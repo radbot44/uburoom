@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101217"><title>uburoom playback test</title><link rel="stylesheet" href="/watch.css"><link rel="stylesheet" href="/watch-test.css"></head>
+<body class="playback-test"><main>
+<header class="account"><img class="brand" src="/assets/radtv-logo.svg" alt="Legacy radTV artwork" width="164" height="43"><a id="back" class="quiet" href="/watch">Back to watch</a></header>
+<section class="card"><h1>Codec playback test</h1><p>Select each codec, press Play for about 10 seconds, and report picture/sound below. Switching codecs saves the result; Copy diagnostics includes all tested samples.</p>
+<div class="test-actions"><label>Codec <select id="codec"></select></label><label>Observed <select id="observed"><option value="not checked">Not checked</option><option value="picture and sound">Picture and sound</option><option value="picture only">Picture only</option><option value="sound only">Sound only</option><option value="neither">Neither</option></select></label></div>
+<p id="sample-description" class="hint"></p>
+<video id="test-video" controls playsinline preload="metadata"></video>
+<div class="test-actions"><button id="play" class="primary">Play</button><button id="reset" class="quiet">Reset test</button><label>Hardware acceleration <select id="acceleration"><option value="not stated">Not stated</option><option value="off">Off</option><option value="on">On</option></select></label></div>
+<p id="play-status" role="status">Ready to test.</p>
+</section>
+<section class="card"><div class="library-header"><h2>Diagnostics</h2><button id="copy" class="quiet">Copy diagnostics</button></div><p class="hint">Updates live. Capability checks are support hints; frame counts and your observation establish playback. The acceleration selection is your report, not an automatic detection.</p>
+<textarea id="diagnostics" readonly spellcheck="false" aria-label="Playback diagnostics"></textarea><p id="copy-status" role="status"></p></section>
+</main><script src="/vendor/discord-sdk.js"></script><script src="/watch-test.js"></script></body></html>

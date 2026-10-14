@@ -1,0 +1,44 @@
+# Private configuration (keep the distributable example).
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+# Runtime identity, account databases and TLS/key material.
+/data/
+/certs/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.key
+*.pem
+*.pfx
+*.p12
+*.cer
+# Dependencies and generated/local output.
+node_modules/
+/releases/
+/artifacts/
+/dist/
+/build/
+/coverage/
+/backups/
+*.log
+*.tmp
+*.zip
+*.xpi
+# Independent upstream reference; retained in the private source backup.
+/reference/plezy-main/
+# Per-developer settings.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Personal installation/development notes live outside the public source tree.
+/private/
+/personal/
+/local-notes/
+/reference/

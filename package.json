@@ -1,0 +1,25 @@
+{
+  "name": "uburoom",
+  "version": "0.5.3",
+  "private": true,
+  "description": "Self-hosted Plex watch parties with a web interface and Discord integration",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test tests/*.test.js",
+    "demo": "node --env-file-if-exists=.env scripts/watch-demo.js",
+    "build:player": "node scripts/build-player-vendor.js"
+  },
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
+    "discord.js": "^14.22.1",
+    "hls.js": "^1.7.3",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

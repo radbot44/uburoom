@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "uburoom",
+  "version": "0.4.14",
+  "description": "Local YouTube TV picture controls and remote access with per-tab Discord sharing settings.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "radtv@tch.one",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "identity",
+    "sessions"
+  ],
+  "host_permissions": [
+    "https://tv.youtube.com/*",
+    "https://localhost/*"
+  ],
+  "background": {
+    "scripts": [
+      "engine.js",
+      "server-config.js",
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "uburoom \u2014 remote off by default",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://tv.youtube.com/*"
+      ],
+      "js": [
+        "engine.js",
+        "remote-ui.js",
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/radtv-logo.svg"
+      ],
+      "matches": [
+        "https://tv.youtube.com/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://localhost:6767 wss://localhost:6767"
+  }
+}

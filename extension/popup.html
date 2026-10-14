@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>uburoom</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header><h1><img class="brand" src="assets/radtv-logo.svg" alt="Legacy radTV artwork" width="124" height="32"></h1><div><a id="open-website" class="icon" href="https://localhost:6767/" target="_blank" rel="noopener" title="Open uburoom website" aria-label="Open uburoom website">◎</a><button id="open-controls" class="icon" title="Open controls in player (F8)" aria-label="Open controls in player">▣</button><button id="settings-toggle" class="icon" title="Device settings" aria-label="Device settings" aria-expanded="false">⚙</button></div></header>
+<section id="settings-panel" hidden><label id="alias-label">Player name (optional) <input id="alias" placeholder="Discord username" maxlength="48" autocomplete="off"></label><button id="forget" class="secondary" hidden>↪ Forget device login</button><p class="hint">Blank uses your Discord username. Remote starts off after a tab or connection restart.</p></section>
+<p id="status" role="status">Loading…</p>
+<section id="signin-area"><button id="signin" class="primary">Log in with Discord</button><p class="hint">Connect Firefox automatically.</p><div id="servers" class="chips" role="group" aria-label="Server"></div></section>
+<section id="player-section" hidden>
+<div id="local-remote"></div>
+</section>
+<p id="no-player" class="hint">Select a YouTube TV tab with a player.</p>
+<p id="error" role="alert"></p>
+<script src="server-config.js"></script><script src="remote-ui.js"></script><script src="popup.js"></script></body></html>
