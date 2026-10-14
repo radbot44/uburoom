@@ -42,6 +42,9 @@ function ExtensionZip([string]$Name, [string]$ManifestOverride) {
                 $output.Write($bytes, 0, $bytes.Length)
             } finally { $output.Dispose() }
         }
+        $licenseEntry = $zip.CreateEntry('LICENSE'); $licenseOutput = $licenseEntry.Open()
+        try { $licenseBytes = [IO.File]::ReadAllBytes((Join-Path $projectPath 'LICENSE')); $licenseOutput.Write($licenseBytes, 0, $licenseBytes.Length) }
+        finally { $licenseOutput.Dispose() }
     } finally { $zip.Dispose(); $stream.Dispose() }
     Write-Host $destination
 }

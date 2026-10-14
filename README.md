@@ -33,4 +33,6 @@ Fixtures do not establish compatibility with every Plex server, Discord client o
 
 ## License and attribution
 
-GPL-3.0 is the intended project license; the exact version qualifier and full LICENSE file remain release gates. Third-party code retains its own licenses and [bundled notices](web/vendor/THIRD_PARTY_NOTICES.txt). Dependency, artwork and media provenance need final review before public distribution.
+uburoom's original source code is licensed under **GPL-3.0-only**: GNU General Public License version 3 only. See [LICENSE](LICENSE). It comes without warranty, as described in that license.
+
+Third-party code retains its own licenses and [bundled notices](web/vendor/THIRD_PARTY_NOTICES.txt); it is not relicensed by this declaration. See [attribution and remaining review](docs/third-party.md). Artwork and media provenance need final review before public distribution.

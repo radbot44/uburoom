@@ -15,4 +15,4 @@ uburoom is a self-hosted Plex watch-together app with a browser interface, Disco
 11. Run relevant tests without unexpected skips. Keep unfinished work in docs/testing.md. The known full extension smoke issue is deferred; do not weaken permissions/throttling to hide it.
 12. Keep commits small and documentation generic/public-facing. Personal deployment notes, paths, screenshots, migration diaries and reference projects belong outside this checkout and publication history.
 13. No production restart/config/DNS/Cloudflare/Discord-registration changes, signing/publication or public push without explicit approval. GitHub creation is deferred until the brand transition is complete.
-14. Deliver distributable bundles as ZIPs. Audit source, full publication history, assets, notices and ZIP contents before release. Preserve third-party licensing; GPL qualifier remains pending.
+14. Deliver distributable bundles as ZIPs. Audit source, full publication history, assets, notices and ZIP contents before release. First-party source is GPL-3.0-only; preserve third-party licenses/notices and include LICENSE in distributions. Artwork/media provenance remains a release gate.
