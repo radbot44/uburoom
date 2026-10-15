@@ -14,6 +14,8 @@ The selected wordmark is `assets/branding/uburoom-master.svg`. Preserve its path
 
 Icons contain only the original interlocking **oo** paths and clipped shadows. `assets/branding/uburoom-oo.svg` is tightly cropped; `extension/assets/uburoom-icon.svg` is a centered square with padding for toolbar/favicon use. Transparent PNG exports are provided at 16, 32, 48, 64, 96, 128, 256 and 512 pixels. The favicon ICO includes 16/32/48 sizes. Preserve the ligature geometry rather than redrawing it for individual sizes.
 
+For square placements, `assets/branding/uburoom-oo-square.svg` and `uburoom-wordmark-square.svg` center the oo icon or full wordmark on the existing #101217 background. Each has a 1024×1024 PNG export beside it. `assets/branding/uburoom-icon.svg` and `uburoom-icon-512.png` provide the transparent square icon. Use the cropped wordmark for site headers and the oo icon for favicons; do not stretch the full wordmark into an icon.
+
 Use the canonical uburoom logo asset/HTTP path. All palette, typography and component layout rules above remain unchanged.
 
 ## Components
