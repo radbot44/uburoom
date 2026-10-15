@@ -4,6 +4,39 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## Playback reliability work
+
+The [playback reliability and content coverage plan](playback-reliability.md) defines the investigation, implementation order, browser/Activity targets and media corpus. A first personal audio/subtitle implementation is present. Complete cross-browser coverage, automatic complete-source negotiation, live Plex track delivery, VFR timing in custom AV1, split-file timelines and Plex video UX parity remain unfinished. Existing fixture checks do not certify those features or real Discord playback. Performance targets in the plan are proposed goals; record actual picture/audio/caption and lifecycle evidence before claiming support.
+
+The first isolated playback baseline completed 21 cases with zero failures: seven cases each in Windows headless Firefox 157.0.1, Chrome 155.0.8059.79 and Edge 155.0.4283.45, with accelerated video decoding disabled. Cases covered direct 23.976/24/60 fps, automatic recovery of a HEVC/AC-3 source, a pre-generated H.264/AAC HLS conversion, and AV1/Opus at 23.976/60 fps. Actual watch-player pixels, decoded PCM tone, frame counts, startup, steady playback, room drift and pause/seek/resume were checked. This is a single-run synthetic baseline, not client certification or a performance percentile.
+
+That baseline reproduced forced 30 fps AV1 output and a failed speculative final chunk stopping buffered playback. CFR source cadence now survives conversion, and failed speculative work remains scoped to its chunk; current playback and seeks elsewhere remain usable. Before/after encoded probes and browser measurements provide the regression evidence. The two-viewer Firefox AV1 smoke passes chunk continuity, shared seek/pause, personal quality, restart and desktop/phone layout checks after the buffering changes, with rendered surfaces inspected. Production still requires Intel AV1 hardware encoding; these fixtures explicitly substitute a bounded software encoder in their own instances, so sustained QSV capacity remains unverified.
+
+The initial Edge HEVC recovery took approximately 9.3 seconds before confirmed HLS playback. Explicit unsupported-codec preflight now selects the existing compatible conversion without waiting for that failed decode trial: follow-up automatic HEVC/AC-3 cases passed in all three browsers at approximately 0.9–1.0 seconds to confirmed playback. Three AV1 23.976 fps regressions and three 60 fps regressions also passed. These small synthetic single-run results do not establish live Plex startup performance or complete codec negotiation.
+
+Nine longer buffering cases passed: direct, HLS and AV1 in the same three browser versions. At the paused checkpoint, native file playback held approximately 50–77 seconds ahead, AV1 59 seconds and the conservatively budgeted 24 Mbps HLS path 15 seconds. All nine continued rendering frames and decoded PCM throughout a ten-second synthetic media outage with zero rebuffer events. Cached rewind succeeded during the outage; outside-cache seeks recovered after delivery returned, including the AV1 chunk whose speculative preparation had failed. The timeline's actual loaded/played ranges were inspected in desktop, theater and phone renders. Native caching remains browser-controlled; the fixture's preload threshold is not a product guarantee.
+
+That run exposed an obsolete HLS retry wait delaying a fresh outside-cache seek after recovery. Shared seeks now supersede that wait while keeping cached media attached. Three follow-up HLS outage/rewind/seek cases passed, reducing measured seek-plus-resume time from approximately 6.6 seconds to 1.2 seconds in each browser. This measures fixture recovery, not a live Plex conversion latency guarantee.
+
+The automated suite passes 98 tests with zero skips/failures, including buffer bounds, rewind/seek windows, quota response, retry cooldown/backoff, source audio/cache isolation, serialized subtitle starts, failed-burn recovery, stale caption cancellation and revoked media/caption authorization. The existing two-viewer Firefox AV1 smoke also passes after the audio/subtitle changes. See [baseline commands and limitations](development.md#isolated-playback-baseline); generated reports stay in ignored artifacts.
+
+### Audio and subtitle gates
+
+The first slice includes source audio, external SRT/WebVTT with native timing adjustment, and Plex burn negotiation for embedded/styled/image subtitles. Browser fixtures check actual decoded audio, native cue activity and ASS pixels against generated renditions. Simulated Plex acknowledgements do not establish real PMS behavior.
+
+Fifteen isolated cases passed with zero failures: five each in Windows Firefox 157.0.1, Chrome 155.0.8059.79 and Edge 155.0.4283.45 with accelerated decoding disabled. Cases cover native WebVTT without video replacement, French SRT/Unicode/delay/Off, two-viewer English/French PCM output, ASS dialogue and positioned colored sign pixels, and selected audio with native captions in AV1. Desktop, theater and phone renders were inspected. Each browser uses fresh synthetic provider state and a fresh server with unchanged request throttles. These are generated-media results, not live Plex/Discord certification.
+
+Visual inspection found stale caption clearance immediately after a phone resize. Resize now updates the native cue layout immediately; five Edge follow-up cases passed and the phone caption render was inspected clear of transport controls.
+
+Before claiming live coverage, verify:
+
+- Real Plex source IDs, decisions, subtitle selection confirmation and cold/warm start latency, including commands expiring during slow preparation. Existing command deadlines remain enforced.
+- Two viewers sharing a Plex identity with different audio/subtitles; simultaneous selection, seeks, retries, session expiry/restart and another Plex app changing its saved preference. Burn preparation changes that user's stored subtitle preference; uburoom Off does not restore it.
+- Anime ASS/SSA attachment fonts, signs, overlapping dialogue/karaoke and seek timing; PGS and VobSub/SUB/IDX inputs. The synthetic ASS sample uses a system font and is not an attachment-font test.
+- AAC, AC-3/E-AC-3, DTS, TrueHD, FLAC and other inputs, real dialogue/channel order/downmix/clipping. Current converted outputs are stereo; multichannel/lossless/Atmos fidelity is unverified.
+- Text legacy encodings, CJK/right-to-left/overlap, fullscreen/native PIP, real Discord focused/grid/PIP and proxy caption fetch/revocation. Unknown subtitle codecs are explicitly unavailable. Custom AV1 cannot render burned subtitles.
+- VFR/A/V/caption alignment, final end-of-stream semantics, HDR fidelity, live event manifests, physical audio, Safari/mobile, long playback, memory pressure and broader load/network failures.
+
 ## Local migration checks
 
 The migration baseline completed 66 automated tests, a fresh-checkout dependency install and shared-watch Firefox playback, plus blocked-autoplay/native-tracking checks with regenerated synthetic media. The complete naming transition passes 67 automated tests with zero skips/failures, including `/ubu` registration/routing, Firefox shared-watch playback and startup of the new extension identity. An offline copied-state startup retained account/identity/credential/device records with unchanged key bytes and no network calls; rooms, remote consent and Admin mode began off. Missing-key startup was refused. The naming transition requires browser sign-in and a new extension installation/pairing.

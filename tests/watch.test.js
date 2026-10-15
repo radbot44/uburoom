@@ -248,6 +248,10 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'applied','personal quality works with remote off');
   room.s.visibility = 'private';
   assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'forbidden','personal quality never bypasses privacy');
+  const personal = room.viewers.get(b); personal.compatible = true; personal.fallback = 'av1';
+  watch.dropMedia(room);
+  assert.equal(personal.compatible,false,'new content gets a fresh compatibility decision');
+  assert.equal(personal.fallback,undefined); assert.equal(personal.quality,'720p','personal quality survives new content');
   watch.close();
 });
 
@@ -355,14 +359,20 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const room = app.watch.rooms.get(id), local = room.viewers.get(viewer);
   room.mediaVersion = randomUUID(); room.position = 0; room.s.state.paused = true;
   app.watch.plex.av1.ffmpeg = 'fixture-only';
-  const av1 = {kind:'plex',format:'av1',videoCodec:'av1',duration:60,av1Lease:app.watch.plex.av1.acquire({id:'123',duration:60},'direct')};
+  const av1 = {kind:'plex',format:'av1',videoCodec:'av1',duration:180,av1Lease:app.watch.plex.av1.acquire({id:'123',duration:180},'direct')};
+  room.media = {...room.media,duration:180};
   local.media = av1; local.mediaVersion = room.mediaVersion; local.streamVersion = randomUUID();
   let chunks = 0;
   app.watch.plex.av1.chunk = async () => { chunks++; return {video:Buffer.from('private fixture webm'),audio:Buffer.from('opus')}; };
   const av1State = (await getState()).body, base = av1State.mediaUrl.replace(/\/start$/, '/chunk-video-');
   assert.equal((await request(base + '0')).status, 200);
+  assert.equal((await request(base + '10')).status, 200, 'bounded ahead buffer is available while paused');
+  assert.equal((await request(base + '11')).status, 403, 'prefetch cannot exceed the shared ahead window');
   assert.equal((await request(base + '100')).status, 403, 'AV1 cannot transcode an arbitrary offset');
-  assert.equal(chunks,1);
+  assert.equal(chunks,2);
+  room.position = 120; room.s.state.duration = 180;
+  assert.equal((await request(base + '14')).status,403,'old rewind chunks are outside the authorized window');
+  assert.equal((await request(base + '15')).status,200,'recent rewind window remains available');
   local.streamVersion = randomUUID();
   assert.equal((await request(base + '0')).status, 403, 'quality replacement invalidates AV1 grants');
   const renewed = (await getState()).body;

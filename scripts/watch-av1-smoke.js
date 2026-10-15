@@ -73,9 +73,11 @@ async function main() {
     await evaluate(guest,'compatibleFallback("Simulated H.264 decode failure").then(()=>true)');
     await until(guest,'state.format==="av1" && videoFrames>0','guest AV1 frames');
     console.log('PASS: second viewer decodes the shared AV1 tier.');
-    const firstCount=encoded;assert.ok(firstCount<=3,'same tier reuses existing chunks');
+    const firstCount=encoded;assert.ok(firstCount<=Math.ceil(source.duration/1000/6),'same tier shares the bounded ahead cache rather than encoding each viewer separately');
     await evaluate(host,'window.smokePlay=execute({action:"media.play"}).then(()=>true); true');
-    await until(host,'video.currentTime>7 && video.getVideoPlaybackQuality().totalVideoFrames>180','cross WebM chunk boundary');
+    // The procedural source is 12 fps. The encoder now retains that cadence;
+    // requiring 180 frames here accidentally required the old 30 fps conversion.
+    await until(host,'video.currentTime>7 && video.getVideoPlaybackQuality().totalVideoFrames>70','cross WebM chunk boundary');
     await until(guest,'video.currentTime>7 && Math.abs(video.currentTime-expected())<1','guest sync');
     console.log('PASS: continuous playback across WebM chunks.');
     await evaluate(host,'execute({action:"media.seek.absolute",args:{seconds:25}}).then(()=>execute({action:"media.pause"})).then(()=>true)');

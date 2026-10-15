@@ -7,16 +7,18 @@ let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, 
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
 const activity = params.has('frame_id');
 let theater = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
-let hlsRecoveryTimer, hlsRecoveryCount = 0;
+let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 let browserHandoff, browserHandoffTimer, browserVerification;
+let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
+const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['drawer-symbol','drawer'],['drawer-close','close'],['playback-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['playback-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
@@ -157,6 +159,7 @@ function updateActivityLayout(event) {
   document.body.classList.toggle('activity-pip', pip);
   if (pip) { toggleDrawer(false); toggleRemote(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); if ($('playback-dialog').open) { hidePlaybackTest(); library.closeTest(); } }
   if(pip&&$('account-dialog').open)$('account-dialog').close();
+  if(pip&&$('tracks-dialog').open)$('tracks-dialog').close();
 }
 document.body.classList.toggle('activity', activity); $('fullscreen').hidden = $('theater').hidden = activity;
 if (activity) {
@@ -164,23 +167,23 @@ if (activity) {
   $('welcome').hidden = true;
 }
 setTheater(activity); updateActivityLayout();
-window.addEventListener('resize', () => updateActivityLayout());
+window.addEventListener('resize', () => { updateActivityLayout(); renderTransport(); });
 $('theater').addEventListener('click', () => setTheater(!theater));
 $('drawer-open').addEventListener('click', () => {
   if (!theater) return;
   toggleDrawer(); if (!drawer.hidden) $('drawer-close').focus();
 });
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
-async function compatibleFallback(reason) {
+async function compatibleFallback(reason, preferHLS = false) {
   if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
-  const useAV1 = state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || '');
+  const useAV1 = !preferHLS && (state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || ''));
   if (state.format === 'av1' || useAV1 && av1FallbackVersion === state.mediaVersion || !useAV1 && fallbackVersion === state.mediaVersion) {
     if (state.format === 'av1') { av1?.destroy(); video.pause(); playbackError = 'AV1 played no decoded video. Check the Playback test and server encoder probe.'; fail(playbackError); }
     return;
   }
   if (pending) {
     const id = selected, version = state.mediaVersion;
-    setTimeout(() => { if (selected === id && state?.mediaVersion === version) void compatibleFallback(reason); }, 200); return;
+    setTimeout(() => { if (selected === id && state?.mediaVersion === version) void compatibleFallback(reason,preferHLS); }, 200); return;
   }
   if (useAV1) av1FallbackVersion = state.mediaVersion; else fallbackVersion = state.mediaVersion;
   fallbackPending = true;
@@ -204,6 +207,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer() {
+  captions.reset(); trackActionError='';
   observing = false; observationBreak++; playerWaiting = false;
   av1?.destroy(); av1 = undefined;
   clearTimeout(hlsRecoveryTimer); hlsRecoveryCount = 0; $('acceleration-help').hidden = true;
@@ -216,6 +220,7 @@ function clearPlayer() {
 }
 function stopHls() {
   clearTimeout(hlsRecoveryTimer);
+  hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   const client = hls; hls = undefined; client?.destroy();
 }
 function unsupportedDecoder() {
@@ -226,8 +231,28 @@ function unsupportedDecoder() {
   $('enable-acceleration').hidden = !sdk;
   fail(playbackError);
 }
+function restartHlsForSeek(target) {
+  if (!hls || !hlsNetworkInterrupted || state?.mediaUrl !== mediaSource || uburoomPlayback.bufferedAhead(video.buffered,target) > .05) return;
+  // A new authorized room seek supersedes the old segment's retry timer.
+  // stopLoad keeps MediaSource and its cached ranges attached.
+  clearTimeout(hlsRecoveryTimer); hlsNetworkRetries = 0;
+  if (playbackError === hlsNetworkFailure) playbackError = '';
+  hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
+  hls.stopLoad(); hls.startLoad(target);
+}
 function handleHlsError(client, data) {
   if (hls !== client) return;
+  if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hlsNetworkInterrupted = true;
+  if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+    // Keep already buffered media attached while retrying the current stream.
+    // Authorization and grant renewal still run through the normal room poll.
+    clearTimeout(hlsRecoveryTimer);
+    if (hlsNetworkRetries < 3) hlsRecoveryTimer = setTimeout(() => {
+      if (hls === client && state?.mediaUrl === mediaSource) client.startLoad();
+    }, 1000 * 2 ** hlsNetworkRetries++);
+    else hlsNetworkFailure = 'The video stream could not load. Check the connection and try again.';
+    return;
+  }
   // hls.js also resets MediaSource internally on nonfatal reset events.
   if (data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET && !data.fatal) {
     if (hlsRecoveryCount++ === 0) return;
@@ -249,6 +274,7 @@ function handleHlsError(client, data) {
   fail(playbackError);
 }
 function unavailable(message) {
+  if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
   clearPlayer(); state = undefined; toggleRemote(false);
   browseSession = undefined; $('library-panel').hidden = true; void library.setSession(undefined);
   renderRemote(); renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
@@ -333,7 +359,54 @@ function renderTransport() {
   $('join-playback').setAttribute('aria-label', autoplayBlocked ? 'Join playback' : 'Play'); $('join-playback').title = autoplayBlocked ? 'Join playback' : 'Play';
   $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' : '';
   if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
+  renderTracks();
+  captions.layout($('stage').matches(':hover,:focus-within') || paused || autoplayBlocked || !$('remote').hidden,innerWidth<=700);
 }
+function trackLabel(track) {
+  const roles=[track.forced && 'Forced',track.sdh && 'SDH',track.commentary && 'Commentary',track.description && 'Audio description'].filter(Boolean);
+  return [track.label,track.codec?.toUpperCase(),track.channels && track.channels+' ch',...roles,!track.available && 'Unavailable'].filter(Boolean).join(' · ');
+}
+function renderTracks() {
+  const tracks=state?.tracks, available=!!tracks;
+  $('tracks-open').hidden=!available || !tracks.audio.length && !tracks.subtitles.length;
+  $('tracks-open').disabled=pending;
+  const render=(id,rows,choices,value)=>{
+    const options=[...choices,...(rows || []).map(row=>({id:row.id,label:trackLabel(row),disabled:!row.available}))];
+    const element=$(id), signature=JSON.stringify(options);
+    if(element.dataset.options!==signature){element.replaceChildren(...options.map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=row.label;option.disabled=!!row.disabled;return option;}));element.dataset.options=signature;}
+    element.value=value || 'auto'; element.disabled=!available || pending;
+  };
+  render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic (Plex)'}],tracks?.audioChoice);
+  render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic (Plex)'},{id:'off',label:'Off'}],tracks?.subtitleChoice);
+  const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), burned=subtitle?.delivery==='burn';
+  $('audio-track-status').textContent=audio ? audio.label+(state.format!=='file' ? ' · Stereo playback' : '') : '';
+  if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
+  $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
+  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title. Timing cannot be adjusted here.' : '');
+  const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
+  $('track-status').classList.toggle('error',error);
+  $('subtitle-status').hidden=!trackNoticeError && !tracks?.subtitleError;
+  $('subtitle-status').textContent='Subtitles could not be shown. Open Audio and subtitles for details.';
+  $('subtitle-retry').hidden=!trackNoticeError || !state?.subtitleUrl;
+}
+async function changeTrack(args) {
+  if(!$('tracks-dialog').open || !state || pending || !trackContext || trackContext.mediaVersion!==state.mediaVersion || trackContext.streamVersion!==state.streamVersion)return;
+  trackActionError='';
+  try { await execute({action:'media.tracks.set',args:{...trackContext,...args}}); }
+  catch(error){trackActionError=error.message;}
+  finally{renderTracks();}
+}
+$('tracks-open').addEventListener('click',()=>{
+  if(!state?.tracks || pending)return;
+  trackContext={mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}; trackActionError=''; renderTracks();
+  $('tracks-dialog').showModal(); $('audio-track').focus();
+});
+$('tracks-close').addEventListener('click',()=>$('tracks-dialog').close());
+$('tracks-dialog').addEventListener('close',()=>{trackContext=undefined; $('tracks-open').focus();});
+$('audio-track').addEventListener('change',()=>void changeTrack({audioId:$('audio-track').value}));
+$('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$('subtitle-track').value}));
+$('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
+$('subtitle-retry').addEventListener('click',()=>captions.retry());
 function expected() {
   if (!state) return 0;
   return Math.min(state.state.duration || 0, state.state.position + (state.state.paused ? 0 : (performance.now() - receivedAt) / 1000));
@@ -374,6 +447,9 @@ async function reportReadiness() {
 async function synchronize() {
   if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
   const target = expected(), difference = target - video.currentTime;
+  if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
+    playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
+  }
   const bufferedTarget = state.format === 'av1' && [...Array(video.buffered.length)].some((_, i) =>
     target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
   // A shared seek/restart can supersede a native seek still waiting for old
@@ -395,23 +471,32 @@ async function synchronize() {
 }
 function applyState(next) {
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
+  const previousTarget = state ? expected() : undefined;
+  if(trackContext && trackContext.mediaVersion!==next.mediaVersion){$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
+  if($('tracks-dialog').open)trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
     clearPlayer(); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       $('empty-stage').hidden = true;
       watchFrames();
-      if (next.format === 'av1') {
+      if (next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) {
+        queueMicrotask(() => { if (state === next) void compatibleFallback('The browser does not support the original codecs.',true); });
+      } else if (next.format === 'av1') {
         try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
-        const client = hls = new Hls({ enableWorker: true, maxBufferLength: 25 });
+        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
+        client.on(Hls.Events.FRAG_BUFFERED, () => { if (hls === client) { hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false; } });
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }
   }
+  if (!changed && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) restartHlsForSeek(expected());
+  captions.update(next);
+  if(next.mediaError)playbackError=next.mediaError;
   const picture = next.state.picture;
   video.style.scale = picture.zoom * picture.stretchX + ' ' + picture.zoom * picture.stretchY;
   video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
@@ -450,6 +535,7 @@ async function refreshState() {
 }
 async function selectRoom(id) {
   if (id === selected) return;
+  if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
   if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }).catch(() => {});
   clearPlayer(); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseSession = undefined;
   await refreshState(); await refreshRooms();
@@ -583,7 +669,15 @@ $('admin-end-room').addEventListener('click', async () => {
 });
 $('refresh').addEventListener('click', () => refreshRooms().catch(error => fail(error.message)));
 window.addEventListener('pagehide', () => { stopBrowserHandoff(true); if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }, { keepalive:true }).catch(() => {}); });
-setInterval(() => { if (state && !seekDragging) { const value = expected(); $('timeline').value = value; $('time').textContent = clock(value); } }, 250);
+setInterval(() => {
+  const timeline = $('timeline'), duration = state?.state.duration || 0;
+  const value = seekDragging ? Number(timeline.value) : state ? expected() : 0;
+  if (!seekDragging) { timeline.value = value; $('time').textContent = clock(value); }
+  timeline.style.setProperty('--timeline-fill',uburoomPlayback.timeline(video.buffered,duration,value));
+  const loaded = Math.floor(uburoomPlayback.bufferedAhead(video.buffered,video.currentTime));
+  timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
+  timeline.title = loaded + ' seconds buffered ahead';
+}, 250);
 setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
   config = await api('/api/watch/config');

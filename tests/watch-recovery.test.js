@@ -1,0 +1,46 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const playback = require('../web/playback-policy');
+const source = fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
+function load(context,name,next) { vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context); }
+test('HLS retries the current stream with backoff, retains buffered media, and ignores superseded timers',() => {
+  const timers = [], client = {loads:0,startLoad(){this.loads++;}};
+  const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current'},mediaSource:'/current',
+    hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,
+    clearTimeout:()=>{},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
+  load(context,'handleHlsError','unavailable');
+  for (let i=0;i<4;i++) context.handleHlsError(client,{fatal:true,type:'network'});
+  assert.deepEqual(timers.map(t=>t.delay),[1000,2000,4000]);
+  assert.equal(context.hls,client,'good MSE data stays attached after exhausted speculation');
+  assert.match(context.hlsNetworkFailure,/connection/);
+  timers[0].action(); assert.equal(client.loads,1);
+  context.hls = undefined; timers[1].action(); assert.equal(client.loads,1,'old stream cannot restart');
+});
+test('exhausted HLS delivery failure allows cached playback and surfaces the error only when needed',async () => {
+  let paused = false, message;
+  const context = {state:{mediaUrl:'/current',state:{paused:false,volume:50,muted:false}},probing:false,playbackError:'',
+    video:{readyState:4,currentTime:12,paused:false,buffered:{length:1,start:()=>0,end:()=>20},pause:()=>{paused=true;}},
+    hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,
+    fail:value=>{message=value;},renderTransport:()=>{},checkVideoFrames:()=>{}};
+  // This function is async; retain its declaration keyword when isolating it.
+  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),context);
+  await context.synchronize(); assert.equal(paused,false); assert.equal(context.playbackError,'');
+  context.expected = ()=>21;
+  await context.synchronize(); assert.equal(paused,true); assert.equal(message,'Connection failed');
+});
+test('a fresh outside-cache HLS seek supersedes old network backoff while cached rewind keeps its data',() => {
+  const actions = [], client = {stopLoad:()=>actions.push('stop'),startLoad:time=>actions.push(time)};
+  const context = {hls:client,hlsNetworkInterrupted:true,state:{mediaUrl:'/current'},mediaSource:'/current',
+    video:{buffered:{length:1,start:()=>10,end:()=>30}},uburoomPlayback:playback,hlsRecoveryTimer:1,
+    hlsNetworkRetries:3,hlsNetworkFailure:'Connection failed',playbackError:'Connection failed',clearTimeout:()=>actions.push('cancel')};
+  load(context,'restartHlsForSeek','handleHlsError');
+  context.restartHlsForSeek(20); assert.deepEqual(actions,[],'cached rewind needs no network restart');
+  context.restartHlsForSeek(80); assert.deepEqual(actions,['cancel','stop',80]);
+  assert.equal(context.hls,client); assert.equal(context.hlsNetworkRetries,0); assert.equal(context.playbackError,'');
+  context.hlsNetworkInterrupted = true; context.state.mediaUrl = '/replacement';
+  context.restartHlsForSeek(90); assert.equal(actions.length,3,'old stream cannot restart for replacement content');
+});

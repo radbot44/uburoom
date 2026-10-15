@@ -7,6 +7,8 @@ const { randomBytes, randomUUID } = require('node:crypto');
 const { UUID, hash } = require('./core');
 const { PlaybackError, CHUNK, MIME, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
+const Playback = require('../web/playback-policy');
+const Subtitles = require('./subtitles');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
   const identities = new Map(), grants = new Map();
@@ -37,7 +39,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   function mediaGrant(room, auth, req, viewerId) {
     const viewer = room.viewers.get(viewerId);
-    if (!viewer?.media) return;
+    if (!viewer?.media || viewer.media.playbackError) return;
     const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion);
     if (existing) { existing.expires = Date.now() + 15000; return existing.id; }
     const id = randomBytes(24).toString('hex');
@@ -60,12 +62,26 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function stream(req, res, grant, key) {
     if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
     const media = grant.media;
+    if (key.startsWith('captions-')) {
+      const match = /^captions-([a-f0-9-]{36})$/.exec(key);
+      if (!match || match[1]!==media.captionVersion) return json(res,403,{error:'Subtitle selection changed or access expired.'});
+      const abort=new AbortController(), cancel=()=>abort.abort(); res.on('close',cancel);
+      const check=setInterval(async()=>{try{if(!await validGrant(grant)||media.captionVersion!==match[1])abort.abort();}catch{abort.abort();}},2000);
+      try {
+        const cues=await Subtitles.load(media.plexContext||watch.plex,media,abort.signal);
+        if (abort.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1]) return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        json(res,200,{cues});
+      } catch(error) { if(!res.destroyed)json(res,503,{error:error instanceof PlaybackError ? error.message : 'Subtitles could not load.'}); }
+      finally {clearInterval(check);res.off('close',cancel);}
+      return;
+    }
     if (media.format === 'av1') {
-      if (key === 'start') return json(res, 200, { format:'av1', mime:MIME, audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration });
+      if (key === 'start') return json(res, 200, { format:'av1', mime:MIME, audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration,buffer:Playback.BUFFER });
       const match = /^chunk-(video|audio)-(\d{1,9})$/.exec(key), index = Number(match?.[2]);
       // The authoritative timeline selects source time. The grant cannot be used
       // as an arbitrary transcoding API, even by an authenticated viewer.
-      if (!match || Math.abs(index * CHUNK - watch.position(grant.room)) > CHUNK * 4) return json(res, 403, {error:'Chunk is outside the shared playback window'});
+      const window = Playback.chunkWindow(watch.position(grant.room),media.duration);
+      if (!match || index < window.first || index > window.last) return json(res, 403, {error:'Chunk is outside the shared playback window'});
       const abort = new AbortController();
       const cancel = () => abort.abort(); res.on('close', cancel);
       const check = setInterval(async () => { try { if (!await validGrant(grant)) abort.abort(); } catch { abort.abort(); } }, 2000);
@@ -100,6 +116,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     const target = key === 'start' ? media.start : media.resources.get(key);
     if (!target) return json(res, 404, { error: 'Media unavailable' });
+    if (key==='start' && media.initialManifest && req.method!=='HEAD') {
+      const text=media.initialManifest; media.initialManifest=undefined;
+      res.writeHead(200,{'Content-Type':'application/vnd.apple.mpegurl'}); return res.end(rewriteManifest(text,target,media,grant.id));
+    }
     const abort = new AbortController(); let response;
     const timer = setTimeout(() => abort.abort(), 12000);
     const disconnect = () => { if (!res.writableEnded) abort.abort(); }; res.on('close', disconnect);
@@ -125,7 +145,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
-      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|[a-f0-9]{24})$/.exec(url.pathname);
+      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
       await stream(req, res, grants.get(match[1]), match[2]); return true;
     }
@@ -290,7 +310,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (!await watch.canView(room, auth.actor) || !await alive()) { json(res, 403, { error: 'Viewing access was revoked' }); return true; }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);
       const grant = mediaGrant(room, auth, req, viewerId);
-      if (grant) state.mediaUrl = `/api/watch/media/${grant}/start`;
+      if (grant) {
+        state.mediaUrl = `/api/watch/media/${grant}/start`;
+        const media=room.viewers.get(viewerId).media;
+        if (media.selection?.subtitle?.available && media.selection.subtitle.delivery==='text') state.subtitleUrl=`/api/watch/media/${grant}/captions-${media.captionVersion}`;
+      }
       json(res, 200, state); return true;
     } catch (error) { json(res, 400, { error: error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); return true; }
   }

@@ -1,7 +1,8 @@
 'use strict';
 const { randomUUID, createHash } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../extension/engine');
-const { AV1 } = require('./av1');
+const { AV1, PlaybackError } = require('./av1');
+const Tracks = require('./media-tracks');
 
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
@@ -10,6 +11,7 @@ class Plex {
     this.fetch = fetcher; this.token = config.plexToken; this.av1 = new AV1(this, config);
     this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
+    this.partQueues = new Map();
     if (config.plexUrl) {
       this.base = new URL(config.plexUrl);
       if (!['http:', 'https:'].includes(this.base.protocol) || this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/') throw new Error('PLEX_URL must be an HTTP(S) origin');
@@ -19,7 +21,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{fetch:this.fetch,token,clientId:principal,base:this.base,av1:this.av1,principal:key,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{fetch:this.fetch,token,clientId:principal,base:this.base,av1:this.av1,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
@@ -228,7 +230,7 @@ class Plex {
     return QUALITIES.filter(q => !q.bitrate || (!original?.bitrate || q.bitrate <= original.bitrate) &&
       (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)));
   }
-  async prepare(id, quality, compatible = false, source, fallback) {
+  async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     const sameSource=source && (source.principal||'discord-shared')===this.principal;
     const item = sameSource && source.source || (await this.json(`/library/metadata/${id}`)).Metadata?.[0];
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
@@ -236,37 +238,97 @@ class Plex {
     if (!part?.key || !/^\/library\/parts\/\d+\//.test(part.key) || !Number.isFinite(item.duration) || item.duration <= 0) throw new Error('Media is not playable');
     const media = { title: String(item.title).slice(0, 200), subtitle: this.subtitle(item), duration: item.duration / 1000, quality, kind: 'plex', resources: new Map(), id,
       source: item, principal:this.principal, plexContext:this, videoCodec: item.Media[0].videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
+      audioCodec:item.Media[0].audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.neighbors(item)) };
-    if (fallback === 'av1') {
-      const original = { ...media, start:this.url(part.key).href };
-      media.format = 'av1'; media.videoCodec = 'av1'; media.compatible = true;
+    media.tracks = Tracks.catalog(part);
+    media.selection = Tracks.select(media.tracks,choices);
+    media.sourceStart = this.url(part.key).href; media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);
+    media.captionVersion = randomUUID(); media.subtitleAbort = new AbortController();
+    const audio = media.selection.audio;
+    if (audio) media.audioCodec = audio.codec;
+    const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
+    if (choices.sourceOnly) { media.format='file'; media.start=media.sourceStart; }
+    else if (fallback === 'av1') {
+      if (burn) throw new PlaybackError('These subtitles require Plex video transcoding. This AV1 fallback cannot preserve them; try a browser that can play the Plex stream.');
+      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal };
+      media.format = 'av1'; media.videoCodec = 'av1'; media.audioCodec = 'opus'; media.compatible = true;
       media.av1Lease = this.av1.acquire(original, quality);
     }
-    else if (quality === 'direct' && !compatible) { media.format = 'file'; media.start = this.url(part.key).href; }
+    else if (quality === 'direct' && !compatible && !burn && media.tracks.audio.length<=1) { media.format = 'file'; media.start = media.sourceStart; }
     else {
+      const prepare = async () => {
+      if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
+      if (burn) await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex: '0', partIndex: '0',
         protocol: 'hls', directPlay: '0', directStream: '0', fastSeek: '1', hasMDE: '1',
-        offset: '0', session: media.transcodeId, subtitles: 'none', audioBoost: '100',
+        offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
         'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
         maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, item.Media[0].bitrate || 0)) : String(QUALITIES.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
         'X-Plex-Client-Profile-Name': 'Generic',
         'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
+      if (audio) params.set('audioStreamID',audio.id);
+      params.set('audioChannelCount','2');
+      if (burn) { params.set('advancedSubtitles','burn'); params.set('subtitleSize','100'); }
       if (quality !== 'direct') {
         const q = QUALITIES.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
       }
       const decision = await this.json('/video/:/transcode/universal/decision?' + params);
       const output = decision.Metadata?.[0]?.Media?.[0];
       const stream = output?.Part?.[0]?.Stream?.find(x => x.streamType === 1);
+      const listedAudio = output?.Part?.[0]?.Stream?.filter(x=>Number(x.streamType)===2) || [];
+      const selectedAudio = listedAudio.filter(s=>[true,1,'1'].includes(s.selected) || ['copy','transcode'].includes(s.decision));
+      const outputAudio=selectedAudio.length ? selectedAudio : listedAudio.length===1 ? listedAudio : [];
       if (Number(decision.generalDecisionCode) >= 2000 || output && output.videoCodec && output.videoCodec !== 'h264' || stream?.codec && stream.codec !== 'h264') {
-        await this.stop(media); throw new Error('Plex could not provide H.264 video; check transcoding settings');
+        await this.stop(media); throw new PlaybackError('Plex could not provide H.264 video; check transcoding settings');
+      }
+      if (output?.audioCodec && output.audioCodec!=='aac' || outputAudio.some(s=>s.codec && s.codec!=='aac') ||
+        audio && outputAudio.length===1 && outputAudio[0].id!=null && String(outputAudio[0].id)!==audio.id) {
+        await this.stop(media); throw new PlaybackError('Plex did not confirm the requested audio stream and AAC output.');
+      }
+      if (burn) {
+        const carried=output?.Part?.[0]?.Stream?.find(s=>Number(s.streamType)===3 && String(s.id)===media.selection.subtitle.id && (s.decision==='burn' || output.subtitleDecision==='burn'));
+        if (!carried) throw new PlaybackError('Plex did not confirm burning the requested subtitle. Your previous player is unchanged.');
       }
       media.videoCodec = 'h264'; media.compatible = compatible;
+      media.audioCodec = 'aac'; media.bitrate = Number(params.get('maxVideoBitrate'));
       media.start = this.url('/video/:/transcode/universal/start.m3u8?' + params).href;
+      if (burn) {
+        if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
+        const response=await this.request(media.start,{headers:{Accept:'application/vnd.apple.mpegurl'}});
+        const text=await response.text();
+        if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested subtitle transcode.');
+        media.initialManifest=text;
+      }
+      };
+      try { if(burn) await this.withPartLock(media.partId,prepare); else await prepare(); }
+      catch(error) {
+        await this.stop(media);
+        const failure=error instanceof PlaybackError ? error : new PlaybackError('Plex playback could not be prepared. Check server access and transcoding support.');
+        failure.media=media; throw failure;
+      }
     }
     return media;
   }
+  async withPartLock(id,action) {
+    const previous=this.partQueues.get(id) || Promise.resolve();
+    const job=previous.catch(()=>{}).then(action); this.partQueues.set(id,job);
+    try { return await job; } finally { if(this.partQueues.get(id)===job)this.partQueues.delete(id); }
+  }
+  async selectSubtitleForBurn(media,choices) {
+    // PMS uses this user's stored part selection for burn-in. Hold the part
+    // lock through decision AND session start so another viewer cannot replace
+    // it before this conversion has captured its intended source stream.
+    const read=async()=> (await this.json('/library/metadata/'+media.id)).Metadata?.[0]?.Media?.[0]?.Part?.[0];
+    const part=await read(), requested=media.selection.subtitle.id;
+    if (!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested)) throw new PlaybackError('The requested subtitle no longer belongs to this source.');
+    if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
+    await this.request('/library/parts/'+media.partId+'?'+new URLSearchParams({subtitleStreamID:requested}),{method:'PUT'});
+    const confirmed=await read();
+    if (!confirmed?.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested && [true,1,'1'].includes(s.selected))) throw new PlaybackError('Plex did not select the requested subtitle.');
+  }
   async stop(media) {
+    media?.subtitleAbort?.abort(); media?.subtitleCache?.clear();
     if (media?.av1Lease) this.av1.release(media.av1Lease);
     if (media?.transcodeId) await (media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
   }

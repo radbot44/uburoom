@@ -233,6 +233,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const assets = { '/': [player ? 'watch.html' : 'index.html', 'text/html'], '/setup.js': ['setup.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'],
         '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'], '/watch/test': ['watch-test.html', 'text/html'],
         '/watch-test.js': ['watch-test.js', 'text/javascript'], '/watch-test.css': ['watch-test.css', 'text/css'],
+        '/playback-policy.js':['playback-policy.js','text/javascript'],
+        '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && route === '/engine.js') {
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../extension/engine.js')));

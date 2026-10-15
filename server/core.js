@@ -137,7 +137,7 @@ class Hub {
     // Only the authenticated watch endpoint can attach a viewer identity.
     // Personal audio/quality never changes an extension player or the room.
     const personal = this.sessions.get(input.sessionId)?.kind === 'watch' && actor.surface === 'web' && !!actor.watchViewerId &&
-      ['media.quality.set', 'media.volume.set', 'media.mute', 'media.unmute'].includes(command.action);
+      ['media.quality.set', 'media.tracks.set', 'media.volume.set', 'media.mute', 'media.unmute'].includes(command.action);
     const manage = Engine.MANAGEMENT.includes(command.action) && !personal;
     if (manage && (actor.surface !== 'web' && !this.isAdmin(actor) || !input.sessionId)) return { status: 'forbidden', message: 'This action requires the host website or local extension.' };
     if (command.action === 'session.sharing' && command.args.mode !== 'owner' && this.sessions.get(input.sessionId)?.kind!=='watch' && !this.access?.options?.().available) return { status: 'unavailable', message: 'Wait for Discord to connect before sharing.' };

@@ -14,7 +14,7 @@
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
   const validQuality = id => QUALITIES.some(q => q.id === qualityId(id));
-  const MANAGEMENT = Object.freeze(['session.enable', 'session.sharing', 'session.visibility', 'session.controls', 'session.autojoin', 'media.load', 'media.quality.set']);
+  const MANAGEMENT = Object.freeze(['session.enable', 'session.sharing', 'session.visibility', 'session.controls', 'session.autojoin', 'media.load', 'media.quality.set','media.tracks.set']);
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
     return { playback: value.playback, transform: value.transform };
@@ -74,6 +74,22 @@
       case 'media.seek.start': case 'media.seek.end':
       case 'status.get': case 'help.get': case 'session.disable': case 'session.enable': break;
       case 'media.previous': case 'media.next': break;
+      case 'media.tracks.set':
+        for (const name of ['mediaVersion','streamVersion']) {
+          if (typeof a[name]!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a[name])) throw new Error('Track selection expired.');
+          args[name]=a[name];
+        }
+        if (a.audioId!==undefined) {
+          if (typeof a.audioId!=='string' || !/^(?:auto|\d{1,20})$/.test(a.audioId)) throw new Error('Choose an audio track.');
+          args.audioId=a.audioId;
+        }
+        if (a.subtitleId!==undefined) {
+          if (typeof a.subtitleId!=='string' || !/^(?:auto|off|\d{1,20})$/.test(a.subtitleId)) throw new Error('Choose subtitles or Off.');
+          args.subtitleId=a.subtitleId;
+        }
+        if (a.subtitleOffset!==undefined) args.subtitleOffset=numeric(a.subtitleOffset,-30,30);
+        if (a.audioId===undefined && a.subtitleId===undefined && a.subtitleOffset===undefined) throw new Error('Choose a track setting.');
+        break;
       case 'media.quality.set':
         if (!validQuality(a.quality)) throw new Error('Choose a playback quality');
         args.quality = a.quality;

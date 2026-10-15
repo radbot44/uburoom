@@ -6,11 +6,12 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { QUALITIES, qualityId } = require('../extension/engine');
-const CHUNK = 6, MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
+const CHUNK = require('../web/playback-policy').BUFFER.chunkSeconds;
+const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
 class PlaybackError extends Error {}
 
 async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic) {
@@ -97,12 +98,24 @@ function outputSpec(info, quality) {
   const ratio = Math.min(1, maxWidth / video.width, maxHeight / video.height);
   const width = Math.max(2, Math.floor(video.width * ratio / 2) * 2), height = Math.max(2, Math.floor(video.height * ratio / 2) * 2);
   const hdr = ['smpte2084','arib-std-b67'].includes(video.color_transfer);
-  const filters = ['setpts=PTS-STARTPTS','fps=30'];
+  // Keep constant-rate source cadence. Forcing 30 fps duplicates film frames and
+  // discards half of a 60 fps source, even when both decoder and encoder keep up.
+  const filters = ['setpts=PTS-STARTPTS'];
   if (hdr) filters.push('zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv');
   filters.push(`scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12');
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
   const bitrate = q.bitrate || Math.min(40000, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : 12000));
-  return { width, height, hdr, bitrate, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
+  // Carry the measured source rate through the encoder and WebM DefaultDuration.
+  // Timestamp passthrough without packet durations creates MSE buffer holes on
+  // some clients. This establishes CFR coverage; VFR timing needs separate tests.
+  let frameRate;
+  for (const rate of [video.r_frame_rate,video.avg_frame_rate]) {
+    const match = /^(\d+)\/(\d+)$/.exec(rate || '');
+    if (match && Number(match[2]) > 0 && Number(match[1])/Number(match[2]) > 0 && Number(match[1])/Number(match[2]) <= 240) {
+      frameRate = rate; break;
+    }
+  }
+  return { width, height, hdr, bitrate, frameRate, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
 }
 
 class AV1 {
@@ -118,7 +131,7 @@ class AV1 {
   acquire(source, quality) {
     if (!this.ffmpeg) throw new PlaybackError('AV1 unavailable: set FFMPEG_PATH after running the encoder probe on the server.');
     if (this.closed) throw new PlaybackError('Server is shutting down.');
-    const key = source.id + ':' + qualityId(quality);
+    const key = createHash('sha256').update(JSON.stringify([source.principal,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality)])).digest('hex');
     let group = this.groups.get(key);
     if (!group) {
       if (this.groups.size >= 8) throw new PlaybackError('AV1 is busy; close an unused player or choose a shared quality.');
@@ -188,8 +201,13 @@ class AV1 {
     if (lease.released || this.closed) throw new PlaybackError('AV1 stream was replaced.');
     const group = lease.group, start = index * CHUNK;
     if (!Number.isSafeInteger(index) || index < 0 || start >= group.source.duration) throw new PlaybackError('Invalid AV1 chunk.');
-    if (group.error) throw group.error;
     let entry = group.chunks.get(index);
+    // Briefly memoize failures to collapse concurrent track/viewer requests.
+    // A later bounded client retry must be able to recover a temporary Plex
+    // outage; caching a rejected chunk forever makes that source time unusable.
+    if (entry?.error && !entry.users && Date.now() - entry.failedAt >= 5000) {
+      group.chunks.delete(index); entry = undefined;
+    }
     if (!entry) {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
       entry = { users:0, at:Date.now(), controller };
@@ -198,27 +216,36 @@ class AV1 {
         await this.probePromise;
         return this.input(group.source, controller.signal, async url => {
           if (!group.info) group.info = JSON.parse((await this.run(this.ffprobe, ['-v','error','-show_entries',
-            'stream=codec_type,width,height,color_transfer:format=bit_rate','-of','json',url], controller.signal)).toString());
+            'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal)).toString());
           const spec = outputSpec(group.info, group.quality);
+          const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
+          const selectedAudio = group.source.audioIndex !== undefined ? audioStreams.find(s=>s.index===group.source.audioIndex) : audioStreams[group.source.audioOrdinal ?? 0];
+          if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
+          const audioMap = group.source.audioIndex !== undefined ? '0:'+group.source.audioIndex : '0:a:'+(group.source.audioOrdinal ?? 0);
           const args = ['-hide_banner','-loglevel','error','-nostdin','-threads','2','-ss',String(start),'-i',url];
           if (!spec.audio) args.push('-f','lavfi','-i','anullsrc=r=48000:cl=stereo');
           const duration = String(Math.min(CHUNK, group.source.duration - start));
           args.push('-t',duration, '-map','0:v:0','-an',
             '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',spec.filter,
             ...encoderArgs(),'-b:v',`${spec.bitrate}k`,'-maxrate',`${spec.bitrate}k`,'-bufsize',`${spec.bitrate * 2}k`,
+            ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
             '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
-            '-t',duration,'-map',spec.audio ? '0:a:0' : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
+            '-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
             '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3');
           return this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024);
         });
       }).then(bytes => {
         entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry); return bytes;
       }).catch(error => {
-        group.chunks.delete(index);
-        // Disconnection cancels this chunk, not everyone else's stream.
-        if (!controller.signal.aborted) group.error = error instanceof PlaybackError ? error : new PlaybackError('AV1 source probing failed.');
-        throw group.error || error;
+        if (controller.signal.aborted) group.chunks.delete(index);
+        else {
+          // Keep failure local to this chunk and cool down before re-encoding.
+          entry.error = error instanceof PlaybackError ? error : new PlaybackError('AV1 chunk preparation failed.');
+          entry.failedAt = Date.now();
+          this.prune(group,entry);
+        }
+        throw entry.error || error;
       }).finally(() => { group.controllers.delete(controller); this.controllers.delete(controller); });
       // Caller disconnects can stop waiting without leaving an unhandled rejection.
       entry.promise.catch(() => {}); group.chunks.set(index, entry);
@@ -238,7 +265,7 @@ class AV1 {
   prune(group, keep) {
     for (const [index, entry] of [...group.chunks].sort((a,b) => a[1].at - b[1].at)) {
       if (group.chunks.size <= 12 && group.bytes <= 128 * 1024 * 1024) break;
-      if (entry !== keep && entry.bytes && !entry.users) { group.chunks.delete(index); group.bytes -= entry.size; }
+      if (entry !== keep && (entry.bytes || entry.error) && !entry.users) { group.chunks.delete(index); group.bytes -= entry.size || 0; }
     }
   }
   close() {
