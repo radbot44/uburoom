@@ -22,7 +22,7 @@ Optional FFmpeg/FFprobe are supplied by the installation operator, not bundled h
 
 ## Project branding
 
-The approved vector authoring source is `assets/branding/uburoom-master.svg`, supplied for this project. Cropped wordmark and oo exports preserve its paths, colors, clipping and gradient shadows; only the background/canvas and the icon's surrounding letters are removed. Raster exports derive from those vectors. No external fonts, images or icon libraries are used. The retired wordmark is not included in the current source distributions.
+The supplied Slate vector assets are `assets/branding/uburoom-wordmark-brand.svg`, `uburoom-wordmark-white.svg`, `uburoom-oomark-brand.svg`, and `uburoom-oomark-white.svg`. Runtime raster icons and the favicon derive from the brand oomark. Earlier blue/green branding sources and exports are archived in `assets/branding/old/`; the diagnostic demo media still use that wordmark. No external fonts, images or icon libraries are used.
 
 ## Remaining asset review
 

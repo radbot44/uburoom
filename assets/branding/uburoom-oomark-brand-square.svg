@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="528.4100 519.4580 298.9900 298.9900">
+  <title>uburoom Slate square oomark</title>
+  <desc>uburoom oomark using the slate brand palette: off-white #F8F7F4 eyes and a pink #FF7197 mouth.</desc>
+  <rect x="528.4100" y="519.4580" width="298.9900" height="298.9900" fill="#101217"/>
+
+  <circle id="letter-o-first" cx="618.4600" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <circle id="letter-o-second" cx="737.3500" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <line x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="#FF7197" stroke-width="53.0061" stroke-linecap="butt"/>
+</svg>

@@ -36,7 +36,7 @@ async function main() {
     manifest.browser_action = manifest.action; delete manifest.action;
     manifest.background.persistent = true;
     manifest.content_security_policy = manifest.content_security_policy.extension_pages;
-    manifest.web_accessible_resources = ['assets/uburoom-logo.svg'];
+    manifest.web_accessible_resources = ['assets/uburoom-wordmark-brand.svg'];
   }
   fs.writeFileSync(path.join(extensionPath, 'manifest.json'), JSON.stringify(manifest));
   const background = fs.readFileSync(path.join(extensionPath, 'background.js'), 'utf8')
@@ -196,7 +196,7 @@ async function main() {
     assert.equal(await evaluate(popup,"(() => {const s=document.getElementById('local-remote').shadowRoot;return s.querySelectorAll('.size-control').length===3 && [...s.querySelectorAll('.size-reset')].every(b=>b.disabled) && !s.querySelector('.modes') && [...s.querySelectorAll('.size-control')].every(r=>{const minus=r.querySelector('.minus').getBoundingClientRect(),reset=r.querySelector('.size-reset').getBoundingClientRect(),plus=r.querySelector('.plus').getBoundingClientRect();return reset.top>=minus.bottom && reset.left===minus.left && plus.height>minus.height;});})()"),true,'reset beneath minus; full-height plus; no switcher');
     await evaluate(popup,"document.getElementById('local-remote').shadowRoot.querySelector('.reset-all').click();true");
     await until(player,"document.title==='Fixture TV'",'Reset all clears picture transforms');
-    assert.equal(await evaluate(popup,"(() => {const b=document.getElementById('local-remote').shadowRoot.querySelector('.reset-all');return !!b.querySelector('svg') && getComputedStyle(b).backgroundColor==='rgb(44, 51, 62)';})()"),true,'Reset all uses a quiet key surface and shared icon');
+    assert.equal(await evaluate(popup,"(() => {const b=document.getElementById('local-remote').shadowRoot.querySelector('.reset-all');return !!b.querySelector('svg') && getComputedStyle(b).backgroundColor==='rgb(41, 46, 56)';})()"),true,'Reset all uses a quiet key surface and shared icon');
     await evaluate(player,"window.dispatchEvent(new KeyboardEvent('keydown',{code:'Equal',altKey:true,shiftKey:true,bubbles:true}));true");
     console.log('[Firefox] PASS: three independent exact values, isolated resets beneath minus and quiet icon Reset all through the real toolbar/engine.');
     assert.equal((await app.hub.dispatch(actor, { action: 'media.mute' })).status, 'forbidden');

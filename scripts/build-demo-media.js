@@ -29,7 +29,7 @@ function main() {
   const opus = ['-c:a', 'libopus', '-b:a', '64k', '-ac', '1', '-ar', '48000'];
   const source = path.join(output, 'sync-test.mp4');
   run(ffmpeg, [...basic, '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=12', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
-    '-loop', '1', '-i', path.join(root, 'assets/branding/uburoom-wordmark.png'),
+    '-loop', '1', '-i', path.join(root, 'assets/branding/old/uburoom-wordmark.png'),
     '-filter_complex', '[2:v]scale=320:-1,format=rgba[logo];[0:v]drawbox=x=12:y=12:w=344:h=84:color=0x101217@0.85:t=fill[bg];[bg][logo]overlay=24:24,format=yuv420p[v]',
     '-map', '[v]', '-map', '1:a', '-t', '60', '-r', '12', ...h264, '-profile:v', 'high', '-level:v', '2.2', ...aac, '-movflags', '+faststart', source]);
   const variants = [

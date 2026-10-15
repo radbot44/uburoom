@@ -1,22 +1,24 @@
 # uburoom design guide
 
-Keep the established philosophy and palette. The shared source is `extension/remote-ui.js` (styles, SVGs, controls/badges); shells live in `extension/popup.css`, `web/style.css` and `web/watch*.css`. Inspect affected renders before UI changes and use shared safe-DOM components.
+Keep the established layout and behavior. The shared remote source is `extension/remote-ui.js` (styles, SVGs, controls/badges); shells live in `extension/popup.css`, `web/style.css` and `web/watch*.css`. Inspect affected renders before UI changes and use shared safe-DOM components.
 
 ## Visual language
 
-Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. Text #e7e9ee; secondary #9ca4b1/#aab1bc; main #101217; keys #2c333e; hover #394351; web background #030406. Keep semantic blue #318fff for primary/Zoom, green #26ca96 for Width, yellow #f6bd35 for Height and #158761 for enabled remote.
+Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. Slate tokens: background #101217, card #1B1E26, elevated #292E38, border #393F4D, text #F8F7F4, muted #AAB0BC, orange #FF9954, pink #FF7197. Orange is the main interaction accent; pink is a supporting brand accent. Keep semantic green #158761 for enabled remote and semantic red for destructive/error states. Keep playback surfaces black where viewing quality requires it.
 
 Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and approximately 1.9px width. Preserve rounded surfaces, subtle borders, spacing, focus and accessible names. Do not substitute emoji/icon libraries.
 
 ## Approved branding
 
-The selected wordmark is `assets/branding/uburoom-master.svg`. Preserve its paths, white lettering, blue #2D8DFE, green #1DC57A and symmetric gradient overlap shadows. Runtime headers use the tightly cropped transparent `extension/assets/uburoom-logo.svg`. The original square background is retained only in the editable master; do not stretch the wordmark to fill existing image boxes.
+The primary wordmark is `assets/branding/uburoom-wordmark-brand.svg` (944.16 × 293.5061): orange `ubu`, off-white `room`, pink underline. Runtime headers use this asset or its extension copy at its natural aspect ratio. `uburoom-wordmark-white.svg` is available for monochrome dark contexts.
 
-Icons contain only the original interlocking **oo** paths and clipped shadows. `assets/branding/uburoom-oo.svg` is tightly cropped; `extension/assets/uburoom-icon.svg` is a centered square with padding for toolbar/favicon use. Transparent PNG exports are provided at 16, 32, 48, 64, 96, 128, 256 and 512 pixels. The favicon ICO includes 16/32/48 sizes. Preserve the ligature geometry rather than redrawing it for individual sizes.
+The primary standalone oomark is `assets/branding/uburoom-oomark-brand.svg` (298.99 × 249.1061): off-white eyes and a pink mouth. `uburoom-oomark-white.svg` is its monochrome variant. The extension uses a square framed copy and PNG exports at 16, 32, 48, 64, 96, 128, 256 and 512 pixels; the favicon ICO includes 16/32/48 sizes.
 
-For square placements, `assets/branding/uburoom-oo-square.svg` and `uburoom-wordmark-square.svg` center the oo icon or full wordmark on the existing #101217 background. Each has a 1024×1024 PNG export beside it. `assets/branding/uburoom-icon.svg` and `uburoom-icon-512.png` provide the transparent square icon. Use the cropped wordmark for site headers and the oo icon for favicons; do not stretch the full wordmark into an icon.
+Use the full-color wordmark for site headers and the oomark for favicons and toolbar icons. Do not stretch the wordmark into a square icon.
 
-Use the canonical uburoom logo asset/HTTP path. All palette, typography and component layout rules above remain unchanged.
+Raster/source exports in `assets/branding` include the 1848 px wide transparent wordmark PNG, 512 px transparent square icon, and 1024 px background square wordmark/oomark PNGs with matching SVGs. The prior blue/green assets are archived in `assets/branding/old/`.
+
+Use the canonical uburoom logo asset/HTTP path. Preserve the established typography and component layout rules above.
 
 ## Components
 

@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="3.7761 111.9491 1069.6078 1069.6078">
+  <title>uburoom Slate square wordmark</title>
+  <desc>uburoom wordmark using the slate brand palette: ubu in orange #FF9954, room in off-white #F8F7F4, and the oo underline in pink #FF7197.</desc>
+  <rect x="3.7761" y="111.9491" width="1069.6078" height="1069.6078" fill="#101217"/>
+
+  <path id="letter-u-first" fill="#FF9954" fill-rule="evenodd" d="M 90.5 571.5 H 131.5 V 629.2 C 131.5 649.6 135.4 660.2 150.6 660.2 C 163.3 660.2 169.5 650.3 169.5 630.4 V 571.5 H 211.5 V 696.5 H 169.5 V 682.8 C 160.3 694.1 148.0 700.4 133.0 700.4 C 104.7 700.4 90.5 681.8 90.5 651.2 Z"/>
+  <path id="letter-b" fill="#FF9954" fill-rule="evenodd" d="M 220.5 524 H 261.5 V 584.9 C 270.5 574.0 283.7 568.4 299.1 568.4 C 333.5 568.4 359.4 597.0 359.4 634.9 C 359.4 673.4 334.0 700.5 299.1 700.5 C 283.3 700.5 270.2 694.6 261.5 683.7 V 696.5 H 220.5 Z M 317.8 633.45 A 28.05 27.85 0 1 0 261.7 633.45 A 28.05 27.85 0 1 0 317.8 633.45 Z"/>
+  <path id="letter-u-second" fill="#FF9954" fill-rule="evenodd" d="M 90.5 571.5 H 131.5 V 629.2 C 131.5 649.6 135.4 660.2 150.6 660.2 C 163.3 660.2 169.5 650.3 169.5 630.4 V 571.5 H 211.5 V 696.5 H 169.5 V 682.8 C 160.3 694.1 148.0 700.4 133.0 700.4 C 104.7 700.4 90.5 681.8 90.5 651.2 Z" transform="translate(264.9600 0)"/>
+  <path id="letter-r" fill="#F8F7F4" fill-rule="evenodd" d="M 496.5 571.5 H 537.5 V 587.8 C 546.0 575.0 557.7 568.5 572.5 568.5 V 608.5 C 558.7 608.5 548.0 611.3 542.5 620.1 C 538.8 626.0 538.5 634.1 538.5 646.5 V 696.5 H 496.5 Z" transform="translate(-9.5400 0)"/>
+  <circle id="letter-o-first" cx="618.4600" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/><circle id="letter-o-second" cx="737.3500" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/><path id="letter-m" fill="#F8F7F4" fill-rule="evenodd" d="M 823.5 696.5 V 571.5 H 862.5 V 584.9 C 870.5 573.2 881.5 567.6 894.6 567.6 C 910.9 567.6 922.9 574.5 930.4 587.9 C 938.7 575.0 951.9 567.6 967.3 567.6 C 995.1 567.6 1010.7 586.5 1010.7 619.1 V 696.5 H 968.5 V 634.3 C 968.5 615.0 963.3 606.1 953.1 606.1 C 942.8 606.1 937.5 615.0 937.5 634.3 V 696.5 H 896.5 V 635.0 C 896.5 615.6 891.9 606.4 880.2 606.4 C 868.6 606.4 864.5 616.6 864.5 635.0 V 696.5 Z" transform="translate(-24.0400 0)"/>
+
+  <line x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="#FF7197" stroke-width="53.0061" stroke-linecap="butt"/>
+</svg>

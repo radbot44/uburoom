@@ -220,9 +220,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         return res.end(fs.readFileSync(path.join(publicDir, 'handoff.html')));
       }
       const branding = {
-        '/assets/uburoom-logo.svg': ['uburoom-logo.svg', 'image/svg+xml; charset=utf-8'],
-        '/assets/uburoom-icon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
-        '/favicon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
+        '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
+        '/assets/branding/uburoom-oomark-brand.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
+        '/favicon.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
         '/favicon.ico': ['uburoom-favicon.ico', 'image/vnd.microsoft.icon']
       };
       if (req.method === 'GET' && branding[route]) {

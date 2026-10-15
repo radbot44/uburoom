@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="298.99" height="249.10610000000008" viewBox="528.41 544.4 298.99 249.10610000000008">
+  <title>uburoom oomark — white</title>
+  <desc>uburoom oomark in all off-white #F8F7F4 for dark backgrounds.</desc>
+
+  <circle id="letter-o-first" cx="618.4600" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <circle id="letter-o-second" cx="737.3500" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <line x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="#F8F7F4" stroke-width="53.0061" stroke-linecap="butt"/>
+</svg>
