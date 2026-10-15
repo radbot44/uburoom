@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const viewerId = crypto.randomUUID(), params = new URLSearchParams(location.search);
 let token, me, config, selected, state, receivedAt, offset = 0, pending = false, polling = false, creating = false;
+let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
 let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseSession, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
@@ -59,6 +60,35 @@ async function api(path, data, options = {}) {
   const response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000), keepalive: !!options.keepalive });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
+}
+function acceptIdentity(auth) {
+  token = auth.token; identityExpiresAt = auth.expiresAt;
+  identityRenewAt = identityExpiresAt - Math.min(60000, Math.floor((identityExpiresAt - Date.now()) / 5));
+  identityRetryAt = 0; identityGeneration++;
+}
+async function activityIdentity() {
+  const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
+  const auth = await api('/api/watch/activity-login', {code});
+  if (!await sdk.commands.authenticate({access_token:auth.accessToken})) throw new Error('Discord Activity authentication failed');
+  return auth;
+}
+async function renewIdentity() {
+  if (!token || Date.now() < identityRenewAt) return;
+  if (identityRenewal) return identityRenewal;
+  if (Date.now() < identityRetryAt) {
+    if (Date.now() >= identityExpiresAt) throw new Error('Viewing sign-in expired; reconnect to continue.');
+    return;
+  }
+  identityRenewal = (async () => {
+    const auth = config.demo && ['host','guest','guest2'].includes(params.get('demo'))
+      ? await api('/api/watch/demo-login', {persona:params.get('demo'),activity})
+      : await activityIdentity();
+    acceptIdentity(auth);
+  })().catch(error => {
+    identityRetryAt = Date.now() + 10000;
+    if (Date.now() >= identityExpiresAt) throw error;
+  }).finally(() => { identityRenewal = undefined; });
+  return identityRenewal;
 }
 function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = undefined; volumeDragging = false; }
 // Move the actual shells so their controls, state and listeners stay shared.
@@ -706,13 +736,11 @@ async function start() {
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});
-    else {const auth = await api('/api/watch/demo-login', { persona:params.get('demo'), activity }); token = auth.token;}
+    else acceptIdentity(await api('/api/watch/demo-login', { persona:params.get('demo'), activity }));
   } else if (params.has('frame_id')) {
     if (!config.clientId) throw new Error('Configure Discord OAuth on the server first');
     sdk = new uburoomDiscord.DiscordSDK(config.clientId); await sdk.ready();
-    const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
-    const auth = await api('/api/watch/activity-login', {code}); token = auth.token;
-    if (!await sdk.commands.authenticate({access_token:auth.accessToken})) throw new Error('Discord Activity authentication failed');
+    acceptIdentity(await activityIdentity());
     await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', updateActivityLayout);
   }
   try { me = await api('/api/watch/me'); } catch (error) { $('status').textContent = ''; if (activity) throw error; return; }
@@ -728,7 +756,7 @@ async function start() {
   let roomPoll = 0;
   setInterval(async () => {
     if (polling) return; polling = true;
-    try { if (!pending) { if (!selected || ++roomPoll % 5 === 0) {me = await api('/api/watch/me');renderAccount();await refreshRooms();} await refreshState(); } }
+    try { if (!pending) { await renewIdentity(); if (!selected || ++roomPoll % 5 === 0) {me = await api('/api/watch/me');renderAccount();await refreshRooms();} await refreshState(); } }
     catch (error) { unavailable('Disconnected. ' + error.message); } finally { polling = false; }
   }, 1000);
 }

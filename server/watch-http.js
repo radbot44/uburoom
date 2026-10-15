@@ -17,8 +17,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
   if (config.demo && (!['localhost', '127.0.0.1'].includes(new URL(config.publicUrl).hostname) || config.botToken)) throw new Error('Demo identities are restricted to an isolated localhost server without a bot token');
   function issue(login) {
-    const token = randomBytes(32).toString('hex'); login.expires = Date.now() + 3600000; login.viewerId = randomUUID();
-    identities.set(token, login); return token;
+    const token = randomBytes(32).toString('hex');
+    const lifetime = config.demo && Number.isSafeInteger(config.demoIdentityMs) && config.demoIdentityMs >= 10000 ? config.demoIdentityMs : 3600000;
+    login.expires = Date.now() + lifetime; login.viewerId = randomUUID();
+    identities.set(token, login); return { token, expiresAt: login.expires };
   }
   async function login(req) {
     const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
@@ -40,11 +42,13 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   function mediaGrant(room, auth, req, viewerId) {
     const viewer = room.viewers.get(viewerId);
     if (!viewer?.media || viewer.media.playbackError) return;
+    const credential = req.headers.authorization || cookies(req).uburoom;
     const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion);
-    if (existing) { existing.expires = Date.now() + 15000; return existing.id; }
+    if (existing?.credential === credential) { existing.expires = Date.now() + 15000; return existing.id; }
+    if (existing) grants.delete(existing.id);
     const id = randomBytes(24).toString('hex');
     const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-    grants.set(id, { id, room, media: viewer.media, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, expires: Date.now() + 15000,
+    grants.set(id, { id, room, media: viewer.media, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, credential, expires: Date.now() + 15000,
       alive: async () => (await login({ headers }))?.userId === auth.actor.userId });
     return id;
   }
@@ -191,7 +195,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         if (!config.demo || !allowedOrigin(req) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { json(res, 403, { error: 'Demo login is disabled' }); return true; }
         const data = await body(req); if (!['host', 'guest', 'guest2'].includes(data.persona)) throw new Error('Choose a demo identity');
         const identity = discordIdentity({ userId:config.demoSubjects?.[data.persona]||(data.persona === 'host' ? config.ownerId : data.persona === 'guest2' ? 'demo-guest2' : 'demo-guest'), name: data.persona === 'host' ? 'Demo host' : data.persona === 'guest2' ? 'Demo guest 2' : 'Demo guest', activity:data.activity === true });
-        json(res, 200, { token: issue(identity), name: identity.name, owner: hub.isOwner(webActor(identity)) }); return true;
+        json(res, 200, { ...issue(identity), name: identity.name, owner: hub.isOwner(webActor(identity)) }); return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/activity-login') {
         if (!activityOrigin || req.headers.origin !== activityOrigin || !config.clientSecret) { json(res, 403, { error: 'Activity authentication unavailable' }); return true; }
@@ -207,7 +211,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         // and its current voice channel come from the connected bot's guild.
         if (!await hub.access?.refresh(identity.id) || !hub.access.validVoiceChannel(hub.access.voiceChannel(identity.id))) { json(res, 403, { error: 'Join a voice channel in the configured Discord server first' }); return true; }
         const login = discordIdentity({ userId: identity.id, name: EngineName(identity.global_name || identity.username), activity:true });
-        json(res, 200, { token: issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
+        json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
       const auth = await authorized(req, req.method !== 'GET');
       if (!auth) { json(res, 401, { error: 'Log in with Discord' }); return true; }
