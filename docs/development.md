@@ -68,3 +68,14 @@ node scripts/playback-tracks.js --media=artifacts/playback-media-tracks --out=ar
 ```
 
 The same browser, TLS and FFmpeg prerequisites apply. Use a new output directory. Five cases per browser check native WebVTT, French SRT/Unicode/delay/Off, independent two-viewer audio via distinguishable decoded PCM tones, burned ASS dialogue/positioned colored signs via actual video pixels, and separate selected-audio AV1 caches with native text. Reports include desktop/theater/phone renders and synthetic provider events. The provider simulates Plex decisions, stored selections and session capture using generated media; it does not verify a real PMS decision, attachment font, PGS/VobSub, concurrent Plex seek/restart or Discord proxy. Test-only software AV1 substitution never enables production software fallback.
+
+### Bounded playback and recovery check
+
+Generate a longer track corpus, then run one isolated browser at a time:
+
+```powershell
+node scripts/build-playback-fixtures.js --out=artifacts/playback-media-recovery --duration=120 --tracks=on
+node scripts/playback-recovery.js --media=artifacts/playback-media-recovery --out=artifacts/playback-recovery-run --browser=firefox
+```
+
+The default checks 45 seconds of decoded playback, an eight-second media-only outage, paused fill and rewind, a forced expiry of one captured HLS session, and a temporary control poll failure. It confirms that the selected audio and burn source survive recovery, the other viewer is unaffected and the old grant is revoked. `--browser=chrome` or `--browser=edge` selects another installed browser. `--soak=5` gives a shorter recovery check without the eight-second outage. For a two-minute playback window, generate a 240-second corpus and pass `--soak=120`; the source must be at least 35 seconds longer than the requested soak. Outputs remain in a new ignored artifacts directory. This fixture cannot establish real Plex transcode lifetime, multi-hour memory growth, physical audio or Discord Activity behavior.

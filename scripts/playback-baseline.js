@@ -77,11 +77,18 @@ function fixturePlex(directory, manifest, control = {}) {
       sessions.set(url.searchParams.get('session'),{audioId,subtitleId:subtitle && String(subtitle.id),rendition});
       control.events?.push({event:'start',session:url.searchParams.get('session'),...sessions.get(url.searchParams.get('session'))});
       if(control.blocked)return new Response(null,{status:503});
-      const text=fs.readFileSync(path.join(directory,rendition,'start.m3u8'),'utf8').replace(/^(segment-\d{3}\.ts)$/gm,'/video/:/transcode/universal/renditions/'+rendition+'/$1');
+      const text=fs.readFileSync(path.join(directory,rendition,'start.m3u8'),'utf8').replace(/^(segment-\d{3}\.ts)$/gm,
+        '/video/:/transcode/universal/renditions/'+rendition+'/$1?session='+encodeURIComponent(url.searchParams.get('session')));
       return new Response(text,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
     }
     const rendition=/^\/video\/:\/transcode\/universal\/renditions\/(hls(?:-(?:french|srt|ass)(?:-french)?)?)\/(segment-\d{3}\.ts)$/.exec(url.pathname);
-    if(rendition)return send(path.join(directory,rendition[1],rendition[2]),options,'video/mp2t');
+    if(rendition){
+      const session=url.searchParams.get('session');
+      if(!session || sessions.get(session)?.rendition!==rendition[1] || control.expiredSessions?.has(session)){
+        control.events?.push({event:'expired-fragment',session});return new Response(null,{status:404});
+      }
+      return send(path.join(directory,rendition[1],rendition[2]),options,'video/mp2t');
+    }
     const segment = /^\/video\/:\/transcode\/universal\/(segment-\d{3}\.ts)$/.exec(url.pathname);
     if (segment) return send(path.join(directory,'hls',segment[1]),options,'video/mp2t');
     if (/^\/video\/:\/transcode\/universal\/(stop|ping)$/.test(url.pathname)) return json({});
