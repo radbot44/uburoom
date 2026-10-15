@@ -25,7 +25,7 @@ The approved vector authoring source is `assets/branding/uburoom-master.svg`, su
 ## Remaining asset review
 
 - Confirm branding authorship and any separate asset terms as part of final release review; retain the supplied vector master and any applicable source notices.
-- Seven synthetic media fixtures: preserve or document source/generation recipes and audio/video provenance before public release. The fixture files' codec formats alone do not establish their copyright terms.
+- Seven synthetic media fixtures are now generated from procedural patterns, a sine tone and project branding, using `scripts/build-demo-media.js`. `assets/demo/README.md` documents their source and regeneration; no third-party footage/music/fonts are included. Review metadata/codec distribution requirements if the build or distribution changes.
 - Preserve any upstream source notices for copied code or artwork found during review; do not label third-party material as newly GPL-licensed.
 
 The project's GPL declaration does not clear these asset questions or authorize publication. Source/history/privacy, packaging and live/upgrade checks remain separate release gates.

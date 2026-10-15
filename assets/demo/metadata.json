@@ -1,0 +1,182 @@
+{
+  "sync-test.mp4": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "profile": "High",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": 22,
+        "r_frame_rate": "12/1",
+        "bit_rate": "386887"
+      },
+      {
+        "codec_name": "aac",
+        "profile": "LC",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0",
+        "bit_rate": "64312"
+      }
+    ],
+    "format": {
+      "duration": "60.000000"
+    }
+  },
+  "h264-baseline.mp4": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": 31,
+        "r_frame_rate": "12/1",
+        "bit_rate": "404342"
+      },
+      {
+        "codec_name": "aac",
+        "profile": "LC",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0",
+        "bit_rate": "64326"
+      }
+    ],
+    "format": {
+      "duration": "12.000000"
+    }
+  },
+  "h264-main.mp4": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "profile": "Main",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": 31,
+        "r_frame_rate": "12/1",
+        "bit_rate": "369967"
+      },
+      {
+        "codec_name": "aac",
+        "profile": "LC",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0",
+        "bit_rate": "64326"
+      }
+    ],
+    "format": {
+      "duration": "12.000000"
+    }
+  },
+  "vp8.webm": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "vp8",
+        "profile": "0",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": -99,
+        "r_frame_rate": "12/1"
+      },
+      {
+        "codec_name": "opus",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "12.008000"
+    }
+  },
+  "vp9.webm": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "vp9",
+        "profile": "Profile 0",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": -99,
+        "r_frame_rate": "12/1"
+      },
+      {
+        "codec_name": "opus",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "12.008000"
+    }
+  },
+  "av1.webm": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "av1",
+        "profile": "Main",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": 1,
+        "r_frame_rate": "12/1"
+      },
+      {
+        "codec_name": "opus",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "12.008000"
+    }
+  },
+  "hevc.mp4": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "hevc",
+        "profile": "Main",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "level": 93,
+        "r_frame_rate": "12/1",
+        "bit_rate": "322946"
+      },
+      {
+        "codec_name": "aac",
+        "profile": "LC",
+        "sample_rate": "48000",
+        "channels": 1,
+        "r_frame_rate": "0/0",
+        "bit_rate": "64326"
+      }
+    ],
+    "format": {
+      "duration": "12.000000"
+    }
+  }
+}
