@@ -8,6 +8,7 @@ let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = f
 const activity = params.has('frame_id');
 let theater = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
+let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 let browserHandoff, browserHandoffTimer, browserVerification;
@@ -240,9 +241,28 @@ function restartHlsForSeek(target) {
   hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   hls.stopLoad(); hls.startLoad(target);
 }
+async function refreshHlsSession(client) {
+  if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending || pending) return;
+  if (hlsRefreshVersion !== state.mediaVersion) { hlsRefreshVersion = state.mediaVersion; hlsRefreshTimes = []; }
+  const now = Date.now(); hlsRefreshTimes = hlsRefreshTimes.filter(time => now-time < 60000);
+  if (hlsRefreshTimes.length >= 3) return;
+  hlsRefreshTimes.push(now); hlsRefreshPending = true;
+  const version = state.mediaVersion, streamVersion = state.streamVersion;
+  try {
+    await execute({action:'media.stream.refresh',args:{mediaVersion:version,streamVersion}});
+  } catch {
+    // The old buffered media can still play. HLS's bounded network retry
+    // reports an error if delivery does not return in time.
+  } finally { hlsRefreshPending = false; }
+}
 function handleHlsError(client, data) {
   if (hls !== client) return;
-  if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hlsNetworkInterrupted = true;
+  if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+    hlsNetworkInterrupted = true;
+    // A vanished Plex conversion can be reported as a nonfatal fragment
+    // error while hls.js is still spending its own retry budget.
+    if (data.response?.code === 410) void refreshHlsSession(client);
+  }
   if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     // Keep already buffered media attached while retrying the current stream.
     // Authorization and grant renewal still run through the normal room poll.

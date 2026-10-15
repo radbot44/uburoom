@@ -44,3 +44,25 @@ test('a fresh outside-cache HLS seek supersedes old network backoff while cached
   context.hlsNetworkInterrupted = true; context.state.mediaUrl = '/replacement';
   context.restartHlsForSeek(90); assert.equal(actions.length,3,'old stream cannot restart for replacement content');
 });
+test('expired HLS session requests one personal refresh per stream with a bounded rate',async () => {
+  const timers=[], commands=[];
+  const client={startLoad(){}};
+  const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'},ErrorDetails:{MEDIA_SOURCE_REQUIRES_RESET:'reset'}},state:{format:'hls',mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream'},
+    mediaSource:'/current',selected:'room',pending:false,hlsRefreshPending:false,hlsRefreshVersion:undefined,hlsRefreshTimes:[],
+    hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,
+    execute:async command=>{commands.push(command);},clearTimeout:()=>{},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
+  vm.runInNewContext(source.slice(source.indexOf('async function refreshHlsSession('),source.indexOf('function handleHlsError(')),context);
+  load(context,'handleHlsError','unavailable');
+  context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});
+  context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(commands.length,1);
+  assert.equal(commands[0].action,'media.stream.refresh');
+  assert.equal(commands[0].args.streamVersion,'stream');
+  context.handleHlsError(client,{fatal:false,type:'network',response:{code:410}});
+  for(let i=0;i<4;i++) {context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});await new Promise(resolve=>setImmediate(resolve));}
+  assert.equal(commands.length,3,'repeated expiry cannot create an unbounded refresh loop');
+  context.hls=undefined;
+  context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});
+  assert.equal(commands.length,3,'superseded media cannot refresh');
+});

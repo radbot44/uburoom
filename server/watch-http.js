@@ -141,7 +141,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       res.writeHead(response.status, headers); if (req.method === 'HEAD') return res.end();
       const check = setInterval(async () => { if (!await validGrant(grant)) abort.abort(); }, 2000);
       try { await pipeline(Readable.fromWeb(response.body), res); } finally { clearInterval(check); }
-    } catch { if (!res.headersSent) json(res, 502, { error: 'Plex playback failed; try a different quality or check server access' }); else res.destroy(); }
+    } catch (error) {
+      if (!res.headersSent) json(res, media.transcodeId && [404,410].includes(error.status) ? 410 : 502,
+        { error: 'Plex playback failed; try a different quality or check server access' });
+      else res.destroy();
+    }
     finally { clearTimeout(timer); res.off('close', disconnect); }
   }
   async function route(req, res, url) {

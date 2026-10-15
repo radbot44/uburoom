@@ -255,6 +255,44 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   watch.close();
 });
 
+test('HLS recovery replaces only the authorized viewer stream and preserves personal tracks and room intent',async()=>{
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+  const prepared=[],stopped=[];
+  const plex={prepare:async(id,quality,compatible,source,fallback,choices)=>{
+    const media={id,kind:'plex',format:'hls',duration:60,quality,selection:{audio:{id:choices.audioId},subtitle:{id:choices.subtitleId}}};
+    prepared.push({media,choices});return media;
+  },stop:async media=>stopped.push(media)};
+  const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'},guest={...host,userId:'guest'};
+  const id=watch.create(host),room=watch.rooms.get(id),a=randomUUID(),b=randomUUID();
+  watch.snapshot(room,host,a);watch.snapshot(room,guest,b);
+  room.media={id:'104',kind:'plex',duration:60};room.position=18;room.manualPaused=true;room.s.state.paused=true;
+  await watch.prepareViewer(room,host,a);await watch.prepareViewer(room,guest,b);
+  const viewer=room.viewers.get(b),other=room.viewers.get(a).media,old=viewer.media,version=room.mediaVersion,epoch=room.s.epoch;
+  viewer.trackChoice={audioId:'1042',subtitleId:'1044'};
+  const command=(actor,viewerId,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{sessionId:id,action:'media.stream.refresh',args});
+  const args={mediaVersion:version,streamVersion:viewer.streamVersion};
+  assert.equal((await command(guest,b,args)).status,'applied');
+  assert.notEqual(viewer.media,old);assert.equal(room.viewers.get(a).media,other);
+  assert.equal(prepared.at(-1).choices.audioId,'1042');assert.equal(prepared.at(-1).choices.subtitleId,'1044');
+  assert.equal(room.position,18);assert.equal(room.manualPaused,true);assert.equal(room.s.state.paused,true);
+  assert.equal(room.s.enabled,false);assert.equal(room.s.epoch,epoch);assert.equal(room.mediaVersion,version);
+  assert.ok(stopped.includes(old));
+  assert.equal((await command(guest,b,args)).status,'unavailable','stale stream cannot replace its successor');
+  assert.equal((await command(guest,a,{mediaVersion:version,streamVersion:room.viewers.get(a).streamVersion})).status,'unsupported','viewer identity is bound to the actor');
+  let release;
+  plex.prepare=async()=>new Promise(resolve=>{release=()=>resolve({id:'104',kind:'plex',format:'hls',duration:60});});
+  const active=viewer.media,pending=command(guest,b,{mediaVersion:version,streamVersion:viewer.streamVersion});
+  for(let i=0;i<10&&!release;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(release,'refresh entered preparation');
+  room.s.visibility='private';
+  release();
+  assert.equal((await pending).status,'unavailable','revoked permission cancels an in-flight refresh');
+  assert.equal(viewer.media,active,'revocation keeps the old player attached until normal access cleanup');
+  assert.equal((await command(guest,b,{mediaVersion:version,streamVersion:viewer.streamVersion})).status,'forbidden');
+  watch.close();
+});
+
 test('real HTTPS watch endpoints reject impersonation, stale commands and revoked media grants', { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) }, async t => {
   const cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
   const config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')), publicUrl: 'https://localhost:6768',

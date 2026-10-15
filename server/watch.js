@@ -195,10 +195,11 @@ class Watch {
   async execute(room, input, actor, permitted) {
     const command = Engine.validate(input), { action, args } = command, s = room.s;
     if (!permitted()) return { status: 'unavailable', message: 'Session changed or command expired.' };
-    if (['media.quality.set','media.tracks.set','media.volume.set','media.mute','media.unmute'].includes(action)) {
+    if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute'].includes(action)) {
       const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId) return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
       if (action === 'media.tracks.set') return this.changeTracks(room,viewer,args,actor,permitted);
+      if (action === 'media.stream.refresh') return this.refreshStream(room,viewer,args,actor,permitted);
       if (action === 'media.quality.set') {
         if (!room.media || room.media.kind === 'demo') return { status: 'unsupported', message: 'Quality is unavailable for this video.' };
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
@@ -330,6 +331,29 @@ class Watch {
     } catch (error) {
       if (replacement) await this.plex.stop(replacement);
       return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Audio and subtitles could not be updated. Your previous selection is unchanged.'};
+    } finally { viewer.updating=false; }
+  }
+  async refreshStream(room,viewer,args,actor,permitted) {
+    const current=viewer.media, version=room.mediaVersion;
+    if (!current || current.kind!=='plex' || !room.media || current.format!=='hls') return {status:'unsupported',message:'This stream cannot be refreshed.'};
+    if (viewer.preparing || viewer.updating) return {status:'unavailable',message:'Wait for your stream to finish loading.'};
+    if (args.mediaVersion!==version || args.streamVersion!==viewer.streamVersion) return {status:'unavailable',message:'Stream refresh expired.'};
+    viewer.updating=true;
+    let replacement;
+    try {
+      replacement=await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id,viewer.quality,viewer.compatible,room.media,viewer.fallback,
+        {...viewer.trackChoice,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
+      if (!permitted() || version!==room.mediaVersion || room.viewers.get(actor.watchViewerId)!==viewer || viewer.media!==current ||
+        !await this.canView(room,actor) || viewer.alive && !await viewer.alive()) {
+        await this.plex.stop(replacement); return {status:'unavailable',message:'Session changed or command expired.'};
+      }
+      if (replacement.format!=='hls') { await this.plex.stop(replacement); return {status:'failed',message:'Plex could not refresh this stream.'}; }
+      this.tracking.end(viewer,'stream-changed'); viewer.media=replacement; viewer.mediaVersion=version; viewer.streamVersion=randomUUID();
+      void this.plex.stop(current);
+      return {status:'applied',message:'Your stream refreshed.'};
+    } catch(error) {
+      if(replacement)await this.plex.stop(replacement);
+      return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Plex could not refresh this stream.'};
     } finally { viewer.updating=false; }
   }
   remove(id) {

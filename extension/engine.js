@@ -14,7 +14,7 @@
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
   const validQuality = id => QUALITIES.some(q => q.id === qualityId(id));
-  const MANAGEMENT = Object.freeze(['session.enable', 'session.sharing', 'session.visibility', 'session.controls', 'session.autojoin', 'media.load', 'media.quality.set','media.tracks.set']);
+  const MANAGEMENT = Object.freeze(['session.enable', 'session.sharing', 'session.visibility', 'session.controls', 'session.autojoin', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh']);
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
     return { playback: value.playback, transform: value.transform };
@@ -74,6 +74,12 @@
       case 'media.seek.start': case 'media.seek.end':
       case 'status.get': case 'help.get': case 'session.disable': case 'session.enable': break;
       case 'media.previous': case 'media.next': break;
+      case 'media.stream.refresh':
+        for (const name of ['mediaVersion','streamVersion']) {
+          if (typeof a[name]!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a[name])) throw new Error('Stream refresh expired.');
+          args[name]=a[name];
+        }
+        break;
       case 'media.tracks.set':
         for (const name of ['mediaVersion','streamVersion']) {
           if (typeof a[name]!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a[name])) throw new Error('Track selection expired.');
