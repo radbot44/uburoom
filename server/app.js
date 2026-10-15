@@ -219,9 +219,17 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(fs.readFileSync(path.join(publicDir, 'handoff.html')));
       }
-      if (req.method === 'GET' && route === '/assets/radtv-logo.svg') {
-        res.writeHead(200, { 'Content-Type':'image/svg+xml; charset=utf-8' });
-        return res.end(fs.readFileSync(path.join(__dirname, '../extension/assets/radtv-logo.svg')));
+      const branding = {
+        '/assets/uburoom-logo.svg': ['uburoom-logo.svg', 'image/svg+xml; charset=utf-8'],
+        '/assets/radtv-logo.svg': ['uburoom-logo.svg', 'image/svg+xml; charset=utf-8'],
+        '/assets/uburoom-icon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
+        '/favicon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
+        '/favicon.ico': ['uburoom-favicon.ico', 'image/vnd.microsoft.icon']
+      };
+      if (req.method === 'GET' && branding[route]) {
+        const [file, type] = branding[route];
+        res.writeHead(200, { 'Content-Type': type });
+        return res.end(fs.readFileSync(path.join(__dirname, '../extension/assets', file)));
       }
       const assets = { '/': [player ? 'watch.html' : 'index.html', 'text/html'], '/setup.js': ['setup.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'],
         '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'], '/watch/test': ['watch-test.html', 'text/html'],

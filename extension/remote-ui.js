@@ -226,8 +226,8 @@
     function glyph(parent, name, className, image, action) { const b = button(parent, name, className, action); b.append(icon(doc, image)); return b; }
     const header = node(doc, root, 'header', undefined, { class: 'header' });
     const heading = node(doc, header, 'h2');
-    const logoUrl = typeof browser !== 'undefined' && browser.runtime?.getURL ? browser.runtime.getURL('assets/radtv-logo.svg') : '/assets/radtv-logo.svg';
-    node(doc, heading, 'img', undefined, { class:'brand', src:logoUrl, alt:'Legacy radTV artwork', width:'108', height:'28' });
+    const logoUrl = typeof browser !== 'undefined' && browser.runtime?.getURL ? browser.runtime.getURL('assets/uburoom-logo.svg') : '/assets/uburoom-logo.svg';
+    node(doc, heading, 'img', undefined, { class:'brand', src:logoUrl, alt:'uburoom', width:'108', height:'28' });
     const headerActions = node(doc, header, 'div', undefined, { class: 'header-actions' });
     if (headerSlot) { headerActions.classList.add('with-slot'); node(doc, headerActions, 'slot', undefined, { name: headerSlot }); }
     if (website) glyph(headerActions, 'Open uburoom website', 'plain', 'website', () => { website(); });

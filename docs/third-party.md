@@ -18,9 +18,13 @@ The SDK build's input metadata identifies only @discord/embedded-app-sdk as a bu
 
 Optional FFmpeg/FFprobe are supplied by the installation operator, not bundled here. Their build options and codec licensing need review if a future distribution includes binaries. Node, Firefox, Discord and Plex are external products, not relicensed by uburoom.
 
+## Project branding
+
+The approved vector authoring source is `assets/branding/uburoom-master.svg`, supplied for this project. Cropped wordmark and oo exports preserve its paths, colors, clipping and gradient shadows; only the background/canvas and the icon's surrounding letters are removed. Raster exports derive from those vectors. No external fonts, images or icon libraries are used. The retired wordmark is not included in the current source distributions.
+
 ## Remaining asset review
 
-- Existing logo SVG/PNG source and forthcoming replacement graphics: establish authorship, permission and any separate asset terms.
+- Confirm branding authorship and any separate asset terms as part of final release review; retain the supplied vector master and any applicable source notices.
 - Seven synthetic media fixtures: preserve or document source/generation recipes and audio/video provenance before public release. The fixture files' codec formats alone do not establish their copyright terms.
 - Preserve any upstream source notices for copied code or artwork found during review; do not label third-party material as newly GPL-licensed.
 

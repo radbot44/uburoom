@@ -17,6 +17,7 @@ function configureRemote(inputs, destination = path.join(root, 'releases/remote'
   const relative = path.relative(source, target);
   if (target.toLowerCase() === root.toLowerCase() || !relative || !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative) || fs.existsSync(target)) throw new Error('Use a new output directory outside extension source.');
   const files = ['manifest.json', 'server-config.js', 'background.js', 'content.js', 'engine.js', 'popup.css', 'popup.html', 'popup.js', 'remote-ui.js', 'assets/radtv-logo.svg'];
+  files.push('assets/uburoom-logo.svg', 'assets/uburoom-icon.svg', 'assets/uburoom-favicon.ico', ...[16,32,48,64,96,128,256,512].map(size => `assets/uburoom-icon-${size}.png`));
   // Never copy unrelated local files or credentials into the prepared build.
   for (const file of files) fs.accessSync(path.join(source, file), fs.constants.R_OK);
   for (const file of files) {

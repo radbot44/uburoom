@@ -28,7 +28,11 @@
   },
   "action": {
     "default_title": "uburoom \u2014 remote off by default",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/uburoom-icon-16.png",
+      "32": "assets/uburoom-icon-32.png"
+    }
   },
   "content_scripts": [
     {
@@ -46,6 +50,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "assets/uburoom-logo.svg",
         "assets/radtv-logo.svg"
       ],
       "matches": [
@@ -55,5 +60,10 @@
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://localhost:6767 wss://localhost:6767"
+  },
+  "icons": {
+    "48": "assets/uburoom-icon-48.png",
+    "96": "assets/uburoom-icon-96.png",
+    "128": "assets/uburoom-icon-128.png"
   }
 }

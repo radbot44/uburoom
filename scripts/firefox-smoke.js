@@ -36,7 +36,7 @@ async function main() {
     manifest.browser_action = manifest.action; delete manifest.action;
     manifest.background.persistent = true;
     manifest.content_security_policy = manifest.content_security_policy.extension_pages;
-    manifest.web_accessible_resources = ['assets/radtv-logo.svg'];
+    manifest.web_accessible_resources = ['assets/uburoom-logo.svg', 'assets/radtv-logo.svg'];
   }
   fs.writeFileSync(path.join(extensionPath, 'manifest.json'), JSON.stringify(manifest));
   const background = fs.readFileSync(path.join(extensionPath, 'background.js'), 'utf8')

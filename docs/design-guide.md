@@ -6,7 +6,15 @@ Keep the established philosophy and palette. The shared source is `extension/rem
 
 Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. Text #e7e9ee; secondary #9ca4b1/#aab1bc; main #101217; keys #2c333e; hover #394351; web background #030406. Keep semantic blue #318fff for primary/Zoom, green #26ca96 for Width, yellow #f6bd35 for Height and #158761 for enabled remote.
 
-Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and approximately 1.9px width. Preserve rounded surfaces, subtle borders, spacing, focus and accessible names. Do not substitute emoji/icon libraries. Header graphic paths stay compatible until replacement artwork is supplied; do not invent a logo/palette.
+Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and approximately 1.9px width. Preserve rounded surfaces, subtle borders, spacing, focus and accessible names. Do not substitute emoji/icon libraries.
+
+## Approved branding
+
+The selected wordmark is `assets/branding/uburoom-master.svg`. Preserve its paths, white lettering, blue #2D8DFE, green #1DC57A and symmetric gradient overlap shadows. Runtime headers use the tightly cropped transparent `extension/assets/uburoom-logo.svg`. The original square background is retained only in the editable master; do not stretch the wordmark to fill existing image boxes.
+
+Icons contain only the original interlocking **oo** paths and clipped shadows. `assets/branding/uburoom-oo.svg` is tightly cropped; `extension/assets/uburoom-icon.svg` is a centered square with padding for toolbar/favicon use. Transparent PNG exports are provided at 16, 32, 48, 64, 96, 128, 256 and 512 pixels. The favicon ICO includes 16/32/48 sizes. Preserve the ligature geometry rather than redrawing it for individual sizes.
+
+The legacy logo asset/HTTP path is an alias of the new wordmark for compatibility. All palette, typography and component layout rules above remain unchanged.
 
 ## Components
 

@@ -1,6 +1,6 @@
 # Branding and compatibility
 
-Visible text is lowercase **uburoom**. Original graphics remain pending replacement. Source/server and extension versions stay 0.5.3 and 0.4.14 during migration.
+Visible branding is lowercase **uburoom**, using the approved transparent wordmark and interlocking oo icons. Legacy logo paths return the new artwork. Source/server and extension versions stay 0.5.3 and 0.4.14 during migration.
 
 These technical identities intentionally remain:
 
