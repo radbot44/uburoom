@@ -55,7 +55,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     const id = randomBytes(32).toString('hex');
     logins.set(hash(id), { userId: identity.userId, name: identity.name, accountRevision:identity.accountRevision, csrf: randomBytes(32).toString('hex'), expires: identity.expires });
     accounts.save();
-    res.setHeader('Set-Cookie', [cookie('radtv', id, Math.max(1, Math.floor((identity.expires - Date.now()) / 1000))), cookie('radtv_handoff', '', 0)]);
+    res.setHeader('Set-Cookie', [cookie('uburoom', id, Math.max(1, Math.floor((identity.expires - Date.now()) / 1000))), cookie('uburoom_handoff', '', 0)]);
   }
   function throttle(key, max = 60) {
     const now = Date.now(); let bucket = limits.get(key);
@@ -67,14 +67,14 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   function renewCookie(req, res, login, force = false) {
     if (!login) return;
-    const token = cookies(req).radtv, now = Date.now();
+    const token = cookies(req).uburoom, now = Date.now();
     if (force || now - (cookieRenewedAt.get(hash(token)) || 0) >= 86400000) {
-      res.setHeader('Set-Cookie', cookie('radtv', token, loginSeconds));
+      res.setHeader('Set-Cookie', cookie('uburoom', token, loginSeconds));
       cookieRenewedAt.set(hash(token), now);
     }
   }
   async function user(req) {
-    const token = cookies(req).radtv;
+    const token = cookies(req).uburoom;
     const id = token && /^[a-f0-9]{64}$/.test(token) && hash(token);
     const login = id && logins.get(id);
     if (!login || !validIdentity(login) || login.expires !== null && login.expires <= Date.now()) return;
@@ -154,9 +154,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   hub.watchCanView=(session,actor)=>watch.canView(watch.rooms.get(session.sessionId),actor);
   const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry });
   async function discordStart(req,res,linkLogin,extension) {
-    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).radtv),revision:linkLogin.accountRevision}:{})});
+    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
     const query=new URLSearchParams({client_id:config.clientId,redirect_uri:config.publicUrl+'/auth/callback',response_type:'code',scope:'identify',state});
-    res.setHeader('Set-Cookie',cookie('radtv_oauth',state,300));
+    res.setHeader('Set-Cookie',cookie('uburoom_oauth',state,300));
     const destination=config.demo&&plexAuth?.demo?config.publicUrl+'/demo-discord?state='+state:authorizeUrl+'?'+query;
     if(linkLogin)json(res,200,{url:destination});else{res.writeHead(302,{Location:destination});res.end();}
   }
@@ -215,13 +215,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && route === '/health') return json(res, 200, { ok: true, version });
       if(req.method==='GET'&&['/demo-plex','/demo-discord'].includes(route)&&!config.demo)return json(res,404,{error:'Not found'});
       if (req.method === 'GET' && route === '/auth/handoff') {
-        res.setHeader('Set-Cookie', cookie('radtv_handoff', randomBytes(32).toString('hex'), 60));
+        res.setHeader('Set-Cookie', cookie('uburoom_handoff', randomBytes(32).toString('hex'), 60));
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(fs.readFileSync(path.join(publicDir, 'handoff.html')));
       }
       const branding = {
         '/assets/uburoom-logo.svg': ['uburoom-logo.svg', 'image/svg+xml; charset=utf-8'],
-        '/assets/radtv-logo.svg': ['uburoom-logo.svg', 'image/svg+xml; charset=utf-8'],
         '/assets/uburoom-icon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
         '/favicon.svg': ['uburoom-icon.svg', 'image/svg+xml; charset=utf-8'],
         '/favicon.ico': ['uburoom-favicon.ico', 'image/vnd.microsoft.icon']
@@ -280,10 +279,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && route === '/auth/callback') {
         const state = url.searchParams.get('state'), code = url.searchParams.get('code');
         const attempt = oauthStates.get(state); oauthStates.delete(state);
-        if (!oauthReady || !state || cookies(req).radtv_oauth !== state || !attempt || attempt.expires <= Date.now() || !code || code.length > 512) return json(res, 403, { error: 'Invalid or expired login; start again' });
+        if (!oauthReady || !state || cookies(req).uburoom_oauth !== state || !attempt || attempt.expires <= Date.now() || !code || code.length > 512) return json(res, 403, { error: 'Invalid or expired login; start again' });
         if (attempt.loginId && !deviceLogin.get(attempt.loginId)) return json(res, 403, { error: 'Login expired; start from the extension again' });
         const linking=attempt.linkUserId?await user(req):undefined;
-        if(attempt.linkUserId&&(!linking||linking.userId!==attempt.linkUserId||hash(cookies(req).radtv||'')!==attempt.sourceHash||linking.accountRevision!==attempt.revision))return json(res,403,{error:'Account changed during linking; start again'});
+        if(attempt.linkUserId&&(!linking||linking.userId!==attempt.linkUserId||hash(cookies(req).uburoom||'')!==attempt.sourceHash||linking.accountRevision!==attempt.revision))return json(res,403,{error:'Account changed during linking; start again'});
         const token = await discordFetch('https://discord.com/api/oauth2/token', { method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code', code,
@@ -292,7 +291,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if(linking){
           if((await user(req))!==linking)return json(res,403,{error:'Account sign-in expired during linking'});
           accountRoutes.verifiedLink(req,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
-          res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':cookie('radtv_oauth','',0)});return res.end();
+          res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':cookie('uburoom_oauth','',0)});return res.end();
         }
         if (identity.id !== config.ownerId && attempt.loginId) {
           const request = deviceLogin.get(attempt.loginId); deviceLogin.requests.delete(attempt.loginId);
@@ -310,17 +309,17 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         // The completion code goes only to this add-on's fixed Firefox auth URL,
         // never to a caller-selected destination or a polling endpoint.
         const destination = attempt.loginId ? FIREFOX_REDIRECT + '#' + new URLSearchParams(deviceLogin.approve(attempt.loginId, identity.id)) : '/';
-        res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('radtv', id, loginSeconds), cookie('radtv_oauth', '', 0)] }); return res.end();
+        res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {
         // Sign-out needs the existing cookie and CSRF proof, not current provider
         // eligibility: revocation or an upstream outage must not trap a login.
-        const token=cookies(req).radtv,id=token&&hash(token),login=id&&logins.get(id);
+        const token=cookies(req).uburoom,id=token&&hash(token),login=id&&logins.get(id);
         if (!login || req.headers.origin!==config.publicUrl || req.headers['x-csrf-token']!==login.csrf) return json(res,403,{error:'Not authorized'});
         if (hub.adminMode && hub.isOwner(webActor(login))) {hub.adminMode=false;hub.adminEpoch++;for(const [pendingId,command]of hub.pending)if(hub.isOwner(command.actor))hub.finish(pendingId,{status:'unavailable',message:'Admin mode changed.'});}
         logins.delete(id);cookieRenewedAt.delete(id);accounts.save();
         await watchRoutes.logout(id);
-        res.setHeader('Set-Cookie', cookie('radtv', '', 0)); return json(res, 200, { ok: true });
+        res.setHeader('Set-Cookie', cookie('uburoom', '', 0)); return json(res, 200, { ok: true });
       }
       if (req.method === 'POST' && (route === '/api/login/start' || route === '/api/login/finish')) {
         if (!extensionRequest(req) || !throttle('login:' + req.socket.remoteAddress, 30)) return json(res, 403, { error: 'Login unavailable' });

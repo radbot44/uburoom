@@ -1,14 +1,14 @@
 'use strict';
 const $ = id => document.getElementById(id);
-$('open-controls').replaceChildren(RadTVUI.icon(document, 'open'));
-$('settings-toggle').replaceChildren(RadTVUI.icon(document, 'settings'));
-$('open-website').replaceChildren(RadTVUI.icon(document, 'website'));
+$('open-controls').replaceChildren(uburoomUI.icon(document, 'open'));
+$('settings-toggle').replaceChildren(uburoomUI.icon(document, 'settings'));
+$('open-website').replaceChildren(uburoomUI.icon(document, 'website'));
 const serverOrigins = globalThis.UBUROOM_REMOTE_SERVERS;
 for (const origin of serverOrigins) {
   const b = document.createElement('button'); b.dataset.server = origin; b.textContent = new URL(origin).host; b.title = origin; $('servers').appendChild(b);
 }
 let current, selectedServer = serverOrigins[0], serverEdited = false, refreshing = false;
-const remote = RadTVUI.mount($('local-remote'), { compact: true, execute: async command => {
+const remote = uburoomUI.mount($('local-remote'), { compact: true, execute: async command => {
   const id = current?.id;
   const result = await request({ type: 'local-command', sessionId: id, command });
   if (current?.id !== id) return { status: 'unavailable', message: 'Selected tab changed.' };

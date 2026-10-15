@@ -22,7 +22,7 @@ async function extension(saved, serverOrigins) {
     close(){this.readyState=3;this.onclose?.();}
   }
   vm.runInNewContext(fs.readFileSync(require.resolve('../extension/background'),'utf8'),{
-    browser,RadTV:Engine,WebSocket:Socket,crypto:webcrypto,URL,URLSearchParams,TextEncoder,Uint8Array,UBUROOM_REMOTE_SERVERS:serverOrigins,
+    browser,uburoom:Engine,WebSocket:Socket,crypto:webcrypto,URL,URLSearchParams,TextEncoder,Uint8Array,UBUROOM_REMOTE_SERVERS:serverOrigins,
     setTimeout:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearTimeout:id=>timers.delete(id),setInterval:()=>0,console
   });
   await new Promise(resolve=>setImmediate(resolve));
@@ -33,7 +33,7 @@ async function extension(saved, serverOrigins) {
   await receive({type:'voice-state',sequence:1,available:true,joined:false,channelId:'voice',serverNow:Date.now(),expiresAt:Date.now()+3000});
   async function player(tabId = 1) {
     let listen,disconnect;const messages=[],id=randomUUID();
-    const port={name:'radtv-player',sender:{tab:{id:tabId},frameId:0,url:'https://tv.youtube.com/'},
+    const port={name:'uburoom-player',sender:{tab:{id:tabId},frameId:0,url:'https://tv.youtube.com/'},
       postMessage:m=>messages.push(m),onMessage:event(fn=>listen=fn),onDisconnect:event(fn=>disconnect=fn)};
     onConnect(port);await listen({type:'hello',sessionId:id});await listen({type:'presence',reachable:true,state:{picture:{...Engine.DEFAULT}}});
     const report=ws.sent.findLast(m=>m.type==='session');

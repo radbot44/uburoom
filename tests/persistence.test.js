@@ -11,7 +11,7 @@ const { hash } = require('../server/core');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
 test('logins survive restart, renew Discord tokens, persist logout/revocation and never restore player consent', { skip: !fs.existsSync(certFile) }, async t => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'radtv-auth-test-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-auth-test-'));
   const cert = fs.readFileSync(certFile), config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
     publicUrl: 'https://localhost:6767', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret',
     deviceFile: path.join(directory, 'devices.json'), loginFile: path.join(directory, 'logins.json') };
@@ -67,7 +67,7 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
   const headers = await login(), csrf = headers['X-CSRF-Token'];
   const persisted = JSON.parse(fs.readFileSync(config.loginFile, 'utf8'));
   assert.equal(persisted.logins[0][1].expires, null, 'no arbitrary login deadline');
-  assert.equal(persisted.logins[0][0], hash(headers.Cookie.slice('radtv='.length)), 'only a hash of the browser credential is stored');
+  assert.equal(persisted.logins[0][0], hash(headers.Cookie.slice('uburoom='.length)), 'only a hash of the browser credential is stored');
   assert.equal(JSON.stringify(persisted).includes('private-fixture-access'), false, 'unused access tokens are not retained');
   const deviceId = randomUUID(), credential = 'a'.repeat(64);
   app.store.devices.push({ id: deviceId, ownerId: 'owner', credentialHash: hash(credential) }); app.store.save();

@@ -2,10 +2,10 @@
 // Uses the watch page's existing authenticated API and shared safe-DOM controls.
 let accountPreview, accountMerge;
 const accountButton=document.createElement('button');accountButton.id='account-settings';accountButton.className='icon-button';accountButton.type='button';accountButton.title='Account';accountButton.setAttribute('aria-label','Account');accountButton.hidden=true;
-accountButton.append(RadTVUI.icon(document,'settings'));document.querySelector('.account-actions').insertBefore(accountButton,$('open-browser'));
-$('account-close').append(RadTVUI.icon(document,'close'));
+accountButton.append(uburoomUI.icon(document,'settings'));document.querySelector('.account-actions').insertBefore(accountButton,$('open-browser'));
+$('account-close').append(uburoomUI.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
-logoutButton.append(RadTVUI.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
+logoutButton.append(uburoomUI.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
 function updateAccountButton(){accountButton.hidden=!config?.unifiedAccounts||!me;}
 function accountError(message=''){$('account-error').textContent=message;}
 function identityRows(host,account){

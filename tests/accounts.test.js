@@ -17,7 +17,7 @@ test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with s
     return provider.fetch(input,options);
   };
   const plex=new Plex(config,fetcher),auth=new PlexAuth(config,accounts,plex,fetcher);t.after(()=>{accounts.close();plex.close();});
-  const attempt=await auth.start('https://radtv.example/auth/plex/callback');provider.choose(attempt.pinId,'bob');
+  const attempt=await auth.start('https://uburoom.example/auth/plex/callback');provider.choose(attempt.pinId,'bob');
   const verified=await auth.finish(attempt);assert.equal(verified.subject,'102');assert.equal(jwkRegistered,false);assert.equal(verified.credential.authType,'traditional');
   assert.ok(provider.requests.some(r=>r.path==='/library/sections'&&r.token==='fixture-server-102'&&r.clientId===attempt.credential.clientId),'PMS sees the verified per-user token and registered client ID');
   failure='libraries';await assert.rejects(auth.validate(verified.credential,'102'),error=>error.revoked&&/library access check failed \(HTTP 401\)/.test(error.message)&&!error.message.includes('fixture-')&&!error.message.includes('private-upstream-detail'));
@@ -34,7 +34,7 @@ test('previous JWT credentials still renew through their registered signing key'
 });
 
 test('account IDs persist, owner reservations resolve exact subjects, conflicting merges roll back, and credentials are authenticated ciphertext',()=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'radtv-accounts-')),vault=credentialVault(path.join(directory,'key')),file=path.join(directory,'accounts.sqlite');
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-accounts-')),vault=credentialVault(path.join(directory,'key')),file=path.join(directory,'accounts.sqlite');
   let accounts=new Accounts(file,vault);
   try{
     const discord=accounts.resolve('discord','123','Alice'),plex=accounts.resolve('plex','101','Same name');assert.notEqual(discord.id,plex.id);
@@ -75,20 +75,20 @@ const tls={skip:!fs.existsSync(path.join(__dirname,'../certs/server-cert.pem'))}
 
 test('logout checks CSRF, revokes only this browser login and its viewers, retains links, and works after access revocation',tls,async t=>{
   const f=await fixture(t),host=f.browser(),other=f.browser(),bob=f.browser();await host.discord();await host.plex('alice',true);await other.plex('alice');await bob.plex('bob');
-  const account=(await host.request('/api/account')).body.account,csrf=(await host.request('/api/watch/me')).body.csrf,oldCookie=host.jar.get('radtv');
+  const account=(await host.request('/api/account')).body.account,csrf=(await host.request('/api/watch/me')).body.csrf,oldCookie=host.jar.get('uburoom');
   await host.post('/api/watch/admin-mode',{enabled:true});
   const roomId=(await host.post('/api/watch/rooms',{})).body.id,first=randomUUID(),second=randomUUID();await host.request(`/api/watch/rooms/${roomId}?viewer=${first}`);await other.request(`/api/watch/rooms/${roomId}?viewer=${second}`);
   const room=f.app.watch.rooms.get(roomId);assert.equal(room.viewers.size,2);
   assert.equal((await host.request('/api/logout',{})).status,403);assert.equal((await host.request('/api/logout',{}, {'X-CSRF-Token':csrf,Origin:'https://elsewhere.invalid'})).status,403);assert.equal(room.viewers.size,2);
-  const result=await host.request('/api/logout',{}, {'X-CSRF-Token':csrf});assert.equal(result.status,200);assert.ok(result.headers['set-cookie'].some(cookie=>cookie.startsWith('radtv=;')&&cookie.includes('Max-Age=0')));
+  const result=await host.request('/api/logout',{}, {'X-CSRF-Token':csrf});assert.equal(result.status,200);assert.ok(result.headers['set-cookie'].some(cookie=>cookie.startsWith('uburoom=;')&&cookie.includes('Max-Age=0')));
   assert.equal(room.viewers.has(first),false);assert.equal(room.viewers.has(second),true);assert.equal(f.app.hub.adminMode,false);assert.equal((await other.request('/api/watch/me')).status,200);
-  assert.equal((await host.request('/api/watch/me',undefined,{Cookie:'radtv='+oldCookie})).status,401,'the old cookie cannot be replayed');assert.equal(f.app.registry.summary(account.id).identities.length,2);assert.ok(f.app.registry.credential('101'));
+  assert.equal((await host.request('/api/watch/me',undefined,{Cookie:'uburoom='+oldCookie})).status,401,'the old cookie cannot be replayed');assert.equal(f.app.registry.summary(account.id).identities.length,2);assert.ok(f.app.registry.credential('101'));
   await host.plex('alice');assert.equal((await host.request('/api/account')).body.account.id,account.id);
   const bobCsrf=(await bob.request('/api/watch/me')).body.csrf;f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.request('/api/logout',{}, {'X-CSRF-Token':bobCsrf})).status,200,'provider eligibility is not needed to revoke your existing browser session');
 });
 
 test('legacy Discord login migration keeps device identities, encrypts refresh credentials and backup, and survives restart with stable UUIDs',tls,async()=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'radtv-migration-')),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-migration-')),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
   const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:'100000000000000001',guildId:'guild',channels:['commands'],clientId:'100000000000000010',accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:path.join(directory,'credentials.key'),loginFile:path.join(directory,'logins.json'),deviceFile:path.join(directory,'devices.json')};
   const legacy={context:JSON.stringify([config.publicUrl,config.ownerId,config.guildId,config.clientId]),ownerName:'Owner',logins:[['a'.repeat(64),{userId:config.ownerId,name:'Owner',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-legacy-refresh',expires:Date.now()+3600000}}]]};
   fs.writeFileSync(config.loginFile,JSON.stringify(legacy));const device={id:randomUUID(),ownerId:config.ownerId,credentialHash:'c'.repeat(64)};fs.writeFileSync(config.deviceFile,JSON.stringify([device]));
@@ -107,7 +107,7 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   const f=await fixture(t),alice=f.browser(),bob=f.browser(),denied=f.browser();
   assert.equal((await alice.discord()).status,302);const a=(await alice.request('/api/account')).body.account;assert.match(a.id,/^[a-f0-9-]{36}$/);assert.notEqual(a.id,f.config.ownerId);
   assert.equal((await alice.plex('alice',true)).status,302);assert.equal((await alice.request('/api/account')).body.account.id,a.id);
-  const same=f.browser();assert.equal((await same.plex('alice')).status,302);assert.equal((await same.request('/api/account')).body.account.id,a.id,'either login resolves the same radTV account');
+  const same=f.browser();assert.equal((await same.plex('alice')).status,302);assert.equal((await same.request('/api/account')).body.account.id,a.id,'either login resolves the same uburoom account');
   f.members.delete(f.config.ownerId);assert.equal((await same.post('/api/watch/admin-mode',{enabled:true})).status,200,'the verified owner can use Plex authorization independently of guild membership');await same.post('/api/watch/admin-mode',{enabled:false});f.members.add(f.config.ownerId);
   assert.equal((await bob.plex('bob')).status,302);const b=(await bob.request('/api/account')).body.account;assert.equal(b.identities.length,1);assert.equal(b.identities[0].provider,'plex');
   const stored=f.app.registry.credential('102');assert.equal(stored.authType,'traditional');assert.equal(stored.privateKey,undefined);assert.equal(stored.expires,undefined);f.app.plexAuth.clear();assert.equal((await bob.request('/api/watch/me')).status,200);assert.equal(f.provider.requests.some(r=>r.deviceJWT||r.path==='/api/v2/auth/token'),false,'traditional PINs never request incompatible JWT resource tokens');
@@ -125,7 +125,7 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   assert.equal(f.app.hub.access.isMember(b.id),false);assert.equal(await f.app.watch.canView(f.app.watch.rooms.get(roomId),actor),true,'Plex access does not require Discord membership');
   const aliceRoom=(await alice.post('/api/watch/rooms',{})).body.id,aliceViewer=randomUUID();let aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}&quality=direct`)).body;
   await alice.post(`/api/watch/rooms/${aliceRoom}/command`,{epoch:aliceState.epoch,expiresAt:Date.now()+2900,viewerId:aliceViewer,command:{action:'media.load',args:{mediaId:'999',quality:'direct'}}});aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
-  f.provider.revoked.add('101');f.app.plexAuth.clear();assert.equal((await alice.request('/api/watch/me')).status,200,'Discord still provides radTV account access');assert.equal((await alice.request(aliceState.mediaUrl)).status,403,'a linked Plex denial does not fall back to the owner token');
+  f.provider.revoked.add('101');f.app.plexAuth.clear();assert.equal((await alice.request('/api/watch/me')).status,200,'Discord still provides uburoom account access');assert.equal((await alice.request(aliceState.mediaUrl)).status,403,'a linked Plex denial does not fall back to the owner token');
   assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',guildId:'guild',channelId:'commands'},{sessionId:aliceRoom,action:'media.pause'})).status,'forbidden','Discord commands enforce the same media entitlement');
   f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request(state.mediaUrl)).status,403,'revoked Plex access invalidates media grants');
   assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,401);

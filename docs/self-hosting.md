@@ -17,10 +17,10 @@ Run `npm ci`. Copy `.env.example` to private `.env` and supply your own values:
 | DISCORD_COMMAND_CHANNEL_IDS | Permitted text-channel IDs, comma-separated. |
 | PLEX_URL / PLEX_TOKEN | Your Plex origin and private configured server token. |
 | PLEX_MACHINE_IDENTIFIER | Optional exact target; otherwise pinned after verification. |
-| RADTV_CREDENTIAL_KEY_FILE | Optional absolute key path outside the project. |
+| UBUROOM_CREDENTIAL_KEY_FILE | Optional absolute key path outside the project. |
 | FFMPEG_PATH / FFPROBE_PATH | Optional existing binaries for Intel AV1 fallback. |
 
-The key defaults to the runtime user's LOCALAPPDATA/radTV/credentials.key (or equivalent home fallback); that compatibility path is intentional. Protect private environment, data, TLS and external key with restrictive permissions. Linked viewers delegate Plex credentials to this server; encryption at rest does not eliminate trust in its operator.
+The key defaults to the runtime user's LOCALAPPDATA/uburoom/credentials.key (or equivalent home fallback). Protect private environment, data, TLS and external key with restrictive permissions. Linked viewers delegate Plex credentials to this server; encryption at rest does not eliminate trust in its operator.
 
 ## Providers
 

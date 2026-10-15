@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id), video = $('test-video');
 const embedded = new URLSearchParams(location.search).get('embedded') === '1' && parent !== window;
 document.body.classList.toggle('test-embedded',embedded);
-if (embedded) document.addEventListener('keydown',event => { if (event.key === 'Escape') { event.preventDefault(); parent.postMessage({type:'radtv-test-close'},location.origin); } });
+if (embedded) document.addEventListener('keydown',event => { if (event.key === 'Escape') { event.preventDefault(); parent.postMessage({type:'uburoom-test-close'},location.origin); } });
 $('back').href = '/watch' + location.search;
 const samples = [
   { file:'sync-test.mp4', url:'/watch/test/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:386887 },
@@ -141,7 +141,7 @@ async function readyActivity() {
     if (!response.ok) throw new Error('Activity configuration unavailable');
     const {clientId} = await response.json();
     if (!clientId) { discordSdk = 'not configured (local demo)'; refresh(); return; }
-    sdk = new RadTVDiscord.DiscordSDK(clientId);
+    sdk = new uburoomDiscord.DiscordSDK(clientId);
     let timer;
     try { await Promise.race([sdk.ready(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Activity handshake timed out')), 8000); })]); }
     finally { clearTimeout(timer); }

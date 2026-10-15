@@ -1,7 +1,7 @@
 'use strict';
 // AV1 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
-class RadTVAV1 {
+class uburoomAV1 {
   constructor(video, url, target, failed) {
     this.video = video; this.url = url; this.target = target; this.failed = failed;
     this.abort = new AbortController(); this.appended = new Set();
@@ -78,4 +78,4 @@ class RadTVAV1 {
     URL.revokeObjectURL(this.objectUrl);
   }
 }
-window.RadTVAV1 = RadTVAV1;
+window.uburoomAV1 = uburoomAV1;

@@ -5,7 +5,7 @@
   "description": "Local YouTube TV picture controls and remote access with per-tab Discord sharing settings.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "radtv@tch.one",
+      "id": "uburoom@uburoom.com",
       "strict_min_version": "115.0"
     }
   },
@@ -27,7 +27,7 @@
     ]
   },
   "action": {
-    "default_title": "uburoom \u2014 remote off by default",
+    "default_title": "uburoom — remote off by default",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "assets/uburoom-icon-16.png",
@@ -50,8 +50,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "assets/uburoom-logo.svg",
-        "assets/radtv-logo.svg"
+        "assets/uburoom-logo.svg"
       ],
       "matches": [
         "https://tv.youtube.com/*"

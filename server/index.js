@@ -14,7 +14,7 @@ async function main() {
     deviceFile: path.join(root, 'data/devices.json'),
     loginFile: path.join(root, 'data/logins.json'),
     accountFile: path.join(root,'data/accounts.sqlite'),
-    credentialKeyFile: process.env.RADTV_CREDENTIAL_KEY_FILE || path.join(process.env.LOCALAPPDATA||process.env.HOME||require('node:os').homedir(),'radTV','credentials.key'),
+    credentialKeyFile: process.env.UBUROOM_CREDENTIAL_KEY_FILE || path.join(process.env.LOCALAPPDATA||process.env.HOME||require('node:os').homedir(),'uburoom','credentials.key'),
     plexMachineIdentifier: process.env.PLEX_MACHINE_IDENTIFIER,
     botToken: process.env.DISCORD_BOT_TOKEN,
     plexUrl: process.env.PLEX_URL,
@@ -30,7 +30,7 @@ async function main() {
   for (const value of [config.ownerId, config.guildId, config.clientId, ...config.channels].filter(Boolean)) if (!/^\d{17,20}$/.test(value)) throw new Error('Discord IDs must be numeric IDs copied with Developer Mode');
   const port = Number(process.env.PORT || 6767);
   const keyRelative=path.relative(root,path.resolve(config.credentialKeyFile));
-  if(!keyRelative.startsWith('..'+path.sep)&&!path.isAbsolute(keyRelative))throw new Error('RADTV_CREDENTIAL_KEY_FILE must be outside the shared project folder');
+  if(!keyRelative.startsWith('..'+path.sep)&&!path.isAbsolute(keyRelative))throw new Error('UBUROOM_CREDENTIAL_KEY_FILE must be outside the shared project folder');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
   const app = createApp(config);
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(port, process.env.HOST || '127.0.0.1', resolve); });

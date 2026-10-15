@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, Events, MessageFlags, ApplicationCommandOptio
 const Engine = require('../extension/engine');
 const { discordAccess } = require('./sharing');
 
-const slashCommand = { name: 'radtv', description: 'Control an enabled uburoom player', options: [
+const slashCommand = { name: 'ubu', description: 'Control an enabled uburoom player', options: [
   { name: 'command', description: 'For example: pause, volume 50, zoom 150%, reset all, or off', type: ApplicationCommandOptionType.String, required: true, max_length: 140 },
   { name: 'target', description: 'Player name (for example bob #1); only needed with several available players', type: ApplicationCommandOptionType.String, max_length: 104 }
 ] };
@@ -11,7 +11,7 @@ function slashInput(options) {
   const target = options.getString('target')?.trim().toLowerCase();
   if (target && !/^[a-z0-9_][a-z0-9_.-]{0,99}(?: ?#[1-9][0-9]?)?$/.test(target)) throw new Error('Invalid target');
   // Parse exactly the same vocabulary as text commands; a command cannot override target.
-  const input = Engine.parse('!radtv ' + options.getString('command', true));
+  const input = Engine.parse('!ubu ' + options.getString('command', true));
   return { ...input, target: target || undefined };
 }
 function replyText(result) {
@@ -20,7 +20,7 @@ function replyText(result) {
 function helpText(website) {
   return [
     '**uburoom commands**',
-    'Use `!radtv <command>` when one player is available, or `!radtv.<player> <command>` to choose a player.',
+    'Use `!ubu <command>` when one player is available, or `!ubu.<player> <command>` to choose a player.',
     '',
     '**Playback & sound**',
     '• `play` / `pause` — start or pause playback',
@@ -43,8 +43,8 @@ function helpText(website) {
     '• `help` — show this list',
     '',
     'Blank player names use the host’s Discord username: `bob`, or `bob #1` / `bob #2` with multiple players.',
-    'Examples: `!radtv.livingroom volume 50`, `!radtv.bob#1 pause`',
-    'Slash commands: `/radtv command:volume 50 target:livingroom` (target optional with one player).',
+    'Examples: `!ubu.livingroom volume 50`, `!ubu.bob#1 pause`',
+    'Slash commands: `/ubu command:volume 50 target:livingroom` (target optional with one player).',
     'Enable and permissions: Firefox controls or the host’s website. Guests must share the host’s current voice channel or be actively watching that session. The owner can opt into Admin mode on the website.',
     `**Web remote:** ${website}`
   ].join('\n');
@@ -52,7 +52,7 @@ function helpText(website) {
 
 function loginFailure(error) {
   const code = error?.cause?.code || error?.code;
-  if (code === 'RADTV_LOGIN_TIMEOUT') return new Error('Discord login timed out after 30 seconds. Check the server can reach discord.com and gateway.discord.gg over HTTPS/WSS, then retry.');
+  if (code === 'UBUROOM_LOGIN_TIMEOUT') return new Error('Discord login timed out after 30 seconds. Check the server can reach discord.com and gateway.discord.gg over HTTPS/WSS, then retry.');
   if (code === 'TokenInvalid' || code === 4004 || error?.status === 401) return new Error('Discord rejected the bot token. Put the Bot page token in DISCORD_BOT_TOKEN; the OAuth client secret is a different value.');
   if (code === 4014 || /disallowed intents/i.test(error?.message || '')) return new Error('Discord rejected Message Content Intent. Enable it on the application\'s Bot page, save, and restart uburoom.');
   if (code === 4013 || /invalid intents/i.test(error?.message || '')) return new Error('Discord rejected the requested Gateway intents. Check the installed discord.js version and Bot settings.');
@@ -65,7 +65,7 @@ async function connectBot(client, token, timeoutMs = 30000) {
   let timer, onReady;
   const ready = new Promise(resolve => { onReady = resolve; client.once(Events.ClientReady, onReady); });
   const timeout = new Promise((resolve, reject) => {
-    timer = setTimeout(() => reject(Object.assign(new Error('Login timeout'), { code: 'RADTV_LOGIN_TIMEOUT' })), timeoutMs);
+    timer = setTimeout(() => reject(Object.assign(new Error('Login timeout'), { code: 'UBUROOM_LOGIN_TIMEOUT' })), timeoutMs);
   });
   try {
     await Promise.race([Promise.all([client.login(token), ready]), timeout]);
@@ -89,10 +89,10 @@ function watchVoice(config, client, hub) {
   client.on(Events.GuildUnavailable, guild => { if (guild.id === config.guildId) hub.publishVoice(false, true); });
   client.on(Events.GuildAvailable, guild => { if (guild.id === config.guildId) hub.publishVoice(); });
 }
-async function startBot(config, hub) {
+async function startBot(config, hub, { createClient = options => new Client(options) } = {}) {
   if (!config.botToken) { console.log('[Discord] Not configured. Local picture controls and HTTPS setup are available.'); return; }
   if (!config.ownerId || !config.guildId || !config.channels.length) throw new Error('Configure Discord owner, guild and command channels');
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
+  const client = createClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
   hub.access = discordAccess(client, config.guildId);
   watchVoice(config, client, hub);
   const buckets = new Map();
@@ -109,7 +109,7 @@ async function startBot(config, hub) {
   client.on(Events.ShardDisconnect, event => console.warn('[Discord] Gateway disconnected' + (Number.isInteger(event.code) ? ` (code ${event.code})` : '') + '. Commands unavailable until reconnected.'));
   client.on(Events.ShardReconnecting, () => console.log('[Discord] Reconnecting to the Gateway...'));
   client.on(Events.MessageCreate, async message => {
-    if (message.author.bot || !/^!radtv(?:\.|\s|$)/i.test(message.content)) return;
+    if (message.author.bot || !/^!ubu(?:\.|\s|$)/i.test(message.content)) return;
     // Forbidden channels get no reply and no player data.
     if (message.guildId !== config.guildId || !config.channels.includes(message.channelId)) return;
     try {
@@ -122,11 +122,11 @@ async function startBot(config, hub) {
       await message.reply({ content,
         allowedMentions: { parse: [], repliedUser: false } });
     } catch {
-      await message.reply({ content: 'Use `!radtv help` for all commands and examples.', allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
+      await message.reply({ content: 'Use `!ubu help` for all commands and examples.', allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
     }
   });
   client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== 'radtv') return;
+    if (!interaction.isChatInputCommand() || interaction.commandName !== 'ubu') return;
     try {
       if (interaction.guildId !== config.guildId || !config.channels.includes(interaction.channelId) || interaction.user.bot) {
         await interaction.reply({ content: 'forbidden: Use a configured uburoom command channel.', flags: MessageFlags.Ephemeral }); return;
@@ -140,7 +140,7 @@ async function startBot(config, hub) {
         guildId: interaction.guildId, channelId: interaction.channelId };
       await interaction.editReply({ content: input.action === 'help.get' ? helpText(config.publicUrl) : replyText(await hub.dispatch(actor, input)), allowedMentions: { parse: [] } });
     } catch {
-      const content = 'Use `/radtv command:help` for all commands and examples.';
+      const content = 'Use `/ubu command:help` for all commands and examples.';
       if (interaction.deferred) await interaction.editReply({ content }).catch(() => {});
       else if (!interaction.replied) await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
@@ -149,11 +149,11 @@ async function startBot(config, hub) {
   await connectBot(client, config.botToken);
   try { hub.setOwnerName?.((await client.users.fetch(config.ownerId)).username); }
   catch { /* Retain the last authenticated account name if Discord lookup fails. */ }
-  // Guild-scoped upsert preserves any other application commands; no global publication.
+  // This application exposes one guild-scoped command. Replace its previous command set.
   try {
-    await client.application.commands.create(slashCommand, config.guildId);
-    console.log('[Discord] /radtv registered in the configured server.');
-  } catch { console.warn('[Discord] Could not register /radtv. Check the bot installation includes applications.commands. Text commands remain available.'); }
+    await client.application.commands.set([slashCommand], config.guildId);
+    console.log('[Discord] /ubu registered in the configured server.');
+  } catch { console.warn('[Discord] Could not register /ubu. Check the bot installation includes applications.commands. Text commands remain available.'); }
   return client;
 }
 module.exports = { startBot, connectBot, slashInput, helpText, watchVoice };

@@ -3,7 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const root = path.resolve(__dirname, '..');
 const result = require('esbuild').buildSync({ stdin: { contents: 'export { DiscordSDK } from "@discord/embedded-app-sdk";', resolveDir: root },
-  bundle: true, minify: true, format: 'iife', globalName: 'RadTVDiscord', platform: 'browser',
+  bundle: true, minify: true, format: 'iife', globalName: 'uburoomDiscord', platform: 'browser',
   outfile: path.resolve(__dirname, '../web/vendor/discord-sdk.js'), legalComments: 'eof', metafile: true });
 const packages = new Set(Object.keys(result.metafile.inputs).map(input => /node_modules\/(\@[^/]+\/[^/]+|[^/]+)\//.exec(input)?.[1]).filter(Boolean));
 // Published SDK modules include libraries below output/lib, which the outer

@@ -85,7 +85,7 @@ test('HTTPS handoff rejects other sources, cross-origin/proof attacks and unconf
   assert.equal((await f.redeem(claimed,{}, {Origin:'https://evil.example'})).status,403);
   assert.equal((await f.redeem(claimed,{}, {Authorization:source.Authorization})).status,403);
   assert.equal((await f.redeem({...claimed,proof:secret()})).status,410);
-  assert.equal((await f.redeem({...claimed,cookie:'radtv_handoff='+secret()})).status,410);
+  assert.equal((await f.redeem({...claimed,cookie:'uburoom_handoff='+secret()})).status,410);
   const guest=await f.source('guest'),guestClaim=await f.claim(await f.issue(guest));await f.approve(guest,guestClaim);
   const guestLogin=await f.redeem(guestClaim),browserCookie=guestLogin.headers['set-cookie'][0].split(';')[0];
   await f.approve(source,claimed);
@@ -97,7 +97,7 @@ test('HTTPS handoff rejects other sources, cross-origin/proof attacks and unconf
   const again=await f.claim(await f.issue(source));again.cookie+='; '+hostCookie;
   await f.approve(source,again);
   const preserved=await f.redeem(again);assert.equal(preserved.status,200);
-  assert.equal(preserved.headers['set-cookie'].some(value=>value.startsWith('radtv=')),false,'same-account browser login is preserved');
+  assert.equal(preserved.headers['set-cookie'].some(value=>value.startsWith('uburoom=')),false,'same-account browser login is preserved');
   assert.equal((await f.request('/api/watch/me',undefined,{Cookie:hostCookie})).body.csrf,before.csrf);
 });
 

@@ -19,7 +19,7 @@ async function main() {
   const app = createApp(config);
   app.hub.access = {refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve)); config.publicUrl=`https://localhost:${app.server.address().port}`;
-  const profile=fs.mkdtempSync(path.join(os.tmpdir(),'radtv-codec-chromium-'));
+  const profile=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-codec-chromium-'));
   let browser, driver;
   try {
     const runtime=process.argv.find(x=>x.startsWith('--runtime='))?.slice(10);

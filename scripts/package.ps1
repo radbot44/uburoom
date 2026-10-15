@@ -28,7 +28,7 @@ function WriteZip([string]$Destination, [string[]]$Files, [string]$ManifestOverr
 # Extension archive has manifest at its root for temporary loading after unzip.
 $extensionPath = [IO.Path]::GetFullPath((Join-Path $projectPath $ExtensionDirectory))
 if ($extensionPath -ne (Join-Path $projectPath 'extension') -and -not $extensionPath.StartsWith($releaseDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'ExtensionDirectory must be the source extension or a prepared build under releases.' }
-$extensionFiles = @('manifest.json', 'server-config.js', 'background.js', 'content.js', 'engine.js', 'popup.css', 'popup.html', 'popup.js', 'remote-ui.js', 'assets/radtv-logo.svg')
+$extensionFiles = @('manifest.json', 'server-config.js', 'background.js', 'content.js', 'engine.js', 'popup.css', 'popup.html', 'popup.js', 'remote-ui.js')
 $extensionFiles += @('assets/uburoom-logo.svg', 'assets/uburoom-icon.svg', 'assets/uburoom-favicon.ico')
 foreach ($size in @(16,32,48,64,96,128,256,512)) { $extensionFiles += "assets/uburoom-icon-$size.png" }
 $version = (Get-Content -LiteralPath (Join-Path $extensionPath 'manifest.json') -Raw | ConvertFrom-Json).version
@@ -54,7 +54,7 @@ ExtensionZip "uburoom-extension-$version-$stamp.zip" ''
 # Explicit whitelist: never package credentials, certificates, node_modules or device data.
 $trackedFiles = @(& git -C $projectPath ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Source packaging requires an audited Git checkout.' }
-$sourceFiles = @($trackedFiles | Where-Object { (Test-Path -LiteralPath (Join-Path $projectPath $_) -PathType Leaf) -and ($_ -in @('README.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','.gitattributes','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat','run-radtv.bat','install-radtv.bat','test-radtv.bat') -or $_ -match '^(assets|extension|server|web|scripts|tests|docs)/') -and ($_ -eq '.env.example' -or ($_ -notmatch '(^|/)\.env($|\.)' -and $_ -notmatch '\.(key|pem|pfx|p12|sqlite|db|zip|log)$')) })
+$sourceFiles = @($trackedFiles | Where-Object { (Test-Path -LiteralPath (Join-Path $projectPath $_) -PathType Leaf) -and ($_ -in @('README.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','.gitattributes','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat') -or $_ -match '^(assets|extension|server|web|scripts|tests|docs)/') -and ($_ -eq '.env.example' -or ($_ -notmatch '(^|/)\.env($|\.)' -and $_ -notmatch '\.(key|pem|pfx|p12|sqlite|db|zip|log)$')) })
 WriteZip (Join-Path $releaseDirectory "uburoom-source-$sourceVersion-$stamp.zip") $sourceFiles ''
 if ($IncludeMV2Fallback) {
     $manifest = Get-Content -LiteralPath (Join-Path $extensionPath 'manifest.json') -Raw | ConvertFrom-Json
@@ -66,6 +66,6 @@ if ($IncludeMV2Fallback) {
     $manifest | Add-Member -NotePropertyName browser_action -NotePropertyValue $manifest.action
     $manifest.PSObject.Properties.Remove('action')
     $manifest.content_security_policy = $manifest.content_security_policy.extension_pages
-    $manifest.web_accessible_resources = @('assets/uburoom-logo.svg', 'assets/radtv-logo.svg')
+    $manifest.web_accessible_resources = @('assets/uburoom-logo.svg')
     ExtensionZip "uburoom-mv2-persistent-fallback-$stamp.zip" ($manifest | ConvertTo-Json -Depth 10)
 }

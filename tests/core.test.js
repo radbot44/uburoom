@@ -19,7 +19,7 @@ test('unnamed players use Discord names, visible numbering and unambiguous targe
   assert.deepEqual((await hub.list(friend)).map(s => s.alias), ['alice #1', 'alice #2']);
   assert.equal(resolve(hub.sessions.values(), friend, config, 'alice', Date.now(), hub.access).status, 'ambiguous');
   for (const target of ['alice#2', 'alice #2']) {
-    const input = Engine.parse('!radtv.' + target + ' pause');
+    const input = Engine.parse('!ubu.' + target + ' pause');
     assert.equal(resolve(hub.sessions.values(), friend, config, input.target, Date.now(), hub.access).session.sessionId, second.sessionId);
   }
   hub.sessions.get(second.sessionId).enabled = false;
@@ -41,14 +41,15 @@ function setup() {
   return { hub, ws, register, sent };
 }
 test('command parser has explicit units, bounded finite values and no arbitrary actions', () => {
-  assert.equal(Engine.parse('!radtv start').action, 'media.seek.start');
-  for (const verb of ['end', 'live']) assert.equal(Engine.parse('!radtv ' + verb).action, 'media.seek.end');
-  assert.equal(Engine.parse('!radtv.bob.bedroom zoom 150').args.value, 1.5);
-  assert.equal(Engine.parse('!radtv zoom 1.5').args.value, 1.5);
-  assert.equal(Engine.parse('!radtv zoom 150%').args.value, 1.5);
-  assert.equal(Engine.parse('!radtv zoom -0.5%').args.delta, -.005);
-  assert.equal(Engine.parse('!radtv volume 50').args.percent, 50);
-  for (const text of ['!radtv zoom Infinity', '!radtv zoom NaN', '!radtv zoom 2000%', '!radtv zoom +5', '!radtv volume 101', '!radtv pause now', '!radtv enable', '!radtv eval alert(1)']) assert.throws(() => Engine.parse(text));
+  for (const prefix of ['!uburoom', '!ubux', '!u']) assert.throws(() => Engine.parse(prefix + ' pause'));
+  assert.equal(Engine.parse('!ubu start').action, 'media.seek.start');
+  for (const verb of ['end', 'live']) assert.equal(Engine.parse('!ubu ' + verb).action, 'media.seek.end');
+  assert.equal(Engine.parse('!ubu.bob.bedroom zoom 150').args.value, 1.5);
+  assert.equal(Engine.parse('!ubu zoom 1.5').args.value, 1.5);
+  assert.equal(Engine.parse('!ubu zoom 150%').args.value, 1.5);
+  assert.equal(Engine.parse('!ubu zoom -0.5%').args.delta, -.005);
+  assert.equal(Engine.parse('!ubu volume 50').args.percent, 50);
+  for (const text of ['!ubu zoom Infinity', '!ubu zoom NaN', '!ubu zoom 2000%', '!ubu zoom +5', '!ubu volume 101', '!ubu pause now', '!ubu enable', '!ubu eval alert(1)']) assert.throws(() => Engine.parse(text));
   assert.throws(() => Engine.validate({ action: 'zoom.set', args: { value: '1.5' } }));
   let picture = Engine.picture(Engine.DEFAULT, { action: 'zoom.set', args: { value: 16 } });
   picture = Engine.picture(picture, { action: 'stretch.set', args: { axis: 'stretchX', value: 16 } });
@@ -148,12 +149,12 @@ test('routing checks actor, guild, channel, permission mode, opt-in and current 
 });
 test('acknowledgements are bound to socket, command, epoch and current authorization', async () => {
   const { hub, ws, register, sent } = setup(); const s = register();
-  const reply = hub.dispatch(actor, Engine.parse('!radtv mute'));
+  const reply = hub.dispatch(actor, Engine.parse('!ubu mute'));
   const command = sent.at(-1); assert.equal(command.type, 'command');
   hub.ack({}, { ...command, status: 'applied' }); assert.equal(hub.pending.size, 1);
   hub.ack(ws, { ...command, epoch: randomUUID(), status: 'applied' }); assert.equal(hub.pending.size, 1);
   hub.ack(ws, { ...command, status: 'applied' }); assert.equal((await reply).status, 'applied');
-  const pending = hub.dispatch(actor, Engine.parse('!radtv pause'));
+  const pending = hub.dispatch(actor, Engine.parse('!ubu pause'));
   hub.update(ws, { ...s, epoch: randomUUID(), enabled: false });
   assert.equal((await pending).status, 'unavailable'); assert.equal(hub.pending.size, 0); hub.close();
 });
@@ -175,18 +176,18 @@ test('sender labels come from authenticated actors, never command JSON, and do n
 });
 test('disconnect removes consent and pending commands, and reconnect does not replay them', async () => {
   const { hub, ws, register, sent } = setup(); register();
-  const reply = hub.dispatch(actor, Engine.parse('!radtv pause'));
+  const reply = hub.dispatch(actor, Engine.parse('!ubu pause'));
   hub.drop(ws); assert.equal((await reply).status, 'unavailable'); assert.equal(hub.sessions.size, 0);
   const count = sent.length; register('player', false);
-  assert.equal((await hub.dispatch(actor, Engine.parse('!radtv pause'))).status, 'forbidden');
+  assert.equal((await hub.dispatch(actor, Engine.parse('!ubu pause'))).status, 'forbidden');
   assert.equal(sent.length, count + 1, 'only the disabled registration acknowledgement is sent'); hub.close();
 });
 test('expired commands cannot acknowledge success or survive a changed permission', async () => {
   const { hub, ws, register, sent } = setup(); register();
-  const reply = hub.dispatch(actor, Engine.parse('!radtv mute')); const command = sent.at(-1);
+  const reply = hub.dispatch(actor, Engine.parse('!ubu mute')); const command = sent.at(-1);
   hub.pending.get(command.id).sentAt -= 4000;
   hub.ack(ws, { ...command, status: 'applied' }); assert.equal((await reply).status, 'unavailable');
-  const next = hub.dispatch(actor, Engine.parse('!radtv mute')); const second = sent.at(-1);
+  const next = hub.dispatch(actor, Engine.parse('!ubu mute')); const second = sent.at(-1);
   hub.sessions.get(second.sessionId).mode = 'voice';
   hub.ack(ws, { ...second, status: 'applied' }); assert.equal((await next).status, 'unavailable'); hub.close();
 });
@@ -214,7 +215,7 @@ test('sharing gates friends by current guild/voice membership and keeps owner ac
   hub.access = { refresh: async id => members.has(id), isMember: id => members.has(id),
     validVoiceChannel: id => [voice, otherVoice].includes(id), voiceChannel: id => voices.get(id) };
   const friend = { ...actor, userId: 'friend' }, s = register('bob');
-  const input = Engine.parse('!radtv.bob pause');
+  const input = Engine.parse('!ubu.bob pause');
   voices.set('friend', otherVoice);
   assert.equal((await hub.dispatch(friend, input)).status, 'forbidden');
   voices.set('friend', voice);
@@ -262,24 +263,24 @@ test('sharing changes cancel pending commands and private sessions do not create
   hub.update(ws, { ...publicSession, mode: 'guild' });
   assert.equal(resolve(hub.sessions.values(), friend, config, undefined, Date.now(), hub.access).session.alias, 'bob.livingroom');
   assert.equal(resolve(hub.sessions.values(), friend, config, 'bob.private', Date.now(), hub.access).status, 'forbidden');
-  const pending = hub.dispatch(friend, Engine.parse('!radtv pause')); await new Promise(resolve => setImmediate(resolve));
+  const pending = hub.dispatch(friend, Engine.parse('!ubu pause')); await new Promise(resolve => setImmediate(resolve));
   const old = sent.at(-1);
   hub.update(ws, { ...publicSession, mode: 'owner', epoch: randomUUID() });
   assert.equal((await pending).status, 'unavailable'); await hub.ack(ws, { ...old, status: 'applied' });
   assert.equal(hub.pending.size, 0);
   hub.update(ws, { ...publicSession, mode: 'guild' });
   const second = register('bob.bedroom'); hub.update(ws, { ...second, mode: 'guild' });
-  assert.equal((await hub.dispatch(friend, Engine.parse('!radtv pause'))).status, 'ambiguous');
+  assert.equal((await hub.dispatch(friend, Engine.parse('!ubu pause'))).status, 'ambiguous');
   assert.ok(resolve(hub.sessions.values(), friend, config, 'bob.bedroom', Date.now(), hub.access).session);
   for (const denied of [{ ...friend, guildId: 'other' }, { ...friend, channelId: 'other' }]) {
-    assert.equal((await hub.dispatch(denied, Engine.parse('!radtv pause'))).status, 'forbidden');
+    assert.equal((await hub.dispatch(denied, Engine.parse('!ubu pause'))).status, 'forbidden');
   }
   hub.close();
 });
 
 test('media seeking stays inside available DVR ranges and snapshots contain only validated state', () => {
-  assert.equal(Engine.parse('!radtv seek -15').args.seconds, -15);
-  assert.throws(() => Engine.parse('!radtv seek Infinity'));
+  assert.equal(Engine.parse('!ubu seek -15').args.seconds, -15);
+  assert.throws(() => Engine.parse('!ubu seek Infinity'));
   assert.throws(() => Engine.validate({ action: 'media.seek.relative', args: { seconds: 601 } }));
   assert.equal(Engine.seekTarget(25, [[10, 40]], -15), 10);
   assert.equal(Engine.seekTarget(35, [[10, 40]], 15), 39.99);

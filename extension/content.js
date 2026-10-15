@@ -1,11 +1,11 @@
 /* Picture CSS and shortcut behavior adapted from the user-verified v5.1 script. */
 (function () {
   'use strict';
-  if (window !== window.top || document.getElementById('radtv-root')) return;
+  if (window !== window.top || document.getElementById('uburoom-root')) return;
   const sessionId = crypto.randomUUID();
-  let state = { ...RadTV.DEFAULT }, profiles = {}, selectedSlot = 1, fast = false;
+  let state = { ...uburoom.DEFAULT }, profiles = {}, selectedSlot = 1, fast = false;
   let enabled = false, live = false, epoch, liveUntil = 0, port, hideTimer, lastUrl = location.href;
-  let sessionControls = { canManage: true, mode: 'owner', controls: { ...RadTV.CONTROLS }, autoJoin: false, paired: false, connected: false, sharingAvailable: false };
+  let sessionControls = { canManage: true, mode: 'owner', controls: { ...uburoom.CONTROLS }, autoJoin: false, paired: false, connected: false, sharingAvailable: false };
   const frameWindows = new WeakSet();
   let root, osd, panel, remoteUI, badge;
   const audio = { volume: undefined, muted: undefined }, watched = new WeakSet();
@@ -35,7 +35,7 @@
     const node = document.querySelector('title'); if (!node) return;
     const raw = node.textContent || '';
     const clean = raw.replace(/^(?:(?:🟢|🔵)\s*)+/, '');
-    const changed = Object.keys(RadTV.DEFAULT).some(k => Math.abs(state[k] - RadTV.DEFAULT[k]) > .0000001);
+    const changed = Object.keys(uburoom.DEFAULT).some(k => Math.abs(state[k] - uburoom.DEFAULT[k]) > .0000001);
     const next = (enabled && live && Date.now() < liveUntil ? '🟢 ' : '') + (changed ? '🔵 ' : '') + clean;
     if (raw !== next) node.textContent = next;
   }
@@ -49,14 +49,14 @@
     const css = 'video {scale:' + state.zoom * state.stretchX + ' ' + state.zoom * state.stretchY +
       ' !important;translate:' + state.x * 100 + '% ' + state.y * 100 + '% !important;transform-origin:center center !important;}';
     for (const doc of documents()) {
-      let style = doc.getElementById('radtv-video-css');
-      if (!style) { style = doc.createElement('style'); style.id = 'radtv-video-css'; (doc.head || doc.documentElement).appendChild(style); }
+      let style = doc.getElementById('uburoom-video-css');
+      if (!style) { style = doc.createElement('style'); style.id = 'uburoom-video-css'; (doc.head || doc.documentElement).appendChild(style); }
       if (style.textContent !== css) style.textContent = css;
     }
   }
   function show(message, sender = sessionControls.ownerName || 'You', symbol) {
     mount();
-    sender = RadTV.senderName(sender, 'You');
+    sender = uburoom.senderName(sender, 'You');
     osd.removeAttribute('aria-hidden');
     if (typeof message === 'string') badge.notice(message, sender, symbol);
     else if (!badge.show(message, snapshot(), sender)) return;
@@ -123,7 +123,7 @@
   }
   async function seek(v, seconds, edge) {
     const ranges = Array.from({ length: v.seekable.length }, (_, i) => [v.seekable.start(i), v.seekable.end(i)]);
-    const target = edge ? RadTV.seekBoundary(ranges, edge) : RadTV.seekTarget(v.currentTime, ranges, seconds);
+    const target = edge ? uburoom.seekBoundary(ranges, edge) : uburoom.seekTarget(v.currentTime, ranges, seconds);
     if (target === undefined) return false;
     if (Math.abs(v.currentTime - target) < .01) return v === video();
     return new Promise(resolve => {
@@ -138,10 +138,10 @@
   }
   async function execute(input, remote) {
     try {
-      const command = RadTV.validate(input);
+      const command = uburoom.validate(input);
       const permitted = () => !remote || remote.sessionId === sessionId && enabled && live &&
         epoch === remote.epoch && Date.now() < liveUntil && Date.now() < remote.localExpiresAt && location.href === lastUrl && !!video() &&
-        (!remote.guest || RadTV.controlAllowed(sessionControls.controls, command));
+        (!remote.guest || uburoom.controlAllowed(sessionControls.controls, command));
       if (!permitted()) return { status: 'unavailable' };
       const { action, args } = command;
       if (action === 'status.get' || action === 'help.get') return { status: 'applied', state: snapshot() };
@@ -150,7 +150,7 @@
         await browser.storage.local.set({ profiles: next }); profiles = next; selectedSlot = args.slot;
       } else if (action === 'profile.load') {
         if (!profiles[args.slot]) { show('Profile ' + args.slot + ' is empty', remote?.senderName || input.senderName); return { status: 'unsupported' }; }
-        state = RadTV.picture(profiles[args.slot], { action: 'pan.move', args: { x: 0, y: 0 } }); selectedSlot = args.slot;
+        state = uburoom.picture(profiles[args.slot], { action: 'pan.move', args: { x: 0, y: 0 } }); selectedSlot = args.slot;
       } else if (action.startsWith('media.')) {
         const v = video(); if (!v) return { status: 'unavailable' };
         if (!['media.pause', 'media.play', 'media.toggle', 'media.mute', 'media.unmute', 'media.volume.set',
@@ -170,7 +170,7 @@
         if (action === 'media.pause' && !v.paused || action === 'media.mute' && !v.muted || action === 'media.unmute' && v.muted ||
           action === 'media.volume.set' && (Math.abs(v.volume * 100 - args.percent) > .1 || v.muted)) return { status: 'failed' };
         if (v !== video()) return { status: 'unavailable' };
-      } else state = RadTV.picture(state, command);
+      } else state = uburoom.picture(state, command);
       refresh();
       if (remote && !action.startsWith('media.') && action !== 'profile.save') {
         const currentVideo = video();
@@ -213,15 +213,15 @@
     if (command) { e.preventDefault(); e.stopImmediatePropagation(); execute(command); }
   }
   function build() {
-    root = document.createElement('div'); root.id = 'radtv-root';
+    root = document.createElement('div'); root.id = 'uburoom-root';
     root.style.cssText = 'position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;';
     document.body.append(root);
     const shadow = root.attachShadow({ mode: 'open' }), style = document.createElement('style');
     style.textContent = '#osd{position:fixed;left:16px;top:16px;opacity:0;pointer-events:none;transition:opacity 250ms ease-out}#panel{position:fixed;top:12px;right:12px;width:min(420px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;pointer-events:auto;border-radius:28px;box-shadow:0 12px 50px #0009}#panel[hidden]{display:none!important}@media(prefers-reduced-motion:reduce){#osd{transition:none}}'; shadow.append(style);
     osd = document.createElement('div'); osd.id = 'osd'; osd.setAttribute('role', 'status'); osd.setAttribute('aria-atomic', 'true'); shadow.append(osd);
-    badge = RadTVUI.mountBadge(osd);
+    badge = uburoomUI.mountBadge(osd);
     panel = document.createElement('div'); panel.id = 'panel'; panel.hidden = true; shadow.append(panel);
-    remoteUI = RadTVUI.mount(panel, { trustedSessionControls: true, execute: async command => {
+    remoteUI = uburoomUI.mount(panel, { trustedSessionControls: true, execute: async command => {
       if (!command.action.startsWith('session.')) return execute(command);
       const result = await browser.runtime.sendMessage({ type: 'local-session-command', sessionId, command });
       if (result?.error) throw new Error(result.error); return result;
@@ -229,16 +229,16 @@
   }
   function connect() {
     enabled = live = false; title();
-    port = browser.runtime.connect({ name: 'radtv-player' });
+    port = browser.runtime.connect({ name: 'uburoom-player' });
     port.postMessage({ type: 'hello', sessionId });
     port.onMessage.addListener(m => {
       if (m.type === 'remote-state') {
-        sessionControls = { canManage: true, mode: m.mode, controls: RadTV.controls(m.controls), autoJoin: m.autoJoin,
+        sessionControls = { canManage: true, mode: m.mode, controls: uburoom.controls(m.controls), autoJoin: m.autoJoin,
           ownerName: m.ownerName, paired: m.paired, connected: m.connected, sharingAvailable: m.sharingAvailable };
         enabled = m.enabled === true; live = m.live === true; epoch = m.epoch; liveUntil = live ? Date.now() + 8000 : 0; title();
         refresh();
       } else if (m.type === 'command-feedback' && m.sessionId === sessionId && m.command?.action?.startsWith('session.')) {
-        show(RadTV.validate(m.command), m.senderName);
+        show(uburoom.validate(m.command), m.senderName);
       }
     });
     port.onDisconnect.addListener(() => { port = undefined; enabled = live = false; sessionControls.connected = false; remoteUI.stop(); refresh(); setTimeout(connect, 3000); });
@@ -259,7 +259,7 @@
       try { source = JSON.parse(localStorage.getItem('yttv-os5-profiles') || localStorage.getItem('yttv-overscan-profiles-v3') || '{}'); } catch {}
     }
     for (let slot = 1; slot <= 9; slot++) {
-      try { if (source?.[slot]) profiles[slot] = RadTV.picture(source[slot], { action: 'pan.move', args: { x: 0, y: 0 } }); } catch {}
+      try { if (source?.[slot]) profiles[slot] = uburoom.picture(source[slot], { action: 'pan.move', args: { x: 0, y: 0 } }); } catch {}
     }
     if (!saved.profiles && Object.keys(profiles).length) await browser.storage.local.set({ profiles });
     refresh(); show('Ready · F8 opens controls', undefined, 'website'); connect();

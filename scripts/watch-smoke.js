@@ -28,7 +28,7 @@ async function main() {
   };
   app.hub.access = { refresh: async () => true, isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); config.publicUrl = `https://localhost:${app.server.address().port}`;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'radtv-watch-firefox-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-watch-firefox-'));
   fs.writeFileSync(path.join(profile, 'user.js'), ['user_pref("media.autoplay.default",' + (process.argv.includes('--blocked') ? 5 : 0) + ');',
     'user_pref("browser.shell.checkDefaultBrowser",false);', 'user_pref("media.hardware-video-decoding.enabled",false);'].join('\n'));
   let firefox, driver;
@@ -169,7 +169,7 @@ async function main() {
       assert.equal(await evaluate(browser,'location.hash'), '','code stripped from browser history');
       assert.equal(await evaluate(browser,'document.getElementById("handoff-code").textContent'),await evaluate(activityHost,'browserVerification'));
       assert.equal(await evaluate(browser,'document.documentElement.scrollWidth<=390'),true,'browser sign-in fits phone width');
-      assert.equal(await evaluate(browser,'document.cookie.includes("radtv_handoff")'),false,'browser nonce cookie is HttpOnly');
+      assert.equal(await evaluate(browser,'document.cookie.includes("uburoom_handoff")'),false,'browser nonce cookie is HttpOnly');
       const browserShot=await command('browsingContext.captureScreenshot',{context:browser,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'handoff-browser-mobile-qa.png'),Buffer.from(browserShot.data,'base64'));
       const sourceShot=await command('browsingContext.captureScreenshot',{context:activityHost,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'handoff-activity-qa.png'),Buffer.from(sourceShot.data,'base64'));
       await click(activityHost,'approve-browser');

@@ -6,7 +6,7 @@ uburoom is a self-hosted Plex watch-together app with a browser interface, Disco
 2. Develop/install on local disk. Use isolated fixture accounts/media; never run a second process against production bot credentials or data.
 3. Remote consent starts off after session/tab/browser/server restart or disconnect. Authorize actor, guild/channel, session eligibility and current permissions for every command. Hide inaccessible/private sessions, reject ambiguous targets and never replay stale commands.
 4. All control surfaces use the shared validated command engine. Preserve synchronization, linking and per-user Plex scopes. Server acknowledgement is not proof of client playback.
-5. Preserve extension identity/storage, cookies, encryption-key paths, Discord command names, database IDs and protocol fields until a deliberate tested migration. Visible branding is lowercase uburoom; see docs/compatibility.md.
+5. Use uburoom names throughout, with `/ubu` and `!ubu` as the only Discord commands. No legacy aliases or wrappers. Preserve account UUIDs, encrypted credentials and the exact original key bytes when moving state; see docs/upgrading.md.
 6. Credentials belong in private server configuration or extension storage. Never log, commit or package secrets, private state or TLS/key files. Keep the original encryption key matched to account data; never generate a replacement for an existing database.
 7. Use safe DOM creation/textContent in the player, never unsafe HTML sinks. Use standard media APIs and report unsupported/site-dependent behavior honestly.
 8. Title indicators are independent: 🟢 only for that session's confirmed reachable remote enablement; 🔵 only for non-default transforms. Preserve SPA titles without duplicate prefixes.

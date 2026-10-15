@@ -107,7 +107,7 @@
     return svg;
   }
   const BADGE_CSS = `
-.radtv-badge{width:min(164px,calc(100vw - 32px));min-height:186px;padding:16px 12px 12px;box-sizing:border-box;background:#101217;color:#e7e9ee;color-scheme:dark;border-radius:18px;text-align:center;font:14px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+.uburoom-badge{width:min(164px,calc(100vw - 32px));min-height:186px;padding:16px 12px 12px;box-sizing:border-box;background:#101217;color:#e7e9ee;color-scheme:dark;border-radius:18px;text-align:center;font:14px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
 .badge-symbol{display:grid;place-items:center;height:112px;color:var(--badge-color,#e7e9ee)}.badge-symbol svg{width:min(112px,100%);height:112px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .badge-value{min-height:20px;margin-top:5px;font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.badge-name{color:#aab1bc;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.badge-announcement{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 `;
@@ -133,7 +133,7 @@
       case 'media.load': symbol = 'play'; label = 'Video selected'; break;
       case 'media.previous': symbol = 'start'; label = 'Previous / restart'; break;
       case 'media.next': symbol = 'end'; label = 'Next video'; break;
-      case 'media.quality.set': symbol = 'settings'; value = global.RadTV?.QUALITIES?.find(q => q.id === global.RadTV.qualityId(args.quality))?.label || (args.quality === 'direct' ? 'Original' : args.quality); label = 'Quality'; break;
+      case 'media.quality.set': symbol = 'settings'; value = global.uburoom?.QUALITIES?.find(q => q.id === global.uburoom.qualityId(args.quality))?.label || (args.quality === 'direct' ? 'Original' : args.quality); label = 'Quality'; break;
       case 'media.seek.start': symbol = 'start'; label = 'Back to start'; break;
       case 'media.seek.end': symbol = 'end'; label = 'Go to end / live'; break;
       case 'zoom.set': case 'zoom.adjust': case 'reset.zoom':
@@ -171,7 +171,7 @@
   function mountBadge(host) {
     const doc = host.ownerDocument;
     node(doc, host, 'style', BADGE_CSS);
-    const root = node(doc, host, 'div', undefined, { class:'radtv-badge' });
+    const root = node(doc, host, 'div', undefined, { class:'uburoom-badge' });
     const symbol = node(doc, root, 'div', undefined, { class:'badge-symbol', 'aria-hidden':'true' });
     const value = node(doc, root, 'div', '', { class:'badge-value', 'aria-hidden':'true' });
     const name = node(doc, root, 'div', '', { class:'badge-name', 'aria-hidden':'true' });
@@ -400,5 +400,5 @@
   }
   const api = { mount, CSS, icon, mountBadge, BADGE_CSS, badgeDetails };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else global.RadTVUI = api;
+  else global.uburoomUI = api;
 })(globalThis);

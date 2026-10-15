@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Events, Status } = require('discord.js');
-const { connectBot, slashInput, helpText, watchVoice } = require('../server/discord');
+const { startBot, connectBot, slashInput, helpText, watchVoice } = require('../server/discord');
 const { discordAccess } = require('../server/sharing');
 const Engine = require('../extension/engine');
 
@@ -13,6 +13,45 @@ function fakeClient(login) {
   client.destroy = async () => { client.destroyed = true; };
   return client;
 }
+
+test('bot replaces its guild command set with ubu and routes only ubu through channel authorization', async t => {
+  t.mock.method(console, 'log', () => {});
+  const client = fakeClient(async () => { queueMicrotask(() => client.emit(Events.ClientReady)); return 'fixture'; });
+  client.guilds = { cache: new Map() };
+  client.isReady = () => true;
+  client.users = { fetch: async () => ({ username: 'Owner' }) };
+  const registrations = [], dispatched = [], replies = [];
+  client.application = { commands: { set: async (...args) => { registrations.push(args); } } };
+  const hub = { publishVoice() {}, dispatch: async (actor, input) => {
+    dispatched.push({ actor, input }); return { status: 'ok', message: 'paused' };
+  } };
+  await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild', channels: ['commands'] }, hub, { createClient: () => client });
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0][1], 'guild');
+  assert.deepEqual(registrations[0][0].map(command => command.name), ['ubu']);
+  const message = (content, guildId = 'guild') => ({ content, guildId, channelId: 'commands', author: { id: 'friend', username: 'Friend', bot: false }, reply: async reply => replies.push(reply) });
+  const receive = client.listeners(Events.MessageCreate)[0];
+  await receive(message('!ubu pause', 'other'));
+  await receive(message('!uburoom pause'));
+  assert.equal(dispatched.length, 0);
+  assert.equal(replies.length, 0);
+  await receive(message('!ubu pause'));
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].input.action, 'media.pause');
+  assert.equal(dispatched[0].actor.channelId, 'commands');
+  assert.deepEqual(replies[0].allowedMentions, { parse: [], repliedUser: false });
+  const interaction = { isChatInputCommand: () => true, commandName: 'ubu', guildId: 'guild', channelId: 'commands', user: { id: 'friend', username: 'Friend', bot: false }, options: { getString: name => name === 'command' ? 'pause' : null }, deferReply: async () => {}, editReply: async reply => replies.push(reply), reply: async reply => replies.push(reply) };
+  const slash = client.listeners(Events.InteractionCreate)[0];
+  await slash({ ...interaction, commandName: 'uburoom' });
+  assert.equal(dispatched.length, 1);
+  await slash({ ...interaction, guildId: 'other' });
+  assert.equal(dispatched.length, 1);
+  assert.match(replies.at(-1).content, /forbidden/);
+  await slash(interaction);
+  assert.equal(dispatched.length, 2);
+  assert.equal(dispatched[1].input.action, 'media.pause');
+  await client.destroy();
+});
 
 test('Discord startup waits for actual readiness and removes its startup listener', async () => {
   const client = fakeClient(async () => 'private-token');
@@ -29,15 +68,15 @@ test('Discord startup waits for actual readiness and removes its startup listene
 
 test('slash commands use the same parser with an explicit target and cannot smuggle commands into it', () => {
   const options = (command, target) => ({ getString: name => name === 'command' ? command : target });
-  assert.deepEqual(slashInput(options('zoom 150%', 'bob.bedroom')), Engine.parse('!radtv.bob.bedroom zoom 150%'));
-  assert.deepEqual(slashInput(options('pause')), Engine.parse('!radtv pause'));
-  assert.deepEqual(slashInput(options('pause', 'alice #2')), Engine.parse('!radtv.alice #2 pause'));
+  assert.deepEqual(slashInput(options('zoom 150%', 'bob.bedroom')), Engine.parse('!ubu.bob.bedroom zoom 150%'));
+  assert.deepEqual(slashInput(options('pause')), Engine.parse('!ubu pause'));
+  assert.deepEqual(slashInput(options('pause', 'alice #2')), Engine.parse('!ubu.alice #2 pause'));
   assert.throws(() => slashInput(options('pause', 'bob pause')));
-  assert.throws(() => slashInput(options('!radtv.other off', 'bob')));
+  assert.throws(() => slashInput(options('!ubu.other off', 'bob')));
   assert.equal(slashInput(options('help')).action, 'help.get');
   const help = helpText('https://watch.example');
   assert.ok(help.length < 2000, 'help fits a single Discord reply');
-  for (const example of ['play', 'pause', 'toggle', 'mute', 'unmute', 'volume 50', 'seek -15', 'seek 15', 'zoom 150%', 'zoom +5%', 'zoom -5%', 'reset zoom', 'reset stretch', 'reset pan', 'reset all', 'profile load 1', 'profile save 1', 'status', 'off', 'help']) assert.doesNotThrow(() => Engine.parse('!radtv ' + example));
+  for (const example of ['play', 'pause', 'toggle', 'mute', 'unmute', 'volume 50', 'seek -15', 'seek 15', 'zoom 150%', 'zoom +5%', 'zoom -5%', 'reset zoom', 'reset stretch', 'reset pan', 'reset all', 'profile load 1', 'profile save 1', 'status', 'off', 'help']) assert.doesNotThrow(() => Engine.parse('!ubu ' + example));
   assert.match(help, /https:\/\/watch\.example/);
 });
 

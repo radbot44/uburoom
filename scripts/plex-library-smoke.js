@@ -37,7 +37,7 @@ async function main(){
  app.watch.plex.prepare=async id=>({...app.watch.demoMedia,id,title:all.find(x=>x.ratingKey===id)?.title||'Fixture',subtitle:all.find(x=>x.ratingKey===id)?.editionTitle||'',kind:'demo'});
  app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));config.publicUrl=`https://localhost:${app.server.address().port}`;
- const profile=fs.mkdtempSync(path.join(os.tmpdir(),'radtv-library-firefox-'));let firefox,driver;
+ const profile=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-library-firefox-'));let firefox,driver;
  try{
   firefox=spawn(process.env.FIREFOX_BINARY||'C:/Program Files/Mozilla Firefox/firefox.exe',['--headless','--no-remote','--profile',profile,'--remote-debugging-port','0'],{windowsHide:true,stdio:['ignore','pipe','pipe']});
   const address=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Firefox startup timeout')),20000);const read=b=>{const m=/WebDriver BiDi listening on (ws:\/\/127\.0\.0\.1:\d+)/.exec(b.toString());if(m){clearTimeout(timer);resolve(m[1]+'/session');}};firefox.stdout.on('data',read);firefox.stderr.on('data',read);});

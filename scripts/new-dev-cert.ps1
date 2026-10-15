@@ -51,9 +51,9 @@ $privateKey = DerWrap 48 $keyData.ToArray()
 [void][IO.Directory]::CreateDirectory($certDirectory)
 [IO.File]::WriteAllText((Join-Path $certDirectory 'server-key.pem'), (Pem 'RSA PRIVATE KEY' $privateKey), [Text.Encoding]::ASCII)
 [IO.File]::WriteAllText((Join-Path $certDirectory 'server-cert.pem'), (Pem 'CERTIFICATE' $certificate.RawData), [Text.Encoding]::ASCII)
-[IO.File]::WriteAllBytes((Join-Path $certDirectory 'radtv-lan.cer'), $certificate.RawData)
+[IO.File]::WriteAllBytes((Join-Path $certDirectory 'uburoom-lan.cer'), $certificate.RawData)
 $certificate.Dispose()
 $rsa.Dispose()
 Write-Host "Created local TLS files in $certDirectory. No certificate was installed in any trust store."
-Write-Host 'In Firefox, visit the exact HTTPS setup URL and add a certificate exception after checking radtv-lan.cer.'
+Write-Host 'In Firefox, visit the exact HTTPS setup URL and add a certificate exception after checking uburoom-lan.cer.'
 Write-Host 'Never share server-key.pem. This self-signed leaf certificate is not a root CA.'

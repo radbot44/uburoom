@@ -23,7 +23,7 @@ function send(message) {
 function tell(s) {
   try { s.port.postMessage({ type: 'remote-state', enabled: s.enabled, live: s.live, epoch: s.epoch,
     mode: s.mode, controls: { ...s.controls }, autoJoin: s.autoJoin,
-    ownerName: RadTV.senderName(ownerName, 'You'), paired: !!config.credential, connected: authenticated, sharingAvailable: sharing.available, serverUrl: config.serverUrl }); } catch {}
+    ownerName: uburoom.senderName(ownerName, 'You'), paired: !!config.credential, connected: authenticated, sharingAvailable: sharing.available, serverUrl: config.serverUrl }); } catch {}
 }
 function turnOff(s, notify = true) {
   s.enabled = false; s.live = false; s.epoch = crypto.randomUUID(); s.lastAck = 0;
@@ -68,7 +68,7 @@ async function connect() {
           const wasReady = voiceReady; voiceReady = m.available === true;
           sharing.available = voiceReady;
           for (const s of sessions.values()) {
-            if (wasReady && voiceReady && RadTV.joinEligible(s, m, Date.now(), serverOffset)) {
+            if (wasReady && voiceReady && uburoom.joinEligible(s, m, Date.now(), serverOffset)) {
               try { changeSession(s, { action: 'session.enable' }); } catch { /* No deferred enable or retry. */ }
             }
             tell(s);
@@ -82,25 +82,25 @@ async function connect() {
         } else if (m.type === 'command') {
           const s = sessions.get(m.sessionId);
           const ack = (result) => send({ type: 'ack', id: m.id, sessionId: m.sessionId, epoch: m.epoch, ...result });
-          const management = RadTV.MANAGEMENT.includes(m.action);
+          const management = uburoom.MANAGEMENT.includes(m.action);
           if (!s || !s.reachable || !management && (!s.enabled || !s.live) || s.epoch !== m.epoch || Date.now() - s.lastAck > 8000 || Date.now() + serverOffset >= m.expiresAt) {
             ack({ status: 'unavailable' }); return;
           }
           if (management || m.action === 'session.disable') {
             if (m.actorId !== m.ownerId) { ack({ status: 'unavailable' }); return; }
             try {
-              await changeSession(s, RadTV.validate(m), false, RadTV.senderName(m.senderName));
+              await changeSession(s, uburoom.validate(m), false, uburoom.senderName(m.senderName));
               ack({ status: 'applied', disabled: m.action === 'session.disable', state: s.state }); report(s);
             } catch { ack({ status: 'unavailable' }); }
             return;
           }
-          const command = RadTV.validate(m);
+          const command = uburoom.validate(m);
           const guest = m.actorId !== m.ownerId;
-          if (guest && !RadTV.controlAllowed(s.controls, command)) { ack({ status: 'unavailable' }); return; }
+          if (guest && !uburoom.controlAllowed(s.controls, command)) { ack({ status: 'unavailable' }); return; }
           const result = await browser.tabs.sendMessage(s.tabId, { type: 'remote-command', id: m.id,
-            sessionId: s.id, epoch: s.epoch, guest, localExpiresAt: m.expiresAt - serverOffset, senderName: RadTV.senderName(m.senderName), ...command }, { frameId: 0 });
+            sessionId: s.id, epoch: s.epoch, guest, localExpiresAt: m.expiresAt - serverOffset, senderName: uburoom.senderName(m.senderName), ...command }, { frameId: 0 });
           if (!s.enabled || s.epoch !== m.epoch || Date.now() + serverOffset >= m.expiresAt) ack({ status: 'unavailable' });
-          else { s.state = RadTV.snapshot(result.state) || s.state; ack({ status: result.status, state: s.state }); report(s); }
+          else { s.state = uburoom.snapshot(result.state) || s.state; ack({ status: result.status, state: s.state }); report(s); }
         }
       } catch { /* Invalid messages never execute or reveal credentials. */ }
     };
@@ -119,8 +119,8 @@ function setSharing(s, m) {
   if (mode !== 'owner' && !sharing.available) throw new Error('Wait for Discord to connect before sharing');
   s.mode = mode;
 }
-function changeSession(s, input, notify = true, senderName = RadTV.senderName(ownerName, 'You')) {
-  const command = RadTV.validate(input);
+function changeSession(s, input, notify = true, senderName = uburoom.senderName(ownerName, 'You')) {
+  const command = uburoom.validate(input);
   if (command.action === 'session.autojoin') {
     if (command.args.enabled && (!authenticated || !sharing.available || !s.reachable)) throw new Error('Connect Discord and a player before enabling On join');
     // A remembered device preference arms new tabs; it never restores remote consent.
@@ -152,7 +152,7 @@ function changeSession(s, input, notify = true, senderName = RadTV.senderName(ow
 }
 browser.runtime.onConnect.addListener(port => {
   const sender = port.sender;
-  if (port.name !== 'radtv-player' || !sender?.tab || sender.frameId !== 0 || !sender.url?.startsWith('https://tv.youtube.com/')) { port.disconnect(); return; }
+  if (port.name !== 'uburoom-player' || !sender?.tab || sender.frameId !== 0 || !sender.url?.startsWith('https://tv.youtube.com/')) { port.disconnect(); return; }
   let session, closed = false;
   port.onMessage.addListener(async m => {
     await loaded;
@@ -162,18 +162,18 @@ browser.runtime.onConnect.addListener(port => {
         send({ type: 'remove', sessionId: old.id }); sessions.delete(old.id);
       }
       session = { id: m.sessionId, tabId: sender.tab.id, port, epoch: crypto.randomUUID(), alias: '',
-        mode: 'owner', controls: { ...RadTV.CONTROLS }, autoJoin: config.autoJoin === true, autoArmedAt: Date.now(),
+        mode: 'owner', controls: { ...uburoom.CONTROLS }, autoJoin: config.autoJoin === true, autoArmedAt: Date.now(),
         enabled: false, live: false, reachable: false, lastAck: 0 };
       sessions.set(session.id, session); tell(session);
       const restoring = session;
-      session.nameReady = browser.sessions.getTabValue(sender.tab.id, 'radtv-name').then(alias => {
+      session.nameReady = browser.sessions.getTabValue(sender.tab.id, 'uburoom-name').then(alias => {
         if (sessions.get(restoring.id) === restoring && typeof alias === 'string' && (!alias || /^[a-z0-9][a-z0-9.-]{0,47}$/.test(alias))) {
           restoring.alias = alias; report(restoring);
         }
       }).catch(() => {});
     } else if (m.type === 'presence' && session && sessions.get(session.id) === session) {
       session.reachable = m.reachable === true;
-      session.state = RadTV.snapshot(m.state);
+      session.state = uburoom.snapshot(m.state);
       if (m.navigation || !session.reachable) turnOff(session);
       else report(session);
     }
@@ -259,11 +259,11 @@ browser.runtime.onMessage.addListener((m, sender) => {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const s = [...sessions.values()].find(s => s.tabId === tabs[0]?.id && s.id === m.sessionId);
       if (!s) throw new Error('Select the YouTube TV tab');
-      const command = m.type === 'local-command' ? RadTV.validate(m.command) : undefined;
+      const command = m.type === 'local-command' ? uburoom.validate(m.command) : undefined;
       if (command && command.action.startsWith('session.')) return changeSession(s, command);
       const result = await browser.tabs.sendMessage(s.tabId, m.type === 'open-controls' ? { type: 'open-controls' } :
-        { type: 'local-command', senderName: RadTV.senderName(ownerName, 'You'), ...command }, { frameId: 0 });
-      if (result.state) { s.state = RadTV.snapshot(result.state); report(s); }
+        { type: 'local-command', senderName: uburoom.senderName(ownerName, 'You'), ...command }, { frameId: 0 });
+      if (result.state) { s.state = uburoom.snapshot(result.state); report(s); }
       return result;
     }
     if (m.type === 'enable' || m.type === 'disable' || m.type === 'sharing' || m.type === 'rename') {
@@ -275,7 +275,7 @@ browser.runtime.onMessage.addListener((m, sender) => {
       if (m.type === 'rename' || m.type === 'enable') {
         const alias = m.alias ?? s.alias;
         if (typeof alias !== 'string' || alias && !/^[a-z0-9][a-z0-9.-]{0,47}$/.test(alias)) throw new Error('Use a short name containing letters, numbers, dots or hyphens, or leave it blank');
-        await browser.sessions.setTabValue(s.tabId, 'radtv-name', alias);
+        await browser.sessions.setTabValue(s.tabId, 'uburoom-name', alias);
         if (sessions.get(s.id) !== s) throw new Error('Player session changed');
         s.alias = alias;
         if (m.type === 'rename') { report(s); return {}; }

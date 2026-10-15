@@ -6,7 +6,7 @@
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
       const b = node('button',parent,undefined,className); b.type = 'button'; b.setAttribute('aria-label',label); b.title = label;
-      if (symbol) b.append(RadTVUI.icon(doc,symbol)); return b;
+      if (symbol) b.append(uburoomUI.icon(doc,symbol)); return b;
     }
     function option(select, value, label) { const n = node('option',select,label); n.value = value; }
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
@@ -50,13 +50,13 @@
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false, testOpen = false;
     const homes = new Map(), images = new Map();
-    let view = 'normal'; try { const saved = localStorage.getItem('radtv-library-view'); if (['normal','list','poster'].includes(saved)) view = saved; } catch {}
+    let view = 'normal'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['normal','list','poster'].includes(saved)) view = saved; } catch {}
     const demoItem = { id:'demo',type:'demo',title:'uburoom synchronization test',duration:60,summary:'A short picture and sound sample for checking shared playback.' };
     function context(section, tab = 'library') { return { section,tab,title:sections.find(x => x.id === section)?.title || 'Test video',kind:'library',q:'',genre:'',year:'',sort:'title',order:'asc',seed:newSeed(),items:[],total:null,nextOffset:null,scroll:0,minHeight:0 }; }
     function homeContext() { return {...context(),title:'Libraries',kind:'home'}; }
     // Browser history holds only opaque indices. Private catalog data remains in
     // session-scoped memory, and is discarded when viewing eligibility changes.
-    function historyState(index = visitIndex) { return {...history.state,radtvLibrary:{epoch:historyEpoch,index}}; }
+    function historyState(index = visitIndex) { return {...history.state,uburoomLibrary:{epoch:historyEpoch,index}}; }
     function saveVisit() { if (screen) visits[visitIndex] = {screen,trail:[...trail],testOpen}; }
     function beginHistory() {
       historyEpoch = newSeed(); visits = []; visitIndex = 0; historyMoving = false; testOpen = false;
@@ -73,7 +73,7 @@
     function prepareNavigation() { rememberScroll(); saveVisit(); saveHome(); cancelReads(); reserveHeight(); }
     function goHistory(delta) { if (historyMoving || !session || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return; historyMoving = true; history.go(delta); }
     window.addEventListener('popstate',event => {
-      const entry = event.state?.radtvLibrary;
+      const entry = event.state?.uburoomLibrary;
       if (!historyEpoch) return;
       if (entry?.epoch === historyEpoch && entry.index === -1) { history.go(1); return; }
       if (entry?.epoch !== historyEpoch || !visits[entry.index]) { history.replaceState(historyState(),''); historyMoving = false; return; }
@@ -179,7 +179,7 @@
     }
     function art(parent,item,landscape = false) {
       const box = node('div',parent,undefined,'library-art' + (landscape ? ' landscape' : ''));
-      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(RadTVUI.icon(doc,['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
+      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomUI.icon(doc,['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
       if (landscape ? item.hasLandscape : item.hasPoster) {
         const img = node('img',box); img.alt = ''; img.decoding = 'async'; img.dataset.item = item.id; img.dataset.kind = landscape ? 'landscape' : 'poster'; img.dataset.type = item.type;
         img.addEventListener('load',() => { box.classList.add('loaded'); });
@@ -292,7 +292,7 @@
       option(sort,'random','Random');
       sort.value = screen.sort; direction.disabled = screen.sort === 'default';
       direction.title = direction.ariaLabel = screen.sort === 'random' ? 'Shuffle again' : screen.order === 'asc' ? 'Ascending: switch to descending' : 'Descending: switch to ascending';
-      direction.replaceChildren(RadTVUI.icon(doc,screen.sort === 'random' ? 'refresh' : 'sort')); direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
+      direction.replaceChildren(uburoomUI.icon(doc,screen.sort === 'random' ? 'refresh' : 'sort')); direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
       genre.value = screen.genre; year.value = screen.year;
       chips.replaceChildren();
       for (const [key,control] of [['genre',genre],['year',year]]) if (screen[key]) {
@@ -410,7 +410,7 @@
     direction.onclick = () => { if (screen.sort === 'random') screen.seed = newSeed(); else screen.order = screen.order === 'asc' ? 'desc' : 'asc'; void query(); };
     genre.onchange = () => { screen.genre = genre.value; void query(); }; year.onchange = () => { screen.year = year.value; void query(); };
     filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
-    viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('radtv-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
+    viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
     async function setSession(id) {
       if (session === id) { setBusy(busy); return; }
@@ -433,5 +433,5 @@
     }
     return {setSession,setBusy,closeTest};
   }
-  global.RadTVLibrary = {mount};
+  global.uburoomLibrary = {mount};
 })(globalThis);

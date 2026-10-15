@@ -16,4 +16,4 @@ Firefox YouTube TV picture controls work locally without a server. Remote connec
 
 ## Boundaries
 
-Keep one repository initially. An independent remote, native-player integration, project-hosted rooms and managed room URLs are future work, not installation requirements. Preserve the established UI design. Graphics, licensing/provenance, existing-instance upgrade and unrelated-host clean-install/live checks remain release gates. See docs/testing.md and docs/compatibility.md.
+Keep one repository initially. An independent remote, native-player integration, project-hosted rooms and managed room URLs are future work, not installation requirements. Preserve the established UI design. Graphics, licensing/provenance, existing-instance upgrade and unrelated-host clean-install/live checks remain release gates. See docs/testing.md and docs/upgrading.md.

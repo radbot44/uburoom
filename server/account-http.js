@@ -5,7 +5,7 @@ const {hash}=require('./core');
 function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore,discordStart,throttle}) {
   const attempts=new Map(),previews=new Map(),merges=new Map(),errors=new Map();
   const secret=()=>randomBytes(32).toString('hex');
-  const sourceHash=req=>cookies(req).radtv&&hash(cookies(req).radtv);
+  const sourceHash=req=>cookies(req).uburoom&&hash(cookies(req).uburoom);
   const busy=ids=>[...watch.rooms.values()].some(room=>ids.includes(room.s.hostId)||[...room.viewers.values()].some(v=>ids.includes(v.userId)));
   function invalidate(ids){
     if(ids.includes(registry.identity('discord',config.ownerId)?.userId)){hub.adminMode=false;hub.adminEpoch++;}
@@ -13,7 +13,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
     for(const [id,pending]of hub.pending)if(ids.includes(pending.actor.userId))hub.finish(id,{status:'unavailable',message:'Account identities changed'});
     loginStore.save();plexAuth.clear();
   }
-  function session(res,account,name){const token=secret();logins.set(hash(token),{userId:account.id,accountRevision:account.revision,name,csrf:secret(),expires:null});loginStore.save();res.setHeader('Set-Cookie',cookie('radtv',token,31536000));}
+  function session(res,account,name){const token=secret();logins.set(hash(token),{userId:account.id,accountRevision:account.revision,name,csrf:secret(),expires:null});loginStore.save();res.setHeader('Set-Cookie',cookie('uburoom',token,31536000));}
   function mergePreview(req,login,incoming){
     const source=registry.canonical(login.userId),other=registry.canonical(incoming.conflict.id),all=[...registry.identities(source.id),...registry.identities(other.id)];
     if(new Set(all.map(i=>i.provider)).size!==all.length)throw new Error('Accounts have conflicting identities; owner assistance is required');
@@ -31,7 +31,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
     if(attempts.size>=200)throw new Error('Plex sign-in is busy');
     const state=secret(),attempt=await plexAuth.start(config.publicUrl+'/auth/plex/callback?state='+state);
     attempts.set(state,{...attempt,expires:Date.now()+300000,...(login?{sourceId:login.userId,sourceHash:sourceHash(req),revision:login.accountRevision}:{})});
-    res.setHeader('Set-Cookie',cookie('radtv_plex',state,300));return config.demo&&plexAuth.demo?config.publicUrl+'/demo-plex?state='+state:attempt.url;
+    res.setHeader('Set-Cookie',cookie('uburoom_plex',state,300));return config.demo&&plexAuth.demo?config.publicUrl+'/demo-plex?state='+state:attempt.url;
   }
   function pending(req,login){const merge=merges.get(sourceHash(req));return merge&&merge.expires>Date.now()&&merge.sourceId===login.userId?{id:merge.id,accounts:[registry.summary(merge.sourceId),registry.summary(merge.otherId)]}:undefined;}
   async function route(req,res,url){
@@ -41,14 +41,14 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
     if(!throttle('account:'+req.socket.remoteAddress,120)){json(res,429,{error:'Too many account requests'});return true;}
     try {
       if(req.method==='GET'&&route==='/api/account/auth-error'){
-        const id=cookies(req).radtv_auth_error,record=errors.get(id);errors.delete(id);json(res,200,{error:record&&record.expires>Date.now()?record.message:'Sign-in expired. Start again from uburoom.'});return true;
+        const id=cookies(req).uburoom_auth_error,record=errors.get(id);errors.delete(id);json(res,200,{error:record&&record.expires>Date.now()?record.message:'Sign-in expired. Start again from uburoom.'});return true;
       }
       if(req.method==='GET'&&route==='/auth/plex'){
         const destination=await startPlex(req,res);res.writeHead(302,{Location:destination});res.end();return true;
       }
       if(req.method==='GET'&&route==='/auth/plex/demo'){
         const state=url.searchParams.get('state'),attempt=attempts.get(state);
-        if(!config.demo||!plexAuth.demo||!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!attempt||attempt.expires<=Date.now()||cookies(req).radtv_plex!==state)throw new Error('Isolated Plex demo is unavailable');
+        if(!config.demo||!plexAuth.demo||!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!attempt||attempt.expires<=Date.now()||cookies(req).uburoom_plex!==state)throw new Error('Isolated Plex demo is unavailable');
         plexAuth.demo.choose(attempt.pinId,url.searchParams.get('persona'));
         res.writeHead(302,{Location:'/auth/plex/callback?state='+state});res.end();return true;
       }
@@ -60,13 +60,13 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       }
       if(req.method==='GET'&&route==='/auth/plex/callback'){
         const state=url.searchParams.get('state'),attempt=attempts.get(state);attempts.delete(state);
-        if(!state||cookies(req).radtv_plex!==state||!attempt||attempt.expires<=Date.now())throw new Error('Plex sign-in expired; start again');
+        if(!state||cookies(req).uburoom_plex!==state||!attempt||attempt.expires<=Date.now())throw new Error('Plex sign-in expired; start again');
         const login=attempt.sourceId?await user(req):undefined;
         if(attempt.sourceId&&(!login||login.userId!==attempt.sourceId||sourceHash(req)!==attempt.sourceHash||login.accountRevision!==attempt.revision))throw new Error('The account changed during Plex linking; start again');
         const identity=await plexAuth.finish(attempt);
         if(login){if((await user(req))!==login)throw new Error('Account sign-in expired during linking');verifiedLink(req,login,'plex',identity.subject,identity.name,identity.credential);}
         else {const account=registry.resolve('plex',identity.subject,identity.name);registry.credential(identity.subject,identity.credential);plexAuth.clear();session(res,account,account.name);}
-        const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(existing?Array.isArray(existing)?existing:[existing]:[]),cookie('radtv_plex','',0)]);
+        const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(existing?Array.isArray(existing)?existing:[existing]:[]),cookie('uburoom_plex','',0)]);
         res.writeHead(302,{Location:'/watch?account=1'});res.end();return true;
       }
       const login=req.method==='GET'?await user(req):await protectedPost(req);
@@ -104,7 +104,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       json(res,404,{error:'Account action unavailable'});return true;
     }catch(error){
       const message=error.message.includes('UNIQUE')?'Account identity conflict; preview again':error.message;
-      if(req.method==='GET'&&route.startsWith('/auth/plex')){const id=secret();errors.set(id,{message,expires:Date.now()+60000});res.setHeader('Set-Cookie',cookie('radtv_auth_error',id,60));res.writeHead(302,{Location:'/auth/error'});res.end();}
+      if(req.method==='GET'&&route.startsWith('/auth/plex')){const id=secret();errors.set(id,{message,expires:Date.now()+60000});res.setHeader('Set-Cookie',cookie('uburoom_auth_error',id,60));res.writeHead(302,{Location:'/auth/error'});res.end();}
       else json(res,400,{error:message});return true;
     }
   }

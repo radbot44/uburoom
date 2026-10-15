@@ -21,7 +21,7 @@ test('configured remote narrows both network policy and permissions while preser
   const destination = path.join(directory, 'extension');
   configureRemote(['https://watch.example:8443', 'https://legacy.example', 'https://watch.example:8443'], destination);
   const manifest = JSON.parse(fs.readFileSync(path.join(destination, 'manifest.json')));
-  assert.equal(manifest.browser_specific_settings.gecko.id, 'radtv@tch.one');
+  assert.equal(manifest.browser_specific_settings.gecko.id, 'uburoom@uburoom.com');
   assert.deepEqual(manifest.host_permissions, ['https://tv.youtube.com/*', 'https://watch.example/*', 'https://legacy.example/*']);
   assert.equal(manifest.content_security_policy.extension_pages, "script-src 'self'; object-src 'none'; connect-src https://watch.example:8443 wss://watch.example:8443 https://legacy.example wss://legacy.example");
   const context = {};

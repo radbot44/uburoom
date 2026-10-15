@@ -23,7 +23,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
       // QSV (and libaom) may supply AV1 codec extradata only with the first
       // packet. WebM must seek back to finalize CodecPrivate; live stdout fails.
       // Only one bounded chunk is written, never a temporary episode download.
-      directory = await fs.mkdtemp(path.join(os.tmpdir(), 'radtv-av1-'));
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), 'uburoom-av1-'));
       files = ['video.webm', ...(split ? ['audio.webm'] : [])].map(name => path.join(directory, name));
       args = [...args];
       for (let i = 0; i < args.length; i++) {

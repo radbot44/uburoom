@@ -22,7 +22,7 @@ test('only advancing decoded playback earns credit; seeks, buffering, paused pre
   f.tick();send(8,203,'playing',{frames:210});assert.equal(v.tracking.record.watchedSeconds,2,'no new frames');
   f.tick();send(9,204,'playing',{discontinuity:1});assert.equal(v.tracking.record.watchedSeconds,2,'brief seek/pause between reports');
   f.tick();send(10,205,'playing',{discontinuity:1,rate:1.04});assert.ok(v.tracking.record.watchedSeconds>2,'small synchronized rate adjustments retain observed viewing');
-  f.tracking.end(v,'logout');const row=f.tracking.history('user').sessions[0];assert.equal(row.endReason,'logout');assert.equal(row.deliveryMode,'radtv-av1');f.tracking.close();
+  f.tracking.end(v,'logout');const row=f.tracking.history('user').sessions[0];assert.equal(row.endReason,'logout');assert.equal(row.deliveryMode,'uburoom-av1');f.tracking.close();
 });
 test('overlapping tabs retain individual sessions but account totals union wall time and source coverage',()=>{
   const f=fixture(),a=f.viewer(),b=f.viewer();

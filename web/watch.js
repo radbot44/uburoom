@@ -13,14 +13,14 @@ let observationPending = false, observationSequence = 0, observationBreak = 0, o
 let browserHandoff, browserHandoffTimer, browserVerification;
 const video = $('video');
 video.volume = .5;
-function glyph(id, symbol) { $(id).replaceChildren(RadTVUI.icon(document, symbol)); }
+function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
   ['theater','theater'],['drawer-symbol','drawer'],['drawer-close','close'],['playback-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
-const badge = RadTVUI.mountBadge($('badge'));
-const remote = RadTVUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
-const settings = RadTVUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
-const library = RadTVLibrary.mount($('library-content'), {
+const badge = uburoomUI.mountBadge($('badge'));
+const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
+const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
+const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
   artwork:async (path,signal) => {
     const response = await fetch(path,{signal:AbortSignal.any([signal,AbortSignal.timeout(12000)]),headers:token ? {Authorization:'Bearer ' + token} : {}});
@@ -43,7 +43,7 @@ function hidePlaybackTest() {
 $('playback-close').onclick = () => library.closeTest();
 $('playback-dialog').addEventListener('cancel',event => { event.preventDefault(); library.closeTest(); });
 window.addEventListener('message',event => {
-  if (event.origin === location.origin && event.source === $('playback-frame').contentWindow && event.data?.type === 'radtv-test-close') library.closeTest();
+  if (event.origin === location.origin && event.source === $('playback-frame').contentWindow && event.data?.type === 'uburoom-test-close') library.closeTest();
 });
 function fail(message) {
   const changed = $('error').textContent !== message;
@@ -403,7 +403,7 @@ function applyState(next) {
       $('empty-stage').hidden = true;
       watchFrames();
       if (next.format === 'av1') {
-        try { av1 = new RadTVAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
+        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         const client = hls = new Hls({ enableWorker: true, maxBufferLength: 25 });
@@ -421,14 +421,14 @@ function applyState(next) {
   $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library below.' : 'The host chooses the video.';
   $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End session' : 'Leave session';
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
-  const choices = next.qualities || RadTV.QUALITIES;
+  const choices = next.qualities || uburoom.QUALITIES;
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));
   }
-  if (next.mediaUrl && !pending && document.activeElement !== $('quality')) $('quality').value = RadTV.qualityId(next.quality);
+  if (next.mediaUrl && !pending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
   $('library-panel').hidden = !next.canBrowse;
   browseSession = next.canBrowse ? next.id : undefined; void library.setSession(browseSession); library.setBusy(pending);
-  const transformed = Object.keys(RadTV.DEFAULT).some(key => Math.abs(picture[key] - RadTV.DEFAULT[key]) > 1e-8);
+  const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
   document.title = (next.enabled && video.readyState >= 1 && !playbackError ? '🟢 ' : '') + (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
   renderRemote(); renderVisibility(); renderTransport();
   if (next.feedback && next.feedback.revision !== lastFeedback && Date.now() + offset - next.feedback.at < 3000) {
@@ -459,8 +459,8 @@ function renderRooms(host, rooms) {
   host.replaceChildren();
   for (const room of rooms) {
     const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
-    if (room.visibility === 'private') button.append(RadTVUI.icon(document,'lock'));
-    const name = document.createElement('span'); name.textContent = room.hostName; button.append(name,RadTVUI.icon(document,'users'));
+    if (room.visibility === 'private') button.append(uburoomUI.icon(document,'lock'));
+    const name = document.createElement('span'); name.textContent = room.hostName; button.append(name,uburoomUI.icon(document,'users'));
     const count = document.createElement('span'); count.textContent = String(room.viewers); button.append(count);
     button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
     button.setAttribute('aria-label', room.hostName + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
@@ -594,7 +594,7 @@ async function start() {
     else {const auth = await api('/api/watch/demo-login', { persona:params.get('demo'), activity }); token = auth.token;}
   } else if (params.has('frame_id')) {
     if (!config.clientId) throw new Error('Configure Discord OAuth on the server first');
-    sdk = new RadTVDiscord.DiscordSDK(config.clientId); await sdk.ready();
+    sdk = new uburoomDiscord.DiscordSDK(config.clientId); await sdk.ready();
     const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
     const auth = await api('/api/watch/activity-login', {code}); token = auth.token;
     if (!await sdk.commands.authenticate({access_token:auth.accessToken})) throw new Error('Discord Activity authentication failed');

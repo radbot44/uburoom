@@ -1,8 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
-for (const [id, icon] of [['manage', 'settings'], ['logout', 'logout'], ['refresh', 'refresh'], ['close-devices', 'close'], ['admin-mode','admin']]) $(id).replaceChildren(RadTVUI.icon(document, icon));
+for (const [id, icon] of [['manage', 'settings'], ['logout', 'logout'], ['refresh', 'refresh'], ['close-devices', 'close'], ['admin-mode','admin']]) $(id).replaceChildren(uburoomUI.icon(document, icon));
 let me, selected, sessions = [], polling = false, commandPending = false, commandVersion = 0;
-const remote = RadTVUI.mount($('remote'), { headerSlot: 'players', volumeInterval: 600, execute: async command => {
+const remote = uburoomUI.mount($('remote'), { headerSlot: 'players', volumeInterval: 600, execute: async command => {
   if (!selected || commandPending) throw new Error('Select an available player');
   const id = selected; commandPending = true; commandVersion++;
   try {

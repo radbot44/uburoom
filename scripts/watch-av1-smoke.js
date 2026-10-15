@@ -39,7 +39,7 @@ async function main() {
   });
   app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve)); config.publicUrl=`https://localhost:${app.server.address().port}`;
-  const profile=fs.mkdtempSync(path.join(os.tmpdir(),'radtv-av1-firefox-'));
+  const profile=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-av1-firefox-'));
   fs.writeFileSync(path.join(profile,'user.js'),'user_pref("media.autoplay.default",0);\nuser_pref("media.hardware-video-decoding.enabled",false);');
   let firefox,driver;
   try {

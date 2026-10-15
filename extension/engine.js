@@ -143,8 +143,8 @@
   }
   function parse(text) {
     if (typeof text !== 'string' || text.length > 200) throw new Error('Command too long');
-    const m = /^!radtv(?:\.([a-z0-9_][a-z0-9_.-]{0,99}(?: ?#[1-9][0-9]?)?))?\s+(.+)$/i.exec(text.trim());
-    if (!m) throw new Error('Use !radtv pause, mute, zoom 150%, or reset all');
+    const m = /^!ubu(?:\.([a-z0-9_][a-z0-9_.-]{0,99}(?: ?#[1-9][0-9]?)?))?\s+(.+)$/i.exec(text.trim());
+    if (!m) throw new Error('Use !ubu pause, mute, zoom 150%, or reset all');
     const [verb, ...words] = m[2].trim().toLowerCase().split(/\s+/);
     let command;
     if (['pause', 'play', 'mute', 'unmute', 'toggle'].includes(verb) && words.length === 0) command = { action: 'media.' + verb };
@@ -197,5 +197,5 @@
   const api = { DEFAULT, PAN_MAX, CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible,
     validate, picture, parse, factor, snapshot, seekTarget, seekBoundary, senderName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.RadTV = api;
+  else root.uburoom = api;
 })(globalThis);

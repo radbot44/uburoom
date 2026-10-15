@@ -133,7 +133,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     try {
       if (req.method === 'POST' && ['/api/watch/handoff/claim', '/api/watch/handoff/redeem'].includes(url.pathname)) {
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
-        const nonce = cookies(req).radtv_handoff;
+        const nonce = cookies(req).uburoom_handoff;
         if (req.headers.origin !== config.publicUrl || req.headers.authorization || !SECRET.test(nonce || '') ||
           !throttle('handoff-browser:' + req.socket.remoteAddress, 120)) { json(res, 403, {error:'Browser sign-in unavailable; open a fresh link from the Activity'}); return true; }
         const data = await body(req);
@@ -154,7 +154,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           const roomId = await watch.canView(room, webActor(attempt.source)) ? room.s.sessionId : undefined;
           if (!await alive() || !handoff.consume(attempt)) { json(res,410,{error:'Activity sign-in expired or was cancelled'}); return true; }
           if (existing?.userId !== attempt.source.userId) browserLogin(res,attempt.source);
-          else res.setHeader('Set-Cookie','radtv_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+          else res.setHeader('Set-Cookie','uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
           json(res,200,{destination:'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
         } finally { attempt.redeeming = false; }
       }
@@ -285,7 +285,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
       const alive = async () => (await login({ headers }))?.userId === auth.actor.userId;
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
-      room.viewers.get(viewerId).browserLoginHash=req.headers.authorization?undefined:cookies(req).radtv&&hash(cookies(req).radtv);
+      room.viewers.get(viewerId).browserLoginHash=req.headers.authorization?undefined:cookies(req).uburoom&&hash(cookies(req).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!await watch.canView(room, auth.actor) || !await alive()) { json(res, 403, { error: 'Viewing access was revoked' }); return true; }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);

@@ -46,7 +46,7 @@ class Plex {
     const response = await this.fetch(url, { ...options, redirect: 'manual',
       signal: options.signal || AbortSignal.timeout(12000), headers: {
         Accept: 'application/json', 'X-Plex-Token': this.token, 'X-Plex-Product': 'uburoom',
-        'X-Plex-Client-Identifier': url.searchParams.get('X-Plex-Client-Identifier') || url.searchParams.get('session') || this.clientId || 'radtv-watch',
+        'X-Plex-Client-Identifier': url.searchParams.get('X-Plex-Client-Identifier') || url.searchParams.get('session') || this.clientId || 'uburoom-watch',
         'X-Plex-Platform': 'Firefox', ...options.headers
       } });
     if (!response.ok && response.status !== 206) {const error=new Error(`Plex server request failed (HTTP ${response.status}); check server access and playback support`);error.status=response.status;throw error;}

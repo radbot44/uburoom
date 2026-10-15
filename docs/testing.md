@@ -6,7 +6,7 @@ Firefox watch/account/tracking fixtures use real browser decoding with synthetic
 
 ## Local migration checks
 
-The local migration pass completed 66 automated tests with zero skips/failures, a fresh-checkout dependency install and shared-watch Firefox playback, plus blocked-autoplay/native-tracking checks with regenerated synthetic media. An offline copied-state startup preserved account/credential records, browser-login payloads, device hashes and the original key; rooms, remote consent and Admin mode began off. Missing-key startup was refused. Changing origin required browser reauthentication while retaining account/device/key data.
+The migration baseline completed 66 automated tests, a fresh-checkout dependency install and shared-watch Firefox playback, plus blocked-autoplay/native-tracking checks with regenerated synthetic media. The complete naming transition passes 67 automated tests with zero skips/failures, including `/ubu` registration/routing, Firefox shared-watch playback and startup of the new extension identity. An offline copied-state startup retained account/identity/credential/device records with unchanged key bytes and no network calls; rooms, remote consent and Admin mode began off. Missing-key startup was refused. The naming transition requires browser sign-in and a new extension installation/pairing.
 
 These checks used one development machine, local test TLS and offline/simulated providers. They do not replace an unrelated-host setup or actual provider/extension upgrade. Public ZIP and complete-history privacy checks remain required for each release revision.
 
@@ -15,7 +15,7 @@ The full extension Firefox fixture has an unresolved failure around restoring gu
 Before release, separately verify:
 
 - Clean install with unrelated domains, Plex/Discord credentials and fresh browser profiles.
-- Upgrade retaining original account key/data, browser auth, extension identity/settings/pairing and commands.
+- Upgrade retaining the original account key/data, with fresh browser sign-in and new-extension pairing; verify `/ubu` and `!ubu` against the real configured guild.
 - Restricted Plex accounts/revocation and per-viewer Original/HLS/AV1, without owner-token fallback.
 - Native observations under buffering, seek/reconnect, quality/host changes and multiple viewers. Plex timeline/watch-state reporting remains disabled; actual monitoring experiments require consenting accounts and must account for resume/history effects.
 - Real Activity SDK authorization, browser handoff, proxy media and PIP events.

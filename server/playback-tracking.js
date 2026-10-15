@@ -53,7 +53,7 @@ class PlaybackTracking {
     if (starting) {
       const identities = this.registry?.identities(viewer.userId).map(i=>({provider:i.provider,subject:i.subject})) || [];
       viewer.tracking = { record: { id:randomUUID(),userId:viewer.userId,identities,roomId:room.s.sessionId,viewerId,mediaId:room.media.id,duration:room.media.duration,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
-        deliveryMode:viewer.media.kind==='demo'?'local-fixture':({file:'original',hls:'plex-hls',av1:'radtv-av1'}[viewer.media.format] || 'unknown'),startedAt:now,lastReceivedAt:now,watchedSeconds:0,sourceSeconds:0,wallIntervals:[],sourceIntervals:[] } };
+        deliveryMode:viewer.media.kind==='demo'?'local-fixture':({file:'original',hls:'plex-hls',av1:'uburoom-av1'}[viewer.media.format] || 'unknown'),startedAt:now,lastReceivedAt:now,watchedSeconds:0,sourceSeconds:0,wallIntervals:[],sourceIntervals:[] } };
     }
     const {record,previous} = viewer.tracking;
     if (previous) {
