@@ -79,3 +79,12 @@ node scripts/playback-recovery.js --media=artifacts/playback-media-recovery --ou
 ```
 
 The default checks 45 seconds of decoded playback, an eight-second media-only outage, paused fill and rewind, a forced expiry of one captured HLS session, and a temporary control poll failure. It confirms that the selected audio and burn source survive recovery, the other viewer is unaffected and the old grant is revoked. `--browser=chrome` or `--browser=edge` selects another installed browser. `--soak=5` gives a shorter recovery check without the eight-second outage. For a two-minute playback window, generate a 240-second corpus and pass `--soak=120`; the source must be at least 35 seconds longer than the requested soak. Outputs remain in a new ignored artifacts directory. This fixture cannot establish real Plex transcode lifetime, multi-hour memory growth, physical audio or Discord Activity behavior.
+
+For a sustained local Firefox run, use a track corpus of at least 200 seconds and a new output directory:
+
+```powershell
+node scripts/build-playback-fixtures.js --out=artifacts/playback-media-soak --duration=240 --tracks=on
+node scripts/playback-soak.js --media=artifacts/playback-media-soak --out=artifacts/playback-soak-run --minutes=120
+```
+
+The soak loops the procedural source with shared seeks near its end. It records decoded frames, French audio samples, buffering and room drift, 30-second checkpoints, server memory, and periodic browser process-tree memory. It forces an eight-second media-delivery outage every 15 minutes, expires the selected HLS session every 20 minutes, and interrupts one control poll after an hour. Each refresh checks the viewer's audio/subtitle choices, the other viewer's unchanged stream and off-by-default remote consent. `--minutes=`, `--expiry-seconds=`, `--outage-seconds=` and `--control-seconds=` can shorten the schedule for diagnostics; use `0` to disable an event. `--identity-seconds=45` shortens only the isolated demo bearer lifetime to exercise login renewal. The default keeps the normal one-hour bearer lifetime. Provider offered bytes estimate fixture delivery load, not measured network throughput. The looped synthetic source does not establish real Plex session lifetime or uninterrupted feature-length playback.

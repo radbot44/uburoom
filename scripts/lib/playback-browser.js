@@ -91,7 +91,7 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
       const result = firefox ? await command('browsingContext.captureScreenshot',{context:page,origin:'viewport'}) : await command('Page.captureScreenshot',{format:'png'},page);
       fs.writeFileSync(file,Buffer.from(result.data,'base64'));
     };
-    return {name,version,headless:true,acceleration,evaluate,until,page,viewport,screenshot,close};
+    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,screenshot,close};
   } catch (error) { await close(); throw error; }
 }
 module.exports = { playbackBrowser, pause };

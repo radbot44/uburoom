@@ -20,8 +20,9 @@ function fixturePlex(directory, manifest, control = {}) {
     {id:Number(source.id+'92'),streamType:3,codec:'ass',language:'English',languageCode:'eng',displayTitle:'English styled (ASS)',key:'/library/streams/'+source.id+'92',selected:selectedSubtitles.get(source.id)===source.id+'92'}];
   const json = value => new Response(JSON.stringify({MediaContainer:value}),{headers:{'Content-Type':'application/json'}});
   const send = (file,options,type) => {
-    control.requests?.push({file:path.relative(directory,file).replaceAll('\\','/'),range:options.headers?.Range || null});
-    if (control.blocked) return new Response(null,{status:503});
+    const request={file:path.relative(directory,file).replaceAll('\\','/'),range:options.headers?.Range || null};
+    control.requests?.push(request);
+    if (control.blocked) {request.status=503;return new Response(null,{status:503});}
     const size = fs.statSync(file).size, header = options.headers?.Range;
     let start = 0, end = size - 1;
     if (header) {
@@ -31,6 +32,7 @@ function fixturePlex(directory, manifest, control = {}) {
       else { start = Number(match[1]); if (match[2]) end = Math.min(end,Number(match[2])); }
       if (!Number.isSafeInteger(start) || start > end || start >= size) return new Response(null,{status:416});
     }
+    request.status=header ? 206 : 200;request.offeredBytes=options.method==='HEAD' ? 0 : end-start+1;
     return new Response(options.method === 'HEAD' ? null : Readable.toWeb(fs.createReadStream(file,{start,end})),{
       status:header ? 206 : 200,headers:{'Content-Type':type,'Content-Length':String(end-start+1),'Accept-Ranges':'bytes',
         ...(header ? {'Content-Range':`bytes ${start}-${end}/${size}`} : {})}
