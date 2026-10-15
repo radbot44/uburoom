@@ -116,9 +116,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     const target = key === 'start' ? media.start : media.resources.get(key);
     if (!target) return json(res, 404, { error: 'Media unavailable' });
-    if (key==='start' && media.initialManifest && req.method!=='HEAD') {
-      const text=media.initialManifest; media.initialManifest=undefined;
-      res.writeHead(200,{'Content-Type':'application/vnd.apple.mpegurl'}); return res.end(rewriteManifest(text,target,media,grant.id));
+    if (key==='start' && media.initialManifest) {
+      // Repeated master loads must keep the captured session. Reissuing start
+      // after restoring Plex's audio preference could select another track.
+      const text=media.initialManifest;
+      res.writeHead(200,{'Content-Type':'application/vnd.apple.mpegurl'}); return res.end(req.method==='HEAD' ? undefined : rewriteManifest(text,target,media,grant.id));
     }
     const abort = new AbortController(); let response;
     const timer = setTimeout(() => abort.abort(), 12000);

@@ -382,7 +382,8 @@ function renderTracks() {
   $('audio-track-status').textContent=audio ? audio.label+(state.format!=='file' ? ' · Stereo playback' : '') : '';
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
-  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title. Timing cannot be adjusted here.' : '');
+  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select text subtitles to adjust their timing.';
+  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title.' : '');
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
   $('subtitle-status').hidden=!trackNoticeError && !tracks?.subtitleError;

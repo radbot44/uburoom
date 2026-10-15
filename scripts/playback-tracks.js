@@ -136,6 +136,11 @@ async function main() {
           }
           assert.equal(await evaluate(host,'captions.track.mode'),'disabled','burned captions have no duplicate native text');
           assert.equal(await evaluate(guest,'!state.tracks.subtitleId'),true,'guest subtitles stay off');
+          await evaluate(host,'document.getElementById("tracks-open").click();true');
+          assert.equal(await evaluate(host,'document.getElementById("subtitle-offset").disabled'),true);
+          assert.equal(await evaluate(host,'document.getElementById("subtitle-delay-hint").textContent.includes("fixed by Plex")'),true);
+          await browser.screenshot(host,path.join(output,name+'-ass-dialog.png'));
+          await evaluate(host,'document.getElementById("tracks-close").click();true');
           await choose(host,{subtitleId:'off'});await until(host,'video.readyState>=2 && !video.seeking','Burn off');
           return {detail:'Bottom styled caption and positioned colored sign matched actual decoded pixels; Off replaces burned video.',evidence};
         });

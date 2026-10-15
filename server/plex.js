@@ -258,6 +258,8 @@ class Plex {
     else {
       const prepare = async () => {
       if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
+      const restoreAudio = await this.selectAudioForTranscode(media,choices);
+      try {
       if (burn) await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex: '0', partIndex: '0',
@@ -293,15 +295,16 @@ class Plex {
       media.videoCodec = 'h264'; media.compatible = compatible;
       media.audioCodec = 'aac'; media.bitrate = Number(params.get('maxVideoBitrate'));
       media.start = this.url('/video/:/transcode/universal/start.m3u8?' + params).href;
-      if (burn) {
+      if (burn || audio) {
         if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
         const response=await this.request(media.start,{headers:{Accept:'application/vnd.apple.mpegurl'}});
         const text=await response.text();
-        if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested subtitle transcode.');
+        if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested audio and subtitle transcode.');
         media.initialManifest=text;
       }
+      } finally { await restoreAudio?.(); }
       };
-      try { if(burn) await this.withPartLock(media.partId,prepare); else await prepare(); }
+      try { await this.withPartLock(media.partId,prepare); }
       catch(error) {
         await this.stop(media);
         const failure=error instanceof PlaybackError ? error : new PlaybackError('Plex playback could not be prepared. Check server access and transcoding support.');
@@ -314,6 +317,39 @@ class Plex {
     const previous=this.partQueues.get(id) || Promise.resolve();
     const job=previous.catch(()=>{}).then(action); this.partQueues.set(id,job);
     try { return await job; } finally { if(this.partQueues.get(id)===job)this.partQueues.delete(id); }
+  }
+  async selectAudioForTranscode(media,choices) {
+    const requested=media.selection.audio?.id;
+    if(!requested)return;
+    // PMS chooses audio from the scoped user's part selection, ignoring the
+    // universal audioStreamID hint on some versions. Capture a private session
+    // under the part lock, then restore the preference before releasing it.
+    const read=async()=> (await this.json('/library/metadata/'+media.id)).Metadata?.[0]?.Media?.[0]?.Part?.[0];
+    const selected=part=>part?.Stream?.filter(s=>Number(s.streamType)===2 && [true,1,'1'].includes(s.selected)) || [];
+    const part=await read();
+    if(!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===2 && String(s.id)===requested)) throw new PlaybackError('The requested audio no longer belongs to this source.');
+    const previous=selected(part);
+    if(previous.length!==1)throw new PlaybackError('Plex did not identify its current audio selection.');
+    const original=String(previous[0].id);
+    if(original===requested)return;
+    const set=id=>this.request('/library/parts/'+media.partId+'?'+new URLSearchParams({audioStreamID:id}),{method:'PUT'});
+    const restore=async()=>{
+      const current=selected(await read());
+      if(current.length!==1)throw new PlaybackError('Plex could not confirm its saved audio preference.');
+      // Respect a selection changed by another Plex app in the meantime.
+      if(current.length===1 && String(current[0].id)===requested){
+        await set(original);
+        const restored=selected(await read());
+        if(restored.length!==1 || String(restored[0].id)!==original)throw new PlaybackError('Plex could not restore its saved audio preference.');
+      }
+    };
+    if(choices.authorized && !await choices.authorized())throw new PlaybackError('Viewing access or track selection expired.');
+    try {
+      await set(requested);
+      const confirmed=selected(await read());
+      if(confirmed.length!==1 || String(confirmed[0].id)!==requested)throw new PlaybackError('Plex did not select the requested audio.');
+    } catch(error) { await restore();throw error; }
+    return restore;
   }
   async selectSubtitleForBurn(media,choices) {
     // PMS uses this user's stored part selection for burn-in. Hold the part

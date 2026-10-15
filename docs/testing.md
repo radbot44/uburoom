@@ -18,7 +18,7 @@ Nine longer buffering cases passed: direct, HLS and AV1 in the same three browse
 
 That run exposed an obsolete HLS retry wait delaying a fresh outside-cache seek after recovery. Shared seeks now supersede that wait while keeping cached media attached. Three follow-up HLS outage/rewind/seek cases passed, reducing measured seek-plus-resume time from approximately 6.6 seconds to 1.2 seconds in each browser. This measures fixture recovery, not a live Plex conversion latency guarantee.
 
-The automated suite passes 98 tests with zero skips/failures, including buffer bounds, rewind/seek windows, quota response, retry cooldown/backoff, source audio/cache isolation, serialized subtitle starts, failed-burn recovery, stale caption cancellation and revoked media/caption authorization. The existing two-viewer Firefox AV1 smoke also passes after the audio/subtitle changes. See [baseline commands and limitations](development.md#isolated-playback-baseline); generated reports stay in ignored artifacts.
+The automated suite passes 100 tests with zero skips/failures, including buffer bounds, rewind/seek windows, quota response, retry cooldown/backoff, source audio/cache isolation, serialized stream starts, audio preference restoration on success/failure, repeated master loads, failed-burn recovery, stale caption cancellation and revoked media/caption authorization. The existing two-viewer Firefox AV1 smoke also passes after the audio/subtitle changes. See [baseline commands and limitations](development.md#isolated-playback-baseline); generated reports stay in ignored artifacts.
 
 ### Audio and subtitle gates
 
@@ -27,6 +27,8 @@ The first slice includes source audio, external SRT/WebVTT with native timing ad
 Fifteen isolated cases passed with zero failures: five each in Windows Firefox 157.0.1, Chrome 155.0.8059.79 and Edge 155.0.4283.45 with accelerated decoding disabled. Cases cover native WebVTT without video replacement, French SRT/Unicode/delay/Off, two-viewer English/French PCM output, ASS dialogue and positioned colored sign pixels, and selected audio with native captions in AV1. Desktop, theater and phone renders were inspected. Each browser uses fresh synthetic provider state and a fresh server with unchanged request throttles. These are generated-media results, not live Plex/Discord certification.
 
 Visual inspection found stale caption clearance immediately after a phone resize. Resize now updates the native cue layout immediately; five Edge follow-up cases passed and the phone caption render was inspected clear of transport controls.
+
+Live PMS checks subsequently reproduced non-default audio requests returning the first source stream despite the universal query hint. The original fake provider honored that hint and missed this behavior; it now requires the stored part selection, matching the observed server. The corrected flow confirmed source IDs and AAC output for four-track and three-track sources, restoring each original audio preference after session capture. With multiple sessions active, decoded English and Japanese audio fetched after a seek matched their respective source languages rather than each other. These scoped server probes establish a narrower result than browser/Discord listening, physical output or general Plex-version coverage; no timeline/history events were sent. The fifteen browser cases also passed with the corrected fake provider.
 
 Before claiming live coverage, verify:
 

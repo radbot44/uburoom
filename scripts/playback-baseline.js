@@ -11,10 +11,10 @@ const { checkBuffering } = require('./lib/playback-buffering');
 const root = path.resolve(__dirname,'..');
 
 function fixturePlex(directory, manifest, control = {}) {
-  const selectedSubtitles=new Map(), sessions=new Map();
+  const selectedSubtitles=new Map(), selectedAudio=new Map(), sessions=new Map();
   const streams = source => [...source.probe.streams.map((s,i)=>({id:Number(source.id)*10+i,index:s.index,streamType:{video:1,audio:2,subtitle:3}[s.codec_type],
     codec:s.codec_name,language:s.tags?.language,languageCode:s.tags?.language,displayTitle:s.tags?.title,channels:s.channels,
-    selected:s.codec_type==='audio' ? !!s.disposition?.default : s.codec_type==='subtitle' && String(Number(source.id)*10+i)===selectedSubtitles.get(source.id)})),
+    selected:s.codec_type==='audio' ? selectedAudio.has(source.id) ? String(Number(source.id)*10+i)===selectedAudio.get(source.id) : !!s.disposition?.default : s.codec_type==='subtitle' && String(Number(source.id)*10+i)===selectedSubtitles.get(source.id)})),
     {id:Number(source.id+'90'),streamType:3,codec:'webvtt',language:'English',languageCode:'eng',displayTitle:'English SDH (WebVTT)',hearingImpaired:1,key:'/library/streams/'+source.id+'90',selected:selectedSubtitles.get(source.id)===source.id+'90'},
     ...(fs.existsSync(path.join(directory,'captions-fr.srt')) ? [{id:Number(source.id+'91'),streamType:3,codec:'srt',language:'French',languageCode:'fra',displayTitle:'French (SRT)',key:'/library/streams/'+source.id+'91',selected:selectedSubtitles.get(source.id)===source.id+'91'}] : []),
     {id:Number(source.id+'92'),streamType:3,codec:'ass',language:'English',languageCode:'eng',displayTitle:'English styled (ASS)',key:'/library/streams/'+source.id+'92',selected:selectedSubtitles.get(source.id)===source.id+'92'}];
@@ -42,9 +42,11 @@ function fixturePlex(directory, manifest, control = {}) {
     if (url.pathname === '/library/sections') return json({Directory:[]});
     const select=/^\/library\/parts\/(\d+)$/.exec(url.pathname);
     if(select && options.method==='PUT') {
-      const source=manifest.sources.find(s=>s.id===select[1]), choice=url.searchParams.get('subtitleStreamID');
-      if(!source || !streams(source).some(s=>s.streamType===3 && String(s.id)===choice))return new Response(null,{status:404});
-      selectedSubtitles.set(source.id,choice); control.events?.push({event:'select',source:source.id,subtitleId:choice}); return json({});
+      const source=manifest.sources.find(s=>s.id===select[1]), audioChoice=url.searchParams.get('audioStreamID'), choice=url.searchParams.get('subtitleStreamID');
+      if(!source || audioChoice && !streams(source).some(s=>s.streamType===2 && String(s.id)===audioChoice) || choice && !streams(source).some(s=>s.streamType===3 && String(s.id)===choice))return new Response(null,{status:404});
+      if(choice)selectedSubtitles.set(source.id,choice);
+      if(audioChoice)selectedAudio.set(source.id,audioChoice);
+      control.events?.push({event:'select',source:source.id,subtitleId:choice,audioId:audioChoice}); return json({});
     }
     const metadata = /^\/library\/metadata\/(\d+)$/.exec(url.pathname);
     const part = /^\/library\/parts\/(\d+)\/file$/.exec(url.pathname);
@@ -61,7 +63,7 @@ function fixturePlex(directory, manifest, control = {}) {
     if (['/video/:/transcode/universal/decision','/video/:/transcode/universal/start.m3u8'].includes(url.pathname)) {
       const source=manifest.sources.find(s=>'/library/metadata/'+s.id===url.searchParams.get('path'));
       if(!source)return new Response(null,{status:404});
-      const catalog=streams(source), audioId=url.searchParams.get('audioStreamID') || String(catalog.find(s=>s.streamType===2).id);
+      const catalog=streams(source), audioId=String(catalog.find(s=>s.streamType===2 && s.selected)?.id || catalog.find(s=>s.streamType===2).id);
       const audio=catalog.find(s=>String(s.id)===audioId && s.streamType===2);
       const subtitle=url.searchParams.get('subtitles')==='burn' ? catalog.find(s=>s.streamType===3 && s.selected) : undefined;
       if(!audio)return new Response(null,{status:400});

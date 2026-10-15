@@ -14,11 +14,11 @@ const https=require('node:https');
 const {createApp}=require('../server/app');
 
 function provider() {
-  const state={selected:undefined,events:[],wrongBurn:false,wrongAudio:false,deny:false};
+  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,deny:false};
   const streams=()=>[
     {id:10,index:0,streamType:1,codec:'h264'},
-    {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:1,channels:6},
-    {id:12,index:2,streamType:2,codec:'ac3',languageCode:'fra',displayTitle:'French',selected:0,channels:6},
+    {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:state.audio==='11',channels:6},
+    {id:12,index:2,streamType:2,codec:'ac3',languageCode:'fra',displayTitle:'French',selected:state.audio==='12',channels:6},
     {id:21,streamType:3,codec:'srt',languageCode:'fra',displayTitle:'French text',key:'/library/streams/21'},
     {id:22,index:3,streamType:3,codec:'ass',languageCode:'eng',displayTitle:'English styled',selected:state.selected==='22'},
     {id:23,index:4,streamType:3,codec:'pgs',languageCode:'eng',displayTitle:'English image',selected:state.selected==='23'}];
@@ -29,13 +29,18 @@ function provider() {
       if(state.deny)return new Response(null,{status:403});
       return json({Metadata:[{ratingKey:'1',type:'movie',title:'Track fixture',duration:60000,Media:[{videoCodec:'h264',height:1080,bitrate:24000,Part:[{id:5,key:'/library/parts/5/file',Stream:streams()}]}]}]});
     }
-    if(url.pathname==='/library/parts/5' && options.method==='PUT'){state.selected=url.searchParams.get('subtitleStreamID');state.events.push({selection:state.selected});return json({});}
+    if(url.pathname==='/library/parts/5' && options.method==='PUT'){
+      if(url.searchParams.has('subtitleStreamID')){state.selected=url.searchParams.get('subtitleStreamID');state.events.push({selection:state.selected});}
+      if(url.searchParams.has('audioStreamID')){state.audio=url.searchParams.get('audioStreamID');state.events.push({audioSelection:state.audio});}
+      return json({});
+    }
     if(url.pathname.endsWith('/decision')) {
-      const burned=url.searchParams.get('subtitles')==='burn', audioId=state.wrongAudio ? 11 : Number(url.searchParams.get('audioStreamID'));
+      // Model measured PMS behavior: the universal query hint is ignored.
+      const burned=url.searchParams.get('subtitles')==='burn', audioId=state.wrongAudio ? 11 : Number(state.audio);
       return json({generalDecisionCode:1001,Metadata:[{Media:[{videoCodec:'h264',audioCodec:'aac',subtitleDecision:burned?'burn':'none',Part:[{Stream:[{streamType:1,codec:'h264'},
         {streamType:2,id:audioId,codec:'aac',selected:1},...(burned ? [{streamType:3,id:state.wrongBurn ? 999 : Number(state.selected),decision:'burn'}] : [])]}]}]}]});
     }
-    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected});await new Promise(r=>setTimeout(r,5));return new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');}
+    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');}
     if(url.pathname==='/library/streams/21.srt')return new Response('1\n00:00:01,000 --> 00:00:04,000\nBonjour\n');
     return json({});
   };
@@ -85,6 +90,39 @@ test('concurrent burn requests capture their own choices before another viewer c
     assert.equal(state.events.filter(e=>e.method==='PUT').length,before,'expired work cannot mutate Plex selections');
   } finally {await plex.close();}
 });
+test('audio starts capture different per-viewer choices and restore the saved preference, including failures',async()=>{
+  const {plex,state}=provider();
+  try {
+    const [french,english]=await Promise.all(['12','11'].map(audioId=>plex.prepare('1','direct',false,undefined,undefined,{audioId,subtitleId:'off'})));
+    assert.notEqual(french.transcodeId,english.transcodeId);
+    assert.deepEqual(state.events.filter(e=>e.startedAudio).map(e=>e.startedAudio),['12','11']);
+    assert.equal(state.audio,'11');assert.equal(french.selection.audio.id,'12');assert.equal(english.selection.audio.id,'11');
+    const events=state.events.filter(e=>e.audioSelection || e.startedAudio).map(e=>e.audioSelection ? 'select:'+e.audioSelection : 'start:'+e.startedAudio);
+    assert.deepEqual(events,['select:12','start:12','select:11','start:11']);
+    assert.match(english.initialManifest,/EXTM3U/,'default audio is captured before another selection can start');
+    state.wrongAudio=true;
+    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}),/requested audio/);
+    assert.equal(state.audio,'11','wrong decision restores the original preference');
+    state.wrongAudio=false;state.failStart=true;
+    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}));
+    assert.equal(state.audio,'11','failed startup restores the original preference');
+    const before=state.events.filter(e=>e.method==='PUT').length;
+    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',authorized:async()=>false}),/expired/);
+    assert.equal(state.events.filter(e=>e.method==='PUT').length,before);
+  } finally {await plex.close();}
+});
+
+test('audio selection and restoration use only the current viewer Plex credential',async()=>{
+  const {plex,state}=provider();
+  try {
+    const scoped=plex.scope('viewer-only','viewer');
+    await scoped.prepare('1','direct',false,undefined,undefined,{audioId:'12'});
+    assert.equal(state.audio,'11');
+    assert.ok(state.events.some(e=>e.method==='PUT'));
+    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
+  } finally {await plex.close();}
+});
+
 test('sidecar requests retain the viewer Plex scope, cap content, and do not fetch embedded streams as sidecars',async()=>{
   const {plex,state}=provider(), scoped=plex.scope('viewer-only','viewer');
   try {
@@ -155,7 +193,7 @@ test('subtitle HTTP grants reject stale selections and revoked viewers, includin
   const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
   const request=(route,method='GET',data,token)=>new Promise((resolve,reject)=>{
     const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
-      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(chunks).toString())}));
+      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
     });req.on('error',reject);req.end(data && JSON.stringify(data));
   });
   const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token;
@@ -168,6 +206,11 @@ test('subtitle HTTP grants reject stale selections and revoked viewers, includin
   await snapshot();await command('media.load',{mediaId:'1',quality:'direct'});await command('media.tracks.set',{subtitleId:'21'});
   const first=await snapshot(), captions=await request(first.subtitleUrl);
   assert.equal(captions.status,200);assert.equal(captions.body.cues[0].text,'Bonjour');assert.equal(JSON.stringify(first.tracks).includes('/library/'),false);
+  const starts=fixture.state.events.filter(e=>e.startedAudio).length;
+  const master=await request(first.mediaUrl), repeated=await request(first.mediaUrl);
+  assert.equal((await request(first.mediaUrl,'HEAD')).status,200);
+  assert.equal(master.status,200);assert.match(master.body,/#EXTM3U/);assert.equal(repeated.body,master.body);
+  assert.equal(fixture.state.events.filter(e=>e.startedAudio).length,starts,'master reloads never renegotiate restored audio preferences');
   await command('media.tracks.set',{subtitleId:'off'});assert.equal((await request(first.subtitleUrl)).status,403);
   await command('media.tracks.set',{subtitleId:'21'});const current=await snapshot();
   const pending=new Promise(resolve=>waitCaption=resolve), fetching=request(current.subtitleUrl);await pending;
