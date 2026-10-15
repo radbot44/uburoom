@@ -54,7 +54,7 @@ ExtensionZip "uburoom-extension-$version-$stamp.zip" ''
 # Explicit whitelist: never package credentials, certificates, node_modules or device data.
 $trackedFiles = @(& git -C $projectPath ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Source packaging requires an audited Git checkout.' }
-$sourceFiles = @($trackedFiles | Where-Object { (Test-Path -LiteralPath (Join-Path $projectPath $_) -PathType Leaf) -and ($_ -in @('README.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat','run-radtv.bat','install-radtv.bat','test-radtv.bat') -or $_ -match '^(assets|extension|server|web|scripts|tests|docs)/') -and ($_ -eq '.env.example' -or ($_ -notmatch '(^|/)\.env($|\.)' -and $_ -notmatch '\.(key|pem|pfx|p12|sqlite|db|zip|log)$')) })
+$sourceFiles = @($trackedFiles | Where-Object { (Test-Path -LiteralPath (Join-Path $projectPath $_) -PathType Leaf) -and ($_ -in @('README.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','.gitattributes','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat','run-radtv.bat','install-radtv.bat','test-radtv.bat') -or $_ -match '^(assets|extension|server|web|scripts|tests|docs)/') -and ($_ -eq '.env.example' -or ($_ -notmatch '(^|/)\.env($|\.)' -and $_ -notmatch '\.(key|pem|pfx|p12|sqlite|db|zip|log)$')) })
 WriteZip (Join-Path $releaseDirectory "uburoom-source-$sourceVersion-$stamp.zip") $sourceFiles ''
 if ($IncludeMV2Fallback) {
     $manifest = Get-Content -LiteralPath (Join-Path $extensionPath 'manifest.json') -Raw | ConvertFrom-Json

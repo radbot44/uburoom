@@ -14,7 +14,9 @@ The version 0.5.3 lockfile contains 63 dependency entries, including optional pl
 | ws | 8.22.0 | MIT | Installed server/test dependency |
 | esbuild | 0.28.2 | MIT | Development bundler |
 
-The SDK build's input metadata identifies only @discord/embedded-app-sdk as a bundled npm package. `web/vendor/THIRD_PARTY_NOTICES.txt` preserves its MIT notice and hls.js's upstream notice, including attribution to Dailymotion and derived Brightcove code. The complete Apache-2.0 text is also retained in `web/vendor/licenses/Apache-2.0.txt`. Installed npm dependencies retain their upstream license files; do not remove them when redistributing dependencies.
+The SDK's published modules also embed eventemitter3, zod, big-integer, uuid, decimal.js-light, lodash.transform and tslib below their own `output/lib` directory. These are identified from actual bundle inputs, even though the outer package path is the SDK. Published embedded versions are not consistently specified: notice headings distinguish the embedded copy from the locked package whose upstream license text is reproduced.
+
+`web/vendor/THIRD_PARTY_NOTICES.txt` preserves SDK/library license texts, copyright/license comments present in embedded sources, and hls.js's upstream notice including Dailymotion/Brightcove attribution. The full Apache-2.0 text is retained in `web/vendor/licenses/Apache-2.0.txt`. Rebuilding fails if a discovered component has no upstream license file. Installed dependencies retain their own notices; do not remove them when redistributing dependencies.
 
 Optional FFmpeg/FFprobe are supplied by the installation operator, not bundled here. Their build options and codec licensing need review if a future distribution includes binaries. Node, Firefox, Discord and Plex are external products, not relicensed by uburoom.
 

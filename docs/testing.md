@@ -4,6 +4,12 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## Local migration checks
+
+The local migration pass completed 66 automated tests with zero skips/failures, a fresh-checkout dependency install and shared-watch Firefox playback, plus blocked-autoplay/native-tracking checks with regenerated synthetic media. An offline copied-state startup preserved account/credential records, browser-login payloads, device hashes and the original key; rooms, remote consent and Admin mode began off. Missing-key startup was refused. Changing origin required browser reauthentication while retaining account/device/key data.
+
+These checks used one development machine, local test TLS and offline/simulated providers. They do not replace an unrelated-host setup or actual provider/extension upgrade. Public ZIP and complete-history privacy checks remain required for each release revision.
+
 The full extension Firefox fixture has an unresolved failure around restoring guest controls/rate-limit disconnects. Investigation is deferred. Do not describe it as passed or relax authorization/throttling to hide it.
 
 Before release, separately verify:
