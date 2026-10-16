@@ -2,7 +2,7 @@
 
 Self-hosted Plex watch parties with a web interface and Discord integration.
 
-Run your own server, connect your own Plex and Discord applications, and watch together in a browser or Discord Activity. The same server supports the included Firefox YouTube TV picture-control remote. An independent remote and native-player integration are future milestones.
+Run your own server, connect your own Plex and Discord applications, and watch together in a browser or Discord Activity. The same server supports the included Firefox YouTube TV picture-control remote. A separate repository for the remote is planned in [phase M1-P8](ROADMAP.md#m1-p8--separate-remote-extension-repository-and-uburoom-compatibility); native-player integration remains future work.
 
 This source is undergoing release preparation. The approved wordmark and oo icons are integrated; the remaining asset-provenance and integration checks are pending. No managed room-hosting service is included.
 
