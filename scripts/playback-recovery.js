@@ -46,7 +46,7 @@ async function main(){
     const command=async(page,action,args)=>{await until(page,'!!state && !pending','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state && !pending','Available tracks');return evaluate(page,`execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
     const sample=page=>evaluate(page,'playbackMeter.sample();true');
-    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,remote:state?.enabled,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length})').then(JSON.parse);
+    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,remote:state?.enabled,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length})').then(JSON.parse);
     const check=async(name,action)=>{const row={name,status:'failed'};report.checks.push(row);try{Object.assign(row,await action());row.status='passed';}catch(error){row.error=error.message;row.state=await snapshot(host).catch(()=>null);throw error;}finally{write();console.log('[Recovery]',name,row.status,row.error||'');}};
     await command(host,'media.load',{mediaId:'104',quality:'direct'});
     await until(host,'state.format==="hls" && video.readyState>=2','Host HLS');
@@ -194,6 +194,57 @@ async function main(){
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
       await command(host,'media.pause');
       return {detail:'Thirty-second media outage exhausted the buffer; player caught up in '+recoveryMs+' ms, then decoded frames and selected audio continued.',before,interrupted,recovered,after,tones,recoveryMs};
+    });
+    await check('fatal HLS retry exhaustion recovers on a slow retry',async()=>{
+      const before=await snapshot(host),guestBefore=await snapshot(guest);
+      // Exhaust the real hls.js loader with actual failed segment requests.
+      // Only this disposable client's internal retry budget is shortened;
+      // application retry delays and production configuration stay unchanged.
+      await evaluate(host,'(()=>{window.__fatalHls=[];window.__fragPolicy=hls.config.fragLoadPolicy;hls.config.fragLoadPolicy=JSON.parse(JSON.stringify(hls.config.fragLoadPolicy));hls.config.fragLoadPolicy.default.errorRetry.maxNumRetry=0;hls.config.fragLoadPolicy.default.timeoutRetry.maxNumRetry=0;hls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal&&data.type===Hls.ErrorTypes.NETWORK_ERROR)window.__fatalHls.push({at:Date.now(),details:data.details,retries:hlsNetworkRetries});});return true;})()');
+      const started=Date.now();
+      control.blocked=true;
+      let interrupted;
+      try {
+        await command(host,'media.seek.absolute',{seconds:Math.min(sourceDuration-40,Math.max(60,before.position+25))});
+        await command(host,'media.play');
+        await until(host,'hlsNetworkRetries>=4 && !!hlsNetworkFailure','Actual fatal HLS retry exhaustion',60000);
+        interrupted=await snapshot(host);
+      } finally {control.blocked=false;}
+      const returnedAt=Date.now();
+      await until(host,'!video.paused && video.readyState>=3 && !playbackError && !hlsNetworkFailure && Math.abs(video.currentTime-expected())<1','Slow HLS recovery',35000);
+      const recoveryMs=Date.now()-returnedAt,recovered=await snapshot(host);
+      await pause(3000);const after=await snapshot(host),guestAfter=await snapshot(guest);
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      const events=JSON.parse(await evaluate(host,'JSON.stringify(window.__fatalHls)'));
+      await evaluate(host,'hls.config.fragLoadPolicy=window.__fragPolicy;true');
+      assert.ok(events.length>=4,'real hls.js fatal events exhaust all three quick retries');
+      assert.ok(recoveryMs>=10000,'recovery uses the low-frequency timer');
+      assert.ok(after.frames-recovered.frames>35);assert.ok(after.position-recovered.position>2);assert.ok(tones>=5);
+      assert.equal(after.stream,before.stream);assert.equal(after.mediaUrl,before.mediaUrl);
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
+      assert.equal(guestAfter.stream,guestBefore.stream);assert.equal(after.remote,false);
+      await command(host,'media.pause');
+      return {detail:'Actual failed fragments exhausted three quick restarts; a slow retry resumed decoded frames and French PCM without replacing the stream.',before,interrupted,recovered,after,events,recoveryMs,elapsedMs:Date.now()-started,tones};
+    });
+    await check('sole host rejoins an empty room after timeout',async()=>{
+      await evaluate(guest,'selectRoom(undefined).then(()=>true)');
+      await until(host,'state.viewers===1','Sole host');
+      await command(host,'session.enable');
+      const before=await snapshot(host);
+      await evaluate(host,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+12000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture sole-host outage")):original(input,options);return true;})()');
+      await until(host,'state===undefined && mediaSource===undefined','Host disconnect unloads playback',6000);
+      await until(host,`!!state?.streamVersion && state.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Host rejoins retained room',25000);
+      const after=await snapshot(host);
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
+      assert.notEqual(after.observationEpoch,before.observationEpoch);assert.equal(after.remote,false);
+      const oldStatus=await evaluate(host,`fetch(${JSON.stringify(before.mediaUrl)},{headers:token?{Authorization:'Bearer '+token}:{}}).then(r=>r.status)`);
+      assert.equal(oldStatus,403);
+      await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback after sole-host rejoin');
+      const resumed=await snapshot(host);await pause(3000);const played=await snapshot(host);
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      assert.ok(played.frames-resumed.frames>35);assert.ok(tones>=5);
+      await command(host,'media.pause');
+      return {detail:'A twelve-second sole-host control outage retained the empty room; selected French/ASS playback resumed with fresh stream/observation state, old grant revoked and remote consent off.',before,after,oldStatus,tones};
     });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}

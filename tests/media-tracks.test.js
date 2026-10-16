@@ -19,7 +19,7 @@ function provider() {
     {id:10,index:0,streamType:1,codec:'h264'},
     {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:state.audio==='11',channels:6},
     {id:12,index:2,streamType:2,codec:'ac3',languageCode:'fra',displayTitle:'French',selected:state.audio==='12',channels:6},
-    {id:21,streamType:3,codec:'srt',languageCode:'fra',displayTitle:'French text',key:'/library/streams/21'},
+    {id:21,streamType:3,codec:'srt',languageCode:'fra',displayTitle:'French text',key:'/library/streams/21',selected:state.selected==='21'},
     {id:22,index:3,streamType:3,codec:'ass',languageCode:'eng',displayTitle:'English styled',selected:state.selected==='22'},
     {id:23,index:4,streamType:3,codec:'pgs',languageCode:'eng',displayTitle:'English image',selected:state.selected==='23'}];
   const fetch=async(input,options={})=>{
@@ -30,6 +30,7 @@ function provider() {
       return json({Metadata:[{ratingKey:'1',type:'movie',title:'Track fixture',duration:60000,Media:[{videoCodec:'h264',height:1080,bitrate:24000,Part:[{id:5,key:'/library/parts/5/file',Stream:streams()}]}]}]});
     }
     if(url.pathname==='/library/parts/5' && options.method==='PUT'){
+      if(state.failSubtitleRestore && url.searchParams.get('subtitleStreamID')==='0')return new Response(null,{status:503});
       if(url.searchParams.has('subtitleStreamID')){state.selected=url.searchParams.get('subtitleStreamID');state.events.push({selection:state.selected});}
       if(url.searchParams.has('audioStreamID')){state.audio=url.searchParams.get('audioStreamID');state.events.push({audioSelection:state.audio});}
       return json({});
@@ -43,7 +44,7 @@ function provider() {
       return json({generalDecisionCode:1001,Metadata:[{Media:[{videoCodec:'h264',audioCodec:'aac',subtitleDecision:burned?'burn':'none',Part:[{Stream:[{streamType:1,codec:'h264'},
         ...audioRows,...(burned ? [{streamType:3,id:state.wrongBurn ? 999 : Number(state.selected),decision:'burn'}] : [])]}]}]}]});
     }
-    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');}
+    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});state.onStart?.();await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');}
     if(url.pathname.endsWith('/child.m3u8')) {
       const body='#EXTM3U\n#EXTINF:6\nsegment.ts\n';
       if(state.holdPlaylist)return new Response(new ReadableStream({start(controller){
@@ -94,12 +95,53 @@ test('concurrent burn requests capture their own choices before another viewer c
     const [a,b]=await Promise.all(['22','23'].map(subtitleId=>plex.prepare('1','direct',false,undefined,undefined,{subtitleId})));
     assert.notEqual(a.transcodeId,b.transcodeId); assert.deepEqual(state.events.filter(e=>e.startedWith).map(e=>e.startedWith),['22','23']);
     const events=state.events.filter(e=>e.selection || e.startedWith).map(e=>e.selection ? 'select:'+e.selection : 'start:'+e.startedWith);
-    assert.deepEqual(events,['select:22','start:22','select:23','start:23']); assert.equal(plex.partQueues.size,0);
+    assert.deepEqual(events,['select:22','start:22','select:0','select:23','start:23','select:0']); assert.equal(state.selected,'0');assert.equal(plex.partQueues.size,0);
     const before=state.events.filter(e=>e.method==='PUT').length;
     await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{subtitleId:'22',authorized:async()=>false}),/expired/);
     assert.equal(state.events.filter(e=>e.method==='PUT').length,before,'expired work cannot mutate Plex selections');
   } finally {await plex.close();}
 });
+test('burn sessions restore Off or a selected subtitle on success, rejected decisions and failed startup',async()=>{
+  const {plex,state}=provider();
+  try {
+    for (const original of ['0','21','23']) for (const failure of ['none','decision','start']) {
+      state.selected=original;state.wrongBurn=failure==='decision';state.failStart=failure==='start';
+      const prepare=plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',subtitleId:'22'});
+      if (failure==='none') assert.equal((await prepare).selection.subtitle.id,'22');else await assert.rejects(prepare);
+      assert.equal(state.selected,original,`${original}/${failure} restores the saved subtitle`);
+      assert.equal(state.audio,'11','audio restoration still runs');
+    }
+    state.wrongBurn=false;state.failStart=false;state.selected='22';
+    const before=state.events.filter(e=>e.selection).length;
+    await plex.prepare('1','direct',false,undefined,undefined,{subtitleId:'22'});
+    assert.equal(state.events.filter(e=>e.selection).length,before,'an already selected subtitle needs no mutation');
+  } finally {await plex.close();}
+});
+
+test('subtitle restoration respects an external choice and uses only the viewer credential',async()=>{
+  const {plex,state}=provider();
+  try {
+    const scoped=plex.scope('viewer-only','viewer');
+    for (const external of ['0','21','23']) {
+      state.selected='0';state.onStart=()=>{state.selected=external;};
+      const media=await scoped.prepare('1','direct',false,undefined,undefined,{subtitleId:'22'});
+      assert.equal(media.selection.subtitle.id,'22');assert.equal(state.selected,external);
+    }
+    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
+    assert.equal(state.events.filter(e=>e.selection).length,3,'only the temporary selections are written');
+  } finally {await plex.close();}
+});
+
+test('a failed subtitle restoration fails preparation but still restores audio and stops the captured session',async()=>{
+  const {plex,state}=provider();
+  try {
+    state.failSubtitleRestore=true;
+    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',subtitleId:'22'}));
+    assert.equal(state.audio,'11');assert.equal(plex.partQueues.size,0);
+    assert.ok(state.events.some(e=>e.path?.endsWith('/stop')),'failed restoration releases the captured conversion');
+  } finally {await plex.close();}
+});
+
 test('audio starts capture different per-viewer choices and restore the saved preference, including failures',async()=>{
   const {plex,state}=provider();
   try {

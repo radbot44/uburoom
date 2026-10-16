@@ -9,16 +9,45 @@ const source = fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
 function load(context,name,next) { vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context); }
 test('HLS retries the current stream with backoff, retains buffered media, and ignores superseded timers',() => {
   const timers = [], client = {loads:0,startLoad(){this.loads++;}};
-  const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current'},mediaSource:'/current',
+  const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}},mediaSource:'/current',
+    selected:'room',navigator:{onLine:true},performance:{now:()=>0},receivedAt:0,expected:()=>12,video:{readyState:4,currentTime:12},
     hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,
     clearTimeout:()=>{},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
   load(context,'handleHlsError','unavailable');
   for (let i=0;i<4;i++) context.handleHlsError(client,{fatal:true,type:'network'});
-  assert.deepEqual(timers.map(t=>t.delay),[1000,2000,4000]);
+  assert.deepEqual(timers.map(t=>t.delay),[1000,2000,4000,15000]);
   assert.equal(context.hls,client,'good MSE data stays attached after exhausted speculation');
   assert.match(context.hlsNetworkFailure,/connection/);
   timers[0].action(); assert.equal(client.loads,1);
   context.hls = undefined; timers[1].action(); assert.equal(client.loads,1,'old stream cannot restart');
+});
+
+test('slow fatal HLS recovery is capped and requires the current online stream, fresh control and valid timeline',() => {
+  const timers=[],loads=[],client={startLoad:target=>loads.push(target)};
+  let now=0,target=12;
+  const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}},
+    mediaSource:'/current',selected:'room',navigator:{onLine:true},performance:{now:()=>now},receivedAt:0,expected:()=>target,video:{readyState:4,currentTime:12},
+    hlsNetworkRetries:3,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,clearTimeout:()=>{},
+    setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
+  load(context,'handleHlsError','unavailable');
+  const fatal=()=>context.handleHlsError(client,{fatal:true,type:'network'});
+  fatal();assert.equal(timers[0].delay,15000);
+  context.navigator.onLine=false;timers[0].action();assert.deepEqual(loads,[],'offline cannot load');
+  context.navigator.onLine=true;now=4000;timers[1].action();assert.deepEqual(loads,[],'stale authorization cannot load');
+  context.receivedAt=now;target=24;timers[2].action();assert.deepEqual(loads,[24],'fresh authorization uses the current shared position');
+  assert.equal(context.video.currentTime,24,'a delivery error must not leave MSE loading around its paused local position');
+  fatal();assert.equal(timers.at(-1).delay,30000);timers.at(-1).action();
+  fatal();assert.equal(timers.at(-1).delay,60000);timers.at(-1).action();
+  const count=timers.length;
+  for(let i=0;i<10;i++)fatal();
+  assert.equal(timers.length,count,'a persistent outage cannot schedule unlimited recovery attempts');
+  assert.deepEqual(loads,[24,24,24]);
+  for (const change of [()=>{context.selected='other';},()=>{context.state.mediaVersion='other';},()=>{context.state.streamVersion='other';},
+    ()=>{context.state.mediaUrl='/replacement';},()=>{context.hls={};},()=>{context.state=undefined;},()=>{target=60;},()=>{target=NaN;}]) {
+    context.hls=client;context.state={mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}};context.selected='room';
+    context.hlsNetworkRetries=3;target=12;fatal();const timer=timers.at(-1);change();timer.action();
+    assert.equal(loads.length,3,'obsolete or out-of-range playback cannot restart');
+  }
 });
 test('exhausted HLS delivery failure allows cached playback and surfaces the error only when needed',async () => {
   let paused = false, message;

@@ -45,7 +45,7 @@ function fixturePlex(directory, manifest, control = {}) {
     const select=/^\/library\/parts\/(\d+)$/.exec(url.pathname);
     if(select && options.method==='PUT') {
       const source=manifest.sources.find(s=>s.id===select[1]), audioChoice=url.searchParams.get('audioStreamID'), choice=url.searchParams.get('subtitleStreamID');
-      if(!source || audioChoice && !streams(source).some(s=>s.streamType===2 && String(s.id)===audioChoice) || choice && !streams(source).some(s=>s.streamType===3 && String(s.id)===choice))return new Response(null,{status:404});
+      if(!source || audioChoice && !streams(source).some(s=>s.streamType===2 && String(s.id)===audioChoice) || choice && choice!=='0' && !streams(source).some(s=>s.streamType===3 && String(s.id)===choice))return new Response(null,{status:404});
       if(choice)selectedSubtitles.set(source.id,choice);
       if(audioChoice)selectedAudio.set(source.id,audioChoice);
       control.events?.push({event:'select',source:source.id,subtitleId:choice,audioId:audioChoice}); return json({});

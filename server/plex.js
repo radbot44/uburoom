@@ -259,8 +259,9 @@ class Plex {
       const prepare = async () => {
       if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
       const restoreAudio = await this.selectAudioForTranscode(media,choices);
+      let restoreSubtitle;
       try {
-      if (burn) await this.selectSubtitleForBurn(media,choices);
+      if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex: '0', partIndex: '0',
         protocol: 'hls', directPlay: '0', directStream: '0', fastSeek: '1', hasMDE: '1',
@@ -303,7 +304,7 @@ class Plex {
         if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested audio and subtitle transcode.');
         media.initialManifest=text;
       }
-      } finally { await restoreAudio?.(); }
+      } finally { try { await restoreSubtitle?.(); } finally { await restoreAudio?.(); } }
       };
       try { await this.withPartLock(media.partId,prepare); }
       catch(error) {
@@ -359,10 +360,28 @@ class Plex {
     const read=async()=> (await this.json('/library/metadata/'+media.id)).Metadata?.[0]?.Media?.[0]?.Part?.[0];
     const part=await read(), requested=media.selection.subtitle.id;
     if (!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested)) throw new PlaybackError('The requested subtitle no longer belongs to this source.');
+    const selected=part=>{
+      if (!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !Array.isArray(part.Stream)) throw new PlaybackError('Plex could not confirm its saved subtitle preference.');
+      const rows=part.Stream.filter(s=>Number(s.streamType)===3 && [true,1,'1'].includes(s.selected));
+      if (rows.length>1 || rows.length===1 && rows[0].id==null) throw new PlaybackError('Plex could not identify one saved subtitle preference.');
+      return rows.length ? String(rows[0].id) : '0';
+    };
+    const original=selected(part);
+    if (original===requested) return;
+    const set=id=>this.request('/library/parts/'+media.partId+'?'+new URLSearchParams({subtitleStreamID:id}),{method:'PUT'});
+    const restore=async()=>{
+      // Respect a newer preference from another Plex app. Selection checks
+      // and writes are separate requests; re-read just before restoring.
+      if (selected(await read())!==requested) return;
+      await set(original);
+      if (selected(await read())!==original) throw new PlaybackError('Plex could not restore its saved subtitle preference.');
+    };
     if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
-    await this.request('/library/parts/'+media.partId+'?'+new URLSearchParams({subtitleStreamID:requested}),{method:'PUT'});
-    const confirmed=await read();
-    if (!confirmed?.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested && [true,1,'1'].includes(s.selected))) throw new PlaybackError('Plex did not select the requested subtitle.');
+    try {
+      await set(requested);
+      if (selected(await read())!==requested) throw new PlaybackError('Plex did not select the requested subtitle.');
+    } catch(error) { await restore(); throw error; }
+    return restore;
   }
   async stop(media) {
     media?.subtitleAbort?.abort(); media?.subtitleCache?.clear();

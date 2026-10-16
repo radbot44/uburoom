@@ -284,6 +284,58 @@ test('a timed-out viewer can rejoin the same media with personal tracks but a fr
   watch.close();
 });
 
+test('an empty timed-out room admits only its eligible host tab and revokes old command and playback state', async () => {
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  let member=true;
+  hub.access={refresh:async()=>member,isMember:()=>member,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+  const stopped=[],watch=new Watch(hub,{stop:async media=>{if(media)stopped.push(media);}});
+  const host={userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'commands'},guest={...host,userId:'guest'};
+  const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
+  watch.snapshot(room,host,viewerId);
+  const old=room.viewers.get(viewerId),oldEpoch=room.s.epoch;
+  old.trackChoice={audioId:'12',subtitleId:'off'};old.quality='1080p';old.media={privateStream:true};old.streamVersion=randomUUID();
+  old.at=Date.now()-11000;room.s.enabled=true;
+  watch.refresh(room);
+  assert.equal(watch.rooms.get(id),room);assert.equal(room.reconnecting,true);
+  assert.equal(hub.sessions.has(id),false,'dormant rooms cannot receive commands');
+  assert.equal((await hub.dispatch(host,{sessionId:id,action:'session.enable'})).status,'forbidden');
+  assert.equal(room.s.enabled,false);assert.notEqual(room.s.epoch,oldEpoch);
+  assert.deepEqual(stopped,[old.media]);assert.equal(room.viewers.size,0,'old media grants have no matching viewer');
+  assert.equal(await watch.canView(room,guest),false);assert.deepEqual(await watch.list(guest,true),[]);
+  assert.throws(()=>watch.snapshot(room,guest,viewerId),/identity mismatch/);
+  assert.throws(()=>watch.snapshot(room,host,randomUUID()),/unavailable/);
+  member=false;assert.equal(await watch.canView(room,host),false);
+  assert.throws(()=>watch.snapshot(room,host,viewerId),/unavailable/);
+  member=true;assert.equal(await watch.canView(room,host),true);
+  watch.snapshot(room,host,viewerId);
+  const restored=room.viewers.get(viewerId);
+  assert.deepEqual(restored.trackChoice,old.trackChoice);assert.equal(restored.quality,'1080p');
+  assert.notEqual(restored.observationEpoch,old.observationEpoch);assert.equal(restored.media,undefined);assert.equal(restored.streamVersion,undefined);
+  assert.equal(hub.sessions.get(id),room.s);assert.equal(room.s.enabled,false);
+  watch.close();
+});
+
+test('retained host rooms count toward the limit and expire on grace, media change, leave or close', async () => {
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true};
+  const watch=new Watch(hub,{stop:async()=>{}}),host={userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'commands'};
+  const timedOut=()=>{
+    const room=watch.rooms.get(watch.create(host)),viewerId=randomUUID();watch.snapshot(room,host,viewerId);
+    room.viewers.get(viewerId).at=Date.now()-11000;watch.refresh(room);return {room,viewerId};
+  };
+  const rooms=Array.from({length:4},timedOut);
+  assert.throws(()=>watch.create(host),/Close an existing/);
+  const [expired,changed,left,closed]=rooms;
+  const deadline=expired.room.disconnectedViewers.get(expired.viewerId).expires;
+  watch.refresh(expired.room,deadline-1);assert.equal(watch.rooms.has(expired.room.s.sessionId),true);
+  watch.refresh(expired.room,deadline);assert.equal(watch.rooms.has(expired.room.s.sessionId),false);
+  assert.throws(()=>watch.snapshot(expired.room,host,expired.viewerId),/unavailable/,'expired room cannot be resurrected');
+  changed.room.mediaVersion=randomUUID();watch.refresh(changed.room);assert.equal(watch.rooms.has(changed.room.s.sessionId),false);
+  await watch.leave(left.room,host,left.viewerId);assert.equal(watch.rooms.has(left.room.s.sessionId),false);
+  watch.remove(closed.room.s.sessionId);assert.equal(watch.rooms.size,0);
+  watch.close();
+});
+
 test('episode metadata uses the same subtitle and cross-season ordering for library and playback', async () => {
   const episodes = [
     { ratingKey: '10', type: 'episode', grandparentRatingKey: '99', title: 'First', grandparentTitle: 'Show', parentIndex: 1, index: 1, year: 2025 },

@@ -312,10 +312,26 @@ function handleHlsError(client, data) {
     // Keep already buffered media attached while retrying the current stream.
     // Authorization and grant renewal still run through the normal room poll.
     clearTimeout(hlsRecoveryTimer);
-    if (hlsNetworkRetries < 3) hlsRecoveryTimer = setTimeout(() => {
-      if (hls === client && state?.mediaUrl === mediaSource) client.startLoad();
-    }, 1000 * 2 ** hlsNetworkRetries++);
-    else hlsNetworkFailure = 'The video stream could not load. Check the connection and try again.';
+    if (hlsNetworkRetries >= 3) hlsNetworkFailure = 'The video stream could not load. Check the connection and try again.';
+    // Three quick retries, then at most three low-frequency recovery attempts.
+    // Keep the private stream, tracks and shared timeline; never replay commands.
+    if (hlsNetworkRetries < 6) {
+      const attempt = hlsNetworkRetries++, delay = attempt < 3 ? 1000 * 2 ** attempt : 15000 * 2 ** (attempt-3);
+      const source = mediaSource, version = state?.mediaVersion, stream = state?.streamVersion, room = selected;
+      const retry = () => {
+        if (hls !== client || !state?.state || selected !== room || mediaSource !== source || state.mediaUrl !== source ||
+          state.mediaVersion !== version || state.streamVersion !== stream) return;
+        // Wait for online state and a recent authorized poll before loading.
+        if (navigator.onLine === false || performance.now()-receivedAt > 3000) { hlsRecoveryTimer = setTimeout(retry,delay); return; }
+        const target = expected();
+        if (!Number.isFinite(target) || target < 0 || target >= state.state.duration) return;
+        // Once the delivery error pauses local playback, normal synchronization
+        // is suspended. Retarget MSE too, or hls.js can refill the old position.
+        if (video.readyState >= 1 && Math.abs(video.currentTime-target) > .65) video.currentTime = target;
+        hlsRecoveryTimer = undefined; client.startLoad(target);
+      };
+      hlsRecoveryTimer = setTimeout(retry,delay);
+    }
     return;
   }
   // hls.js also resets MediaSource internally on nonfatal reset events.

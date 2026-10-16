@@ -97,13 +97,22 @@ class Watch {
     if (room.media && !room.s.state.paused && room.s.state.position >= room.media.duration) {
       room.position = room.media.duration; room.changedAt = now; room.s.state.paused = true; room.revision++;
     }
-    if (room.hadViewers && !room.viewers.size) { this.remove(room.s.sessionId); return; }
+    if (room.hadViewers && !room.viewers.size) {
+      const savedHost = room.disconnectedViewers.get(room.hostViewerId);
+      if (savedHost?.userId === room.s.hostId) {
+        // An empty room has no command target. Only its original host tab may
+        // reactivate it during the bounded, same-media reconnect grace.
+        room.reconnecting = true; this.hub.sessions.delete(room.s.sessionId); return;
+      }
+      this.remove(room.s.sessionId); return;
+    }
     if (room.hadViewers && ![...room.viewers.values()].some(viewer => viewer.userId === room.s.hostId)) void this.transfer(room);
     else if (pruned) void this.maybeStart(room);
     if (!room.hadViewers && now - room.lastActivity > 30000) this.remove(room.s.sessionId);
   }
   async canView(room, actor) {
     if (!room || this.rooms.get(room.s.sessionId) !== room) return false;
+    if (room.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
     if (!canWatch(this.hub.access,actor.userId)) {
       try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId)) return false; } catch { return false; }
     }
@@ -114,6 +123,7 @@ class Watch {
     const rooms = [];
     for (const room of this.rooms.values()) {
       this.refresh(room); if (!this.rooms.has(room.s.sessionId)) continue;
+      if (room.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) continue;
       const accessible = await this.canView(room, actor);
       if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access))) continue;
       const members = [...new Map([...room.viewers.values()].map(v => [v.userId, v.name])).values()];
@@ -144,7 +154,10 @@ class Watch {
     } finally { room.transferring = false; }
   }
   async leave(room, actor, viewerId, reason = 'left') {
-    if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) room.disconnectedViewers.delete(viewerId);
+    if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
+      room.disconnectedViewers.delete(viewerId);
+      if (room.reconnecting && viewerId === room.hostViewerId) { this.remove(room.s.sessionId); return; }
+    }
     if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
     const hostLeft = actor.userId === room.s.hostId;
     this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
@@ -179,13 +192,17 @@ class Watch {
   }
   snapshot(room, actor, viewerId, alive, quality = '720p') {
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
+    if (this.rooms.get(room.s.sessionId) !== room) throw new Error('Session unavailable');
     // A new host page never silently inherits remote consent from a previous
     // host tab. Existing viewers can keep the server session alive in between.
     const oldViewer = room.viewers.get(viewerId);
     if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
     const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
     if (saved && saved.userId !== actor.userId) throw new Error('Viewer identity mismatch');
+    if (room.reconnecting && (!saved || viewerId !== room.hostViewerId || actor.surface !== 'web' || actor.userId !== room.s.hostId ||
+      !viewEligible(room.s, actor, this.hub.config, now, this.hub.access))) throw new Error('Session unavailable');
     if (saved) room.disconnectedViewers.delete(viewerId);
+    if (room.reconnecting) { room.reconnecting = false; this.hub.sessions.set(room.s.sessionId, room.s); }
     if (isHost(room.s, actor) && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
       room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
     }
