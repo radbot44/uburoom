@@ -12,6 +12,8 @@ let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFai
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
+const observationClock=uburoomPlayback.observationClock();
+let observationClockRevision=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
@@ -128,16 +130,17 @@ function fail(message) {
   if (message && changed && theater && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
 async function api(path, data, options = {}) {
-  const started=performance.now(); let response,decoded=false;
+  const started=performance.now(); let response,decoded=false,rejection;
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
   try {
   if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000), keepalive: !!options.keepalive });
-  const value = await response.json(); decoded=true; if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
+  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw new Error(value.error || 'Request failed');} return value;
   } catch(error) {
     diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
+      rejection:uburoomDiagnostics.requestKind(path)==='observe'?rejection:undefined,
       failure:response && !response.ok?'http':response && !decoded?'decode':error.name==='TimeoutError'?'timeout':error.name==='AbortError'?'abort':error instanceof TypeError?'network':'other'});
     throw error;
   }
@@ -594,12 +597,16 @@ async function reportObservation() {
   const id = selected;
   const playerState = playbackError || video.error ? 'error' : autoplayBlocked ? 'blocked' : video.ended ? 'ended' : video.seeking ? 'seeking' :
     probing ? 'buffering' : video.paused ? 'paused' : playerWaiting || video.readyState < 3 ? 'buffering' : 'playing';
-  const quality = video.getVideoPlaybackQuality?.();
+  const sampleAt=performance.now(), observedAt=observationClock.sample(sampleAt);
+  if(observedAt===undefined){diagnostics.record('observation-uncredited',{creditReason:'clock-unavailable'});return;}
   const data = {viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,observationEpoch:state.observationEpoch,
-    sequence:++observationSequence,sampleAt:performance.now(),observedAt:Date.now()+offset,position:video.currentTime,
-    rate:video.playbackRate,frames:quality ? quality.totalVideoFrames-quality.droppedVideoFrames : videoFrames,discontinuity:observationBreak,state:playerState};
+    sequence:++observationSequence,sampleAt,observedAt,position:video.currentTime,
+    rate:video.playbackRate,frames:uburoomPlayback.observationFrames(video,videoFrames),discontinuity:observationBreak,state:playerState};
   observationPending = true;
-  try { await api('/api/watch/rooms/' + id + '/observe',data); }
+  try {
+    const result=await api('/api/watch/rooms/' + id + '/observe',data);
+    if(result.credit && result.credit.reason!=='credited')diagnostics.record('observation-uncredited',{...result.credit,creditReason:result.credit.reason});
+  }
   catch { /* Never replay an observation after reconnect. The next sample is fresh. */ }
   finally { observationPending = false; }
 }
@@ -706,9 +713,11 @@ function applyState(next) {
 }
 async function refreshState() {
   if (!selected) return;
-  const id = selected, before = Date.now();
+  const id = selected, before = Date.now(), sent=performance.now();
   try {
     const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality); if (id !== selected) return;
+    const revision=observationClock.update(next.observationEpoch,next.serverNow,sent,performance.now());
+    if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}
     offset = next.serverNow - (before + Date.now()) / 2; applyState(next); fail(playbackError); void reportReadiness();
   } catch (error) { if (id === selected) unavailable(error.message,'room-poll'); }
 }

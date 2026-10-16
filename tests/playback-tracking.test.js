@@ -51,3 +51,51 @@ test('overlap uses source observation timestamps rather than differing delivery 
   f.tick(500);f.tracking.observe(f.room,a,'a',f.data(a,2,1));f.tick(500);f.tracking.observe(f.room,b,'b',f.data(b,2,1,'playing',{observedAt:101000}));
   assert.equal(f.tracking.history('user').totals[0].watchedSeconds,1);f.tracking.close();
 });
+
+test('interval diagnostics classify timing jitter, clock changes, resets and playback gaps without relaxing guards',()=>{
+  const cases=[
+    ['credited',500,{observedAt:101000}],
+    ['delivery-jitter',2000,{observedAt:101000}],
+    ['clock-discontinuity',1000,{observedAt:101300}],
+    ['receive-gap',0,{}],
+    ['frames-not-advancing',1000,{frames:30}],
+    ['frames-not-advancing',1000,{frames:0}],
+    ['sample-gap',1000,{sampleAt:7000}],
+    ['not-playing',1000,{state:'buffering'}],
+    ['discontinuity',1000,{discontinuity:1}],
+    ['position-discontinuity',1000,{position:10}]
+  ];
+  for(const [reason,delay,extra] of cases){
+    const f=fixture(),v=f.viewer();try{
+      assert.equal(f.tracking.observe(f.room,v,'tab',f.data(v,1,0)).credit.reason,'baseline');f.tick(delay);
+      const result=f.tracking.observe(f.room,v,'tab',f.data(v,2,1,'playing',extra));
+      assert.equal(result.credit.reason,reason);assert.equal(result.watchedSeconds,reason==='credited'?1:0);
+      assert.ok(Object.values(result.credit).every(value=>typeof value==='string'||Number.isFinite(value)&&Math.abs(value)<=1e9));
+    }finally{f.tracking.close();}
+  }
+});
+test('rejected observations retain safe categories and cannot consume the next sequence or reset the baseline',()=>{
+  const cases=[['media-changed',{mediaVersion:'secret'}],['stream-changed',{streamVersion:'secret'}],['epoch-changed',{observationEpoch:'secret'}],
+    ['invalid-state',{state:'secret'}],['invalid-frames',{frames:-1}],['invalid-rate',{rate:0}],['invalid-position',{position:999}],
+    ['invalid-clock',{observedAt:NaN}],['sample-stale',{observedAt:97999}],['sample-future',{observedAt:102001}],
+    ['sequence-replayed',{sequence:1}],['sample-replayed',{sampleAt:1000}],['invalid-discontinuity',{discontinuity:-1}]];
+  for(const [reason,extra] of cases){
+    const f=fixture(),v=f.viewer();try{
+      f.tracking.observe(f.room,v,'tab',f.data(v,1,0));f.tick();
+      assert.throws(()=>f.tracking.observe(f.room,v,'secret',f.data(v,2,1,'playing',extra)),error=>error.rejection===reason&&!error.message.includes('secret'));
+      assert.equal(v.observationSequence,1);assert.equal(f.tracking.observe(f.room,v,'tab',f.data(v,2,1)).watchedSeconds,1);
+    }finally{f.tracking.close();}
+  }
+});
+test('server wall-clock steps reject stale/future reports without replaying or crediting the changed interval',()=>{
+  for(const step of [-4745,4745]){
+    const f=fixture(),v=f.viewer();try{
+      f.tracking.observe(f.room,v,'tab',f.data(v,1,0));f.tick(1000+step);
+      assert.throws(()=>f.tracking.observe(f.room,v,'tab',f.data(v,2,1,'playing',{observedAt:101000})),error=>error.rejection===(step>0?'sample-stale':'sample-future'));
+      if(step>0)assert.throws(()=>f.tracking.observe(f.room,v,'tab',f.data(v,2,1,'playing',{discontinuity:1})),error=>error.rejection==='observation-timeout');
+      const result=f.tracking.observe(f.room,v,'tab',f.data(v,2,1,'playing',{discontinuity:1}));
+      assert.equal(result.credit.reason,step>0?'baseline':'discontinuity');assert.equal(result.watchedSeconds,0);
+      f.tick();assert.equal(f.tracking.observe(f.room,v,'tab',f.data(v,3,2,'playing',{discontinuity:1})).watchedSeconds,1);
+    }finally{f.tracking.close();}
+  }
+});

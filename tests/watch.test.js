@@ -493,8 +493,16 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const observe= (data,headers=host)=>request(`/api/watch/rooms/${id}/observe`,'POST',data,headers);
   assert.equal((await observe(observation,guest)).status,403,'another account cannot report this viewer');
   assert.equal((await observe(observation,{...host,Origin:'https://evil.example'})).status,401);
-  assert.equal((await observe(observation)).status,200);
-  assert.equal((await observe(observation)).status,409,'report replay rejected');
+  const acceptedObservation=await observe(observation);
+  assert.equal(acceptedObservation.status,200);assert.equal(acceptedObservation.body.credit.reason,'baseline');
+  const replayObservation=await observe(observation);
+  assert.equal(replayObservation.status,409,'report replay rejected');assert.equal(replayObservation.body.rejection,'sequence-replayed');
+  const originalObserve=app.watch.tracking.observe;
+  try {
+    app.watch.tracking.observe=()=>{throw new Error('secret database path and token');};
+    const failed=await observe({...observation,sequence:2,sampleAt:2000});
+    assert.equal(failed.status,503);assert.equal(failed.body.rejection,'storage-failure');assert.ok(!JSON.stringify(failed.body).includes('secret'));
+  } finally {app.watch.tracking.observe=originalObserve;}
   const ownHistory=(await request('/api/watch/playback','GET',undefined,host)).body;
   assert.equal(ownHistory.sessions[0].userId,'host');assert.equal(ownHistory.sessions[0].mediaId,'demo','server derives media');
   assert.equal((await request('/api/watch/playback?userId=host','GET',undefined,guest)).body.sessions.length,0,'history is private to the authenticated account');

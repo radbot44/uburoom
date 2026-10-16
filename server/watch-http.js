@@ -9,6 +9,7 @@ const { PlaybackError, CHUNK, MIME, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
+const {ObservationError}=require('./playback-tracking');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
   const identities = new Map(), grants = new Map();
@@ -303,7 +304,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           json(res,403,{error:'Playback viewer unavailable'}); return true;
         }
         try { json(res,200,watch.tracking.observe(room,viewer,data.viewerId,data)); }
-        catch { json(res,409,{error:'Playback observation changed or expired'}); }
+        catch(error) { json(res,error instanceof ObservationError?409:503,{error:'Playback observation unavailable',rejection:error instanceof ObservationError?error.rejection:'storage-failure'}); }
         return true;
       }
       if (req.method === 'POST' && match[2] === 'ready') {

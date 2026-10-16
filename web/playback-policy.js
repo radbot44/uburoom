@@ -49,7 +49,33 @@
     } catch { /* Unknown capability keeps the normal observed-playback path. */ }
     return false;
   }
-  const api = {BUFFER,hlsConfig,chunkWindow,ranges,bufferedAhead,timeline,needsCompatible};
+  // Observation duration follows the monotonic clock, not Date.now() or a
+  // freshly jittering poll offset. A server clock step starts a new boundary.
+  // Slow polls cannot establish/rebase this clock or extend its freshness.
+  function observationClock() {
+    let epoch,anchor,lastPoll,revision=0;
+    return {
+      update(nextEpoch,serverNow,sent,received) {
+        if(epoch!==nextEpoch){epoch=nextEpoch;anchor=undefined;lastPoll=undefined;revision++;}
+        const rtt=received-sent;
+        if(!Number.isFinite(serverNow)||!Number.isFinite(rtt)||rtt<0||rtt>1000)return revision;
+        const predicted=anchor && anchor.wall+received-anchor.mono;
+        if(!anchor || predicted<serverNow-250 || predicted>serverNow+rtt+250){
+          anchor={wall:serverNow+rtt/2,mono:received};revision++;
+        }
+        lastPoll=received;return revision;
+      },
+      sample(mono) {return anchor && mono>=lastPoll && mono-lastPoll<=3000 ? anchor.wall+mono-anchor.mono : undefined;}
+    };
+  }
+  function observationFrames(video,callbacks) {
+    // Never switch to a different counter when the chosen one stops. Hidden
+    // video may advance its media clock/native counters without presentation.
+    if(typeof video.requestVideoFrameCallback==='function')return callbacks;
+    const quality=video.getVideoPlaybackQuality?.();
+    return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
+  }
+  const api = {BUFFER,hlsConfig,chunkWindow,ranges,bufferedAhead,timeline,needsCompatible,observationClock,observationFrames};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

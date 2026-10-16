@@ -9,14 +9,18 @@
     category:['network','media','other'],
     detail:['reset','fragment','manifest','other'],
     format:['hls','file','av1'], delivery:['text','burn','off'],
-    visibility:['visible','hidden','prerender']
+    visibility:['visible','hidden','prerender'],
+    rejection:['media-unavailable','media-changed','stream-changed','epoch-changed','invalid-discontinuity','invalid-state','invalid-sequence','sequence-replayed',
+      'invalid-sample','sample-replayed','invalid-clock','sample-stale','sample-future','invalid-position','invalid-rate','invalid-frames','observation-timeout','storage-failure'],
+    creditReason:['baseline','not-playing','discontinuity','frames-not-advancing','sample-gap','receive-gap','delivery-jitter','clock-discontinuity','position-discontinuity','interval-limit','clock-unavailable','credited']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
-    'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide']);
+    'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
-    'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation']);
+    'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
+    'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds']);
   const flags = new Set(['paused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged']);
   function requestKind(path) {
     const route = String(path).split('?')[0];

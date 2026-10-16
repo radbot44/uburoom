@@ -93,3 +93,20 @@ test('automatic soak cleanup refuses changed rooms, media, permissions and concu
     assert.deepEqual(calls,[]);assert.equal(events.filter(row=>row.event==='export').length,1);assert.equal(events.find(row=>row.event==='soak-end').cleanup,false);
   }
 });
+
+test('observation diagnostics retain only known rejection/credit reasons and bounded ring entries',async()=>{
+  const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8'),diagnostics=create();
+  const ctx={token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
+    fetch:async()=>({status:409,ok:false,json:async()=>({error:'secret token URL',rejection:'sample-stale'})})};
+  vm.runInNewContext(source.slice(source.indexOf('async function api('),source.indexOf('function acceptIdentity(')),ctx);
+  await assert.rejects(ctx.api('/api/watch/rooms/secret/observe',{}));
+  assert.equal(diagnostics.snapshot().entries.at(-1).rejection,'sample-stale');
+  ctx.fetch=async()=>({status:409,ok:false,json:async()=>({error:'secret',rejection:'secret'})});
+  await assert.rejects(ctx.api('/api/watch/rooms/secret/observe',{}));
+  assert.equal(diagnostics.snapshot().entries.at(-1).rejection,undefined);
+  for(let i=0;i<400;i++)diagnostics.record('observation-uncredited',{creditReason:'frames-not-advancing',elapsedMs:1000,frameDelta:0,url:'secret',playbackId:'secret'});
+  assert.equal(diagnostics.snapshot().entries.length,300);assert.ok(diagnostics.snapshot().discardedEvents>0);
+  diagnostics.record('observation-uncredited',{creditReason:'secret',rejection:'secret',positionDelta:Infinity});
+  assert.equal(diagnostics.snapshot().entries.at(-1).creditReason,undefined);
+  assert.ok(!JSON.stringify(diagnostics.snapshot()).includes('secret'));
+});

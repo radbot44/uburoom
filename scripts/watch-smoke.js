@@ -66,8 +66,8 @@ async function main() {
     const session = await command('session.new', { capabilities: { alwaysMatch: { acceptInsecureCerts: true } } });
     console.log('[Watch Firefox]', session.capabilities.browserVersion);
     if (process.argv.includes('--tracking')) {
-      const {context:host}=await command('browsingContext.create',{type:'tab'});
-      const {context:guest}=await command('browsingContext.create',{type:'tab'});
+      const {context:host}=await command('browsingContext.create',{type:'window'});
+      const {context:guest}=await command('browsingContext.create',{type:'window'});
       await command('browsingContext.navigate',{context:host,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
       await until(host,'!!me','host login');await evaluate(host,'document.getElementById("create").click()');await until(host,'!!state','host room');
       await until(host,'document.querySelector("[data-action=play]")','local media');await evaluate(host,'document.querySelector("[data-action=play]").click()');
@@ -77,6 +77,31 @@ async function main() {
       }
       await until(host,'video.currentTime>1 && !video.paused','real decoded playback');
       await until(host,'api("/api/watch/playback").then(h=>h.totals.some(t=>t.watchedSeconds>1))','native reports earn actual playback');
+      const creditedBefore=app.watch.tracking.history('demo-host').totals[0].watchedSeconds;
+      const timingStart=performance.now();
+      await evaluate(host,`globalThis.trackingClockNow=Date.now;globalThis.trackingFetch=fetch;
+        Date.now=()=>trackingClockNow()+4745;
+        globalThis.trackingPolls=0;
+        fetch=async(...args)=>{const response=await trackingFetch(...args);
+          if(uburoomDiagnostics.requestKind(args[0])==='room-poll'&&++trackingPolls%2)await new Promise(resolve=>setTimeout(resolve,700));return response;};true`);
+      try {
+        await pause(3200);await evaluate(host,'Date.now=()=>trackingClockNow()-4745;true');await pause(3200);
+      } finally {await evaluate(host,'Date.now=trackingClockNow;fetch=trackingFetch;true');}
+      const timingElapsed=(performance.now()-timingStart)/1000;
+      const timingCredit=app.watch.tracking.history('demo-host').totals[0].watchedSeconds-creditedBefore;
+      assert.ok(timingCredit>=timingElapsed-1.5&&timingCredit<=timingElapsed+1.5,'clock steps and poll jitter retain bounded decoded credit');
+      assert.equal(await evaluate(host,'diagnostics.snapshot().entries.some(row=>row.event==="request-failed"&&row.request==="observe")'),false,'clock steps do not cause rejected observations');
+      await evaluate(host,'globalThis.trackingQuality=video.getVideoPlaybackQuality;globalThis.trackingFrozen=video.getVideoPlaybackQuality();video.getVideoPlaybackQuality=()=>trackingFrozen;true');
+      const framesBefore=app.watch.tracking.history('demo-host').totals[0].watchedSeconds;
+      try {await pause(2200);assert.ok(app.watch.tracking.history('demo-host').totals[0].watchedSeconds>framesBefore+1,'callbacks earn decoded credit despite flat native counters');}
+      finally {await evaluate(host,'video.getVideoPlaybackQuality=trackingQuality;true');}
+      await evaluate(host,'video.cancelVideoFrameCallback(frameCallback);frameCallback=undefined;true');
+      // Let the first frozen report establish its boundary, then require no credit.
+      await pause(1200);const frozenCredit=app.watch.tracking.history('demo-host').totals[0].watchedSeconds;
+      try {await pause(2200);assert.equal(app.watch.tracking.history('demo-host').totals[0].watchedSeconds,frozenCredit,'frozen callbacks earn no credit despite native frames');
+        assert.equal(await evaluate(host,'diagnostics.snapshot().entries.some(row=>row.creditReason==="frames-not-advancing")'),true);}
+      finally {await evaluate(host,'watchFrames();true');}
+      console.log('[Watch Firefox] Timing probe:',JSON.stringify({elapsedSeconds:timingElapsed,creditedSeconds:timingCredit}));
       const roomId=await evaluate(host,'selected');
       await command('browsingContext.navigate',{context:guest,url:config.publicUrl+'/watch?demo=guest',wait:'complete'});
       await until(guest,'!!me','guest login');await evaluate(guest,`selectRoom(${JSON.stringify(roomId)}).then(()=>true)`);
@@ -92,11 +117,14 @@ async function main() {
       await evaluate(guest,'globalThis.savedObservation=reportObservation;reportObservation=async()=>{};true');await pause(6200);
       assert.ok(app.watch.tracking.history('demo-guest').sessions.some(s=>s.endReason==='observation-timeout'),'missing observations expire even while room polls continue');
       await evaluate(guest,'reportObservation=globalThis.savedObservation;true');await until(guest,'api("/api/watch/playback").then(h=>h.sessions.length>=2 && !h.sessions[0].endedAt)','fresh reconnect run');
-      const {context:overlap}=await command('browsingContext.create',{type:'tab'});
+      const {context:overlap}=await command('browsingContext.create',{type:'window'});
       await command('browsingContext.navigate',{context:overlap,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
       await until(overlap,'!!me','overlapping host tab login');await evaluate(overlap,`selectRoom(${JSON.stringify(roomId)}).then(()=>true)`);
       if(process.argv.includes('--blocked')) {await until(overlap,'autoplayBlocked && video.readyState>=2','overlapping tab blocked');await click(overlap,'join-playback');}
-      await until(overlap,'video.currentTime>5 && !video.paused','overlapping actual playback');await pause(3200);
+      await until(overlap,'video.currentTime>5 && !video.paused','overlapping actual playback');
+      for(const context of [host,overlap])assert.equal(await evaluate(context,'document.visibilityState'), 'visible','overlap requires two visible viewers');
+      const overlapFrames=await Promise.all([host,overlap].map(context=>evaluate(context,'videoFrames')));await pause(3200);
+      for(let i=0;i<2;i++)assert.ok(await evaluate([host,overlap][i],'videoFrames')>overlapFrames[i],'both overlapping viewers present decoded frames');
       const history=app.watch.tracking.history('demo-host');assert.ok(history.sessions.reduce((n,s)=>n+s.watchedSeconds,0)>history.totals[0].watchedSeconds+.5,'overlapping tabs deduplicate account time');
       await command('browsingContext.close',{context:overlap});await command('browsingContext.close',{context:host});await command('browsingContext.close',{context:guest});await pause(300);
       for(let n=0;n<65 && !app.watch.tracking.history('demo-host').sessions.every(s=>s.endedAt);n++)await pause(100);
