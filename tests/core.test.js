@@ -178,9 +178,25 @@ test('disconnect removes consent and pending commands, and reconnect does not re
   const { hub, ws, register, sent } = setup(); register();
   const reply = hub.dispatch(actor, Engine.parse('!ubu pause'));
   hub.drop(ws); assert.equal((await reply).status, 'unavailable'); assert.equal(hub.sessions.size, 0);
-  const count = sent.length; register('player', false);
+  const count = sent.length, freshSent=[];
+  const fresh={readyState:1,send:raw=>freshSent.push(JSON.parse(raw)),close(){this.readyState=3;},terminate(){this.readyState=3;}};
+  assert.equal(hub.authenticate(fresh,ws.device.id,'a'.repeat(64)),true);
+  hub.update(fresh,{sessionId:randomUUID(),epoch:randomUUID(),alias:'player',enabled:false,reachable:true,mode:'owner'});
   assert.equal((await hub.dispatch(actor, Engine.parse('!ubu pause'))).status, 'forbidden');
-  assert.equal(sent.length, count + 1, 'only the disabled registration acknowledgement is sent'); hub.close();
+  assert.equal(sent.length,count);assert.equal(freshSent.length,1,'only the new socket receives the disabled registration acknowledgement'); hub.close();
+});
+
+test('a replaced device socket cannot register a new remotely enabled session', async () => {
+  const {hub,ws,register}=setup(), previous=register();
+  const replacement={readyState:1,send:()=>{},close(){this.readyState=3;},terminate(){this.readyState=3;}};
+  assert.equal(hub.authenticate(replacement,ws.device.id,'a'.repeat(64)),true);
+  assert.equal(hub.sessions.size,0,'replacing the socket drops its old sessions');
+  ws.readyState=1; // A queued old message may reach the hub before close completes.
+  assert.throws(()=>hub.update(ws,{...previous,sessionId:randomUUID(),enabled:true}),/Device disconnected/);
+  assert.equal(hub.sessions.size,0,'a stale socket cannot restore remote consent');
+  hub.update(replacement,{...previous,sessionId:randomUUID(),enabled:false});
+  assert.equal(hub.sessions.size,1,'the current socket can register a fresh disabled session');
+  hub.close();
 });
 test('expired commands cannot acknowledge success or survive a changed permission', async () => {
   const { hub, ws, register, sent } = setup(); register();

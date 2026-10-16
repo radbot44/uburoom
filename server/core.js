@@ -88,6 +88,7 @@ class Hub {
     return true;
   }
   update(socket, message) {
+    if (socket.readyState !== 1 || !socket.device || this.connections.get(socket.device.id) !== socket) throw new Error('Device disconnected');
     if (!UUID.test(message.sessionId) || !UUID.test(message.epoch) || typeof message.alias !== 'string' || message.alias !== '' && !ALIAS.test(message.alias) ||
       !MODES.has(message.mode) || typeof message.enabled !== 'boolean' || typeof message.reachable !== 'boolean') throw new Error('Invalid session');
     const old = this.sessions.get(message.sessionId);
