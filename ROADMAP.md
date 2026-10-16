@@ -35,6 +35,7 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 | M3 | Complete audio, subtitles and content fidelity | Next; first slice implemented | M2 delivery model; validation can start now |
 | M4 | Complete the Plex viewing experience | Later; planned | Stable source/track selection and item timeline |
 | M5 | Make a verified self-hosted release | Release gate; preparation underway | Evidence for the combinations being shipped |
+| M6 | Low-latency playback synchronization | Planned; clock synchronization and latency compensation first | M1 playback diagnostics and multi-client measurements |
 
 ### M1 — Sustained real playback and room continuity
 
@@ -98,6 +99,30 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 **Done for a release:** Claims match recorded evidence, required install/upgrade and provenance gates are satisfied, and audited ZIPs can be reviewed for publication. A feature milestone alone does not authorize a release.
 
 Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [attribution](docs/third-party.md), [verification gates](docs/testing.md#local-migration-checks).
+
+### M6 — Low-latency playback synchronization
+
+**Goal:** Synchronize playback between geographically separated viewers with a delay equal to or lower than typical Discord voice-call latency, targeting a playback difference of **≤100 ms at p95**. This is a performance goal to validate, not an established support claim.
+
+**Current issues:** Playback does not compensate for network latency; existing clock-offset estimation is not used for playback synchronization; play/pause updates rely on one-second polling; drift correction is reactive and relatively slow.
+
+**Planned improvements, in priority order:**
+
+1. **Latency-aware synchronization:** Measure network RTT and server/client clock offsets, filtering out unreliable samples.
+2. **Server-time-based playback:** Calculate the correct playback position using synchronized server timestamps rather than response arrival times.
+3. **Real-time updates:** Use WebSockets or Server-Sent Events instead of polling for immediate play/pause/seek notifications, preserving the shared validated command engine, authorization and stale-command rejection.
+4. **Scheduled playback:** Coordinate playback starts using shared future server timestamps to account for network delays.
+5. **Improved drift correction:** Tune playback-speed adjustments and seeking to minimize noticeable desynchronization without disrupting buffering or decoder recovery.
+6. **Sync diagnostics:** Add multi-client testing that measures actual playback differences, including audio timing where possible, with p95/p99 metrics. Separate geographically distributed evidence from local fixtures and command acknowledgements.
+
+**Success criteria:**
+
+- ≤100 ms playback difference at p95.
+- ≤200 ms playback difference at p99.
+- Play/pause/seek events remain tightly synchronized across distant clients.
+- Minimal buffering, stuttering or noticeable playback-speed changes.
+
+**Next useful slice:** Focus first on clock synchronization and latency-compensated playback calculations, followed by real-time event delivery and improved drift correction. Record the measurement conditions, actual playback percentiles and remaining limitations in [testing status](docs/testing.md#low-latency-playback-synchronization).
 
 ## Future direction and decisions still open
 

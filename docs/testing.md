@@ -6,6 +6,10 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## Low-latency playback synchronization
+
+[Roadmap milestone M6](../ROADMAP.md#m6--low-latency-playback-synchronization) is planned; its ≤100 ms p95 and ≤200 ms p99 inter-client playback targets remain unverified. Pending checks include filtered RTT/clock-offset accuracy, latency-compensated playback positions, real-time play/pause/seek delivery, scheduled starts and drift correction across geographically separated clients. Measure actual playback differences, including audio timing where possible, and buffering, stuttering and noticeable speed changes. Existing local room-timeline drift samples and command acknowledgements do not establish these inter-client percentiles.
+
 ## Playback reliability work
 
 The [playback reliability and content coverage plan](playback-reliability.md) defines the investigation, implementation order, browser/Activity targets and media corpus. A first personal audio/subtitle implementation is present. Complete cross-browser coverage, automatic complete-source negotiation, live Plex track delivery, VFR timing in custom AV1, split-file timelines and Plex video UX parity remain unfinished. Existing fixture checks do not certify those features or real Discord playback. Performance targets in the plan are proposed goals; record actual picture/audio/caption and lifecycle evidence before claiming support.
