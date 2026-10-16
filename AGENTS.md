@@ -2,6 +2,8 @@
 
 uburoom is a self-hosted Plex watch-together app with a browser interface, Discord Activity, bot integration and linked accounts. The Firefox YouTube TV remote stays in this repository; native-player integration and a remote split are future milestones.
 
+Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next increment. It consolidates priorities and links to detailed plans; keep its affected milestone current after material work. Record verification evidence and unfinished checks in docs/testing.md. The owner's current task takes priority, and roadmap entries do not authorize unrelated implementation or deployment.
+
 1. Prefer one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. No unrelated rewrites or infrastructure.
 2. Develop/install on local disk. Use isolated fixture accounts/media; never run a second process against production bot credentials or data.
 3. Remote consent starts off after session/tab/browser/server restart or disconnect. Authorize actor, guild/channel, session eligibility and current permissions for every command. Hide inaccessible/private sessions, reject ambiguous targets and never replay stale commands.

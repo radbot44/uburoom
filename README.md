@@ -29,7 +29,7 @@ See [self-hosting](docs/self-hosting.md) for your own server and [development](d
 - Firefox local zoom/stretch/pan and profiles, with optional explicitly enabled remote control.
 - Native per-viewer observations; Plex timeline/watch-state reporting is not enabled.
 
-Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage. See the [playback reliability plan](docs/playback-reliability.md) for the proposed work and verification gates.
+See the [roadmap](ROADMAP.md) for priorities, milestones and release gates. Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage; the [playback reliability plan](docs/playback-reliability.md) contains the detailed requirements.
 
 The player includes personal audio/subtitle selection, external SRT/WebVTT captions and Plex burn-in requests for styled or embedded subtitles. Live Plex and Discord coverage remains under verification; see [testing status](docs/testing.md).
 

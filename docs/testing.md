@@ -1,5 +1,7 @@
 # Verification status
 
+Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
+
 Automated tests cover parsing/target resolution, permissions/private visibility, stale commands, account linking/encryption/persistence, native tracking, isolated HTTP/media boundaries and configured extension origins. Generate local test TLS first; a suite with skipped tests is not a full baseline.
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
@@ -78,7 +80,7 @@ A separate maintenance check identified exactly one newly created conversion for
 
 Ending the room returned the browser to no active sessions, readyState 0 and zero picture width. Plex then reported no active conversions and no matching test transcoder process; complete temporary-file deletion was not independently checked. The browser was returned to the ordinary watch page with the opt-in probe hidden. Physical network interruptions, sustained memory/resource bounds, the original overnight unload trigger, a repeated real two-hour soak, live Firefox and Discord coverage remain open.
 
-An opt-in unattended soak recorder now retains up to 8,100 samples and 2,400 events, requests a final archive download and attempts authorized pause/leave of the unchanged private single-viewer test room. All 125 automated tests and twelve Firefox recovery/layout cases pass. The completion fixture advances only its soak clock, then verifies actual command-engine pause, room leave and archive export; it is not a two-hour playback result. Focused guards verify that changed room/media, public or multi-viewer state, lost management permission and concurrent commands cannot trigger automatic cleanup. Browser-reported heap counters are approximate, and the expanded in-memory recorder itself contributes known bounded retention. A full live run with this recorder remains pending.
+An opt-in unattended soak recorder now retains up to 8,100 samples and 2,400 events, requests a final archive download and attempts authorized pause/leave of the unchanged private single-viewer test room. All 125 automated tests and twelve Firefox recovery/layout cases pass. The completion fixture advances only its soak clock, then verifies actual command-engine pause, room leave and archive export; it is not a two-hour playback result. Focused guards verify that changed room/media, public or multi-viewer state, lost management permission and concurrent commands cannot trigger automatic cleanup. Browser-reported heap counters are approximate, and the expanded in-memory recorder itself contributes known bounded retention. A full live run at revision `9d384e7` is underway with the player visible, site audio muted and local resource sampling; completion and analysis remain pending. Other Chrome activity is included in aggregate process measurements, so those totals cannot isolate the player. Muted playback does not certify audible output throughout the run.
 
 ### Audio and subtitle gates
 
