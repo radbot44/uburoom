@@ -177,9 +177,9 @@ test('initial readiness honors deliberate pause; episode navigation and host suc
   const version = room.mediaVersion, epoch = room.s.epoch;
   await watch.leave(room, host, hId);
   assert.equal(room.s.hostId, 'a'); assert.equal(room.s.ownerId, 'host', 'administrator identity is not transferred');
-  assert.equal(room.mediaVersion, version); assert.equal(room.position, 35); assert.equal(room.s.enabled, true);
-  assert.notEqual(room.s.epoch, epoch); assert.equal(room.s.controls.playback, false);
-  assert.equal(watch.snapshot(room, a, aId).canManage, true); assert.equal(room.s.enabled, true, 'successor already in the session retains sharing');
+  assert.equal(room.mediaVersion, version); assert.equal(room.position, 35); assert.equal(room.s.enabled, false);
+  assert.equal(room.s.mode,'owner');assert.notEqual(room.s.epoch, epoch); assert.equal(room.s.controls.playback, false);
+  assert.equal(watch.snapshot(room, a, aId).canManage, true); assert.equal(room.s.enabled, false, 'successor must grant fresh remote consent');
   assert.equal((await dispatch(host, 'media.load', { mediaId: '3', quality: 'direct' })).status, 'forbidden', 'former host cannot manage the inherited session');
   assert.equal((await dispatch(a, 'media.load', { mediaId: '3', quality: 'direct' })).status, 'applied');
   await watch.leave(room, a, aId); assert.equal(room.s.hostId, 'b');
@@ -205,6 +205,41 @@ test('host election skips revoked or expired viewers and respects session privac
   watch.snapshot(privateRoom, actor('eligible'), randomUUID()); privateRoom.s.visibility = 'private';
   await watch.leave(privateRoom, host, privateHost);
   assert.equal(watch.rooms.has(privateRoom.s.sessionId), false, 'revoked viewers cannot take over a private session');
+  watch.close();
+});
+
+test('host heartbeat expiry revokes remote consent before a guest takes over', async () => {
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+  const watch=new Watch(hub,{stop:async()=>{}});
+  const actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
+  const host=actor('host'),guest=actor('guest'),id=watch.create(host),room=watch.rooms.get(id),hostId=randomUUID(),guestId=randomUUID();
+  watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
+  assert.equal((await hub.dispatch(host,{sessionId:id,action:'session.enable'})).status,'applied');
+  const epoch=room.s.epoch;
+  room.viewers.get(hostId).at=Date.now()-11000;
+  watch.refresh(room);
+  assert.equal(room.s.enabled,false,'host timeout removes consent even while a guest keeps the room alive');
+  assert.equal(room.s.mode,'owner');assert.notEqual(room.s.epoch,epoch,'stale commands cannot replay after disconnect');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(room.s.hostId,'guest');assert.equal(room.s.enabled,false,'successor must opt in to remote control');
+  watch.close();
+});
+
+test('privacy removal releases the initial playback gate when the remaining host is ready', async () => {
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+  const watch=new Watch(hub,{stop:async()=>{}},{title:'fixture',duration:60,format:'file',kind:'demo'});
+  const actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
+  const host=actor('host'),guest=actor('guest'),id=watch.create(host),room=watch.rooms.get(id),hostId=randomUUID(),guestId=randomUUID();
+  watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
+  assert.equal((await hub.dispatch(host,{sessionId:id,action:'media.load',args:{mediaId:'demo',quality:'direct'}})).status,'applied');
+  await watch.ready(room,host,hostId,room.mediaVersion,true);
+  assert.equal(room.initialGate,true,'unready guest holds the initial start');
+  assert.equal((await hub.dispatch(host,{sessionId:id,action:'session.visibility',args:{visibility:'private'}})).status,'applied');
+  assert.equal(room.viewers.has(guestId),false);
+  assert.equal(room.initialGate,false);
+  assert.equal(room.s.state.paused,false,'ready host starts after the guest is removed');
   watch.close();
 });
 
@@ -466,4 +501,20 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const renewed = (await getState()).body;
   app.watch.remove(id);
   assert.equal((await request(renewed.mediaUrl)).status, 403, 'room removal revokes AV1 manifests');
+  const transferId=(await request('/api/watch/rooms','POST',{},host)).body.id;
+  const transferHostId=randomUUID(),transferGuestId=randomUUID();
+  const transferHostState=(await request(`/api/watch/rooms/${transferId}?viewer=${transferHostId}`,'GET',undefined,host)).body;
+  await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`,'GET',undefined,guest);
+  assert.equal((await request(`/api/watch/rooms/${transferId}/command`,'POST',{
+    epoch:transferHostState.epoch,expiresAt:Date.now()+2000,command:{action:'session.enable'}
+  },host)).body.status,'applied');
+  const oldEpoch=app.watch.rooms.get(transferId).s.epoch;
+  assert.equal((await request(`/api/watch/rooms/${transferId}/leave`,'POST',{viewerId:transferHostId},host)).status,200);
+  const successor=(await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`,'GET',undefined,guest)).body;
+  assert.equal(successor.isHost,true);assert.equal(successor.enabled,false);
+  assert.notEqual(successor.epoch,oldEpoch);
+  assert.equal((await request(`/api/watch/rooms/${transferId}/command`,'POST',{
+    epoch:oldEpoch,expiresAt:Date.now()+2000,command:{action:'session.enable'}
+  },guest)).status,409,'the old host epoch cannot re-enable remote control after transfer');
+  app.watch.remove(transferId);
 });

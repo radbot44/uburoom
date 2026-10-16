@@ -25,6 +25,9 @@ class Watch {
   position(room, now = Date.now()) {
     return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : (now - room.changedAt) / 1000)));
   }
+  revokeConsent(room) {
+    room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
+  }
   dropMedia(room, reason = 'media-changed') {
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
@@ -70,7 +73,7 @@ class Watch {
   refresh(room, now = Date.now()) {
     room.s.lastSeen = now;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
-    let pruned = false;
+    let pruned = false, hostTimedOut = false;
     for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion) room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) this.tracking.expire(viewer);
     for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && viewer.userId !== room.s.hostId && !this.hub.isAdmin(viewer.actor)) {
@@ -83,8 +86,10 @@ class Watch {
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
+      if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
+    if (hostTimedOut) this.revokeConsent(room);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
       for (const viewer of room.viewers.values()) if (viewer.media?.transcodeId) void this.plex.ping(viewer.media);
@@ -141,9 +146,11 @@ class Watch {
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) room.disconnectedViewers.delete(viewerId);
     if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
+    const hostLeft = actor.userId === room.s.hostId;
     this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
     if (!room.viewers.size) { this.remove(room.s.sessionId); return; }
+    if (hostLeft) this.revokeConsent(room);
     if (![...room.viewers.values()].some(v => v.userId === room.s.hostId)) await this.transfer(room);
     await this.maybeStart(room);
   }
@@ -304,7 +311,7 @@ class Watch {
     if (action.startsWith('session.')) { s.epoch = randomUUID(); this.hub.cancel(s.sessionId); }
     s.state.profileSlots = Object.keys(room.profiles).map(Number); room.revision++; room.lastActivity = now; this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
-    if (['media.play', 'media.toggle'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
+    if (['media.play', 'media.toggle', 'session.visibility'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
     return { status: 'applied', message: 'Viewing session updated.', ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}) };
   }
   async changeTracks(room,viewer,args,actor,permitted) {
