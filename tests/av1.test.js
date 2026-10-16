@@ -127,3 +127,32 @@ test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disc
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(aborted,true); waiting.release(active); waiting.close();
 });
+
+test('a fresh AV1 request can replace a cancelled chunk before its encoder settles',async()=>{
+  let encodes=0, started, settleFirst;
+  const firstStarted=new Promise(resolve=>started=resolve);
+  const manager=new AV1({}, {ffmpegPath:'fixture'},async(_binary,args,signal)=>{
+    if(args.includes('-show_entries'))return Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:640,height:360},{codec_type:'audio'}]}));
+    if(args.includes('-ss')){
+      if(++encodes===1){
+        started();
+        return new Promise(resolve=>signal.addEventListener('abort',()=>{settleFirst=()=>resolve({video:Buffer.alloc(300),audio:Buffer.alloc(50)});},{once:true}));
+      }
+      return {video:Buffer.alloc(200),audio:Buffer.alloc(50)};
+    }
+    return Buffer.alloc(200);
+  });
+  const lease=manager.acquire({id:'1',duration:60,start:'http://fixture'},'direct'), cancelled=new AbortController();
+  try {
+    const old=manager.chunk(lease,0,cancelled.signal);
+    await firstStarted;cancelled.abort();
+    await assert.rejects(old,/disconnected/);
+    assert.equal(typeof settleFirst,'function');
+    const fresh=manager.chunk(lease,0,new AbortController().signal);
+    settleFirst();
+    const bytes=await fresh;
+    assert.equal(encodes,2);
+    assert.equal(lease.group.chunks.get(0)?.bytes,bytes,'late cancellation cannot delete the replacement cache entry');
+    assert.equal(lease.group.bytes,250,'cancelled output is not added to the cache budget');
+  } finally {settleFirst?.();manager.release(lease);await manager.close();}
+});

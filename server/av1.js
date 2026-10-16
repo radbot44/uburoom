@@ -202,6 +202,9 @@ class AV1 {
     const group = lease.group, start = index * CHUNK;
     if (!Number.isSafeInteger(index) || index < 0 || start >= group.source.duration) throw new PlaybackError('Invalid AV1 chunk.');
     let entry = group.chunks.get(index);
+    if (entry?.controller.signal.aborted && !entry.error) {
+      group.chunks.delete(index); entry = undefined;
+    }
     // Briefly memoize failures to collapse concurrent track/viewer requests.
     // A later bounded client retry must be able to recover a temporary Plex
     // outage; caching a rejected chunk forever makes that source time unusable.
@@ -236,9 +239,10 @@ class AV1 {
           return this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024);
         });
       }).then(bytes => {
+        if (controller.signal.aborted || group.chunks.get(index)!==entry) throw new PlaybackError('AV1 preparation cancelled.');
         entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry); return bytes;
       }).catch(error => {
-        if (controller.signal.aborted) group.chunks.delete(index);
+        if (controller.signal.aborted) { if (group.chunks.get(index)===entry) group.chunks.delete(index); }
         else {
           // Keep failure local to this chunk and cool down before re-encoding.
           entry.error = error instanceof PlaybackError ? error : new PlaybackError('AV1 chunk preparation failed.');
