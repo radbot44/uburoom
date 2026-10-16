@@ -74,3 +74,4 @@ body.theater{overflow:hidden;background:black}
 .activity-pip #account,.activity-pip #welcome,.activity-pip #session-bar,.activity-pip #options-panel,.activity-pip #library-panel,.activity-pip #status,.activity-pip #error,.activity-pip #acceleration-help{display:none!important}
 @media(max-width:700px){.title-bar{gap:8px;flex-wrap:wrap}.player-actions{margin-left:auto}.solid-button{font-size:12px;padding:8px;gap:5px}.media-heading{min-width:85px}.media-heading h1{max-width:100%}}
 @media(max-width:700px){#subtitle-status{bottom:105px}}
+#diagnostic-actions{display:flex;flex-wrap:wrap;gap:10px}

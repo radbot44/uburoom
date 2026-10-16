@@ -16,17 +16,26 @@ let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
 const diagnostics = uburoomDiagnostics.create();
+const controlProbe=params.get('playbackProbe')==='1'?uburoomDiagnostics.controlProbe():undefined;
+let probeRunning=false;
+$('probe-control').hidden=!controlProbe;
+$('probe-control').onclick=()=>{
+  if(!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!controlProbe?.start(selected))return;
+  probeRunning=true;diagnosticSample('probe-start',{delayMs:6000});
+};
 function diagnosticSample(event='sample',fields={}) {
   // Diagnostics must never interrupt playback, even during MediaSource teardown.
   try {
-    const quality=video.getVideoPlaybackQuality?.(), tracks=state?.tracks;
+    const quality=video.getVideoPlaybackQuality?.(), tracks=state?.tracks, rect=video.getBoundingClientRect();
     diagnostics.record(event,{position:video.currentTime,target:expected(),ready:video.readyState,network:video.networkState,
       paused:video.paused,seeking:video.seeking,waiting:playerWaiting,rate:video.playbackRate,
       ranges:Array.from({length:Math.min(video.buffered.length,8)},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),
       bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),frames:quality?.totalVideoFrames,dropped:quality?.droppedVideoFrames,
       decoded:quality?quality.totalVideoFrames-quality.droppedVideoFrames:videoFrames,
       callbackFrames:videoFrames,width:video.videoWidth,height:video.videoHeight,mediaError:video.error?.code,
-      online:navigator.onLine,visibility:document.visibilityState,format:state?.format,enabled:!!state?.enabled,
+      online:navigator.onLine,visibility:document.visibilityState,inViewport:rect.width>0&&rect.height>0&&rect.bottom>0&&rect.top<innerHeight&&rect.right>0&&rect.left<innerWidth,
+      viewportFraction:rect.width>0&&rect.height>0?Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top))/(rect.width*rect.height):0,
+      format:state?.format,enabled:!!state?.enabled,
       audio:tracks?.audio.findIndex(row=>row.id===tracks.audioId),subtitle:tracks?.subtitles.findIndex(row=>row.id===tracks.subtitleId),
       delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',...fields});
   } catch { /* A missing diagnostic sample must not change player behavior. */ }
@@ -35,7 +44,11 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
   video.addEventListener(event,()=>diagnosticSample(event));
 for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>diagnosticSample(event));
 document.addEventListener('visibilitychange',()=>diagnosticSample('visibilitychange'));
-setInterval(()=>{if(selected || state || mediaSource)diagnosticSample();},1000);
+setInterval(()=>{
+  if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
+  $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!!controlProbe?.active();
+  if(selected || state || mediaSource)diagnosticSample();
+},1000);
 $('save-diagnostics').onclick=()=>{
   diagnosticSample();
   const url=URL.createObjectURL(new Blob([JSON.stringify(diagnostics.snapshot(),null,2)+'\n'],{type:'application/json'}));
@@ -86,6 +99,7 @@ async function api(path, data, options = {}) {
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
   try {
+  if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000), keepalive: !!options.keepalive });
   const value = await response.json(); decoded=true; if (!response.ok) throw new Error(value.error || 'Request failed'); return value;

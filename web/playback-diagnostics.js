@@ -14,10 +14,10 @@
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
-    'command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide']);
+    'probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
-    'callbackFrames','width','height','mediaError','audio','subtitle','identity','room','media','stream','grant','observation']);
-  const flags = new Set(['paused','seeking','waiting','online','fatal','enabled','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged']);
+    'callbackFrames','width','height','viewportFraction','mediaError','audio','subtitle','identity','room','media','stream','grant','observation']);
+  const flags = new Set(['paused','seeking','waiting','online','inViewport','fatal','enabled','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged']);
   function requestKind(path) {
     const route = String(path).split('?')[0];
     if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';
@@ -52,6 +52,14 @@
     return {record,state,snapshot:()=>JSON.parse(JSON.stringify({schema:1,startedAt,exportedAt:now(),limits:{events:300,samples:600},discardedEvents,discardedSamples,
       entries:[...buckets.events,...buckets.samples].sort((a,b)=>a.sequence-b.sequence)}))};
   }
-  const api={create,requestKind};
+  function controlProbe(now=()=>performance.now()) {
+    let room,until=0;
+    return {
+      start(id) {if(!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id||'')||now()<until)return false;room=id;until=now()+6000;return true;},
+      active:()=>now()<until,
+      rejects:(path,id)=>id===room && now()<until && String(path).split('?')[0]==='/api/watch/rooms/'+room
+    };
+  }
+  const api={create,requestKind,controlProbe};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomDiagnostics=api;
 })(typeof globalThis==='object'?globalThis:this);

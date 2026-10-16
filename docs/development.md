@@ -75,6 +75,8 @@ The watch page keeps a local diagnostic ring: up to 600 one-second playback samp
 
 The recovery fixture asserts distinct traces for an expired Plex stream and a failed control poll, saves both snapshots, and checks the download control in desktop, theater and portrait phone layouts. It explicitly activates the host tab before visible decoded-video checks; creating the guest tab can otherwise leave Chromium's host hidden with video decoding suspended. Background playback and sleep/wake need separate lifecycle checks. Browser throttling and application recovery timing remain unchanged.
 
+For an explicitly controlled live reconnect check, open `/watch?playbackProbe=1` before creating the test room. **Test control reconnect (6 seconds)** is available only with loaded media in a private, single-viewer room with remote consent off. It locally rejects this tab's room polls for a fixed six seconds and then resumes normal requests. Media, identity, observation and command requests remain normal; this simulates a control failure, not a physical network outage. The export marks probe start/end and ordinary failure/recovery events. Normal pages have no probe control. Samples also report geometric player intersection with the viewport; this does not detect occlusion by other windows or overlays.
+
 Generate a longer track corpus, then run one isolated browser at a time:
 
 ```powershell

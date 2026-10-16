@@ -38,7 +38,7 @@ async function main(){
   };
   try{
     browser=await playbackBrowser(name);report.version=browser.version;
-    host=await browser.page(config.publicUrl+'/watch?demo=host');
+    host=await browser.page(config.publicUrl+'/watch?demo=host&playbackProbe=1');
     const evaluate=(page,code)=>browser.evaluate(page,code),until=(page,code,label,timeout)=>browser.until(page,code,label,timeout);
     await until(host,'!!me','Host login');
     await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room creation');
@@ -264,6 +264,24 @@ async function main(){
       assert.ok(played.frames-resumed.frames>35);assert.ok(tones>=5);
       await command(host,'media.pause');
       return {detail:'A twelve-second sole-host control outage retained the empty room; selected French/ASS playback resumed with fresh stream/observation state, old grant revoked and remote consent off.',before,after,oldStatus,tones};
+    });
+    await check('opt-in private control reconnect probe',async()=>{
+      assert.equal(await evaluate(guest,'document.getElementById("probe-control").hidden'),true,'ordinary pages have no probe control');
+      assert.equal(await evaluate(host,'document.getElementById("probe-control").disabled'),true,'public rooms cannot run the probe');
+      await command(host,'session.visibility',{visibility:'private'});
+      await until(host,'!document.getElementById("probe-control").disabled','Private single-viewer probe eligibility');
+      const before=await snapshot(host);
+      await evaluate(host,'document.getElementById("probe-control").click();true');
+      await until(host,'state===undefined && mediaSource===undefined','Probe unloads only this tab',6000);
+      await until(host,'!!state?.mediaUrl && video.readyState>=2 && !controlProbe.active()','Live control polling resumes',15000);
+      const after=await snapshot(host);
+      assert.equal(after.stream,before.stream);assert.equal(after.mediaUrl,before.mediaUrl);
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');assert.equal(after.remote,false);
+      const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
+      assert.ok(trace.entries.some(row=>row.event==='probe-start'));
+      assert.ok(trace.entries.some(row=>row.event==='probe-end'));
+      fs.writeFileSync(path.join(output,'probe-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
+      return {detail:'Six-second opt-in room-poll interruption reattached the same captured stream; private tracks and off consent retained.',before,after};
     });
     await check('diagnostics download layouts',async()=>{
       for(const [layout,width,height] of [['desktop',1280,900],['theater',1280,900],['phone',390,844]]){

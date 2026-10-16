@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {create,requestKind}=require('../web/playback-diagnostics');
+const {create,requestKind,controlProbe}=require('../web/playback-diagnostics');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -49,7 +49,7 @@ test('failed control requests preserve errors while recording safe HTTP, decodin
     ['timeout',undefined,new DOMException('private URL','TimeoutError')],
     ['abort',undefined,new DOMException('private URL','AbortError')]
   ]){
-    const diagnostics=create(),context={token:undefined,me:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
+    const diagnostics=create(),context={token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
       fetch:async()=>{if(error)throw error;return response;}};
     vm.runInNewContext(source.slice(source.indexOf('async function api('),source.indexOf('function acceptIdentity(')),context);
     await assert.rejects(context.api('/api/watch/rooms/private-room?viewer=secret'),error?value=>value===error:undefined);
@@ -58,4 +58,15 @@ test('failed control requests preserve errors while recording safe HTTP, decodin
     assert.equal(row.status,response?.status);assert.ok(row.elapsedMs>=0);
     assert.ok(!JSON.stringify(row).includes('private'));assert.ok(!JSON.stringify(row).includes('secret'));
   }
+});
+
+test('opt-in control probe affects only one room poll for a fixed six seconds',()=>{
+  let time=100;const probe=controlProbe(()=>time),room='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222';
+  assert.equal(probe.start('invalid'),false);assert.equal(probe.active(),false);
+  assert.equal(probe.start(room),true);assert.equal(probe.start(other),false);
+  assert.equal(probe.rejects('/api/watch/rooms/'+room+'?viewer=secret',room),true);
+  for(const route of ['/api/watch/me','/api/watch/rooms','/api/watch/rooms/'+room+'/observe','/api/watch/rooms/'+room+'/command','/api/watch/media/private/start'])assert.equal(probe.rejects(route,room),false);
+  assert.equal(probe.rejects('/api/watch/rooms/'+other+'?viewer=secret',other),false);
+  time=6099;assert.equal(probe.active(),true);time=6100;assert.equal(probe.active(),false);
+  assert.equal(probe.rejects('/api/watch/rooms/'+room,room),false);assert.equal(probe.start(other),true);
 });
