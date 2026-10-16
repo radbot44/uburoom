@@ -46,7 +46,7 @@ function compare(a,b,{sameTimeline=false,stepMs=10}={}) {
     end=Math.min(left.at(-1).frameServerTime,right.at(-1).frameServerTime);
   if(end<=start)throw new Error('No overlapping presentation evidence');
   let i=0,j=0;const healthy=[],outliers=[],uncertainty=[],excluded={};
-  const classify=(r,t)=>!r.clockValid||!Number.isFinite(r.clockUncertaintyMs)?'clock-unavailable':t-r.frameServerTime>100?'missing-frame':r.paused?'paused':r.seeking?'seeking':
+  const classify=(r,t)=>!r.clockValid||!Number.isFinite(r.clockUncertaintyMs)?'clock-unavailable':t-r.frameServerTime>100?'missing-frame':r.paused||r.roomPaused?'paused':r.seeking?'seeking':
     r.waiting||r.ready<3||r.bufferAhead<.5?'buffering':r.visibility!=='visible'?'hidden':r.settling?'settling':undefined;
   // Hold the last presented media frame at a uniform real-time grid. Linear
   // extrapolation of currentTime would conceal frame cadence and held frames.

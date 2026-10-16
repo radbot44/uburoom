@@ -14,6 +14,8 @@ let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
+const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
+let preparedStartKey;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
@@ -79,7 +81,7 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
     if(['playing','pause','waiting','seeking','emptied'].includes(event))lastPresentationBreak=performance.now();
     if(event==='seeking'||event==='emptied')presentationTiming.reset();diagnosticSample(event);
   });
-for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online')playbackClock.reset();diagnosticSample(event);});
+for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();}diagnosticSample(event);});
 document.addEventListener('visibilitychange',()=>diagnosticSample('visibilitychange'));
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
@@ -326,7 +328,7 @@ function watchFrames() {
       const target=uburoomTiming.target(state,timing.serverTime);
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
         timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs:target===undefined?undefined:(metadata.mediaTime-target)*1000,
-        paused:video.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,
+        paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,
         settling:performance.now()-lastPresentationBreak<2000,
         visibility:document.visibilityState,bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)});
     } catch { /* Diagnostics cannot stop the decoded-frame evidence loop. */ }
@@ -344,6 +346,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  startAlarm.cancel();preparedStartKey=undefined;
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
   observing = false; observationBreak++; playerWaiting = false;
@@ -561,7 +564,8 @@ function renderTransport() {
   $('join-playback').hidden = !state?.mediaUrl || !paused && !autoplayBlocked;
   $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
   $('join-playback').setAttribute('aria-label', autoplayBlocked ? 'Join playback' : 'Play'); $('join-playback').title = autoplayBlocked ? 'Join playback' : 'Play';
-  $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' : '';
+  $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
+    state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
   if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
   renderTracks();
   captions.layout($('stage').matches(':hover,:focus-within') || paused || autoplayBlocked || !$('remote').hidden,innerWidth<=700);
@@ -657,9 +661,31 @@ async function reportReadiness() {
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
     ready }); readinessSent = key; } catch {} finally { readyPending = false; }
 }
+function startKey(value=state) {
+  return value && [selected,value.mediaVersion,value.streamVersion,value.epoch,value.revision,value.startAt].join(':');
+}
+function holdForStart(timing,target) {
+  if(state.state.paused)return false;
+  if(timing.valid && timing.serverTime>=state.startAt){startAlarm.cancel();return false;}
+  video.pause();if(video.playbackRate!==1)video.playbackRate=1;
+  video.volume=state.state.volume/100;video.muted=state.state.muted;
+  const key=startKey();
+  if(preparedStartKey!==key && !video.seeking && video.readyState>=2) {
+    // Readiness briefly decoded a local probe. Rewind/align once while paused,
+    // before the shared deadline, rather than correcting its residue in motion.
+    try{if(Math.abs(video.currentTime-target)>.01){diagnosticSample('start-prepare');video.currentTime=target;}preparedStartKey=key;}catch{}
+  }
+  if(timing.valid)startAlarm.arm(key,state.startAt,()=>{
+    if(startKey()!==key || !state?.mediaUrl || mediaSource!==state.mediaUrl || navigator.onLine===false || performance.now()-receivedAt>3000)return;
+    diagnosticSample('start-timer',{delayMs:playbackClock.read().serverTime-state.startAt});void synchronize();
+  });
+  else startAlarm.cancel();
+  renderTransport();return true;
+}
 async function synchronize() {
   if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
-  const target = expected(), difference = target - video.currentTime, clockValid=playbackClock.read().valid;
+  const target = expected(), difference = target - video.currentTime, timing=playbackClock.read(),clockValid=timing.valid;
+  if(state.startAt>state.serverNow && holdForStart(timing,target))return;
   if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
     playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
   }
@@ -677,13 +703,16 @@ async function synchronize() {
     video.pause();
     if (state.waitingForReady && readyVersion !== state.mediaVersion && !autoplayBlocked && video.readyState >= 2) { await unlockLocal(); void reportReadiness(); }
   } else if (video.paused && !autoplayBlocked) {
-    try { await video.play(); readyVersion = state.mediaVersion; autoplayBlocked = false; }
-    catch (error) { if (error.name === 'NotAllowedError') autoplayBlocked = true; }
+    const room=selected,version=state.mediaVersion,stream=state.streamVersion,source=mediaSource;
+    const current=()=>selected===room && state?.mediaVersion===version && state?.streamVersion===stream && mediaSource===source;
+    try { await video.play(); if(current()){readyVersion = version; autoplayBlocked = false;} }
+    catch (error) { if (current() && error.name === 'NotAllowedError') autoplayBlocked = true; }
   }
   renderTransport();
   checkVideoFrames();
 }
 function applyState(next) {
+  if(startKey()!==startKey(next))startAlarm.cancel();
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const previousTarget = state ? expected() : undefined;
@@ -902,7 +931,7 @@ setInterval(() => {
 setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
   config = await api('/api/watch/config');
-  if (config.watchVersion !== 14) throw new Error('The player and server versions differ. Reload after the server update.');
+  if (config.watchVersion !== 15) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});

@@ -75,7 +75,25 @@
   }
   function target(state,serverTime) {
     if(!state || !Number.isFinite(serverTime) || !Number.isFinite(state.serverNow))return undefined;
-    return Math.max(0,Math.min(state.state.duration||0,state.state.position+(state.state.paused?0:(serverTime-state.serverNow)/1000)));
+    const elapsed=Number.isFinite(state.startAt)?Math.max(0,serverTime-Math.max(state.serverNow,state.startAt)):serverTime-state.serverNow;
+    return Math.max(0,Math.min(state.state.duration||0,state.state.position+(state.state.paused?0:elapsed/1000)));
+  }
+  function alarm({now,set=setTimeout,clear=clearTimeout}) {
+    let timer,key,generation=0;
+    const cancel=()=>{generation++;if(timer!==undefined)clear(timer);timer=key=undefined;};
+    function arm(nextKey,at,fire) {
+      if(key===nextKey && timer!==undefined)return;
+      cancel();key=nextKey;const current=generation;
+      const check=()=>{
+        if(current!==generation)return;
+        const time=now();
+        if(!Number.isFinite(time)){cancel();return;}
+        if(time<at){timer=set(check,Math.min(2500,at-time));return;}
+        timer=key=undefined;generation++;fire();
+      };
+      check();
+    }
+    return {arm,cancel};
   }
   function presentation() {
     let previous;
@@ -97,6 +115,6 @@
       }
     };
   }
-  const api={clock,target,presentation};
+  const api={clock,target,presentation,alarm};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
 })(typeof globalThis==='object'?globalThis:this);

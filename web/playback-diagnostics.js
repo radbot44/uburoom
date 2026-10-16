@@ -19,14 +19,14 @@
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
-    'frame','clock-sample','ratechange','sync-seek']);
+    'frame','clock-sample','ratechange','sync-seek','start-prepare','start-timer']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
     'clockUncertaintyMs','networkRttMs','networkMinRttMs','networkJitterMs','requestRttMs','serverProcessingMs','timelineRevision','sharedTarget','positionErrorMs',
     'frameMediaTime','frameDisplayMonoMs','framePresentationMonoMs','frameCallbackLatenessMs','frameProcessingMs','presentedFrames',
     'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime']);
-  const flags = new Set(['paused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling']);
+  const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling']);
   function requestKind(path) {
     const route = String(path).split('?')[0];
     if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';

@@ -6,6 +6,9 @@ const { PlaybackError } = require('./av1');
 const { PlaybackTracking } = require('./playback-tracking');
 const Tracks = require('./media-tracks');
 const RECONNECT_GRACE_MS = 60000;
+// Covers the normal 1 s state poll plus a 300+ ms RTT and scheduling margin.
+// Only the initial readiness release waits; ongoing recovery never reschedules it.
+const INITIAL_START_LEAD_MS = 1750;
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) { this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map(); }
@@ -23,7 +26,8 @@ class Watch {
     this.rooms.set(id, room); this.hub.sessions.set(id, s); return id;
   }
   position(room, now = Date.now()) {
-    return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : (now - room.changedAt) / 1000)));
+    const elapsed=room.startAt?Math.max(0,now-Math.max(room.changedAt,room.startAt)):now-room.changedAt;
+    return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : elapsed / 1000)));
   }
   revokeConsent(room) {
     room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
@@ -216,6 +220,7 @@ class Watch {
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
     return { id: room.s.sessionId, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
+      startAt:room.startAt,
       title: room.media?.title || 'Choose something to watch', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
@@ -277,6 +282,7 @@ class Watch {
     if (!action.startsWith('session.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
     const now = Date.now(); room.position = this.position(room, now); room.changedAt = now;
+    if(['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action)||action.startsWith('media.seek.'))room.startAt=undefined;
     switch (action) {
       case 'media.load': case 'media.next': {
         const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.position = 0;
@@ -297,7 +303,9 @@ class Watch {
       case 'media.pause': s.state.paused = true; room.manualPaused = true; break;
       case 'media.play':
         if (room.position >= room.media.duration - .1) room.position = 0;
-        room.manualPaused = false; s.state.paused = room.initialGate; break;
+        room.manualPaused = false; s.state.paused = room.initialGate;
+        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=now+INITIAL_START_LEAD_MS;
+        break;
       case 'media.toggle':
         // A play intent at the end restarts even before the expiry sweep pauses it.
         if (room.position >= room.media.duration - .1) { room.position = 0; s.state.paused = true; }

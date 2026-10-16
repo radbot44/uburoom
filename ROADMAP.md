@@ -108,7 +108,7 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 **Target:** Aim for ≤50 ms p95 presentation-time skew, with ≤100 ms p99 as an initial engineering target, subject to real-world testing.
 
-**Current increment:** Bounded compositor-frame diagnostics, four-timestamp clock estimation with explicit uncertainty, and a server-time playback target are implemented with an isolated two-browser unequal-delay comparison. Watch-time accounting retains its separate conservative clock. Rate/seek policy remains the comparison baseline; frame-aware correction experiments, scheduled actions and prompt event delivery remain next increments. Callback coverage and physical display/audio validation are open gates. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
+**Current increment:** Timing/clock/shared-target diagnostics now include repeated, counterbalanced startup comparisons and a minimal browser callback probe. Initial readiness releases use a shared future start with paused preparation; ongoing buffering and ordinary resume remain independent/immediate. Local Firefox 24 fps and Chrome 59.94 fps trials need no rate corrections after this change. The rate/seek policy is otherwise unchanged. Scheduled ordinary controls, prompt event delivery, frame-aware correction experiments and physical/geographic validation remain open. Firefox's sparse high-rate callbacks and interval outliers remain measurement limits. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
 
 **Architecture:**
 

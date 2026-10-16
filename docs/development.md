@@ -85,6 +85,20 @@ node scripts/sync-report.js artifacts/sync-shared/320-host.json artifacts/sync-s
 
 The report requires at least 80% healthy grid coverage and more than 100 healthy points before the baseline labels a case `measured`. This is an evidence-quality label, not a synchronization performance pass. Callback intervals containing unobserved presented frames are excluded as `callback-gap`, and their skew remains separate. A run with sparse callbacks can successfully verify local recovery while reporting `insufficient-presentation-coverage`. Steady per-viewer files are saved separately from the files that include recovery. The offline report also refuses clock resets/regressions; select a continuous interval before comparing.
 
+### Matched startup and callback coverage
+
+The startup runner reuses two disposable browser processes and one room, loading fresh media generations for each trial. Within every round and guest RTT, a seeded order counterbalances the current controller against a fixture-only 1.00× mode. That mode suppresses rate nudges while retaining meaningful hard seeks; it never changes production defaults. `roomPaused` frame evidence separates decoded readiness probes from the actual shared start. Reports retain first playing-state receipt, first matching observed content-frame timing, initial error, per-trial steady skew/coverage, correction requests and frame intervals. Steady windows start two seconds after the first shared-playing callback. Raw traces and per-trial reports remain separate, avoiding a pooled percentile that hides a bad trial.
+
+```powershell
+node scripts/sync-startup.js --initial-start=immediate --repeats=5 --seconds=6 --rtts=20,320 --output=artifacts/startup-immediate
+node scripts/sync-startup.js --initial-start=scheduled --repeats=5 --seconds=6 --rtts=20,320 --output=artifacts/startup-scheduled
+node scripts/sync-startup.js --repeats=1 --seconds=4 --rtts=320 --lifecycle=on --output=artifacts/startup-lifecycle
+node scripts/sync-startup.js --browser=chrome --fps=60000/1001 --repeats=2 --seconds=6 --output=artifacts/startup-high-rate
+node scripts/frame-callback-probe.js --browsers=firefox,chrome --fps=24,60000/1001 --seconds=8 --output=artifacts/frame-probe
+```
+
+The immediate-start comparison removes only the local fixture's accepted autoplay deadline, through an instance wrapper around the normal validated execution path. The scheduled mode uses production behavior. Use the same seed, source, browser and workload for comparisons. Lifecycle checks require scheduled mode and cover pause cancellation, replacement, desktop/theater/phone renders and a guest-only interruption after playback starts. The minimal probe serves procedural media on localhost without the watch app/controller and records native frame counts, callbacks, animation intervals and callback work. It helps separate browser reporting limits from application work; it does not measure physical panel refresh or speaker timing. Firefox's sparse callbacks must remain excluded when they leave presentation unknown. No browser permissions, privacy settings or throttling are weakened to improve coverage.
+
 ### Bounded playback and recovery check
 
 The watch page keeps a local diagnostic ring: up to 600 one-second playback samples and 300 events, with separate eviction counts. **Save playback diagnostics** downloads a JSON snapshot from the current tab, including after a control disconnect. Reloading or closing the tab loses the capture; background timer throttling can reduce sample frequency. Nothing is uploaded automatically. Exports contain wall/monotonic timing, decoded/dropped frame counters where available, buffer/readiness state, track ordinals/delivery, classified request failures, teardown reasons and local generation counters for room/media/stream/grant/observation changes. They exclude URLs, credentials, account/room/source IDs, titles, track labels and raw error text. Frame counters do not prove the intended audio or subtitle content, and browser diagnostics do not measure server/Plex memory or explain every upstream failure.
