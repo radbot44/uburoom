@@ -285,6 +285,21 @@ async function refreshHlsSession(client) {
     // reports an error if delivery does not return in time.
   } finally { hlsRefreshPending = false; }
 }
+function handleHlsFragmentBuffered(client) {
+  if (hls !== client || !state?.state || state.mediaUrl !== mediaSource) return;
+  // A buffered fragment from an obsolete seek does not establish that the
+  // shared playback position can advance again.
+  const target = expected(), ahead = uburoomPlayback.bufferedAhead(video.buffered,target);
+  if (ahead <= .05 || ahead + .05 < Math.min(.5,Math.max(0,state.state.duration - target))) return;
+  clearTimeout(hlsRecoveryTimer);
+  const resume = !!hlsNetworkFailure && playbackError === hlsNetworkFailure;
+  hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
+  if (resume) {
+    playbackError = '';
+    fail('');
+    void synchronize();
+  }
+}
 function handleHlsError(client, data) {
   if (hls !== client) return;
   if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -540,7 +555,7 @@ function applyState(next) {
       } else if (next.format === 'hls' && Hls.isSupported()) {
         const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
-        client.on(Hls.Events.FRAG_BUFFERED, () => { if (hls === client) { hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false; } });
+        client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }

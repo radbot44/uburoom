@@ -66,3 +66,28 @@ test('expired HLS session requests one personal refresh per stream with a bounde
   context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});
   assert.equal(commands.length,3,'superseded media cannot refresh');
 });
+test('fresh HLS media clears an exhausted delivery error and resumes synchronization',async () => {
+  const client = {}, calls = [];
+  const context = {hls:client,hlsRecoveryTimer:7,hlsNetworkRetries:3,
+    hlsNetworkFailure:'Connection failed',hlsNetworkInterrupted:true,playbackError:'Connection failed',
+    state:{mediaUrl:'/current',state:{duration:60}},mediaSource:'/current',expected:()=>12,uburoomPlayback:playback,
+    video:{buffered:{length:1,start:()=>0,end:()=>5}},
+    clearTimeout:id=>calls.push(['cancel',id]),fail:value=>calls.push(['error',value]),
+    synchronize:()=>{calls.push(['synchronize']);}};
+  load(context,'handleHlsFragmentBuffered','handleHlsError');
+  context.handleHlsFragmentBuffered({});
+  assert.equal(context.playbackError,'Connection failed','obsolete stream cannot clear an active error');
+  context.state = undefined;
+  context.handleHlsFragmentBuffered(client);
+  assert.equal(context.playbackError,'Connection failed','teardown cannot resume a stale player');
+  context.state = {mediaUrl:'/current',state:{duration:60}};
+  context.handleHlsFragmentBuffered(client);
+  assert.equal(context.playbackError,'Connection failed','an unrelated fragment cannot recover the playback position');
+  context.video.buffered = {length:1,start:()=>10,end:()=>20};
+  context.handleHlsFragmentBuffered(client);
+  assert.equal(context.playbackError,'');
+  assert.equal(context.hlsNetworkFailure,undefined);
+  assert.equal(context.hlsNetworkRetries,0);
+  assert.equal(context.hlsNetworkInterrupted,false);
+  assert.deepEqual(calls,[['cancel',7],['error',''],['synchronize']]);
+});
