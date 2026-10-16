@@ -61,6 +61,30 @@ test('a seek supersedes a failing AV1 fetch at the previous position',async () =
   await player.pump();
   assert.equal(player.prefetchFailure.index,0,'the old failure must not stop playback at the new position');
 });
+test('a seek during AV1 window eviction does not fetch chunks at the old position',async () => {
+  const player = playerAt();
+  player.position = 120; player.appended.add(0); player.chunkBytes.set(0,1024);
+  player.evict = async indices => {
+    for (const index of indices) { player.appended.delete(index); player.chunkBytes.delete(index); }
+    if (indices.length) { player.position = 0; player.seekVersion++; }
+  };
+  await player.pump();
+  assert.equal(player.requests.length,0,'obsolete work stops before the old-position fetch');
+  await player.pump();
+  assert.ok(player.appended.has(0),'the next pump fills the new position');
+});
+test('a seek during AV1 byte-budget eviction cannot append a stale chunk',async () => {
+  const player = playerAt(60);
+  let checks = 0;
+  player.makeSpace = async () => {
+    if (++checks === 1) { player.position = 24; player.seekVersion++; }
+    return true;
+  };
+  await player.pump();
+  assert.deepEqual([...player.appended],[],'old bytes may arrive but cannot enter MediaSource');
+  await player.pump();
+  assert.ok(player.appended.has(4),'the new source-time chunk is appended on the next pump');
+});
 test('temporary AV1 network failure retries with backoff without clearing good chunks',async () => {
   const player = playerAt(30), original = player.fetch;
   const error = Object.assign(new Error('Temporary outage'),{retryable:true});

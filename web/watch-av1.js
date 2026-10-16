@@ -98,11 +98,14 @@ class uburoomAV1 {
   async fill() {
     const policy = uburoomPlayback.BUFFER;
     const target = this.target(), first = Math.floor(Math.min(target, this.duration - .05) / this.seconds);
+    const version = this.seekVersion;
+    const superseded = () => this.abort.signal.aborted || this.seekVersion !== version ||
+      Math.floor(Math.min(this.target(),this.duration - .05) / this.seconds) !== first;
     const ahead = Math.min(policy.ahead,this.pressureAhead ?? policy.ahead);
     const last = Math.floor(Math.min(target + ahead,this.duration - .05) / this.seconds);
     const earliest = Math.max(0,Math.floor((target - (this.pressured ? 0 : policy.behind)) / this.seconds));
     await this.evict([...this.appended].filter(index => index < earliest || index > last));
-    const version = this.seekVersion;
+    if (superseded()) return;
     for (let index = first; index <= last && index * this.seconds < this.duration; index++) {
       if (this.appended.has(index)) continue;
       if (this.prefetchFailure?.index === index) {
@@ -119,7 +122,10 @@ class uburoomAV1 {
         if (Date.now() < failure.retryAt) break;
       }
       const estimate = this.prefetchSize?.index === index ? this.prefetchSize.bytes : this.chunkBytes.size ? this.retainedBytes / this.chunkBytes.size : 0;
-      if (index > first && !await this.makeSpace(first,estimate)) break;
+      if (index > first) {
+        const space = await this.makeSpace(first,estimate);
+        if (superseded() || !space) break;
+      }
       let videoBytes, audioBytes;
       const request = this.request = new AbortController();
       try {
@@ -137,17 +143,21 @@ class uburoomAV1 {
         this.prefetchFailure = {index,error,attempts,required:index === needed || this.prefetchFailure?.index === index && this.prefetchFailure.required,
           retryAt:Date.now() + 1000 * Math.min(8,2 ** (attempts-1))}; break;
       } finally { if (this.request === request) this.request = undefined; }
-      if (this.abort.signal.aborted) return;
       // A shared seek may have happened while FFmpeg was running. Don't append
       // stale work; the next pump requests the authoritative position instead.
-      if (this.seekVersion !== version || Math.floor(Math.min(this.target(),this.duration-.05)/this.seconds) !== first) break;
+      if (superseded()) break;
       if (this.prefetchFailure?.index === index) this.prefetchFailure = undefined;
       const bytes = videoBytes.byteLength + audioBytes.byteLength;
-      if (index > first && !await this.makeSpace(first,bytes)) { this.prefetchSize = {index,bytes}; break; }
+      if (index > first) {
+        const space = await this.makeSpace(first,bytes);
+        if (superseded()) break;
+        if (!space) { this.prefetchSize = {index,bytes}; break; }
+      }
       if (index === first && !await this.makeSpace(first,bytes)) {
         const future = [...this.appended].filter(entry => entry > first).sort((a,b) => b-a);
         while (future.length && this.retainedBytes + bytes > policy.maxBytes) await this.evict([future.shift()]);
       }
+      if (superseded()) break;
       // Keep Opus's codec preroll above zero; the source mapping differs by 10 ms.
       if (!await this.append(index,videoBytes,audioBytes,first)) break;
     }
