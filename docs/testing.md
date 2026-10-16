@@ -78,6 +78,8 @@ A separate maintenance check identified exactly one newly created conversion for
 
 Ending the room returned the browser to no active sessions, readyState 0 and zero picture width. Plex then reported no active conversions and no matching test transcoder process; complete temporary-file deletion was not independently checked. The browser was returned to the ordinary watch page with the opt-in probe hidden. Physical network interruptions, sustained memory/resource bounds, the original overnight unload trigger, a repeated real two-hour soak, live Firefox and Discord coverage remain open.
 
+An opt-in unattended soak recorder now retains up to 8,100 samples and 2,400 events, requests a final archive download and attempts authorized pause/leave of the unchanged private single-viewer test room. All 125 automated tests and twelve Firefox recovery/layout cases pass. The completion fixture advances only its soak clock, then verifies actual command-engine pause, room leave and archive export; it is not a two-hour playback result. Focused guards verify that changed room/media, public or multi-viewer state, lost management permission and concurrent commands cannot trigger automatic cleanup. Browser-reported heap counters are approximate, and the expanded in-memory recorder itself contributes known bounded retention. A full live run with this recorder remains pending.
+
 ### Audio and subtitle gates
 
 The first slice includes source audio, external SRT/WebVTT with native timing adjustment, and Plex burn negotiation for embedded/styled/image subtitles. Browser fixtures check actual decoded audio, native cue activity and ASS pixels against generated renditions. Simulated Plex acknowledgements do not establish real PMS behavior.

@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const choices = {
-    reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','leave','end','logout','fallback','decoder','fatal'],
+    reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','leave','end','logout','fallback','decoder','fatal','complete','source-changed','unavailable'],
     action:['media.load','media.play','media.pause','media.toggle','media.seek.absolute','media.seek.relative','media.quality.set','media.tracks.set','media.stream.refresh','session.enable','session.disable','session.visibility'],
     request:['room-poll','rooms','observe','ready','command','identity','other'],
     failure:['http','network','timeout','abort','decode','other'],
@@ -14,10 +14,10 @@
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
-    'probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide']);
+    'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
-    'callbackFrames','width','height','viewportFraction','mediaError','audio','subtitle','identity','room','media','stream','grant','observation']);
-  const flags = new Set(['paused','seeking','waiting','online','inViewport','fatal','enabled','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged']);
+    'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation']);
+  const flags = new Set(['paused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged']);
   function requestKind(path) {
     const route = String(path).split('?')[0];
     if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';
@@ -26,7 +26,8 @@
     if (action) return action;
     return /^\/api\/(watch\/(me|.*login)|account\/.*login)$/.test(route) ? 'identity' : 'other';
   }
-  function create({now=Date.now,monotonic=()=>performance.now()}={}) {
+  function create({now=Date.now,monotonic=()=>performance.now(),soak=false}={}) {
+    const limits=soak?{events:2400,samples:8100}:{events:300,samples:600};
     const startedAt=now(), start=monotonic(), buckets={events:[],samples:[]}, generations={room:0,media:0,stream:0,grant:0,observation:0};
     let previous={}, sequence=0, discardedEvents=0, discardedSamples=0;
     function record(event,fields={}) {
@@ -38,7 +39,7 @@
         else if (Object.hasOwn(choices,key) && choices[key].includes(value)) row[key]=value;
         else if (key==='ranges' && Array.isArray(value)) row.ranges=value.slice(0,8).filter(pair=>Array.isArray(pair)&&pair.length===2&&pair.every(n=>Number.isFinite(n)&&n>=0&&n<=1e9)).map(pair=>pair.map(n=>Math.round(n*1000)/1000));
       }
-      const sample=event==='sample', bucket=sample?buckets.samples:buckets.events, limit=sample?600:300;
+      const sample=event==='sample', bucket=sample?buckets.samples:buckets.events, limit=sample?limits.samples:limits.events;
       if (bucket.length===limit) { bucket.shift(); if(sample)discardedSamples++;else discardedEvents++; }
       bucket.push(row);
     }
@@ -49,7 +50,7 @@
       if(Object.keys(changed).length)record('state-change',changed);
     }
     record('start');
-    return {record,state,snapshot:()=>JSON.parse(JSON.stringify({schema:1,startedAt,exportedAt:now(),limits:{events:300,samples:600},discardedEvents,discardedSamples,
+    return {record,state,snapshot:()=>JSON.parse(JSON.stringify({schema:1,startedAt,exportedAt:now(),limits,discardedEvents,discardedSamples,
       entries:[...buckets.events,...buckets.samples].sort((a,b)=>a.sequence-b.sequence)}))};
   }
   function controlProbe(now=()=>performance.now()) {

@@ -40,6 +40,15 @@ test('request categories never include room IDs, query grants or arbitrary route
   assert.equal(requestKind('/api/watch/rooms/private-id/private-secret'),'other');
 });
 
+test('opt-in soak retains two hours of one-second samples with finite caps',()=>{
+  const log=create({soak:true});log.record('soak-start');
+  for(let second=0;second<7201;second++)log.record('sample',{position:second,jsHeapUsed:123456});
+  let saved=log.snapshot();assert.equal(saved.discardedSamples,0);assert.equal(saved.entries.filter(row=>row.event==='sample').length,7201);
+  assert.deepEqual(saved.limits,{events:2400,samples:8100});
+  for(let second=7201;second<10000;second++)log.record('sample',{position:second});
+  saved=log.snapshot();assert.equal(saved.discardedSamples,1900);assert.equal(saved.entries.filter(row=>row.event==='sample').length,8100);
+});
+
 test('failed control requests preserve errors while recording safe HTTP, decoding and transport evidence',async()=>{
   const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
   for(const [failure,response,error] of [
@@ -69,4 +78,18 @@ test('opt-in control probe affects only one room poll for a fixed six seconds',(
   assert.equal(probe.rejects('/api/watch/rooms/'+other+'?viewer=secret',other),false);
   time=6099;assert.equal(probe.active(),true);time=6100;assert.equal(probe.active(),false);
   assert.equal(probe.rejects('/api/watch/rooms/'+room,room),false);assert.equal(probe.start(other),true);
+});
+
+test('automatic soak cleanup refuses changed rooms, media, permissions and concurrent commands',async()=>{
+  const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
+  const base={mediaVersion:'original',visibility:'private',viewers:1,canManage:true};
+  for(const change of [ctx=>{ctx.selected='other';},ctx=>{ctx.state.mediaVersion='new';},ctx=>{ctx.state.visibility='public';},
+    ctx=>{ctx.state.viewers=2;},ctx=>{ctx.state.canManage=false;},ctx=>{ctx.pending=true;},ctx=>{ctx.state=undefined;}]){
+    const events=[],calls=[],element={},ctx={soak:{room:'room',media:'original',startedAt:0},selected:'room',state:{...base},pending:false,performance:{now:()=>7200000},
+      execute:()=>{calls.push('command');throw new Error('Must not command this session');},api:()=>{calls.push('leave');throw new Error('Must not leave this session');},
+      diagnosticSample:(event,fields)=>events.push({event,...fields}),saveDiagnostics:()=>events.push({event:'export'}),$:()=>element};
+    change(ctx);vm.runInNewContext(source.slice(source.indexOf('async function finishSoak('),source.indexOf('const controlProbe=')),ctx);
+    await ctx.finishSoak('complete');await ctx.finishSoak('complete');
+    assert.deepEqual(calls,[]);assert.equal(events.filter(row=>row.event==='export').length,1);assert.equal(events.find(row=>row.event==='soak-end').cleanup,false);
+  }
 });

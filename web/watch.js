@@ -15,7 +15,33 @@ let observationPending = false, observationSequence = 0, observationBreak = 0, o
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
-const diagnostics = uburoomDiagnostics.create();
+const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
+let soak;
+$('soak-start').hidden=!soakMode;
+$('soak-status').hidden=!soakMode;
+$('soak-start').onclick=()=>{
+  if(soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||video.paused||video.readyState<3)return;
+  soak={room:selected,media:state.mediaVersion,startedAt:performance.now(),finishing:false,done:false};
+  diagnosticSample('soak-start');$('soak-status').textContent='Two-hour soak recording locally. Keep this tab open.';
+};
+async function finishSoak(reason) {
+  if(!soak||soak.finishing||soak.done)return;
+  soak.finishing=true;let cleanup=false;
+  const same=()=>selected===soak.room&&state?.mediaVersion===soak.media&&state.visibility==='private'&&state.viewers===1&&state.canManage;
+  try {
+    if(reason==='complete'&&same()&&!pending){
+      await execute({action:'media.pause'});
+      if(same()&&!pending){const id=selected;pending=true;try{await api('/api/watch/rooms/'+id+'/leave',{viewerId});
+        if(selected===id){selected=undefined;browseSession=undefined;unavailable('','leave');await refreshRooms();cleanup=true;}}
+        finally{pending=false;renderTransport();}}
+    }
+  } catch { /* Export even if the current authorized session cannot be cleaned up. */ }
+  finally {
+    soak.done=true;diagnosticSample('soak-end',{reason,cleanup,elapsedMs:performance.now()-soak.startedAt});
+    saveDiagnostics('uburoom-playback-soak.json');
+    $('soak-status').textContent=reason==='complete'?'Soak complete. Diagnostic download requested'+(cleanup?'; test room closed.':'; check playback cleanup.'):'Soak stopped because the session changed. Diagnostic download requested.';
+  }
+}
 const controlProbe=params.get('playbackProbe')==='1'?uburoomDiagnostics.controlProbe():undefined;
 let probeRunning=false;
 $('probe-control').hidden=!controlProbe;
@@ -32,6 +58,7 @@ function diagnosticSample(event='sample',fields={}) {
       ranges:Array.from({length:Math.min(video.buffered.length,8)},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),
       bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),frames:quality?.totalVideoFrames,dropped:quality?.droppedVideoFrames,
       decoded:quality?quality.totalVideoFrames-quality.droppedVideoFrames:videoFrames,
+      jsHeapUsed:performance.memory?.usedJSHeapSize,jsHeapTotal:performance.memory?.totalJSHeapSize,jsHeapLimit:performance.memory?.jsHeapSizeLimit,
       callbackFrames:videoFrames,width:video.videoWidth,height:video.videoHeight,mediaError:video.error?.code,
       online:navigator.onLine,visibility:document.visibilityState,inViewport:rect.width>0&&rect.height>0&&rect.bottom>0&&rect.top<innerHeight&&rect.right>0&&rect.left<innerWidth,
       viewportFraction:rect.width>0&&rect.height>0?Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top))/(rect.width*rect.height):0,
@@ -47,14 +74,20 @@ document.addEventListener('visibilitychange',()=>diagnosticSample('visibilitycha
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
   $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!!controlProbe?.active();
+  $('soak-start').disabled=!!soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||video.paused||video.readyState<3;
   if(selected || state || mediaSource)diagnosticSample();
+  if(soak&&!soak.finishing&&!soak.done){
+    if(selected!==soak.room||state&&state.mediaVersion!==soak.media)void finishSoak('source-changed');
+    else if(performance.now()-soak.startedAt>=7200000)void finishSoak('complete');
+  }
 },1000);
-$('save-diagnostics').onclick=()=>{
+$('save-diagnostics').onclick=()=>saveDiagnostics();
+function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   diagnosticSample();
   const url=URL.createObjectURL(new Blob([JSON.stringify(diagnostics.snapshot(),null,2)+'\n'],{type:'application/json'}));
-  const link=document.createElement('a');link.href=url;link.download='uburoom-playback-diagnostics.json';link.click();
+  const link=document.createElement('a');link.href=url;link.download=filename;link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-};
+}
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }

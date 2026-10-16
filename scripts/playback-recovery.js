@@ -38,7 +38,7 @@ async function main(){
   };
   try{
     browser=await playbackBrowser(name);report.version=browser.version;
-    host=await browser.page(config.publicUrl+'/watch?demo=host&playbackProbe=1');
+    host=await browser.page(config.publicUrl+'/watch?demo=host&playbackProbe=1&soak=1');
     const evaluate=(page,code)=>browser.evaluate(page,code),until=(page,code,label,timeout)=>browser.until(page,code,label,timeout);
     await until(host,'!!me','Host login');
     await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room creation');
@@ -296,6 +296,22 @@ async function main(){
       const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};document.getElementById("save-diagnostics").click();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));
       assert.equal(downloaded.schema,1);assert.ok(downloaded.entries.some(row=>row.event==='sample'),'download contains playback measurements');
       return {detail:'Download control is visible and fits desktop, theater drawer and portrait phone.'};
+    });
+    await check('autonomous soak completion and bounded archive',async()=>{
+      await browser.viewport(host,1280,900);await evaluate(host,'setTheater(false);true');
+      await command(host,'media.seek.absolute',{seconds:15});await command(host,'media.play');
+      await until(host,'!document.getElementById("soak-start").disabled','Soak eligibility');
+      await evaluate(host,'(()=>{window.__soakURL=URL.createObjectURL;window.__soakClick=HTMLAnchorElement.prototype.click;URL.createObjectURL=value=>{window.__soakBlob=value;return window.__soakURL(value);};HTMLAnchorElement.prototype.click=function(){window.__soakFilename=this.download;};document.getElementById("soak-start").click();return true;})()');
+      await until(host,'!!soak','Started soak');
+      await evaluate(host,'soak.startedAt=performance.now()-7200000;true');
+      await until(host,'soak.done && state===undefined && video.readyState===0','Automatic pause and test-room leave',15000);
+      const saved=JSON.parse(await evaluate(host,'window.__soakBlob.text()'));
+      assert.equal(await evaluate(host,'window.__soakFilename'),'uburoom-playback-soak.json');
+      assert.ok(saved.entries.some(row=>row.event==='soak-end'&&row.reason==='complete'&&row.cleanup===true));
+      assert.equal(saved.limits.samples,8100);
+      await evaluate(host,'URL.createObjectURL=window.__soakURL;HTMLAnchorElement.prototype.click=window.__soakClick;true');
+      fs.writeFileSync(path.join(output,'completed-soak-diagnostics.json'),JSON.stringify(saved,null,2)+'\n');
+      return {detail:'Fixture advances only its soak clock; real command engine pauses, leaves the unchanged private test room and exports a bounded archive.'};
     });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}
