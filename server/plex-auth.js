@@ -2,7 +2,7 @@
 const {randomUUID,sign}=require('node:crypto');
 class PlexAccessError extends Error {constructor(message,revoked=false){super(message);this.revoked=revoked;}}
 class PlexAuth {
-  constructor(config,accounts,plex,fetcher=fetch){this.config=config;this.accounts=accounts;this.plex=plex;this.fetch=fetcher;this.cache=new Map();this.inflight=new Map();}
+  constructor(config,accounts,plex,fetcher=fetch){this.config=config;this.accounts=accounts;this.plex=plex;this.fetch=fetcher;this.cache=new Map();this.inflight=new Map();this.generation=0;}
   async request(resource,{token,clientId,method='GET',data}={}) {
     const response=await this.fetch('https://clients.plex.tv/api/v2'+resource,{method,redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json','X-Plex-Product':'uburoom','X-Plex-Client-Identifier':clientId||'uburoom-auth',...(token?{'X-Plex-Token':token}:{}),...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});
     if(!response.ok)throw new PlexAccessError([401,403,498].includes(response.status)?'Plex authorization expired or was revoked':'Plex is temporarily unavailable; try again',[401,403,498].includes(response.status));
@@ -65,12 +65,15 @@ class PlexAuth {
     if(!identity)return;
     const cached=this.cache.get(identity.subject);if(cached&&cached.until>Date.now())return cached.plex;
     if(this.inflight.has(identity.subject))return this.inflight.get(identity.subject);
+    const generation=this.generation;
     const job=(async()=>{const credential=this.accounts.credential(identity.subject);if(!credential)return;try{
-      const scoped=await this.validate(credential,identity.subject);this.accounts.credential(identity.subject,credential);this.cache.set(identity.subject,{plex:scoped,until:Date.now()+30000});return scoped;
-    }catch(error){this.cache.delete(identity.subject);throw error;}})();
-    this.inflight.set(identity.subject,job);try{return await job;}finally{this.inflight.delete(identity.subject);}
+      const scoped=await this.validate(credential,identity.subject);
+      if(generation!==this.generation)throw new PlexAccessError('Plex scope changed during validation');
+      this.accounts.credential(identity.subject,credential);this.cache.set(identity.subject,{plex:scoped,until:Date.now()+30000});return scoped;
+    }catch(error){if(generation===this.generation)this.cache.delete(identity.subject);throw error;}})();
+    this.inflight.set(identity.subject,job);try{return await job;}finally{if(this.inflight.get(identity.subject)===job)this.inflight.delete(identity.subject);}
   }
   fresh(userId){const identity=this.accounts.identities(userId).find(i=>i.provider==='plex');return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
-  clear(){this.cache.clear();}
+  clear(){this.generation++;this.cache.clear();this.inflight.clear();}
 }
 module.exports={PlexAuth,PlexAccessError};
