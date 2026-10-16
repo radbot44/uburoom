@@ -149,6 +149,28 @@ async function main(){
       await command(host,'media.pause');
       return {detail:'Six seconds without control responses; captured French/ASS stream and guest survived, remote consent stayed off.',before,after,tones};
     });
+    await check('rejoin after viewer timeout keeps personal tracks',async()=>{
+      await choose(guest,{audioId:'1042',subtitleId:'off'});
+      await until(guest,'state.tracks.audioId==="1042" && state.tracks.subtitleChoice==="off"','Guest personal track selection');
+      await evaluate(guest,'('+installMeter.toString()+')()');await evaluate(guest,'playbackMeter.resumeAudio()');
+      await evaluate(guest,'playbackMeter.reset("104","hls");true');
+      const before=await snapshot(guest),hostBefore=await snapshot(host);
+      await evaluate(guest,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+12000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture control outage")):original(input,options);return true;})()');
+      await until(guest,'state===undefined && mediaSource===undefined','Long control outage unloads guest',6000);
+      await until(guest,`state?.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Guest rejoins after viewer timeout',25000);
+      const after=await snapshot(guest),hostAfter=await snapshot(host);
+      assert.equal(after.tracks.audioId,'1042','guest selected audio survives rejoin');
+      assert.equal(after.tracks.subtitleChoice,'off','guest subtitle choice survives rejoin');
+      assert.equal(after.remote,false,'rejoin does not enable remote consent');
+      assert.equal(hostAfter.stream,hostBefore.stream,'host stream stays unchanged');
+      const oldStatus=await evaluate(guest,`fetch(${JSON.stringify(before.mediaUrl)},{headers:token?{Authorization:'Bearer '+token}:{}}).then(r=>r.status)`);
+      assert.equal(oldStatus,403,'old media grant stays revoked');
+      await command(host,'media.play');await until(guest,'!video.paused && video.readyState>=3','Guest playback after rejoin');
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(guest,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      assert.ok(tones>=5,'selected French audio decodes after rejoin');
+      await command(host,'media.pause');
+      return {detail:'Twelve-second control outage removed and rejoined guest; French audio/Off choice returned without changing host or consent.',before,after,oldStatus,tones};
+    });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}
   finally{control.blocked=false;report.providerEvents=control.events;write();await browser?.close();await app.close();}

@@ -5,6 +5,7 @@ const { eligible, viewEligible, isHost, sameVoice, canWatch } = require('./core'
 const { PlaybackError } = require('./av1');
 const { PlaybackTracking } = require('./playback-tracking');
 const Tracks = require('./media-tracks');
+const RECONNECT_GRACE_MS = 60000;
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) { this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map(); }
@@ -15,7 +16,7 @@ class Watch {
     const s = { sessionId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
       ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility: 'public', mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
       controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false, profileSlots: [] } };
-    const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), profiles: {}, lastActivity: Date.now(),
+    const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
     s.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
     s.viewers = room.viewers;
@@ -25,6 +26,7 @@ class Watch {
     return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : (now - room.changedAt) / 1000)));
   }
   dropMedia(room, reason = 'media-changed') {
+    room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); viewer.media = undefined; viewer.ready = false;
       if (reason === 'media-changed') {
@@ -69,8 +71,18 @@ class Watch {
     room.s.lastSeen = now;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false;
+    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion) room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) this.tracking.expire(viewer);
     for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && viewer.userId !== room.s.hostId && !this.hub.isAdmin(viewer.actor)) {
+      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || viewer.userId === room.s.hostId || this.hub.isAdmin(viewer.actor))) {
+        // Preserve only personal playback settings for the same tab's short
+        // reconnect. A fresh stream and observation epoch are always required.
+        room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, expires:now+RECONNECT_GRACE_MS,
+          trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
+          quality:viewer.quality, compatible:viewer.compatible, fallback:viewer.fallback,
+          volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt });
+        if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+      }
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
@@ -127,6 +139,7 @@ class Watch {
     } finally { room.transferring = false; }
   }
   async leave(room, actor, viewerId, reason = 'left') {
+    if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) room.disconnectedViewers.delete(viewerId);
     if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
     this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
@@ -163,13 +176,17 @@ class Watch {
     // host tab. Existing viewers can keep the server session alive in between.
     const oldViewer = room.viewers.get(viewerId);
     if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
+    const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
+    if (saved && saved.userId !== actor.userId) throw new Error('Viewer identity mismatch');
+    if (saved) room.disconnectedViewers.delete(viewerId);
     if (isHost(room.s, actor) && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
       room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
     }
     if (isHost(room.s, actor) && !oldViewer) room.hostViewerId = viewerId;
     room.hadViewers = true;
-    const viewer = oldViewer || { observationEpoch: randomUUID(), quality: Engine.validQuality(quality) ? quality : '720p4', volume: 50, muted: false,
-      joinedAt: Math.min(now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
+    const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'), volume: saved?.volume ?? 50, muted: saved?.muted ?? false,
+      trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
+      joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
@@ -271,6 +288,7 @@ class Watch {
       case 'session.sharing': s.mode = args.mode; break;
       case 'session.visibility':
         s.visibility = args.visibility;
+        room.disconnectedViewers.clear();
         if (s.visibility === 'private') for (const [id, viewer] of room.viewers) {
           if (viewer.userId === s.hostId || this.hub.isAdmin(viewer.actor)) continue;
           this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id);

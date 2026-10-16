@@ -208,6 +208,47 @@ test('host election skips revoked or expired viewers and respects session privac
   watch.close();
 });
 
+test('a timed-out viewer can rejoin the same media with personal tracks but a fresh stream', () => {
+  const hub = new Hub({ ownerId:'host', guildId:'guild', channels:['commands'] }, []);
+  hub.access = { refresh:async()=>true, isMember:()=>true, voiceChannel:()=> 'call', validVoiceChannel:()=>true, options:()=>({available:true}) };
+  const watch = new Watch(hub,{stop:async()=>{}});
+  const actor = userId => ({userId,guildId:'guild',channelId:'commands',surface:'web',name:userId});
+  const host=actor('host'),guest=actor('guest'),room=watch.rooms.get(watch.create(host)),hostId=randomUUID(),guestId=randomUUID();
+  watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
+  const previous=room.viewers.get(guestId);
+  previous.trackChoice={audioId:'1042',subtitleId:'off',audioIntent:{language:'fr'}};
+  previous.quality='1080p';previous.subtitleOffset=2;previous.streamVersion=randomUUID();
+  previous.at=Date.now()-11000;
+  const oldEpoch=previous.observationEpoch;
+  watch.refresh(room);
+  assert.equal(room.viewers.has(guestId),false);
+  assert.throws(()=>watch.snapshot(room,actor('other'),guestId),/identity mismatch/);
+  const newTab=randomUUID();watch.snapshot(room,guest,newTab);
+  assert.equal(room.viewers.get(newTab).trackChoice,undefined,'a new tab does not inherit personal choices');
+  watch.snapshot(room,guest,guestId);
+  const restored=room.viewers.get(guestId);
+  assert.deepEqual(restored.trackChoice,previous.trackChoice);
+  assert.equal(restored.quality,'1080p');assert.equal(restored.subtitleOffset,2);
+  assert.notEqual(restored.observationEpoch,oldEpoch,'old playback observations cannot resume');
+  assert.equal(restored.streamVersion,undefined,'a new personal stream must be prepared');
+  assert.equal(room.s.enabled,false,'rejoin never enables remote control');
+  restored.at=Date.now()-11000;watch.refresh(room);
+  room.mediaVersion=randomUUID();watch.refresh(room);
+  watch.snapshot(room,guest,guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'a changed title cannot reuse numeric track IDs');
+  room.viewers.get(guestId).trackChoice={audioId:'1042'};
+  room.viewers.get(guestId).at=Date.now()-11000;watch.refresh(room);
+  room.disconnectedViewers.get(guestId).expires=Date.now()-1;
+  watch.snapshot(room,guest,guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'expired reconnect state is ignored');
+  room.viewers.get(guestId).trackChoice={audioId:'1042'};
+  room.viewers.get(guestId).at=Date.now()-11000;watch.refresh(room);
+  watch.leave(room,guest,guestId);
+  watch.snapshot(room,guest,guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'explicit leave does not restore personal choices');
+  watch.close();
+});
+
 test('episode metadata uses the same subtitle and cross-season ordering for library and playback', async () => {
   const episodes = [
     { ratingKey: '10', type: 'episode', grandparentRatingKey: '99', title: 'First', grandparentTitle: 'Show', parentIndex: 1, index: 1, year: 2025 },
