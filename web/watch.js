@@ -14,6 +14,10 @@ let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
+const driftCorrection=uburoomTiming.correction();
+// The local comparison runner enables this candidate. Native-drop and skew
+// regressions must be resolved before promoting it to the default policy.
+let gentleCorrectionEnabled=false;
 const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
 let preparedStartKey;
 let observationClockRevision=0;
@@ -21,6 +25,9 @@ let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
+function resetDriftCorrection() {
+  driftCorrection.reset();if(video.playbackRate!==1)video.playbackRate=1;
+}
 const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
 let soak;
 $('soak-start').hidden=!soakMode;
@@ -79,10 +86,12 @@ function diagnosticSample(event='sample',fields={}) {
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
     if(['playing','pause','waiting','seeking','emptied'].includes(event))lastPresentationBreak=performance.now();
-    if(event==='seeking'||event==='emptied')presentationTiming.reset();diagnosticSample(event);
+    if(event==='seeking'||event==='emptied')presentationTiming.reset();
+    if(['pause','waiting','seeking','emptied'].includes(event))resetDriftCorrection();
+    diagnosticSample(event);
   });
-for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();}diagnosticSample(event);});
-document.addEventListener('visibilitychange',()=>diagnosticSample('visibilitychange'));
+for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();resetDriftCorrection();}diagnosticSample(event);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)resetDriftCorrection();diagnosticSample('visibilitychange');});
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
   $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!!controlProbe?.active();
@@ -696,7 +705,12 @@ async function synchronize() {
   if ((clockValid || state.state.paused) && (!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
     try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05)); } catch {}
   }
-  const rate=!clockValid || state.state.paused || Math.abs(difference) < .15 || Math.abs(difference) > .65 ? 1 : difference > 0 ? 1.04 : .96;
+  const correctionInput={now:performance.now(),error:difference,context:startKey(),
+    eligible:clockValid&&document.visibilityState==='visible'&&!state.state.paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
+      uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
+    uncertaintyMs:timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
+  const rate=gentleCorrectionEnabled?driftCorrection.update(correctionInput):
+    !correctionInput.eligible||Math.abs(difference)<.15||Math.abs(difference)>.65?1:difference>0?1.04:.96;
   if(video.playbackRate!==rate)video.playbackRate=rate;
   video.volume = state.state.volume / 100; video.muted = state.state.muted;
   if (state.state.paused) {

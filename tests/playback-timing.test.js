@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
-const {clock,target,presentation}=require('../web/playback-timing');
+const {clock,target,presentation,correction}=require('../web/playback-timing');
 const {create}=require('../web/playback-diagnostics');
 const {compare}=require('../scripts/sync-report');
 function fixture() {
@@ -57,7 +57,8 @@ test('player uses the mapped server target and tolerates clock loss without drif
   let valid=true,serverTime=100300;
   const ctx={state:{mediaUrl:'fixture',format:'file',serverNow:100000,state:{position:10,duration:60,paused:false,volume:50,muted:false}},
     playbackClock:{read:()=>({valid,serverTime:valid?serverTime:undefined})},uburoomTiming:{target},receivedAt:100,
-    performance:{now:()=>100},video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
+    performance:{now:()=>100},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:correction(),startKey:()=> 'fixture',presentationTiming:presentation(),playerWaiting:false,
+    uburoomPlayback:require('../web/playback-policy'),video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
     probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
   vm.runInNewContext(source.slice(source.indexOf('function expected('),source.indexOf('async function reportObservation(')),ctx);
   vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);

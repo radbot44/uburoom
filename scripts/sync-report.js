@@ -8,6 +8,13 @@ function distribution(values) {
 function summarize(log) {
   const rows=log.entries||[], frames=rows.filter(r=>r.event==='frame'), samples=rows.filter(r=>r.event==='sample');
   let dropped=0,counterPairs=0,counterResets=0;
+  const timed=rows.filter(r=>Number.isFinite(r.ms)&&Number.isFinite(r.rate)).sort((a,b)=>a.ms-b.ms);
+  let observedRateMs=0,nonUnitRateMs=0,unknownRateMs=0;
+  for(let i=1;i<timed.length;i++) {
+    const duration=timed[i].ms-timed[i-1].ms;
+    if(duration>1500){unknownRateMs+=duration;continue;}
+    observedRateMs+=duration;if(timed[i-1].rate!==1)nonUnitRateMs+=duration;
+  }
   for(let i=1;i<samples.length;i++)if(samples[i].stream===samples[i-1].stream && Number.isFinite(samples[i].dropped)&&Number.isFinite(samples[i-1].dropped)){
     if(samples[i].dropped<samples[i-1].dropped)counterResets++;
     else {dropped+=samples[i].dropped-samples[i-1].dropped;counterPairs++;}
@@ -22,6 +29,8 @@ function summarize(log) {
     observedDroppedFrames:counterPairs?dropped:null,frameCounterPairs:counterPairs,frameCounterResets:counterResets,
     seeks:rows.filter(r=>r.event==='seeking').length,syncSeeks:rows.filter(r=>r.event==='sync-seek').length,
     rateChanges:rows.filter(r=>r.event==='ratechange').length,nonUnitRateFrames:frames.filter(r=>r.rate!==1).length,
+    rateDeviationPercent:distribution(frames.map(r=>Math.abs(r.rate-1)*100)),
+    observedRateMs,nonUnitRateMs,unknownRateMs,
     waits:rows.filter(r=>r.event==='waiting').length,stalls:rows.filter(r=>r.event==='stalled').length};
 }
 function compare(a,b,{sameTimeline=false,stepMs=10}={}) {
@@ -39,7 +48,8 @@ function compare(a,b,{sameTimeline=false,stepMs=10}={}) {
       return Number.isFinite(r.frameServerTime)?r:{...r,frameServerTime:offset===undefined?undefined:r.frameDisplayMonoMs+offset,clockValid:false};
     }).filter(r=>Number.isFinite(r.frameServerTime));
     if(new Set(rows.map(r=>r.room+':'+r.media)).size!==1)throw new Error('Use exports from one room/media generation per run.');
-    if(new Set(rows.map(r=>r.clockRevision)).size!==1 || rows.some((r,i)=>i>0&&r.frameServerTime<rows[i-1].frameServerTime))throw new Error('Select a continuous clock segment before comparing; a reset cannot be aligned reliably.');
+    if(new Set(rows.map(r=>r.clockRevision)).size!==1)throw new Error('Select a continuous clock segment before comparing; a reset cannot be aligned reliably.');
+    if(rows.some((r,i)=>i>0&&r.frameServerTime<rows[i-1].frameServerTime))throw new Error('Presentation timestamps regressed; select a continuous presentation segment before comparing.');
     return rows;
   };
   const left=prepare(a),right=prepare(b), start=Math.max(left[0].frameServerTime,right[0].frameServerTime),

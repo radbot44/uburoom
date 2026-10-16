@@ -96,14 +96,19 @@
     return {arm,cancel};
   }
   function presentation() {
-    let previous;
+    let previous, intervals=[];
     return {
-      reset(){previous=undefined;},
+      reset(){previous=undefined;intervals=[];},
+      cadence(){return intervals.length>=8?[...intervals].sort((a,b)=>a-b)[Math.floor(intervals.length/2)]:0;},
       frame(now,metadata) {
         const {mediaTime,expectedDisplayTime,presentationTime,presentedFrames,processingDuration}=metadata;
         if(![mediaTime,expectedDisplayTime,presentedFrames].every(Number.isFinite))return undefined;
         const current={mediaTime,expectedDisplayTime,presentedFrames};
         const advancing=previous && mediaTime>previous.mediaTime && expectedDisplayTime>previous.expectedDisplayTime && presentedFrames>previous.presentedFrames;
+        if(advancing && presentedFrames===previous.presentedFrames+1) {
+          const interval=mediaTime-previous.mediaTime;
+          if(interval>=1/120 && interval<=.1){intervals.push(interval);intervals=intervals.slice(-24);}
+        }
         const result={frameMediaTime:mediaTime,frameDisplayMonoMs:expectedDisplayTime,framePresentationMonoMs:presentationTime,
           frameCallbackLatenessMs:now-expectedDisplayTime,frameProcessingMs:Number.isFinite(processingDuration)?processingDuration*1000:undefined,
           presentedFrames,frameIntervalMs:advancing?expectedDisplayTime-previous.expectedDisplayTime:undefined,
@@ -115,6 +120,29 @@
       }
     };
   }
-  const api={clock,target,presentation,alarm};
+  // Local drift correction only. Frame intervals widen tolerance; they never
+  // authorize a shared action or imply that physical display cadence is known.
+  function correction() {
+    let since, direction=0, activeUntil=0, quietUntil=0, last, key;
+    function reset() {since=last=key=undefined;direction=activeUntil=quietUntil=0;}
+    function update({now,error,eligible,context,uncertaintyMs=0,frameSeconds=0}) {
+      if(context!==key || !Number.isFinite(now) || last!==undefined&&(now<last||now-last>3000))reset();
+      key=context;last=now;
+      const stop=()=>{if(direction)quietUntil=now+10000;direction=0;activeUntil=0;since=undefined;};
+      const tolerance=Math.max(.15+Math.min(.1,Math.max(0,frameSeconds)),Math.min(.25,uncertaintyMs/1000));
+      if(!eligible || !Number.isFinite(error) || !Number.isFinite(now)){stop();return 1;}
+      const sign=Math.sign(error),magnitude=Math.abs(error);
+      if(direction) {
+        if(sign!==direction || magnitude<=tolerance*.6 || magnitude>.65 || now>=activeUntil)stop();
+        else return 1+direction*.005;
+      }
+      if(magnitude<=tolerance+.05 || magnitude>.65 || now<quietUntil){since=undefined;return 1;}
+      if(since===undefined || since.sign!==sign)since={at:now,sign};
+      if(now-since.at<2000)return 1;
+      direction=sign;activeUntil=now+10000;since=undefined;return 1+direction*.005;
+    }
+    return {update,reset};
+  }
+  const api={clock,target,presentation,alarm,correction};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
 })(typeof globalThis==='object'?globalThis:this);

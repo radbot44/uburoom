@@ -49,7 +49,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P3 | Complete audio, subtitles and content fidelity | Next; first slice implemented | M1-P2 delivery model; validation can start now |
 | M1-P4 | Complete the Plex viewing experience | Later; planned | Stable source/track selection and item timeline |
 | M1-P5 | Real-time playback synchronization | In progress; timing instrumentation and clock estimation implemented, live targets unverified | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
-| M1-P6 | Frame-pacing preservation during synchronization | High priority; compositor baseline implemented, correction experiments pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
+| M1-P6 | Frame-pacing preservation during synchronization | In progress; cadence comparisons recorded, gentle candidate gated after regressions; joint live verification pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | Planned; review complete user journeys before restructuring | Existing design guide, rendered surfaces and playback/permission behavior |
 | M1-P8 | Separate remote extension repository and uburoom compatibility | Planned; define the integration and shared-source boundaries before extraction | Stable command/protocol contract and cross-repository compatibility checks |
 
@@ -108,7 +108,7 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 **Target:** Aim for ≤50 ms p95 presentation-time skew, with ≤100 ms p99 as an initial engineering target, subject to real-world testing.
 
-**Current increment:** Timing/clock/shared-target diagnostics now include repeated, counterbalanced startup comparisons and a minimal browser callback probe. Initial readiness releases use a shared future start with paused preparation; ongoing buffering and ordinary resume remain independent/immediate. Local Firefox 24 fps and Chrome 59.94 fps trials need no rate corrections after this change. The rate/seek policy is otherwise unchanged. Scheduled ordinary controls, prompt event delivery, frame-aware correction experiments and physical/geographic validation remain open. Firefox's sparse high-rate callbacks and interval outliers remain measurement limits. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
+**Current increment:** Timing/clock/shared-target diagnostics now include repeated, counterbalanced startup comparisons and a minimal browser callback probe. Initial readiness releases use a shared future start with paused preparation; ongoing buffering and ordinary resume remain independent/immediate. Local Firefox 24 fps and Chrome 59.94 fps startup trials needed no rate corrections. M1-P6 adds recovery/visibility guards and an experimental bounded gentle policy; its observed skew/drop regressions prevent default enablement. Default rate gain/deadband and hard-seek thresholds remain unchanged. Scheduled ordinary controls, prompt event delivery, alternative frame-aware correction experiments and physical/geographic validation remain open. Firefox's sparse high-rate callbacks and interval outliers remain measurement limits. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
 
 **Architecture:**
 
@@ -150,7 +150,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Guiding principle:** A consistent, smooth video presentation with 30 ms synchronization error is preferable to a theoretically perfect 0 ms synchronization error achieved through distracting playback corrections.
 
-Verification remains planned; record cadence, display refresh rates, correction behavior and separate skew/smoothness results in [testing status](docs/testing.md#frame-pacing-preservation-during-synchronization).
+**Current increment:** Rate correction now stops during buffering, seeking, hidden/offline state and local lifecycle changes. An experimental ±0.5% policy adds sustained-drift evidence, cadence/clock-informed tolerance, hysteresis, bounded bursts and a quiet interval. Local comparisons across all six requested cadences found slower catch-up and additional Chrome native drops in several candidate trials, so the candidate remains disabled by default and available to the isolated runner. The owner will test M1-P5 alongside M1-P6 during the live human checks. Drop investigation, threshold calibration, alternative recovery methods and the physical display/network/transport matrix remain open. Record separate skew/smoothness results in [testing status](docs/testing.md#frame-pacing-preservation-during-synchronization).
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
