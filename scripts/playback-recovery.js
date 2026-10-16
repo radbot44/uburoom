@@ -171,6 +171,30 @@ async function main(){
       await command(host,'media.pause');
       return {detail:'Twelve-second control outage removed and rejoined guest; French audio/Off choice returned without changing host or consent.',before,after,oldStatus,tones};
     });
+    await check('buffer exhaustion recovers after delivery returns',async()=>{
+      await command(host,'media.seek.absolute',{seconds:10});
+      await until(host,'video.paused && !video.seeking && Math.abs(video.currentTime-10)<.7','Paused before long delivery outage');
+      await pause(3000);
+      const before=await snapshot(host);
+      await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback before long delivery outage');
+      control.blocked=true;
+      try { await pause(30000); } finally { control.blocked=false; }
+      const interrupted=await snapshot(host);
+      assert.equal(interrupted.buffered,0,'the outage must actually exhaust buffered media');
+      const returnedAt=Date.now();
+      await until(host,'!video.paused && video.readyState>=3 && !playbackError && Math.abs(video.currentTime-expected())<1','Playback after buffer exhaustion',30000);
+      const recoveryMs=Date.now()-returnedAt;
+      const recovered=await snapshot(host);
+      await pause(3000);
+      const after=await snapshot(host);
+      assert.ok(after.position-recovered.position>2,'decoded playback advances after delivery returns');
+      assert.ok(after.frames-recovered.frames>35,'video frames decode after delivery returns');
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      assert.ok(tones>=5,'selected French PCM decodes after delivery returns');
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
+      await command(host,'media.pause');
+      return {detail:'Thirty-second media outage exhausted the buffer; player caught up in '+recoveryMs+' ms, then decoded frames and selected audio continued.',before,interrupted,recovered,after,tones,recoveryMs};
+    });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}
   finally{control.blocked=false;report.providerEvents=control.events;write();await browser?.close();await app.close();}
