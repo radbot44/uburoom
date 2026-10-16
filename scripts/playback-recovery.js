@@ -133,6 +133,22 @@ async function main(){
       await command(host,'media.pause');
       return {detail:'Control poll failed once; player unloaded and reattached with selected French/ASS stream.',before,after,tones};
     });
+    await check('six-second control outage keeps personal tracks',async()=>{
+      const before=await snapshot(host),guestBefore=await snapshot(guest);
+      await evaluate(host,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+6000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture control outage")):original(input,options);return true;})()');
+      await until(host,'state===undefined && mediaSource===undefined','Control outage unloads player',6000);
+      await until(host,`state?.streamVersion===${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking`,'Selected stream after six-second outage',15000);
+      const after=await snapshot(host),guestAfter=await snapshot(guest);
+      assert.equal(after.mediaUrl,before.mediaUrl,'reconnect keeps the captured stream');
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
+      assert.equal(after.remote,false,'reconnect cannot enable remote consent');
+      assert.equal(guestAfter.stream,guestBefore.stream,'other viewer remains unaffected');
+      await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback after sustained control outage');
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      assert.ok(tones>=5,'selected French audio decodes after sustained control outage');
+      await command(host,'media.pause');
+      return {detail:'Six seconds without control responses; captured French/ASS stream and guest survived, remote consent stayed off.',before,after,tones};
+    });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}
   finally{control.blocked=false;report.providerEvents=control.events;write();await browser?.close();await app.close();}
