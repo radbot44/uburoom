@@ -3,9 +3,9 @@
   'use strict';
   const MAX_AGE=5000, WINDOW=30000;
   function clock({monotonic=()=>performance.now(),wall=Date.now}={}) {
-    let samples=[], delays=[], mapping, desired, adjustedAt, lastGood, lastTick, lastWall, lastSent, epoch, revision=0, rejected=0, accepted=0, reason='startup';
+    let samples=[], delays=[], delayed=[], mapping, desired, adjustedAt, lastGood, lastTick, lastWall, lastSent, epoch, uncertain=false, revision=0, rejected=0, accepted=0, reason='startup';
     function reset(why='disconnect') {
-      samples=[];delays=[];mapping=desired=adjustedAt=lastGood=lastTick=lastWall=lastSent=epoch=undefined;revision++;reason=why;
+      samples=[];delays=[];delayed=[];uncertain=false;mapping=desired=adjustedAt=lastGood=lastTick=lastWall=lastSent=epoch=undefined;revision++;reason=why;
     }
     function tick() {
       const now=monotonic(), date=wall();
@@ -29,17 +29,25 @@
       if(![t2,t3,processing,duration].every(Number.isFinite) || duration<0 || processing<0 || t3<t2 ||
         Math.abs(t3-t2-processing)>5 || processing>duration+5 || typeof clockEpoch!=='string' || !clockEpoch)return reject('invalid');
       const rtt=Math.max(0,duration-processing);
+      if(epoch!==undefined && clockEpoch!==epoch){reset('server-change');lastTick=received;lastWall=wall();lastSent=request.sent;}
+      epoch=clockEpoch;
       delays.push({at:received,rtt});delays=delays.filter(s=>received-s.at<=WINDOW).slice(-32);
       if(rtt>1500)return reject('delay');
-      if(epoch!==undefined && clockEpoch!==epoch){reset('server-change');lastTick=received;lastWall=wall();}
-      epoch=clockEpoch;
       const offset=(t2+t3-request.sent-received)/2;
       samples=samples.filter(s=>received-s.at<=WINDOW);
       // A low-delay sample gives the narrowest possible offset interval. Do
       // not assume path symmetry: uncertainty retains half the network RTT.
       const best=samples.filter(s=>!s.suspect).reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
-      if(best && rtt>best.rtt+Math.max(20,best.rtt*.5))return reject('jitter');
+      if(best && rtt>best.rtt+Math.max(20,best.rtt*.5)) {
+        delayed.push({rtt,offset});delayed=delayed.slice(-3);
+        // Reacquire a persistently slower route without waiting for the old
+        // minimum to age out. Isolated queueing spikes cannot replace it.
+        if(delayed.length<3 || !delayed.every(s=>Math.abs(s.rtt-rtt)<=Math.max(20,rtt*.2) && Math.abs(s.offset-offset)<=20))return reject('jitter');
+        samples=[];
+      }
+      delayed=[];
       if(mapping!==undefined && Math.abs(offset-mapping)>Math.max(250,rtt/2+(best?.rtt||0)/2+10)) {
+        uncertain=true;
         // A server wall-clock step changes the authoritative timeline. Require
         // three agreeing exchanges before rebasing; one outlier cannot jump it.
         samples.push({at:received,rtt,offset,suspect:true});samples=samples.slice(-32);
@@ -51,15 +59,15 @@
       const reliable=samples.filter(s=>!s.suspect).sort((a,b)=>a.rtt-b.rtt || b.at-a.at);
       desired=reliable[0].offset;
       if(mapping===undefined)mapping=desired;
-      adjustedAt=received;lastGood=received;accepted++;reason='accepted';return true;
+      adjustedAt=received;lastGood=received;uncertain=false;accepted++;reason='accepted';return true;
     }
     function read(at) {
       const now=tick();at??=now;
       const reliable=samples.filter(s=>!s.suspect && now-s.at<=WINDOW), best=reliable.reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
-      const valid=mapping!==undefined && best && now-lastGood<=MAX_AGE && reason!=='outlier';
+      const valid=mapping!==undefined && best && now-lastGood<=MAX_AGE && !uncertain;
       const rtts=delays.filter(s=>now-s.at<=WINDOW).map(s=>s.rtt), jitter=rtts.length?Math.max(...rtts)-Math.min(...rtts):undefined;
       return {valid:!!valid,serverTime:valid?at+mapping:undefined,clockRevision:revision,clockAccepted:accepted,clockRejected:rejected,clockReason:reason,
-        clockOffsetMs:valid?at+mapping-wall()-(at-now):undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
+        clockOffsetMs:valid?now+mapping-wall():undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
         clockUncertaintyMs:valid?best.rtt/2+2+Math.abs(desired-mapping)+(now-best.at)*.0001:undefined,
         networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter};
     }

@@ -59,7 +59,7 @@ test('exhausted HLS delivery failure allows cached playback and surfaces the err
   let paused = false, message;
   const context = {state:{mediaUrl:'/current',state:{paused:false,volume:50,muted:false}},probing:false,playbackError:'',
     video:{readyState:4,currentTime:12,paused:false,buffered:{length:1,start:()=>0,end:()=>20},pause:()=>{paused=true;}},
-    hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,
+    hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
     fail:value=>{message=value;},renderTransport:()=>{},checkVideoFrames:()=>{}};
   // This function is async; retain its declaration keyword when isolating it.
   vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),context);

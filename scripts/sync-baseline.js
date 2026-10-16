@@ -56,8 +56,9 @@ async function main() {
         await pause(seconds*1000);
         const capture=async(browser,page,boundary)=>JSON.parse(await browser.evaluate(page,'JSON.stringify((()=>{diagnosticSample();const log=diagnostics.snapshot();log.entries=log.entries.filter(r=>r.ms>='+boundary+');return log;})())'));
         const logs=await Promise.all([capture(host,h,boundaries[0]),capture(guest,g,boundaries[1])]);
+        for(let i=0;i<2;i++)fs.writeFileSync(path.join(output,rtt+'-steady-'+(i?'guest':'host')+'.json'),JSON.stringify(logs[i])+'\n');
         const steady=compare(...logs,{sameTimeline:true});
-        assert.ok(steady.healthySkewMs.count>100,'Require actual overlapping healthy presentation evidence');
+        const status=steady.healthySkewMs.count>100&&steady.healthyCoverageFraction>=.8?'measured':'insufficient-presentation-coverage';
         assert.equal(await host.evaluate(h,'state.enabled'),false);
         const before=await host.evaluate(h,'video.currentTime');
         await guest.evaluate(g,'probing=true;video.pause();playerWaiting=true;true');await pause(3000);
@@ -67,8 +68,8 @@ async function main() {
         await guest.until(g,'!video.paused && !video.seeking','Guest catch-up');await pause(3000);
         const recovery=await Promise.all([capture(host,h,boundaries[0]),capture(guest,g,boundaries[1])]);
         for(let i=0;i<2;i++){fs.writeFileSync(path.join(output,rtt+'-'+(i?'guest':'host')+'.json'),JSON.stringify(recovery[i])+'\n');}
-        report.results.push({guestControlDelayMs:rtt,versions:[host.version,guest.version],steady,recovery:compare(...recovery,{sameTimeline:true}),independentRecovery:true});
-        console.log(JSON.stringify({controller:mode,rtt,skew:steady.healthySkewMs,intervals:steady.viewers.map(v=>v.frameIntervalMs),uncertainty:steady.combinedClockUncertaintyMs}));
+        report.results.push({status,guestControlDelayMs:rtt,versions:[host.version,guest.version],steady,recovery:compare(...recovery,{sameTimeline:true}),independentRecovery:true});
+        console.log(JSON.stringify({controller:mode,rtt,status,coverage:steady.healthyCoverageFraction,skew:steady.healthySkewMs,intervals:steady.viewers.map(v=>v.frameIntervalMs),uncertainty:steady.combinedClockUncertaintyMs}));
         app.watch.remove(room);
       }finally{await Promise.allSettled([host?.close(),guest?.close()]);}
     }

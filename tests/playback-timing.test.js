@@ -37,6 +37,13 @@ test('clock expires, detects sleep/wake and both directions of wall jumps, and r
   assert.equal(f.sample(10,10,0,2000),false);assert.equal(f.sample(10,10,0,2000),false);assert.equal(f.sample(10,10,0,2000),true);
   assert.ok(f.c.read().clockRevision>revision);assert.equal(f.c.read().clockOffsetMs,2500);
 });
+test('a stable slower route is reacquired without a thirty-second clock outage',()=>{
+  const f=fixture();f.sample();
+  f.tick(700);assert.equal(f.sample(150,150),false);
+  f.tick(700);assert.equal(f.sample(150,150),false);
+  f.tick(700);assert.equal(f.sample(150,150),true);
+  assert.equal(f.c.read().networkMinRttMs,300);assert.equal(f.c.read().clockOffsetMs,500);assert.ok(f.c.read().clockUncertaintyMs>=150);
+});
 test('shared target removes response-arrival bias and follows pause, seek, replacement and bounds',()=>{
   const state={serverNow:100000,state:{position:10,duration:60,paused:false}};
   assert.equal(target(state,100150),10.15);assert.equal(target(state,200000),60);
@@ -44,6 +51,42 @@ test('shared target removes response-arrival bias and follows pause, seek, repla
   assert.equal(target({...state,state:{position:42,duration:100,paused:false}},101000),43);
   assert.equal(target({...state,state:{position:0,duration:5,paused:true}},101000),0);
   assert.equal(target(state,undefined),undefined);
+});
+test('player uses the mapped server target and tolerates clock loss without drift corrections',async()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
+  let valid=true,serverTime=100300;
+  const ctx={state:{mediaUrl:'fixture',format:'file',serverNow:100000,state:{position:10,duration:60,paused:false,volume:50,muted:false}},
+    playbackClock:{read:()=>({valid,serverTime:valid?serverTime:undefined})},uburoomTiming:{target},receivedAt:100,
+    performance:{now:()=>100},video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
+    probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
+  vm.runInNewContext(source.slice(source.indexOf('function expected('),source.indexOf('async function reportObservation(')),ctx);
+  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  assert.equal(ctx.expected(),10.3);await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
+  valid=false;ctx.video.currentTime=5;await ctx.synchronize();assert.equal(ctx.video.currentTime,5);assert.equal(ctx.video.playbackRate,1);
+  valid=true;await ctx.synchronize();assert.equal(ctx.video.currentTime,10.3,'fresh clock permits meaningful catch-up');
+});
+test('late room polls and failures cannot overwrite a newer authorized state',async()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),pending=[],applied=[];
+  const ctx={selected:'room',stateRequestSequence:0,Date,performance,viewerId:'viewer',preferredQuality:'direct',
+    playbackClock:{begin:()=>({sent:performance.now()}),add(){},read:()=>({})},diagnostics:{record(){}},
+    api:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),observationClock:{update:()=>0},observationClockRevision:0,
+    playbackError:'',applyState:v=>applied.push(v.marker),fail(){},reportReadiness(){},unavailable(){throw new Error('Old failure must not clear new state');}};
+  vm.runInNewContext(source.slice(source.indexOf('async function refreshState('),source.indexOf('async function selectRoom(')),ctx);
+  const first=ctx.refreshState(),second=ctx.refreshState();
+  pending[1].resolve({marker:'new',serverNow:Date.now()});await second;
+  pending[0].resolve({marker:'old',serverNow:Date.now()});await first;assert.deepEqual(applied,['new']);
+  const third=ctx.refreshState(),fourth=ctx.refreshState();pending[3].resolve({marker:'newest',serverNow:Date.now()});await fourth;
+  pending[2].reject(new Error('old failure'));await third;assert.deepEqual(applied,['new','newest']);
+});
+test('command deadlines use fresh mapped time and never queue controls without a clock',async()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),sent=[];
+  let valid=true;
+  const ctx={selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,
+    playbackClock:{read:()=>({valid,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
+    api:async(path,data)=>{sent.push({path,data});return {status:'applied'};},refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
+  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
+  await ctx.execute({action:'media.pause'});assert.equal(sent[0].data.expiresAt,102500);assert.equal(sent[0].data.epoch,'current');
+  valid=false;await assert.rejects(ctx.execute({action:'media.pause'}),/timing is refreshing/);assert.equal(sent.length,1);assert.equal(ctx.pending,false);
 });
 test('presentation measures compositor cadence and callback gaps, never equating them to dropped pixels',()=>{
   const p=presentation();const a=p.frame(20,{mediaTime:1,expectedDisplayTime:22,presentationTime:18,presentedFrames:1,processingDuration:.003});
@@ -71,4 +114,10 @@ test('pairwise report uses held presented frames, reports excluded recovery and 
   assert.ok(recovery.excludedSkewMs.p95>=299);assert.ok(recovery.healthySkewMs.p95>=299);
   assert.throws(()=>compare(trace(),{entries:[]},{sameTimeline:true}),/unavailable/);
   const mixed=trace();mixed.entries[200].media=2;assert.throws(()=>compare(trace(),mixed,{sameTimeline:true}),/generation/);
+  const lostClock=trace();for(const r of lostClock.entries){r.frameDisplayMonoMs=r.frameServerTime-100000;}
+  for(let i=100;i<200;i++){lostClock.entries[i].clockValid=false;delete lostClock.entries[i].frameServerTime;}
+  assert.ok(compare(trace(),lostClock,{sameTimeline:true}).excludedGridSamples['clock-unavailable']>0);
+  const reset=trace();reset.entries[200].clockRevision=2;assert.throws(()=>compare(trace(),reset,{sameTimeline:true}),/continuous/);
+  const sparse=trace();for(const r of sparse.entries)r.frameCallbackGap=1;
+  const gapReport=compare(trace(),sparse,{sameTimeline:true});assert.ok(gapReport.excludedGridSamples['callback-gap']>500);assert.ok(gapReport.healthyCoverageFraction<.01);
 });

@@ -193,7 +193,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
-        json(res, 200, { watchVersion: 13,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
+        json(res, 200, { watchVersion: 14,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/demo-login') {
         if (!config.demo || !allowedOrigin(req) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { json(res, 403, { error: 'Demo login is disabled' }); return true; }

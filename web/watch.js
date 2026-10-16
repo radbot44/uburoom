@@ -506,7 +506,9 @@ async function execute(command) {
   const id = selected, epoch = state.epoch; pending = true; fail('');
   diagnosticSample('command-start',{action:command.action});
   try {
-    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: Date.now() + offset + 2500, command });
+    const timing=playbackClock.read();
+    if(!timing.valid)throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
+    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command });
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
     diagnostics.record('command-ok',{action:command.action});
@@ -611,7 +613,8 @@ $('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$
 $('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
 $('subtitle-retry').addEventListener('click',()=>captions.retry());
 function expected() {
-  return arrivalExpected();
+  const timing=playbackClock.read();
+  return uburoomTiming.target(state,timing.serverTime) ?? arrivalExpected();
 }
 function arrivalExpected() {
   if (!state) return 0;
@@ -656,7 +659,7 @@ async function reportReadiness() {
 }
 async function synchronize() {
   if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
-  const target = expected(), difference = target - video.currentTime;
+  const target = expected(), difference = target - video.currentTime, clockValid=playbackClock.read().valid;
   if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
     playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
   }
@@ -664,10 +667,10 @@ async function synchronize() {
     target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
   // A shared seek/restart can supersede a native seek still waiting for old
   // chunks. Retarget it once the new source-time window is buffered.
-  if ((!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
+  if ((clockValid || state.state.paused) && (!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
     try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05)); } catch {}
   }
-  const rate=state.state.paused || Math.abs(difference) < .15 || Math.abs(difference) > .65 ? 1 : difference > 0 ? 1.04 : .96;
+  const rate=!clockValid || state.state.paused || Math.abs(difference) < .15 || Math.abs(difference) > .65 ? 1 : difference > 0 ? 1.04 : .96;
   if(video.playbackRate!==rate)video.playbackRate=rate;
   video.volume = state.state.volume / 100; video.muted = state.state.muted;
   if (state.state.paused) {
@@ -899,7 +902,7 @@ setInterval(() => {
 setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
   config = await api('/api/watch/config');
-  if (config.watchVersion !== 13) throw new Error('Restart the uburoom server to load the native playback tracking update.');
+  if (config.watchVersion !== 14) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});

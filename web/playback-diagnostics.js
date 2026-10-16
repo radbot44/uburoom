@@ -38,7 +38,7 @@
   function create({now=Date.now,monotonic=()=>performance.now(),soak=false}={}) {
     const limits=soak?{events:2400,samples:8100,frames:36000}:{events:300,samples:600,frames:7200};
     const startedAt=now(), start=monotonic(), buckets={events:[],samples:[],frames:[]}, generations={room:0,media:0,stream:0,grant:0,observation:0};
-    let previous={}, sequence=0, discardedEvents=0, discardedSamples=0, discardedFrames=0;
+    let previous={}, sequence=0, discardedEvents=0, discardedSamples=0, discardedFrames=0, frameCursor=0;
     function record(event,fields={}) {
       if (!events.has(event)) return;
       const row={sequence:++sequence,at:now(),ms:Math.round(monotonic()-start),event,...generations};
@@ -49,6 +49,7 @@
         else if (key==='ranges' && Array.isArray(value)) row.ranges=value.slice(0,8).filter(pair=>Array.isArray(pair)&&pair.length===2&&pair.every(n=>Number.isFinite(n)&&n>=0&&n<=1e9)).map(pair=>pair.map(n=>Math.round(n*1000)/1000));
       }
       const sample=event==='sample', frame=event==='frame', bucket=frame?buckets.frames:sample?buckets.samples:buckets.events, limit=frame?limits.frames:sample?limits.samples:limits.events;
+      if(frame && bucket.length===limit){bucket[frameCursor]=row;frameCursor=(frameCursor+1)%limit;discardedFrames++;return;}
       if (bucket.length===limit) { bucket.shift(); if(frame)discardedFrames++;else if(sample)discardedSamples++;else discardedEvents++; }
       bucket.push(row);
     }
