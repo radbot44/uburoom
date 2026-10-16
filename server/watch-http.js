@@ -137,6 +137,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const type = response.headers.get('content-type') || 'application/octet-stream';
       if (req.method !== 'HEAD' && (new URL(target).pathname.endsWith('.m3u8') || /mpegurl/i.test(type))) {
         const text = await response.text(); if (text.length > 2e6) throw new Error('Manifest too large');
+        if (!await validGrant(grant)) { abort.abort(); return json(res, 403, { error: 'Viewing access was revoked' }); }
         res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
         return res.end(rewriteManifest(text, target, media, grant.id));
       }

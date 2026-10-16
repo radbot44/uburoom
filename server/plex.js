@@ -279,13 +279,14 @@ class Plex {
       const output = decision.Metadata?.[0]?.Media?.[0];
       const stream = output?.Part?.[0]?.Stream?.find(x => x.streamType === 1);
       const listedAudio = output?.Part?.[0]?.Stream?.filter(x=>Number(x.streamType)===2) || [];
-      const selectedAudio = listedAudio.filter(s=>[true,1,'1'].includes(s.selected) || ['copy','transcode'].includes(s.decision));
-      const outputAudio=selectedAudio.length ? selectedAudio : listedAudio.length===1 ? listedAudio : [];
+      const selectedAudio = listedAudio.filter(s=>[true,1,'1'].includes(s.selected));
+      const decidedAudio = listedAudio.filter(s=>['copy','transcode'].includes(s.decision));
+      const outputAudio=selectedAudio.length ? selectedAudio : decidedAudio.length ? decidedAudio : listedAudio.length===1 ? listedAudio : [];
       if (Number(decision.generalDecisionCode) >= 2000 || output && output.videoCodec && output.videoCodec !== 'h264' || stream?.codec && stream.codec !== 'h264') {
         await this.stop(media); throw new PlaybackError('Plex could not provide H.264 video; check transcoding settings');
       }
       if (output?.audioCodec && output.audioCodec!=='aac' || outputAudio.some(s=>s.codec && s.codec!=='aac') ||
-        audio && outputAudio.length===1 && outputAudio[0].id!=null && String(outputAudio[0].id)!==audio.id) {
+        audio && (outputAudio.length!==1 || outputAudio[0].id==null || String(outputAudio[0].id)!==audio.id)) {
         await this.stop(media); throw new PlaybackError('Plex did not confirm the requested audio stream and AAC output.');
       }
       if (burn) {

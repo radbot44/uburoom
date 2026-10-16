@@ -14,7 +14,7 @@ const https=require('node:https');
 const {createApp}=require('../server/app');
 
 function provider() {
-  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,deny:false};
+  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,decisionAudio:'confirmed',deny:false};
   const streams=()=>[
     {id:10,index:0,streamType:1,codec:'h264'},
     {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:state.audio==='11',channels:6},
@@ -37,10 +37,20 @@ function provider() {
     if(url.pathname.endsWith('/decision')) {
       // Model measured PMS behavior: the universal query hint is ignored.
       const burned=url.searchParams.get('subtitles')==='burn', audioId=state.wrongAudio ? 11 : Number(state.audio);
+      const audioRows=state.decisionAudio==='missing' ? [] : state.decisionAudio==='ambiguous' ?
+        [11,12].map(id=>({streamType:2,id,codec:'aac',selected:1})) :
+        [{streamType:2,...(state.decisionAudio==='unidentified' ? {} : {id:audioId}),codec:'aac',selected:1}];
       return json({generalDecisionCode:1001,Metadata:[{Media:[{videoCodec:'h264',audioCodec:'aac',subtitleDecision:burned?'burn':'none',Part:[{Stream:[{streamType:1,codec:'h264'},
-        {streamType:2,id:audioId,codec:'aac',selected:1},...(burned ? [{streamType:3,id:state.wrongBurn ? 999 : Number(state.selected),decision:'burn'}] : [])]}]}]}]});
+        ...audioRows,...(burned ? [{streamType:3,id:state.wrongBurn ? 999 : Number(state.selected),decision:'burn'}] : [])]}]}]}]});
     }
-    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');}
+    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');}
+    if(url.pathname.endsWith('/child.m3u8')) {
+      const body='#EXTM3U\n#EXTINF:6\nsegment.ts\n';
+      if(state.holdPlaylist)return new Response(new ReadableStream({start(controller){
+        state.playlistStarted?.();state.releasePlaylist=()=>{controller.enqueue(new TextEncoder().encode(body));controller.close();};
+      }}),{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+      return new Response(body,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+    }
     if(url.pathname==='/library/streams/21.srt')return new Response('1\n00:00:01,000 --> 00:00:04,000\nBonjour\n');
     return json({});
   };
@@ -123,6 +133,19 @@ test('audio selection and restoration use only the current viewer Plex credentia
   } finally {await plex.close();}
 });
 
+test('HLS preparation rejects decisions that cannot identify one matching source audio stream',async()=>{
+  const {plex,state}=provider();
+  try {
+    for(const kind of ['missing','unidentified','ambiguous']) {
+      state.decisionAudio=kind;
+      await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}),/did not confirm the requested audio/);
+      assert.equal(state.audio,'11',`${kind} decision restores the saved audio preference`);
+    }
+    assert.equal(state.events.filter(e=>e.startedAudio).length,0,'unconfirmed audio never starts a private stream');
+    assert.equal(plex.partQueues.size,0);
+  } finally {await plex.close();}
+});
+
 test('sidecar requests retain the viewer Plex scope, cap content, and do not fetch embedded streams as sidecars',async()=>{
   const {plex,state}=provider(), scoped=plex.scope('viewer-only','viewer');
   try {
@@ -180,7 +203,7 @@ test('track command validation binds current media and stream versions and never
   assert.equal(Engine.validate({action:'media.tracks.set',args:{...versions,audioId:'12'}}).args.audioId,'12');
   for(const args of [{subtitleId:'off'},{...versions,audioId:'https://example.com'},{...versions,subtitleOffset:31},{...versions}])assert.throws(()=>Engine.validate({action:'media.tracks.set',args}));
 });
-test('subtitle HTTP grants reject stale selections and revoked viewers, including changes during a pending fetch',async t=>{
+test('media grants reject stale playlists, subtitles and revoked viewers during pending fetches',async t=>{
   const fixture=provider(), cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
   const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture'};
   let member=true, waitCaption, releaseCaption;
@@ -193,7 +216,7 @@ test('subtitle HTTP grants reject stale selections and revoked viewers, includin
   const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
   const request=(route,method='GET',data,token)=>new Promise((resolve,reject)=>{
     const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
-      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
+      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
     });req.on('error',reject);req.end(data && JSON.stringify(data));
   });
   const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token;
@@ -211,6 +234,24 @@ test('subtitle HTTP grants reject stale selections and revoked viewers, includin
   assert.equal((await request(first.mediaUrl,'HEAD')).status,200);
   assert.equal(master.status,200);assert.match(master.body,/#EXTM3U/);assert.equal(repeated.body,master.body);
   assert.equal(fixture.state.events.filter(e=>e.startedAudio).length,starts,'master reloads never renegotiate restored audio preferences');
+  const childUrl=master.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
+  assert.ok(childUrl,'captured master points to a private child playlist');
+  const playlistStarted=new Promise(resolve=>fixture.state.playlistStarted=resolve);
+  fixture.state.holdPlaylist=true;
+  const pendingPlaylist=request(childUrl);await playlistStarted;
+  assert.equal((await command('media.tracks.set',{audioId:'12'})).body.status,'applied');
+  fixture.state.releasePlaylist();
+  assert.equal((await pendingPlaylist).status,403,'an old playlist cannot arrive after audio selection changes');
+  fixture.state.holdPlaylist=false;
+  const chosen=await snapshot();
+  assert.equal(chosen.tracks.audioId,'12');
+  assert.equal((await command('media.stream.refresh',{mediaVersion:chosen.mediaVersion,streamVersion:chosen.streamVersion})).body.status,'applied');
+  const refreshed=await snapshot();
+  assert.equal(refreshed.tracks.audioId,'12','session refresh retains the personal source audio');
+  assert.equal(fixture.state.events.filter(e=>e.startedAudio).at(-1).startedAudio,'12');
+  assert.equal(fixture.state.audio,'11','session refresh restores Plex saved audio');
+  assert.equal((await request(refreshed.mediaUrl)).status,200);
+  assert.equal((await request(chosen.mediaUrl,'HEAD')).status,403,'old master grant is revoked after session refresh');
   await command('media.tracks.set',{subtitleId:'off'});assert.equal((await request(first.subtitleUrl)).status,403);
   await command('media.tracks.set',{subtitleId:'21'});const current=await snapshot();
   const pending=new Promise(resolve=>waitCaption=resolve), fetching=request(current.subtitleUrl);await pending;
