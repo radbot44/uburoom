@@ -71,6 +71,10 @@ The same browser, TLS and FFmpeg prerequisites apply. Use a new output directory
 
 ### Bounded playback and recovery check
 
+The watch page keeps a local diagnostic ring: up to 600 one-second playback samples and 300 events, with separate eviction counts. **Save playback diagnostics** downloads a JSON snapshot from the current tab, including after a control disconnect. Reloading or closing the tab loses the capture; background timer throttling can reduce sample frequency. Nothing is uploaded automatically. Exports contain wall/monotonic timing, decoded/dropped frame counters where available, buffer/readiness state, track ordinals/delivery, classified request failures, teardown reasons and local generation counters for room/media/stream/grant/observation changes. They exclude URLs, credentials, account/room/source IDs, titles, track labels and raw error text. Frame counters do not prove the intended audio or subtitle content, and browser diagnostics do not measure server/Plex memory or explain every upstream failure.
+
+The recovery fixture asserts distinct traces for an expired Plex stream and a failed control poll, saves both snapshots, and checks the download control in desktop, theater and portrait phone layouts. It explicitly activates the host tab before visible decoded-video checks; creating the guest tab can otherwise leave Chromium's host hidden with video decoding suspended. Background playback and sleep/wake need separate lifecycle checks. Browser throttling and application recovery timing remain unchanged.
+
 Generate a longer track corpus, then run one isolated browser at a time:
 
 ```powershell

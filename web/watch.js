@@ -15,6 +15,33 @@ let observationPending = false, observationSequence = 0, observationBreak = 0, o
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
+const diagnostics = uburoomDiagnostics.create();
+function diagnosticSample(event='sample',fields={}) {
+  // Diagnostics must never interrupt playback, even during MediaSource teardown.
+  try {
+    const quality=video.getVideoPlaybackQuality?.(), tracks=state?.tracks;
+    diagnostics.record(event,{position:video.currentTime,target:expected(),ready:video.readyState,network:video.networkState,
+      paused:video.paused,seeking:video.seeking,waiting:playerWaiting,rate:video.playbackRate,
+      ranges:Array.from({length:Math.min(video.buffered.length,8)},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),
+      bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),frames:quality?.totalVideoFrames,dropped:quality?.droppedVideoFrames,
+      decoded:quality?quality.totalVideoFrames-quality.droppedVideoFrames:videoFrames,
+      callbackFrames:videoFrames,width:video.videoWidth,height:video.videoHeight,mediaError:video.error?.code,
+      online:navigator.onLine,visibility:document.visibilityState,format:state?.format,enabled:!!state?.enabled,
+      audio:tracks?.audio.findIndex(row=>row.id===tracks.audioId),subtitle:tracks?.subtitles.findIndex(row=>row.id===tracks.subtitleId),
+      delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',...fields});
+  } catch { /* A missing diagnostic sample must not change player behavior. */ }
+}
+for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort'])
+  video.addEventListener(event,()=>diagnosticSample(event));
+for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>diagnosticSample(event));
+document.addEventListener('visibilitychange',()=>diagnosticSample('visibilitychange'));
+setInterval(()=>{if(selected || state || mediaSource)diagnosticSample();},1000);
+$('save-diagnostics').onclick=()=>{
+  diagnosticSample();
+  const url=URL.createObjectURL(new Blob([JSON.stringify(diagnostics.snapshot(),null,2)+'\n'],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='uburoom-playback-diagnostics.json';link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
@@ -55,16 +82,24 @@ function fail(message) {
   if (message && changed && theater && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
 async function api(path, data, options = {}) {
+  const started=performance.now(); let response,decoded=false;
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
-  const response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
+  try {
+  response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000), keepalive: !!options.keepalive });
-  const value = await response.json(); if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
+  const value = await response.json(); decoded=true; if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
+  } catch(error) {
+    diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
+      failure:response && !response.ok?'http':response && !decoded?'decode':error.name==='TimeoutError'?'timeout':error.name==='AbortError'?'abort':error instanceof TypeError?'network':'other'});
+    throw error;
+  }
 }
 function acceptIdentity(auth) {
   token = auth.token; identityExpiresAt = auth.expiresAt;
   identityRenewAt = identityExpiresAt - Math.min(60000, Math.floor((identityExpiresAt - Date.now()) / 5));
   identityRetryAt = 0; identityGeneration++;
+  diagnostics.record('identity-renewed',{identity:identityGeneration});
 }
 async function activityIdentity() {
   const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
@@ -85,6 +120,7 @@ async function renewIdentity() {
       : await activityIdentity();
     acceptIdentity(auth);
   })().catch(error => {
+    diagnostics.record('identity-renew-failed');
     identityRetryAt = Date.now() + 10000;
     if (Date.now() >= identityExpiresAt) throw error;
   }).finally(() => { identityRenewal = undefined; });
@@ -94,7 +130,7 @@ function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = 
 // Move the actual shells so their controls, state and listeners stay shared.
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
 drawer.setAttribute('aria-label', 'Sessions and library'); document.body.append(drawer);
-const shells = ['account','welcome','session-bar','options-panel','library-panel','status','error','acceleration-help'].map(id => {
+const shells = ['account','welcome','session-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -218,7 +254,7 @@ async function compatibleFallback(reason, preferHLS = false) {
   }
   if (useAV1) av1FallbackVersion = state.mediaVersion; else fallbackVersion = state.mediaVersion;
   fallbackPending = true;
-  stopHls();
+  diagnosticSample('fallback');stopHls('fallback');
   try { await execute({ action:'media.quality.set', args:{quality:state.quality, compatible:true, ...(useAV1 ? {fallback:'av1'} : {})} }); }
   catch (error) { playbackError = reason + ' ' + (useAV1 ? 'AV1' : 'H.264') + ' fallback failed: ' + error.message; fail(playbackError); }
   finally { fallbackPending = false; }
@@ -237,25 +273,27 @@ function checkVideoFrames() {
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
-function clearPlayer() {
+function clearPlayer(reason) {
+  diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
   observing = false; observationBreak++; playerWaiting = false;
   av1?.destroy(); av1 = undefined;
   clearTimeout(hlsRecoveryTimer); hlsRecoveryCount = 0; $('acceleration-help').hidden = true;
   if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
   frameCallback = undefined; frameStartedAt = undefined; videoFrames = 0;
-  remote.stop(); dropVolume(); video.pause(); stopHls();
+  remote.stop(); dropVolume(); video.pause(); stopHls(reason);
   video.removeAttribute('src'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
   playbackError = ''; autoplayBlocked = false;
   $('join-playback').hidden = true; $('empty-stage').hidden = false; $('ready-status').textContent = '';
 }
-function stopHls() {
+function stopHls(reason) {
+  if(hls)diagnosticSample('hls-stop',{reason});
   clearTimeout(hlsRecoveryTimer);
   hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   const client = hls; hls = undefined; client?.destroy();
 }
 function unsupportedDecoder() {
-  av1?.destroy(); video.pause(); stopHls(); clearTimeout(hlsRecoveryTimer);
+  av1?.destroy(); video.pause(); stopHls('decoder'); clearTimeout(hlsRecoveryTimer);
   playbackError = activity ? 'Discord cannot decode this video with hardware acceleration off. Enable acceleration and reopen the Activity, or watch on the website.' :
     'This browser cannot decode the video. Try Firefox or Chrome, or enable hardware acceleration.';
   $('acceleration-help').hidden = !activity;
@@ -277,10 +315,13 @@ async function refreshHlsSession(client) {
   const now = Date.now(); hlsRefreshTimes = hlsRefreshTimes.filter(time => now-time < 60000);
   if (hlsRefreshTimes.length >= 3) return;
   hlsRefreshTimes.push(now); hlsRefreshPending = true;
+  diagnosticSample('stream-refresh');
   const version = state.mediaVersion, streamVersion = state.streamVersion;
   try {
     await execute({action:'media.stream.refresh',args:{mediaVersion:version,streamVersion}});
+    diagnosticSample('stream-refresh-ok');
   } catch {
+    diagnosticSample('stream-refresh-failed');
     // The old buffered media can still play. HLS's bounded network retry
     // reports an error if delivery does not return in time.
   } finally { hlsRefreshPending = false; }
@@ -295,6 +336,7 @@ function handleHlsFragmentBuffered(client) {
   const resume = !!hlsNetworkFailure && playbackError === hlsNetworkFailure;
   hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   if (resume) {
+    diagnosticSample('buffer-recovered');
     playbackError = '';
     fail('');
     void synchronize();
@@ -302,6 +344,9 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
+  diagnosticSample('hls-error',{fatal:!!data.fatal,status:data.response?.code,
+    category:data.type===Hls.ErrorTypes.NETWORK_ERROR?'network':data.type===Hls.ErrorTypes.MEDIA_ERROR?'media':'other',
+    detail:data.details===Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET?'reset':/^frag/.test(data.details)?'fragment':/^manifest/.test(data.details)?'manifest':'other'});
   if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     hlsNetworkInterrupted = true;
     // A vanished Plex conversion can be reported as a nonfatal fragment
@@ -317,18 +362,19 @@ function handleHlsError(client, data) {
     // Keep the private stream, tracks and shared timeline; never replay commands.
     if (hlsNetworkRetries < 6) {
       const attempt = hlsNetworkRetries++, delay = attempt < 3 ? 1000 * 2 ** attempt : 15000 * 2 ** (attempt-3);
+      diagnostics.record('retry-scheduled',{attempt:attempt+1,delayMs:delay});
       const source = mediaSource, version = state?.mediaVersion, stream = state?.streamVersion, room = selected;
       const retry = () => {
         if (hls !== client || !state?.state || selected !== room || mediaSource !== source || state.mediaUrl !== source ||
           state.mediaVersion !== version || state.streamVersion !== stream) return;
         // Wait for online state and a recent authorized poll before loading.
-        if (navigator.onLine === false || performance.now()-receivedAt > 3000) { hlsRecoveryTimer = setTimeout(retry,delay); return; }
+        if (navigator.onLine === false || performance.now()-receivedAt > 3000) { diagnostics.record('retry-deferred',{attempt:attempt+1,delayMs:delay});hlsRecoveryTimer = setTimeout(retry,delay); return; }
         const target = expected();
         if (!Number.isFinite(target) || target < 0 || target >= state.state.duration) return;
         // Once the delivery error pauses local playback, normal synchronization
         // is suspended. Retarget MSE too, or hls.js can refill the old position.
         if (video.readyState >= 1 && Math.abs(video.currentTime-target) > .65) video.currentTime = target;
-        hlsRecoveryTimer = undefined; client.startLoad(target);
+        diagnosticSample('retry-start',{attempt:attempt+1});hlsRecoveryTimer = undefined; client.startLoad(target);
       };
       hlsRecoveryTimer = setTimeout(retry,delay);
     }
@@ -348,15 +394,15 @@ function handleHlsError(client, data) {
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
     void compatibleFallback('H.264 decoder failed.'); return;
   }
-  stopHls();
+  stopHls('fatal');
   playbackError = data.type === Hls.ErrorTypes.MEDIA_ERROR ?
     'The browser could not decode the video stream (' + data.details + '). Try enabling hardware acceleration or use the website.' :
     'The video stream could not load (' + data.details + '). Check the connection and try again.';
   fail(playbackError);
 }
-function unavailable(message) {
+function unavailable(message,reason='room-unavailable') {
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-  clearPlayer(); state = undefined; toggleRemote(false);
+  clearPlayer(reason); state = undefined; toggleRemote(false);
   browseSession = undefined; $('library-panel').hidden = true; void library.setSession(undefined);
   renderRemote(); renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
 }
@@ -386,12 +432,15 @@ async function execute(command) {
   if (!selected || !state || pending) throw new Error('Wait for an available viewing session');
   if (['media.play','media.toggle'].includes(command.action) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
   const id = selected, epoch = state.epoch; pending = true; fail('');
+  diagnosticSample('command-start',{action:command.action});
   try {
     const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: Date.now() + offset + 2500, command });
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
+    diagnostics.record('command-ok',{action:command.action});
     await refreshState(); if (command.action === 'session.visibility') await refreshRooms(); return result;
-  } finally { pending = false; renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume(); }
+  } catch(error) {diagnostics.record('command-failed',{action:command.action});throw error;}
+  finally { pending = false; renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume(); }
 }
 function renderRemote() {
   const options = { available: !!state, canSave: !!state?.canManage,
@@ -552,6 +601,7 @@ async function synchronize() {
   checkVideoFrames();
 }
 function applyState(next) {
+  diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const previousTarget = state ? expected() : undefined;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){$('tracks-dialog').close();trackContext=undefined;}
@@ -559,7 +609,7 @@ function applyState(next) {
   state = next; receivedAt = performance.now();
   if($('tracks-dialog').open)trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
-    clearPlayer(); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
+    clearPlayer('state-change'); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       $('empty-stage').hidden = true;
       watchFrames();
@@ -613,13 +663,13 @@ async function refreshState() {
   try {
     const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality); if (id !== selected) return;
     offset = next.serverNow - (before + Date.now()) / 2; applyState(next); fail(playbackError); void reportReadiness();
-  } catch (error) { if (id === selected) unavailable(error.message); }
+  } catch (error) { if (id === selected) unavailable(error.message,'room-poll'); }
 }
 async function selectRoom(id) {
   if (id === selected) return;
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
   if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }).catch(() => {});
-  clearPlayer(); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseSession = undefined;
+  clearPlayer('room-select'); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseSession = undefined;
   await refreshState(); await refreshRooms();
   if (theater) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
 }
@@ -740,13 +790,13 @@ $('close-room').addEventListener('click', async () => {
   const id = selected; pending = true;
   try {
     await api('/api/watch/rooms/' + id + '/leave', { viewerId });
-    selected = undefined; browseSession = undefined; unavailable(''); await refreshRooms();
+    selected = undefined; browseSession = undefined; unavailable('','leave'); await refreshRooms();
   } catch (error) { fail(error.message); } finally { pending = false; }
 });
 $('admin-end-room').addEventListener('click', async () => {
   if (!state?.adminMode || pending) return;
   const id = selected; pending = true;
-  try {await api('/api/watch/rooms/' + id + '/close',{});selected=undefined;browseSession=undefined;unavailable('');await refreshRooms();}
+  try {await api('/api/watch/rooms/' + id + '/close',{});selected=undefined;browseSession=undefined;unavailable('','end');await refreshRooms();}
   catch(error){fail(error.message);} finally {pending=false;}
 });
 $('refresh').addEventListener('click', () => refreshRooms().catch(error => fail(error.message)));
@@ -776,6 +826,7 @@ async function start() {
   }
   try { me = await api('/api/watch/me'); } catch (error) { $('status').textContent = ''; if (activity) throw error; return; }
   renderAccount(); $('welcome').hidden = true; $('app').hidden = false;
+  $('diagnostic-actions').hidden=false;
   $('create').hidden = false; $('library-panel').hidden = true; renderTransport();
   await refreshRooms();
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/watch');if(typeof showAccount==='function')await showAccount();}
@@ -788,7 +839,7 @@ async function start() {
   setInterval(async () => {
     if (polling) return; polling = true;
     try { if (!pending) { await renewIdentity(); if (!selected || ++roomPoll % 5 === 0) {me = await api('/api/watch/me');renderAccount();await refreshRooms();} await refreshState(); } }
-    catch (error) { unavailable('Disconnected. ' + error.message); } finally { polling = false; }
+    catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); } finally { polling = false; }
   }, 1000);
 }
 start().catch(error => fail(error.message));

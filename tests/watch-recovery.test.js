@@ -5,8 +5,14 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const playback = require('../web/playback-policy');
+const {create:diagnosticLog}=require('../web/playback-diagnostics');
 const source = fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
-function load(context,name,next) { vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context); }
+function load(context,name,next) {
+  context.diagnostics ??= diagnosticLog();
+  context.diagnosticSample ??= (event,fields)=>context.diagnostics.record(event,fields);
+  if(context.Hls)context.Hls.ErrorDetails ??= {};
+  vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context);
+}
 test('HLS retries the current stream with backoff, retains buffered media, and ignores superseded timers',() => {
   const timers = [], client = {loads:0,startLoad(){this.loads++;}};
   const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}},mediaSource:'/current',
@@ -88,6 +94,10 @@ test('expired HLS session requests one personal refresh per stream with a bounde
   assert.equal(commands.length,1);
   assert.equal(commands[0].action,'media.stream.refresh');
   assert.equal(commands[0].args.streamVersion,'stream');
+  const trace=context.diagnostics.snapshot().entries;
+  assert.ok(trace.some(row=>row.event==='hls-error'&&row.status===410));
+  assert.equal(trace.filter(row=>row.event==='stream-refresh').length,1);
+  assert.ok(trace.some(row=>row.event==='stream-refresh-ok'));
   context.handleHlsError(client,{fatal:false,type:'network',response:{code:410}});
   for(let i=0;i<4;i++) {context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});await new Promise(resolve=>setImmediate(resolve));}
   assert.equal(commands.length,3,'repeated expiry cannot create an unbounded refresh loop');

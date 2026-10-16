@@ -35,7 +35,7 @@ async function showAccount(){
 accountButton.addEventListener('click',showAccount);
 logoutButton.addEventListener('click',async()=>{
   logoutButton.disabled=true;accountError();pending=true;
-  try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer();hidePlaybackTest();location.replace('/watch');}
+  try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer('logout');hidePlaybackTest();location.replace('/watch');}
   catch(error){accountError(error.message);logoutButton.disabled=false;pending=false;}
 });
 $('account-close').addEventListener('click',()=>$('account-dialog').close());

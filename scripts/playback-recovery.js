@@ -53,6 +53,9 @@ async function main(){
     const roomId=await evaluate(host,'selected');guest=await browser.page(config.publicUrl+'/watch?demo=guest');
     await until(guest,'!!me','Guest login');await evaluate(guest,`preferredQuality="direct";selectRoom(${JSON.stringify(roomId)}).then(()=>true)`);
     await until(guest,'state.format==="hls" && video.readyState>=2','Guest HLS');
+    // Frame assertions below measure the visible host. Creating the guest tab
+    // otherwise leaves Chromium free to suspend hidden-tab video decoding.
+    await browser.activate(host);await until(host,'document.visibilityState==="visible"','Visible host for decoded-frame checks');
     await choose(host,{audioId:'1042',subtitleId:'1044'});await choose(guest,{subtitleId:'off'});
     await until(host,'state.tracks.audioId==="1042" && state.tracks.subtitleId==="1044" && video.readyState>=2','Personal host tracks');
     await evaluate(host,'playbackMeter.reset("104","hls");true');
@@ -115,11 +118,18 @@ async function main(){
       assert.ok(tones>=5,'selected French audio still decodes after recovery');
       await command(host,'media.pause');
       await browser.screenshot(host,path.join(output,'recovered-player.png'));
+      const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
+      const expiry=trace.entries.findIndex(row=>row.event==='hls-error'&&row.status===410);
+      assert.ok(expiry>=0,'diagnostics identify expired media delivery');
+      assert.ok(trace.entries.slice(expiry).some(row=>row.event==='stream-refresh'),'expiry requests a new stream');
+      assert.ok(trace.entries.slice(expiry).some(row=>row.event==='state-change'&&row.streamChanged),'replacement has a new stream generation');
+      fs.writeFileSync(path.join(output,'expiry-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
       return {detail:'New HLS session in '+(Date.now()-started)+' ms; 880 Hz PCM and selected burn confirmed; guest unchanged.',
         oldSession,freshSession:fresh.session,recovered,guestBefore,guestAfter,oldStatus,tones};
     });
     await check('control reconnect keeps captured tracks',async()=>{
       const before=await snapshot(host);
+      const traceStart=await evaluate(host,'diagnostics.snapshot().entries.at(-1).sequence');
       await evaluate(host,'(()=>{const original=window.fetch.bind(window);let fail=true;window.fetch=(input,options)=>{if(fail&&String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")){fail=false;window.__controlFailed=true;return Promise.reject(new TypeError("Fixture control interruption"));}return original(input,options);};return true;})()');
       await until(host,'window.__controlFailed && state===undefined && mediaSource===undefined','Control loss unloads player',6000);
       await until(host,`state?.streamVersion===${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking`,'Fresh state after control reconnect',15000);
@@ -131,6 +141,15 @@ async function main(){
       let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
       assert.ok(tones>=5,'captured French stream still decodes after reload');
       await command(host,'media.pause');
+      const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
+      const entries=trace.entries.filter(row=>row.sequence>traceStart),failure=entries.findIndex(row=>row.event==='request-failed'&&row.request==='room-poll'&&row.failure==='network');
+      assert.ok(failure>=0,'diagnostics identify failed control fetch');
+      assert.ok(entries.slice(failure+1).some(row=>row.event==='player-clear'&&row.reason==='room-poll'),'failed poll precedes reasoned teardown');
+      assert.ok(!entries.some(row=>row.event==='state-change'&&row.streamChanged),'control reconnect keeps the same stream generation');
+      assert.ok(entries.some(row=>row.event==='playing'),'diagnostics observe playback resuming after reload');
+      assert.ok(entries.some(row=>(row.event==='sample'||row.event==='pause')&&row.decoded>0),'diagnostics observe decoded frames after reload');
+      assert.ok(!JSON.stringify(trace).includes(before.mediaUrl),'diagnostics never retain the media grant');
+      fs.writeFileSync(path.join(output,'control-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
       return {detail:'Control poll failed once; player unloaded and reattached with selected French/ASS stream.',before,after,tones};
     });
     await check('six-second control outage keeps personal tracks',async()=>{
@@ -246,9 +265,30 @@ async function main(){
       await command(host,'media.pause');
       return {detail:'A twelve-second sole-host control outage retained the empty room; selected French/ASS playback resumed with fresh stream/observation state, old grant revoked and remote consent off.',before,after,oldStatus,tones};
     });
+    await check('diagnostics download layouts',async()=>{
+      for(const [layout,width,height] of [['desktop',1280,900],['theater',1280,900],['phone',390,844]]){
+        await browser.viewport(host,width,height);
+        await evaluate(host,`setTheater(${layout==='desktop'?'false':'true'});true`);
+        if(layout!=='desktop')await evaluate(host,'toggleDrawer(true);true');
+        await pause(200);
+        const bounds=JSON.parse(await evaluate(host,'(()=>{const button=document.getElementById("save-diagnostics");button.scrollIntoView({block:"center"});const r=button.getBoundingClientRect();return JSON.stringify({width:innerWidth,left:r.left,right:r.right,height:r.height,visible:!!button.getClientRects().length});})()'));
+        assert.ok(bounds.visible&&bounds.left>=0&&bounds.right<=bounds.width&&bounds.height>=30,'diagnostic download is reachable in '+layout);
+        await browser.screenshot(host,path.join(output,'diagnostics-'+layout+'.png'));
+      }
+      const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};document.getElementById("save-diagnostics").click();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));
+      assert.equal(downloaded.schema,1);assert.ok(downloaded.entries.some(row=>row.event==='sample'),'download contains playback measurements');
+      return {detail:'Download control is visible and fits desktop, theater drawer and portrait phone.'};
+    });
     report.status='passed';
   }catch(error){report.error=error.stack||error.message;console.error('[Recovery]',error.stack||error.message);process.exitCode=1;}
-  finally{control.blocked=false;report.providerEvents=control.events;write();await browser?.close();await app.close();}
+  finally{
+    control.blocked=false;
+    if(browser)for(const [label,page] of [['host',host],['guest',guest]])if(page){
+      try{const trace=await browser.evaluate(page,'JSON.stringify(diagnostics.snapshot())');fs.writeFileSync(path.join(output,label+'-final-diagnostics.json'),trace+'\n');}
+      catch{report.diagnosticExportIncomplete=true;}
+    }
+    report.providerEvents=control.events;write();await browser?.close();await app.close();
+  }
   console.log('[Recovery] Report:',path.join(output,'report.md'));
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1;});
