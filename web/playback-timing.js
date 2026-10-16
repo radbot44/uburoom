@@ -1,0 +1,94 @@
+/* Playback timing only; never supplies watch-time credit or shared commands. */
+(function(root) {
+  'use strict';
+  const MAX_AGE=5000, WINDOW=30000;
+  function clock({monotonic=()=>performance.now(),wall=Date.now}={}) {
+    let samples=[], delays=[], mapping, desired, adjustedAt, lastGood, lastTick, lastWall, lastSent, epoch, revision=0, rejected=0, accepted=0, reason='startup';
+    function reset(why='disconnect') {
+      samples=[];delays=[];mapping=desired=adjustedAt=lastGood=lastTick=lastWall=lastSent=epoch=undefined;revision++;reason=why;
+    }
+    function tick() {
+      const now=monotonic(), date=wall();
+      if(lastTick!==undefined && (now<lastTick || now-lastTick>MAX_AGE || Math.abs((date-lastWall)-(now-lastTick))>250))reset('discontinuity');
+      lastTick=now;lastWall=date;
+      if(mapping!==undefined) {
+        // Refine at <=2 ms/s. Reading a future frame timestamp cannot slew the clock.
+        const limit=Math.max(0,now-adjustedAt)*.002;
+        mapping+=Math.max(-limit,Math.min(limit,desired-mapping));adjustedAt=now;
+      }
+      return now;
+    }
+    function begin() {return {sent:tick(),revision};}
+    function add(request,timing) {
+      const received=tick(), duration=received-request.sent;
+      const {serverReceivedAt:t2,serverSentAt:t3,serverProcessingMs:processing,clockEpoch}=timing||{};
+      const reject=why=>{rejected++;reason=why;return false;};
+      if(request.revision!==revision)return reject('discontinuity');
+      if(lastSent!==undefined && request.sent<=lastSent)return reject('invalid');
+      lastSent=request.sent;
+      if(![t2,t3,processing,duration].every(Number.isFinite) || duration<0 || processing<0 || t3<t2 ||
+        Math.abs(t3-t2-processing)>5 || processing>duration+5 || typeof clockEpoch!=='string' || !clockEpoch)return reject('invalid');
+      const rtt=Math.max(0,duration-processing);
+      delays.push({at:received,rtt});delays=delays.filter(s=>received-s.at<=WINDOW).slice(-32);
+      if(rtt>1500)return reject('delay');
+      if(epoch!==undefined && clockEpoch!==epoch){reset('server-change');lastTick=received;lastWall=wall();}
+      epoch=clockEpoch;
+      const offset=(t2+t3-request.sent-received)/2;
+      samples=samples.filter(s=>received-s.at<=WINDOW);
+      // A low-delay sample gives the narrowest possible offset interval. Do
+      // not assume path symmetry: uncertainty retains half the network RTT.
+      const best=samples.filter(s=>!s.suspect).reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
+      if(best && rtt>best.rtt+Math.max(20,best.rtt*.5))return reject('jitter');
+      if(mapping!==undefined && Math.abs(offset-mapping)>Math.max(250,rtt/2+(best?.rtt||0)/2+10)) {
+        // A server wall-clock step changes the authoritative timeline. Require
+        // three agreeing exchanges before rebasing; one outlier cannot jump it.
+        samples.push({at:received,rtt,offset,suspect:true});samples=samples.slice(-32);
+        const recent=samples.slice(-3);
+        if(recent.length<3 || !recent.every(s=>s.suspect && Math.abs(s.offset-offset)<10))return reject('outlier');
+        samples=[];mapping=undefined;revision++;
+      }
+      samples.push({at:received,rtt,offset});samples=samples.slice(-32);
+      const reliable=samples.filter(s=>!s.suspect).sort((a,b)=>a.rtt-b.rtt || b.at-a.at);
+      desired=reliable[0].offset;
+      if(mapping===undefined)mapping=desired;
+      adjustedAt=received;lastGood=received;accepted++;reason='accepted';return true;
+    }
+    function read(at) {
+      const now=tick();at??=now;
+      const reliable=samples.filter(s=>!s.suspect && now-s.at<=WINDOW), best=reliable.reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
+      const valid=mapping!==undefined && best && now-lastGood<=MAX_AGE && reason!=='outlier';
+      const rtts=delays.filter(s=>now-s.at<=WINDOW).map(s=>s.rtt), jitter=rtts.length?Math.max(...rtts)-Math.min(...rtts):undefined;
+      return {valid:!!valid,serverTime:valid?at+mapping:undefined,clockRevision:revision,clockAccepted:accepted,clockRejected:rejected,clockReason:reason,
+        clockOffsetMs:valid?at+mapping-wall()-(at-now):undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
+        clockUncertaintyMs:valid?best.rtt/2+2+Math.abs(desired-mapping)+(now-best.at)*.0001:undefined,
+        networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter};
+    }
+    return {begin,add,read,reset};
+  }
+  function target(state,serverTime) {
+    if(!state || !Number.isFinite(serverTime) || !Number.isFinite(state.serverNow))return undefined;
+    return Math.max(0,Math.min(state.state.duration||0,state.state.position+(state.state.paused?0:(serverTime-state.serverNow)/1000)));
+  }
+  function presentation() {
+    let previous;
+    return {
+      reset(){previous=undefined;},
+      frame(now,metadata) {
+        const {mediaTime,expectedDisplayTime,presentationTime,presentedFrames,processingDuration}=metadata;
+        if(![mediaTime,expectedDisplayTime,presentedFrames].every(Number.isFinite))return undefined;
+        const current={mediaTime,expectedDisplayTime,presentedFrames};
+        const advancing=previous && mediaTime>previous.mediaTime && expectedDisplayTime>previous.expectedDisplayTime && presentedFrames>previous.presentedFrames;
+        const result={frameMediaTime:mediaTime,frameDisplayMonoMs:expectedDisplayTime,framePresentationMonoMs:presentationTime,
+          frameCallbackLatenessMs:now-expectedDisplayTime,frameProcessingMs:Number.isFinite(processingDuration)?processingDuration*1000:undefined,
+          presentedFrames,frameIntervalMs:advancing?expectedDisplayTime-previous.expectedDisplayTime:undefined,
+          frameMediaIntervalMs:advancing?(mediaTime-previous.mediaTime)*1000:undefined,
+          // Gaps mean callbacks were missed; they do not prove repeated/dropped pixels.
+          frameCallbackGap:advancing?Math.max(0,presentedFrames-previous.presentedFrames-1):undefined,
+          frameRepeated:!!previous&&mediaTime===previous.mediaTime};
+        previous=current;return result;
+      }
+    };
+  }
+  const api={clock,target,presentation};
+  if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
+})(typeof globalThis==='object'?globalThis:this);

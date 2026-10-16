@@ -489,6 +489,11 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   assert.equal((await request('/api/watch/rooms', 'GET', undefined, guest)).body.rooms[0].id, id);
   assert.equal((await command('media.load', { mediaId: 'demo', quality: 'direct' })).body.status, 'applied');
   const observedState=(await getState()).body;
+  assert.ok(observedState.timing.serverSentAt>=observedState.timing.serverReceivedAt);
+  assert.ok(observedState.serverNow>=observedState.timing.serverReceivedAt && observedState.serverNow<=observedState.timing.serverSentAt);
+  assert.ok(Math.abs(observedState.timing.serverSentAt-observedState.timing.serverReceivedAt-observedState.timing.serverProcessingMs)<5);
+  assert.equal((await getState()).body.timing.clockEpoch,observedState.timing.clockEpoch);
+  assert.equal((await request('/playback-timing.js')).status,200,'timing module is served to the player');
   const observation={viewerId:viewer,mediaVersion:observedState.mediaVersion,streamVersion:observedState.streamVersion,observationEpoch:observedState.observationEpoch,sequence:1,sampleAt:1000,observedAt:Date.now(),position:0,state:'paused',frames:0,rate:1,discontinuity:0,userId:'demo-guest',mediaId:'fake'};
   const observe= (data,headers=host)=>request(`/api/watch/rooms/${id}/observe`,'POST',data,headers);
   assert.equal((await observe(observation,guest)).status,403,'another account cannot report this viewer');

@@ -48,8 +48,8 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P2 | Choose compatible delivery automatically | Next; partial implementation | M1-P1 measurements and complete source inventory |
 | M1-P3 | Complete audio, subtitles and content fidelity | Next; first slice implemented | M1-P2 delivery model; validation can start now |
 | M1-P4 | Complete the Plex viewing experience | Later; planned | Stable source/track selection and item timeline |
-| M1-P5 | Real-time playback synchronization | Planned; presentation-time skew targets require real-world testing | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
-| M1-P6 | Frame-pacing preservation during synchronization | High priority; planned alongside M1-P5 | Presentation-interval diagnostics and coordinated design with M1-P5 |
+| M1-P5 | Real-time playback synchronization | In progress; timing instrumentation and clock estimation implemented, live targets unverified | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
+| M1-P6 | Frame-pacing preservation during synchronization | High priority; compositor baseline implemented, correction experiments pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | Planned; review complete user journeys before restructuring | Existing design guide, rendered surfaces and playback/permission behavior |
 | M1-P8 | Separate remote extension repository and uburoom compatibility | Planned; define the integration and shared-source boundaries before extraction | Stable command/protocol contract and cross-repository compatibility checks |
 
@@ -107,6 +107,8 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 **Goal:** Minimize the actual real-world playback difference between healthy viewers so reactions over Discord voice chat don't arrive before other viewers see the corresponding event.
 
 **Target:** Aim for ≤50 ms p95 presentation-time skew, with ≤100 ms p99 as an initial engineering target, subject to real-world testing.
+
+**Current increment:** Bounded compositor-frame diagnostics, four-timestamp clock estimation with explicit uncertainty, and an isolated two-browser unequal-delay baseline are implemented. Watch-time accounting retains its separate conservative clock. Next, compare a server-time playback target with the arrival-time baseline before changing correction policy or event delivery. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
 
 **Architecture:**
 

@@ -1,0 +1,74 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
+const {clock,target,presentation}=require('../web/playback-timing');
+const {create}=require('../web/playback-diagnostics');
+const {compare}=require('../scripts/sync-report');
+function fixture() {
+  let mono=0,wall=100000;const c=clock({monotonic:()=>mono,wall:()=>wall});
+  const tick=(ms,date=ms)=>{mono+=ms;wall+=date;};
+  function sample(up=10,down=up,processing=0,step=0) {
+    const request=c.begin();tick(up);const received=wall+500+step;tick(processing);const sent=wall+500+step;tick(down);
+    return c.add(request,{serverReceivedAt:received,serverSentAt:sent,serverProcessingMs:processing,clockEpoch:'server'});
+  }
+  return {c,tick,sample,now:()=>mono};
+}
+test('four timestamps separate processing and RTT, bound asymmetric delay, and ignore client wall offsets',()=>{
+  for(const rtt of [20,100,200,300,450]) {
+    const f=fixture();assert.equal(f.sample(rtt/2,rtt/2,83),true);
+    const t=f.c.read();assert.equal(t.networkRttMs,rtt);assert.equal(t.clockOffsetMs,500);
+    assert.equal(t.serverTime,100500+f.now());assert.ok(t.clockUncertaintyMs>=rtt/2);
+  }
+  const f=fixture();f.sample(20,280,70);const t=f.c.read();
+  assert.equal(t.clockOffsetMs,370);assert.ok(Math.abs(t.serverTime-(100500+f.now()))<=t.clockUncertaintyMs);
+});
+test('clock rejects jitter/malformed/reordered exchanges; refinements slew without target jumps',()=>{
+  const f=fixture();f.sample();const first=f.c.read();f.tick(1000);assert.equal(f.sample(10,700),false);
+  assert.equal(f.c.read().clockOffsetMs,500);assert.equal(f.c.read().clockReason,'jitter');
+  f.tick(1000);f.sample(10,10,0,20);assert.equal(f.c.read().clockOffsetMs,500);
+  f.tick(1000);assert.ok(Math.abs(f.c.read().clockOffsetMs-500)<=2.001);
+  const request=f.c.begin();f.tick(10);assert.equal(f.c.add(request,{serverReceivedAt:NaN}),false);
+  f.c.reset();assert.equal(f.c.add(request,{serverReceivedAt:1,serverSentAt:1,serverProcessingMs:0,clockEpoch:'server'}),false);
+  assert.equal(first.valid,true);assert.equal(f.c.read().valid,false);
+});
+test('clock expires, detects sleep/wake and both directions of wall jumps, and requires agreement on server steps',()=>{
+  for(const jump of [-4745,4745]){const f=fixture();f.sample();f.tick(1000,1000+jump);assert.equal(f.c.read().valid,false);assert.equal(f.sample(),true);}
+  const f=fixture();f.sample();f.tick(5100);assert.equal(f.c.read().valid,false);assert.equal(f.sample(),true);
+  const revision=f.c.read().clockRevision;
+  assert.equal(f.sample(10,10,0,2000),false);assert.equal(f.sample(10,10,0,2000),false);assert.equal(f.sample(10,10,0,2000),true);
+  assert.ok(f.c.read().clockRevision>revision);assert.equal(f.c.read().clockOffsetMs,2500);
+});
+test('shared target removes response-arrival bias and follows pause, seek, replacement and bounds',()=>{
+  const state={serverNow:100000,state:{position:10,duration:60,paused:false}};
+  assert.equal(target(state,100150),10.15);assert.equal(target(state,200000),60);
+  assert.equal(target({...state,state:{...state.state,paused:true}},100150),10);
+  assert.equal(target({...state,state:{position:42,duration:100,paused:false}},101000),43);
+  assert.equal(target({...state,state:{position:0,duration:5,paused:true}},101000),0);
+  assert.equal(target(state,undefined),undefined);
+});
+test('presentation measures compositor cadence and callback gaps, never equating them to dropped pixels',()=>{
+  const p=presentation();const a=p.frame(20,{mediaTime:1,expectedDisplayTime:22,presentationTime:18,presentedFrames:1,processingDuration:.003});
+  assert.equal(a.frameIntervalMs,undefined);assert.equal(a.frameCallbackLatenessMs,-2);assert.equal(a.frameProcessingMs,3);
+  const b=p.frame(63,{mediaTime:1+1/24,expectedDisplayTime:64,presentedFrames:3});
+  assert.equal(b.frameIntervalMs,42);assert.equal(b.frameCallbackGap,1);
+  assert.equal(p.frame(64,{mediaTime:1+1/24,expectedDisplayTime:65,presentedFrames:4}).frameRepeated,true);
+  p.reset();assert.equal(p.frame(200,{mediaTime:9,expectedDisplayTime:200,presentedFrames:1}).frameIntervalMs,undefined);
+});
+test('frame diagnostics have their own bounded sanitized ring',()=>{
+  const d=create();for(let i=0;i<7300;i++)d.record('frame',{frameMediaTime:i,frameServerTime:100000+i,clockEpoch:'secret',url:'secret'});
+  const log=d.snapshot();assert.equal(log.discardedFrames,100);assert.equal(log.entries.filter(r=>r.event==='frame').length,7200);
+  assert.equal(log.entries.filter(r=>r.event==='frame')[0].frameMediaTime,100);assert.ok(!JSON.stringify(log).includes('secret'));
+});
+function trace(delay=0,changes={}) {
+  return {entries:Array.from({length:301},(_,i)=>({event:'frame',room:1,media:1,timelineRevision:1,frameServerTime:100000+i*20,
+    frameMediaTime:i*.02-delay,clockValid:true,clockUncertaintyMs:10,paused:false,seeking:false,waiting:false,ready:4,bufferAhead:5,visibility:'visible',rate:1,...changes}))};
+}
+test('pairwise report uses held presented frames, reports excluded recovery and refuses unrelated/absent evidence',()=>{
+  assert.throws(()=>compare(trace(),trace()),/Confirm/);
+  const report=compare(trace(),trace(.04),{sameTimeline:true});assert.ok(Math.abs(report.healthySkewMs.p95-40)<.001);
+  assert.equal(report.combinedClockUncertaintyMs.p95,20);
+  const recovering=trace(.3);for(let i=100;i<200;i++)recovering.entries[i].waiting=true;
+  const recovery=compare(trace(),recovering,{sameTimeline:true});assert.ok(recovery.excludedGridSamples.buffering>0);
+  assert.ok(recovery.excludedSkewMs.p95>=299);assert.ok(recovery.healthySkewMs.p95>=299);
+  assert.throws(()=>compare(trace(),{entries:[]},{sameTimeline:true}),/unavailable/);
+  const mixed=trace();mixed.entries[200].media=2;assert.throws(()=>compare(trace(),mixed,{sameTimeline:true}),/generation/);
+});

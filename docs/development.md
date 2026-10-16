@@ -69,6 +69,20 @@ node scripts/playback-tracks.js --media=artifacts/playback-media-tracks --out=ar
 
 The same browser, TLS and FFmpeg prerequisites apply. Use a new output directory. Five cases per browser check native WebVTT, French SRT/Unicode/delay/Off, independent two-viewer audio via distinguishable decoded PCM tones, burned ASS dialogue/positioned colored signs via actual video pixels, and separate selected-audio AV1 caches with native text. Reports include desktop/theater/phone renders and synthetic provider events. The provider simulates Plex decisions, stored selections and session capture using generated media; it does not verify a real PMS decision, attachment font, PGS/VobSub, concurrent Plex seek/restart or Discord proxy. Test-only software AV1 substitution never enables production software fallback.
 
+### Playback synchronization baseline
+
+The player records `requestVideoFrameCallback` media/compositor timestamps when available, frame intervals/callback gaps, clock offset/uncertainty, request/network RTT and server processing time, shared-timeline presentation/position errors, rate changes and seeks. Schema 2 exports retain 7,200 recent frames separately from events and one-second samples (36,000 frames in soak mode). Frame eviction counts are explicit; this is a recent-frame window, not a full two-hour frame trace. Full physical refresh repetitions, exact photon timing and speaker timing cannot be measured through these APIs. No automatic upload or new server-side viewer telemetry is added.
+
+Use local test TLS, installed Firefox and FFmpeg. This runner creates an isolated localhost service, procedural media and two disposable browser processes; it never reads `.env` or uses live providers. Output directories must be new. Delay injection affects room-state fetches only, symmetrically in each direction; the recovery test locally interrupts just the guest. This does not simulate a whole network link or packet loss.
+
+```powershell
+node scripts/sync-baseline.js --controller=arrival --rtts=20,100,200,320 --seconds=10 --output=artifacts/sync-arrival
+node scripts/sync-baseline.js --controller=shared --rtts=20,100,200,320 --seconds=10 --output=artifacts/sync-shared
+node scripts/sync-report.js artifacts/sync-shared/320-host.json artifacts/sync-shared/320-guest.json --same-timeline
+```
+
+`arrival` overrides the target only inside the disposable fixture to reproduce the original controller. `shared` uses the current player target. `--browser=chrome`, `--fps=24000/1001`, `--fps=25`, `--fps=30000/1001`, `--fps=50` and `--fps=60000/1001` select other browser/cadence cases. Keep the same machine/workload/settings when comparing runs. `report.json` contains separate steady/recovery reports and exclusion counts; per-viewer files retain the recovery interval. Confirm content and timeline before using `--same-timeline` on manual exports: sanitized local generation numbers cannot establish cross-viewer identity. Use one continuous room/media/clock segment per pair. Browser frame evidence unavailable on either side is an error, not a passing skew measurement.
+
 ### Bounded playback and recovery check
 
 The watch page keeps a local diagnostic ring: up to 600 one-second playback samples and 300 events, with separate eviction counts. **Save playback diagnostics** downloads a JSON snapshot from the current tab, including after a control disconnect. Reloading or closing the tab loses the capture; background timer throttling can reduce sample frequency. Nothing is uploaded automatically. Exports contain wall/monotonic timing, decoded/dropped frame counters where available, buffer/readiness state, track ordinals/delivery, classified request failures, teardown reasons and local generation counters for room/media/stream/grant/observation changes. They exclude URLs, credentials, account/room/source IDs, titles, track labels and raw error text. Frame counters do not prove the intended audio or subtitle content, and browser diagnostics do not measure server/Plex memory or explain every upstream failure.

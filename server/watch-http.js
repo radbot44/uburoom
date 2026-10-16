@@ -13,6 +13,7 @@ const {ObservationError}=require('./playback-tracking');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
   const identities = new Map(), grants = new Map();
+  const clockEpoch=randomUUID();
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
@@ -156,6 +157,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
+    const serverReceivedAt=Date.now(), receivedMono=performance.now();
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
       const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
@@ -327,6 +329,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         const media=room.viewers.get(viewerId).media;
         if (media.selection?.subtitle?.available && media.selection.subtitle.delivery==='text') state.subtitleUrl=`/api/watch/media/${grant}/captions-${media.captionVersion}`;
       }
+      state.timing={serverReceivedAt,serverSentAt:Date.now(),serverProcessingMs:performance.now()-receivedMono,clockEpoch};
       json(res, 200, state); return true;
     } catch (error) { json(res, 400, { error: error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); return true; }
   }

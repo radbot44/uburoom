@@ -8,6 +8,27 @@ Firefox watch/account/tracking fixtures use real browser decoding with synthetic
 
 ## Real-time playback synchronization
 
+### Timing baseline and clock estimation — 2026-10-16
+
+M1-P5/M1-P6 now have bounded local frame diagnostics and an offline pairwise report. Room polls carry server receive/send timestamps and monotonic processing duration; the playback clock uses the client's monotonic send/receive times, a bounded low-delay filter, at most 2 ms/s refinement, freshness expiry, and reset/discontinuity handling. Three consistent low-delay samples are required to rebase a large server clock change. Its uncertainty includes half the best network RTT, mapping refinement and sample age; symmetric paths are not assumed as a guarantee. The existing watch-time observation clock/credit guards are separate and unchanged.
+
+The arrival-time controller baseline used two independent headless Firefox 158.0 processes, software decoding, generated 640×360 24 fps H.264/AAC, ten-second steady windows, and symmetric artificial delays on room-state fetches only. Each guest's local three-second playback interruption left the host advancing by more than two seconds and the room playing; guest catch-up resumed independently. This is a controlled local interruption, not a real bandwidth-induced stall. No production accounts or services were used.
+
+| Host/guest added control delay (ms) | Healthy compositor skew p95 / p99 (ms) | Combined clock uncertainty p95 (ms) | Host/guest frame interval p95 (ms) |
+| --- | --- | --- | --- |
+| 20 / 20 | 42 / 42 | 27.0 | 44.8 / 45.6 |
+| 20 / 100 | 42 / 83 | 67.5 | 46.0 / 46.0 |
+| 20 / 200 | 125 / 125 | 117.6 | 44.8 / 44.8 |
+| 20 / 320 | 459 / 500 | 183.2 | 44.8 / 44.6 |
+
+Steady windows recorded no synchronization seeks or native dropped frames. The 320 ms guest used a non-unit rate on 185 of 248 callbacks with three rate changes; the other steady windows stayed at 1.00×. Short startup/settling effects can affect these results. These are single-run compositor estimates, not physical presentation/audio percentiles or validation of the aspirational targets. Unresolved asymmetry alone can exceed the target's measurement budget. Frame callback gaps and repeated callback media timestamps are reported separately from native dropped-frame counters; physical refresh repetition cannot be inferred from this API.
+
+The report holds the last presented frame on a uniform 10 ms common-time grid, rather than extrapolating `currentTime`. Healthy samples require fresh clock evidence, visible documents, readyState ≥3, at least 0.5 seconds buffered, and no paused/seeking/waiting state. New captures additionally separate the two seconds after play/pause/wait/seek as settling. Hidden, buffering, settling, missing-frame (>100 ms without a callback), clock-unavailable and mismatched timeline-revision samples remain in separate excluded counts/skew, not silently removed. Comparing different content or room timelines is refused unless the operator explicitly confirms the same timeline. Multiple room/media generations or clock resets require selecting a continuous segment first. Raw exports remain local, bounded, sanitized and subject to eviction; unsupported frame callbacks produce no presentation claim.
+
+Automated validation: all 144 tests passed with zero failures/skips. New cases cover 20–450 ms RTT, processing delay, asymmetric paths, jitter filtering, malformed/reordered samples, expiry, both directions of client wall steps, server steps, target boundaries, frame metadata, bounded sanitized frame storage and offline comparisons. The HTTPS test checks authenticated timing fields and the served module. Reproduction commands and prerequisites are in [development](development.md#playback-synchronization-baseline).
+
+Unfinished: shared-target browser comparison, correction strategy experiments, scheduled play/pause/seek, prompt notifications with authorized reconciliation/reconnect, real jitter/loss/bandwidth failures, Tunnel access, geographically separated viewers, physical 60/120/144 Hz displays, all source cadences/transports, A/V alignment and subjective motion quality. Neither the baseline nor the clock estimator closes M1-P5/M1-P6.
+
 [Roadmap phase M1-P5](../ROADMAP.md#m1-p5--real-time-playback-synchronization--design-requirements), within milestone M1 (Verified self-hosted release), is planned. Its initial engineering targets of ≤50 ms p95 and ≤100 ms p99 actual inter-viewer presentation-time skew remain unverified and subject to real-world testing. Pending checks include clock-offset/network-latency estimation, the authoritative timeline, scheduled play/pause/seek timestamps and gradual correction or hard seeks within M1-P6's frame-pacing constraints. Measure actual frame presentation differences across network RTTs including 20–300+ ms; `video.currentTime`, local room-timeline drift and command acknowledgements alone do not establish these percentiles. Verify that buffering, disconnection or poor performance affects only the recovering viewer during ongoing playback, that it catches up to the current timeline with personal quality and stream recovery preserved, and that healthy viewers are never paused or delayed. Test the initial new-media readiness gate separately. Include audio timing where possible and record measurement limits.
 
 ## Frame-pacing preservation during synchronization

@@ -44,7 +44,7 @@ test('opt-in soak retains two hours of one-second samples with finite caps',()=>
   const log=create({soak:true});log.record('soak-start');
   for(let second=0;second<7201;second++)log.record('sample',{position:second,jsHeapUsed:123456});
   let saved=log.snapshot();assert.equal(saved.discardedSamples,0);assert.equal(saved.entries.filter(row=>row.event==='sample').length,7201);
-  assert.deepEqual(saved.limits,{events:2400,samples:8100});
+  assert.deepEqual(saved.limits,{events:2400,samples:8100,frames:36000});
   for(let second=7201;second<10000;second++)log.record('sample',{position:second});
   saved=log.snapshot();assert.equal(saved.discardedSamples,1900);assert.equal(saved.entries.filter(row=>row.event==='sample').length,8100);
 });
