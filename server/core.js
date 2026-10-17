@@ -1,4 +1,10 @@
+// @ts-check
 'use strict';
+/** @typedef {import('./types').Actor} Actor */
+/** @typedef {import('./types').SessionDescriptor} SessionDescriptor */
+/** @typedef {import('./types').Viewer} Viewer */
+/** @typedef {import('./types').EngineCommand} EngineCommand */
+
 const { randomUUID, createHash } = require('node:crypto');
 const Engine = require('../extension/engine');
 const hash = text => createHash('sha256').update(text).digest('hex');
