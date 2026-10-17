@@ -35,8 +35,34 @@ class Watch {
     this.rooms.set(id, room); this.hub.rooms.set(id, s); return id;
   }
   position(room, now = Date.now()) {
+    if (room.pauseAt) now = Math.min(now, room.pauseAt);
     const elapsed=room.startAt?Math.max(0,now-Math.max(room.changedAt,room.startAt)):now-room.changedAt;
     return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : elapsed / 1000)));
+  }
+  controlLead(room) {
+    const now = performance.now();
+    let lead = READY_START_MARGIN_MS;
+    for (const viewer of room.viewers.values()) {
+      const samples = (viewer.watchSocket?.watchRtts || []).filter(sample => now - sample.at <= 30000 && now >= sample.at).map(sample => sample.ms).sort((a, b) => a - b);
+      if (samples.length) lead = Math.max(lead, samples[Math.ceil(samples.length * .95) - 1] + 100);
+    }
+    return Math.min(1000, Math.ceil(lead));
+  }
+  beginReadiness(room, now = Date.now(), waitMs = 10000) {
+    room.readinessId = randomUUID();
+    room.readinessSince = performance.now();
+    room.readinessDeadline = room.readinessSince + waitMs;
+    room.readinessTimedOut = false;
+    room.readinessStartAt = now + INITIAL_START_LEAD_MS;
+  }
+  settle(room, now = Date.now()) {
+    if (room.pauseAt && now >= room.pauseAt) {
+      room.position = this.position(room, room.pauseAt); room.changedAt = room.pauseAt;
+      room.pauseAt = undefined; room.s.state.paused = true; room.revision++;
+    }
+    if (room.initialGate && !room.manualPaused && !room.readinessTimedOut && performance.now() >= room.readinessDeadline) {
+      room.readinessTimedOut = true; room.readinessStartAt = undefined; room.revision++;
+    }
   }
   revokeConsent(room) {
     room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
@@ -84,8 +110,9 @@ class Watch {
     return viewer.media;
   }
   refresh(room, now = Date.now()) {
+    this.settle(room, now);
     room.s.lastSeen = now;
-    room.s.state.waitingForReady = room.initialGate && !room.manualPaused;
+    room.s.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false, hostTimedOut = false;
     for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion) room.disconnectedViewers.delete(id);
@@ -187,13 +214,14 @@ class Watch {
     await this.maybeStart(room);
   }
   async ready(room, actor, viewerId, version, ready, readinessVersion) {
+    this.settle(room);
     const viewer = room.viewers.get(viewerId);
     if (!viewer || viewer.userId !== actor.userId || room.mediaVersion !== version || typeof ready !== 'boolean' || room.readinessVersion !== readinessVersion) throw new Error('Invalid readiness');
     viewer.ready = ready; viewer.version = version; viewer.at = Date.now();
     await this.maybeStart(room);
   }
   async maybeStart(room) {
-    if (!room.initialGate || room.manualPaused || room.starting || this.rooms.get(room.s.sessionId) !== room) return;
+    if (!room.initialGate || room.manualPaused || room.readinessTimedOut || room.starting || this.rooms.get(room.s.sessionId) !== room) return;
     const viewers = [...room.initialViewers].map(id => room.viewers.get(id)).filter(Boolean);
     const host = [...room.viewers.values()].find(v => v.userId === room.s.hostId);
     if (!viewers.length || !host || viewers.some(v => !v.ready || v.version !== room.mediaVersion)) return;
@@ -201,7 +229,8 @@ class Watch {
     const version = room.mediaVersion, readinessVersion = room.readinessVersion;
     try {
       if (host.alive && !await host.alive()) return;
-      if (room.manualPaused || room.mediaVersion !== version || room.readinessVersion !== readinessVersion || [...room.initialViewers].some(id => {
+      this.settle(room);
+      if (room.manualPaused || room.readinessTimedOut || room.mediaVersion !== version || room.readinessVersion !== readinessVersion || [...room.initialViewers].some(id => {
         const viewer = room.viewers.get(id); return viewer && (!viewer.ready || viewer.version !== version);
       })) return;
       room.initialGate = false;
@@ -236,7 +265,7 @@ class Watch {
     const owner = this.hub.canManage(room.s, actor);
     room.transportSequence=(room.transportSequence||0)+1;
     return { id: room.s.sessionId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
-      startAt:room.startAt,
+      startAt:room.startAt, pauseAt:room.pauseAt,
       title: room.media?.title || 'Choose something to watch', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
@@ -248,7 +277,11 @@ class Watch {
         subtitleError:viewer.media.selection.subtitle && !viewer.media.selection.subtitle.available ? viewer.media.selection.subtitle.reason : undefined}} : {}),
       qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
       hasPrevious: !!room.media?.previousId, hasNext: !!room.media?.nextId,
-      readinessVersion: room.readinessVersion, waitingForReady: room.initialGate && !room.manualPaused, hostName: room.s.hostName, canBrowse: owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
+      readinessVersion: room.readinessVersion, waitingForReady: room.initialGate && !room.manualPaused && !room.readinessTimedOut,
+      readiness: room.initialGate && !room.manualPaused ? { id:room.readinessId, timedOut:!!room.readinessTimedOut,
+        blockers: performance.now() - room.readinessSince >= 3000 ? [...room.initialViewers].map(id => room.viewers.get(id)).filter(v => v && (!v.ready || v.version !== room.mediaVersion)).map(v => v.name) : [],
+        canStart:[...room.initialViewers].some(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; }) } : undefined,
+      hostName: room.s.hostName, canBrowse: owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
       state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, enabled: room.s.enabled, mode: room.s.mode, controls: { ...room.s.controls },
       visibility: room.s.visibility,
       sharingAvailable: !!this.hub.access?.options?.().available, canPlayback: owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback,
@@ -258,6 +291,26 @@ class Watch {
   async execute(room, input, actor, permitted) {
     const command = Engine.validate(input), { action, args } = command, s = room.s;
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
+    this.settle(room);
+    if (action.startsWith('media.ready.')) {
+      if (!this.hub.canManage(s, actor) || !room.initialGate || !room.readinessTimedOut || args.readinessId !== room.readinessId) return { status:'unavailable', message:'This readiness choice expired.' };
+      if (action === 'media.ready.start') {
+        const ready = [...room.initialViewers].filter(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; });
+        if (!ready.length) return { status:'unavailable', message:'No viewer is ready yet.' };
+        // This host command is already in the validated Engine handler. Commit
+        // the override without an awaited second dispatch or an expired choice.
+        room.initialViewers = new Set(ready); room.initialGate = false; room.readinessTimedOut = false;
+        room.readinessStartAt = undefined; room.changedAt = Date.now(); room.s.state.paused = false;
+        room.startAt = room.changedAt + this.controlLead(room);
+      } else if (action === 'media.ready.wait') {
+        this.beginReadiness(room, Date.now(), 15000); await this.maybeStart(room);
+      } else {
+        room.manualPaused = true; room.readinessTimedOut = false; room.readinessStartAt = undefined;
+      }
+      room.revision++; this.refresh(room);
+      return { status:'applied', message:'Readiness choice applied.' };
+    }
+    if (room.readinessTimedOut && ['media.play','media.toggle','media.pause'].includes(action)) return { status:'unavailable', message:'The host must choose whether to start, wait or cancel.' };
     if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute'].includes(action)) {
       const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId) return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
@@ -303,13 +356,16 @@ class Watch {
     }
     if (!action.startsWith('room.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
-    const now = Date.now(); room.position = this.position(room, now); room.changedAt = now;
+    const now = Date.now(), pausePending = !!room.pauseAt, wasPlaying = !s.state.paused && !(room.startAt > now);
+    room.position = this.position(room, now); room.changedAt = now;
+    if (pausePending && action.startsWith('media.seek.')) s.state.paused = true;
+    if (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.')) room.pauseAt = undefined;
     if(['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action)||action.startsWith('media.seek.'))room.startAt=undefined;
     switch (action) {
       case 'media.load': case 'media.next': {
         const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; room.position = 0;
         this.dropMedia(room);
-        s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
+        s.state.paused = true; room.manualPaused = false; room.initialGate = true; this.beginReadiness(room, now); room.initialViewers = new Set(room.viewers.keys());
         for (const viewer of room.viewers.values()) viewer.ready = false;
         s.state.seekable = true; void this.plex.stop(old); break;
       }
@@ -318,23 +374,33 @@ class Watch {
         if (prepared) {
           const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; void this.plex.stop(old);
           this.dropMedia(room);
-          s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
+          s.state.paused = true; room.manualPaused = false; room.initialGate = true; this.beginReadiness(room, now); room.initialViewers = new Set(room.viewers.keys());
           for (const viewer of room.viewers.values()) viewer.ready = false;
         }
         break;
-      case 'media.pause': s.state.paused = true; room.manualPaused = true; room.readinessStartAt = undefined; break;
+      case 'media.pause':
+        room.manualPaused = true; room.readinessStartAt = undefined; room.readinessTimedOut = false;
+        if (wasPlaying && !room.initialGate) room.pauseAt = now + this.controlLead(room);
+        else s.state.paused = true;
+        break;
       case 'media.play':
         if (room.position >= room.media.duration - .1) room.position = 0;
-        if (room.manualPaused && room.initialGate) room.readinessStartAt = now + INITIAL_START_LEAD_MS;
+        if (room.manualPaused && room.initialGate) this.beginReadiness(room, now);
         room.manualPaused = false; s.state.paused = room.initialGate;
-        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.readinessStartAt || 0, now + READY_START_MARGIN_MS);
+        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.readinessStartAt || 0, now + this.controlLead(room));
+        else if (!room.initialGate && !wasPlaying) room.startAt = now + this.controlLead(room);
         break;
       case 'media.toggle':
         // A play intent at the end restarts even before the expiry sweep pauses it.
         if (room.position >= room.media.duration - .1) { room.position = 0; s.state.paused = true; }
-        room.manualPaused = !s.state.paused || room.initialGate && !room.manualPaused;
-        if (room.initialGate) room.readinessStartAt = room.manualPaused ? undefined : now + INITIAL_START_LEAD_MS;
-        s.state.paused = room.manualPaused || room.initialGate; break;
+        room.manualPaused = !pausePending && (!s.state.paused || room.initialGate && !room.manualPaused);
+        if (room.initialGate) {
+          if (room.manualPaused) room.readinessStartAt = undefined;
+          else this.beginReadiness(room, now);
+          s.state.paused = true;
+        } else if (room.manualPaused && wasPlaying) room.pauseAt = now + this.controlLead(room);
+        else { s.state.paused = room.manualPaused; if (!s.state.paused && !wasPlaying) room.startAt = now + this.controlLead(room); }
+        break;
       case 'media.seek.relative': room.position = Math.max(0, Math.min(room.media.duration - .05, room.position + args.seconds)); break;
       case 'media.seek.absolute': room.position = Math.max(0, Math.min(room.media.duration - .05, args.seconds)); break;
       case 'media.seek.start': room.position = 0; break;
@@ -362,7 +428,7 @@ class Watch {
       // An explicit pause remains paused; seeking during playback resumes together.
       if (!s.state.paused || room.initialGate) {
         room.readinessVersion = randomUUID();
-        room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
+        room.initialGate = true; this.beginReadiness(room, now); room.initialViewers = new Set(room.viewers.keys());
         s.state.paused = true;
         for (const viewer of room.viewers.values()) viewer.ready = false;
       }

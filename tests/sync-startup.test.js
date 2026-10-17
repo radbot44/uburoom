@@ -37,7 +37,7 @@ test('a superseded native play promise cannot mark replacement media ready or au
     const ctx={state:{mediaUrl:'fixture',mediaVersion:'old',streamVersion:'old-stream',state:{paused:false,volume:50,muted:false}},
       selected:'room',mediaSource:'old-source',readyVersion:undefined,playbackClock:{read:()=>({valid:true})},expected:()=>0,
       hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,
-      performance:{now:()=>0},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
+      performance:{now:()=>0},document:{visibilityState:'visible'},precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
       presentationTiming:require('../web/playback-timing').presentation(),uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,
       video:{readyState:4,currentTime:0,seeking:false,paused:true,playbackRate:1,buffered:{length:0},play:()=>play},
       renderTransport(){},checkVideoFrames(){}};
@@ -82,7 +82,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
     const late=randomUUID();f.watch.snapshot(f.room,f.guest,late);await f.watch.ready(f.room,f.guest,late,f.room.mediaVersion,false);
     assert.equal(f.room.startAt,deadline,'a late unready viewer cannot delay the group');
     await f.dispatch('media.pause');assert.equal(f.room.startAt,undefined);assert.equal(f.room.s.state.paused,true);
-    await f.dispatch('media.play');assert.equal(f.room.startAt,undefined,'ordinary resume is immediate');
+    await f.dispatch('media.play');assert.ok(f.room.startAt>=Date.now()+390,'ordinary resume is scheduled');
     await f.dispatch('media.load',{mediaId:'demo'});assert.equal(f.room.startAt,undefined,'replacement cannot inherit the old start');
   }finally{f.watch.close();}
 });

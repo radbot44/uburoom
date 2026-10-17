@@ -73,7 +73,30 @@ Reproduction: [browser subtitle development checks](development.md#browser-subti
 
 ## Real-time playback synchronization
 
+### Coordinated ordinary controls and bounded readiness — 2026-10-17
+
+Ordinary pause/resume now publishes a common authoritative deadline. The lead is the largest current viewer's recent p95 server-measured protocol round trip plus 100 ms, bounded to 400–1,000 ms, with stale samples discarded after thirty seconds. Pauses project and stop the shared timeline at that deadline; clients use mapped-clock alarms, replacement/epoch fencing and local late reconciliation. Ordinary resume does not create a readiness barrier or play a redundant autoplay probe before the deadline. A superseding play/toggle cancels a pending pause. Native ping/pong evidence is separate from client-reported timing.
+
+Startup/shared-seek gates use monotonic waiting deadlines. Blocker names appear after three seconds; after ten seconds automatic release latches off even if viewers subsequently become ready. Only the host or an active administrator can choose Start with ready viewers, Wait another 15 seconds, or Cancel. Choices carry a waiting-period token and use the shared validated Engine. Start requires at least one ready viewer and applies only to that transition; others catch up independently. Cancel retains pause, and stale choices cannot affect replacement media or a superseded wait. Ordinary buffering remains independent.
+
+The isolated Firefox 158.0 and Chrome 155.0.8059.79 two-viewer control checks passed the timeout choices, scheduled native pause/resume and local stall recovery. The three-viewer HLS regression passed again in both browsers, covering startup, zero/nonzero seeks, restart, personal captions/quality, departure, privacy and final output cleanup. The controls smoke shortens only its fixture deadline; exact boundaries, stale choices and permission checks have deterministic unit coverage. Normal, theater and phone prompt renders were inspected. These are synthetic direct/HLS checks, not physical presentation or WAN accuracy claims. The integrated automated suite passed all 220 tests with zero failures/cancellations/skips.
+
+The new 100/50 ms drift candidate requires one second of same-direction evidence and clock uncertainty no greater than 50 ms and less than half the error. It retains ±4% gain; larger errors still use the existing guarded seek path. It is disabled by default. Sequential 24 fps H.264/AAC trials used a 300 ms guest lag injection, ten-second captures, counterbalanced candidate/current order, and application WebSocket/clock delays of 20/20 or 20/320 ms. Native protocol ping/pong was not delayed. Chrome used two rounds per delay/mode; Firefox used one.
+
+| Browser | Added host/guest control RTT (ms) | Current per-trial healthy p95 skew (ms) | Candidate per-trial healthy p95 skew (ms) |
+| --- | --- | --- | --- |
+| Chrome | 20 / 20 | 209, 208 | 250, 291 |
+| Chrome | 20 / 320 | 209, 208 | 333, 334 |
+| Firefox | 20 / 20 | 250 | 292 |
+| Firefox | 20 / 320 | 250 | 375 |
+
+These windows include recovery after the injected lag, with the runner's two-second startup trim and existing settling/coverage exclusions. Healthy grid coverage was 87.0–88.8%. The low-delay Chrome candidate guest recorded eleven native dropped frames in each trial versus zero in its paired current trials, and 8.66–8.82 seconds away from 1.00× versus 5.21–5.40 seconds. All other reported trials recorded zero native drops. High-delay candidates requested no corrections because their uncertainty exceeded the guard. Callback interval p95 was about 41.7–41.8 ms in Chrome and 43.2–45.3 ms in Firefox; these are compositor observations, not physical motion certification. The candidate fails the default-promotion gate on these measurements, so the 150 ms default remains. The full cadence/transport matrix, repeated network faults, clock-asymmetry calibration, real Plex/Discord, physical display/audio and subjective motion remain open.
+
+One existing storage-worker timer-count test failed when run alongside browser work; the unchanged test passed in isolation and the full suite passed without competing browser work. A completed Firefox comparison retained an inherited child pipe after browser shutdown; the disposable browser helper now requests graceful browser closure and releases its own child pipe ends. Neither event changed production state or weakened assertions.
+
 ### SyncPlay source comparison — 2026-10-17
+
+Reassessment at `c699a9c`: authenticated WebSocket pushes close the previous browser polling-delivery gap, and generation-scoped shared-seek readiness now coordinates buffered release. Startup/seek preparation overlaps the 1.75-second lead, with a minimum 400 ms margin after final readiness. Ordinary pause/resume remains immediate; an alive never-ready viewer can still hold startup or a shared seek indefinitely. A fresh `npm test` run passed all 213 tests with zero failures/skips; the Firefox 158.0 `node scripts/watch-smoke.js --readiness` flow also passed. No new comparative presentation, physical motion/audio, real Plex or Discord Activity benchmark was run, and no playback code changed during the reassessment.
 
 A static comparison reviewed the supplied Jellyfin server source and [Jellyfin Web's SyncPlay implementation](https://github.com/jellyfin/jellyfin-web/tree/9bc60933943a6be1028a46dc20028f2aca0523d7/src/plugins/syncPlay/core), including scheduled commands, clock filtering, readiness, buffering and optional drift correction. The server/browser sources were not established as a matched release pair. No playback implementation changed. The current uburoom working tree passed `npm test`: 192 tests, zero failures or skips. Jellyfin was not built or tested; no comparative playback, presentation, network or motion benchmark was run. Scheduled ordinary controls and the existing M1-P5/M1-P6 live verification gates remain unfinished; this review establishes no new synchronization accuracy claim.
 

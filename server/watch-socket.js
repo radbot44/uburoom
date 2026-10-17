@@ -65,6 +65,12 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     wss.handleUpgrade(req, socket, head, ws => {
       const client = { ws, socket: req.socket, headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
       clients.add(client);
+      ws.watchRtts = [];
+      ws.on('pong', () => {
+        if (client.pingAt === undefined) return;
+        const now = performance.now(), ms = now - client.pingAt; client.pingAt = undefined;
+        if (ms >= 0 && ms <= 10000) ws.watchRtts = [...ws.watchRtts, {at:now, ms}].filter(sample => now - sample.at <= 30000).slice(-16);
+      });
       const timer = setTimeout(() => ws.close(4003, 'Authentication required'), 5000);
       let windowAt = Date.now(), count = 0;
       ws.on('error', () => {});
@@ -121,7 +127,8 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   });
   const timer = setInterval(() => {
     for (const client of clients) {
-      if (Date.now() - client.lastSeen >= 10000) client.ws.terminate(); else void publish(client);
+      if (Date.now() - client.lastSeen >= 10000) client.ws.terminate();
+      else { if (client.pingAt === undefined && client.ws.readyState === 1) { client.pingAt = performance.now(); client.ws.ping(); } void publish(client); }
     }
   }, 1000); timer.unref();
   return { close() { clearInterval(timer); for (const client of clients) client.ws.terminate(); wss.close(); } };

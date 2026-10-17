@@ -16,10 +16,13 @@ let observationPending = false, observationSequence = 0, observationBreak = 0, o
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
 const driftCorrection=uburoomTiming.correction();
+const precisionDriftCorrection=uburoomTiming.precisionCorrection();
+let precisionCorrectionEnabled=false;
 // The local comparison runner enables this candidate. Native-drop and skew
 // regressions must be resolved before promoting it to the default policy.
 let gentleCorrectionEnabled=false;
 const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
+const pauseAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
 let preparedStartKey;
 let syncSeekPending=false;
 let qualityPending=false;
@@ -31,7 +34,7 @@ let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
 function resetDriftCorrection() {
-  driftCorrection.reset();if(video.playbackRate!==1)video.playbackRate=1;
+  driftCorrection.reset();precisionDriftCorrection.reset();if(video.playbackRate!==1)video.playbackRate=1;
 }
 const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
 let soak;
@@ -99,7 +102,7 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
     if(['pause','waiting','seeking','emptied'].includes(event))resetDriftCorrection();
     diagnosticSample(event);
   });
-for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();resetDriftCorrection();}diagnosticSample(event);});
+for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();pauseAlarm.cancel();resetDriftCorrection();}diagnosticSample(event);});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)resetDriftCorrection();diagnosticSample('visibilitychange');});
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
@@ -370,7 +373,7 @@ function checkVideoFrames() {
 }
 function clearPlayer(reason) {
   syncSeekPending=false;hlsPreparationUntil=0;hlsTimelinePending=false;
-  startAlarm.cancel();preparedStartKey=undefined;
+  startAlarm.cancel();pauseAlarm.cancel();preparedStartKey=undefined;
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
   observing = false; observationBreak++; playerWaiting = false;
@@ -547,7 +550,8 @@ async function execute(command) {
   if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
   const qualityChange=command.action==='media.quality.set';
   if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
-  if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
+  if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused &&
+      (autoplayBlocked || readyVersion !== state.mediaVersion) && expected() < state.state.duration - .1) await unlockLocal();
   const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
   if(qualityChange)qualityPending=qualityRequest;else pending=true;
   fail('');renderTransport();
@@ -608,16 +612,24 @@ function renderTransport() {
   $('player-mute').disabled = !available || pending; $('player-volume').disabled = !available;
   $('next').disabled = !playback || !state?.hasNext || pending;
   $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
-  const paused = state?.state.paused !== false && !state?.waitingForReady;
+  const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
   $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
   glyph('player-mute', state?.state.muted ? 'muted' : 'mute'); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
   $('player-mute').title = state?.state.muted ? 'Unmute' : 'Mute';
-  $('join-playback').hidden = !state?.mediaUrl || !paused && !autoplayBlocked;
+  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || !state?.state.paused && !autoplayBlocked || !paused && !autoplayBlocked;
   $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
   $('join-playback').setAttribute('aria-label', autoplayBlocked ? 'Join playback' : 'Play'); $('join-playback').title = autoplayBlocked ? 'Join playback' : 'Play';
   $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
     state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
+  if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
+  if (state?.readiness?.timedOut) $('ready-status').textContent = state.canManage ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
+  $('readiness-choice').hidden = !state?.readiness?.timedOut || !state.canManage;
+  $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
+  $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
+  $('ready-start').disabled = pending || !state?.readiness?.canStart;
+  $('ready-wait').disabled = $('ready-cancel').disabled = pending;
+  if (state?.readiness?.timedOut) $('player-play').disabled = true;
   if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
   renderTracks();
   captions.layout($('stage').matches(':hover,:focus-within') || paused || autoplayBlocked || !$('remote').hidden,innerWidth<=700);
@@ -713,13 +725,13 @@ async function reportReadiness() {
     uburoomPlayback.readinessBuffered(video.buffered,target,state.state.duration);
   const ready = bufferedReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
   const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
-  if (readinessSent === key || !state.waitingForReady && !ready) return;
+  if (readinessSent === key || !state.readiness && !state.waitingForReady && !ready) return;
   readyPending = true;
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
     ready, readinessVersion }); readinessSent = key; } catch {} finally { readyPending = false; }
 }
 function startKey(value=state) {
-  return value && [selected,value.mediaVersion,value.streamVersion,value.epoch,value.revision,value.startAt].join(':');
+  return value && [selected,value.mediaVersion,value.streamVersion,value.epoch,value.revision,value.startAt,value.pauseAt].join(':');
 }
 function holdForStart(timing,target) {
   if(state.state.paused)return false;
@@ -747,6 +759,11 @@ async function synchronize() {
     renderTransport();return;
   }
   const target = expected(), difference = target - video.currentTime, timing=playbackClock.read(),clockValid=timing.valid;
+  const paused = state.state.paused || clockValid && Number.isFinite(state.pauseAt) && timing.serverTime >= state.pauseAt;
+  if (clockValid && state.pauseAt > timing.serverTime) {
+    const key = startKey();
+    pauseAlarm.arm(key, state.pauseAt, () => { if (startKey() === key) void synchronize(); });
+  } else pauseAlarm.cancel();
   if(state.startAt>state.serverNow && holdForStart(timing,target))return;
   if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
     playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
@@ -774,16 +791,16 @@ async function synchronize() {
     try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05));syncSeekPending=true; } catch {}
   }
   const correctionInput={now:performance.now(),error:difference,context:startKey(),
-    eligible:clockValid&&document.visibilityState==='visible'&&!state.state.paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
+    eligible:clockValid&&document.visibilityState==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
       uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
     uncertaintyMs:timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
-  const rate=gentleCorrectionEnabled?driftCorrection.update(correctionInput):
+  const rate=precisionCorrectionEnabled?precisionDriftCorrection.update(correctionInput):gentleCorrectionEnabled?driftCorrection.update(correctionInput):
     !correctionInput.eligible||Math.abs(difference)<.15||Math.abs(difference)>.65?1:difference>0?1.04:.96;
   if(video.playbackRate!==rate)video.playbackRate=rate;
   video.volume = state.state.volume / 100; video.muted = state.state.muted;
-  if (state.state.paused) {
+  if (paused) {
     video.pause();
-    if (state.waitingForReady && readyVersion !== state.mediaVersion && !autoplayBlocked && video.readyState >= 2) { await unlockLocal(); void reportReadiness(); }
+    if ((state.waitingForReady || state.readiness) && readyVersion !== state.mediaVersion && !autoplayBlocked && video.readyState >= 2) { await unlockLocal(); void reportReadiness(); }
   } else if (video.paused && !autoplayBlocked) {
     const room=selected,version=state.mediaVersion,stream=state.streamVersion,source=mediaSource;
     const current=()=>selected===room && state?.mediaVersion===version && state?.streamVersion===stream && mediaSource===source;
@@ -796,7 +813,7 @@ async function synchronize() {
 function applyState(next) {
   if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
   stateTransportSequence=next.transportSequence;
-  if(startKey()!==startKey(next))startAlarm.cancel();
+  if(startKey()!==startKey(next)){startAlarm.cancel();pauseAlarm.cancel();}
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const previousTarget = state ? expected() : undefined;
@@ -942,7 +959,10 @@ $('player-volume').addEventListener('change', () => { volumeDragging = false; vo
 $('player-volume').addEventListener('pointercancel', () => { volumeDragging = false; });
 for (const [id, command] of [['previous',{action:'media.previous'}],['seek-back',{action:'media.seek.relative',args:{seconds:-15}}],
   ['seek-forward',{action:'media.seek.relative',args:{seconds:15}}],['next',{action:'media.next'}]]) $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
-$('player-play').addEventListener('click', () => execute({ action: state?.state.paused && !state?.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
+for (const choice of ['start','wait','cancel']) $('ready-' + choice).addEventListener('click', () => {
+  void execute({action:'media.ready.' + choice,args:{readinessId:state?.readiness?.id}}).catch(error => fail(error.message));
+});
+$('player-play').addEventListener('click', () => execute({ action: state?.pauseAt || state?.state.paused && !state?.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
 $('player-mute').addEventListener('click', () => execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)));
 $('join-playback').addEventListener('click', async () => {
   if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void synchronize(); }
@@ -984,7 +1004,7 @@ document.addEventListener('keydown', event => {
   if (event.code === 'Escape' && !drawer.hidden) { toggleDrawer(false); $('drawer-open').focus(); return; }
   if (event.code === 'F8' || event.code === 'KeyC' && event.altKey && event.shiftKey) { event.preventDefault(); if (!event.repeat) toggleRemote(); return; }
   if (!state || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button,input,select,textarea,[contenteditable=true]')) return;
-  const command = event.code === 'Space' ? {action:state.state.paused && !state.waitingForReady?'media.play':'media.pause'} : ['ArrowLeft','ArrowRight'].includes(event.code) ?
+  const command = event.code === 'Space' ? {action:state.pauseAt || state.state.paused && !state.waitingForReady?'media.play':'media.pause'} : ['ArrowLeft','ArrowRight'].includes(event.code) ?
     {action:'media.seek.relative',args:{seconds:event.code==='ArrowLeft'?-15:15}} : event.code==='KeyM' ? {action:state.state.muted?'media.unmute':'media.mute'} : undefined;
   if (command) { event.preventDefault(); execute(command).catch(error => fail(error.message)); }
 });
@@ -1029,7 +1049,7 @@ setInterval(() => {
 setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
   config = await api('/api/watch/config');
-  if (config.watchVersion !== 16) throw new Error('The player and server versions differ. Reload after the server update.');
+  if (config.watchVersion !== 17) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});

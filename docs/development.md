@@ -110,6 +110,16 @@ The immediate-start comparison removes only the local fixture's accepted autopla
 
 ### Frame-pacing correction comparisons
 
+The runner now delays the actual application WebSocket send/receive path, including clock exchanges, rather than obsolete HTTP room fetches. Native WebSocket ping/pong is unaffected by this fixture delay. Use `--policy=precision --comparison=legacy` for the separate sustained 100 ms entry / 50 ms exit candidate; the original gentle experiment remains the default experimental policy. Both candidates are disabled in ordinary players. Precision trials retain ±4% gain, require one second of persistent same-direction error, and require uncertainty at most 50 ms and less than half the error. Reconnect, physical output and real asymmetric paths require separate checks.
+
+```powershell
+node scripts/sync-startup.js --policy=precision --comparison=legacy --browser=chrome --fps=24 --drift=-0.3 --repeats=2 --seconds=10 --rtts=20,320 --output=artifacts/precision-chrome
+node scripts/sync-controls-smoke.js --browser=firefox
+node scripts/sync-controls-smoke.js --browser=chrome
+```
+
+The controls smoke uses two disposable decoded clients to exercise blocker feedback, host-only timeout choices, scheduled pause/resume and independent recovery, and captures normal/theater/phone timeout layouts. Only the smoke's server readiness deadline is shortened for prompt checks; unit tests verify the actual three/ten/fifteen-second boundaries. No live accounts or `.env` are used.
+
 The startup runner also supports `--comparison=legacy --drift=-0.3`. In this mode, `controller` explicitly enables the experimental bounded gentle policy in the disposable tabs; `legacy` uses the default ±4% gain/150 ms deadband, with the same recovery eligibility. The candidate is disabled by default in ordinary players after observed drop/skew regressions. The normal `--comparison=unit` startup comparison continues to use the default policy. After the guest passes one second of playback, a local seek places it 300 ms behind the mapped shared target; `--drift=0.3` places it ahead. The report records the requested injection explicitly. Each trial retains its raw traces, skew/coverage, native dropped-frame counters, callback gaps/intervals, rate magnitude and observed time away from 1.00×. Rate-duration gaps over 1.5 seconds are classified as unknown. These measurements cannot establish physical judder, display repetition or audio output.
 
 ```powershell

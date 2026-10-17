@@ -76,3 +76,5 @@ body.theater{overflow:hidden;background:black}
 @media(max-width:700px){.title-bar{gap:8px;flex-wrap:wrap}.player-actions{margin-left:auto}.solid-button{font-size:12px;padding:8px;gap:5px}.media-heading{min-width:85px}.media-heading h1{max-width:100%}}
 @media(max-width:700px){#subtitle-status{bottom:105px}}
 #diagnostic-actions{display:flex;flex-wrap:wrap;gap:10px}
+
+.readiness-choice{position:absolute;z-index:6;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100% - 24px));max-height:calc(100% - 20px);overflow:auto;padding:20px;border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:0 12px 50px #0009}.readiness-choice h2{font-size:18px;margin:0 0 10px}.readiness-choice p{color:var(--muted);font-size:13px;margin:0 0 16px}.readiness-choice>div{display:flex;flex-wrap:wrap;gap:8px}.readiness-choice button{min-height:44px}.activity-pip .readiness-choice{display:none!important}@media(max-width:600px){.readiness-choice{padding:12px}.readiness-choice h2{font-size:15px}.readiness-choice p{font-size:12px;margin-bottom:10px}.readiness-choice button{padding:8px 10px;font-size:12px}}

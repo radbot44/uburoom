@@ -100,6 +100,7 @@
  * @property {string} [streamVersion] - Unique generation token for current personal stream.
  * @property {Promise<any>} [preparing] - In-flight media resolution promise if polling.
  * @property {Function} [alive] - Optional liveness check callback.
+ * @property {{watchRtts?: Array<{at:number,ms:number}>}} [watchSocket] - Active socket's bounded server-measured round trips; `at` is monotonic.
  */
 
 /**
@@ -114,6 +115,11 @@
  * @property {Map<string, Viewer>} viewers - Active viewers keyed by viewer ID.
  * @property {Map<string, any>} disconnectedViewers - Recently disconnected viewers preserving state across reconnects.
  * @property {number} [startAt] - Confirmed synchronized startup/seek release timestamp (ms).
+ * @property {number} [pauseAt] - Authoritative UTC deadline for a coordinated pause.
+ * @property {string} [readinessId] - Token fencing host choices for a single waiting period.
+ * @property {number} [readinessSince] - Monotonic preparation start for blocker feedback.
+ * @property {number} [readinessDeadline] - Monotonic deadline for host intervention.
+ * @property {boolean} [readinessTimedOut] - Latched until an explicit host choice.
  * @property {number} [readinessStartAt] - Earliest release timestamp, counted alongside buffering.
  * @property {string} [readinessVersion] - Shared seek readiness generation.
  * @property {boolean} initialGate - Whether startup or seek readiness is currently held.

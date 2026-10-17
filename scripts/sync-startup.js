@@ -34,10 +34,11 @@ function compareStarts(a,b) {
   for(const l of left){const r=lookup.get(Math.round(l.frameMediaTime*1000));if(r)matches.push({mediaTime:l.frameMediaTime,displayDifferenceMs:Math.abs(l.frameServerTime-r.frameServerTime)});}
   return {firstCommonFrame:matches[0]??null,matchingFrameDifferencesMs:distribution(matches.map(r=>r.displayDifferenceMs))};
 }
-function installFixture(delay,gentle) {
-  const originalFetch=fetch,apply=applyState,rate=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'playbackRate');
+function installFixture(delay,gentle,precision=false) {
+  const apply=applyState,rate=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'playbackRate');
   globalThis.startupFixture={delay,unit:false,legacy:false,states:[],attempts:0};
   gentleCorrectionEnabled=gentle;
+  precisionCorrectionEnabled=precision;
   const update=driftCorrection.update;
   driftCorrection.update=function(input){
     if(!startupFixture.legacy)return update(input);
@@ -46,11 +47,11 @@ function installFixture(delay,gentle) {
   Object.defineProperty(video,'playbackRate',{configurable:true,get(){return rate.get.call(this);},set(value){
     if(value!==rate.get.call(this))startupFixture.attempts++;rate.set.call(this,startupFixture.unit?1:value);
   }});
-  globalThis.fetch=async function(url,options){
-    if(!/^\/api\/watch\/rooms\/[^/?]+\?/.test(String(url)))return originalFetch(url,options);
-    const delay=startupFixture.delay/2;await new Promise(r=>setTimeout(r,delay));
-    const response=await originalFetch(url,options);await new Promise(r=>setTimeout(r,delay));return response;
-  };
+  // Delay the actual WebSocket control path, including clock exchanges. HTTP
+  // fetch delays no longer exercise watch control after the socket migration.
+  const socket=transport.socket,send=socket.send.bind(socket),receive=socket.onmessage;
+  socket.send=data=>setTimeout(()=>{if(socket.readyState===1)send(data);},startupFixture.delay/2);
+  socket.onmessage=event=>setTimeout(()=>receive(event),startupFixture.delay/2);
   applyState=function(next){
     const timing=playbackClock.read();
     startupFixture.states.push({receivedServerTime:timing.serverTime,serverNow:next.serverNow,position:next.state.position,
@@ -75,10 +76,11 @@ async function main() {
   const name=option('browser','firefox'),repeats=Number(option('repeats','5')),seconds=Number(option('seconds','6')),
     rtts=option('rtts','20,320').split(',').map(Number),seed=Number(option('seed','20261016')),fps=option('fps','24'),
     output=path.resolve(option('output','artifacts/startup-'+Date.now())),initialStart=option('initial-start','scheduled'),
-    comparison=option('comparison','unit'),drift=Number(option('drift','0'));
+    comparison=option('comparison','unit'),drift=Number(option('drift','0')),policy=option('policy','gentle'),precision=policy==='precision';
   assert.ok(Number.isInteger(repeats)&&repeats>0&&repeats<=20&&seconds>=4&&seconds<=15&&rtts.every(n=>n>=0&&n<=1000)&&/^\d+(?:\/\d+)?$/.test(fps));
   assert.ok(['immediate','scheduled'].includes(initialStart));
   assert.ok(['unit','legacy'].includes(comparison)&&Number.isFinite(drift)&&Math.abs(drift)<=.6);
+  assert.ok(['gentle','precision'].includes(policy));
   if(initialStart==='immediate'&&option('lifecycle','off')==='on')throw new Error('Lifecycle checks require scheduled initial starts');
   if(fs.existsSync(output))throw new Error('Use a new output directory');fs.mkdirSync(output,{recursive:true});
   const media=path.join(output,'fixture.mp4'),root=path.resolve(__dirname,'..');
@@ -91,17 +93,17 @@ async function main() {
   app.watch.demoMedia={...app.watch.demoMedia,file:media,duration:40};
   app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'fixture-call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));config.publicUrl='https://localhost:'+app.server.address().port;
-  const report={browser:name,initialStart,sourceFps:fps,seconds,seed,repeats,comparison,injectedGuestDriftSeconds:drift,results:[],limitations:'Two reused disposable headless software browsers, one machine; control fetch delays only. Unit mode suppresses rate nudges only. Legacy mode uses the former 4% gain/deadband with current recovery eligibility. All retain meaningful seeks. Optional guest drift is a local seek after startup. Trials are matched by round/RTT and counterbalanced, not physical output, motion quality or WAN certification.'};
+  const report={browser:name,initialStart,sourceFps:fps,seconds,seed,repeats,comparison,policy:precision?'precision':'gentle',injectedGuestDriftSeconds:drift,results:[],limitations:'Two reused disposable headless software browsers, one machine; symmetric application WebSocket delays, including clock exchanges. Native protocol ping/pong is not delayed. Unit mode suppresses rate nudges only. Legacy mode uses the 4% gain/deadband with current recovery eligibility. All retain meaningful seeks. Optional guest drift is a local seek after startup. Trials are matched by round/RTT and counterbalanced, not physical output, motion quality or WAN certification.'};
   let host,guest;
   try {
     host=await playbackBrowser(name);guest=await playbackBrowser(name);report.versions=[host.version,guest.version];
     const h=await host.page(config.publicUrl+'/watch?demo=host'),g=await guest.page(config.publicUrl+'/watch?demo=guest'),clients=[[host,h],[guest,g]];
-    for(const [browser,page]of clients){await browser.until(page,'typeof me!=="undefined"&&!!me','Fixture login');await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(comparison==='legacy')+')');}
+    for(const [browser,page]of clients){await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(comparison==='legacy'&&!precision)+','+precision+')');}
     await host.evaluate(h,'document.getElementById("create").click();true');await host.until(h,'!!state','Fixture room');
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest room');
     for(const trial of trials(repeats,rtts,seed,comparison)) {
       if(app.watch.rooms.get(room).media)await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
-      await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};driftCorrection.reset();video.playbackRate=1;startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
+      await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};precisionCorrectionEnabled=${precision}&&startupFixture.legacy===false;driftCorrection.reset();precisionDriftCorrection.reset();video.playbackRate=1;startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
       for(const [browser,page]of clients)await browser.until(page,'playbackClock.read().valid','Fresh clock');
       const boundaries=await Promise.all(clients.map(([browser,page])=>browser.evaluate(page,'diagnosticSample();diagnostics.snapshot().entries.at(-1).ms')));
       await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');
@@ -126,7 +128,7 @@ async function main() {
         firstCommon:matching.firstCommonFrame,skew:steady.healthySkewMs,rates:steady.viewers.map(r=>r.rateChanges),initialErrors:starts.map(s=>s.firstFrameErrorMs)}));
     }
     if(option('lifecycle','off')==='on') {
-      for(const [browser,page]of clients)await browser.evaluate(page,'startupFixture.unit=false;startupFixture.legacy=false;driftCorrection.reset();video.playbackRate=1;true');
+      for(const [browser,page]of clients)await browser.evaluate(page,`startupFixture.unit=false;startupFixture.legacy=false;precisionCorrectionEnabled=${precision};driftCorrection.reset();precisionDriftCorrection.reset();video.playbackRate=1;true`);
       report.lifecycle=await require('./lib/sync-start-lifecycle').startLifecycle({host,guest,h,g,app,room,output});
       fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({lifecycle:report.lifecycle}));
     }

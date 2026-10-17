@@ -39,7 +39,7 @@ test('server-owned playback uses the shared authorization engine, timeline, rest
   await dispatch(host, 'room.sharing', { mode: 'voice' }); await dispatch(host, 'room.enable');
   assert.equal(await watch.canView(room, friend), true);
   assert.equal((await dispatch(friend, 'media.play')).status, 'applied');
-  room.changedAt -= 5000; assert.ok(watch.position(room) >= 5);
+  room.startAt = undefined; room.changedAt -= 5000; assert.ok(watch.position(room) >= 5);
   await dispatch(friend, 'media.pause'); const stopped = watch.position(room); assert.ok(stopped >= 5);
   await dispatch(friend, 'media.seek.absolute', { seconds: 42 }); assert.equal(watch.position(room), 42);
   room.position = room.media.duration; room.s.state.paused = true;

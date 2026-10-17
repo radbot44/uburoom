@@ -14,7 +14,7 @@
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
   const validQuality = id => QUALITIES.some(q => q.id === qualityId(id));
-  const MANAGEMENT = Object.freeze(['room.enable', 'room.sharing', 'room.visibility', 'room.controls', 'room.autojoin', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh']);
+  const MANAGEMENT = Object.freeze(['room.enable', 'room.sharing', 'room.visibility', 'room.controls', 'room.autojoin', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh','media.ready.start','media.ready.wait','media.ready.cancel']);
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
     return { playback: value.playback, transform: value.transform };
@@ -75,6 +75,9 @@
       case 'media.seek.start': case 'media.seek.end':
       case 'status.get': case 'help.get': case 'room.disable': case 'room.enable': break;
       case 'media.previous': case 'media.next': break;
+      case 'media.ready.start': case 'media.ready.wait': case 'media.ready.cancel':
+        if (typeof a.readinessId !== 'string' || !/^[a-f0-9-]{36}$/.test(a.readinessId)) throw new Error('Readiness choice expired.');
+        args.readinessId = a.readinessId; break;
       case 'media.stream.refresh':
         for (const name of ['mediaVersion','streamVersion']) {
           if (typeof a[name]!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a[name])) throw new Error('Stream refresh expired.');

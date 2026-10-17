@@ -57,7 +57,7 @@ test('player uses the mapped server target and tolerates clock loss without drif
   let valid=true,serverTime=100300;
   const ctx={state:{mediaUrl:'fixture',format:'file',serverNow:100000,state:{position:10,duration:60,paused:false,volume:50,muted:false}},
     playbackClock:{read:()=>({valid,serverTime:valid?serverTime:undefined})},uburoomTiming:{target},receivedAt:100,
-    performance:{now:()=>100},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:correction(),startKey:()=> 'fixture',presentationTiming:presentation(),playerWaiting:false,
+    performance:{now:()=>100},document:{visibilityState:'visible'},precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,driftCorrection:correction(),startKey:()=> 'fixture',presentationTiming:presentation(),playerWaiting:false,
     uburoomPlayback:require('../web/playback-policy'),video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
   vm.runInNewContext(source.slice(source.indexOf('function expected('),source.indexOf('async function reportObservation(')),ctx);
@@ -88,6 +88,18 @@ test('command deadlines use fresh mapped time and never queue controls without a
   vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
   await ctx.execute({action:'media.pause'});assert.equal(sent[0].data.expiresAt,102500);assert.equal(sent[0].data.epoch,'current');
   valid=false;await assert.rejects(ctx.execute({action:'media.pause'}),/timing is refreshing/);assert.equal(sent.length,1);assert.equal(ctx.pending,false);
+});
+
+test('ordinary unlocked resume does not play a probe before its shared deadline',async()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
+  let probes=0;
+  const ctx={selected:'room',viewerId:'viewer',readyVersion:'media',autoplayBlocked:false,
+    state:{epoch:'current',mediaVersion:'media',state:{paused:true,duration:120}},pending:false,qualityPending:false,expected:()=>10,
+    unlockLocal:async()=>{probes++;},playbackClock:{read:()=>({valid:true,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
+    api:async()=>({status:'applied'}),refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
+  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
+  await ctx.execute({action:'media.play'});assert.equal(probes,0);
+  ctx.autoplayBlocked=true;await ctx.execute({action:'media.play'});assert.equal(probes,1,'blocked playback still unlocks in the user gesture');
 });
 test('presentation measures compositor cadence and callback gaps, never equating them to dropped pixels',()=>{
   const p=presentation();const a=p.frame(20,{mediaTime:1,expectedDisplayTime:22,presentationTime:18,presentedFrames:1,processingDuration:.003});

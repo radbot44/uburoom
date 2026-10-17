@@ -20,11 +20,22 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
     pending.set(id,{resolve,reject,timer}); socket.send(JSON.stringify({id,method,params,...(sessionId ? {sessionId} : {})}));
   });
   const close = async () => {
-    if (socket?.readyState === WebSocket.OPEN) await command(firefox ? 'session.end' : 'Browser.close').catch(() => {});
+    // BiDi browser.close shuts down the browser; session.end only ends control.
+    // https://www.w3.org/TR/webdriver-bidi/#command-browser-close
+    if (socket?.readyState === WebSocket.OPEN) await command(firefox ? 'browser.close' : 'Browser.close').catch(() => {});
     socket?.close(); failPending(new Error('Playback browser closed'));
     if (child && child.exitCode === null) {
-      const exited = once(child,'exit').catch(() => {}); child.kill(); await Promise.race([exited,pause(5000)]);
+      const waitExit = ms => new Promise(resolve => {
+        if (child.exitCode !== null) return resolve();
+        const finished = () => { clearTimeout(timer); child.off('exit',finished); resolve(); };
+        const timer = setTimeout(finished,ms); child.once('exit',finished);
+      });
+      await waitExit(3000);
+      if (child.exitCode === null) { child.kill(); await waitExit(2000); }
     }
+    // A Windows browser helper may inherit these pipes beyond the main child.
+    // Release only this fixture's pipe ends after its browser has shut down.
+    child?.stdout?.destroy(); child?.stderr?.destroy();
     // Only remove the temporary profile this invocation created.
     if (path.dirname(profile) === path.resolve(os.tmpdir()) && path.basename(profile).startsWith(prefix)) {
       await fs.promises.rm(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200}).catch(() => {});

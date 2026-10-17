@@ -75,6 +75,7 @@
   }
   function target(state,serverTime) {
     if(!state || !Number.isFinite(serverTime) || !Number.isFinite(state.serverNow))return undefined;
+    if (Number.isFinite(state.pauseAt)) serverTime = Math.min(serverTime, state.pauseAt);
     const elapsed=Number.isFinite(state.startAt)?Math.max(0,serverTime-Math.max(state.serverNow,state.startAt)):serverTime-state.serverNow;
     return Math.max(0,Math.min(state.state.duration||0,state.state.position+(state.state.paused?0:elapsed/1000)));
   }
@@ -143,6 +144,28 @@
     }
     return {update,reset};
   }
-  const api={clock,target,presentation,alarm,correction};
+  // Candidate policy: require sustained, resolvable error and separate entry
+  // and exit thresholds. Clock uncertainty never authorizes a correction.
+  function precisionCorrection() {
+    let key, last, since, sign = 0, active = false;
+    function reset() { key = last = since = undefined; sign = 0; active = false; }
+    function update({now,error,eligible,context,uncertaintyMs}) {
+      if (key !== context || last !== undefined && (now < last || now - last > 3000)) reset();
+      key = context; last = now;
+      const magnitude = Math.abs(error), direction = Math.sign(error);
+      if (!eligible || !Number.isFinite(now) || !Number.isFinite(error) || !Number.isFinite(uncertaintyMs) ||
+          uncertaintyMs < 0 || uncertaintyMs > 50 || uncertaintyMs / 1000 >= magnitude / 2 || magnitude > .65 || magnitude <= .05) {
+        since = undefined; sign = 0; active = false; return 1;
+      }
+      if (direction !== sign) { since = undefined; active = false; sign = direction; }
+      if (active) return 1 + sign * .04;
+      if (magnitude <= .1) { since = undefined; return 1; }
+      since ??= now;
+      if (now - since < 1000) return 1;
+      active = true; return 1 + sign * .04;
+    }
+    return {update,reset};
+  }
+  const api={clock,target,presentation,alarm,correction,precisionCorrection};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
 })(typeof globalThis==='object'?globalThis:this);

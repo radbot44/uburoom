@@ -49,9 +49,9 @@ test('pause, buffering, seek, teardown, offline and hidden events immediately re
   const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
   const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8'),handlers={};
   const f=fixture();for(let i=0;i<5;i++)f.step();
-  const ctx={driftCorrection:f.policy,video:{playbackRate:1.005,addEventListener:(name,fn)=>{handlers[name]=fn;}},
+  const ctx={precisionDriftCorrection:{reset(){}},driftCorrection:f.policy,video:{playbackRate:1.005,addEventListener:(name,fn)=>{handlers[name]=fn;}},
     window:{addEventListener:(name,fn)=>{handlers[name]=fn;}},document:{hidden:true,addEventListener:(name,fn)=>{handlers[name]=fn;}},
-    playbackClock:{reset(){}},startAlarm:{cancel(){}},presentationTiming:presentation(),performance:{now:()=>0},diagnosticSample(){}};
+    playbackClock:{reset(){}},startAlarm:{cancel(){}},pauseAlarm:{cancel(){}},presentationTiming:presentation(),performance:{now:()=>0},diagnosticSample(){}};
   vm.runInNewContext(source.slice(source.indexOf('function resetDriftCorrection('),source.indexOf('const soakMode=')),ctx);
   vm.runInNewContext(source.slice(source.indexOf("for(const event of ['playing','pause','waiting','stalled'"),source.indexOf('setInterval(()=>{')),ctx);
   for(const event of['pause','waiting','seeking','emptied','offline','pagehide','visibilitychange']) {
@@ -71,7 +71,7 @@ test('default keeps the existing gain with recovery guards; gentle correction re
   const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');let now=0;
   const ctx={state:{mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},expected:()=>10.3,
     playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
-    driftCorrection:correction(),presentationTiming:presentation(),gentleCorrectionEnabled:false,performance:{now:()=>now},document:{visibilityState:'visible'},
+    driftCorrection:correction(),presentationTiming:presentation(),precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,performance:{now:()=>now},document:{visibilityState:'visible'},
     video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
     renderTransport(){},checkVideoFrames(){}};
