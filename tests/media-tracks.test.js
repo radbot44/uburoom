@@ -246,6 +246,39 @@ test('track command validation binds current media and stream versions and never
   assert.equal(Engine.validate({action:'media.tracks.set',args:{...versions,audioId:'12'}}).args.audioId,'12');
   for(const args of [{subtitleId:'off'},{...versions,audioId:'https://example.com'},{...versions,subtitleOffset:31},{...versions}])assert.throws(()=>Engine.validate({action:'media.tracks.set',args}));
 });
+test('browser subtitle resources enforce grants, selection generations and explicit burn-in fallback',async t=>{
+  const fixture=provider(),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
+  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture',ffmpegPath:'fixture'};
+  let member=true;
+  const app=createApp(config,{plexFetch:fixture.plex.fetch});app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
+  app.watch.plex.av1.input=async(source,signal,action)=>action('http://127.0.0.1/synthetic-capability');
+  app.watch.plex.av1.run=async(binary)=>Buffer.from(binary.includes('ffprobe')?'{"streams":[]}':'[Script Info]\n[Events]\n');
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
+  const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
+  const request=(route,method='GET',data,token)=>new Promise((resolve,reject)=>{
+    const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})}},res=>{
+      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,body:text&&res.headers['content-type']?.includes('application/json')?JSON.parse(text):text});});
+    });req.on('error',reject);req.end(data&&JSON.stringify(data));
+  });
+  const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token,viewerId=randomUUID();
+  const room=(await request('/api/watch/rooms','POST',{},token)).body.id;
+  const snapshot=async()=> (await request('/api/watch/rooms/'+room+'?viewer='+viewerId+'&subtitles=browser','GET',undefined,token)).body;
+  const command=async(action,args)=>{const state=await snapshot();return request('/api/watch/rooms/'+room+'/command','POST',
+    {viewerId,epoch:state.epoch,expiresAt:Date.now()+2500,command:{action,args:{...args,...(action==='media.tracks.set'?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:{})}}},token);};
+  await snapshot();await command('media.load',{mediaId:'1',quality:'direct'});await command('media.tracks.set',{subtitleId:'22'});
+  const state=await snapshot();assert.equal(state.tracks.subtitleDelivery,'ass');
+  const descriptor=await request(state.subtitleUrl);assert.equal(descriptor.status,200);assert.equal(descriptor.body.format,'ass');
+  const asset=await request(descriptor.body.data);assert.equal(asset.status,200);assert.match(asset.body,/Script Info/);assert.equal(asset.headers['cache-control'],'no-store');
+  assert.equal((await request(state.subtitleUrl+'/font-0')).status,404);assert.equal((await request(state.subtitleUrl.replace(/media\/[a-f0-9]+/,'media/'+ '0'.repeat(48)))).status,403);
+  const old=app.watch.rooms.get(room).viewers.get(viewerId).media;fixture.state.wrongBurn=true;
+  assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'failed');assert.equal(app.watch.rooms.get(room).viewers.get(viewerId).media,old);
+  fixture.state.wrongBurn=false;assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'applied');assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
+  assert.equal((await request(descriptor.body.data)).status,403);
+  await command('media.tracks.set',{subtitleMode:'auto'});const next=await snapshot();assert.equal(next.tracks.subtitleDelivery,'ass');
+  member=false;assert.equal((await request(next.subtitleUrl)).status,403);
+  const page=await request('/watch');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
+});
+
 test('media grants reject stale playlists, subtitles and revoked viewers during pending fetches',async t=>{
   const fixture=provider(), cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
   const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture'};

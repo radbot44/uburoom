@@ -94,7 +94,8 @@
           args.subtitleId=a.subtitleId;
         }
         if (a.subtitleOffset!==undefined) args.subtitleOffset=numeric(a.subtitleOffset,-30,30);
-        if (a.audioId===undefined && a.subtitleId===undefined && a.subtitleOffset===undefined) throw new Error('Choose a track setting.');
+        if(a.subtitleMode!==undefined){if(!['auto','burn'].includes(a.subtitleMode))throw new Error('Choose automatic subtitles or Plex burn-in.');args.subtitleMode=a.subtitleMode;}
+        if (a.audioId===undefined && a.subtitleId===undefined && a.subtitleOffset===undefined && a.subtitleMode===undefined) throw new Error('Choose a track setting.');
         break;
       case 'media.quality.set':
         if (!validQuality(a.quality)) throw new Error('Choose a playback quality');

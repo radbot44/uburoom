@@ -17,7 +17,7 @@ function fixture(){
         {id:10,index:0,streamType:1,codec:'hevc'},
         ...[11,12].map((id,i)=>({id,index:i+1,streamType:2,codec:'ac3',selected:(state.audio.get(token)||'11')===String(id)})),
         ...[21,24].map(id=>({id,streamType:3,codec:'srt',key:'/library/streams/'+id})),
-        ...[22,23].map(id=>({id,streamType:3,codec:id===22?'pgs':'ass',selected:state.subtitle.get(token)===String(id)}))]}]}]}]});
+        ...[22,23].map((id,i)=>({id,index:i+3,streamType:3,codec:id===22?'pgs':'ass',selected:state.subtitle.get(token)===String(id)}))]}]}]}]});
     }
     if(url.pathname==='/library/parts/5'){
       if(url.searchParams.has('audioStreamID'))state.audio.set(token,url.searchParams.get('audioStreamID'));
@@ -78,6 +78,16 @@ test('browser captions share video but burned subtitle IDs, audio, room and medi
       const next=await f.prepare(f.b,'1080p20',choices);media.push(next);assert.notEqual(next.transcodeId,off.transcodeId);
     }
   }finally{await Promise.all(media.map(m=>f.plex.stop(m)));await f.plex.close();}
+});
+
+test('different browser-rendered ASS and PGS choices share video while retaining personal selection and grants',async()=>{
+  const f=fixture();f.plex.av1.ffmpeg='fixture';
+  try{
+    const a=await f.prepare(f.a,'1080p20',{browserSubtitles:true,subtitleId:'22'}),b=await f.prepare(f.b,'1080p20',{browserSubtitles:true,subtitleId:'23'});
+    assert.equal(a.selection.subtitle.delivery,'pgs');assert.equal(b.selection.subtitle.delivery,'ass');assert.equal(a.transcodeId,b.transcodeId);assert.equal(f.state.starts.length,1);
+    assert.notEqual(a.plexContext,b.plexContext);assert.notEqual(a.captionVersion,b.captionVersion);
+    await f.plex.stop(a);assert.equal(f.state.stops.length,0);await f.plex.stop(b);assert.equal(f.state.stops.length,1);
+  }finally{await f.plex.close();}
 });
 
 test('denied and expired consumers cannot borrow another account output; refresh replaces a group without stopping its remaining users',async()=>{

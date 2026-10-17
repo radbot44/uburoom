@@ -5,7 +5,7 @@ const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u001f
 const id = value => /^\d{1,20}$/.test(String(value ?? '')) ? String(value) : undefined;
 const plain = new Set(['srt','subrip','webvtt','vtt','mov_text','text']);
 const burnable = new Set([...plain,'ass','ssa','pgs','hdmv_pgs_subtitle','vobsub','dvd_subtitle']);
-function catalog(part) {
+function catalog(part, {browserSubtitles=false,extractSubtitles=false}={}) {
   const tracks = {audio:[],subtitles:[]};
   for (const stream of part.Stream || []) {
     const kind = Number(stream.streamType) === 2 ? 'audio' : Number(stream.streamType) === 3 ? 'subtitles' : undefined;
@@ -17,7 +17,8 @@ function catalog(part) {
       title:clean(stream.title),label:clean(stream.displayTitle || stream.title || stream.language) || (kind==='audio' ? 'Audio' : 'Subtitles') + ' '+(tracks[kind].length+1),
       selected:flag(stream.selected),default:flag(stream.default),forced:flag(stream.forced),sdh:flag(stream.hearingImpaired),
       commentary:flag(stream.commentary),description:flag(stream.visualImpaired),channels:Number(stream.channels) || undefined,external,
-      delivery:kind==='subtitles' ? external && plain.has(codec) ? 'text' : 'burn' : undefined,
+      delivery:kind==='subtitles' ? external && plain.has(codec) ? 'text' : browserSubtitles && (external || extractSubtitles && index!==undefined) ?
+        ['ass','ssa'].includes(codec) ? 'ass' : ['pgs','hdmv_pgs_subtitle'].includes(codec) ? 'pgs' : ['vobsub','dvd_subtitle'].includes(codec) ? 'vobsub' : 'burn' : 'burn' : undefined,
       available:kind==='audio' || burnable.has(codec)};
     if (!track.available) track.reason = 'This subtitle format is not supported by the current player.';
     tracks[kind].push(track);
@@ -45,7 +46,9 @@ function select(tracks, options = {}) {
     }
     return matchIntent(rows,wanted) || rows.find(row=>row.selected) || (!subtitle && (rows.find(row=>row.default) || rows[0])) || undefined;
   };
-  const audio = choose(tracks.audio,audioChoice,options.audioIntent,false), subtitle = choose(tracks.subtitles,subtitleChoice,options.subtitleIntent,true);
+  const audio = choose(tracks.audio,audioChoice,options.audioIntent,false);
+  let subtitle = choose(tracks.subtitles,subtitleChoice,options.subtitleIntent,true);
+  if(subtitle && options.subtitleMode==='burn')subtitle={...subtitle,delivery:'burn'};
   return {audioChoice,subtitleChoice,audio,subtitle};
 }
 function publicCatalog(tracks) {

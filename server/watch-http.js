@@ -9,6 +9,7 @@ const { PlaybackError, CHUNK, MIME, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
+const SubtitleResources = require('./subtitle-resources');
 const {ObservationError}=require('./playback-tracking');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
@@ -68,6 +69,25 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function stream(req, res, grant, key) {
     if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
     const media = grant.media;
+    if(key.startsWith('subtitle-')){
+      const match=/^subtitle-([a-f0-9-]{36})(?:\/(data|index|font-\d{1,2}))?$/.exec(key);
+      if(!match || match[1]!==media.captionVersion)return json(res,403,{error:'Subtitle selection changed or access expired.'});
+      const controller=new AbortController(),cancel=()=>controller.abort();res.on('close',cancel);
+      const check=setInterval(async()=>{try{if(!await validGrant(grant)||media.captionVersion!==match[1])controller.abort();}catch{controller.abort();}},1000);
+      try{
+        const result=await SubtitleResources.load(media.plexContext||watch.plex,media,controller.signal);
+        if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        res.setHeader('Cache-Control','no-store');
+        if(!match[2]){
+          const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
+          return json(res,200,{format:result.format,fileName:result.fileName,data:base+'data',
+            ...(result.assets.has('index')?{index:base+'index'}:{}),fonts:[...result.assets.keys()].filter(k=>k.startsWith('font-')).map(k=>base+k)});
+        }
+        const data=result.assets.get(match[2]);if(!data)return json(res,404,{error:'Subtitle resource unavailable.'});
+        res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length});return res.end(req.method==='HEAD'?undefined:data);
+      }catch(error){if(!res.destroyed)json(res,503,{error:error instanceof PlaybackError?error.message:'Subtitles could not load. Try Plex burn-in.'});}
+      finally{clearInterval(check);res.off('close',cancel);}return;
+    }
     if (key.startsWith('captions-')) {
       const match = /^captions-([a-f0-9-]{36})$/.exec(key);
       if (!match || match[1]!==media.captionVersion) return json(res,403,{error:'Subtitle selection changed or access expired.'});
@@ -160,7 +180,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     if (!url.pathname.startsWith('/api/watch/')) return false;
     const serverReceivedAt=Date.now(), receivedMono=performance.now();
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
-      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|[a-f0-9]{24})$/.exec(url.pathname);
+      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
       await stream(req, res, grants.get(match[1]), match[2]); return true;
     }
@@ -320,6 +340,9 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
       const alive = async () => (await login({ headers }))?.userId === auth.actor.userId;
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
+      // Capability is set before the first source preparation and never grants access.
+      const viewer=room.viewers.get(viewerId);
+      if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
       room.viewers.get(viewerId).browserLoginHash=req.headers.authorization?undefined:cookies(req).uburoom&&hash(cookies(req).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!await watch.canView(room, auth.actor) || !await alive()) { json(res, 403, { error: 'Viewing access was revoked' }); return true; }
@@ -329,6 +352,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         state.mediaUrl = `/api/watch/media/${grant}/start`;
         const media=room.viewers.get(viewerId).media;
         if (media.selection?.subtitle?.available && media.selection.subtitle.delivery==='text') state.subtitleUrl=`/api/watch/media/${grant}/captions-${media.captionVersion}`;
+        else if(media.selection?.subtitle?.available && ['ass','pgs','vobsub'].includes(media.selection.subtitle.delivery))state.subtitleUrl=`/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
       }
       state.timing={serverReceivedAt,serverSentAt:Date.now(),serverProcessingMs:performance.now()-receivedMono,clockEpoch};
       json(res, 200, state); return true;

@@ -4,6 +4,7 @@ const { QUALITIES, qualityId } = require('../extension/engine');
 const { AV1, PlaybackError } = require('./av1');
 const Tracks = require('./media-tracks');
 const {HLSPool}=require('./hls-pool');
+const SubtitleResources=require('./subtitle-resources');
 
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
@@ -242,7 +243,7 @@ class Plex {
       source: item, principal:this.principal, plexContext:this, videoCodec: item.Media[0].videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
       audioCodec:item.Media[0].audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.neighbors(item)) };
-    media.tracks = Tracks.catalog(part);
+    media.tracks = Tracks.catalog(part,{browserSubtitles:choices.browserSubtitles,extractSubtitles:!!this.av1.ffmpeg});
     media.selection = Tracks.select(media.tracks,choices);
     media.sourceStart = this.url(part.key).href; media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);
     media.sourceKey=JSON.stringify([this.base.origin,id,media.partId,this.url(part.key).pathname,part.size,item.duration,item.Media[0].id]);
@@ -399,7 +400,7 @@ class Plex {
     return restore;
   }
   async stop(media) {
-    media?.subtitleAbort?.abort(); media?.subtitleCache?.clear();
+    media?.subtitleAbort?.abort(); media?.subtitleCache?.clear(); if(media)SubtitleResources.clear(media);
     if(media?.hlsLease){await media.hlsLease.release();return;}
     if (media?.av1Lease) this.av1.release(media.av1Lease);
     if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});

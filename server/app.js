@@ -188,7 +188,13 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
       const player = route === '/watch' || route === '/watch/test' || route === '/activity' || route === '/' && url.searchParams.has('frame_id');
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
+      if(req.method==='GET' && subtitleAsset){
+        const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
+        if(name.endsWith('.js'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:");
+        res.writeHead(200,{'Content-Type':type});return res.end(fs.readFileSync(path.join(__dirname,'../web/vendor/subtitles',name)));
+      }
       // Only these bundled, non-private fixtures are public. No Plex/session grant.
       const testSamples = { 'sample.mp4':'sync-test.mp4', 'h264-baseline.mp4':'h264-baseline.mp4',
         'h264-main.mp4':'h264-main.mp4', 'vp8.webm':'vp8.webm', 'vp9.webm':'vp9.webm', 'av1.webm':'av1.webm', 'hevc.mp4':'hevc.mp4' };
@@ -236,6 +242,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/playback-policy.js':['playback-policy.js','text/javascript'],
         '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
         '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
+        '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && route === '/engine.js') {
