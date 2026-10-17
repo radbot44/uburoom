@@ -27,5 +27,12 @@ test('configured remote narrows both network policy and permissions while preser
   const context = {};
   vm.runInNewContext(fs.readFileSync(path.join(destination, 'server-config.js'), 'utf8'), context);
   assert.deepEqual(Array.from(context.UBUROOM_REMOTE_SERVERS), ['https://watch.example:8443', 'https://legacy.example']);
+  for (const file of ['room-protocol.js', 'viewport.js', 'engine.js']) {
+    vm.runInNewContext(fs.readFileSync(path.join(destination, file), 'utf8'), context, { filename: file });
+  }
+  assert.equal(context.uburoom.protocolCompatible({ room: 1, viewport: 1 }), true);
+  const scripts = ['room-protocol.js', 'viewport.js', 'engine.js'];
+  assert.deepEqual(manifest.background.scripts.slice(0, 3), scripts);
+  assert.deepEqual(manifest.content_scripts[0].js.slice(0, 3), scripts);
   assert.throws(() => configureRemote(['https://other.example'], destination), 'existing build is never overwritten');
 });

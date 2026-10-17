@@ -2,7 +2,7 @@
 
 Updated: 2026-10-17.
 
-uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity. The Firefox YouTube TV remote is currently included but is scheduled for a separate repository during M1. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
+uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity. The YouTube TV remote is currently included but is scheduled for a separate repository during M1. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
 
 This is a working map for one maintainer and their agents. Milestones define broad outcomes; phases are the smaller bodies of work within each milestone. Plan in small, useful increments within these phases. The order can change with the owner's priorities; there are no sprint commitments or promised release dates. This document consolidates existing plans, not new feature approvals or permission to deploy them.
 
@@ -20,7 +20,7 @@ The main gap is evidence and completeness across real Plex sessions, Discord sur
 | Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. Keep active rooms in memory for M1; durable room restoration and playback queues remain separately scoped future work. Preserve native playback history for future per-viewer Plex watch-state reporting. |
 | Commands and access | Every control surface uses the shared validated engine. Recheck current access around awaited operations, reject stale work, and keep remote consent off after disconnect/restart. |
 | Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. Make authenticated WebSockets the native room-control transport; retain HTTP where appropriate for auth/bootstrap, catalog, artwork, media and health. |
-| Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Firefox and real Discord Activity remain primary targets. Keep a single primary `/watch` entry point after the remote split, and keep diagnostics/experimental tools outside normal viewer navigation. Maintain native ES modularity in the browser without bundlers or frameworks. |
+| Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Chrome and Firefox are equal required web test targets, alongside real Discord Activity coverage. Keep a single primary `/watch` entry point after the remote split, and keep diagnostics/experimental tools outside normal viewer navigation. Maintain native ES modularity in the browser without bundlers or frameworks. |
 
 The [product specification](SPEC.md) and [project instructions](AGENTS.md) define the enduring rules. These milestones do not call for a service split, a framework rewrite or a new dependency stack.
 
@@ -33,6 +33,7 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 - Complete real Firefox/YouTube TV lifecycle, consent, latency and configured-origin checks. The known full extension smoke failure remains deferred; preserve that exception explicitly and do not weaken permissions or throttling to conceal it.
 - Finish branding/artwork/media provenance, dependency notices and GPL-3.0-only distribution review. Switch `scripts/build-demo-media.js` to approved current branding and remove `assets/branding/old/` from the active source before packaging; retain prior artwork in Git history. Audit source, full publication history, assets and ZIP contents for private material; include LICENSE and required notices.
 - **Final M1 pre-release cleanup gate:** Remove obsolete `session.*`/`/api/sessions` compatibility, private pre-release JSON imports/schema upgrade paths and legacy HTTP room-control compatibility routes after their callers/tests are switched to the canonical room/WebSocket contract. Keep post-release database schema versioning and future migration capability; this is not permission to discard a public release user’s data. Complete the remote split and production-vs-diagnostic entry-point cleanup before the first public source/package cut.
+- Source packaging now includes ROADMAP.md; local ZIP inventory verification confirms it is present alongside the existing private-file exclusions. Retain that coverage in later package reviews.
 - Keep signing, publication, public push, provider registration and production configuration/restarts behind their existing explicit approval requirements. Public repository creation remains deferred until the brand transition is complete.
 
 **Done for a release:** Claims match recorded evidence, required install/upgrade and provenance gates are satisfied, and audited ZIPs can be reviewed for publication. Completing a phase alone does not authorize a release.
@@ -52,7 +53,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P5 | Real-time playback synchronization | In progress; timing instrumentation and clock estimation implemented, live targets unverified | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
 | M1-P6 | Frame-pacing preservation during synchronization | In progress; experimental candidates gated, disposition/production cleanup and joint live verification pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | Planned; consolidate viewer entry points and isolate codec diagnostics | Existing design guide, rendered surfaces and playback/permission behavior |
-| M1-P8 | Separate remote extension repository and uburoom compatibility | Planned; define shared-source boundaries, retire standalone remote homepage and verify current-only protocol | Stable command/protocol contract and cross-repository compatibility checks |
+| M1-P8 | Separate remote extension repository and uburoom compatibility | In progress; clean remote snapshot and independent tooling created, local compatibility verified; source cutover and full lifecycle checks pending | Stable command/protocol contract and cross-repository compatibility checks |
 | M1-P9 | Render styled and bitmap subtitles in the browser | Implementation complete; verification and licensing pending | M1-P2/M1-P3 track delivery; existing player and shared conversion boundaries |
 | M1-P10 | Transition "session" terminology to "room" | Canonical room protocol implemented locally; split-repository verification pending | M1-P7 UI/UX review and command engine consistency |
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
@@ -75,6 +76,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 
 **Outcome:** Viewers normally press Play without choosing codecs or troubleshooting conversion paths.
 
+- Before the next delivery-selection increment, audit the server playback-preparation path in `server/watch.js` for tangled responsibilities across delivery selection, personal tracks, shared conversions and recovery. Produce evidence-backed simplification proposals before choosing a refactor; this audit is planned, not completed.
 - Inventory eligible content versions, files and streams instead of assuming the first media/part. Keep alternate cuts distinct; only substitute timing-compatible encodes automatically.
 - Model one playback attempt from complete source, selected tracks, client capability, network observations and server capacity. Confirm the output Plex actually agreed to deliver.
 - Prefer suitable direct playback, then evaluate remux/audio-only conversion before full conversion or burn-in. Keep native HLS, hls.js and custom AV1 choices explicit and tested.
@@ -171,6 +173,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 - Identify confusing navigation, duplicated controls, hidden state, unnecessary steps, inconsistent terminology and unclear loading, empty, error or recovery feedback. Evaluate desktop, mobile and real Discord Activity layouts, including keyboard and assistive-technology use. After M1-P8 extraction, make `/` lead into `/watch` rather than a redundant standalone remote-control homepage; retain the watch page’s authenticated remote drawer.
 - Develop a coherent information architecture and reviewable flow/layout proposals, then implement the restructure in bounded increments. Use the [design guide](docs/design-guide.md) and shared styles/SVGs as the visual foundation; preserve safe DOM creation, accessibility and clear separation of shared room actions from personal settings.
 - Move `web/watch-test.html`, `web/watch-test.js`, `web/watch-test.css` and their test-media routes out of the ordinary user navigation: use an explicit developer-only diagnostic entry point (or separate tooling) with no default release exposure. Retain underlying codec capability checks, automated decoding coverage and reproducible fixtures; do not make the fixture-generation step part of normal viewing.
+- First technical modularization increment: give local playback synchronization one lifecycle owner in a focused native module, reusing the existing timing and buffering primitives. Consolidate scheduled alarms, alignment/refill state and correction resets; migrate affected tests from source-text slicing to the real module interface. Preserve timestamp anchoring, independent buffering, readiness, stale-work guards and current correction policies; verify startup, quality replacement, seek and recovery in Firefox/Chrome. Coordinate with M1-P5/P6 before broader UI restructuring.
 - Modularize the client application without frameworks or build tools: refactor monolithic scripts (`web/watch.js`) into focused native ES modules (`watch-player.js`, `watch-sync.js`, `watch-activity.js`, `watch-ui.js`) using standard `<script type="module">`.
 - Validate discoverability and task completion with representative user journeys. Inspect rendered surfaces across supported layouts and verify that focus, menus, dialogs and player controls remain usable without disrupting playback.
 
@@ -179,6 +182,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 ### M1-P8 — Separate remote extension repository and uburoom compatibility
 
 **Goal:** Move the Firefox remote extension into a separate repository while keeping it fully interoperable with uburoom and preserving its existing YouTube TV functionality.
+
+**Current increment:** Room/playback validation and viewport/transform calculations are separate versioned modules, dispatched through the existing engine, with exact revision negotiation. A clean local uburoom-remote repository now owns a snapshot of the extension, assets, notices, configuration, packaging and tests. Matching fixtures and a disposable TLS compatibility runner exercise its background source against uburoom. See [integration contract and ownership](docs/remote-protocol.md). The original extension remains here for the later source/asset/import cutover; homepage retirement and complete real-browser/YouTube TV lifecycle verification remain pending. Chromium extension support is explicitly deferred to M2-P10; web checks continue in both Chrome and Firefox.
 
 - Inventory extension code, assets, notices, build/configuration tools and tests. Decouple `extension/engine.js` into distinct Room/Playback vs. Viewport/Transform protocols ahead of extraction, so YouTube TV presentation controls do not intertwine with room synchronization. Define ownership and distribution of shared command validation, remote styles/icons and protocol fixtures so both repositories can build and test independently without incompatible copies drifting apart.
 - Define and document the extension/server integration contract, supported version combinations, configured HTTPS origins, authentication, connection lifecycle and failure behavior. M1 supports the **canonical `room.*` protocol only**, not old pre-release `session.*` aliases; coordinate both repositories before removal. Preserve shared command validation, per-user scopes, private-room visibility and stale-command rejection.
@@ -196,7 +201,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 - Deliver original tracks, VobSub indexes/palettes and ASS fonts through viewer-authorized resources. Bound extraction, downloads, caches and worker lifetimes; never expose Plex credentials or use another viewer's access as authority.
 - Preserve authored layout, personal delay and picture transforms across track changes, pause/seek, quality replacements, late joins and recovery. Keep video outputs reusable across different browser-rendered subtitle selections.
 - Retain explicit Plex burn-in fallback when original resources or browser capabilities are insufficient. Verify video-only PIP limitations and actual Discord Activity delivery without requiring cross-origin isolation globally.
-- Self-host pinned worker/WASM/font assets with narrow CSP changes and complete upstream notices/source obligations. Validate difficult ASS fonts/signs/karaoke, PGS compositions and VobSub palettes in Firefox first, then Chrome and real Activity.
+- Self-host pinned worker/WASM/font assets with narrow CSP changes and complete upstream notices/source obligations. Validate difficult ASS fonts/signs/karaoke, PGS compositions and VobSub palettes in both Chrome and Firefox, and in real Activity.
 
 **Status: Implementation complete; verification and licensing pending.** Authorized original-resource delivery, bounded embedded stream-copy/font extraction, lazy JASSUB/libbitsub integration and explicit Plex burn-in fallback are implemented and deployed. Firefox/Chrome fixtures cover external and embedded ASS/PGS/VobSub, full initialization, paused repaints, personal delay, transforms and overlay cleanup. Rendering mode persists across track changes, cancelled retries no longer block loading, and ASS uses transparent Canvas2D composition. The owner confirmed PGS and VobSub work and subsequently confirmed normal loading after the ASS fix. Remaining gates are complex authored subtitles/fonts, quality replacement/recovery and mixed-viewer lifecycle checks, actual Discord Activity/mobile coverage, broader real-source/resource testing, and third-party licensing/font provenance/corresponding-source review. The phase remains open until those gates are satisfied. See [testing](docs/testing.md#browser-subtitle-rendering-m1-p9).
 
@@ -258,6 +263,7 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 | M2-P7 | Self-hosting installation validator (`--doctor` CLI check) | Planned | M1-P11 configuration and storage unification |
 | M2-P8 | Official containerization (Docker & Docker Compose) | Planned | M2-P7 configuration validation |
 | M2-P9 | Discord voice channel presence and room invite embeds | Planned | M1-P10 room terminology and Discord bot integration |
+| M2-P10 | Chromium remote extension support | Deferred; outside M1 extraction | M1-P8 independent remote repository and versioned protocol |
 
 ### M2-P1 — High Dynamic Range (HDR) support
 
@@ -330,6 +336,16 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 - When a room begins playback, automatically post a rich Discord embed in the matched text/voice channel featuring media metadata (title, poster, year, duration) and a one-click "Join Room" button.
 - Update bot status and rich presence dynamically with current watching activity.
 - Automatically update or clean up the active embed when the room session ends or media changes.
+
+### M2-P10 — Chromium remote extension support
+
+**Goal:** Support the remote extension in Chrome and other explicitly tested Chromium browsers alongside Firefox.
+
+- Add Chromium Manifest V3 service-worker builds and browser API handling without weakening configured-origin permissions, CSP or off-by-default consent.
+- Define stable extension identity and proof-bound sign-in return URLs; retain per-tab metadata and safe behavior across worker suspension, reconnect and browser restart.
+- Verify installation, local/remote controls, authentication, revoked access and lifecycle behavior in both Chrome and Firefox. Test other claimed Chromium browsers explicitly.
+
+This phase is deferred. M1-P8 extracts and verifies the current Firefox extension without implementing Chromium support. Chrome and Firefox remain equal required targets for web-client changes now.
 
 ## Future direction and decisions still open
 

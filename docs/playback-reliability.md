@@ -120,11 +120,11 @@ Current Plex HLS and custom AV1 reuse is scoped to one room/media generation acr
 
 ## Browser and Discord verification targets
 
-The matrix below describes required test targets, not current support claims. Record exact browser/client, OS, device/GPU and acceleration state for results. Establish supported versions from completed tests and repeat on meaningful browser, SDK, server or player changes.
+The matrix below describes required test targets, not current support claims. Chrome and Firefox are equal required web test targets; run relevant checks in both. Record exact browser/client, OS, device/GPU and acceleration state for results. Establish supported versions from completed tests and repeat on meaningful browser, SDK, server or player changes.
 
 | Surface | Required environments and checks |
 | --- | --- |
-| Firefox | Primary development coverage on Windows, macOS and Linux; representative hardware, including software decoding and missing system codecs. |
+| Firefox | Required coverage alongside Chrome on Windows, macOS and Linux; representative hardware, including software decoding and missing system codecs. |
 | Chrome and Edge | Windows and macOS, plus Chrome on Linux; test each claimed browser rather than inheriting a Chromium result. |
 | Safari | Real macOS, iPhone and iPad; test native HLS, inline/fullscreen playback, user gesture requirements, captions, rotation and background/return behavior. |
 | Android browsers | Chrome and Firefox on representative physical devices; weak hardware, changing networks and orientation. |

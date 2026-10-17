@@ -8,6 +8,7 @@ const { Hub, hash, UUID } = require('./core');
 const { DeviceLogin, FIREFOX_REDIRECT } = require('./login');
 const { deviceStore, loginStore } = require('./storage');
 const RemoteUI = require('../extension/remote-ui');
+const Engine = require('../extension/engine');
 const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
@@ -254,8 +255,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
-      if (req.method === 'GET' && route === '/engine.js') {
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../extension/engine.js')));
+      if (req.method === 'GET' && ['/room-protocol.js', '/viewport.js', '/engine.js'].includes(route)) {
+        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../extension', route.slice(1))));
       }
       if (req.method === 'GET' && route === '/vendor/hls.js') {
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js')));
@@ -374,8 +375,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (++count > 40) return ws.close(4008, 'Rate limit');
         const m = JSON.parse(raw.toString());
         if (!ws.device) {
-          if (m.type !== 'auth' || !UUID.test(m.deviceId) || typeof m.credential !== 'string' || m.credential.length !== 64 || !hub.authenticate(ws, m.deviceId, m.credential)) return ws.close(4003, 'Authentication failed');
-          clearTimeout(authTimer); ws.send(JSON.stringify({ type: 'auth-ok' })); return;
+          if (m.type !== 'auth' || !UUID.test(m.deviceId) || typeof m.credential !== 'string' || m.credential.length !== 64) return ws.close(4003, 'Authentication failed');
+          if (!Engine.protocolCompatible(m.protocol)) return ws.close(4006, 'Incompatible remote protocol');
+          if (!hub.authenticate(ws, m.deviceId, m.credential)) return ws.close(4003, 'Authentication failed');
+          clearTimeout(authTimer); ws.send(JSON.stringify({ type: 'auth-ok', protocol: Engine.PROTOCOL })); return;
         }
         ws.lastSeen = Date.now();
         if (m.type === 'room') hub.update(ws, m);

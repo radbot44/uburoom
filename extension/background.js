@@ -29,14 +29,15 @@ function turnOff(s, notify = true) {
   s.enabled = false; s.live = false; s.epoch = crypto.randomUUID(); s.lastAck = 0;
   tell(s); if (notify) report(s);
 }
-function loseConnection(ws) {
+function loseConnection(ws, incompatible = false) {
   if (socket !== ws) return;
-  authenticated = false; connecting = false; socket = undefined; status = 'Disconnected — remote off';
+  authenticated = false; connecting = false; socket = undefined;
+  status = incompatible ? 'Incompatible remote protocol — update the extension and server; remote off' : 'Disconnected — remote off';
   sharing = { available: false }; sharingRequestedAt = 0;
   voiceReady = false; voiceSequence = 0;
   for (const s of rooms.values()) turnOff(s, false);
   clearTimeout(reconnectTimer);
-  if (config.credential) reconnectTimer = setTimeout(connect, 3000);
+  if (config.credential && !incompatible) reconnectTimer = setTimeout(connect, 3000);
 }
 async function connect() {
   await loaded;
@@ -46,17 +47,19 @@ async function connect() {
     const ws = new WebSocket(endpoint().replace('https:', 'wss:') + '/ws');
     socket = ws;
     const authTimeout = setTimeout(() => { if (!authenticated && socket === ws) ws.close(); }, 5000);
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', deviceId: config.deviceId, credential: config.credential }));
-    ws.onclose = () => { clearTimeout(authTimeout); loseConnection(ws); };
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', deviceId: config.deviceId, credential: config.credential, protocol: uburoom.PROTOCOL }));
+    ws.onclose = event => { clearTimeout(authTimeout); loseConnection(ws, event?.code === 4006); };
     ws.onerror = () => { status = 'Connection failed — check HTTPS certificate'; ws.close(); };
     ws.onmessage = async event => {
       if (socket !== ws) return;
       try {
         const m = JSON.parse(event.data);
         if (m.type === 'auth-ok') {
+          if (!uburoom.protocolCompatible(m.protocol)) { ws.close(4006, 'Incompatible remote protocol'); return; }
           authenticated = true; connecting = false; status = 'Connected — enable a tab locally'; clearTimeout(authTimeout); requestSharing();
           for (const s of rooms.values()) report(s);
         }
+        else if (!authenticated) return;
         else if (m.type === 'sharing-options') {
           ownerName = typeof m.ownerName === 'string' ? m.ownerName : ownerName;
           sharing = { available: m.available === true, guildName: typeof m.guildName === 'string' ? m.guildName : '' };

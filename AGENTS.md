@@ -1,6 +1,6 @@
 # Working on uburoom
 
-uburoom is a self-hosted Plex watch-together app with a browser interface, Discord Activity, bot integration and linked accounts. The Firefox YouTube TV remote is still in this repository; its extraction is planned within M1 before the first public release. Native-player integration is later work.
+uburoom is a self-hosted Plex watch-together app with a browser interface, Discord Activity, bot integration and linked accounts. The YouTube TV remote has an independent clean snapshot in uburoom-remote; its original source remains here until the M1-P8 cutover and remaining compatibility checks. Native-player integration is later work.
 
 Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next increment. It consolidates priorities and links to detailed plans; keep its affected milestone current after material work. Record verification evidence and unfinished checks in [docs/testing.md](docs/testing.md). The owner's current task takes priority, and roadmap entries do not authorize unrelated implementation or deployment.
 
@@ -85,12 +85,14 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ---
 
-## Extension (Firefox Remote)
+## Extension (YouTube TV Remote)
 
 - **Firefox MV3.** The extension is Manifest V3 (Gecko ID `uburoom@uburoom.com`, min Firefox 115.0). Keep permissions narrow — only explicitly configured HTTPS origins, never `<all_urls>`.
+- The current extension is Firefox-only. Chromium extension support is deferred to M2-P10; it is not part of M1-P8 extraction. This does not establish a Firefox-first policy for the web app.
 - **Configured builds** accept explicit HTTPS origins with matching `permissions` and CSP entries. Configure with `scripts/configure-remote.js --server=https://origin`. No unrestricted host access.
 - Communication flow: `content.js` ↔ `background.js` (via `browser.runtime` messaging) ↔ server (via WebSocket with device ID + credential auth). The popup (`popup.js`) also talks to `background.js`.
 - `engine.js` is the shared command engine — same file used by extension, web client, and server. Changes currently affect all three surfaces; after M1-P8, keep the common protocol/validation contract stable through separately versioned builds instead of importing source across repositories.
+- `room-protocol.js` owns room/playback validation and `viewport.js` owns transform/profile validation and picture calculations. The engine dispatches between them. Keep both protocol revisions and matching fixtures coordinated; see [remote integration contract](docs/remote-protocol.md).
 - The known full extension smoke timing issue is deferred; do not weaken permissions or throttling to hide it.
 
 ---
@@ -138,6 +140,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 ## Testing
 
 - Run `npm test` (invokes `node --test tests/*.test.js`). All tests must pass without unexpected skips.
+- Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both; there is no Firefox-first policy. Until M2-P10, extension installation/lifecycle checks apply to the supported Firefox build.
 - **No unexpected skips.** 13 tests skip without test certificates (expected). If a test is otherwise skipped, document why in [docs/testing.md](docs/testing.md).
 - Smoke and integration scripts live in `scripts/` and require a running server with fixture data (`scripts/account-fixture.js`). They are not part of the `npm test` suite. The playback baseline exercises actual watch playback in headless Firefox/Chrome/Edge, checking decoded pixels, PCM tones, startup, stalls, drift, pause/seek/resume across multiple codecs and frame rates.
 - Record verification evidence and unfinished checks in [docs/testing.md](docs/testing.md).

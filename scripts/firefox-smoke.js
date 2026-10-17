@@ -16,7 +16,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-firefox-'));
-  const extensionPath = path.join(temp, 'extension'); fs.cpSync(path.join(project, 'extension'), extensionPath, { recursive: true });
+  const extensionSource = path.resolve(process.argv.find(arg => arg.startsWith('--extension='))?.slice(12) || path.join(project, 'extension'));
+  const extensionPath = path.join(temp, 'extension'); fs.cpSync(extensionSource, extensionPath, { recursive: true });
   const profile = path.join(temp, 'profile'); fs.mkdirSync(profile);
   const extensionUuid = randomUUID(), deviceId = randomUUID();
   const manifest = JSON.parse(fs.readFileSync(path.join(extensionPath, 'manifest.json'), 'utf8'));
@@ -230,7 +231,7 @@ async function main() {
     const seekFixture=JSON.parse(await evaluate(player, `(async () => {const chunks=[],stream=document.querySelector('canvas').captureStream(10),recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);await new Promise(resolve=>{recorder.onstop=resolve;recorder.start();setTimeout(()=>recorder.stop(),3000);});const v=document.querySelector('video');v.srcObject=null;v.src=URL.createObjectURL(new Blob(chunks,{type:'video/webm'}));await new Promise((resolve,reject)=>{v.addEventListener('loadeddata',resolve,{once:true});v.addEventListener('error',()=>reject(new Error('Recording video load failed')),{once:true});});v.pause();return JSON.stringify({duration:v.duration,ranges:Array.from({length:v.seekable.length},(_,i)=>[v.seekable.start(i),v.seekable.end(i)])});})()`));
     console.log('[Firefox] Seek fixture:',seekFixture);
     assert.ok(seekFixture.ranges.length,'recording must expose actual seekable ranges');
-    const Engine=require('../extension/engine');
+    const Engine=require(path.join(extensionSource,'engine'));
     for (const [action,target] of [['media.seek.start',Engine.seekBoundary(seekFixture.ranges,'start')],['media.seek.end',Engine.seekBoundary(seekFixture.ranges,'end')]]) {
       const r=JSON.parse(await evaluate(popup,`browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:${JSON.stringify(action)}}}).then(r=>JSON.stringify(r))`));
       assert.equal(r.status,'applied',action);assert.ok(Math.abs(await evaluate(player,"document.querySelector('video').currentTime")-target)<.05,'seek reached boundary');

@@ -21,6 +21,8 @@
   ],
   "background": {
     "scripts": [
+      "room-protocol.js",
+      "viewport.js",
       "engine.js",
       "server-config.js",
       "background.js"
@@ -40,6 +42,8 @@
         "https://tv.youtube.com/*"
       ],
       "js": [
+        "room-protocol.js",
+        "viewport.js",
         "engine.js",
         "remote-ui.js",
         "content.js"

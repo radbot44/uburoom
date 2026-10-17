@@ -2,6 +2,17 @@
 
 Use a local-disk checkout and Node 22.13.0+. Install from the committed lockfile; ordinary development needs no frontend build.
 
+Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both. The current remote extension is Firefox-only; Chromium extension support is deferred to M2-P10.
+
+The independent uburoom-remote snapshot carries its own configuration, packaging and ten Node tests without a runtime dependency on this checkout. For cross-repository checks, pass explicit artifact and fixture paths; the runner starts a disposable local TLS fixture without loading `.env` or restarting an installation:
+
+```powershell
+node scripts/remote-compatibility.js --extension=<remote-build-directory> --fixtures=<remote-repository>/tests/fixtures/remote-protocol-v1.json
+node scripts/firefox-smoke.js --extension=<remote-build-directory> --startup-only
+```
+
+These integration tools use this checkout's development certificates. The TLS runner simulates browser APIs and player execution while using the artifact's real background/protocol source. The Firefox startup smoke installs an isolated copy against synthetic local pages; its localhost origins and content-script fixture matches do not change the distributed build. Full lifecycle and real YouTube TV verification remain separate checks.
+
 ```powershell
 npm ci
 .\scripts\new-dev-cert.ps1 -DnsNames @('localhost')

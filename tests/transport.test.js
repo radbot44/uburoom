@@ -9,6 +9,7 @@ const { randomUUID } = require('node:crypto');
 const { WebSocket } = require('ws');
 const { createApp } = require('../server/app');
 const { hash } = require('../server/core');
+const Engine = require('../extension/engine');
 const { FIREFOX_REDIRECT } = require('../server/login');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 test('real TLS transport authenticates devices, gates consent, acknowledges execution and drops on disconnect', { skip: !fs.existsSync(certFile) && 'Generate the development certificate to run the TLS integration check' }, async t => {
@@ -32,7 +33,7 @@ test('real TLS transport authenticates devices, gates consent, acknowledges exec
   assert.equal((await request('/api/devices/revoke', 'POST', { id: randomUUID() })).status, 403);
   const unpaired = new WebSocket(`wss://localhost:${port}/ws`, { ca: cert });
   await once(unpaired, 'open');
-  const denied = once(unpaired, 'close'); unpaired.send(JSON.stringify({ type: 'auth', deviceId: randomUUID(), credential: 'a'.repeat(64) }));
+  const denied = once(unpaired, 'close'); unpaired.send(JSON.stringify({ type: 'auth', deviceId: randomUUID(), credential: 'a'.repeat(64), protocol: Engine.PROTOCOL }));
   assert.equal((await denied)[0], 4003);
   const deviceId = randomUUID(), credential = 'c'.repeat(64);
   app.store.devices.push({ id: deviceId, ownerId: 'owner', credentialHash: hash(credential) });
@@ -41,12 +42,24 @@ test('real TLS transport authenticates devices, gates consent, acknowledges exec
   async function exchange(message) {
     const response = once(ws, 'message'); ws.send(JSON.stringify(message)); return JSON.parse((await response)[0]);
   }
-  assert.equal((await exchange({ type: 'auth', deviceId, credential })).type, 'auth-ok');
+  assert.deepEqual(await exchange({ type: 'auth', deviceId, credential, protocol: Engine.PROTOCOL }), { type: 'auth-ok', protocol: Engine.PROTOCOL });
   const room = { type: 'room', roomId: randomUUID(), epoch: randomUUID(), alias: 'player', mode: 'owner', enabled: false, reachable: true };
   assert.equal((await exchange(room)).live, false);
   const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' }, command = { action: 'media.pause' };
   assert.equal((await app.hub.dispatch(actor, command)).status, 'forbidden');
   room.enabled = true; assert.equal((await exchange(room)).live, true);
+  const registeredSocket = app.hub.rooms.get(room.roomId).socket;
+  for (const protocol of [undefined, null, {}, { room: 2, viewport: 1 }, { room: 1, viewport: 2 }]) {
+    const incompatible = new WebSocket(`wss://localhost:${port}/ws`, { ca: cert });
+    await once(incompatible, 'open');
+    const rejected = once(incompatible, 'close');
+    incompatible.send(JSON.stringify({ type: 'auth', deviceId, credential, protocol }));
+    const [code, reason] = await rejected;
+    assert.equal(code, 4006);
+    assert.equal(reason.toString(), 'Incompatible remote protocol');
+    assert.ok(app.hub.rooms.get(room.roomId).socket === registeredSocket, 'incompatible clients cannot replace a compatible connection');
+    assert.equal((await exchange(room)).live, true);
+  }
   const received = once(ws, 'message'); const applied = app.hub.dispatch(actor, command);
   const wire = JSON.parse((await received)[0]);
   assert.ok(wire.expiresAt > Date.now());
@@ -59,7 +72,7 @@ test('real TLS transport authenticates devices, gates consent, acknowledges exec
   for (const message of [{ ...room, type: 'session' }, { ...room, roomId: undefined, sessionId: randomUUID() }]) {
     const legacy = new WebSocket(`wss://localhost:${port}/ws`, { ca: cert });
     await once(legacy, 'open');
-    const auth = once(legacy, 'message'); legacy.send(JSON.stringify({ type: 'auth', deviceId, credential }));
+    const auth = once(legacy, 'message'); legacy.send(JSON.stringify({ type: 'auth', deviceId, credential, protocol: Engine.PROTOCOL }));
     assert.equal(JSON.parse((await auth)[0]).type, 'auth-ok');
     const rejected = once(legacy, 'close'); legacy.send(JSON.stringify(message));
     assert.equal((await rejected)[0], 4002, 'pre-release registration is rejected');

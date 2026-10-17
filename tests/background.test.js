@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { webcrypto, randomUUID } = require('node:crypto');
 const Engine = require('../extension/engine');
 
-async function extension(saved, serverOrigins) {
+async function extension(saved, serverOrigins, protocol = Engine.PROTOCOL) {
   const sockets = [], timers = new Map(); let nextTimer = 0, onConnect, onMessage;
   const event = register => ({ addListener: register || (() => {}) });
   const browser = {
@@ -19,7 +19,7 @@ async function extension(saved, serverOrigins) {
     static OPEN = 1;
     constructor(url){this.url=url;this.readyState=1;this.sent=[];sockets.push(this);}
     send(raw){this.sent.push(JSON.parse(raw));}
-    close(){this.readyState=3;this.onclose?.();}
+    close(code){this.readyState=3;this.onclose?.({code});}
   }
   vm.runInNewContext(fs.readFileSync(require.resolve('../extension/background'),'utf8'),{
     browser,uburoom:Engine,WebSocket:Socket,crypto:webcrypto,URL,URLSearchParams,TextEncoder,Uint8Array,UBUROOM_REMOTE_SERVERS:serverOrigins,
@@ -28,7 +28,7 @@ async function extension(saved, serverOrigins) {
   await new Promise(resolve=>setImmediate(resolve));
   const ws=sockets[0];assert.ok(ws);ws.onopen();
   const receive=async message=>ws.onmessage({data:JSON.stringify(message)});
-  await receive({type:'auth-ok'});
+  await receive({type:'auth-ok',protocol});
   await receive({type:'sharing-options',available:true,ownerName:'Alice'});
   await receive({type:'voice-state',sequence:1,available:true,joined:false,channelId:'voice',serverNow:Date.now(),expiresAt:Date.now()+3000});
   async function player(tabId = 1) {
@@ -40,7 +40,7 @@ async function extension(saved, serverOrigins) {
     await receive({type:'room-ack',roomId:id,epoch:report.epoch,serverNow:Date.now(),live:false});
     return {id,messages,disconnect,state:()=>messages.findLast(m=>m.type==='remote-state')};
   }
-  return {ws,receive,player,sockets,timers,command:(id,command)=>onMessage({type:'local-command',roomId:id,command},{url:'moz-extension://fixture/popup.html'})};
+  return {ws,receive,player,sockets,timers,popup:()=>onMessage({type:'popup-state'},{url:'moz-extension://fixture/popup.html'}),command:(id,command)=>onMessage({type:'local-command',roomId:id,command},{url:'moz-extension://fixture/popup.html'})};
 }
 
 test('remembered On join survives fresh background and tab sessions, without restoring consent or replaying voice snapshots', async () => {
@@ -76,6 +76,34 @@ test('a configured upgrade retains the paired device and exact stored origin wit
   assert.equal(tab.state().enabled, false);
   assert.equal(tab.state().live, false);
   assert.equal(tab.state().autoJoin, true);
+});
+
+test('incompatible or unversioned servers leave consent off and stop automatic reconnects', async () => {
+  for (const protocol of [null, {}, { room: 2, viewport: 1 }, { room: 1, viewport: 2 }]) {
+    const saved = { deviceId: randomUUID(), credential: 'a'.repeat(64), serverUrl: 'https://localhost:6767', autoJoin: true };
+    const ext = await extension(saved, undefined, protocol);
+    assert.deepEqual(ext.ws.sent[0].protocol, Engine.PROTOCOL);
+    assert.equal(ext.ws.readyState, 3);
+    assert.equal(ext.ws.sent.some(m => m.type === 'room' || m.type === 'sharing-options'), false);
+    assert.equal(ext.timers.size, 0);
+    const state = await ext.popup();
+    assert.equal(state.connected, false);
+    assert.match(state.status, /Incompatible remote protocol/);
+    assert.equal(saved.credential, 'a'.repeat(64), 'upgrading never discards pairing');
+  }
+});
+
+test('a protocol failure on an enabled connection revokes consent and ignores later commands', async () => {
+  const ext = await extension({ deviceId: randomUUID(), credential: 'a'.repeat(64), serverUrl: 'https://localhost:6767' });
+  const tab = await ext.player();
+  await ext.command(tab.id, { action: 'room.enable' });
+  assert.equal(tab.state().enabled, true);
+  await ext.receive({ type: 'auth-ok', protocol: { room: 2, viewport: 1 } });
+  assert.equal(tab.state().enabled, false);
+  assert.equal(tab.state().live, false);
+  await ext.receive({ type: 'command', action: 'room.enable', roomId: tab.id });
+  assert.equal(tab.state().enabled, false);
+  assert.equal(ext.timers.size, 0);
 });
 
 test('canonical server management commands enforce disabled-room admission', async () => {
