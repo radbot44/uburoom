@@ -82,7 +82,7 @@ test('late room polls and failures cannot overwrite a newer authorized state',as
 test('command deadlines use fresh mapped time and never queue controls without a clock',async()=>{
   const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),sent=[];
   let valid=true;
-  const ctx={selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,
+  const ctx={selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,qualityPending:false,
     playbackClock:{read:()=>({valid,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
     api:async(path,data)=>{sent.push({path,data});return {status:'applied'};},refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
   vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);

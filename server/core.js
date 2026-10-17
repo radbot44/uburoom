@@ -150,7 +150,14 @@ class Hub {
     if (!this.canManage(s, actor) && (manage || ['profile.save', 'session.disable'].includes(command.action))) return { status: 'forbidden', message: 'This action requires the host.' };
     if (!personal && !this.canManage(s, actor) && !Engine.controlAllowed(s.controls, command)) return { status: 'forbidden', message: 'This control is not shared.' };
     if (s.execute) {
-      const epoch = s.epoch, mode = s.mode, adminEpoch = this.adminEpoch, deadline = Math.min(Date.now() + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
+      const acceptedAt = Date.now();
+      const admissionDeadline = Math.min(acceptedAt + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
+      if (acceptedAt >= admissionDeadline) return { status: 'unavailable', message: 'Session changed or command expired.' };
+      // A fresh personal quality request starts immediately, but Plex session
+      // preparation can take longer than a remote button's delivery lifetime.
+      // Keep completion bounded and recheck the same live authorization below.
+      const deadline = personal && command.action === 'media.quality.set' ? acceptedAt + 30000 : admissionDeadline;
+      const epoch = s.epoch, mode = s.mode, adminEpoch = this.adminEpoch;
       const permitted = () => this.sessions.get(s.sessionId) === s && s.epoch === epoch && s.mode === mode && Date.now() < deadline &&
         (!this.isOwner(actor) || this.adminEpoch === adminEpoch) &&
         (personal ? viewEligible(s, actor, this.config, Date.now(), this.access, this.isAdmin(actor)) : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor))) &&

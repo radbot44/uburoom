@@ -8,6 +8,7 @@ const playback = require('../web/playback-policy');
 const {create:diagnosticLog}=require('../web/playback-diagnostics');
 const source = fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
 function load(context,name,next) {
+  context.qualityPending ??= false;
   context.diagnostics ??= diagnosticLog();
   context.diagnosticSample ??= (event,fields)=>context.diagnostics.record(event,fields);
   if(context.Hls)context.Hls.ErrorDetails ??= {};

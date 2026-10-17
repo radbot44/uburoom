@@ -119,6 +119,7 @@ For mid-playback HLS quality replacement, use a generated corpus at least 120 se
 node scripts/build-playback-fixtures.js --out=artifacts/quality-media --duration=120
 node scripts/quality-switch-smoke.js --media=artifacts/quality-media --output=artifacts/quality-chrome
 node scripts/quality-switch-smoke.js --browser=firefox --media=artifacts/quality-media --output=artifacts/quality-firefox
+node scripts/quality-switch-smoke.js --preparation-only=true --media=artifacts/quality-media --output=artifacts/quality-preparation
 ```
 
 Keep runs sequential and use fresh output directories. `report.json` records requests, refill/first-frame timing, seek/wait/error counts and viewer isolation. Raw per-viewer diagnostics stay in the output directory. `--delay=0` removes the fixture delivery delay; the default exercises a cold replacement with limited initial headroom. Desktop software decoding does not certify Android or physical A/V output.

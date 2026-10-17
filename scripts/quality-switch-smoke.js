@@ -13,6 +13,8 @@ async function main() {
   assert.ok(manifest.sources.find(s=>s.id==='104')?.duration>=115,'Use a synthetic corpus at least 120 seconds long');
   const fetch=async(input,options)=>{
     const url=new URL(input);
+    if(url.pathname.endsWith('/decision')&&control.preparationDelay)await pause(control.preparationDelay);
+    if(url.pathname.endsWith('/decision')&&control.rejectPreparation)return new Response('{}',{status:503});
     if(url.pathname.includes('/renditions/')) {
       requests.push({at:Date.now(),segment:path.basename(url.pathname)});await pause(delay);
     }
@@ -39,6 +41,35 @@ async function main() {
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest');
     await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"104",quality:"720p4"}}).then(()=>true)');
     await Promise.all([[host,h],[guest,g]].map(([browser,page])=>browser.until(page,'!state.waitingForReady&&!video.paused&&videoFrames>5','Initial playback',30000)));
+    // Exercise the actual dropdown, a slow private conversion, ongoing polls,
+    // and an ordinary pause while its preparation request is still in flight.
+    control.preparationDelay=13000;
+    await host.evaluate(h,'document.getElementById("quality").value="1080p8";document.getElementById("quality").dispatchEvent(new Event("change"));true');
+    await host.until(h,'qualityPending','Slow quality request');
+    await pause(500);
+    assert.equal(await host.evaluate(h,'!pending&&!document.getElementById("player-play").disabled&&document.getElementById("quality").disabled'),true);
+    for(const [layout,width,height]of[['normal',1280,900],['phone',390,844],['theater',1280,900]]) {
+      await host.viewport(h,width,height);
+      await host.evaluate(h,'setTheater('+JSON.stringify(layout==='theater')+');document.getElementById("player-play").focus();document.getElementById("quality").scrollIntoView({block:"center"});true');
+      await pause(250);
+      await host.screenshot(h,path.join(output,'preparing-quality-'+layout+'.png'));
+    }
+    await host.evaluate(h,'setTheater(false);true');
+    await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
+    await pause(10500);
+    assert.equal(await host.evaluate(h,'qualityPending&&state.state.paused&&performance.now()-receivedAt<2500'),true,'polling and pause survive the former request/viewer timeouts');
+    await host.until(h,'!qualityPending&&state.quality==="1080p8"&&document.getElementById("quality").value==="1080p8"','Slow quality applied',20000);
+    assert.equal(await host.evaluate(h,'state.state.paused'),true,'quality completion preserves pause');
+    control.preparationDelay=0;control.rejectPreparation=true;
+    await host.evaluate(h,'document.getElementById("quality").value="720p2";document.getElementById("quality").dispatchEvent(new Event("change"));true');
+    await host.until(h,'!qualityPending&&document.getElementById("quality").value==="1080p8"','Rejected quality restores applied dropdown');
+    control.rejectPreparation=false;
+    report.slowPreparation={delayMs:13000,pauseAvailable:true,pollingContinued:true,qualityApplied:true,failureRestoresDropdown:true};
+    if(option('preparation-only','false')==='true') {
+      fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));
+      console.log(JSON.stringify(report.slowPreparation));app.watch.remove(room);return;
+    }
+    await host.evaluate(h,'execute({action:"media.play"}).then(()=>true)');
     await host.evaluate(h,'execute({action:"media.seek.absolute",args:{seconds:65}}).then(()=>true)');
     await Promise.all([[host,h],[guest,g]].map(([browser,page])=>browser.until(page,'!video.seeking&&video.readyState>=3&&video.currentTime>65&&Math.abs(video.currentTime-expected())<.5&&uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>2','Stable mid-video position',30000)));
     for(const quality of['1080p8','720p2','720p4']) {

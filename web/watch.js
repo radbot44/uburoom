@@ -21,6 +21,7 @@ let gentleCorrectionEnabled=false;
 const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
 let preparedStartKey;
 let syncSeekPending=false;
+let qualityPending=false;
 let hlsPreparationUntil=0;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
@@ -157,7 +158,7 @@ async function api(path, data, options = {}) {
   try {
   if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
-    body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000), keepalive: !!options.keepalive });
+    body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
   const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw new Error(value.error || 'Request failed');} return value;
   } catch(error) {
     diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
@@ -319,7 +320,7 @@ async function compatibleFallback(reason, preferHLS = false) {
     if (state.format === 'av1') { av1?.destroy(); video.pause(); playbackError = 'AV1 played no decoded video. Check the Playback test and server encoder probe.'; fail(playbackError); }
     return;
   }
-  if (pending) {
+  if (pending || qualityPending) {
     const id = selected, version = state.mediaVersion;
     setTimeout(() => { if (selected === id && state?.mediaVersion === version) void compatibleFallback(reason,preferHLS); }, 200); return;
   }
@@ -396,7 +397,7 @@ function restartHlsForSeek(target) {
   hls.stopLoad(); hls.startLoad(target);
 }
 async function refreshHlsSession(client) {
-  if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending || pending) return;
+  if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending || pending || qualityPending) return;
   if (hlsRefreshVersion !== state.mediaVersion) { hlsRefreshVersion = state.mediaVersion; hlsRefreshTimes = []; }
   const now = Date.now(); hlsRefreshTimes = hlsRefreshTimes.filter(time => now-time < 60000);
   if (hlsRefreshTimes.length >= 3) return;
@@ -487,6 +488,7 @@ function handleHlsError(client, data) {
   fail(playbackError);
 }
 function unavailable(message,reason='room-unavailable') {
+  qualityPending=false;
   playbackClock.reset();
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
   clearPlayer(reason); state = undefined; toggleRemote(false);
@@ -517,19 +519,31 @@ async function unlockLocal() {
 }
 async function execute(command) {
   if (!selected || !state || pending) throw new Error('Wait for an available viewing session');
+  const qualityChange=command.action==='media.quality.set';
+  if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
   if (['media.play','media.toggle'].includes(command.action) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
-  const id = selected, epoch = state.epoch; pending = true; fail('');
+  const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
+  if(qualityChange)qualityPending=qualityRequest;else pending=true;
+  fail('');renderTransport();
   diagnosticSample('command-start',{action:command.action});
   try {
     const timing=playbackClock.read();
     if(!timing.valid)throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
-    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command });
+    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },qualityChange?{timeoutMs:35000}:{});
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
     diagnostics.record('command-ok',{action:command.action});
     await refreshState(); if (command.action === 'session.visibility') await refreshRooms(); return result;
-  } catch(error) {diagnostics.record('command-failed',{action:command.action});throw error;}
-  finally { pending = false; renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume(); }
+  } catch(error) {
+    diagnostics.record('command-failed',{action:command.action});
+    if(qualityChange&&selected===id)await refreshState();
+    throw error;
+  }
+  finally {
+    if(qualityChange){if(qualityPending===qualityRequest)qualityPending=false;}else pending=false;
+    if(qualityChange&&selected===id&&state?.mediaUrl)$('quality').value=uburoom.qualityId(state.quality);
+    renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume();
+  }
 }
 function renderRemote() {
   const options = { available: !!state, canSave: !!state?.canManage,
@@ -567,7 +581,7 @@ function renderTransport() {
   $('timeline').disabled = !playback;
   $('player-mute').disabled = !available || pending; $('player-volume').disabled = !available;
   $('next').disabled = !playback || !state?.hasNext || pending;
-  $('quality').disabled = !available || state?.mediaId === 'demo' || pending;
+  $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
   const paused = state?.state.paused !== false;
   $('stage').classList.toggle('paused', paused); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
@@ -589,12 +603,12 @@ function trackLabel(track) {
 function renderTracks() {
   const tracks=state?.tracks, available=!!tracks;
   $('tracks-open').hidden=!available || !tracks.audio.length && !tracks.subtitles.length;
-  $('tracks-open').disabled=pending;
+  $('tracks-open').disabled=pending || qualityPending;
   const render=(id,rows,choices,value)=>{
     const options=[...choices,...(rows || []).map(row=>({id:row.id,label:trackLabel(row),disabled:!row.available}))];
     const element=$(id), signature=JSON.stringify(options);
     if(element.dataset.options!==signature){element.replaceChildren(...options.map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=row.label;option.disabled=!!row.disabled;return option;}));element.dataset.options=signature;}
-    element.value=value || 'auto'; element.disabled=!available || pending;
+    element.value=value || 'auto'; element.disabled=!available || pending || qualityPending;
   };
   render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic (Plex)'}],tracks?.audioChoice);
   render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic (Plex)'},{id:'off',label:'Off'}],tracks?.subtitleChoice);
@@ -790,7 +804,7 @@ function applyState(next) {
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));
   }
-  if (next.mediaUrl && !pending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
+  if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
   $('library-panel').hidden = !next.canBrowse;
   browseSession = next.canBrowse ? next.id : undefined; void library.setSession(browseSession); library.setBusy(pending);
   const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
@@ -819,6 +833,7 @@ async function refreshState() {
 }
 async function selectRoom(id) {
   if (id === selected) return;
+  qualityPending=false;
   stateRequestSequence++;
   playbackClock.reset();
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;

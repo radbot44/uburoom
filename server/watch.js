@@ -254,16 +254,21 @@ class Watch {
         const fallback = args.fallback || viewer.fallback;
         let media;
         viewer.updating = true;
-        try { media = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id, args.quality, args.compatible === true || !!viewer.compatible, room.media, fallback,
-          {...viewer.trackChoice,authorized:async()=>permitted() && version===room.mediaVersion && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())}); }
-        catch (error) { if (error instanceof PlaybackError) return {status:'failed', message:error.message}; throw error; }
-        finally { viewer.updating = false; }
-        if (!permitted() || version !== room.mediaVersion || room.viewers.get(actor.watchViewerId) !== viewer) {
-          await this.plex.stop(media); return { status: 'unavailable', message: 'Session changed or command expired.' };
-        }
-        this.tracking.end(viewer, 'stream-changed'); const old = viewer.media; viewer.media = media; viewer.mediaVersion = version; viewer.streamVersion = randomUUID();
-        viewer.quality = args.quality; viewer.compatible = args.compatible === true || !!viewer.compatible; void this.plex.stop(old);
-        viewer.fallback = fallback;
+        try {
+          try { media = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id, args.quality, args.compatible === true || !!viewer.compatible, room.media, fallback,
+            {...viewer.trackChoice,authorized:async()=>permitted() && version===room.mediaVersion && room.viewers.get(actor.watchViewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())}); }
+          catch (error) { if (error instanceof PlaybackError) return {status:'failed', message:error.message}; throw error; }
+          const authorized=await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
+          if (!authorized || !permitted() || version !== room.mediaVersion || room.viewers.get(actor.watchViewerId) !== viewer) {
+            await this.plex.stop(media); return { status: 'unavailable', message: 'Session changed or command expired.' };
+          }
+          this.tracking.end(viewer, 'stream-changed'); const old = viewer.media; viewer.media = media; viewer.mediaVersion = version; viewer.streamVersion = randomUUID();
+          viewer.quality = args.quality; viewer.compatible = args.compatible === true || !!viewer.compatible; void this.plex.stop(old);
+          viewer.fallback = fallback;
+        } catch(error) {
+          if(media && viewer.media!==media)await this.plex.stop(media);
+          throw error;
+        } finally { viewer.updating = false; }
       } else if (action === 'media.volume.set') { viewer.volume = args.percent; viewer.muted = false; }
       else viewer.muted = action === 'media.mute';
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };

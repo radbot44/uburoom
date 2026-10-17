@@ -383,6 +383,45 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   watch.close();
 });
 
+test('slow personal quality preparation has a bounded completion budget and retains live authorization',async t=>{
+  let now=Date.now();t.mock.method(Date,'now',()=>now);
+  for(const outcome of ['success','expired','stale-input','epoch','left','media','logout','access']) {
+    const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+    hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+    let finish,started,live=true,allowed=true;
+    const preparing=new Promise(resolve=>{started=resolve;}),stopped=[];
+    const replacement={kind:'plex',id:'12',duration:60,format:'hls',quality:'720p4'};
+    const plex={stop:async media=>stopped.push(media),prepare:async()=>{started();await new Promise(resolve=>{finish=resolve;});return replacement;}};
+    const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'};
+    const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
+    watch.snapshot(room,host,viewerId,async()=>live);
+    room.media={kind:'plex',id:'12',duration:60};
+    const viewer=room.viewers.get(viewerId),old={kind:'plex',duration:60};viewer.media=old;viewer.mediaVersion=room.mediaVersion;
+    const originalCanView=watch.canView.bind(watch);watch.canView=async(...args)=>allowed&&await originalCanView(...args);
+    const command=(action,args,expiresAt=now+2500)=>hub.dispatch({...host,watchViewerId:viewerId},{sessionId:id,action,args,expiresAt});
+    const result=command('media.quality.set',{quality:'720p4'},outcome==='stale-input'?now-1:now+2500);
+    if(outcome==='stale-input') {
+      assert.equal((await result).status,'unavailable');assert.equal(viewer.media,old);watch.close();hub.close();continue;
+    }
+    await preparing;now+=4000;
+    // Polling and room controls stay independent of private Plex preparation.
+    watch.snapshot(room,host,viewerId,async()=>live);
+    assert.equal((await command('media.pause')).status,'applied');
+    assert.equal((await command('media.quality.set',{quality:'1080p'})).status,'unavailable','no concurrent replacement');
+    if(outcome==='expired')now+=26001;
+    if(outcome==='epoch')room.s.epoch=randomUUID();
+    if(outcome==='left')room.viewers.delete(viewerId);
+    if(outcome==='media')room.mediaVersion=randomUUID();
+    if(outcome==='logout')live=false;
+    if(outcome==='access')allowed=false;
+    finish();assert.equal((await result).status,outcome==='success'?'applied':'unavailable',outcome);
+    assert.equal(viewer.media,outcome==='success'?replacement:old,outcome);
+    assert.ok(stopped.includes(outcome==='success'?old:replacement),'discard unused stream');
+    assert.equal(viewer.updating,false);
+    watch.close();hub.close();
+  }
+});
+
 test('HLS recovery replaces only the authorized viewer stream and preserves personal tracks and room intent',async()=>{
   const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
   hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
