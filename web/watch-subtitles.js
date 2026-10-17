@@ -9,7 +9,7 @@ class uburoomSubtitles {
   }
   clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); }
   reset() {
-    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false;
+    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false;
     this.renderer?.destroy();this.renderer=undefined;
     this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false});
   }

@@ -8,6 +8,10 @@ Firefox watch/account/tracking fixtures use real browser decoding with synthetic
 
 ## Browser subtitle rendering (M1-P9)
 
+### Reported live failure and recovery fixes — 2026-10-17
+
+The owner reported blank Automatic ASS, PGS and VobSub in Chrome and Firefox, while explicit Plex burn-in worked. Track changes also unexpectedly reset the rendering mode. The server now preserves the viewer's rendering mode through track changes and Off; only an explicit mode change replaces it. The client now clears its retry timer reference when resetting subtitles: previously a track change during a pending retry could suppress every subsequent load without displaying an error. All 193 automated tests pass without failures or skips, including regression checks for both bugs. A read-only live Plex check successfully extracted a real embedded VobSub track (about 2.2 MB) in approximately 16 seconds; this does not yet establish browser rendering or explain every reported initial failure. Live browser verification remains open.
+
 ### Local implementation and resumed verification — 2026-10-17
 
 JASSUB 2.5.21 renders ASS/SSA and libbitsub 1.13.0 renders PGS/VobSub through one watch-page subtitle controller. Native SRT/WebVTT remains unchanged. Original-resource URLs use the viewer's active media grant and caption generation; embedded extraction copies the selected subtitle stream through the credential-free loopback bridge. ASS font attachments are delivered as private bytes. Different browser subtitle selections can share an otherwise identical video conversion; explicit Plex burn-in remains available.

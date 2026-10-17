@@ -23,6 +23,21 @@ test('late captions cannot reappear after Off or replace a newer selection',asyn
   assert.equal(track.cues.length,1);assert.equal(track.cues[0].text,'new');player.destroy();
 });
 
+test('changing tracks during a retry clears the cancelled timer and loads the new selection',async()=>{
+  const requests=[];
+  const {player,track}=fixture(async url=>{
+    requests.push(url);
+    if(url==='/failed')throw new Error('Resource unavailable');
+    return {ok:true,json:async()=>({cues:[{start:1,end:3,text:'New track'}]})};
+  });
+  try {
+    player.update({subtitleUrl:'/failed'});await tick();assert.ok(player.timer);
+    player.update({});player.update({subtitleUrl:'/new'});await tick();
+    assert.deepEqual(requests,['/failed','/new']);assert.equal(player.loaded,true);
+    assert.equal(track.cues[0].text,'New track');assert.equal(player.timer,undefined);
+  } finally {player.destroy();}
+});
+
 test('a renderer finishing after Off is destroyed and cannot restore a stale overlay',async()=>{
   let finish,destroyed=0;
   const {player,track}=fixture(async url=>url.endsWith('/data')?new Response(new Uint8Array([1,2])):

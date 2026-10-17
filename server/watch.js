@@ -359,7 +359,7 @@ class Watch {
     if (viewer.preparing || viewer.updating) return {status:'unavailable',message:'Wait for your stream to finish loading.'};
     if (args.mediaVersion!==version || args.streamVersion!==viewer.streamVersion) return {status:'unavailable',message:'Track selection expired. Choose again for the current video.'};
     const choices = {...viewer.trackChoice,audioId:args.audioId ?? viewer.trackChoice?.audioId ?? 'auto',subtitleId:args.subtitleId ?? viewer.trackChoice?.subtitleId ?? 'auto',
-      subtitleMode:args.subtitleMode ?? (args.subtitleId!==undefined ? 'auto' : viewer.trackChoice?.subtitleMode || 'auto')};
+      subtitleMode:args.subtitleMode ?? viewer.trackChoice?.subtitleMode ?? 'auto'};
     if (args.audioId==='auto') choices.audioIntent=undefined;
     if (['auto','off'].includes(args.subtitleId)) choices.subtitleIntent=undefined;
     let selection, replacement;

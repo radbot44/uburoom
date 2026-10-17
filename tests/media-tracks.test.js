@@ -274,6 +274,10 @@ test('browser subtitle resources enforce grants, selection generations and expli
   assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'failed');assert.equal(app.watch.rooms.get(room).viewers.get(viewerId).media,old);
   fixture.state.wrongBurn=false;assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'applied');assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
   assert.equal((await request(descriptor.body.data)).status,403);
+  assert.equal((await command('media.tracks.set',{subtitleId:'23'})).body.status,'applied');
+  assert.equal((await snapshot()).tracks.subtitleMode,'burn');assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
+  await command('media.tracks.set',{subtitleId:'off'});assert.equal((await snapshot()).tracks.subtitleMode,'burn');
+  await command('media.tracks.set',{subtitleId:'22'});assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
   await command('media.tracks.set',{subtitleMode:'auto'});const next=await snapshot();assert.equal(next.tracks.subtitleDelivery,'ass');
   member=false;assert.equal((await request(next.subtitleUrl)).status,403);
   const page=await request('/watch');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
