@@ -1,11 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id), video = $('test-video');
-const embedded = new URLSearchParams(location.search).get('embedded') === '1' && parent !== window;
-document.body.classList.toggle('test-embedded',embedded);
-if (embedded) document.addEventListener('keydown',event => { if (event.key === 'Escape') { event.preventDefault(); parent.postMessage({type:'uburoom-test-close'},location.origin); } });
-$('back').href = '/watch' + location.search;
 const samples = [
-  { file:'sync-test.mp4', url:'/watch/test/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:386887 },
+  { file:'sync-test.mp4', url:'/__diagnostics/media/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:386887 },
   { file:'h264-baseline.mp4', video:'H.264 Constrained Baseline', codec:'avc1.42C01F', videoBitrate:404342 },
   { file:'h264-main.mp4', video:'H.264 Main', codec:'avc1.4D401F', videoBitrate:369967 },
   { file:'vp8.webm', video:'VP8', codec:'vp8' },
@@ -15,23 +11,14 @@ const samples = [
 ].map(sample => ({ width:640, height:360, framerate:12, pixelFormat:'yuv420p', videoBitrate:null,
   audio:sample.file.endsWith('.webm') ? 'Opus' : 'AAC LC', audioCodec:sample.file.endsWith('.webm') ? 'opus' : 'mp4a.40.2',
   container:sample.file.endsWith('.webm') ? 'video/webm' : 'video/mp4', sampleRate:48000, channels:1,
-  url:'/watch/test/' + sample.file, ...sample }));
+  url:'/__diagnostics/media/' + sample.file, ...sample }));
 let fixture = samples[0], started = performance.now(), loadId = 0, accelerationReported = $('acceleration').value;
 const events = [], savedResults = new Map();
 for (const [index, sample] of samples.entries()) {
   const option = document.createElement('option'); option.value = index; option.textContent = sample.video; $('codec').append(option);
 }
 let capabilities = 'Checking…', presentedCallbacks = 0, frameCallback, lastMediaError = null, playAttempt = null, copied = false;
-let discordSdk = 'not in an Activity', sdk, layoutMode;
 let fixtureHttp = 'Checking…';
-const inActivity = new URLSearchParams(location.search).has('frame_id');
-function activityLayout(event) {
-  if (event) layoutMode = event.layout_mode;
-  const pip = inActivity && (layoutMode === 1 || layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300);
-  document.body.classList.toggle('test-pip', pip); video.controls = !pip;
-}
-if (inActivity) video.setAttribute('controlslist', 'nofullscreen');
-activityLayout(); window.addEventListener('resize', () => activityLayout());
 const finite = value => Number.isFinite(value) ? Math.round(value * 1000) / 1000 : null;
 const mediaError = () => video.error ? { code:video.error.code, message:video.error.message } : null;
 const ranges = values => Array.from({length:values.length}, (_, i) => [finite(values.start(i)), finite(values.end(i))]);
@@ -39,8 +26,8 @@ function report() {
   const quality = video.getVideoPlaybackQuality?.();
   return {
     capturedAt:new Date().toISOString(),
-    environment:{ userAgent:navigator.userAgent, secureContext:isSecureContext, inActivity,
-      hardwareAccelerationReported:accelerationReported, discordSdk, mediaSource:typeof MediaSource !== 'undefined', webCodecs:typeof VideoDecoder !== 'undefined' },
+    environment:{ userAgent:navigator.userAgent, secureContext:isSecureContext,
+      hardwareAccelerationReported:accelerationReported, mediaSource:typeof MediaSource !== 'undefined', webCodecs:typeof VideoDecoder !== 'undefined' },
     fixture, fixtureHttp,
     playback:{ currentTime:finite(video.currentTime), duration:finite(video.duration), width:video.videoWidth, height:video.videoHeight,
       paused:video.paused, ended:video.ended, seeking:video.seeking, muted:video.muted, volume:video.volume,
@@ -130,24 +117,3 @@ async function checkCapabilities() {
 loadSample();
 setInterval(refresh, 500);
 void checkCapabilities();
-// Re-establish the Activity handshake after in-frame navigation. No OAuth is
-// needed for the public synthetic fixture, and no account credentials are read.
-async function readyActivity() {
-  if (embedded) { discordSdk = inActivity ? 'managed by watch page' : 'not in an Activity'; refresh(); return; }
-  if (!new URLSearchParams(location.search).has('frame_id')) return;
-  discordSdk = 'connecting'; refresh();
-  try {
-    const response = await fetch('/api/watch/config', { signal:AbortSignal.timeout(8000) });
-    if (!response.ok) throw new Error('Activity configuration unavailable');
-    const {clientId} = await response.json();
-    if (!clientId) { discordSdk = 'not configured (local demo)'; refresh(); return; }
-    sdk = new uburoomDiscord.DiscordSDK(clientId);
-    let timer;
-    try { await Promise.race([sdk.ready(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Activity handshake timed out')), 8000); })]); }
-    finally { clearTimeout(timer); }
-    discordSdk = 'ready';
-    await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', activityLayout).catch(() => {});
-  } catch (error) { discordSdk = error.name + ': ' + error.message; }
-  refresh();
-}
-void readyActivity();

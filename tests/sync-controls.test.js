@@ -1,4 +1,5 @@
 'use strict';
+const {install}=require('./helpers/watch-sync');
 const test = require('node:test'), assert = require('node:assert/strict');
 const {randomUUID} = require('node:crypto');
 const {Hub} = require('../server/core'), {Watch} = require('../server/watch');
@@ -100,8 +101,6 @@ test('precision candidate requires sustained trustworthy drift and has a distinc
 });
 
 test('client pauses at the common deadline and cancels a superseded pause alarm', async () => {
-  const fs=require('node:fs'),vm=require('node:vm');
-  const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
   let now=1500,key='first',callback,pauses=0;
   const ctx={state:{mediaUrl:'fixture',pauseAt:2000,state:{paused:false,duration:60,volume:50,muted:false}},
     playbackClock:{read:()=>({valid:true,serverTime:now})},expected:()=>10+Math.min(now-1000,1000)/1000,
@@ -112,7 +111,7 @@ test('client pauses at the common deadline and cancels a superseded pause alarm'
     probing:false,playbackError:'',playerWaiting:false,autoplayBlocked:false,hlsTimelinePending:false,hlsPreparationUntil:0,
     hlsNetworkFailure:undefined,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),
     renderTransport(){},checkVideoFrames(){}};
-  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  await install(ctx);
   await ctx.synchronize(); assert.equal(pauses,0);
   key='replacement';now=2000;callback();assert.equal(pauses,0,'old callback cannot pause a replacement');
   key='first';ctx.video.currentTime=11;await ctx.synchronize();assert.equal(pauses,1);

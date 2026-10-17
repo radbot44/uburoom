@@ -1,7 +1,7 @@
 /* One safe-DOM Plex browser for the website, theater drawer and Activity. */
 (function (global) {
   'use strict';
-  function mount(host, { request, artwork, load, close, getPlayer, showTest, hideTest }) {
+  function mount(host, { request, artwork, load, close, getPlayer }) {
     const doc = host.ownerDocument;
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
@@ -48,7 +48,7 @@
     const navigationControls = [home,libraryTab,collectionsTab,search,sort,filterButton,...viewButtons];
     let room, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
-    let visits = [], visitIndex = 0, historyEpoch, historyMoving = false, testOpen = false;
+    let visits = [], visitIndex = 0, historyEpoch, historyMoving = false;
     const homes = new Map(), images = new Map();
     let view = 'normal'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['normal','list','poster'].includes(saved)) view = saved; } catch {}
     const demoItem = { id:'demo',type:'demo',title:'uburoom synchronization test',duration:60,summary:'A short picture and sound sample for checking shared playback.' };
@@ -57,9 +57,9 @@
     // Browser history holds only opaque indices. Private catalog data remains in
     // room-scoped memory, and is discarded when viewing eligibility changes.
     function historyState(index = visitIndex) { return {...history.state,uburoomLibrary:{epoch:historyEpoch,index}}; }
-    function saveVisit() { if (screen) visits[visitIndex] = {screen,trail:[...trail],testOpen}; }
+    function saveVisit() { if (screen) visits[visitIndex] = {screen,trail:[...trail]}; }
     function beginHistory() {
-      historyEpoch = newSeed(); visits = []; visitIndex = 0; historyMoving = false; testOpen = false;
+      historyEpoch = newSeed(); visits = []; visitIndex = 0; historyMoving = false;
       history.scrollRestoration = 'manual';
       // A root guard keeps an ordinary mouse/browser Back at Home on /watch.
       history.replaceState(historyState(-1),''); history.pushState(historyState(0),''); saveVisit();
@@ -78,20 +78,15 @@
       if (entry?.epoch === historyEpoch && entry.index === -1) { history.go(1); return; }
       if (entry?.epoch !== historyEpoch || !visits[entry.index]) { history.replaceState(historyState(),''); historyMoving = false; return; }
       rememberScroll(); saveVisit(); saveHome(); cancelReads(); visitIndex = entry.index;
-      ({screen,trail,testOpen} = visits[visitIndex]); historyMoving = false;
+      ({screen,trail} = visits[visitIndex]); historyMoving = false;
       if (!room || !screen) return;
-      restoreScreen(); if (testOpen) showTest?.(); else hideTest?.();
+      restoreScreen();
       if (screen.section && screen.section !== filterSection) void fetchFacets(screen.section);
     });
     function goHome() {
       if (!room || screen.kind === 'home') return;
       prepareNavigation(); screen = homeContext(); trail = []; pushVisit(); renderResults(); positionLibrary();
     }
-    function openTest() {
-      if (!room || testOpen) return;
-      rememberScroll(); saveVisit(); testOpen = true; pushVisit(); renderTools(); showTest?.();
-    }
-    function closeTest() { if (testOpen) goHistory(-1); }
     function newSeed() { return crypto.randomUUID().replace(/-/g,''); }
     function clearResults() { for (const card of results.children) layoutObserver.unobserve(card); results.replaceChildren(); }
     const layoutObserver = new ResizeObserver(entries => {
@@ -312,9 +307,10 @@
         const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'libraryNormal','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
         b.append(node('span',null,title,'library-home-title')); b.onclick = () => void chooseLibrary(section.id,tab);
       }
-      const other = node('article',landing,undefined,'library-home-card library-other'); node('h3',other,'Other');
-      if (testVideo) { const b = button(other,'Play synchronization video','play'); b.dataset.action = 'play'; b.dataset.play = 'demo'; b.append(node('span',null,'Synchronization video')); b.onclick = () => void play(demoItem); }
-      const b = button(other,'Playback test','theater'); b.id = 'library-playback-test'; b.append(node('span',null,'Playback test')); b.onclick = openTest;
+      if (testVideo) {
+        const other = node('article',landing,undefined,'library-home-card library-other'); node('h3',other,'Other');
+        const b = button(other,'Play synchronization video','play'); b.dataset.action = 'play'; b.dataset.play = 'demo'; b.append(node('span',null,'Synchronization video')); b.onclick = () => void play(demoItem);
+      }
     }
     function renderResults() {
       renderTools(); clearResults();
@@ -415,7 +411,7 @@
     async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
       room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
-      hideTest?.(); testVideo = false; screen = homeContext(); beginHistory();
+      testVideo = false; screen = homeContext(); beginHistory();
       pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
       navigationControls.forEach(n => { n.disabled = true; }); direction.disabled = true;
       previous.disabled = next.disabled = true;
@@ -431,7 +427,7 @@
       }
       await start();
     }
-    return {setRoom,setBusy,closeTest};
+    return {setRoom,setBusy};
   }
   global.uburoomLibrary = {mount};
 })(globalThis);

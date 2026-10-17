@@ -15,29 +15,27 @@ let av1, av1FallbackVersion;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
-const driftCorrection=uburoomTiming.correction();
-const precisionDriftCorrection=uburoomTiming.precisionCorrection();
-const jumpDriftCorrection=uburoomTiming.jumpCorrection();
+let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
-// The local comparison runner enables this candidate. Native-drop and skew
-// regressions must be resolved before promoting it to the default policy.
+// Experimental policies remain off; only isolated comparison runners enable them.
 let gentleCorrectionEnabled=false;
-const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
-const pauseAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
-let preparedStartKey;
-let syncSeekPending=false;
 let qualityPending=false;
-let hlsPreparationUntil=0;
-let hlsTimelinePending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
-function resetDriftCorrection() {
-  driftCorrection.reset();precisionDriftCorrection.reset();jumpDriftCorrection.interrupt();if(video.playbackRate!==1)video.playbackRate=1;
-}
+const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
+  sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
+    read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
+      autoplayBlocked,readyVersion,syncCorrectionMode,precisionCorrectionEnabled,gentleCorrectionEnabled}),
+    expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
+    error:message=>{playbackError=message;fail(message);},
+    playing:(version,blocked)=>{if(version!==undefined)readyVersion=version;autoplayBlocked=blocked;},
+    visibility:()=>document.visibilityState,online:()=>navigator.onLine,
+    repeat:(callback,delay)=>setInterval(callback,delay),cancelRepeat:timer=>clearInterval(timer)});
+});
 const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
 let soak;
 $('soak-start').hidden=!soakMode;
@@ -98,14 +96,12 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
   video.addEventListener(event,()=>{
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
-    if(event==='playing'&&!hlsTimelinePending)syncSeekPending=false;
+    sync?.event(event);
     if(['playing','pause','waiting','seeking','emptied'].includes(event))lastPresentationBreak=performance.now();
-    if(event==='seeking'||event==='emptied')presentationTiming.reset();
-    if(['pause','waiting','seeking','emptied'].includes(event))resetDriftCorrection();
     diagnosticSample(event);
   });
-for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{if(event!=='online'){playbackClock.reset();startAlarm.cancel();pauseAlarm.cancel();resetDriftCorrection();}diagnosticSample(event);});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)resetDriftCorrection();diagnosticSample('visibilitychange');});
+for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{sync?.event(event);diagnosticSample(event);});
+document.addEventListener('visibilitychange',()=>{sync?.event('visibilitychange');diagnosticSample('visibilitychange');});
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
   $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!!controlProbe?.active();
@@ -129,7 +125,7 @@ video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['playback-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
@@ -140,23 +136,7 @@ const library = uburoomLibrary.mount($('library-content'), {
     if (!response.ok) throw new Error('Artwork unavailable'); return response.blob();
   },
   load:item => execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality}}),
-  close:() => toggleDrawer(false), getPlayer:() => state, showTest:showPlaybackTest, hideTest:hidePlaybackTest
-});
-function showPlaybackTest() {
-  if (document.body.classList.contains('activity-pip') || $('playback-dialog').open) return;
-  const testParams = new URLSearchParams(location.search); testParams.set('embedded','1');
-  $('playback-frame').src = '/watch/test?' + testParams;
-  $('playback-dialog').showModal(); $('playback-close').focus();
-}
-function hidePlaybackTest() {
-  if ($('playback-dialog').open) $('playback-dialog').close();
-  // Unload the diagnostic player so audio/decoding stop as soon as it closes.
-  $('playback-frame').removeAttribute('src');
-}
-$('playback-close').onclick = () => library.closeTest();
-$('playback-dialog').addEventListener('cancel',event => { event.preventDefault(); library.closeTest(); });
-window.addEventListener('message',event => {
-  if (event.origin === location.origin && event.source === $('playback-frame').contentWindow && event.data?.type === 'uburoom-test-close') library.closeTest();
+  close:() => toggleDrawer(false), getPlayer:() => state
 });
 function fail(message) {
   const changed = $('error').textContent !== message;
@@ -257,11 +237,11 @@ function loadSyncPreference() {
   if(key===syncPreferenceKey)return;
   syncPreferenceKey=key;syncCorrectionMode='speed';syncPreferenceStored=true;
   try { if(localStorage.getItem(key)==='jumps')syncCorrectionMode='jumps'; } catch { syncPreferenceStored=false; }
-  jumpDriftCorrection.reset();resetDriftCorrection();renderSyncPreference();
+  sync.resetCorrection(true);renderSyncPreference();
 }
 function setSyncPreference(value) {
   if(value!=='speed'&&value!=='jumps')return;
-  syncCorrectionMode=value;jumpDriftCorrection.reset();resetDriftCorrection();
+  syncCorrectionMode=value;sync.resetCorrection(true);
   try { localStorage.setItem(syncPreferenceKey,value);syncPreferenceStored=true; } catch { syncPreferenceStored=false; }
   renderSyncPreference();diagnosticSample('sync-mode');
 }
@@ -334,7 +314,7 @@ function updateActivityLayout(event) {
   if (event) layoutMode = event.layout_mode;
   const pip = activity && (layoutMode === 1 || layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300);
   document.body.classList.toggle('activity-pip', pip);
-  if (pip) { toggleDrawer(false); toggleRemote(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); if ($('playback-dialog').open) { hidePlaybackTest(); library.closeTest(); } }
+  if (pip) { toggleDrawer(false); toggleRemote(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); }
   if(pip&&$('account-dialog').open)$('account-dialog').close();
   if(pip&&$('tracks-dialog').open)$('tracks-dialog').close();
 }
@@ -396,9 +376,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
-  jumpDriftCorrection.reset();resetDriftCorrection();
-  syncSeekPending=false;hlsPreparationUntil=0;hlsTimelinePending=false;
-  startAlarm.cancel();pauseAlarm.cancel();preparedStartKey=undefined;
+  sync.reset();
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
   observing = false; observationBreak++; playerWaiting = false;
@@ -427,7 +405,7 @@ function unsupportedDecoder() {
   fail(playbackError);
 }
 function restartHlsForSeek(target) {
-  if(hlsTimelinePending)return;
+  if(sync.timelinePending)return;
   if (!hls || !hlsNetworkInterrupted || state?.mediaUrl !== mediaSource || uburoomPlayback.bufferedAhead(video.buffered,target) > .05) return;
   // A new authorized room seek supersedes the old segment's retry timer.
   // stopLoad keeps MediaSource and its cached ranges attached.
@@ -455,19 +433,17 @@ async function refreshHlsSession(client) {
 }
 function handleHlsFragmentBuffered(client) {
   if (hls !== client || !state?.state || state.mediaUrl !== mediaSource) return;
-  if(hlsTimelinePending) {
+  if(sync.timelinePending) {
     // Plex advertises estimated segment durations. Starting a fresh transmuxer
     // in the middle normalizes its first PTS against that estimate, moving the
     // actual pictures relative to currentTime. Anchor every private stream at
     // segment zero before seeking, keeping that origin for the stream lifetime.
-    hlsTimelinePending=false;hlsPreparationUntil=performance.now()+10000;
-    const target=expected();
+    const target=expected();sync.anchor(target);
     if(target>.65) {
-      try{diagnosticSample('hls-anchor');video.currentTime=target;syncSeekPending=true;}catch{}
       client.startLoad(target);
     }
     client.resumeBuffering();
-    void synchronize();
+    void sync.synchronize();
   }
   // A buffered fragment from an obsolete seek does not establish that the
   // shared playback position can advance again.
@@ -480,7 +456,7 @@ function handleHlsFragmentBuffered(client) {
     diagnosticSample('buffer-recovered');
     playbackError = '';
     fail('');
-    void synchronize();
+    void sync.synchronize();
   }
 }
 function handleHlsError(client, data) {
@@ -510,7 +486,7 @@ function handleHlsError(client, data) {
           state.mediaVersion !== version || state.streamVersion !== stream) return;
         // Wait for online state and a recent authorized poll before loading.
         if (navigator.onLine === false || performance.now()-receivedAt > 3000) { diagnostics.record('retry-deferred',{attempt:attempt+1,delayMs:delay});hlsRecoveryTimer = setTimeout(retry,delay); return; }
-        const target = hlsTimelinePending?0:expected();
+        const target = sync.timelinePending?0:expected();
         if (!Number.isFinite(target) || target < 0 || target >= state.state.duration) return;
         // Once the delivery error pauses local playback, normal synchronization
         // is suspended. Retarget MSE too, or hls.js can refill the old position.
@@ -528,7 +504,7 @@ function handleHlsError(client, data) {
   else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsRecoveryCount++ === 0) {
     // Retry the current authorized stream once. No shared command or timeline change.
     hlsRecoveryTimer = setTimeout(() => {
-      if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(hlsTimelinePending?0:expected()); }
+      if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(sync.timelinePending?0:expected()); }
     }, 0);
     return;
   }
@@ -550,7 +526,7 @@ function unavailable(message,reason='room-unavailable') {
   renderRemote(); renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
 }
 async function unlockLocal() {
-  if (!state?.mediaUrl || video.readyState < 2 || probing || playbackError || hlsTimelinePending) return false;
+  if (!state?.mediaUrl || video.readyState < 2 || probing || playbackError || sync.timelinePending) return false;
   const version = state.mediaVersion, source = mediaSource; probing = true; let playTimer;
   try {
     await Promise.race([video.play(), new Promise((resolve,reject) => { playTimer = setTimeout(() => {
@@ -755,107 +731,10 @@ async function reportReadiness() {
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
     ready, readinessVersion }); readinessSent = key; } catch {} finally { readyPending = false; }
 }
-function startKey(value=state) {
-  return value && [selected,value.mediaVersion,value.streamVersion,value.epoch,value.revision,value.startAt,value.pauseAt].join(':');
-}
-function holdForStart(timing,target) {
-  if(state.state.paused)return false;
-  if(timing.valid && timing.serverTime>=state.startAt){startAlarm.cancel();return false;}
-  video.pause();if(video.playbackRate!==1)video.playbackRate=1;
-  video.volume=state.state.volume/100;video.muted=state.state.muted;
-  const key=startKey();
-  if(preparedStartKey!==key && !video.seeking && video.readyState>=2) {
-    // Readiness briefly decoded a local probe. Rewind/align once while paused,
-    // before the shared deadline, rather than correcting its residue in motion.
-    try{if(Math.abs(video.currentTime-target)>.01){diagnosticSample('start-prepare');video.currentTime=target;}preparedStartKey=key;}catch{}
-  }
-  if(timing.valid)startAlarm.arm(key,state.startAt,()=>{
-    if(startKey()!==key || !state?.mediaUrl || mediaSource!==state.mediaUrl || navigator.onLine===false || performance.now()-receivedAt>3000)return;
-    diagnosticSample('start-timer',{delayMs:playbackClock.read().serverTime-state.startAt});void synchronize();
-  });
-  else startAlarm.cancel();
-  renderTransport();return true;
-}
-async function synchronize() {
-  if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
-  if(hlsTimelinePending){
-    video.pause();resetDriftCorrection();
-    if(hlsNetworkFailure){playbackError=hlsNetworkFailure;fail(playbackError);}
-    renderTransport();return;
-  }
-  const target = expected(), difference = target - video.currentTime, timing=playbackClock.read(),clockValid=timing.valid;
-  const paused = state.state.paused || clockValid && Number.isFinite(state.pauseAt) && timing.serverTime >= state.pauseAt;
-  if (clockValid && state.pauseAt > timing.serverTime) {
-    const key = startKey();
-    pauseAlarm.arm(key, state.pauseAt, () => { if (startKey() === key) void synchronize(); });
-  } else pauseAlarm.cancel();
-  if(state.startAt>state.serverNow && holdForStart(timing,target))return;
-  if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
-    playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
-  }
-  if(hlsPreparationUntil&&!state.state.paused) {
-    // A replacement has discarded this viewer's old buffer. Fill ahead of the
-    // moving room target before starting locally; healthy viewers keep playing.
-    const required=Math.min(2,Math.max(0,state.state.duration-target));
-    if(performance.now()<hlsPreparationUntil&&uburoomPlayback.bufferedAhead(video.buffered,target)<required) {
-      video.pause();resetDriftCorrection();renderTransport();return;
-    }
-    hlsPreparationUntil=0;
-  }
-  if (state.waitingForReady) video.pause();
-  const bufferedTarget = state.format === 'av1' && [...Array(video.buffered.length)].some((_, i) =>
-    target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
-  // A shared seek/restart can supersede a native seek still waiting for old
-  // chunks. Retarget it once the new source-time window is buffered.
-  const targetBuffered=uburoomPlayback.bufferedAhead(video.buffered,target)>=Math.min(.5,Math.max(0,state.state.duration-target));
-  if(!video.seeking&&!playerWaiting&&video.readyState>=3&&Math.abs(difference)<=.65)syncSeekPending=false;
-  // Let an in-flight alignment refill before chasing a moving playing target.
-  // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
-  const canAlign=!syncSeekPending||state.state.paused||!playerWaiting&&video.readyState>=3&&targetBuffered;
-  const jumpContext=syncCorrectionMode==='jumps'?[selected,state.mediaVersion,state.streamVersion,state.epoch,state.readinessVersion].join(':'):undefined;
-  const align = (event='sync-seek') => {
-    const destination=Math.max(0,Math.min(target,(Number.isFinite(video.duration)?video.duration:state.state.duration)-.05));
-    try {
-      const seekDeltaMs=(destination-video.currentTime)*1000;
-      const frames=syncCorrectionMode==='jumps'?decodedFrames():undefined;
-      video.currentTime=destination;syncSeekPending=true;
-      if(syncCorrectionMode==='jumps')jumpDriftCorrection.committed({frames,target:destination,context:jumpContext});
-      diagnosticSample(event,{seekDeltaMs});
-    } catch { return false; }
-    return true;
-  };
-  if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
-    align();
-  }
-  const correctionInput={now:performance.now(),error:difference,context:startKey(),
-    eligible:clockValid&&document.visibilityState==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
-      uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
-    uncertaintyMs:timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
-  if(syncCorrectionMode==='jumps' && jumpDriftCorrection.update({...correctionInput,
-    context:jumpContext,
-    eligible:correctionInput.eligible&&!state.waitingForReady,
-    buffered:targetBuffered,settled:!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3,
-    frames:decodedFrames(),position:video.currentTime}) && canAlign && !syncSeekPending && !video.seeking)align('sync-jump');
-  const rate=syncCorrectionMode==='jumps'?1:precisionCorrectionEnabled?precisionDriftCorrection.update(correctionInput):gentleCorrectionEnabled?driftCorrection.update(correctionInput):
-    !correctionInput.eligible||Math.abs(difference)<.15||Math.abs(difference)>.65?1:difference>0?1.04:.96;
-  if(video.playbackRate!==rate)video.playbackRate=rate;
-  video.volume = state.state.volume / 100; video.muted = state.state.muted;
-  if (paused) {
-    video.pause();
-    if ((state.waitingForReady || state.readiness) && readyVersion !== state.mediaVersion && !autoplayBlocked && video.readyState >= 2) { await unlockLocal(); void reportReadiness(); }
-  } else if (video.paused && !autoplayBlocked) {
-    const room=selected,version=state.mediaVersion,stream=state.streamVersion,source=mediaSource;
-    const current=()=>selected===room && state?.mediaVersion===version && state?.streamVersion===stream && mediaSource===source;
-    try { await video.play(); if(current()){readyVersion = version; autoplayBlocked = false;} }
-    catch (error) { if (current() && error.name === 'NotAllowedError') autoplayBlocked = true; }
-  }
-  renderTransport();
-  checkVideoFrames();
-}
 function applyState(next) {
   if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
   stateTransportSequence=next.transportSequence;
-  if(startKey()!==startKey(next)){startAlarm.cancel();pauseAlarm.cancel();}
+  sync.transition(next);
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const previousTarget = state ? expected() : undefined;
@@ -874,20 +753,20 @@ function applyState(next) {
         try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
-        hlsTimelinePending=true;
+        sync.prepare({timeline:true});
         const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         // Finish appending the anchor without requesting segment one before
         // the target seek; aborting that speculative load adds recovery noise.
-        client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&hlsTimelinePending)client.pauseBuffering();});
+        client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&sync.timelinePending)client.pauseBuffering();});
         client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }
   }
-  if (!changed && !hlsTimelinePending && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
-    syncSeekPending=false;
-    if(hlsPreparationUntil&&hls){hlsPreparationUntil=performance.now()+10000;hls.startLoad(expected());}
+  if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
+    sync.sharedSeek();
+    if(sync.preparationUntil&&hls){hls.startLoad(expected());}
     else restartHlsForSeek(expected());
   }
   captions.update(next);
@@ -918,7 +797,7 @@ function applyState(next) {
     }
   }
   observing = !!next.mediaUrl;
-  void synchronize();
+  void sync.synchronize();
 }
 async function refreshState() {
   if (!selected) return;
@@ -1007,7 +886,7 @@ for (const choice of ['start','wait','cancel']) $('ready-' + choice).addEventLis
 $('player-play').addEventListener('click', () => execute({ action: state?.pauseAt || state?.state.paused && !state?.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
 $('player-mute').addEventListener('click', () => execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)));
 $('join-playback').addEventListener('click', async () => {
-  if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void synchronize(); }
+  if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void sync.synchronize(); }
   else execute({ action: 'media.play' }).catch(error => fail(error.message));
 });
 $('quality').addEventListener('change', () => {
@@ -1018,8 +897,8 @@ $('timeline').addEventListener('pointerdown', () => { seekDragging = true; });
 $('timeline').addEventListener('input', () => { $('time').textContent = clock($('timeline').value); });
 $('timeline').addEventListener('change', () => { const seconds = Number($('timeline').value); seekDragging = false; execute({ action:'media.seek.absolute',args:{seconds} }).catch(error => fail(error.message)); });
 $('timeline').addEventListener('pointercancel', () => { seekDragging = false; });
-video.addEventListener('loadedmetadata', () => { void synchronize(); });
-video.addEventListener('canplay', () => { void synchronize(); });
+video.addEventListener('loadedmetadata', () => { void sync.synchronize(); });
+video.addEventListener('canplay', () => { void sync.synchronize(); });
 video.addEventListener('error', () => {
   if (!video.getAttribute('src') || !state?.mediaUrl || !video.error || playbackError) return;
   const code = video.error?.code, message = video.error?.message || '';
@@ -1041,7 +920,7 @@ $('enable-acceleration').addEventListener('click', async () => {
   catch { fail('Enable hardware acceleration in Discord Settings → Advanced, then reopen the Activity.'); }
 });
 document.addEventListener('keydown', event => {
-  if (document.body.classList.contains('activity-pip') || $('playback-dialog').open) return;
+  if (document.body.classList.contains('activity-pip')) return;
   if (event.code === 'Escape' && !$('remote').hidden) { toggleRemote(false); $('open-remote').focus(); return; }
   if (event.code === 'Escape' && !drawer.hidden) { toggleDrawer(false); $('drawer-open').focus(); return; }
   if (event.code === 'F8' || event.code === 'KeyC' && event.altKey && event.shiftKey) { event.preventDefault(); if (!event.repeat) toggleRemote(); return; }
@@ -1088,8 +967,8 @@ setInterval(() => {
   timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
   timeline.title = loaded + ' seconds buffered ahead';
 }, 250);
-setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
+  await syncReady;
   config = await api('/api/watch/config');
   if (config.watchVersion !== 18) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;

@@ -1,4 +1,5 @@
 'use strict';
+const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const {clock,target,presentation,correction}=require('../web/playback-timing');
 const {create}=require('../web/playback-diagnostics');
@@ -61,7 +62,7 @@ test('player uses the mapped server target and tolerates clock loss without drif
     uburoomPlayback:require('../web/playback-policy'),video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
   vm.runInNewContext(source.slice(source.indexOf('function expected('),source.indexOf('async function reportObservation(')),ctx);
-  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  await install(ctx);
   assert.equal(ctx.expected(),10.3);await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
   valid=false;ctx.video.currentTime=5;await ctx.synchronize();assert.equal(ctx.video.currentTime,5);assert.equal(ctx.video.playbackRate,1);
   valid=true;await ctx.synchronize();assert.equal(ctx.video.currentTime,10.3,'fresh clock permits meaningful catch-up');

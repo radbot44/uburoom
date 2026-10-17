@@ -21,6 +21,8 @@ async function startLifecycle({host,guest,h,g,app,room,output}) {
   }
   await host.viewport(h,1280,800);await load();await pending();
   const oldDeadline=app.watch.rooms.get(room).startAt,oldVersion=app.watch.rooms.get(room).mediaVersion;
+  // Separate the deadlines deliberately; fast local loads can finish within 200 ms.
+  await pause(300);
   await load();await pending();
   const newDeadline=app.watch.rooms.get(room).startAt;
   assert.notEqual(app.watch.rooms.get(room).mediaVersion,oldVersion);
@@ -36,7 +38,7 @@ async function startLifecycle({host,guest,h,g,app,room,output}) {
   assert.equal(active.s.state.paused,false);assert.equal(active.startAt,deadline,'Ongoing buffering cannot reschedule healthy viewers');
   assert.deepEqual([...active.viewers.values()].map(v=>v.streamVersion),streams);
   assert.equal(await host.evaluate(h,'diagnostics.snapshot().entries.some(r=>r.sequence>'+sequence+'&&["pause","waiting","stalled"].includes(r.event))'),false);
-  await guest.evaluate(g,'probing=false;playerWaiting=false;synchronize().then(()=>true)');
+  await guest.evaluate(g,'probing=false;playerWaiting=false;sync.synchronize().then(()=>true)');
   await guest.until(g,'!video.paused && !video.seeking && Math.abs(video.currentTime-expected())<.3','Independent catch-up');
   result.independentRecovery={hostAdvancedSeconds:after-before,noHostPauseOrWait:true,streamsPreserved:true,startNotRescheduled:true};
   return result;

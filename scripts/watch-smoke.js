@@ -12,7 +12,7 @@ const root = path.resolve(__dirname, '..');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const config = { cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')), key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
-    publicUrl: 'https://localhost:6768', ownerId: 'demo-host', guildId: 'demo-guild', channels: ['demo-commands'], demo: true };
+    publicUrl: 'https://localhost:6768', ownerId: 'demo-host', guildId: 'demo-guild', channels: ['demo-commands'], demo: true, diagnostics: true };
   if (process.argv.includes('--plex')) {
     config.plexUrl = process.argv.find(x => x.startsWith('--plex-url='))?.slice(11) || process.env.PLEX_URL;
     config.plexToken = process.env.PLEX_TOKEN;
@@ -290,10 +290,9 @@ async function main() {
     const { context: host } = await command('browsingContext.create', { type: 'tab' });
     const { context: guest } = await command('browsingContext.create', { type: 'tab' });
     await command('browsingContext.setViewport', { context: host, viewport: { width: 1360, height: 1050 } });
-    await command('browsingContext.navigate', {context:host,url:config.publicUrl+'/watch/test?demo=host',wait:'complete'});
+    await command('browsingContext.navigate', {context:host,url:config.publicUrl+'/__diagnostics/codec',wait:'complete'});
     await click(host, 'play');
     await until(host, 'document.getElementById("test-video").currentTime>1 && document.getElementById("test-video").getVideoPlaybackQuality().totalVideoFrames>0', 'diagnostic MP4 decodes frames');
-    assert.equal(await evaluate(host, 'JSON.parse(document.getElementById("diagnostics").value).environment.inActivity'), false);
     await until(host, 'Array.isArray(JSON.parse(document.getElementById("diagnostics").value).capabilities)', 'codec support report');
     const artifacts = path.join(root, 'artifacts'); fs.mkdirSync(artifacts, { recursive:true });
     const testDesktop = await command('browsingContext.captureScreenshot', {context:host,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'watch-test-desktop-qa.png'),Buffer.from(testDesktop.data,'base64'));

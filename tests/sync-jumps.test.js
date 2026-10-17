@@ -1,4 +1,5 @@
 'use strict';
+const {install}=require('./helpers/watch-sync');
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const {jumpCorrection,correction,precisionCorrection,presentation} = require('../web/playback-timing');
@@ -48,7 +49,7 @@ test('unconfirmed jump and missing frame counters cannot cause a seek loop',()=>
   for(let now=0;now<30000;now+=500)assert.equal(f.update(now,{frames:200}),false);
   f.policy.reset();assert.equal(f.update(30000),false);assert.equal(f.update(31000),true);
 });
-function playerFixture() {
+async function playerFixture() {
   let now=0,frames=100,position=10,target=10.35,ranges=[[0,60]];const seeks=[],events=[];
   const ctx={selected:'room',mediaSource:'fixture',readyVersion:'m',state:{mediaUrl:'fixture',mediaVersion:'m',streamVersion:'s',epoch:'e',state:{duration:60,paused:false,volume:50,muted:false}},
     syncCorrectionMode:'jumps',jumpDriftCorrection:jumpCorrection(),driftCorrection:correction(),precisionDriftCorrection:precisionCorrection(),
@@ -62,14 +63,14 @@ function playerFixture() {
     probing:false,playbackError:'',playerWaiting:false,autoplayBlocked:false,hlsTimelinePending:false,hlsPreparationUntil:0,
     hlsNetworkFailure:undefined,syncSeekPending:false,diagnosticSample:(event,data)=>events.push({event,...data}),renderTransport(){},checkVideoFrames(){}};
   Object.defineProperty(ctx.video,'currentTime',{get:()=>position,set:value=>{position=value;seeks.push(value);ctx.video.seeking=true;}});
-  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  await install(ctx);
   return {ctx,seeks,events,step:async(time,extra={})=>{
     now=time;frames=extra.frames??frames;target=extra.target??target;position=extra.position??position;ranges=extra.ranges??ranges;
     await ctx.synchronize();
   }};
 }
 test('jump mode uses guarded local alignment at normal speed, cooldown, and independent large recovery',async()=>{
-  const f=playerFixture();await f.step(0);assert.equal(f.ctx.video.playbackRate,1);
+  const f=await playerFixture();await f.step(0);assert.equal(f.ctx.video.playbackRate,1);
   await f.step(500);assert.equal(f.seeks.length,0);await f.step(1000);assert.deepEqual(f.seeks,[10.35]);
   assert.equal(f.events[0].event,'sync-jump');assert.ok(Math.abs(f.events[0].seekDeltaMs-350)<.001);
   f.ctx.jumpDriftCorrection.interrupt();f.ctx.video.seeking=false;
@@ -86,9 +87,9 @@ test('moderate jumps refuse holes, hidden/uncertain clocks, pauses and readiness
   for(const change of [f=>{f.ctx.document.visibilityState='hidden';},f=>{f.ctx.playerWaiting=true;},
     f=>{f.ctx.playbackClock.read=()=>({valid:false});},f=>{f.ctx.playbackClock.read=()=>({valid:true,clockUncertaintyMs:80});},
     f=>{f.ctx.state.waitingForReady=true;f.ctx.state.state.paused=true;}]) {
-    const f=playerFixture();change(f);await f.step(0);await f.step(1000);assert.equal(f.seeks.length,0);assert.equal(f.ctx.video.playbackRate,1);
+    const f=await playerFixture();change(f);await f.step(0);await f.step(1000);assert.equal(f.seeks.length,0);assert.equal(f.ctx.video.playbackRate,1);
   }
-  const f=playerFixture();
+  const f=await playerFixture();
   await f.step(0,{target:9.65,ranges:[[10,40]]});await f.step(1000);
   assert.equal(f.seeks.length,0,'destination must be buffered even when current playback is healthy');
 });
@@ -97,7 +98,7 @@ test('personal preference survives reload, isolates accounts, immediately resets
   const ctx={me:{account:{id:'one'}},syncCorrectionMode:'speed',syncPreferenceStored:true,syncPreferenceKey:undefined,
     $:id=>{if(!elements.has(id))elements.set(id,{addEventListener(){}});return elements.get(id);},
     localStorage:{getItem:key=>data.get(key),setItem:(key,value)=>data.set(key,value)},
-    jumpDriftCorrection:{reset:()=>resets++},resetDriftCorrection:()=>{ctx.video.playbackRate=1;},video:{playbackRate:1.04},diagnosticSample(){}};
+    sync:{resetCorrection:()=>{resets++;ctx.video.playbackRate=1;}},video:{playbackRate:1.04},diagnosticSample(){}};
   vm.runInNewContext(source.slice(source.indexOf('function renderSyncPreference('),source.indexOf('function renderAccount(')),ctx);
   ctx.loadSyncPreference();assert.equal(ctx.syncCorrectionMode,'speed');ctx.setSyncPreference('jumps');
   assert.equal(ctx.video.playbackRate,1);assert.equal(data.get('uburoom.syncCorrection.one'),'jumps');

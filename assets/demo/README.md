@@ -10,6 +10,6 @@ To regenerate, supply an existing FFmpeg/FFprobe installation with libx264, libx
 node scripts/build-demo-media.js --out=artifacts/demo-media
 ```
 
-Optional `--ffmpeg=` and `--ffprobe=` select executable paths. The output must be a new directory; the script does not overwrite committed media. Inspect the result and metadata before copying into this directory. If bitrate facts change, update the MP4 capability hints in `web/watch-test.js`. Encoding bytes may vary with FFmpeg versions; visual content, duration and stream properties are reproducible from the recipe.
+Optional `--ffmpeg=` and `--ffprobe=` select executable paths. The output must be a new directory; the script does not overwrite committed media. Inspect the result and metadata before copying into this directory. If bitrate facts change, update the MP4 capability hints in `diagnostics/codec.js`. Encoding bytes may vary with FFmpeg versions; visual content, duration and stream properties are reproducible from the recipe.
 
 These project fixtures and their recipe use the project's GPL-3.0-only terms. FFmpeg and its encoders are external software with their own licensing and are not bundled. Capability hints are not proof that a particular client decodes a sample.

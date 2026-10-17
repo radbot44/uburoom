@@ -13,7 +13,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 | **Room state & lifecycle** | [server/watch.js](server/watch.js), [server/core.js](server/core.js) |
 | **HTTP/WebSocket routing & auth** | [server/app.js](server/app.js), [server/login.js](server/login.js), [server/watch-http.js](server/watch-http.js) |
 | **Shared command engine** | [shared/engine.js](shared/engine.js), [shared/room-protocol.js](shared/room-protocol.js), [shared/viewport.js](shared/viewport.js) |
-| **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js) |
+| **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js), [web/watch-sync.mjs](web/watch-sync.mjs) |
 | **Web remote UI, SVGs & styles** | [web/remote-ui.js](web/remote-ui.js), [web/watch.css](web/watch.css) |
 | **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
 | **Plex integration** | [server/plex.js](server/plex.js), [server/plex-auth.js](server/plex-auth.js), [server/media-tracks.js](server/media-tracks.js) |

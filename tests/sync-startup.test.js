@@ -1,4 +1,5 @@
 'use strict';
+const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict');
 const {trials,startup,compareStarts,immediateStarts}=require('../scripts/sync-startup');
 const {alarm,target}=require('../web/playback-timing');
@@ -31,7 +32,6 @@ test('start alarms recheck clock refinements, reject stale timers, and stop on c
   timers.at(-1).callback();assert.deepEqual(fired,['current'],'a completed alarm is one-shot');
 });
 test('a superseded native play promise cannot mark replacement media ready or autoplay-blocked',async()=>{
-  const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
   for(const rejected of[false,true]) {
     let resolve,reject;const play=new Promise((a,b)=>{resolve=a;reject=b;});
     const ctx={state:{mediaUrl:'fixture',mediaVersion:'old',streamVersion:'old-stream',state:{paused:false,volume:50,muted:false}},
@@ -41,26 +41,35 @@ test('a superseded native play promise cannot mark replacement media ready or au
       presentationTiming:require('../web/playback-timing').presentation(),uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,
       video:{readyState:4,currentTime:0,seeking:false,paused:true,playbackRate:1,buffered:{length:0},play:()=>play},
       renderTransport(){},checkVideoFrames(){}};
-    vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+    await install(ctx);
     const pending=ctx.synchronize();ctx.state.mediaVersion='replacement';ctx.state.streamVersion='replacement-stream';ctx.mediaSource='replacement-source';
     if(rejected)reject(Object.assign(new Error('Old play blocked'),{name:'NotAllowedError'}));else resolve();
     await pending;assert.equal(ctx.readyVersion,undefined);assert.equal(ctx.autoplayBlocked,false);
   }
 });
-test('scheduled preparation stays paused on clock loss and fences stale or expired callbacks',()=>{
-  const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
-  let key='old',callback,cancelled=0,plays=0,now=0;const events=[];
-  const ctx={state:{startAt:2000,mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},mediaSource:'fixture',
-    video:{currentTime:.1,readyState:4,seeking:false,playbackRate:1.04,pause(){}},preparedStartKey:undefined,
+test('scheduled preparation stays paused on clock loss and fences stale or expired callbacks',async()=>{
+  let key='old',callback,cancelled=0,plays=0,now=0;const events=[];let clock={valid:false};
+  const ctx={state:{startAt:2000,serverNow:0,mediaUrl:'fixture',state:{paused:false,duration:60,volume:50,muted:false}},mediaSource:'fixture',
+    video:{currentTime:.1,readyState:4,seeking:false,paused:false,buffered:{length:0},playbackRate:1.04,pause(){this.paused=true;},async play(){plays++;this.paused=false;}},
     startKey:()=>key,startAlarm:{cancel:()=>{cancelled++;},arm:(_,at,fire)=>{assert.equal(at,2000);callback=fire;}},
-    diagnosticSample:e=>events.push(e),renderTransport(){},navigator:{onLine:true},performance:{now:()=>now},receivedAt:0,
-    playbackClock:{read:()=>({serverTime:2001})},synchronize:()=>{plays++;}};
-  vm.runInNewContext(source.slice(source.indexOf('function holdForStart('),source.indexOf('async function synchronize(')),ctx);
-  assert.equal(ctx.holdForStart({valid:false},0),true);assert.equal(cancelled,1);assert.equal(callback,undefined);assert.equal(ctx.video.playbackRate,1);
+    expected:()=>0,diagnosticSample:e=>events.push(e),performance:{now:()=>now},receivedAt:0,playbackClock:{read:()=>clock}};
+  const sync=await install(ctx);
+  await sync.synchronize();assert.equal(cancelled,1);assert.equal(callback,undefined);assert.equal(ctx.video.playbackRate,1);
   assert.equal(ctx.video.currentTime,0);assert.deepEqual(events,['start-prepare']);
-  ctx.holdForStart({valid:true,serverTime:1000},0);assert.deepEqual(events,['start-prepare'],'paused alignment happens once per start');
+  clock={valid:true,serverTime:1000};await sync.synchronize();assert.deepEqual(events,['start-prepare'],'paused alignment happens once per start');
   key='replacement';callback();assert.equal(plays,0);key='old';now=4000;callback();assert.equal(plays,0);
-  now=0;callback();assert.equal(plays,1);assert.deepEqual(events,['start-prepare','start-timer']);
+  now=0;clock={valid:true,serverTime:2001};callback();assert.equal(plays,1);assert.deepEqual(events,['start-prepare','start-timer']);
+});
+test('sync owner resets replacement state and closes its timer and scheduled alarms',async()=>{
+  let interval,cleared,starts=0,pauses=0;
+  const ctx={video:{playbackRate:1.04},repeat:(callback,delay)=>{assert.equal(delay,500);interval=callback;return 17;},
+    cancelRepeat:id=>{cleared=id;},startAlarm:{cancel:()=>starts++},pauseAlarm:{cancel:()=>pauses++}};
+  const sync=await install(ctx);
+  assert.equal(typeof interval,'function');interval();
+  sync.prepare({until:10000,timeline:true});
+  sync.reset();assert.equal(sync.timelinePending,false);assert.equal(sync.preparationUntil,0);assert.equal(sync.seekPending,false);
+  assert.equal(ctx.video.playbackRate,1);assert.equal(starts,1);assert.equal(pauses,1);
+  sync.close();assert.equal(cleared,17);assert.equal(starts,2);assert.equal(pauses,2);
 });
 function roomFixture() {
   const hub=new Hub({ownerId:'host',guildId:'fixture',channels:['channel']},[]);

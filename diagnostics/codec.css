@@ -1,8 +1,5 @@
 .playback-test main{max-width:1000px}.playback-test a.quiet{color:var(--text);text-decoration:none;white-space:nowrap}.playback-test .card+.card{margin-top:18px}
-.test-embedded .account{display:none}.test-embedded main{margin:12px auto}.test-embedded .card{padding:16px}
 .playback-test video{position:static;display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:contain;background:black;border-radius:12px}
 .test-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:16px}.test-actions label{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:var(--muted)}
 #diagnostics{display:block;width:100%;height:420px;resize:vertical;border:1px solid var(--border);border-radius:12px;background:var(--background);color:var(--text);padding:14px;font:12px/1.5 ui-monospace,Consolas,monospace}
 #play-status,#copy-status{overflow-wrap:anywhere}#copy-status:empty{display:none}
-.playback-test.test-pip{overflow:hidden;background:black}.test-pip .account,.test-pip .card+.card,.test-pip .card>:not(video){display:none!important}
-.test-pip #test-video{position:fixed;inset:0;width:100%;height:100dvh;border-radius:0}

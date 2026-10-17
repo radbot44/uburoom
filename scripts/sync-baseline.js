@@ -64,7 +64,7 @@ async function main() {
         await guest.evaluate(g,'probing=true;video.pause();playerWaiting=true;true');await pause(3000);
         assert.ok(await host.evaluate(h,'video.currentTime')>before+2,'Guest recovery must not stop healthy playback');
         assert.equal(app.watch.rooms.get(room).s.state.paused,false);
-        await guest.evaluate(g,'probing=false;playerWaiting=false;synchronize().then(()=>true)');
+        await guest.evaluate(g,'probing=false;playerWaiting=false;sync.synchronize().then(()=>true)');
         await guest.until(g,'!video.paused && !video.seeking','Guest catch-up');await pause(3000);
         const recovery=await Promise.all([capture(host,h,boundaries[0]),capture(guest,g,boundaries[1])]);
         for(let i=0;i<2;i++){fs.writeFileSync(path.join(output,rtt+'-'+(i?'guest':'host')+'.json'),JSON.stringify(recovery[i])+'\n');}

@@ -1,4 +1,5 @@
 'use strict';
+const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict');
 const {correction,presentation}=require('../web/playback-timing');
 const {summarize}=require('../scripts/sync-report');
@@ -45,19 +46,15 @@ test('rate exposure uses observed time separately from sparse frame counts and u
   const r=summarize({entries:[{ms:0,rate:1},{ms:250,rate:.995},{ms:750,rate:.995},{ms:1000,rate:1},{ms:4000,rate:1}]});
   assert.equal(r.observedRateMs,1000);assert.equal(r.nonUnitRateMs,750);assert.equal(r.unknownRateMs,3000);
 });
-test('pause, buffering, seek, teardown, offline and hidden events immediately restore native speed',()=>{
-  const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-  const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8'),handlers={};
+test('pause, buffering, seek, teardown, offline and hidden events immediately restore native speed',async()=>{
   const f=fixture();for(let i=0;i<5;i++)f.step();
-  const ctx={jumpDriftCorrection:require('../web/playback-timing').jumpCorrection(),precisionDriftCorrection:{reset(){}},driftCorrection:f.policy,video:{playbackRate:1.005,addEventListener:(name,fn)=>{handlers[name]=fn;}},
-    window:{addEventListener:(name,fn)=>{handlers[name]=fn;}},document:{hidden:true,addEventListener:(name,fn)=>{handlers[name]=fn;}},
-    playbackClock:{reset(){}},startAlarm:{cancel(){}},pauseAlarm:{cancel(){}},presentationTiming:presentation(),performance:{now:()=>0},diagnosticSample(){}};
-  vm.runInNewContext(source.slice(source.indexOf('function resetDriftCorrection('),source.indexOf('const soakMode=')),ctx);
-  vm.runInNewContext(source.slice(source.indexOf("for(const event of ['playing','pause','waiting','stalled'"),source.indexOf('setInterval(()=>{')),ctx);
-  for(const event of['pause','waiting','seeking','emptied','offline','pagehide','visibilitychange']) {
-    ctx.video.playbackRate=1.005;handlers[event]();assert.equal(ctx.video.playbackRate,1,event);assert.equal(f.step(),1,event+' cancels persistence');
+  const ctx={driftCorrection:f.policy,video:{playbackRate:1.005},document:{hidden:true}};
+  const sync=await install(ctx);
+  for(const event of ['pause','waiting','seeking','emptied','offline','pagehide','visibilitychange']) {
+    ctx.video.playbackRate=1.005;sync.event(event);assert.equal(ctx.video.playbackRate,1,event);assert.equal(f.step(),1,event+' cancels persistence');
   }
 });
+
 test('correction runner retains invalid presentation segments without inventing skew percentiles',()=>{
   const {compareTrial}=require('../scripts/sync-startup');
   const log={entries:[0,1,2].map(i=>({event:'frame',room:1,media:1,clockRevision:1,frameMediaTime:i/24,
@@ -67,15 +64,14 @@ test('correction runner retains invalid presentation segments without inventing 
   assert.throws(()=>compareTrial({entries:[]},log),/unavailable/,'unrelated fixture errors still fail');
 });
 test('default keeps the existing gain with recovery guards; gentle correction requires explicit fixture enablement',async()=>{
-  const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-  const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');let now=0;
+  let now=0;
   const ctx={state:{mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},expected:()=>10.3,
     playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
     driftCorrection:correction(),presentationTiming:presentation(),syncCorrectionMode:'speed',precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,performance:{now:()=>now},document:{visibilityState:'visible'},
     video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
     renderTransport(){},checkVideoFrames(){}};
-  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  await install(ctx);
   await ctx.synchronize();assert.equal(ctx.video.playbackRate,1.04);
   ctx.gentleCorrectionEnabled=true;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
   for(let i=0;i<4;i++){now+=500;await ctx.synchronize();}assert.equal(ctx.video.playbackRate,1.005);

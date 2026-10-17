@@ -39,11 +39,6 @@ function installFixture(delay,gentle,precision=false) {
   globalThis.startupFixture={delay,unit:false,legacy:false,states:[],attempts:0};
   gentleCorrectionEnabled=gentle;
   precisionCorrectionEnabled=precision;
-  const update=driftCorrection.update;
-  driftCorrection.update=function(input){
-    if(!startupFixture.legacy)return update(input);
-    return !input.eligible||Math.abs(input.error)<.15||Math.abs(input.error)>.65?1:input.error>0?1.04:.96;
-  };
   Object.defineProperty(video,'playbackRate',{configurable:true,get(){return rate.get.call(this);},set(value){
     if(value!==rate.get.call(this))startupFixture.attempts++;rate.set.call(this,startupFixture.unit?1:value);
   }});
@@ -103,7 +98,7 @@ async function main() {
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest room');
     for(const trial of trials(repeats,rtts,seed,comparison)) {
       if(app.watch.rooms.get(room).media)await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
-      await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};precisionCorrectionEnabled=${precision}&&startupFixture.legacy===false;driftCorrection.reset();precisionDriftCorrection.reset();video.playbackRate=1;startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
+      await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};precisionCorrectionEnabled=${precision}&&startupFixture.legacy===false;gentleCorrectionEnabled=${comparison==='legacy'&&!precision}&&startupFixture.legacy===false;sync.resetCorrection(true);startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
       for(const [browser,page]of clients)await browser.until(page,'playbackClock.read().valid','Fresh clock');
       const boundaries=await Promise.all(clients.map(([browser,page])=>browser.evaluate(page,'diagnosticSample();diagnostics.snapshot().entries.at(-1).ms')));
       await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');
@@ -128,7 +123,7 @@ async function main() {
         firstCommon:matching.firstCommonFrame,skew:steady.healthySkewMs,rates:steady.viewers.map(r=>r.rateChanges),initialErrors:starts.map(s=>s.firstFrameErrorMs)}));
     }
     if(option('lifecycle','off')==='on') {
-      for(const [browser,page]of clients)await browser.evaluate(page,`startupFixture.unit=false;startupFixture.legacy=false;precisionCorrectionEnabled=${precision};driftCorrection.reset();precisionDriftCorrection.reset();video.playbackRate=1;true`);
+      for(const [browser,page]of clients)await browser.evaluate(page,`startupFixture.unit=false;startupFixture.legacy=false;precisionCorrectionEnabled=${precision};gentleCorrectionEnabled=${comparison==='legacy'&&!precision};sync.resetCorrection(true);true`);
       report.lifecycle=await require('./lib/sync-start-lifecycle').startLifecycle({host,guest,h,g,app,room,output});
       fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({lifecycle:report.lifecycle}));
     }

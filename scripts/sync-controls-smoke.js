@@ -56,7 +56,7 @@ async function main() {
     const before = await host.evaluate(h,'video.currentTime');
     await guest.evaluate(g,'probing=true;video.pause();playerWaiting=true;true'); await pause(1500);
     assert.ok(await host.evaluate(h,'video.currentTime') > before+1,'A local stall must not stop healthy viewers');
-    await guest.evaluate(g,'probing=false;playerWaiting=false;synchronize().then(()=>true)');
+    await guest.evaluate(g,'probing=false;playerWaiting=false;sync.synchronize().then(()=>true)');
     const report = {browser:name,versions:[host.version,guest.version],passed:true,pausedPositions:paused,
       events:await Promise.all(clients.map(async([browser,page]) => JSON.parse(await browser.evaluate(page,'JSON.stringify(controlEvents)')))),
       limitations:'Local synthetic direct media; fixture-shortened timeout, no physical presentation or WAN accuracy claim.'};

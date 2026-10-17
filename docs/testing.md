@@ -6,6 +6,28 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## P2 playback preparation audit
+
+**Local audit, 2026-10-17:** Traced initial viewer preparation, personal quality/track replacement, HLS refresh, Plex delivery construction and shared leases. The focused watch, track, HLS-pool and playback-policy suite passes **49 tests with zero failures/skips**. Injected fixtures confirm that an unusable first Media entry rejects a title despite a usable later entry, and that an empty Plex decision can be accepted and labelled H.264/AAC when no source audio was catalogued. This does not show that live Plex returns that payload. Complete output confirmation and eligible source inventory remain unimplemented.
+
+The audit produced simplification proposals before refactoring, as required by M1-P2. No runtime behavior changed. Live Plex decisions, browser decoding, remux/audio-only paths and adaptive quality were not exercised by this audit; existing evidence and limitations remain in effect.
+
+## P7 technical foundation
+
+**Verified locally, 2026-10-17:** The codec diagnostic page, scripts and sample media routes return 404 on the normal server. The explicit loopback developer launcher serves `diagnostics/`; ordinary library navigation, browser history and logout no longer manage an embedded diagnostic player. The watch player's capability checks and synchronization sample remain available. Local synchronization now has one native module owner for correction history, scheduled start/pause alarms, alignment/refill state and the periodic timer. Its timing/recovery tests import the actual module instead of slicing synchronization functions from the page source.
+
+- `npm test`: **232 passed, zero failures or skips**, with development certificates present. Checks include diagnostic route gating, Range/HEAD behavior, stale scheduled callbacks, superseded play promises, readiness, correction policies, HLS anchoring/refill and owner reset/timer cleanup.
+- `node scripts/sync-controls-smoke.js --browser=chrome` and `--browser=firefox`: pass readiness blockers, timeout choices, coordinated pause/resume and independent late-viewer recovery.
+- `node scripts/quality-switch-smoke.js --browser=chrome` and `--browser=firefox`: pass slow preparation, rejected quality rollback, three playing replacements, paused replacement and shared seek during preparation. Each playing replacement anchors once, uses at most one initial alignment and has no recurring correction seek or HLS error; the other viewer keeps its stream and continues playback. Consent remains off.
+- `node scripts/playback-baseline.js --media=<synthetic-corpus> --browsers=chrome,firefox --cases=hls-hevc --buffering=on --out=<new-directory>`: pass decoded picture and PCM checks, pause/seek/resume, ten-second media interruption, cached rewind and distant recovery. Both viewers advance about 10.5 seconds during the media outage; distant recovery takes about 1.5–1.6 seconds in this run.
+- `node scripts/codec-diagnostics-smoke.js --browser=chrome` and `--browser=firefox`: pass explicit diagnostic decoding/capability reporting, library diagnostic absence and phone overflow checks. Before/after library renders and desktop/phone diagnostic renders were inspected.
+- `node scripts/plex-library-smoke.js`, `node scripts/watch-smoke.js` and `node scripts/watch-smoke.js --accounts`: pass library history/filtering, responsive/simulated Activity layouts, decoded playback, host handoff/cleanup and linked-account login/logout.
+- `node scripts/sync-startup.js --browser=<chrome|firefox> --repeats=1 --seconds=4 --rtts=20 --comparison=legacy --lifecycle=on --output=<new-directory>`: the comparison runner uses the module reset interface and existing policy flags. Both browsers pass cancellation at desktop/theater/phone sizes, replacement deadline cancellation and independent recovery. The fixture now deliberately spaces replacement loads by 300 ms so its unchanged requirement for distinct deadlines does not depend on slow execution. These short trials verify the runner, not a policy performance improvement.
+
+Browsers: Chrome 155.0.8059.79 and Firefox 158.0, disposable profiles with synthetic media/providers and software decoding. These runs do not establish live Plex conversion throughput, real Discord Activity behavior, physical audio/motion quality, mobile devices or a new two-hour soak. Existing M1-P5/P6 limits remain. No installation was restarted or deployed.
+
+**Still open:** the owner's UI/UX journey review, information architecture/layout decisions and accessibility/usability review. Broader player, Activity and UI module extraction remains a later bounded P7 increment; this change establishes the synchronization boundary without approving a navigation redesign.
+
 ## Room terminology (M1-P10)
 
 **Current local verification, 2026-10-17:** The shared Engine rejects all six former `session.*` management actions. Server descriptors, web clients, installed extension messages and acknowledgement correlation use canonical room names: `roomId`, `room` registration, `room-ack` and `room.*` commands. The old `/api/sessions` HTTP route, legacy library query parameter, outgoing wire translations and shared-renderer aliases are removed. Authentication cookies, browser automation, Plex transcodes and playback-observation sessions keep their technical names. See [the current contract](development.md#room-terminology-and-compatibility).

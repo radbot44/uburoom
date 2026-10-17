@@ -39,7 +39,17 @@ Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create
 
 ## Isolated playback baseline
 
-The current browser codec-test UI (`/watch/test` and `web/watch-test.*`) is diagnostic, not required for normal viewing. M1-P7 will hide it from standard navigation or isolate it in developer-only tooling, while retaining capability checks, fixtures and automated playback tests. If running the current diagnostic page, generate its test media first; absent fixtures can return 404.
+The codec diagnostic UI lives in `diagnostics/`. Normal servers return 404 for its page, scripts and sample routes, including the retired `/watch/test`; the library has no diagnostic entry or embedded player. Start an isolated local server explicitly:
+
+```powershell
+node scripts/codec-diagnostics.js
+node scripts/codec-diagnostics-smoke.js --browser=chrome
+node scripts/codec-diagnostics-smoke.js --browser=firefox
+```
+
+The launcher binds an ephemeral loopback port, prints its `/__diagnostics/codec` URL, uses development TLS and never loads `.env` or live providers. Ctrl+C stops that process. Committed synthetic samples are included; missing samples return 404. Regenerate replacements using [the fixture recipe](../assets/demo/README.md) only when needed. This tooling is independent of normal playback capability checks and the decoded playback baseline.
+
+Local synchronization is owned by `web/watch-sync.mjs`, loaded through native dynamic import before watch authentication starts. It owns correction history, start/pause alarms, alignment/refill state and its 500 ms timer. The page supplies current viewer state and guarded delivery events; HLS callbacks still verify the active client/source before anchoring. No build step is required.
 
 With existing local test TLS, FFmpeg/FFprobe (libx264, libx265, libsvtav1, AAC and AC-3 encoders) and installed browsers:
 

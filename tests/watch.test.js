@@ -480,15 +480,10 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
     });
   }
   assert.equal((await request('/api/watch/rooms')).status, 401);
-  const testPage = await request('/watch/test');
-  assert.equal(testPage.status, 200); assert.match(testPage.headers['content-security-policy'], /frame-ancestors 'self' https:\/\/discord.com/);
-  assert.match(testPage.headers['content-security-policy'], /frame-src 'self'/);
-  assert.match(testPage.body.toString(), /Copy diagnostics/);
-  const testVideo = await request('/watch/test/sample.mp4', 'GET', undefined, {Range:'bytes=0-15'});
-  assert.equal(testVideo.status, 206); assert.equal(testVideo.body.length, 16);
-  assert.equal(testVideo.headers['content-type'], 'video/mp4');
-  assert.equal((await request('/watch/test/sample.mp4', 'HEAD')).status, 200);
-  assert.equal((await request('/watch/test/sample.mp4', 'GET', undefined, {Range:'bytes=999999999-'})).status, 416);
+  for(const route of ['/watch/test','/watch-test.js','/watch-test.css','/watch/test/sample.mp4',
+    '/__diagnostics/codec','/__diagnostics/codec.js','/__diagnostics/codec.css','/__diagnostics/media/sample.mp4']) {
+    assert.equal((await request(route)).status,404,route+' is absent from the normal server');
+  }
   const activityOrigin = `https://${config.clientId}.discordsays.com`;
   assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' })).status, 403, 'web origin cannot impersonate an Activity login');
   const activityLogin = (await request('/api/watch/activity-login', 'POST', { code: 'fixture', userId: 'host', owner: true }, { Origin: activityOrigin })).body;
@@ -500,14 +495,11 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   assert.equal(app.watch.rooms.get(created.body.id).s.hostId, 'demo-guest', 'creator comes from verified identity');
   assert.equal((await request('/api/watch/library?room=' + created.body.id, 'GET', undefined, activityHeaders)).status, 200);
   app.watch.remove(created.body.id);
-  for (const route of ['/', '/activity', '/watch/test', '/auth/discord']) {
+  for (const route of ['/', '/activity', '/auth/discord']) {
     const redirected = await request(route + '?frame_id=fixture');
     assert.equal(redirected.status, 302); assert.equal(redirected.headers.location, '/watch?frame_id=fixture');
   }
-  const embeddedTest = await request('/watch/test?frame_id=fixture&embedded=1','GET',undefined,{'Sec-Fetch-Dest':'iframe'});
-  assert.equal(embeddedTest.status,200,'Activity can embed the public diagnostic inside watch');
-  assert.match(embeddedTest.body.toString(),/Codec playback test/);
-  assert.equal((await request('/watch/test?frame_id=fixture&embedded=1')).status,302,'Top-level Activity navigation still stays on watch');
+  assert.equal((await request('/watch/test?frame_id=fixture&embedded=1','GET',undefined,{'Sec-Fetch-Dest':'iframe'})).status,404);
   member = false;
   assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' }, { Origin: activityOrigin })).status, 403);
   assert.equal((await request('/api/watch/me', 'GET', undefined, activityHeaders)).status, 401, 'existing Activity login is revoked for a removed member');

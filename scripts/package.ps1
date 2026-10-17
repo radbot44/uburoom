@@ -12,7 +12,7 @@ $trackedFiles = @(& git -C $projectPath ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Source packaging requires an audited Git checkout.' }
 $sourceFiles = @($trackedFiles | Where-Object {
   (Test-Path -LiteralPath (Join-Path $projectPath $_) -PathType Leaf) -and
-  ($_ -in @('README.md','ROADMAP.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','.gitattributes','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat') -or $_ -match '^(assets|shared|server|web|scripts|tests|docs)/') -and
+  ($_ -in @('README.md','ROADMAP.md','SPEC.md','AGENTS.md','LICENSE','package.json','package-lock.json','.env.example','.gitignore','.gitattributes','run-uburoom.bat','install-uburoom.bat','test-uburoom.bat','run-watch-demo.bat') -or $_ -match '^(assets|shared|server|web|diagnostics|scripts|tests|docs)/') -and
   ($_ -eq '.env.example' -or ($_ -notmatch '(^|/)\.env($|\.)' -and $_ -notmatch '\.(key|pem|pfx|p12|sqlite|db|zip|log)$'))
 })
 $destination = Join-Path $releaseDirectory "uburoom-source-$version-$stamp.zip"
