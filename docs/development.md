@@ -131,6 +131,23 @@ node scripts/shared-transcode-smoke.js --browser=firefox --media=artifacts/playb
 
 The runner never loads `.env`. It checks two matching qualities plus a different one, independent text captions, joining an existing output, producer departure and final cache/session cleanup. Reports record conversion counts and browser evidence. Synthetic quality labels share rendition bytes; live PMS encoder counts and Android need separate checks. Automated pool/HTTP tests additionally cover burned subtitles, audio separation, independent account authorization and credential refresh.
 
+### Browser subtitle rendering
+
+Build pinned browser modules with `npm run build:player`. The native SRT/WebVTT path remains available. Capable watch pages request JASSUB for ASS/SSA and libbitsub for PGS/VobSub; other clients retain Plex burn-in. The Audio and subtitles dialog also offers explicit Plex burn-in. It may require a new video conversion. Browser overlays are retained in the Activity PIP layout; browser/OS video-only PIP does not automatically include them.
+
+Original external tracks are proxied through private viewing grants. Embedded tracks require operator-supplied `FFMPEG_PATH` and `FFPROBE_PATH` (or the existing adjacent-FFprobe default). Extraction copies the selected subtitle stream without video encoding; it does not require the AV1 hardware encoder probe. FFprobe/FFmpeg receive a short-lived loopback source capability, never a Plex token. A source may need to be scanned for the full subtitle track; extraction is bounded by time, output size and concurrency, rather than promising cheap random access for every container.
+
+Limits: two concurrent original-resource jobs, 60 seconds per FFmpeg extraction, 20 seconds for font probing, 64 MiB subtitle output (4 MiB for ASS), 32 font attachments/16 MiB combined, and an eight-entry/96 MiB asset cache. Track changes and departures cancel stale work. All resource responses recheck the active viewing grant/selection, including cache hits. Limits or delivery failures offer retry/burn-in rather than silently removing captions. Workers/fonts/WASM are self-hosted; only WASM compilation is added to the watch CSP, not general JavaScript eval or unrestricted origins.
+
+With a generated track corpus and local fixture TLS:
+
+```powershell
+node scripts/subtitle-rendering-smoke.js --browser=firefox --repeats=2 --media=artifacts/playback-media-tracks --out=artifacts/subtitles-firefox
+node scripts/subtitle-rendering-smoke.js --browser=chrome --repeats=2 --media=artifacts/playback-media-tracks --out=artifacts/subtitles-chrome
+```
+
+Use fresh output directories and run browsers sequentially. `--repeats=1..5` repeats the six format/delivery cases. The runner never loads `.env`: it generates ASS, PGS/VobSub rectangles and an MKV containing those tracks plus a font attachment. It checks real overlay pixels against the same paused video with subtitles Off, startup without another seek, paused delay changes, embedded stream-copy/font delivery, cleanup, transforms and normal/theater/phone/Activity-PIP layouts. The Activity check is CSS/layout only, not a real Discord SDK/proxy test. Review [subtitle licensing gates](third-party.md#subtitle-bundles-and-outstanding-notices) before any distribution.
+
 ### Bounded playback and recovery check
 
 For mid-playback HLS quality replacement, use a generated corpus at least 120 seconds long. This runner delays each synthetic two-second HLS fragment by 1.2 seconds, starts two separate browser processes and switches only the host's quality around the middle of the source. It checks repeated up/down switches, current-position fragment selection, decoded advancement, drift, absence of recurring alignment/stall errors and the other viewer's unchanged stream. It also checks a paused quality switch and a shared seek during replacement preparation. Quality labels share pre-generated rendition bytes, so the check does not measure live Plex conversion or bandwidth requirements of different encodes.

@@ -6,6 +6,37 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## Browser subtitle rendering (M1-P9)
+
+### Local implementation and resumed verification — 2026-10-17
+
+JASSUB 2.5.21 renders ASS/SSA and libbitsub 1.13.0 renders PGS/VobSub through one watch-page subtitle controller. Native SRT/WebVTT remains unchanged. Original-resource URLs use the viewer's active media grant and caption generation; embedded extraction copies the selected subtitle stream through the credential-free loopback bridge. ASS font attachments are delivered as private bytes. Different browser subtitle selections can share an otherwise identical video conversion; explicit Plex burn-in remains available.
+
+The initial local Firefox 158.0 and Chrome 155.0.8059.79 runs used generated 640×360 media, procedural ASS text/signs and solid PGS/VobSub rectangles, plus an MKV containing all three subtitle tracks and a font attachment. Screenshot RGB comparisons against the same paused video with subtitles Off found the following changed light subtitle pixels for external and embedded versions. These counts are fixture checks, not completeness or perceptual-fidelity scores.
+
+| Browser | ASS pixels | PGS pixels | VobSub pixels | Embedded font |
+| --- | --- | --- | --- | --- |
+| Firefox 158.0 | 4,485 | 4,774 | 4,774 | Extracted and delivered |
+| Chrome 155.0.8059.79 | 4,261 | 4,589 | 4,590 | Extracted and delivered |
+
+The original smoke issued another seek to the already-paused position after loading a subtitle. The revised regression explicitly forbids any further seek events: track loading must paint at the existing two-second position. Small same-cue delay changes, a three-second delay that hides the cue, and restoration to zero are checked with actual screenshot pixels while the video remains paused. Two sequential cycles cover all six external/embedded combinations and remove the overlay on every Off selection.
+
+Initialization now waits for libbitsub's full parser/canvas/render-loop startup instead of treating its parsed-data `onLoaded` callback as presentation readiness. A documented vendor integration exposes initialization completion and forced manual repaint, invalidating cached cue identity and stale presentation work. The supplied host canvas disables libbitsub's automatic worker-offscreen route; the installed library already invalidates on changed offsets. Worker/GPU startup and same-cue manual repaints are tested without assuming that a parsed cue reached the display. JASSUB preloads the bundled fallback font before startup to avoid a blank paused first cue, and worker disposal remains bounded.
+
+Picture geometry checks compare canvas/video bounding rectangles within three CSS pixels for zoom 1.1, horizontal stretch 1.15 and pan (0.03, -0.02). Normal, theater, portrait phone (390×844), and Activity-PIP CSS layouts are captured; the Activity-PIP layout retains the overlay and hides controls. Layout screenshots were inspected. This is not actual Discord Activity authentication, SDK or proxy verification. Native browser/OS video-only PIP excludes separate canvas overlays; subtitle-aware PIP is tracked separately in M2.
+
+All 192 automated tests pass with zero failures/skips. Coverage includes original subtitle/index delivery, exact stream-copy mapping, shared video across personal ASS/PGS selections, stale/invalid/revoked grants and caption generations, explicit burn-in replacement/failure, byte budgets, stale async renderer cancellation, full-initialization gating and forced paused repaints. More than 32 embedded fonts fails explicitly with the burn-in recovery path; fonts are not silently discarded. The vendor build succeeds with the pinned packages and recorded notice exceptions.
+
+Remaining verification/release gates:
+
+- Real Plex Media Server resource/part IDs, source/container combinations, extraction latency on cold large files, and track/font delivery under access changes. Stream copying can scan the source; local tiny fixtures do not establish feature-length cost.
+- Complex authored ASS/SSA fonts, signs, karaoke, overlap, CJK/right-to-left, PGS compositions/forced choices, VobSub palettes and end times. The procedural rectangles and a short text sample are deliberately limited.
+- Actual Discord Activity SDK/proxy delivery and lifecycle, mobile devices, hardware/resource soaks, and browser captions through quality replacement/recovery and mixed-viewer playback. Existing player checks do not automatically establish the new renderers' behavior.
+- Complete JASSUB native component copyright/provenance and corresponding-source/build review, fallback font provenance, and upstream missing-license-file clarification for abslink/lfa-ponyfill/throughput. See [licensing gates](third-party.md#subtitle-bundles-and-outstanding-notices).
+- Temporary extraction folders are removed on normal completion/cancellation. An ungraceful process kill can leave an orphan; there is no broad startup sweep that might delete another live process's extraction directory.
+
+Reproduction: [browser subtitle development checks](development.md#browser-subtitle-rendering). No production configuration or services were changed for these checks.
+
 ## Real-time playback synchronization
 
 ### Timing baseline and clock estimation — 2026-10-16

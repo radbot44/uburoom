@@ -10,14 +10,16 @@ class uburoomSubtitles {
   clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); }
   reset() {
     this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false;
+    this.renderer?.destroy();this.renderer=undefined;
     this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false});
   }
   update(state) {
     if (state.subtitleUrl!==this.url) { this.reset(); this.url=state.subtitleUrl; }
     const offset=state.tracks?.subtitleOffset || 0;
-    if (this.offset!==offset) { this.offset=offset; this.rebuild(); }
+    if (this.offset!==offset) { this.offset=offset; this.rebuild();this.renderer?.offset(offset); }
+    this.picture=state.state?.picture; if(this.picture)this.renderer?.picture(this.picture);
     if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError}); return; }
-    this.track.mode='showing';
+    this.track.mode=this.renderer?'disabled':'showing';
     if (!this.loaded && !this.loading && !this.timer && this.attempts<3) void this.load();
   }
   rebuild() {
@@ -49,11 +51,30 @@ class uburoomSubtitles {
     this.loading=true; const abort=this.abort=new AbortController();
     this.status({message:'Loading subtitles…',error:false});
     try {
-      const response=await fetch(url,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(35000)])}), value=await response.json();
+      const response=await fetch(url,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(90000)])}), value=await response.json();
       if (!response.ok) throw Object.assign(new Error(value.error || 'Subtitles could not load.'),{terminal:response.status===403});
       if (generation!==this.generation || url!==this.url) return;
-      if (!Array.isArray(value.cues) || value.cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string')) throw new Error('Invalid subtitle response.');
-      this.cues=value.cues; this.rebuild(); this.loaded=true; this.status({message:'',error:false});
+      if(value.format){
+        if(!['ass','pgs','vobsub'].includes(value.format)||!Array.isArray(value.fonts)||value.fonts.length>32)throw new Error('Invalid subtitle response.');
+        const asset=async(name,limit)=>{
+          if(typeof name!=='string'||!name.startsWith(url+'/')||!/(?:\/data|\/index|\/font-\d{1,2})$/.test(name))throw new Error('Invalid subtitle asset.');
+          const result=await fetch(name,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(35000)])});
+          if(!result.ok)throw new Error('Subtitle resource could not load. Retry or choose Plex burn-in.');
+          const reader=result.body.getReader(),chunks=[];let size=0;
+          try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw new Error('Subtitle resource exceeds the supported size.');chunks.push(value);}}
+          finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+          const bytes=new Uint8Array(size);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.length;}return bytes;
+        };
+        const data=await asset(value.data,value.format==='ass'?4*1024*1024:64*1024*1024),index=value.index?await asset(value.index,1024*1024):undefined;
+        const fonts=[];let fontSize=0;for(const font of value.fonts){const bytes=await asset(font,16*1024*1024-fontSize);fontSize+=bytes.length;fonts.push(bytes);}
+        const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,index,fonts,fileName:value.fileName},this.offset||0,abort.signal);
+        if(generation!==this.generation || url!==this.url){renderer.destroy();return;}
+        this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
+      }else{
+        if (!Array.isArray(value.cues) || value.cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string')) throw new Error('Invalid subtitle response.');
+        this.cues=value.cues; this.rebuild();
+      }
+      this.loaded=true; this.status({message:'',error:false});
     } catch (error) {
       if (generation!==this.generation || abort.signal.aborted) return;
       this.attempts=error.terminal ? 3 : this.attempts+1;

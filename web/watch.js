@@ -114,6 +114,7 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
+const subtitleMode=$('subtitle-mode');
 video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
@@ -628,11 +629,12 @@ function renderTracks() {
   };
   render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic (Plex)'}],tracks?.audioChoice);
   render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic (Plex)'},{id:'off',label:'Off'}],tracks?.subtitleChoice);
-  const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), burned=subtitle?.delivery==='burn';
+  const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), delivery=tracks?.subtitleDelivery || subtitle?.delivery,burned=delivery==='burn';
+  subtitleMode.value=tracks?.subtitleMode || 'auto';subtitleMode.disabled=!available || pending || qualityPending || !subtitle;
   $('audio-track-status').textContent=audio ? audio.label+(state.format!=='file' ? ' · Stereo playback' : '') : '';
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
-  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select text subtitles to adjust their timing.';
+  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
   $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title.' : '');
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
@@ -657,6 +659,7 @@ $('tracks-dialog').addEventListener('close',()=>{trackContext=undefined; $('trac
 $('audio-track').addEventListener('change',()=>void changeTrack({audioId:$('audio-track').value}));
 $('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$('subtitle-track').value}));
 $('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
+subtitleMode.addEventListener('change',()=>void changeTrack({subtitleMode:subtitleMode.value}));
 $('subtitle-retry').addEventListener('click',()=>captions.retry());
 function expected() {
   const timing=playbackClock.read();
@@ -847,7 +850,7 @@ async function refreshState() {
   if (!selected) return;
   const id = selected, before = Date.now(), sent=performance.now(), exchange=playbackClock.begin(), sequence=++stateRequestSequence;
   try {
-    const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality); if (id !== selected || sequence!==stateRequestSequence) return;
+    const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality+(globalThis.uburoomSubtitleRenderers?.supported()?'&subtitles=browser':'')); if (id !== selected || sequence!==stateRequestSequence) return;
     playbackClock.add(exchange,next.timing);
     diagnostics.record('clock-sample',{...playbackClock.read(),requestRttMs:performance.now()-exchange.sent,serverProcessingMs:next.timing?.serverProcessingMs});
     const revision=observationClock.update(next.observationEpoch,next.serverNow,sent,performance.now());

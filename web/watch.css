@@ -13,6 +13,7 @@ h1{font-size:22px;letter-spacing:-.5px;margin:0}h2{font-size:17px;margin:0}.hint
 #identity{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 video{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}#empty-stage{position:relative;text-align:center;color:var(--muted);padding:24px}#empty-stage h1{color:var(--text);font-size:20px}#empty-symbol svg{width:60px;height:60px;fill:none;stroke:var(--orange);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;margin-bottom:16px}
 video::cue{font-size:clamp(14px,2.4vw,32px)}
+.subtitle-layer{position:absolute;inset:0;pointer-events:none;z-index:1;transform-origin:center}.subtitle-canvas{position:absolute;pointer-events:none}
 .player-chrome{position:absolute;left:0;right:0;z-index:2;opacity:0;pointer-events:none;transition:opacity .18s}
 .stage:hover .player-chrome,.stage:focus-within .player-chrome,.stage.paused .player-chrome,.stage.blocked .player-chrome,.stage.remote-open .player-chrome{opacity:1;pointer-events:auto}
 .title-bar{top:0;padding:18px 20px 34px;background:linear-gradient(#000c,transparent);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.media-heading{min-width:0;pointer-events:none}.media-heading h1{font-size:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.media-heading p{font-size:13px;color:var(--muted);margin:4px 0 0}.media-heading p:empty{display:none}.player-actions{display:flex;gap:6px}
@@ -70,7 +71,7 @@ body.theater{overflow:hidden;background:black}
 #account-logout{margin-top:20px}
 .activity-pip main{margin:0;padding:0;max-width:none}
 .activity-pip .stage{position:fixed;inset:0;width:100%;height:100dvh;aspect-ratio:auto;border-radius:0;background:black}
-.activity-pip .stage>:not(video),.activity-pip #drawer,.activity-pip #remote,
+.activity-pip .stage>:not(video):not(.subtitle-layer),.activity-pip #drawer,.activity-pip #remote,
 .activity-pip #account,.activity-pip #welcome,.activity-pip #session-bar,.activity-pip #options-panel,.activity-pip #library-panel,.activity-pip #status,.activity-pip #error,.activity-pip #acceleration-help{display:none!important}
 @media(max-width:700px){.title-bar{gap:8px;flex-wrap:wrap}.player-actions{margin-left:auto}.solid-button{font-size:12px;padding:8px;gap:5px}.media-heading{min-width:85px}.media-heading h1{max-width:100%}}
 @media(max-width:700px){#subtitle-status{bottom:105px}}

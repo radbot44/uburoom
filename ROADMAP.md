@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-16.
+Updated: 2026-10-17.
 
 uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity, with an included Firefox YouTube TV remote. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
 
@@ -16,11 +16,11 @@ The main gap is evidence and completeness across real Plex sessions, Discord sur
 
 | Boundary | Direction |
 | --- | --- |
-| Service and state | Keep one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. Develop on local disk; keep runtime state and credentials private. |
-| Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. |
+| Service and state | Keep one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. Develop on local disk; keep runtime state and credentials private. Unify device and login persistence into SQLite; protect the single event loop from synchronous disk/crypto spikes during playback synchronization. |
+| Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. Keep active rooms in-memory with optional resumption tokens. |
 | Commands and access | Every control surface uses the shared validated engine. Recheck current access around awaited operations, reject stale work, and keep remote consent off after disconnect/restart. |
-| Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. |
-| Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Firefox and real Discord Activity remain primary targets. |
+| Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. Unify room control over WebSockets, reserving HTTP for media chunks and static assets. |
+| Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Firefox and real Discord Activity remain primary targets. Maintain native ES modularity in the browser without bundlers or frameworks. |
 
 The [product specification](SPEC.md) and [project instructions](AGENTS.md) define the enduring rules. These milestones do not call for a service split, a framework rewrite or a new dependency stack.
 
@@ -52,6 +52,10 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P6 | Frame-pacing preservation during synchronization | In progress; cadence comparisons recorded, gentle candidate gated after regressions; joint live verification pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | Planned; review complete user journeys before restructuring | Existing design guide, rendered surfaces and playback/permission behavior |
 | M1-P8 | Separate remote extension repository and uburoom compatibility | Planned; define the integration and shared-source boundaries before extraction | Stable command/protocol contract and cross-repository compatibility checks |
+| M1-P9 | Render styled and bitmap subtitles in the browser | In progress; authorized delivery and renderer integration | M1-P2/M1-P3 track delivery; existing player and shared conversion boundaries |
+| M1-P10 | Transition "session" terminology to "room" | Next; clear user-facing and API ambiguity | M1-P7 UI/UX review and command engine consistency |
+| M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Planned; addresses single-process scale and latency | M1-P1 and M1-P5 real-world measurements |
+| M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 
 ### M1-P1 — Sustained real playback and room continuity
 
@@ -121,6 +125,8 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 - Use scheduled timestamps for coordinated play/pause/seek events.
 - Use gradual drift correction and hard seeks when necessary, within the frame-pacing requirements in M1-P6.
 - Ensure latency differences between viewers don't translate directly into playback differences.
+- Unify room control and state synchronization onto WebSockets, eliminating HTTP polling jitter and request stampedes.
+- Protect event loop latency: keep heavy crypto and synchronous SQLite writes off the high-frequency tick loop so that disk/crypto stalls do not delay scheduled broadcast ticks.
 
 **Critical constraint — independent buffering:**
 
@@ -163,6 +169,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 - Map and inspect end-to-end journeys: sign-in and account linking, library browsing, room creation/joining, playback and personal tracks/quality, remote permissions, browser/Discord handoff and recovery from failures.
 - Identify confusing navigation, duplicated controls, hidden state, unnecessary steps, inconsistent terminology and unclear loading, empty, error or recovery feedback. Evaluate desktop, mobile and real Discord Activity layouts, including keyboard and assistive-technology use.
 - Develop a coherent information architecture and reviewable flow/layout proposals, then implement the restructure in bounded increments. Use the [design guide](docs/design-guide.md) and shared styles/SVGs as the visual foundation; preserve safe DOM creation, accessibility and clear separation of shared room actions from personal settings.
+- Modularize the client application without frameworks or build tools: refactor monolithic scripts (`web/watch.js`) into focused native ES modules (`watch-player.js`, `watch-sync.js`, `watch-activity.js`, `watch-ui.js`) using standard `<script type="module">`.
 - Validate discoverability and task completion with representative user journeys. Inspect rendered surfaces across supported layouts and verify that focus, menus, dialogs and player controls remain usable without disrupting playback.
 
 **Success criteria:** Common journeys have clear entry points, understandable state and recovery, consistent controls and fewer unnecessary steps. The restructured interface works across its declared surfaces without regressions in playback, account scopes, privacy or remote consent. Record findings, before/after evidence and unfinished checks in [testing status](docs/testing.md#uiux-review-and-restructure).
@@ -171,13 +178,153 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Goal:** Move the Firefox remote extension into a separate repository while keeping it fully interoperable with uburoom and preserving its existing YouTube TV functionality.
 
-- Inventory extension code, assets, notices, build/configuration tools and tests. Define ownership and distribution of shared command validation, remote styles/icons and protocol fixtures so both repositories can build and test independently without incompatible copies drifting apart.
+- Inventory extension code, assets, notices, build/configuration tools and tests. Decouple `extension/engine.js` into distinct Room/Playback vs. Viewport/Transform protocols ahead of extraction, so YouTube TV presentation controls do not intertwine with room synchronization. Define ownership and distribution of shared command validation, remote styles/icons and protocol fixtures so both repositories can build and test independently without incompatible copies drifting apart.
 - Define and document the extension/server integration contract, supported version combinations, configured HTTPS origins, authentication, connection lifecycle and compatibility failure behavior. Preserve the shared validated command engine, per-user scopes, private-session visibility and stale-command rejection.
 - Extract the extension with its required source, licenses and notices; update uburoom imports, asset serving, setup documentation and packaging so neither repository depends on the other's checkout layout.
 - Verify real Firefox installation, connection and permitted controls against uburoom, alongside isolated protocol/integration tests. Cover reconnect, tab/browser/server restart, revoked access, incompatible versions and configured-origin builds. Remote consent must remain off after disconnect/restart, with narrow permissions and matching CSP.
 - Preserve existing remote capabilities and shared web/Discord controls through the split. Keep the known full extension smoke exception explicit until resolved; do not weaken permissions or throttling to obtain a pass. Audit both histories and ZIP contents for private material and preserve GPL-3.0-only source and third-party notices before release.
 
 **Success criteria:** The extension builds and installs from its own repository, uburoom builds and runs independently, and supported extension/server combinations pass integration and real lifecycle checks with the existing authorization and consent safeguards. Keep the extension in this repository until extraction and compatibility are verified. Repository publication and signing retain their existing approval requirements. Record the compatibility matrix, evidence and unfinished checks in [testing status](docs/testing.md#remote-extension-repository-separation).
+
+### M1-P9 — Browser rendering for styled and bitmap subtitles
+
+**Outcome:** Each viewer can select faithful ASS/SSA, PGS and VobSub subtitles without forcing a video conversion solely for subtitle burn-in.
+
+- Keep the existing video player, controls, shared timeline and native SRT/WebVTT path. Use one subtitle controller with lazy-loaded JASSUB for ASS/SSA and libbitsub for PGS/VobSub; only the selected renderer runs.
+- Deliver original tracks, VobSub indexes/palettes and ASS fonts through viewer-authorized resources. Bound extraction, downloads, caches and worker lifetimes; never expose Plex credentials or use another viewer's access as authority.
+- Preserve authored layout, personal delay and picture transforms across track changes, pause/seek, quality replacements, late joins and recovery. Keep video outputs reusable across different browser-rendered subtitle selections.
+- Retain explicit Plex burn-in fallback when original resources or browser capabilities are insufficient. Verify video-only PIP limitations and actual Discord Activity delivery without requiring cross-origin isolation globally.
+- Self-host pinned worker/WASM/font assets with narrow CSP changes and complete upstream notices/source obligations. Validate difficult ASS fonts/signs/karaoke, PGS compositions and VobSub palettes in Firefox first, then Chrome and real Activity.
+
+**Current increment:** Authorized original-resource delivery, bounded embedded stream-copy/font extraction, lazy JASSUB/libbitsub integration and explicit Plex burn-in fallback are implemented locally. Firefox/Chrome fixtures show external and embedded ASS/PGS/VobSub pixels. Resumed checks cover full initialization, forced paused repaints, delay changes without another seek and overlay cleanup; fonts are never silently dropped to satisfy limits. Real Plex/authored-font delivery, Activity/device coverage and complete third-party provenance remain verification gates. See [testing](docs/testing.md#browser-subtitle-rendering-m1-p9).
+
+**Done:** Intended subtitles survive the declared lifecycle/layout matrix with bounded resources and per-viewer access, with honest fallback behavior and recorded rendering evidence. This phase implements the subtitle portion of M1-P3 and delivery choices in M1-P2; it does not replace the video engine or authorize deployment.
+
+### M1-P10 — Transition "session" terminology to "room"
+
+**Goal:** Standardize on "room" across user-facing surfaces, API schemas, and internal concepts to match uburoom branding and eliminate confusion with technical session contexts.
+
+- Inventory and rename all user-facing instances of "session" in the web UI, dialogs, status toasts, Discord bot command options/descriptions (`/ubu`, `!ubu`), and Discord Activity lobby views to "room" (e.g. "Room Lobby", "Create Room", "Room Settings").
+- Reserve the technical term "session" strictly for low-level connection and auth contexts: HTTP cookie sessions, WebSocket connection sessions, and Plex transcode sessions.
+- Update internal engine/API action names where appropriate (e.g., transition `session.enable`, `session.visibility`, `session.controls` towards `room.*` while preserving backward-compatible aliases for active extensions and bots).
+- Update user documentation, developer docs, and test fixtures to reflect consistent room terminology.
+
+**Success criteria:** All UI, bot, and activity touchpoints consistently present "room" to users; developer docs cleanly distinguish between rooms (the shared watching space) and sessions (technical connection state); existing commands and extension connections remain backward-compatible through aliases.
+
+### M1-P11 — Architecture hardening: persistence unification, event-loop protection and fault isolation
+
+**Goal:** Consolidate server persistence, protect the single Node.js event loop from synchronization-blocking latency spikes, and isolate component failures.
+
+- **Storage unification:** Migrate flat-file storage (`data/devices.json` and `data/logins.json`) into dedicated tables within the single built-in SQLite database (`data/accounts.sqlite`). Maintain atomic transactions, schema migrations in `server/storage.js`, and simplify backup procedures to a single database file. Introduce optional short-lived room resumption tokens so quick daemon restarts allow viewers to reconnect seamlessly without recreating rooms.
+- **Event-loop latency protection:** Keep the high-frequency playback/tick loop free from synchronous disk I/O and CPU-bound cryptography. Audit `DatabaseSync` calls and `AES-256-GCM` token encryption/decryption (`credentialVault`) to ensure they only execute during infrequent operations (auth/linking) or offload via asynchronous task batching, safeguarding the ≤50ms p95 sync target in M1-P5.
+- **Transport unification:** Transition web watch room negotiation and viewer polling (`prepareViewer`, stream status checks) entirely onto WebSocket messages. Reserve HTTP strictly for static web assets and media stream segments (HLS chunks, AV1 segments).
+- **Fault isolation and resilience:** Enforce strict error boundaries and circuit breakers around external integrations (`discord.js` gateway/REST client, Plex API requests) so external outages or rate limits do not crash or stall active rooms. Enforce hard execution timeouts, stdio drain safeguards, and memory caps on spawned FFmpeg child processes (`server/av1.js`).
+
+**Success criteria:** Device and login persistence live in SQLite with single-file backup integrity; disk I/O and credential crypto introduce no measurable jitter in sync tick intervals; room state transitions flow entirely over WebSocket; third-party network failures fail gracefully without disrupting unaffected rooms.
+
+### M1-P12 — Rich viewer telemetry, sync health and room presence
+
+**Goal:** Transform the viewer list and player surface into a rich, transparent, and empathetic social watch interface, providing live sync status, stream pipeline visibility, and subtle presence cues.
+
+- **Playhead avatar indicators on the timeline:** Render subtle viewer avatar pips directly on the timeline scrubber. Cluster avatars on the playhead when viewers are in sync; detach and display trailing pips when a viewer is buffering or recovering so the room visually understands who is catching up without voice chat confusion.
+- **Interactive viewer cards:** Expand the viewer roster so hovering or clicking any viewer reveals a detailed telemetry popover: live sync offset (±ms), forward buffer health (seconds cached), stream delivery path (Direct Play vs. HLS/AV1 Transcode vs. Shared Conversion Pool), active personal audio/subtitle track choices, and client surface (browser/device).
+- **Empathy buffering micro-toasts & host pause prompt:** When a viewer encounters a buffer stall during playback, display a discreet, non-blocking toast (e.g. `Alice is buffering at 01:24:12`). Provide the room host with a gentle one-click voluntary pause prompt (`[Pause for Alice?]`) while upholding the core rule that healthy viewers never freeze automatically. Display a confirmation when the viewer catches up.
+- **Host "Stats for Nerds" overlay (HUD mode):** Add a toggleable HUD (e.g., via keyboard shortcut or header icon) showing a live multi-viewer skew radar, active server FFmpeg transcoding processes/QSV hardware utilization, shared transcode pool efficiency, and real-time outbound bandwidth metrics per viewer.
+- **Subtle presence cues:** Display lightweight presence indicators in the roster, including local player mute status (to avoid asking if someone heard dialogue) and optional on-pause cursor/ping markers for pointing out on-screen details.
+
+**Success criteria:** Viewers and hosts can immediately observe room synchronization, delivery pipelines, and buffer health at a glance without verbal back-and-forth; server resource consumption is transparent to operators; social presence is deepened while preserving the cinema layout and independent playback boundaries.
+
+## M2 — Future planned capabilities
+
+**Outcome:** Broaden media sources, accessibility, and frictionless room entry beyond the initial self-hosted release baseline.
+
+These phases expand uburoom's feature set after the M1 release gates are satisfied. The priority and ordering will be adjusted as the owner's focus evolves.
+
+### Phase map
+
+| ID | Phase | Position | Depends on |
+| --- | --- | --- | --- |
+| M2-P1 | High Dynamic Range (HDR) support | Planned | M1-P2/M1-P3 delivery model and capability negotiation |
+| M2-P2 | Enhanced browser Picture-in-Picture with subtitles | Planned | M1-P9 browser subtitle rendering |
+| M2-P3 | Guest room codes | Planned | M1-P10 room terminology, M1-P11 unified persistence |
+| M2-P4 | Rudimentary uburoom-hosted video library | Planned | M1-P2 direct playback and local storage |
+| M2-P5 | Shared YouTube video playback | Planned | M1-P5 synchronization engine and M1-P8 protocol split |
+| M2-P6 | Web Audio dynamic range compression (Dialogue Boost / Night Mode) | Planned | M1-P3 audio playback pipeline |
+| M2-P7 | Self-hosting installation validator (`--doctor` CLI check) | Planned | M1-P11 configuration and storage unification |
+| M2-P8 | Official containerization (Docker & Docker Compose) | Planned | M2-P7 configuration validation |
+| M2-P9 | Discord voice channel presence and room invite embeds | Planned | M1-P10 room terminology and Discord bot integration |
+
+### M2-P1 — High Dynamic Range (HDR) support
+
+**Goal:** Deliver faithful HDR content (HDR10, Dolby Vision) across supported displays and conversion paths.
+
+- Detect display and client HDR capabilities via browser media capabilities APIs.
+- Handle HDR-to-SDR tone mapping dynamically on server transcoding paths when viewers on SDR displays watch HDR sources.
+- Support direct passthrough of HDR streams to capable browser targets without color banding, clipping, or incorrect color space signaling.
+
+### M2-P2 — Enhanced browser Picture-in-Picture with subtitles
+
+**Goal:** Allow viewers to watch in browser Picture-in-Picture (PiP) mode without losing active subtitles.
+
+- Address native `<video>` PiP limitations that strip HTML/canvas-rendered subtitles (ASS/SSA, PGS, styled captions from M1-P9).
+- Implement subtitle-aware PiP using the Document Picture-in-Picture API where supported, or canvas video-stream compositing as a fallback.
+- Preserve viewer-selected subtitle styling, positioning, and language tracks within the PiP surface.
+
+### M2-P3 — Guest room codes
+
+**Goal:** Enable frictionless room entry via temporary invite codes without requiring Discord OAuth or linked Plex accounts.
+
+- Allow room hosts to generate temporary, time-bounded guest invite codes or shareable links.
+- Grant guest viewers synchronized playback, personal volume, and audio/subtitle track choices within the room.
+- Maintain safe permission boundaries: guests cannot manage room settings, transfer host status, access Plex server libraries, or view private credentials.
+
+### M2-P4 — Rudimentary uburoom-hosted video library
+
+**Goal:** Allow streaming video files directly from local server folders without requiring a Plex Media Server.
+
+- Provide a lightweight directory/file scanner for operator-configured media directories.
+- Support direct file playback and basic transcoding for supported container/codec combinations.
+- **Explicit non-goal:** Not a full Plex replacement. Does not include metadata scraping, poster generation, TV/movie matching, or complex watch-state tracking; strictly intended as a simple file-and-folder video player for rooms.
+
+### M2-P5 — Shared YouTube video playback
+
+**Goal:** Allow watch rooms to load and synchronize public YouTube videos.
+
+- Support pasting YouTube URLs in rooms to initiate shared viewing.
+- Integrate the YouTube IFrame Player API with uburoom's server-authoritative playback timeline and sync engine.
+- Coordinate play, pause, seek, and rate adjustments across viewers while respecting YouTube embed constraints and viewer-local ad/buffering states.
+
+### M2-P6 — Web Audio dynamic range compression (Dialogue Boost / Night Mode)
+
+**Goal:** Solve the "whisper quiet dialogue, deafening explosions" problem in downmixed multi-channel audio tracks.
+
+- Implement a client-side Web Audio `DynamicsCompressorNode` processing graph attached to the `<video>` element.
+- Expose an intuitive user toggle in the player audio settings (Off / Dialogue Boost / Night Mode).
+- Ensure zero server CPU overhead, zero external dependencies, and seamless compatibility with personal volume and mute controls.
+
+### M2-P7 — Self-hosting installation validator (`--doctor` CLI check)
+
+**Goal:** Provide single-command validation for self-hosters to verify their environment, permissions, and network integrations before startup.
+
+- Add a CLI diagnostic flag (`node server/index.js --doctor` or `npm run check`).
+- Automatically verify `.env` variable syntax, credential key file location and restrictive permissions, Plex server connectivity and token validity, Discord bot gateway connection and application guild settings, TLS certificate/key pair validity, and local FFmpeg/FFprobe availability.
+- Provide actionable, human-readable troubleshooting steps when a verification check fails.
+
+### M2-P8 — Official containerization (Docker & Docker Compose)
+
+**Goal:** Simplify deployment for homelab, NAS (Unraid, TrueNAS, Synology), and Linux server operators.
+
+- Provide an official, minimal Alpine/Debian-slim `Dockerfile` and `docker-compose.yml`.
+- Standardize volume mounts for persistent data (`/data`) and external credential keys outside the container root.
+- Support optional hardware acceleration passthrough (`/dev/dri` for Intel QuickSync AV1/H.264 transcoding).
+
+### M2-P9 — Discord voice channel presence and room invite embeds
+
+**Goal:** Make rooms easily discoverable from Discord voice channels without manual link sharing.
+
+- When a room begins playback, automatically post a rich Discord embed in the matched text/voice channel featuring media metadata (title, poster, year, duration) and a one-click "Join Room" button.
+- Update bot status and rich presence dynamically with current watching activity.
+- Automatically update or clean up the active embed when the room session ends or media changes.
 
 ## Future direction and decisions still open
 
