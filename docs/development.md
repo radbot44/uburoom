@@ -4,11 +4,13 @@ Use a local-disk checkout and Node 22.13.0+. Install from the committed lockfile
 
 Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both. The current remote extension is Firefox-only; Chromium extension support is deferred to M2-P10.
 
-The independent uburoom-remote snapshot carries its own configuration, packaging and ten Node tests without a runtime dependency on this checkout. For cross-repository checks, pass explicit artifact and fixture paths; the runner starts a disposable local TLS fixture without loading `.env` or restarting an installation:
+The independent uburoom-remote repository owns the extension source, configuration, packaging and ten Node tests without a runtime dependency on this checkout. uburoom owns `shared/` command modules and `web/remote-ui.js`; there is no local extension directory. For cross-repository checks, pass explicit artifact and fixture paths; the runner starts a disposable local TLS fixture without loading `.env` or restarting an installation:
 
 ```powershell
 node scripts/remote-compatibility.js --extension=<remote-build-directory> --fixtures=<remote-repository>/tests/fixtures/remote-protocol-v1.json
 node scripts/firefox-smoke.js --extension=<remote-build-directory> --startup-only
+node scripts/remote-cutover-smoke.js --browser=chrome
+node scripts/remote-cutover-smoke.js --browser=firefox
 ```
 
 These integration tools use this checkout's development certificates. The TLS runner simulates browser APIs and player execution while using the artifact's real background/protocol source. The Firefox startup smoke installs an isolated copy against synthetic local pages; its localhost origins and content-script fixture matches do not change the distributed build. Full lifecycle and real YouTube TV verification remain separate checks.
@@ -20,7 +22,7 @@ npm test
 node scripts/watch-demo.js --accounts
 ```
 
-Generate certificates only on a fresh checkout. The script refuses to overwrite them and installs no trust root. Without test certificates, 13 tests skip: inspect the summary, not merely the exit status.
+Generate certificates only on a fresh checkout. The script refuses to overwrite them and installs no trust root. Certificates are required for a passing full suite: without them, 18 TLS checks skip and three additional TLS checks fail while reading the missing certificate. Inspect the summary and complete setup before treating a run as verified.
 
 Keep production environment variables/configuration, databases, keys and certificates out of this checkout. Start/dev/demo npm scripts load `.env` if present. The explicit fixture-demo command does not load an environment file but still inherits process environment; use a clean shell without production Plex/Discord credentials.
 
@@ -33,7 +35,7 @@ node scripts/watch-smoke.js
 node scripts/plex-library-smoke.js
 ```
 
-Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create disposable profiles. The full `scripts/firefox-smoke.js` check has an unresolved permission/rate-limit failure and is deferred; it binds localhost 6767/9443 when run. Fixtures do not prove real YouTube TV or Activity behavior.
+Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create disposable profiles. The full `scripts/firefox-smoke.js --extension=<remote-build-directory>` check still stops at the popup-height assertion and has a separately deferred permission/rate-limit failure; it binds localhost 6767/9443 when run. The retired standalone-homepage assertions were removed; extension consent, guest permission, expiry and popup-height checks remain. Current watch entry/drawer checks run in both browsers with the cutover smoke. Fixtures do not prove real YouTube TV or Activity behavior.
 
 ## Isolated playback baseline
 

@@ -4,9 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const Engine = require('../extension/engine');
-const Room = require('../extension/room-protocol');
-const Viewport = require('../extension/viewport');
+const source = path.join(__dirname, '..', require('../package.json').name === 'uburoom' ? 'shared' : 'extension');
+const Engine = require(path.join(source, 'engine'));
+const Room = require(path.join(source, 'room-protocol'));
+const Viewport = require(path.join(source, 'viewport'));
 const fixture = require('./fixtures/remote-protocol-v1.json');
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -42,7 +43,7 @@ test('versioned protocol fixtures cover Node dispatch and independent room/viewp
 test('the same protocol fixtures run as browser scripts without Node, DOM or network APIs', () => {
   const context = vm.createContext({});
   for (const file of ['room-protocol.js', 'viewport.js', 'engine.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension', file), 'utf8'), context, { filename: file });
+    vm.runInContext(fs.readFileSync(path.join(source, file), 'utf8'), context, { filename: file });
   }
   checkContract(context.uburoom, context.uburoomRoomProtocol, context.uburoomViewport);
 });

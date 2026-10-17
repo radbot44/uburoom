@@ -9,7 +9,7 @@ const { spawn } = require('node:child_process');
 const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { QUALITIES, qualityId } = require('../extension/engine');
+const { QUALITIES, qualityId } = require('../shared/engine');
 const CHUNK = require('../web/playback-policy').BUFFER.chunkSeconds;
 const { processMemory } = require('./process-memory');
 const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';

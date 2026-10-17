@@ -1,9 +1,10 @@
 'use strict';
 const { randomBytes, createHash } = require('node:crypto');
 const { hash, UUID } = require('./core');
-const extensionId = require('../extension/manifest.json').browser_specific_settings.gecko.id;
+// Fixed integration identity; never derive it from another repository's manifest.
+const FIREFOX_EXTENSION_ID = 'uburoom@uburoom.com';
 // Firefox derives its private auth return URL from the fixed add-on ID.
-const FIREFOX_REDIRECT = `https://${createHash('sha1').update(extensionId).digest('hex')}.extensions.allizom.org/`;
+const FIREFOX_REDIRECT = `https://${createHash('sha1').update(FIREFOX_EXTENSION_ID).digest('hex')}.extensions.allizom.org/`;
 const TOKEN = /^[a-f0-9]{64}$/;
 class DeviceLogin {
   constructor() { this.requests = new Map(); }
@@ -34,4 +35,4 @@ class DeviceLogin {
   }
   sweep() { for (const [id, request] of this.requests) if (request.expires <= Date.now()) this.requests.delete(id); }
 }
-module.exports = { DeviceLogin, FIREFOX_REDIRECT };
+module.exports = { DeviceLogin, FIREFOX_EXTENSION_ID, FIREFOX_REDIRECT };

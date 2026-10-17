@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { badgeDetails } = require('../extension/remote-ui');
-const { DEFAULT } = require('../extension/engine');
+const { badgeDetails } = require('../web/remote-ui');
+const { DEFAULT } = require('../shared/engine');
 
 test('badges describe applied state, resolved toggles and actual seek distances; queries stay silent', () => {
   const state = { picture: { ...DEFAULT, zoom: 1.235, stretchX: 1.11, x: -.025 }, volume: 63, paused: true };

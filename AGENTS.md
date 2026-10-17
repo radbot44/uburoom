@@ -1,6 +1,6 @@
 # Working on uburoom
 
-uburoom is a self-hosted Plex watch-together app with a browser interface, Discord Activity, bot integration and linked accounts. The YouTube TV remote has an independent clean snapshot in uburoom-remote; its original source remains here until the M1-P8 cutover and remaining compatibility checks. Native-player integration is later work.
+uburoom is a self-hosted Plex watch-together app with a browser interface, Discord Activity, bot integration and linked accounts. The YouTube TV remote lives in the independent uburoom-remote repository; no extension source or build tools remain here. Native-player integration is later work.
 
 Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next increment. It consolidates priorities and links to detailed plans; keep its affected milestone current after material work. Record verification evidence and unfinished checks in [docs/testing.md](docs/testing.md). The owner's current task takes priority, and roadmap entries do not authorize unrelated implementation or deployment.
 
@@ -12,9 +12,9 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 | --- | --- |
 | **Room state & lifecycle** | [server/watch.js](server/watch.js), [server/core.js](server/core.js) |
 | **HTTP/WebSocket routing & auth** | [server/app.js](server/app.js), [server/login.js](server/login.js), [server/watch-http.js](server/watch-http.js) |
-| **Shared command engine** | [extension/engine.js](extension/engine.js) |
+| **Shared command engine** | [shared/engine.js](shared/engine.js), [shared/room-protocol.js](shared/room-protocol.js), [shared/viewport.js](shared/viewport.js) |
 | **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js) |
-| **Remote UI, SVGs & styles** | [extension/remote-ui.js](extension/remote-ui.js), [extension/popup.html](extension/popup.html) |
+| **Web remote UI, SVGs & styles** | [web/remote-ui.js](web/remote-ui.js), [web/watch.css](web/watch.css) |
 | **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
 | **Plex integration** | [server/plex.js](server/plex.js), [server/plex-auth.js](server/plex-auth.js), [server/media-tracks.js](server/media-tracks.js) |
 | **Discord bot & Activity** | [server/discord.js](server/discord.js), [web/vendor/discord-sdk.js](web/vendor/discord-sdk.js) |
@@ -46,7 +46,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 - **Terminology rule:** Use **"room"** for watch parties, UI elements, lobby dialogs, and Discord commands. Reserve **"session"** strictly for low-level technical contexts (HTTP cookie sessions, WebSocket connections, Plex transcode sessions).
 - Watch rooms are **in-memory** (`Map` in `server/core.js` and `server/watch.js`). They are intentionally ephemeral for M1. Playback queues and restart-persistent rooms are planned for later scoped work; do not add them as incidental refactors or persist remote consent.
 - Rooms have an owner, viewers, media, playback state (position, paused, muted, volume, seekable), visibility (public/private), mode, controls, epochs, and optional scheduled starts.
-- **Every control surface** — web watch page, extension remote, Discord bot, Discord Activity — sends commands through the shared validated handler in `core.js` via the shared `Engine` (`extension/engine.js`). Never bypass it with direct state mutation or a parallel control path.
+- **Every control surface** — web watch page, extension remote, Discord bot, Discord Activity — sends commands through the shared validated handler in `core.js` via the shared `Engine` (`shared/engine.js`). Never bypass it with direct state mutation or a parallel control path.
 - The **server owns the shared timeline**. Viewers own quality, audio, subtitles, and volume. Server acknowledgement is not proof of client playback.
 
 ---
@@ -89,9 +89,9 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - **Firefox MV3.** The extension is Manifest V3 (Gecko ID `uburoom@uburoom.com`, min Firefox 115.0). Keep permissions narrow — only explicitly configured HTTPS origins, never `<all_urls>`.
 - The current extension is Firefox-only. Chromium extension support is deferred to M2-P10; it is not part of M1-P8 extraction. This does not establish a Firefox-first policy for the web app.
-- **Configured builds** accept explicit HTTPS origins with matching `permissions` and CSP entries. Configure with `scripts/configure-remote.js --server=https://origin`. No unrestricted host access.
+- **Configured builds** are generated and packaged in uburoom-remote, with explicit HTTPS origins and matching permissions/CSP. No unrestricted host access. This repository owns the server integration and optional cross-repository fixtures only.
 - Communication flow: `content.js` ↔ `background.js` (via `browser.runtime` messaging) ↔ server (via WebSocket with device ID + credential auth). The popup (`popup.js`) also talks to `background.js`.
-- `engine.js` is the shared command engine — same file used by extension, web client, and server. Changes currently affect all three surfaces; after M1-P8, keep the common protocol/validation contract stable through separately versioned builds instead of importing source across repositories.
+- `shared/engine.js` is this repository's command engine. uburoom-remote owns its own versioned copy. Keep the common protocol/validation contract stable through matching fixtures and separately versioned builds; never import another checkout's source at runtime.
 - `room-protocol.js` owns room/playback validation and `viewport.js` owns transform/profile validation and picture calculations. The engine dispatches between them. Keep both protocol revisions and matching fixtures coordinated; see [remote integration contract](docs/remote-protocol.md).
 - The known full extension smoke timing issue is deferred; do not weaken permissions or throttling to hide it.
 
@@ -109,7 +109,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ## UI & Design
 
-- Read [docs/design-guide.md](docs/design-guide.md) and the currently shared styles/SVGs in `extension/remote-ui.js` before any UI work. After M1-P8, shared UI assets must have clear per-repository ownership without cross-repository filesystem imports. **Inspect affected rendered surfaces** before and after changes.
+- Read [docs/design-guide.md](docs/design-guide.md) and the web-owned styles/SVGs in `web/remote-ui.js` before any UI work. UI assets have per-repository ownership without cross-repository filesystem imports. **Inspect affected rendered surfaces** before and after changes.
 - **Color tokens:** background `#101217`, card `#1B1E26`, elevated `#292E38`, border `#393F4D`, text `#F8F7F4`, muted `#AAB0BC`, orange `#FF9954` (main accent), pink `#FF7197` (brand accent), green `#158761` (remote enabled).
 - **Icons:** 24×24 SVGs, `currentColor` strokes, rounded ends/joins, ~1.9px stroke width. ~40 icon paths defined inline in `remote-ui.js`. No emoji or icon library substitution. Do not invent replacement graphics.
 - **Title indicators are independent:**
@@ -141,7 +141,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - Run `npm test` (invokes `node --test tests/*.test.js`). All tests must pass without unexpected skips.
 - Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both; there is no Firefox-first policy. Until M2-P10, extension installation/lifecycle checks apply to the supported Firefox build.
-- **No unexpected skips.** 13 tests skip without test certificates (expected). If a test is otherwise skipped, document why in [docs/testing.md](docs/testing.md).
+- **No unexpected skips.** Generate development certificates before the suite. Without them, 18 TLS checks skip and three further TLS checks fail; that incomplete run is not a passing baseline. If a test is otherwise skipped, document why in [docs/testing.md](docs/testing.md).
 - Smoke and integration scripts live in `scripts/` and require a running server with fixture data (`scripts/account-fixture.js`). They are not part of the `npm test` suite. The playback baseline exercises actual watch playback in headless Firefox/Chrome/Edge, checking decoded pixels, PCM tones, startup, stalls, drift, pause/seek/resume across multiple codecs and frame rates.
 - Record verification evidence and unfinished checks in [docs/testing.md](docs/testing.md).
 
@@ -151,7 +151,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - **Develop and install on local disk.** Use isolated fixture accounts/media; never run a second process against production bot credentials or data.
 - **Setup:** `npm ci`, generate dev cert, `npm test`, then `node scripts/watch-demo.js --accounts` for a synthetic demo (no real Plex/Discord needed).
-- **Extension dev:** Load `extension/` as a temporary add-on in Firefox via `about:debugging`. Configure the server URL in the extension popup.
+- **Extension dev:** Use uburoom-remote's source, build/configuration scripts and independent tests. Integration fixtures here require an explicit external build path; no sibling checkout layout is assumed.
 - **Vendor builds:** `npm run build:player` bundles Discord SDK, HLS.js, and subtitle renderers via esbuild into `web/vendor/`.
 - **Database:** `data/accounts.sqlite` is created automatically on first run. The credential key file must exist and be outside the project folder.
 - See [docs/development.md](docs/development.md) for the full dev guide. M1-P7 will isolate the browser codec-test page from normal viewing, and M1-P11 uses transport-neutral room operations directly from WebSockets while preserving necessary HTTP resources.
@@ -163,5 +163,5 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 - Keep commits **small and focused**. Documentation should be generic and public-facing.
 - Keep personal deployment notes, scripts, and configs in the **ignored `/personal/` folder**. Never stage, commit, package, or publish them. Keep personal paths, screenshots, migration diaries, and reference projects out of publication history.
 - **No production changes without explicit approval:** no restart, config, DNS, Cloudflare, or Discord-registration changes; no signing, publication, or public push.
-- Deliver distributable bundles as **timestamped ZIPs** via `scripts/package.ps1`. Current outputs: extension ZIP (explicit file whitelist + LICENSE), source ZIP (from `git ls-files`, filtered), optional MV2 persistent fallback ZIP. Update packaging ownership after the planned separate remote repository is verified. Audit source, full publication history, assets, notices, and ZIP contents before release.
+- Deliver the application source as a **timestamped ZIP** via `scripts/package.ps1` (filtered `git ls-files`, including `shared/` and LICENSE). Extension/source/MV2 fallback archives belong to uburoom-remote's packaging script. Audit source, full publication history, assets, notices, and ZIP contents before release.
 - **License:** First-party source is `GPL-3.0-only`. Preserve third-party licenses/notices (see [docs/third-party.md](docs/third-party.md) and `web/vendor/THIRD_PARTY_NOTICES.txt`). Include `LICENSE` in all distributions. Artwork/media provenance remains a release gate.

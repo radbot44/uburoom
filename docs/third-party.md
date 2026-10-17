@@ -34,7 +34,7 @@ The published abslink 1.3.1, lfa-ponyfill 1.1.1 and throughput 1.0.2 packages an
 
 ## Project branding
 
-The supplied Slate vector assets are `assets/branding/uburoom-wordmark-brand.svg`, `uburoom-wordmark-white.svg`, `uburoom-oomark-brand.svg`, and `uburoom-oomark-white.svg`. Runtime raster icons and the favicon derive from the brand oomark. Earlier blue/green branding sources and exports are archived in `assets/branding/old/`; the diagnostic demo media still use that wordmark. UI typography remains system-based; the subtitle renderer's bundled fallback font is separately reviewed above. No external image or icon libraries are used.
+The supplied Slate vector assets are `assets/branding/uburoom-wordmark-brand.svg`, `uburoom-wordmark-white.svg`, `uburoom-oomark-brand.svg`, and `uburoom-oomark-white.svg`. Web runtime branding and favicon are owned under `web/assets/`; the favicon derives from the brand oomark. The independent remote repository owns its extension icons and branding copies. Earlier blue/green branding sources and exports are archived in `assets/branding/old/`; the diagnostic demo media still use that wordmark. UI typography remains system-based; the subtitle renderer's bundled fallback font is separately reviewed above. No external image or icon libraries are used.
 
 ## Remaining asset review
 

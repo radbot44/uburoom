@@ -5,7 +5,7 @@ const { EventEmitter } = require('node:events');
 const { Events, Status } = require('discord.js');
 const { startBot, connectBot, slashInput, helpText, watchVoice } = require('../server/discord');
 const { discordAccess } = require('../server/sharing');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 
 function fakeClient(login) {
   const client = new EventEmitter();

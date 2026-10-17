@@ -1,6 +1,6 @@
 # uburoom design guide
 
-Keep the established layout and behavior. The remote-only homepage is slated for retirement in M1-P8; the watch remote drawer remains part of the product. The shared remote source is `extension/remote-ui.js` (styles, SVGs, controls/badges); shells live in `extension/popup.css`, `web/style.css` and `web/watch*.css`. Inspect affected renders before UI changes and use shared safe-DOM components.
+Keep the established layout and behavior. The main site enters `/watch`; the standalone remote-only homepage is retired. The web-owned remote renderer is `web/remote-ui.js` (styles, SVGs, controls/badges), with the watch shell in `web/watch*.css`. uburoom-remote owns its own renderer and popup; do not import another checkout's UI files. Inspect affected renders before UI changes and use safe-DOM components.
 
 ## Visual language
 
@@ -10,7 +10,7 @@ Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and appr
 
 ## Approved branding
 
-The primary wordmark is `assets/branding/uburoom-wordmark-brand.svg` (944.16 × 293.5061): orange `ubu`, off-white `room`, pink underline. Runtime headers use this asset or its extension copy at its natural aspect ratio. `uburoom-wordmark-white.svg` is available for monochrome dark contexts.
+The primary wordmark is `assets/branding/uburoom-wordmark-brand.svg` (944.16 × 293.5061): orange `ubu`, off-white `room`, pink underline. Runtime headers use its web-owned copy under `web/assets/` at its natural aspect ratio. `uburoom-wordmark-white.svg` is available for monochrome dark contexts.
 
 The primary standalone oomark is `assets/branding/uburoom-oomark-brand.svg` (298.99 × 249.1061): off-white eyes and a pink mouth. `uburoom-oomark-white.svg` is its monochrome variant. The extension uses a square framed copy and PNG exports at 16, 32, 48, 64, 96, 128, 256 and 512 pixels; the favicon ICO includes 16/32/48 sizes.
 

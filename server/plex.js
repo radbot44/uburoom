@@ -1,6 +1,6 @@
 'use strict';
 const { randomUUID, createHash } = require('node:crypto');
-const { QUALITIES, qualityId } = require('../extension/engine');
+const { QUALITIES, qualityId } = require('../shared/engine');
 const { AV1, PlaybackError } = require('./av1');
 const Tracks = require('./media-tracks');
 const {HLSPool}=require('./hls-pool');

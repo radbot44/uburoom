@@ -32,7 +32,7 @@ Configure your Plex server token privately. Linked viewers use their verified ac
 
 ## Optional Firefox remote
 
-The remote extension remains bundled at this pre-release revision; M1-P8 will move its build and installation documentation to the independent remote repository. Currently, source permits localhost only. Prepare an isolated build for your server:
+The optional extension is maintained and packaged in the independent uburoom-remote repository. From that checkout, prepare an isolated build for your server (the unconfigured source permits localhost only):
 
 ```powershell
 node scripts/configure-remote.js --server=https://watch.example --out=releases/remote

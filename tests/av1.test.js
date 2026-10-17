@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { AV1, PlaybackError, outputSpec } = require('../server/av1');
 const { Plex } = require('../server/plex');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 
 test('AV1 derives a bounded source frame clock for CFR film and high frame rate video', () => {
   const spec = rate => outputSpec({streams:[{codec_type:'video',width:640,height:360,r_frame_rate:rate}]},'direct');

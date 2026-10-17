@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 const { Hub, resolve, hash, PRESENCE_MS } = require('../server/core');
 const { DeviceLogin } = require('../server/login');
 const config = { ownerId: 'owner', guildId: 'guild', channels: ['commands'] };

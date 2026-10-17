@@ -8,7 +8,8 @@ const { randomUUID, webcrypto } = require('node:crypto');
 const { WebSocket } = require('ws');
 const { createApp } = require('../server/app');
 const { hash } = require('../server/core');
-const Engine = require('../extension/engine');
+const { FIREFOX_EXTENSION_ID } = require('../server/login');
+const Engine = require('../shared/engine');
 const fixture = require('../tests/fixtures/remote-protocol-v1.json');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label) {
@@ -25,7 +26,7 @@ async function main() {
   const extension = path.resolve(extensionArg);
   assert.deepEqual(JSON.parse(fs.readFileSync(fixtureFile, 'utf8')), fixture, 'Both repositories must carry matching contract fixtures');
   const manifest = JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'), 'utf8'));
-  assert.equal(manifest.browser_specific_settings.gecko.id, 'uburoom@uburoom.com');
+  assert.equal(manifest.browser_specific_settings.gecko.id, FIREFOX_EXTENSION_ID);
   const root = path.resolve(__dirname, '..');
   const cert = fs.readFileSync(path.join(root, 'certs/server-cert.pem'));
   const config = { cert, key: fs.readFileSync(path.join(root, 'certs/server-key.pem')), publicUrl: 'https://localhost', ownerId: 'fixture-owner', guildId: 'fixture-guild', channels: ['fixture-channel'] };

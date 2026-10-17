@@ -7,7 +7,7 @@ const https = require('node:https');
 const { randomUUID } = require('node:crypto');
 const { createApp } = require('../server/app');
 const { hash } = require('../server/core');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
 test('web login, visibility, explicit UUID routing and writes enforce current permission and CSRF', { skip: !fs.existsSync(certFile) }, async t => {

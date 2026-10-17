@@ -1,10 +1,10 @@
 # Remote integration contract
 
-The remote extension and uburoom use independently versioned builds. A clean local snapshot now lives in the independent uburoom-remote repository with its own builds, assets and tests. This repository temporarily retains the original extension until the later cutover and remaining compatibility checks are complete.
+The remote extension and uburoom use independently versioned builds. uburoom-remote owns the extension, builds, assets and tests. uburoom owns its server integration, shared command modules, web renderer and branding; its original extension directory and standalone remote homepage are removed. Neither checkout depends on the other's layout.
 
 ## Ownership
 
-| Source or behavior | Owner after extraction |
+| Source or behavior | Owner |
 | --- | --- |
 | Room/playback command schema and server authorization | uburoom; the remote carries an explicitly versioned contract copy |
 | Viewport/transform validation and calculations | Versioned copies in both repositories |
@@ -13,9 +13,9 @@ The remote extension and uburoom use independently versioned builds. A clean loc
 | Styles, icons and branding | Each repository owns its local copy and preserves applicable provenance/notices |
 | Protocol fixtures and contract tests | Matching versioned copies, runnable without the other checkout |
 
-`extension/room-protocol.js` owns room/playback command validation. `extension/viewport.js` owns transform/profile validation and picture calculations without room timeline dependencies. `extension/engine.js` dispatches between them and retains text command parsing, player snapshot validation and seek calculations. Existing web, Discord and extension callers still enter the validated engine. Command validation does not authorize an actor; uburoom continues to enforce access, consent, epochs and deadlines.
+uburoom's `shared/room-protocol.js` owns room/playback command validation. `shared/viewport.js` owns transform/profile validation and picture calculations without room timeline dependencies. `shared/engine.js` dispatches between them and retains text command parsing, player snapshot validation and seek calculations. uburoom-remote owns the corresponding modules under its local `extension/`. Existing web, Discord and extension callers still enter the validated engine. Command validation does not authorize an actor; uburoom continues to enforce access, consent, epochs and deadlines.
 
-Copies must identify their contract revision and pass the same `tests/fixtures/remote-protocol-v1.json` cases using `tests/remote-protocol.test.js`. A shared wire/validation change requires coordinated fixture review and compatible releases. Neither checkout may import files from its sibling. UI copies may evolve independently; they are not part of the wire contract.
+Copies must identify their contract revision and pass the same `tests/fixtures/remote-protocol-v1.json` cases using matching `tests/remote-protocol.test.js` copies. The test selects this package's local source directory; it never imports a sibling checkout. A shared wire/validation change requires coordinated fixture review and compatible releases. UI copies may evolve independently; they are not part of the wire contract. Firefox's fixed add-on identity is part of the sign-in contract; the server records it independently rather than reading the extension manifest, and the integration runner checks that the external manifest matches.
 
 ## Version negotiation
 

@@ -7,8 +7,8 @@ const { WebSocketServer } = require('ws');
 const { Hub, hash, UUID } = require('./core');
 const { DeviceLogin, FIREFOX_REDIRECT } = require('./login');
 const { deviceStore, loginStore } = require('./storage');
-const RemoteUI = require('../extension/remote-ui');
-const Engine = require('../extension/engine');
+const RemoteUI = require('../web/remote-ui');
+const Engine = require('../shared/engine');
 const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
@@ -190,13 +190,13 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         activityContext ||= req.headers.origin === activityOrigin || req.headers.host === new URL(activityOrigin).host;
       }
       const embeddedTest = route === '/watch/test' && url.searchParams.get('embedded') === '1' && req.headers['sec-fetch-dest'] === 'iframe';
-      if (req.method === 'GET' && activityContext && !embeddedTest && ['/', '/activity', '/watch/test', '/auth/discord', '/auth/callback'].includes(route)) {
+      if (req.method === 'GET' && !embeddedTest && (route === '/' || activityContext && ['/activity', '/watch/test', '/auth/discord', '/auth/callback'].includes(route))) {
         res.writeHead(302, {Location:'/watch' + activityQuery}); return res.end();
       }
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
-      const player = route === '/watch' || route === '/watch/test' || route === '/activity' || route === '/' && url.searchParams.has('frame_id');
+      const player = route === '/watch' || route === '/watch/test' || route === '/activity';
       if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
@@ -243,9 +243,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && branding[route]) {
         const [file, type] = branding[route];
         res.writeHead(200, { 'Content-Type': type });
-        return res.end(fs.readFileSync(path.join(__dirname, '../extension/assets', file)));
+        return res.end(fs.readFileSync(path.join(publicDir, 'assets', file)));
       }
-      const assets = { '/': [player ? 'watch.html' : 'index.html', 'text/html'], '/setup.js': ['setup.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'],
+      const assets = { '/remote-ui.js': ['remote-ui.js', 'text/javascript'],
         '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'], '/watch/test': ['watch-test.html', 'text/html'],
         '/watch-test.js': ['watch-test.js', 'text/javascript'], '/watch-test.css': ['watch-test.css', 'text/css'],
         '/playback-policy.js':['playback-policy.js','text/javascript'],
@@ -256,13 +256,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && ['/room-protocol.js', '/viewport.js', '/engine.js'].includes(route)) {
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../extension', route.slice(1))));
+        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../shared', route.slice(1))));
       }
       if (req.method === 'GET' && route === '/vendor/hls.js') {
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js')));
-      }
-      if (req.method === 'GET' && route === '/remote-ui.js') {
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); return res.end(fs.readFileSync(path.join(__dirname, '../extension/remote-ui.js')));
       }
       if (req.method === 'GET' && assets[route]) {
         const [file, type] = assets[route];

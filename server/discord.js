@@ -1,6 +1,6 @@
 'use strict';
 const { Client, GatewayIntentBits, Events, MessageFlags, ApplicationCommandOptionType } = require('discord.js');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 const { discordAccess } = require('./sharing');
 
 const slashCommand = { name: 'ubu', description: 'Control an enabled uburoom player', options: [

@@ -273,7 +273,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       json(res, 404, { error: 'Room controls require an authenticated WebSocket' }); return true;
     } catch (error) { json(res, 400, { error: error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); return true; }
   }
-  const EngineName = value => require('../extension/engine').senderName(value);
+  const EngineName = value => require('../shared/engine').senderName(value);
   function sweep() {
     handoff.sweep();
     for (const [token, value] of identities) if (value.expires <= Date.now()) identities.delete(token);

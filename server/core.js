@@ -6,7 +6,7 @@
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
 const { randomUUID, createHash } = require('node:crypto');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const ALIAS = /^[a-z0-9][a-z0-9.-]{0,47}$/;

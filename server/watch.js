@@ -7,7 +7,7 @@
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
 const { randomUUID } = require('node:crypto');
-const Engine = require('../extension/engine');
+const Engine = require('../shared/engine');
 const { eligible, viewEligible, isHost, sameVoice, canWatch } = require('./core');
 const { PlaybackError } = require('./av1');
 const { PlaybackTracking } = require('./playback-tracking');
