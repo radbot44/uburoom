@@ -68,7 +68,7 @@ function roomFixture() {
   const watch=new Watch(hub,{stop:async()=>{}},{kind:'demo',format:'file',duration:120});
   const actor=userId=>({userId,name:userId,surface:'web',guildId:'fixture',channelId:'channel'}),host=actor('host'),guest=actor('guest');
   const room=watch.rooms.get(watch.create(host)),h=randomUUID(),g=randomUUID();watch.snapshot(room,host,h);watch.snapshot(room,guest,g);
-  const dispatch=async(action,args)=>{const result=await hub.dispatch(host,{sessionId:room.s.sessionId,action,args:action==='media.load'?{quality:'direct',...args}:args});assert.equal(result.status,'applied',action);return result;};
+  const dispatch=async(action,args)=>{const result=await hub.dispatch(host,{roomId:room.s.roomId,action,args:action==='media.load'?{quality:'direct',...args}:args});assert.equal(result.status,'applied',action);return result;};
   return {hub,watch,room,host,guest,h,g,dispatch};
 }
 test('readiness schedules one initial start without advancing early; ordinary commands supersede it',async()=>{

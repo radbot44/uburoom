@@ -16,7 +16,7 @@ Retain durable per-viewer playback history for future Plex timeline, resume and 
 
 ## Commands and remote interoperability
 
-Keyboard, extension, web and Discord controls use one validated engine. The first release uses canonical `room.*` commands without pre-release `session.*` aliases; HTTP room-control compatibility routes will be retired in favor of transport-neutral operations over authenticated WebSockets. Remote consent starts off and clears on disconnect/restart. Commands have short TTLs, truthful acknowledgements and no replay; ambiguous or unavailable targets are rejected.
+Keyboard, extension, web and Discord controls use one validated engine. The first release uses canonical `room.*` commands without pre-release `session.*` aliases. Room operations use transport-neutral services over authenticated WebSockets; retired HTTP room-control routes return 404. Remote consent starts off and clears on disconnect/restart. Commands have short TTLs, truthful acknowledgements and no replay; ambiguous or unavailable targets are rejected.
 
 The Firefox YouTube TV extension is included in the current tree but will move to a separate repository before the first public release. Firefox YouTube TV picture controls work locally without a server. Remote connectivity uses configured HTTPS origins and narrow permissions. Seek/channel behavior depends on the actual site; no public YouTube TV control API is assumed. Safe DOM, existing shortcuts/OSD and independent title indicators are required.
 

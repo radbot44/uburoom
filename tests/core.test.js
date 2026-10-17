@@ -11,21 +11,21 @@ test('unnamed players use Discord names, visible numbering and unambiguous targe
   const { hub, register } = setup(); hub.ownerName = 'alice';
   const first = register('');
   assert.deepEqual((await hub.list(actor)).map(s => s.alias), ['alice']);
-  assert.equal(resolve(hub.rooms.values(), actor, config).room.sessionId, first.sessionId);
+  assert.equal(resolve(hub.rooms.values(), actor, config).room.roomId, first.roomId);
   const second = register(''), privatePlayer = register('', false);
-  hub.rooms.get(first.sessionId).mode = hub.rooms.get(second.sessionId).mode = 'guild';
+  hub.rooms.get(first.roomId).mode = hub.rooms.get(second.roomId).mode = 'guild';
   hub.access = { refresh: async () => true, isMember: () => true, voiceChannel:()=> 'call', validVoiceChannel:()=>true };
   const friend = { ...actor, userId: 'friend' };
   assert.deepEqual((await hub.list(friend)).map(s => s.alias), ['alice #1', 'alice #2']);
   assert.equal(resolve(hub.rooms.values(), friend, config, 'alice', Date.now(), hub.access).status, 'ambiguous');
   for (const target of ['alice#2', 'alice #2']) {
     const input = Engine.parse('!ubu.' + target + ' pause');
-    assert.equal(resolve(hub.rooms.values(), friend, config, input.target, Date.now(), hub.access).room.sessionId, second.sessionId);
+    assert.equal(resolve(hub.rooms.values(), friend, config, input.target, Date.now(), hub.access).room.roomId, second.roomId);
   }
-  hub.rooms.get(second.sessionId).enabled = false;
+  hub.rooms.get(second.roomId).enabled = false;
   assert.deepEqual((await hub.list(friend)).map(s => s.alias), ['alice'], 'private and disabled players do not leak through numbers');
-  assert.equal(resolve(hub.rooms.values(), friend, config, 'alice', Date.now(), hub.access).room.sessionId, first.sessionId);
-  assert.equal(hub.rooms.get(privatePlayer.sessionId).alias, '');
+  assert.equal(resolve(hub.rooms.values(), friend, config, 'alice', Date.now(), hub.access).room.roomId, first.roomId);
+  assert.equal(hub.rooms.get(privatePlayer.roomId).alias, '');
   hub.close();
 });
 function setup() {
@@ -35,7 +35,7 @@ function setup() {
   const ws = { readyState: 1, send: raw => sent.push(JSON.parse(raw)), close() { this.readyState = 3; }, terminate() { this.readyState = 3; } };
   assert.equal(hub.authenticate(ws, deviceId, secret), true);
   const register = (alias = 'player', enabled = true) => {
-    const message = { sessionId: randomUUID(), epoch: randomUUID(), alias, enabled, reachable: true, mode: 'owner' };
+    const message = { roomId: randomUUID(), epoch: randomUUID(), alias, enabled, reachable: true, mode: 'owner' };
     hub.update(ws, message); return message;
   };
   return { hub, ws, register, sent };
@@ -67,7 +67,7 @@ test('individual size resets preserve the other sizes and position', () => {
 test('guest control categories are independent, owner controls remain available and revocations cancel in-flight commands', async () => {
   const { hub, ws, register, sent } = setup(); const registration = register();
   hub.access = { refresh: async () => true, isMember: () => true, voiceChannel:()=> 'call', validVoiceChannel:()=>true, options: () => ({ available:true }) };
-  const session = hub.rooms.get(registration.sessionId); session.mode = 'guild';
+  const session = hub.rooms.get(registration.roomId); session.mode = 'guild';
   session.controls = { playback:false, transform:true };
   const friend = { ...actor,userId:'friend' };
   for (const action of ['media.pause','media.play','media.toggle','media.mute','media.unmute','media.seek.start','media.seek.end']) {
@@ -94,12 +94,12 @@ test('guest control categories are independent, owner controls remain available 
   const list = await hub.list(friend); assert.equal(list[0].canPlayback,false);assert.equal(list[0].canTransform,false);
   assert.equal(session.enabled,true,'switching off guest controls does not switch off the connection');
   for (const action of ['room.controls','room.autojoin']) {
-    const input = {action,sessionId:session.sessionId,args:{control:'playback',allowed:true,enabled:true}};
+    const input = {action,roomId:session.roomId,args:{control:'playback',allowed:true,enabled:true}};
     assert.equal((await hub.dispatch({...friend,surface:'web'},input)).status,'forbidden');
     assert.equal((await hub.dispatch(actor,input)).status,'forbidden','Discord cannot manage these owner settings');
   }
   const { hub: otherHub,ws:otherWs,register:otherRegister,sent:otherSent } = setup();
-  const s = otherRegister();otherHub.rooms.get(s.sessionId).mode='guild';otherHub.access=hub.access;
+  const s = otherRegister();otherHub.rooms.get(s.roomId).mode='guild';otherHub.access=hub.access;
   const inFlight=otherHub.dispatch(friend,{action:'media.pause'});await new Promise(resolve=>setImmediate(resolve));
   otherHub.update(otherWs,{...s,mode:'guild',controls:{playback:false,transform:true}});
   assert.equal((await inFlight).status,'unavailable','category changes cancel even without an epoch change');
@@ -137,7 +137,7 @@ test('routing checks actor, guild, channel, permission mode, opt-in and current 
   for (const denied of [{ ...actor, userId: 'friend' }, { ...actor, channelId: 'other' }, { ...actor, guildId: 'other' }]) {
     assert.equal(resolve(hub.rooms.values(), denied, config).status, 'forbidden');
   }
-  const session = hub.rooms.get(s.sessionId);
+  const session = hub.rooms.get(s.roomId);
   for (const changes of [{ enabled: false }, { reachable: false }, { mode: 'anyone' }, { lastSeen: Date.now() - PRESENCE_MS - 1 }]) {
     const copy = { ...session, ...changes }; assert.equal(resolve([copy], actor, config, 'player').status, 'forbidden');
   }
@@ -181,7 +181,7 @@ test('disconnect removes consent and pending commands, and reconnect does not re
   const count = sent.length, freshSent=[];
   const fresh={readyState:1,send:raw=>freshSent.push(JSON.parse(raw)),close(){this.readyState=3;},terminate(){this.readyState=3;}};
   assert.equal(hub.authenticate(fresh,ws.device.id,'a'.repeat(64)),true);
-  hub.update(fresh,{sessionId:randomUUID(),epoch:randomUUID(),alias:'player',enabled:false,reachable:true,mode:'owner'});
+  hub.update(fresh,{roomId:randomUUID(),epoch:randomUUID(),alias:'player',enabled:false,reachable:true,mode:'owner'});
   assert.equal((await hub.dispatch(actor, Engine.parse('!ubu pause'))).status, 'forbidden');
   assert.equal(sent.length,count);assert.equal(freshSent.length,1,'only the new socket receives the disabled registration acknowledgement'); hub.close();
 });
@@ -192,9 +192,9 @@ test('a replaced device socket cannot register a new remotely enabled session', 
   assert.equal(hub.authenticate(replacement,ws.device.id,'a'.repeat(64)),true);
   assert.equal(hub.rooms.size,0,'replacing the socket drops its old sessions');
   ws.readyState=1; // A queued old message may reach the hub before close completes.
-  assert.throws(()=>hub.update(ws,{...previous,sessionId:randomUUID(),enabled:true}),/Device disconnected/);
+  assert.throws(()=>hub.update(ws,{...previous,roomId:randomUUID(),enabled:true}),/Device disconnected/);
   assert.equal(hub.rooms.size,0,'a stale socket cannot restore remote consent');
-  hub.update(replacement,{...previous,sessionId:randomUUID(),enabled:false});
+  hub.update(replacement,{...previous,roomId:randomUUID(),enabled:false});
   assert.equal(hub.rooms.size,1,'the current socket can register a fresh disabled session');
   hub.close();
 });
@@ -204,7 +204,7 @@ test('expired commands cannot acknowledge success or survive a changed permissio
   hub.pending.get(command.id).sentAt -= 4000;
   hub.ack(ws, { ...command, status: 'applied' }); assert.equal((await reply).status, 'unavailable');
   const next = hub.dispatch(actor, Engine.parse('!ubu mute')); const second = sent.at(-1);
-  hub.rooms.get(second.sessionId).mode = 'voice';
+  hub.rooms.get(second.roomId).mode = 'voice';
   hub.ack(ws, { ...second, status: 'applied' }); assert.equal((await next).status, 'unavailable'); hub.close();
 });
 test('device login binds the verifier and private completion code, expires and cannot replay', () => {
@@ -237,7 +237,7 @@ test('sharing gates friends by current guild/voice membership and keeps owner ac
   voices.set('friend', voice);
   // Legacy clients cannot pick a channel: their field is ignored by the server.
   hub.update(ws, { ...s, mode: 'voice', voiceChannelId: otherVoice });
-  assert.equal(hub.rooms.get(s.sessionId).voiceChannelId, undefined);
+  assert.equal(hub.rooms.get(s.roomId).voiceChannelId, undefined);
   const applied = hub.dispatch(friend, input); await new Promise(resolve => setImmediate(resolve));
   const command = sent.at(-1); await hub.ack(ws, { ...command, status: 'applied' });
   assert.equal((await applied).status, 'applied');
@@ -311,26 +311,27 @@ test('media seeking stays inside available DVR ranges and snapshots contain only
 test('only the host web surface manages disabled sessions and commands still expire or cancel on restart', async () => {
   const { hub, ws, register, sent } = setup(), s = register('player', false);
   hub.access = { options: () => ({ available: true }), refresh: async () => true, isMember: () => true, voiceChannel:()=> 'call', validVoiceChannel:()=>true };
-  const host = { ...actor, surface: 'web' }, input = { sessionId: s.sessionId, action: 'room.enable' };
+  const host = { ...actor, surface: 'web' }, input = { roomId: s.roomId, action: 'room.enable' };
   for (const denied of [actor, { ...host, userId: 'friend' }, { ...host, channelId: 'other' }]) assert.equal((await hub.dispatch(denied, input)).status, 'forbidden');
   assert.equal((await hub.dispatch(host, { ...input, action: 'media.pause' })).status, 'forbidden');
   const expired = hub.dispatch(host, input), old = sent.at(-1); hub.pending.get(old.id).sentAt -= 4000;
   await hub.ack(ws, { ...old, status: 'applied' }); assert.equal((await expired).status, 'unavailable');
-  assert.equal(hub.rooms.get(s.sessionId).enabled, false);
+  assert.equal(hub.rooms.get(s.roomId).enabled, false);
   const enabled = hub.dispatch(host, input), on = sent.at(-1); await hub.ack(ws, { ...on, status: 'applied' });
-  assert.equal((await enabled).status, 'applied'); assert.equal(hub.rooms.get(s.sessionId).enabled, true);
+  assert.equal((await enabled).status, 'applied'); assert.equal(hub.rooms.get(s.roomId).enabled, true);
   const media = hub.dispatch(actor, { action: 'media.pause' });
   const policy = hub.dispatch(host, { ...input, action: 'room.sharing', args: { mode: 'guild' } }), change = sent.at(-1);
   await hub.ack(ws, { ...change, status: 'applied' }); assert.equal((await policy).status, 'applied');
   assert.equal((await media).status, 'unavailable', 'policy changes cancel earlier commands');
   const restart = hub.dispatch(host, input); hub.update(ws, { ...s, epoch: randomUUID() });
-  assert.equal((await restart).status, 'unavailable'); assert.equal(hub.rooms.get(s.sessionId).enabled, false);
+  assert.equal((await restart).status, 'unavailable'); assert.equal(hub.rooms.get(s.roomId).enabled, false);
   hub.close();
 });
 
-test('legacy room management aliases normalize before authorization', () => {
+test('legacy room management aliases are rejected', () => {
   for (const [name, args] of Object.entries({enable:{},disable:{},sharing:{mode:'owner'},visibility:{visibility:'private'},controls:{control:'playback',allowed:false},autojoin:{enabled:true}})) {
-    assert.deepEqual(Engine.validate({action:'session.'+name,args}), Engine.validate({action:'room.'+name,args}));
+    assert.throws(() => Engine.validate({action:'session.'+name,args}));
+    assert.equal(Engine.validate({action:'room.'+name,args}).action,'room.'+name);
   }
   assert.throws(() => Engine.validate({action:'session.controls',args:{control:'playback',allowed:'yes'}}));
   assert.throws(() => Engine.validate({action:'session.unknown'}));

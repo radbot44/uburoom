@@ -2,11 +2,17 @@
 const $ = id => document.getElementById(id);
 for (const [id, icon] of [['manage', 'settings'], ['logout', 'logout'], ['refresh', 'refresh'], ['close-devices', 'close'], ['admin-mode','admin']]) $(id).replaceChildren(uburoomUI.icon(document, icon));
 let me, selected, rooms = [], polling = false, commandPending = false, commandVersion = 0;
+const connection = new uburoomWatchTransport({
+  url: location.origin.replace('https:', 'wss:') + '/watch-socket',
+  identity: () => ({ csrf: me?.csrf }),
+  onClose: () => { remote.stop(); rooms = []; selected = undefined; renderSelection(); },
+  onReady: () => refreshPlayers()
+});
 const remote = uburoomUI.mount($('remote'), { headerSlot: 'players', volumeInterval: 600, execute: async command => {
   if (!selected || commandPending) throw new Error('Select an available player');
   const id = selected; commandPending = true; commandVersion++;
   try {
-    const result = await post('/api/command', { roomId: id, command });
+    const result = await connection.request('/api/command', { roomId: id, command });
     if (id !== selected) return { status: 'unavailable', message: 'Player selection changed.' };
     if (result.state) { const s = rooms.find(s => s.id === id); if (s) s.state = result.state; }
     if (result.status === 'applied' && command.action.startsWith('room.')) {
@@ -45,12 +51,8 @@ async function refreshPlayers() {
   polling = true;
   const version = commandVersion;
   try {
-    const response = await fetch('/api/rooms', { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) {
-      if (response.status === 401) { me.loggedIn = false; $('welcome').hidden = false; $('signed-in').hidden = true; }
-      throw new Error(response.status === 401 ? 'Sign-in expired. Log in again.' : 'Players unavailable.');
-    }
-    const next = (await response.json()).rooms;
+    if (!connection.ready) return;
+    const next = (await connection.request('/api/rooms')).rooms;
     if (commandPending || version !== commandVersion) return;
     rooms = next;
     if (!rooms.some(s => s.id === selected)) { if (selected) remote.stop(); selected = undefined; }
@@ -90,8 +92,8 @@ async function refreshAccount() {
     revoke.addEventListener('click', () => action(async () => { await post('/api/devices/revoke', { id: device.id }); await refreshAccount(); await refreshPlayers(); }));
     li.append(name, revoke); $('devices').append(li);
   }
-  if (me.loggedIn) await refreshPlayers();
-  else { rooms = []; selected = undefined; remote.stop(); remote.render(undefined, { available: false, room: null }); $('status').textContent = me.oauthReady ? '' : 'Configure Discord OAuth on the server.'; }
+  if (me.loggedIn) { await connection.connect(); await refreshPlayers(); }
+  else { connection.close(); rooms = []; selected = undefined; remote.stop(); remote.render(undefined, { available: false, room: null }); $('status').textContent = me.oauthReady ? '' : 'Configure Discord OAuth on the server.'; }
 }
 async function action(fn) { $('result').textContent = ''; try { await fn(); } catch (e) { $('result').textContent = e.message; } }
 $('manage').addEventListener('click', () => { $('devices-panel').hidden = !$('devices-panel').hidden; });

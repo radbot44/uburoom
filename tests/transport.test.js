@@ -42,20 +42,29 @@ test('real TLS transport authenticates devices, gates consent, acknowledges exec
     const response = once(ws, 'message'); ws.send(JSON.stringify(message)); return JSON.parse((await response)[0]);
   }
   assert.equal((await exchange({ type: 'auth', deviceId, credential })).type, 'auth-ok');
-  const session = { type: 'session', sessionId: randomUUID(), epoch: randomUUID(), alias: 'player', mode: 'owner', enabled: false, reachable: true };
-  assert.equal((await exchange(session)).live, false);
+  const room = { type: 'room', roomId: randomUUID(), epoch: randomUUID(), alias: 'player', mode: 'owner', enabled: false, reachable: true };
+  assert.equal((await exchange(room)).live, false);
   const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' }, command = { action: 'media.pause' };
   assert.equal((await app.hub.dispatch(actor, command)).status, 'forbidden');
-  session.enabled = true; assert.equal((await exchange(session)).live, true);
+  room.enabled = true; assert.equal((await exchange(room)).live, true);
   const received = once(ws, 'message'); const applied = app.hub.dispatch(actor, command);
   const wire = JSON.parse((await received)[0]);
   assert.ok(wire.expiresAt > Date.now());
-  ws.send(JSON.stringify({ type: 'ack', id: wire.id, sessionId: wire.sessionId, epoch: wire.epoch, status: 'applied' }));
+  ws.send(JSON.stringify({ type: 'ack', id: wire.id, roomId: wire.roomId, epoch: wire.epoch, status: 'applied' }));
   assert.equal((await applied).status, 'applied');
   const closing = once(ws, 'close'); ws.close(); await closing;
   // Server close event can follow the client's close event by one turn.
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await app.hub.dispatch(actor, command)).status, 'forbidden');
+  for (const message of [{ ...room, type: 'session' }, { ...room, roomId: undefined, sessionId: randomUUID() }]) {
+    const legacy = new WebSocket(`wss://localhost:${port}/ws`, { ca: cert });
+    await once(legacy, 'open');
+    const auth = once(legacy, 'message'); legacy.send(JSON.stringify({ type: 'auth', deviceId, credential }));
+    assert.equal(JSON.parse((await auth)[0]).type, 'auth-ok');
+    const rejected = once(legacy, 'close'); legacy.send(JSON.stringify(message));
+    assert.equal((await rejected)[0], 4002, 'pre-release registration is rejected');
+    assert.equal(app.hub.rooms.size, 0);
+  }
 });
 test('Discord sign-in pairs automatically only through the fixed Firefox return URL and matching proof', { skip: !fs.existsSync(certFile) }, async t => {
   const cert = fs.readFileSync(certFile), config = {

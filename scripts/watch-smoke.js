@@ -200,7 +200,8 @@ async function main() {
       await click(accountHost,'account-close');await command('browsingContext.navigate',{context:accountHost,url:config.publicUrl+'/auth/plex',wait:'complete'});await click(accountHost,'demo-bob');
       await until(accountHost,'typeof me!=="undefined" && me?.account?.identities.some(i=>i.provider==="plex"&&i.subject==="102")','Plex login resolves owner reservation');
       assert.notEqual(await evaluate(accountHost,'me.account.id'),accountId);assert.equal(await evaluate(accountHost,'me.owner'),false);
-      await click(accountHost,'account-close');await click(accountHost,'create');await until(accountHost,'!!state && !!selected','Plex viewer creates room');
+      await until(accountHost,'transport?.ready && document.getElementById("account-dialog").open','Plex return account dialog and room connection');
+      await click(accountHost,'account-close');await click(accountHost,await evaluate(accountHost,'document.getElementById("lobby-create").getBoundingClientRect().width>0?"lobby-create":"create"'));await until(accountHost,'!!state && !!selected','Plex viewer creates room');
       await until(accountHost,'document.getElementById("library-content").querySelector("[data-action=play]")','Plex viewer host library');
       await evaluate(accountHost,'document.getElementById("library-content").querySelector("[data-action=play]").click()');
       await until(accountHost,'video.readyState>=2 && !video.paused','actual fixture video for Plex login');

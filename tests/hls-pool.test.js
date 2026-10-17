@@ -150,7 +150,7 @@ test('AV1 preparation pools by room across accounts, preserves independent text 
   }finally{await f.plex.close();}
 });
 
-test('shared HTTP delivery retains viewer grants and own-scope access checks, and can replace an expired producer',async()=>{
+test('shared HTTP delivery retains viewer grants and own-scope access checks, and can replace an expired producer',async t=>{
   const f=fixture(),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
   const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',ownerId:'demo-host',guildId:'guild',channels:['commands'],demo:true,plexUrl:'http://pool-fixture.invalid',plexToken:'alpha'};
   const app=createApp(config,{plexFetch:f.fetch}),root=app.watch.plex;
@@ -158,7 +158,8 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
   app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
   app.hub.plexFor=async actor=>scopes.get(actor.userId);
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
-  const request=(route,token,data,extra={})=>new Promise((resolve,reject)=>{
+  const control=require('./helpers/control-client').controlClient(t,config,cert);
+  const request=(route,token,data,extra={})=>control.handles(route)?control.request(route,data,{...(token?{Authorization:'Bearer '+token}:{}),...extra}):new Promise((resolve,reject)=>{
     const req=https.request({hostname:'localhost',port,path:route,ca:cert,method:data===undefined?'GET':'POST',headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...extra}},res=>{
       const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>{const bytes=Buffer.concat(chunks);resolve({status:res.statusCode,body:res.headers['content-type']?.includes('json')?JSON.parse(bytes):bytes});});
     });req.on('error',reject);req.end(data===undefined?undefined:JSON.stringify(data));

@@ -143,7 +143,7 @@ async function main() {
     if (process.argv.includes('--startup-only')) {
       assert.equal(await evaluate(popup, 'document.title'), 'uburoom');
       assert.equal(await evaluate(popup, "[...document.querySelectorAll('[data-server]')].map(b=>b.dataset.server).join(',')"), 'https://localhost:6767');
-      assert.equal(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>!!s.session?.enabled)"), false);
+      assert.equal(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>!!s.room?.enabled)"), false);
       console.log('[Firefox] PASS: extension startup, configured server picker, local controls/CSP and remote off. Full extension fixture remains deferred.');
       return;
     }
@@ -176,20 +176,20 @@ async function main() {
     // The popup must be evaluated while the actual player tab is active.
     await command('browsingContext.activate', { context: player });
     let stateText = await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s))");
-    let state = JSON.parse(stateText); assert.ok(state.session?.reachable, 'background routes the real content port');
+    let state = JSON.parse(stateText); assert.ok(state.room?.reachable, 'background routes the real content port');
     const actor = { userId: config.ownerId, guildId: config.guildId, channelId: config.channels[0] };
     await evaluate(popup, 'refresh()');
     // The real toolbar controls use the existing validated engine with remote off.
     for (const field of ['zoom','stretchX','stretchY']) {
       await evaluate(popup, `(() => {const row=document.getElementById('local-remote').shadowRoot.querySelector('.size-control[data-field=${field}]');row.querySelector('.picture-value').click();const input=row.querySelector('input');input.value='127.5';input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true;})()`);
-      await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.session?.state.picture.${field}===1.275)`, 'toolbar exact ' + field);
+      await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room?.state.picture.${field}===1.275)`, 'toolbar exact ' + field);
     }
-    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',sessionId:${JSON.stringify(state.session.id)},command:{action:'pan.set',args:{x:.08,y:-.04}}})`);
+    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:'pan.set',args:{x:.08,y:-.04}}})`);
     for (const field of ['zoom','stretchX','stretchY']) {
-      const before=JSON.parse(await evaluate(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s.session.state.picture))"));
+      const before=JSON.parse(await evaluate(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s.room.state.picture))"));
       await evaluate(popup, `document.getElementById('local-remote').shadowRoot.querySelector('.size-control[data-field=${field}] .size-reset').click();true`);
-      await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.session.state.picture.${field}===1)`, 'individual toolbar reset ' + field);
-      const after=JSON.parse(await evaluate(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s.session.state.picture))"));
+      await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room.state.picture.${field}===1)`, 'individual toolbar reset ' + field);
+      const after=JSON.parse(await evaluate(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s.room.state.picture))"));
       assert.deepEqual(after,{...before,[field]:1},'toolbar reset affects only its own setting');
     }
     await evaluate(popup,'refresh()');
@@ -215,13 +215,13 @@ async function main() {
     assert.equal(await evaluate(popup, "document.getElementById('local-remote').shadowRoot.querySelector('.bars').getBoundingClientRect().width"), barsWidth, 'one and three digit values keep the same slider width');
     await evaluate(popup, "range.value='72';range.dispatchEvent(new Event('input'));range.dispatchEvent(new Event('pointerup'));range.dispatchEvent(new Event('change'));true");
     await until(player, "document.querySelector('video').volume===.72", 'final slider value must apply');
-    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',sessionId:${JSON.stringify(state.session.id)},command:{action:'media.mute'}})`);
+    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:'media.mute'}})`);
     await evaluate(player, "(()=>{const target=document.querySelector('video');target.volume=.1;target.muted=false;return true})()");
     await until(player, "document.querySelector('video').volume===.72 && document.querySelector('video').muted", 'site reset does not erase audio intent');
     await evaluate(player, "const old=document.querySelector('video'), replacement=document.createElement('video');replacement.width=640;replacement.height=360;replacement.srcObject=old.srcObject;old.replaceWith(replacement);replacement.play().catch(()=>{});true");
     await pause(500);
     assert.equal(await evaluate(player, "document.querySelector('video').volume===.72 && document.querySelector('video').muted"), true, 'replacement video inherits tab audio intent');
-    await evaluate(popup, `browser.runtime.sendMessage({type:'open-controls',sessionId:${JSON.stringify(state.session.id)}})`);
+    await evaluate(popup, `browser.runtime.sendMessage({type:'open-controls',roomId:${JSON.stringify(state.room.id)}})`);
     assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.getElementById('panel').hidden"), false);
     assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot.querySelectorAll('.media .key').length"), 6, 'in-player controls include new boundary buttons');
     assert.equal(await evaluate(player, "(() => {const s=document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot;return s.querySelector('.start').disabled && s.querySelector('.end').disabled && !s.querySelector('.start').textContent && !s.querySelector('.end').textContent;})()"), true, 'boundary buttons are icon-only and unavailable on an unseekable stream');
@@ -232,7 +232,7 @@ async function main() {
     assert.ok(seekFixture.ranges.length,'recording must expose actual seekable ranges');
     const Engine=require('../extension/engine');
     for (const [action,target] of [['media.seek.start',Engine.seekBoundary(seekFixture.ranges,'start')],['media.seek.end',Engine.seekBoundary(seekFixture.ranges,'end')]]) {
-      const r=JSON.parse(await evaluate(popup,`browser.runtime.sendMessage({type:'local-command',sessionId:${JSON.stringify(state.session.id)},command:{action:${JSON.stringify(action)}}}).then(r=>JSON.stringify(r))`));
+      const r=JSON.parse(await evaluate(popup,`browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:${JSON.stringify(action)}}}).then(r=>JSON.stringify(r))`));
       assert.equal(r.status,'applied',action);assert.ok(Math.abs(await evaluate(player,"document.querySelector('video').currentTime")-target)<.05,'seek reached boundary');
     }
     await evaluate(player,"(async () => {const v=document.querySelector('video');v.removeAttribute('src');v.srcObject=document.querySelector('canvas').captureStream(10);await v.play();return true;})()");
@@ -253,7 +253,7 @@ async function main() {
       mute.addEventListener('click', () => { active().muted = !active().muted; mute.setAttribute('aria-label', active().muted ? 'Unmute (m)' : 'Mute (m)'); });
       control.append(mute, slider); document.body.append(control); return true;
     })()`);
-    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',sessionId:${JSON.stringify(state.session.id)},command:{action:'media.volume.set',args:{percent:36}}})`);
+    await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:'media.volume.set',args:{percent:36}}})`);
     assert.equal(await evaluate(player, "document.querySelector('ytu-volume-slider tp-yt-paper-slider').getAttribute('aria-valuenow')"), '36', 'extension updates native slider DOM and the site handler');
     await evaluate(player, "document.querySelector('ytu-volume-slider tp-yt-paper-slider').focus();true");
     await command('input.performActions', { context: player, actions: [{ type: 'key', id: 'native-audio', actions: [{ type: 'keyDown', value: '\uE013' }, { type: 'keyUp', value: '\uE013' }] }] });
@@ -271,7 +271,7 @@ async function main() {
     await clickPanel('[data-control=enabled]');
     await until(player, "!document.title.includes('🟢')", 'local page disables remote');
     await evaluate(player, "window.dispatchEvent(new KeyboardEvent('keydown',{code:'F8',bubbles:true}));true");
-    const result = await evaluate(popup, `browser.runtime.sendMessage({type:'enable',sessionId:${JSON.stringify(state.session.id)},alias:'fixture'}).then(r=>JSON.stringify(r))`);
+    const result = await evaluate(popup, `browser.runtime.sendMessage({type:'enable',roomId:${JSON.stringify(state.room.id)},alias:'fixture'}).then(r=>JSON.stringify(r))`);
     assert.equal(JSON.parse(result).error, undefined);
     await pause(300);
     assert.equal(await evaluate(player, 'document.title'), '🟢 🔵 Fixture TV');
@@ -304,7 +304,7 @@ async function main() {
     console.log('[Firefox] Web command:', await evaluate(web, "document.getElementById('remote').shadowRoot.querySelector('.message').textContent"));
     assert.equal(await evaluate(player, "document.querySelector('video').paused"), true, 'web command executes through the authenticated hub');
     assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.querySelector('#osd .badge-name').textContent"), 'alice', 'web command shows the authenticated login name');
-    assert.equal(await evaluate(web, "getComputedStyle(document.getElementById('remote').shadowRoot.querySelector('.remote')).backgroundColor"), 'rgb(16, 18, 23)', 'shared stylesheet passes the server CSP');
+    assert.equal(await evaluate(web, "getComputedStyle(document.getElementById('remote').shadowRoot.querySelector('.remote')).backgroundColor"), 'rgb(27, 30, 38)', 'shared card stylesheet passes the server CSP');
     await until(web, "(() => {const i=document.getElementById('remote').shadowRoot.querySelector('.brand');return i.complete && i.naturalWidth>0;})()", 'web remote logo loads under server CSP');
     await evaluate(web, `(() => {
       const host = document.createElement('div'); host.hidden = true; document.body.append(host);globalThis.pictureLayoutHost=host;
@@ -346,14 +346,14 @@ async function main() {
     await pause(850);
     await evaluate(web,"document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=stretchX] .plus').dispatchEvent(new PointerEvent('pointerup',{button:0}));true");
     await pause(200);
-    const held=app.hub.rooms.get(state.session.id).state.picture.stretchX;
+    const held=app.hub.rooms.get(state.room.id).state.picture.stretchX;
     assert.ok(held>1.1,'holding width repeats through acknowledged web commands');
-    await pause(350);assert.equal(app.hub.rooms.get(state.session.id).state.picture.stretchX,held,'release stops repeating');
+    await pause(350);assert.equal(app.hub.rooms.get(state.room.id).state.picture.stretchX,held,'release stops repeating');
     for (const field of ['zoom','stretchX','stretchY']) {
-      const before={...app.hub.rooms.get(state.session.id).state.picture};
+      const before={...app.hub.rooms.get(state.room.id).state.picture};
       await evaluate(web,`document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=${field}] .size-reset').click();true`);
       await until(web,`document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=${field}] .size-number').textContent==='100%'`,'web reset '+field);
-      assert.deepEqual(app.hub.rooms.get(state.session.id).state.picture,{...before,[field]:1},'authenticated web reset preserves other sizes and pan');
+      assert.deepEqual(app.hub.rooms.get(state.room.id).state.picture,{...before,[field]:1},'authenticated web reset preserves other sizes and pan');
     }
     await evaluate(web,"document.getElementById('remote').shadowRoot.querySelector('.reset-all').click();true");
     await until(web,"document.getElementById('remote').shadowRoot.querySelector('.position-text output').textContent==='Centered'",'web Reset all also recenters');
@@ -384,10 +384,10 @@ async function main() {
     fs.writeFileSync(path.join(temp, 'web-remote.png'), Buffer.from(shot.data, 'base64'));
     assert.ok(await evaluate(web, 'document.documentElement.scrollWidth <= 390'), 'phone layout must not scroll horizontally');
     // Exercise selection with several authorized players without changing backend identities.
-    await evaluate(web, `globalThis.realFetch = fetch; globalThis.fakePlayers = [
+    await evaluate(web, `globalThis.realRemoteRequest = connection.request.bind(connection); globalThis.fakePlayers = [
       {id:'friend-player',alias:'bob',enabled:true,canManage:false},
       {id:'host-player',alias:'alice',enabled:true,canManage:true}];
-      globalThis.fetch = (url,options) => url === '/api/sessions' ? Promise.resolve(new Response(JSON.stringify({sessions:fakePlayers}))) : realFetch(url,options);
+      connection.request = (path,data) => path === '/api/rooms' ? Promise.resolve({rooms:fakePlayers}) : realRemoteRequest(path,data);
       selected=undefined;refreshPlayers()`);
     assert.equal(await evaluate(web, 'selected'), 'host-player', 'host stream has priority over another available stream');
     assert.equal(await evaluate(web, `(() => { const heading = document.getElementById('remote').shadowRoot.querySelector('.header h2').getBoundingClientRect(); const players = document.getElementById('players').getBoundingClientRect(); return Math.abs((heading.top + heading.height/2) - (players.top + players.height/2)) < 1 && players.left > heading.right; })()`), true, 'host buttons align to the right of uburoom on the same row');
@@ -397,7 +397,7 @@ async function main() {
     assert.equal(await evaluate(web, 'selected === undefined'), true, 'several own players still require a choice');
     await evaluate(web, "fakePlayers=[{id:'friend-player',alias:'bob',enabled:true},{id:'off-player',alias:'alice',enabled:false,canManage:true}];selected=undefined;refreshPlayers()");
     assert.equal(await evaluate(web, 'selected'), 'friend-player', 'sole live player is selected even with a host off player');
-    await evaluate(web, 'fetch=realFetch;selected=undefined;refreshPlayers()');
+    await evaluate(web, 'connection.request=realRemoteRequest;selected=undefined;refreshPlayers()');
     console.log('[Firefox] PASS: login cookie, automatic and explicit player selection, web-to-player action, shared colors/CSP and phone layout. Screenshot:', path.join(temp, 'web-remote.png'));
     await command('browsingContext.activate', { context: player });
     assert.equal((await app.hub.dispatch(actor, { action: 'media.pause' })).status, 'applied', 'fixture session before pause: '+JSON.stringify([...app.hub.rooms.values()].map(s=>({enabled:s.enabled,reachable:s.reachable,mode:s.mode,age:Date.now()-s.lastSeen}))));
@@ -417,7 +417,7 @@ async function main() {
     // Firefox BiDi cannot resize/capture privileged extension documents. The
     // real popup height is checked above; capture its shared compact component
     // in a normal web document for visual comparison.
-    await evaluate(web,`document.querySelector('main').hidden=true;pictureLayoutHost.hidden=false;pictureLayoutHost.style.cssText='width:358px;max-width:calc(100% - 32px);margin:12px auto';volumeFixture.shadow.querySelector('.remote').classList.add('compact');volumeFixture.render(${JSON.stringify(app.hub.rooms.get(state.session.id).state)},{available:true,session:{canManage:true,enabled:true,reachable:true,connected:true,paired:true,sharingAvailable:true,mode:'voice',controls:{playback:true,transform:true},autoJoin:false}});true`);
+    await evaluate(web,`document.querySelector('main').hidden=true;pictureLayoutHost.hidden=false;pictureLayoutHost.style.cssText='width:358px;max-width:calc(100% - 32px);margin:12px auto';volumeFixture.shadow.querySelector('.remote').classList.add('compact');volumeFixture.render(${JSON.stringify(app.hub.rooms.get(state.room.id).state)},{available:true,room:{canManage:true,enabled:true,reachable:true,connected:true,paired:true,sharingAvailable:true,mode:'voice',controls:{playback:true,transform:true},autoJoin:false}});true`);
     const compactShot=await command('browsingContext.captureScreenshot',{context:web,origin:'document'});fs.writeFileSync(path.join(project,'artifacts','picture-toolbar-component-0.3.1-qa.png'),Buffer.from(compactShot.data,'base64'));
     await evaluate(web,"document.querySelector('main').hidden=false;pictureLayoutHost.hidden=true;volumeFixture.shadow.querySelector('.remote').classList.remove('compact');volumeFixture.stop();true");
 
@@ -431,9 +431,9 @@ async function main() {
     assert.equal((await app.hub.dispatch(friendActor,{action:'media.mute'})).status,'forbidden');
     assert.equal((await app.hub.dispatch(actor,{action:'media.pause'})).status,'applied','host playback unaffected');
     const pictureAcks=[];const originalAck=app.hub.ack.bind(app.hub);
-    app.hub.ack=async (socket,message)=>{const p=app.hub.pending.get(message.id),s=p&&app.hub.rooms.get(p.sessionId);if(p)pictureAcks.push({action:p.command.action,result:message.status,epoch:p.epoch===s?.epoch,mode:p.mode===s?.mode,controls:s?.controls,voice:p.hostVoiceChannelId,currentVoice:hostVoice});return originalAck(socket,message);};
+    app.hub.ack=async (socket,message)=>{const p=app.hub.pending.get(message.id),s=p&&app.hub.rooms.get(p.roomId);if(p)pictureAcks.push({action:p.command.action,result:message.status,epoch:p.epoch===s?.epoch,mode:p.mode===s?.mode,controls:s?.controls,voice:p.hostVoiceChannelId,currentVoice:hostVoice});return originalAck(socket,message);};
     const pictureReply=await app.hub.dispatch(friendActor,{action:'zoom.set',args:{value:1.5}});app.hub.ack=originalAck;
-    if(pictureReply.status!=='applied')console.log('[Firefox] Picture trace:',JSON.stringify({reply:pictureReply,closures:fixtureClosures,acks:pictureAcks,popup:JSON.parse(await evaluate(popup,'browser.runtime.sendMessage({type:"popup-state"}).then(s=>JSON.stringify(s.session))'))}));
+    if(pictureReply.status!=='applied')console.log('[Firefox] Picture trace:',JSON.stringify({reply:pictureReply,closures:fixtureClosures,acks:pictureAcks,popup:JSON.parse(await evaluate(popup,'browser.runtime.sendMessage({type:"popup-state"}).then(s=>JSON.stringify(s.room))'))}));
     assert.equal(pictureReply.status,'applied','picture remains independently shared');
     await evaluate(web,"document.getElementById('remote').shadowRoot.querySelector('[data-control=transform]').click();true");
     await until(player,"document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot.querySelector('[data-control=transform]').getAttribute('aria-checked')==='false'",'web picture permission reaches the player');
@@ -457,9 +457,9 @@ async function main() {
     app.hub.connections.get(deviceId).close(4000,'Fixture reconnect');
     await until(player,"!document.title.includes('🟢')",'disconnect clears remote');
     await pause(3500);
-    await until(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.connected && s.session?.autoJoin && !s.session.enabled)",'reconnect retains preference with remote off');
-    for(let n=0;n<30&&!app.hub.rooms.has(state.session.id);n++)await pause(50);
-    assert.ok(app.hub.rooms.has(state.session.id),'reconnect reports fresh tab presence');
+    await until(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.connected && s.room?.autoJoin && !s.room.enabled)",'reconnect retains preference with remote off');
+    for(let n=0;n<30&&!app.hub.rooms.has(state.room.id);n++)await pause(50);
+    assert.ok(app.hub.rooms.has(state.room.id),'reconnect reports fresh tab presence');
     await pause(300);assert.equal(await evaluate(player,"document.title.includes('🟢')"),false,'reconnect baseline does not enable an existing call');
     hostVoice=fixtureVoice;app.hub.publishVoice(true);
     await until(player,"document.title.includes('🟢')",'a later fresh join works after reconnect');
@@ -482,21 +482,21 @@ async function main() {
     console.log('[Firefox] PASS: 112px shared Player badge, applied values, local/web/remote sender names, literal sender text, 2.5s dismissal and management feedback.');
     assert.equal((await app.hub.dispatch(actor, { action: 'media.mute' })).status, 'forbidden');
     await command('browsingContext.navigate', { context: player, url: 'https://localhost:9443/', wait: 'complete' });
-    await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.session?.reachable && s.session.id!==${JSON.stringify(state.session.id)} && s.session.alias==='fixture')`, 'custom name survives reload');
+    await until(popup, `browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room?.reachable && s.room.id!==${JSON.stringify(state.room.id)} && s.room.alias==='fixture')`, 'custom name survives reload');
     state = JSON.parse(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s))"));
-    assert.equal(state.session.enabled, false, 'name persistence never restores consent');
-    assert.equal(state.session.autoJoin,true,'reload preserves On join, while remote consent resets');
-    const renameResult = await evaluate(popup, `browser.runtime.sendMessage({type:'rename',sessionId:${JSON.stringify(state.session.id)},alias:''}).then(r=>JSON.stringify(r))`);
+    assert.equal(state.room.enabled, false, 'name persistence never restores consent');
+    assert.equal(state.room.autoJoin,true,'reload preserves On join, while remote consent resets');
+    const renameResult = await evaluate(popup, `browser.runtime.sendMessage({type:'rename',roomId:${JSON.stringify(state.room.id)},alias:''}).then(r=>JSON.stringify(r))`);
     assert.deepEqual(JSON.parse(renameResult), {}, 'blank player name is accepted');
     await evaluate(web, 'refreshPlayers()');
     assert.equal(await evaluate(web, "document.querySelector('#players button').textContent"), 'alice · Off', 'unnamed player uses the authenticated Discord username');
     await command('browsingContext.navigate', { context: player, url: 'https://localhost:9443/', wait: 'complete' });
-    await until(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.session?.reachable && s.session.alias==='')", 'optional blank name also survives reload');
+    await until(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room?.reachable && s.room.alias==='')", 'optional blank name also survives reload');
     state = JSON.parse(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s))"));
     const {context: extraPlayer}=await command('browsingContext.create',{type:'tab'});
     await command('browsingContext.navigate',{context:extraPlayer,url:'https://localhost:9443/',wait:'complete'});
     await command('browsingContext.activate',{context:extraPlayer});
-    await until(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.session?.reachable && s.session.autoJoin && !s.session.enabled)",'new tabs inherit remembered On join with remote off');
+    await until(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room?.reachable && s.room.autoJoin && !s.room.enabled)",'new tabs inherit remembered On join with remote off');
     await command('browsingContext.close',{context:extraPlayer});await command('browsingContext.activate',{context:player});
     assert.equal(await evaluate(popup,"browser.storage.local.get('autoJoin').then(s=>s.autoJoin)"),true,'closing a tab does not clear the device preference');
     console.log('[Firefox] PASS: named and unnamed players retain their names across refresh, with fresh identity and remote off.');
@@ -504,7 +504,7 @@ async function main() {
     const idleMs = idleArg ? Number(idleArg.split('=')[1]) : 0;
     if (idleMs) {
       assert.ok(Number.isFinite(idleMs) && idleMs > 0 && idleMs <= 600000);
-      await evaluate(popup, `browser.runtime.sendMessage({type:'enable',sessionId:${JSON.stringify(state.session.id)},alias:'fixture'}).then(r=>JSON.stringify(r))`);
+      await evaluate(popup, `browser.runtime.sendMessage({type:'enable',roomId:${JSON.stringify(state.room.id)},alias:'fixture'}).then(r=>JSON.stringify(r))`);
       await pause(300);
       await app.hub.dispatch(actor, { action: 'media.play' });
       await command('browsingContext.close', { context: popup });

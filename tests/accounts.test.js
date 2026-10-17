@@ -57,7 +57,8 @@ async function fixture(t){
   app.hub.access={identity:async id=>Object.values(provider.subjects).includes(id)?{id,name:'Known Discord user'}:undefined,refresh:async id=>members.has(id),isMember:id=>members.has(id),voiceChannel:id=>members.has(id)?'call':undefined,validVoiceChannel:id=>id==='call',options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());config.publicUrl=`https://localhost:${app.server.address().port}`;
   function browser(){const jar=new Map();
-    const request=(route,data,extra={})=>new Promise((resolve,reject)=>{
+    const control=require('./helpers/control-client').controlClient(t,config,cert);
+    const request=(route,data,extra={})=>control.handles(route)?control.request(route,data,{Cookie:[...jar].map(([k,v])=>k+'='+v).join('; '),...extra}):new Promise((resolve,reject)=>{
       const req=https.request({hostname:'localhost',port:app.server.address().port,path:route,method:data===undefined?'GET':'POST',ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',Cookie:[...jar].map(([k,v])=>k+'='+v).join('; '),...extra}},res=>{
         for(const cookie of res.headers['set-cookie']||[]){const pair=cookie.split(';')[0],i=pair.indexOf('=');jar.set(pair.slice(0,i),pair.slice(i+1));}
         const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>{const raw=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,body:res.headers['content-type']?.includes('json')?JSON.parse(raw):raw});});
@@ -87,21 +88,27 @@ test('logout checks CSRF, revokes only this browser login and its viewers, retai
   const bobCsrf=(await bob.request('/api/watch/me')).body.csrf;f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.request('/api/logout',{}, {'X-CSRF-Token':bobCsrf})).status,200,'provider eligibility is not needed to revoke your existing browser session');
 });
 
-test('legacy Discord login migration keeps device identities, encrypts refresh credentials and backup, and survives restart with stable UUIDs',tls,async()=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-migration-')),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
-  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:'100000000000000001',guildId:'guild',channels:['commands'],clientId:'100000000000000010',accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:path.join(directory,'credentials.key'),loginFile:path.join(directory,'logins.json'),deviceFile:path.join(directory,'devices.json')};
-  const legacy={context:JSON.stringify([config.publicUrl,config.ownerId,config.guildId,config.clientId]),ownerName:'Owner',logins:[['a'.repeat(64),{userId:config.ownerId,name:'Owner',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-legacy-refresh',expires:Date.now()+3600000}}]]};
-  fs.writeFileSync(config.loginFile,JSON.stringify(legacy));const device={id:randomUUID(),ownerId:config.ownerId,credentialHash:'c'.repeat(64)};fs.writeFileSync(config.deviceFile,JSON.stringify([device]));
+test('SQLite restart retains UUIDs and encrypted logins without reading or backing up legacy JSON; missing keys fail closed',tls,async()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-baseline-')),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
+  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:'100000000000000001',guildId:'guild',channels:['commands'],clientId:'100000000000000010',accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:path.join(directory,'credentials.key')};
+  const legacyFile=path.join(directory,'logins.json');fs.writeFileSync(legacyFile,'invalid legacy data');
   let app;
   try{
-    app=createApp(config);const stored=JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record),id=stored.userId;
-    assert.match(id,/^[a-f0-9-]{36}$/);assert.notEqual(id,config.ownerId);assert.equal(stored.oauth.encrypted,1);assert.equal(JSON.stringify(stored).includes('private-legacy-refresh'),false);
-    assert.deepEqual(JSON.parse(fs.readFileSync(config.loginFile,'utf8')),legacy,'legacy import files are not rewritten');
-    const vault=credentialVault(config.credentialKeyFile);assert.deepEqual(vault.open(JSON.parse(fs.readFileSync(config.loginFile+'.pre-accounts.encrypted.json','utf8'))),legacy);
-    assert.equal(app.store.devices[0].ownerId,config.ownerId);assert.equal(app.hub.rooms.size,0);
-    await app.close();app=createApp(config);assert.equal(app.registry.identity('discord',config.ownerId).userId,id);assert.equal(JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record).userId,id);
-    await app.close();app=undefined;fs.renameSync(config.credentialKeyFile,config.credentialKeyFile+'.saved');assert.throws(()=>createApp(config),/key is missing/);assert.equal(fs.existsSync(config.credentialKeyFile),false,'missing keys are never silently replaced');
-  }finally{if(app)await app.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
+    assert.throws(()=>createApp(config),/Legacy private state/);assert.equal(fs.existsSync(config.credentialKeyFile),false);
+    const baseline=new Accounts(config.accountFile,credentialVault(config.credentialKeyFile));await baseline.close();
+    app=createApp(config);assert.equal(app.registry.db.prepare('SELECT COUNT(*) AS n FROM browser_logins').get().n,0);
+    const account=app.registry.resolve('discord',config.ownerId,'Owner');
+    const store=require('../server/storage').loginStore(JSON.stringify([config.publicUrl,config.ownerId,config.guildId,config.clientId]),app.registry.vault,app.registry);
+    store.logins.set('a'.repeat(64),{userId:account.id,accountRevision:account.revision,name:'Owner',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-fixture-refresh',expires:Date.now()+3600000}});await store.save();
+    const keyBytes=fs.readFileSync(config.credentialKeyFile);
+    await app.close();app=createApp(config);
+    const stored=JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record);
+    assert.equal(stored.userId,account.id);assert.equal(app.registry.identity('discord',config.ownerId).userId,account.id);
+    assert.equal(stored.oauth.encrypted,1);assert.equal(JSON.stringify(stored).includes('private-fixture-refresh'),false);
+    assert.equal(fs.readFileSync(legacyFile,'utf8'),'invalid legacy data');assert.equal(fs.existsSync(legacyFile+'.pre-accounts.encrypted.json'),false);
+    assert.deepEqual(fs.readFileSync(config.credentialKeyFile),keyBytes);
+    await app.close();app=undefined;fs.renameSync(config.credentialKeyFile,config.credentialKeyFile+'.saved');assert.throws(()=>createApp(config),/key is missing/);assert.equal(fs.existsSync(config.credentialKeyFile),false);
+  }finally{if(app)await app.close();assert.equal(path.dirname(directory),path.resolve(os.tmpdir()));fs.rmSync(directory,{recursive:true,force:true});}
 });
 
 test('Discord/Plex link ownership, stable accounts and Plex-only room authorization preserve provider-specific media restrictions',tls,async t=>{
@@ -127,7 +134,7 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   const aliceRoom=(await alice.post('/api/watch/rooms',{})).body.id,aliceViewer=randomUUID();let aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}&quality=direct`)).body;
   await alice.post(`/api/watch/rooms/${aliceRoom}/command`,{epoch:aliceState.epoch,expiresAt:Date.now()+2900,viewerId:aliceViewer,command:{action:'media.load',args:{mediaId:'999',quality:'direct'}}});aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
   f.provider.revoked.add('101');f.app.plexAuth.clear();assert.equal((await alice.request('/api/watch/me')).status,200,'Discord still provides uburoom account access');assert.equal((await alice.request(aliceState.mediaUrl)).status,403,'a linked Plex denial does not fall back to the owner token');
-  assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',guildId:'guild',channelId:'commands'},{sessionId:aliceRoom,action:'media.pause'})).status,'forbidden','Discord commands enforce the same media entitlement');
+  assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',guildId:'guild',channelId:'commands'},{roomId:aliceRoom,action:'media.pause'})).status,'forbidden','Discord commands enforce the same media entitlement');
   f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request(state.mediaUrl)).status,403,'revoked Plex access invalidates media grants');
   assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,401);
 });

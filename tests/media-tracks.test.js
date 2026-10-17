@@ -207,7 +207,7 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
   try {
     watch.snapshot(room,host,a); watch.snapshot(room,guest,b); room.media=await plex.prepare('1','direct',false,undefined,undefined,{sourceOnly:true});
     await watch.prepareViewer(room,host,a); await watch.prepareViewer(room,guest,b); room.position=12; room.s.state.paused=true;
-    const command=async(args,who=guest,viewerId=b)=>hub.dispatch({...who,watchViewerId:viewerId},{sessionId:room.s.sessionId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:room.viewers.get(viewerId).streamVersion,...args}});
+    const command=async(args,who=guest,viewerId=b)=>hub.dispatch({...who,watchViewerId:viewerId},{roomId:room.s.roomId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:room.viewers.get(viewerId).streamVersion,...args}});
     const other=room.viewers.get(a).media, previous=room.viewers.get(b).media;
     assert.equal((await command({subtitleId:'21'})).status,'applied');
     assert.equal(room.viewers.get(b).media,previous,'external subtitles do not restart video');
@@ -235,7 +235,7 @@ test('a failed automatic burn keeps its catalog available for an explicit Off re
     watch.snapshot(room,host,viewerId);room.media=await plex.prepare('1','direct',false,undefined,undefined,{sourceOnly:true});
     await watch.prepareViewer(room,host,viewerId);const viewer=room.viewers.get(viewerId);
     assert.match(viewer.media.playbackError,/did not confirm burning/);assert.ok(watch.snapshot(room,host,viewerId).tracks.subtitles.length);
-    const result=await hub.dispatch({...host,watchViewerId:viewerId},{sessionId:room.s.sessionId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,subtitleId:'off'}});
+    const result=await hub.dispatch({...host,watchViewerId:viewerId},{roomId:room.s.roomId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,subtitleId:'off'}});
     assert.equal(result.status,'applied');assert.equal(viewer.media.playbackError,undefined);assert.equal(viewer.media.selection.subtitle,undefined);
     assert.equal(room.s.enabled,false);
   } finally {watch.close();await plex.close();}
@@ -255,7 +255,8 @@ test('browser subtitle resources enforce grants, selection generations and expli
   app.watch.plex.av1.run=async(binary)=>Buffer.from(binary.includes('ffprobe')?'{"streams":[]}':'[Script Info]\n[Events]\n');
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
-  const request=(route,method='GET',data,token)=>new Promise((resolve,reject)=>{
+  const control=require('./helpers/control-client').controlClient(t,config,cert);
+  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
     const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})}},res=>{
       const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,body:text&&res.headers['content-type']?.includes('application/json')?JSON.parse(text):text});});
     });req.on('error',reject);req.end(data&&JSON.stringify(data));
@@ -294,7 +295,8 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
   app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
-  const request=(route,method='GET',data,token)=>new Promise((resolve,reject)=>{
+  const control=require('./helpers/control-client').controlClient(t,config,cert);
+  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
     const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
       const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
     });req.on('error',reject);req.end(data && JSON.stringify(data));

@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 /** @typedef {import('./types').Actor} Actor */
-/** @typedef {import('./types').SessionDescriptor} SessionDescriptor */
+/** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').Viewer} Viewer */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
@@ -56,9 +56,9 @@ function labels(rooms) {
     return { room: s, label };
   });
 }
-function resolve(rooms, actor, config, target, now = Date.now(), access, sessionId, manage = false, personal = false, admin = false) {
+function resolve(rooms, actor, config, target, now = Date.now(), access, roomId, manage = false, personal = false, admin = false) {
   const visible = [...rooms].filter(s => personal ? viewEligible(s, actor, config, now, access, admin) : eligible(s, actor, config, now, access, manage, admin));
-  const candidates = labels(visible).filter(({ room: s, label }) => (!sessionId || s.sessionId === sessionId) &&
+  const candidates = labels(visible).filter(({ room: s, label }) => (!roomId || s.roomId === roomId) &&
     (!target || label.toLowerCase() === target.toLowerCase().replace(/\s*#/, ' #') ||
       !s.alias && (s.ownerName || 'Discord user').toLowerCase() === target.toLowerCase() ||
       s.alias && (s.alias === target || s.alias.startsWith(target + '.')))).map(entry => entry.room);
@@ -95,61 +95,61 @@ class Hub {
   }
   update(socket, message) {
     if (socket.readyState !== 1 || !socket.device || this.connections.get(socket.device.id) !== socket) throw new Error('Device disconnected');
-    if (!UUID.test(message.sessionId) || !UUID.test(message.epoch) || typeof message.alias !== 'string' || message.alias !== '' && !ALIAS.test(message.alias) ||
+    if (Object.hasOwn(message, 'sessionId') || !UUID.test(message.roomId) || !UUID.test(message.epoch) || typeof message.alias !== 'string' || message.alias !== '' && !ALIAS.test(message.alias) ||
       !MODES.has(message.mode) || typeof message.enabled !== 'boolean' || typeof message.reachable !== 'boolean') throw new Error('Invalid room');
-    const old = this.rooms.get(message.sessionId);
+    const old = this.rooms.get(message.roomId);
     if (old && old.socket !== socket) throw new Error('Invalid room');
     if (!old && [...this.rooms.values()].filter(s => s.socket === socket).length >= 20) throw new Error('Too many rooms');
     const controls = Engine.controls(message.controls);
     if (message.autoJoin !== undefined && typeof message.autoJoin !== 'boolean') throw new Error('Invalid room');
     if (old && (old.epoch !== message.epoch || old.mode !== message.mode || !message.enabled || !message.reachable ||
-      old.controls.playback !== controls.playback || old.controls.transform !== controls.transform)) this.cancel(old.sessionId);
+      old.controls.playback !== controls.playback || old.controls.transform !== controls.transform)) this.cancel(old.roomId);
     const room = {
-      sessionId: message.sessionId, epoch: message.epoch, alias: message.alias,
+      roomId: message.roomId, epoch: message.epoch, alias: message.alias,
       mode: message.mode, controls, autoJoin: message.autoJoin === true,
       enabled: message.enabled, reachable: message.reachable,
       state: Engine.snapshot(message.state),
       ownerId: socket.device.ownerId, ownerName: this.ownerName, socket, lastSeen: Date.now()
     };
-    this.rooms.set(room.sessionId, room);
-    socket.send(JSON.stringify({ type: 'session-ack', sessionId: room.sessionId, epoch: room.epoch,
+    this.rooms.set(room.roomId, room);
+    socket.send(JSON.stringify({ type: 'room-ack', roomId: room.roomId, epoch: room.epoch,
       live: room.enabled && room.reachable, serverNow: Date.now() }));
   }
-  remove(socket, sessionId) {
-    if (this.rooms.get(sessionId)?.socket === socket) { this.cancel(sessionId); this.rooms.delete(sessionId); }
+  remove(socket, roomId) {
+    if (this.rooms.get(roomId)?.socket === socket) { this.cancel(roomId); this.rooms.delete(roomId); }
   }
-  cancel(sessionId) {
-    for (const [id, p] of this.pending) if (p.sessionId === sessionId) this.finish(id, { status: 'unavailable', message: 'Room became unavailable.' });
+  cancel(roomId) {
+    for (const [id, p] of this.pending) if (p.roomId === roomId) this.finish(id, { status: 'unavailable', message: 'Room became unavailable.' });
   }
   drop(socket) {
-    for (const s of this.rooms.values()) if (s.socket === socket) this.remove(socket, s.sessionId);
+    for (const s of this.rooms.values()) if (s.socket === socket) this.remove(socket, s.roomId);
     if (this.connections.get(socket.device?.id) === socket) this.connections.delete(socket.device.id);
   }
   sweep() {
     for (const s of this.rooms.values()) if (Date.now() - s.lastSeen >= PRESENCE_MS) {
-      s.enabled = false; s.reachable = false; this.cancel(s.sessionId);
+      s.enabled = false; s.reachable = false; this.cancel(s.roomId);
     }
     for (const ws of this.connections.values()) if (Date.now() - ws.lastSeen >= PRESENCE_MS) { this.drop(ws); ws.terminate(); }
   }
   async dispatch(actor, input) {
-    input = { ...input, sessionId: input.roomId ?? input.sessionId };
+    if (Object.hasOwn(input, 'sessionId')) return { status: 'unsupported', message: 'Use the current room protocol.' };
     actor=this.accountActor?.(actor)||actor;
     if (actor.guildId !== this.config.guildId || !this.config.channels.includes(actor.channelId)) return { status: 'forbidden', message: 'No controllable room.' };
     if (!this.isOwner(actor) || [...this.rooms.values()].some(s => s.kind === 'watch')) {
       try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId)) return { status: 'forbidden', message: 'No controllable room.' }; }
       catch { return { status: 'forbidden', message: 'No controllable room.' }; }
     }
-    if (input.sessionId && !UUID.test(input.sessionId)) return { status: 'forbidden', message: 'No controllable room.' };
+    if (input.roomId && !UUID.test(input.roomId)) return { status: 'forbidden', message: 'No controllable room.' };
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
     // Only the authenticated watch endpoint can attach a viewer identity.
     // Personal audio/quality never changes an extension player or the room.
-    const personal = this.rooms.get(input.sessionId)?.kind === 'watch' && actor.surface === 'web' && !!actor.watchViewerId &&
+    const personal = this.rooms.get(input.roomId)?.kind === 'watch' && actor.surface === 'web' && !!actor.watchViewerId &&
       ['media.quality.set', 'media.tracks.set', 'media.stream.refresh', 'media.volume.set', 'media.mute', 'media.unmute'].includes(command.action);
     const manage = Engine.MANAGEMENT.includes(command.action) && !personal;
-    if (manage && (actor.surface !== 'web' && !this.isAdmin(actor) || !input.sessionId)) return { status: 'forbidden', message: 'This action requires the host website or local extension.' };
-    if (command.action === 'room.sharing' && command.args.mode !== 'owner' && this.rooms.get(input.sessionId)?.kind!=='watch' && !this.access?.options?.().available) return { status: 'unavailable', message: 'Wait for Discord to connect before sharing.' };
-    const found = resolve(this.rooms.values(), actor, this.config, input.target, Date.now(), this.access, input.sessionId, manage, personal, this.isAdmin(actor));
+    if (manage && (actor.surface !== 'web' && !this.isAdmin(actor) || !input.roomId)) return { status: 'forbidden', message: 'This action requires the host website or local extension.' };
+    if (command.action === 'room.sharing' && command.args.mode !== 'owner' && this.rooms.get(input.roomId)?.kind!=='watch' && !this.access?.options?.().available) return { status: 'unavailable', message: 'Wait for Discord to connect before sharing.' };
+    const found = resolve(this.rooms.values(), actor, this.config, input.target, Date.now(), this.access, input.roomId, manage, personal, this.isAdmin(actor));
     if (!found.room) return found;
     const s = found.room;
     if(s.kind==='watch'&&this.watchCanView&&!await this.watchCanView(s,actor))return {status:'forbidden',message:'No controllable room.'};
@@ -165,7 +165,7 @@ class Hub {
       // Keep completion bounded and recheck the same live authorization below.
       const deadline = personal && command.action === 'media.quality.set' ? acceptedAt + 30000 : admissionDeadline;
       const epoch = s.epoch, mode = s.mode, adminEpoch = this.adminEpoch;
-      const permitted = () => this.rooms.get(s.sessionId) === s && s.epoch === epoch && s.mode === mode && Date.now() < deadline &&
+      const permitted = () => this.rooms.get(s.roomId) === s && s.epoch === epoch && s.mode === mode && Date.now() < deadline &&
         (!this.isOwner(actor) || this.adminEpoch === adminEpoch) &&
         (personal ? viewEligible(s, actor, this.config, Date.now(), this.access, this.isAdmin(actor)) : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor))) &&
         (personal || this.canManage(s, actor) || !manage && Engine.controlAllowed(s.controls, command));
@@ -175,26 +175,25 @@ class Hub {
     const id = randomUUID(); const sentAt = Date.now(); const expiresAt = sentAt + COMMAND_MS;
     return new Promise(resolveReply => {
       const timer = setTimeout(() => this.finish(id, { status: 'unavailable', message: 'No execution acknowledgement before expiry.' }), COMMAND_MS);
-      this.pending.set(id, { actor: { ...actor }, command, manage, sessionId: s.sessionId, epoch: s.epoch, mode: s.mode,
+      this.pending.set(id, { actor: { ...actor }, command, manage, roomId: s.roomId, epoch: s.epoch, mode: s.mode,
         hostVoiceChannelId: !this.canManage(s, actor) ? this.access?.voiceChannel?.(s.ownerId) : undefined,
         socket: s.socket, timer, resolveReply, sentAt });
       // Never accept a sender label from command JSON: it comes from the authenticated actor.
       const senderName = Engine.senderName(actor.name, isHost(s,actor) ? Engine.senderName(this.ownerName) : 'Discord user');
-      // Installed extensions still receive the original wire action names.
-      try { s.socket.send(JSON.stringify({ type: 'command', id, sessionId: s.sessionId, epoch: s.epoch, ownerId: s.ownerId, actorId: actor.discordId||actor.userId, expiresAt, senderName, ...command, action: command.action.replace(/^room\./, 'session.') })); }
+      try { s.socket.send(JSON.stringify({ type: 'command', id, roomId: s.roomId, epoch: s.epoch, ownerId: s.ownerId, actorId: actor.discordId||actor.userId, expiresAt, senderName, ...command })); }
       catch { this.finish(id, { status: 'unavailable', message: 'Device disconnected.' }); }
     });
   }
   async ack(socket, message) {
     const p = this.pending.get(message.id);
-    if (!p || p.socket !== socket || p.sessionId !== message.sessionId || p.epoch !== message.epoch) return;
+    if (!p || p.socket !== socket || p.roomId !== message.roomId || p.epoch !== message.epoch) return;
     if (!this.isOwner(p.actor)) {
       try {
         if (!await this.access?.refresh(p.actor.userId)) { this.finish(message.id, { status: 'unavailable', message: 'Room became unavailable.' }); return; }
       } catch { this.finish(message.id, { status: 'unavailable', message: 'Room became unavailable.' }); return; }
       if (this.pending.get(message.id) !== p) return;
     }
-    const s = this.rooms.get(p.sessionId);
+    const s = this.rooms.get(p.roomId);
     const disabling = message.disabled === true;
     if (!s || s.epoch !== p.epoch || s.mode !== p.mode ||
       (p.hostVoiceChannelId && this.access?.voiceChannel(s.ownerId) !== p.hostVoiceChannelId) ||
@@ -209,10 +208,10 @@ class Hub {
     this.finish(message.id, { status, message: status === 'applied' ? 'Action applied.' : 'Action could not be applied.',
       latencyMs: Date.now() - p.sentAt, ...(p.actor.surface === 'web' && state ? { state } : {}) });
     if (status === 'applied' && p.command.action === 'room.enable') s.enabled = true;
-    if (status === 'applied' && p.command.action === 'room.sharing') { s.mode = p.command.args.mode; this.cancel(s.sessionId); }
-    if (status === 'applied' && p.command.action === 'room.controls') { s.controls[p.command.args.control] = p.command.args.allowed; this.cancel(s.sessionId); }
+    if (status === 'applied' && p.command.action === 'room.sharing') { s.mode = p.command.args.mode; this.cancel(s.roomId); }
+    if (status === 'applied' && p.command.action === 'room.controls') { s.controls[p.command.args.control] = p.command.args.allowed; this.cancel(s.roomId); }
     if (status === 'applied' && p.command.action === 'room.autojoin') s.autoJoin = p.command.args.enabled;
-    if (disabling && p.command.action === 'room.disable' && status === 'applied') { s.enabled = false; this.cancel(s.sessionId); }
+    if (disabling && p.command.action === 'room.disable' && status === 'applied') { s.enabled = false; this.cancel(s.roomId); }
   }
   finish(id, result) {
     const p = this.pending.get(id); if (!p) return;
@@ -228,7 +227,7 @@ class Hub {
     for(const entry of labels([...this.rooms.values()].filter(s => eligible(s, actor, this.config, Date.now(), this.access,
       actor.surface === 'web' && this.canManage(s, actor), this.isAdmin(actor)))))if(entry.room.kind!=='watch'||!this.watchCanView||await this.watchCanView(entry.room,actor))visible.push(entry);
     return visible
-      .map(({ room: s, label }) => ({ id: s.sessionId, alias: label, state: s.state, canSave: this.canManage(s, actor),
+      .map(({ room: s, label }) => ({ id: s.roomId, alias: label, state: s.state, canSave: this.canManage(s, actor),
         ...(s.kind ? { kind: s.kind, hostName: s.hostName, visibility: s.visibility } : {}),
         canPlayback: this.canManage(s, actor) || s.controls.playback, canTransform: this.canManage(s, actor) || s.controls.transform,
         ...(this.canManage(s, actor) ? { canManage: true, enabled: s.enabled, mode: s.mode, controls: { ...s.controls }, autoJoin: s.autoJoin,

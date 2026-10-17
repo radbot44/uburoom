@@ -12,7 +12,9 @@ function openDatabase(file, migrate) {
   if (!file) { migrate(db); return { db, flush: async () => {}, close: () => db.close(), abort: () => db.close() }; }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const disk = new DatabaseSync(file);
-  try { disk.exec('PRAGMA journal_mode=DELETE;'); migrate(disk); } finally { disk.close(); }
+  try { migrate(disk); disk.exec('PRAGMA journal_mode=DELETE;'); }
+  catch (error) { db.close(); throw error; }
+  finally { disk.close(); }
   db.prepare('ATTACH DATABASE ? AS durable').run(file);
   try {
     const schema = db.prepare("SELECT type,name,sql FROM durable.sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type='index'").all();

@@ -76,18 +76,18 @@ test('collection genre filters use complete tags when Plex listing rows omit the
 
 test('every library route rejects guests and rechecks ownership before returning awaited private data or artwork', async () => {
   let manage = true, waiting, finish, calls = 0;
-  const room = {s:{sessionId:'room'}}, rooms = new Map([['room',room]]);
+  const room = {s:{roomId:'room'}}, rooms = new Map([['room',room]]);
   const wait = () => { calls++; waiting?.(); return new Promise(resolve=>{finish=resolve;}); };
   const hub = {access:{isMember:()=>true},canManage:(s,actor)=>manage&&actor.userId==='host'};
   const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms,canView:async()=>true,plex:{configured:true,browse:wait,details:wait,filters:wait,artwork:wait}},
     user:async req=>({userId:req.headers.cookie}),webActor:identity=>identity,throttle:()=>true,json:(res,status,data)=>{res.status=status;res.data=data;}});
   for (const suffix of ['','/item','/filters','/art']) {
-    const res={}; await routes.route({method:'GET',headers:{cookie:'guest'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?session=room')); assert.equal(res.status,403);
+    const res={}; await routes.route({method:'GET',headers:{cookie:'guest'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room')); assert.equal(res.status,403);
   }
   assert.equal(calls,0);
   for (const suffix of ['','/art']) {
     manage=true; const ready = new Promise(resolve=>{waiting=resolve;}); const res={};
-    const work=routes.route({method:'GET',headers:{cookie:'host'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?session=room'));
+    const work=routes.route({method:'GET',headers:{cookie:'host'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room'));
     await ready; manage=false; finish(suffix ? {type:'image/jpeg',bytes:Buffer.from('private image')} : {items:[{title:'private title'}]}); await work;
     assert.equal(res.status,403); assert.equal(JSON.stringify(res.data).includes('private title'),false);
   }

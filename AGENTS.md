@@ -26,7 +26,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 - **Single Node process architecture.** `node server/index.js` — no multi-process server clustering (e.g., PM2 cluster mode or multi-instance orchestration). External media tools (`ffmpeg`/`ffprobe`) are spawned as bounded child processes. The server coordination loop runs on the main event loop, but Node built-in `node:worker_threads` may be used when necessary to offload CPU-heavy or blocking tasks (crypto, subtitle parsing) to protect the real-time sync loop.
 - **No frameworks.** HTTP/HTTPS routing is a hand-rolled router in `server/app.js` (raw `node:https`). There is no Express, Koa, or Fastify. Do not introduce one.
 - **Plain JavaScript with JSDoc type safety.** No TypeScript compiler, no JSX, no transpilers, no minifiers. Use standard JavaScript with JSDoc annotations (`@typedef`, `@param`, `@type`) and `// @ts-check` for complex contracts (sync timing, room epochs, track choices, auth tokens). Server code is CommonJS (`require`/`module.exports`); web client code uses standard native ES modules (`<script type="module">`) or plain scripts without build steps. 2-space indentation, semicolons, single quotes.
-- **SQLite for persistence.** Primary database is `data/accounts.sqlite` using Node's built-in `node:sqlite` (`DatabaseSync` — synchronous API). The current pre-release `server/storage.js` contains migration paths; M1 removes legacy JSON imports and pre-release schema upgrades before the first public release. Keep schema versioning for forward migrations between published releases. Do not introduce ORMs (Prisma, TypeORM), external database servers, or secondary databases.
+- **SQLite for persistence.** Primary database is `data/accounts.sqlite` using Node's built-in `node:sqlite` (`DatabaseSync` — synchronous API). `server/storage.js` defines the first-release baseline and rejects incomplete private pre-release layouts; legacy JSON imports and implicit schema upgrades have been removed. Keep schema versioning for forward migrations between published releases. Do not introduce ORMs (Prisma, TypeORM), external database servers, or secondary databases.
 - **Minimal dependencies.** Production deps: `@discord/embedded-app-sdk`, `discord.js`, `hls.js`, `jassub`, `libbitsub`, `ws`. Dev dep: `esbuild` (for vendor bundle builds only). Justify any new dependency; prefer Node built-ins and vendoring small libraries into `web/vendor/` with proper license notices.
 - **Node ≥ 22.13.0 required.** Tests use the built-in `node:test` runner and `node:assert/strict` — no Jest, Mocha, or external test framework.
 
@@ -36,7 +36,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - **All config via `.env` file** (loaded by `--env-file-if-exists=.env`). Not `config.json`, not environment variables set externally. The `.env` file is gitignored.
 - Key variables: `HOST`, `PORT`, `PUBLIC_URL` (must be HTTPS), `TLS_CERT`/`TLS_KEY`, Discord credentials (`DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_COMMAND_CHANNEL_IDS`), Plex credentials (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MACHINE_IDENTIFIER`), `UBUROOM_CREDENTIAL_KEY_FILE`, `FFMPEG_PATH`/`FFPROBE_PATH`.
-- Device, browser-login and playback-history state live in `data/accounts.sqlite`. The current M1-P11 implementation also imports old `data/devices.json` and `data/logins.json`; the final M1 cleanup will remove that pre-release import/rollback code and old schema transitions after a reviewed owner-only state backup/reset or manual transfer. Runtime SQLite work uses an in-memory mirror and a bounded writer worker; await persistence before acknowledging durable changes. Rooms and consent remain ephemeral for M1.
+- Device, browser-login and playback-history state live in `data/accounts.sqlite`. Legacy JSON files are not runtime inputs. Existing private pre-release state requires a matched backup and baseline verification, or a reviewed manual transfer/reset, before deployment. Runtime SQLite work uses an in-memory mirror and a bounded writer worker; await persistence before acknowledging durable changes. Rooms and consent remain ephemeral for M1.
 - See [docs/self-hosting.md](docs/self-hosting.md) for the full configuration reference.
 
 ---
@@ -80,7 +80,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ## Naming & Branding
 
-- Use **uburoom** names throughout all code, UI, docs, and assets. `/ubu` and `!ubu` are the only Discord commands (not `!uburoom`). The remaining `session.*`/`/api/sessions` watch-room aliases are pre-release technical debt scheduled for removal in M1-P10, not an ongoing compatibility contract.
+- Use **uburoom** names throughout all code, UI, docs, and assets. `/ubu` and `!ubu` are the only Discord commands (not `!uburoom`). The `session.*`/`/api/sessions` watch-room aliases are removed; all clients must use the canonical room protocol.
 - The brand transition is tracked in the roadmap. Public GitHub repository creation is deferred until the transition is complete.
 
 ---
@@ -151,7 +151,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 - **Extension dev:** Load `extension/` as a temporary add-on in Firefox via `about:debugging`. Configure the server URL in the extension popup.
 - **Vendor builds:** `npm run build:player` bundles Discord SDK, HLS.js, and subtitle renderers via esbuild into `web/vendor/`.
 - **Database:** `data/accounts.sqlite` is created automatically on first run. The credential key file must exist and be outside the project folder.
-- See [docs/development.md](docs/development.md) for the full dev guide. M1-P7 will isolate the browser codec-test page from normal viewing, and M1-P11 will remove the HTTP-shaped watch-command shim while preserving necessary HTTP resources.
+- See [docs/development.md](docs/development.md) for the full dev guide. M1-P7 will isolate the browser codec-test page from normal viewing, and M1-P11 uses transport-neutral room operations directly from WebSockets while preserving necessary HTTP resources.
 
 ---
 

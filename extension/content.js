@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   if (window !== window.top || document.getElementById('uburoom-root')) return;
-  const sessionId = crypto.randomUUID();
+  const roomId = crypto.randomUUID();
   let state = { ...uburoom.DEFAULT }, profiles = {}, selectedSlot = 1, fast = false;
   let enabled = false, live = false, epoch, liveUntil = 0, port, hideTimer, lastUrl = location.href;
   let roomControls = { canManage: true, mode: 'owner', controls: { ...uburoom.CONTROLS }, autoJoin: false, paired: false, connected: false, sharingAvailable: false };
@@ -139,7 +139,7 @@
   async function execute(input, remote) {
     try {
       const command = uburoom.validate(input);
-      const permitted = () => !remote || remote.sessionId === sessionId && enabled && live &&
+      const permitted = () => !remote || remote.roomId === roomId && enabled && live &&
         epoch === remote.epoch && Date.now() < liveUntil && Date.now() < remote.localExpiresAt && location.href === lastUrl && !!video() &&
         (!remote.guest || uburoom.controlAllowed(roomControls.controls, command));
       if (!permitted()) return { status: 'unavailable' };
@@ -188,7 +188,7 @@
   }
   function toggle(force) {
     panel.hidden = typeof force === 'boolean' ? !force : !panel.hidden;
-    if (!panel.hidden) browser.runtime.sendMessage({ type: 'panel-state', sessionId }).catch(() => {});
+    if (!panel.hidden) browser.runtime.sendMessage({ type: 'panel-state', roomId }).catch(() => {});
     if (panel.hidden) remoteUI.stop(); refresh();
   }
   function key(e) {
@@ -223,21 +223,21 @@
     panel = document.createElement('div'); panel.id = 'panel'; panel.hidden = true; shadow.append(panel);
     remoteUI = uburoomUI.mount(panel, { trustedRoomControls: true, execute: async command => {
       if (!command.action.startsWith('room.')) return execute(command);
-      const result = await browser.runtime.sendMessage({ type: 'local-session-command', sessionId, command });
+      const result = await browser.runtime.sendMessage({ type: 'local-room-command', roomId, command });
       if (result?.error) throw new Error(result.error); return result;
-    }, website: () => browser.runtime.sendMessage({ type: 'open-website', sessionId }), close: () => toggle(false) });
+    }, website: () => browser.runtime.sendMessage({ type: 'open-website', roomId }), close: () => toggle(false) });
   }
   function connect() {
     enabled = live = false; title();
     port = browser.runtime.connect({ name: 'uburoom-player' });
-    port.postMessage({ type: 'hello', sessionId });
+    port.postMessage({ type: 'hello', roomId });
     port.onMessage.addListener(m => {
       if (m.type === 'remote-state') {
         roomControls = { canManage: true, mode: m.mode, controls: uburoom.controls(m.controls), autoJoin: m.autoJoin,
           ownerName: m.ownerName, paired: m.paired, connected: m.connected, sharingAvailable: m.sharingAvailable };
         enabled = m.enabled === true; live = m.live === true; epoch = m.epoch; liveUntil = live ? Date.now() + 8000 : 0; title();
         refresh();
-      } else if (m.type === 'command-feedback' && m.sessionId === sessionId && m.command?.action?.startsWith('room.')) {
+      } else if (m.type === 'command-feedback' && m.roomId === roomId && m.command?.action?.startsWith('room.')) {
         show(uburoom.validate(m.command), m.senderName);
       }
     });

@@ -15,7 +15,7 @@ function fixture(t) {
   const host = {userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'channel'}, guest = {...host,userId:'guest',name:'Guest'};
   const room = watch.rooms.get(watch.create(host)), h = randomUUID(), g = randomUUID();
   watch.snapshot(room, host, h); watch.snapshot(room, guest, g);
-  const dispatch = (action,args,actor=host) => hub.dispatch(actor,{roomId:room.s.sessionId,action,args});
+  const dispatch = (action,args,actor=host) => hub.dispatch(actor,{roomId:room.s.roomId,action,args});
   const ready = (viewer,value=true) => watch.ready(room,viewer===h?host:guest,viewer,room.mediaVersion,value,room.readinessVersion);
   const advance = ms => { now += ms; mono += ms; for (const viewer of room.viewers.values()) viewer.at = now; watch.refresh(room); };
   const load = () => dispatch('media.load',{mediaId:'demo',quality:'direct'});

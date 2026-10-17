@@ -11,8 +11,6 @@ async function main() {
     publicUrl: publicUrl.origin,
     cert: fs.readFileSync(path.resolve(root, process.env.TLS_CERT || 'certs/server-cert.pem')),
     key: fs.readFileSync(path.resolve(root, process.env.TLS_KEY || 'certs/server-key.pem')),
-    deviceFile: path.join(root, 'data/devices.json'),
-    loginFile: path.join(root, 'data/logins.json'),
     accountFile: path.join(root,'data/accounts.sqlite'),
     credentialKeyFile: process.env.UBUROOM_CREDENTIAL_KEY_FILE || path.join(process.env.LOCALAPPDATA||process.env.HOME||require('node:os').homedir(),'uburoom','credentials.key'),
     plexMachineIdentifier: process.env.PLEX_MACHINE_IDENTIFIER,

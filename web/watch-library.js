@@ -330,7 +330,7 @@
       if (!room || !screen || ['details','home'].includes(screen.kind)) return;
       if (append && (screen.loading || screen.nextOffset == null)) return;
       if (append && screen.dirty) { await query(); return; }
-      controller?.abort(); controller = new AbortController(); const version = ++requestVersion, current = screen, sessionVersion = generation;
+      controller?.abort(); controller = new AbortController(); const version = ++requestVersion, current = screen, roomVersion = generation;
       resetStatus(); current.pageError = false; current.loading = true; if (append) renderTools(); else renderResults(); pageObserver.unobserve(sentinel);
       try {
         const query = {section:current.section,tab:current.tab,q:current.q,genre:current.genre,year:current.year,sort:current.sort,order:current.order,seed:current.seed,offset:append ? current.nextOffset : 0};
@@ -338,20 +338,20 @@
         let data;
         if (!current.section) data = {items:[demoItem].filter(x => x.title.toLowerCase().includes(current.q.toLowerCase())),total:1,nextOffset:null};
         else data = await request(endpoint('/api/watch/library',query),controller.signal);
-        if (version !== requestVersion || sessionVersion !== generation || current !== screen) return;
+        if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
         // Use the complete child result, rather than the listing's season count.
         // A Specials folder counts as another season and keeps normal browsing.
         if (!append && current.kind === 'show' && !current.onlySeason && !query.q && !query.genre && !query.year && data.items.length === 1 && data.items[0].type === 'season' && data.nextOffset == null && (data.total == null || data.total === 1)) {
           current.onlySeason = data.items[0]; current.parent = current.onlySeason.id;
           data = await request(endpoint('/api/watch/library',{...query,parent:current.parent}),controller.signal);
         }
-        if (version !== requestVersion || sessionVersion !== generation || current !== screen) return;
+        if (version !== requestVersion || roomVersion !== generation || current !== screen) return;
         const seen = new Set(append ? current.items.map(x => x.id) : []), added = data.items.filter(x => { if (seen.has(x.id)) return false; seen.add(x.id); return true; });
         current.items = append ? [...current.items,...added] : added; current.total = data.total; current.nextOffset = data.nextOffset;
         current.loading = false;
         if (append) { renderTools(); added.forEach(tile); watchNextPage(); setBusy(busy); } else renderResults();
       } catch (error) {
-        if (version !== requestVersion || sessionVersion !== generation || error.name === 'AbortError') return;
+        if (version !== requestVersion || roomVersion !== generation || error.name === 'AbortError') return;
         current.loading = false; current.pageError = true; renderTools(); signalError(error.message,() => void loadPage(append));
       }
     }
@@ -412,7 +412,7 @@
     filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
     viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
-    async function setSession(id) {
+    async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
       room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
       hideTest?.(); testVideo = false; screen = homeContext(); beginHistory();
@@ -431,7 +431,7 @@
       }
       await start();
     }
-    return {setSession,setBusy,closeTest};
+    return {setRoom,setBusy,closeTest};
   }
   global.uburoomLibrary = {mount};
 })(globalThis);

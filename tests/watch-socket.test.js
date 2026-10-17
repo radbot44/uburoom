@@ -86,3 +86,24 @@ test('cookie socket authentication requires CSRF and logout invalidates the acti
   assert.equal((await http('/api/logout',{Cookie:cookie,'X-CSRF-Token':identity.csrf},{})).status,200);
   const revoked=once(good.ws,'close');good.ws.send(JSON.stringify({type:'clock',id:100}));assert.equal((await revoked)[0],4003);
 });
+
+test('retired HTTP room controls and legacy library room queries cannot mutate room state',tls,async t=>{
+  const f=await fixture(t),identity=await f.login('host'),host=await f.connect(identity);
+  const roomId=(await host.call('/api/watch/rooms',{})).value.id;
+  const http=(path,data)=>new Promise((resolve,reject)=>{
+    const req=https.request(f.config.publicUrl+path,{ca:f.cert,method:data===undefined?'GET':'POST',headers:{Origin:f.config.publicUrl,Authorization:'Bearer '+identity.token,'Content-Type':'application/json'}},res=>{
+      let raw='';res.on('data',bytes=>raw+=bytes);res.on('end',()=>resolve({status:res.statusCode,raw}));
+    });req.on('error',reject);req.end(data===undefined?undefined:JSON.stringify(data));
+  });
+  for (const [path,data] of [['/api/sessions'],['/api/rooms'],['/api/command',{roomId,command:{action:'room.enable'}}],['/api/watch/rooms'],['/api/watch/rooms',{}],['/api/watch/admin-mode',{enabled:true}],['/api/watch/rooms/'+roomId+'?viewer='+randomUUID()],['/api/watch/rooms/'+roomId+'/close',{}],['/api/watch/rooms/'+roomId+'/ready',{}],['/api/watch/rooms/'+roomId+'/observe',{}],['/api/watch/rooms/'+roomId+'/leave',{}],['/api/watch/rooms/'+roomId+'/command',{}]]) {
+    assert.equal((await http(path,data)).status,404,path+' was retired');
+  }
+  assert.equal(f.app.watch.rooms.size,1);assert.equal(f.app.watch.rooms.get(roomId).viewers.size,0);assert.equal(f.app.hub.adminMode,false);
+  assert.equal((await http('/api/watch/config')).status,200);assert.equal((await http('/api/watch/me')).status,200);
+  assert.equal((await http('/api/watch/library?session='+roomId)).status,403);
+  assert.equal((await http('/api/watch/library?room='+roomId)).status,200);
+  assert.equal((await host.call('/api/command',{sessionId:roomId,command:{action:'room.enable'}})).status,400);
+  const state=(await host.call('/api/watch/rooms/'+roomId+'?viewer='+randomUUID())).value;
+  assert.equal((await host.call('/api/watch/rooms/'+roomId+'/command',{epoch:state.epoch,expiresAt:Date.now()+2500,command:{action:'session.enable'}})).value.status,'unsupported');
+  assert.equal(f.app.watch.rooms.get(roomId).s.enabled,false);
+});

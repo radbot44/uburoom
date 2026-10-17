@@ -9,8 +9,7 @@ const { WebSocketServer } = require('ws');
  * @property {Object} [data] Mutation body, including existing epoch/expiry fences.
  */
 
-// WebSocket requests reuse the HTTP router's authentication, access rechecks and
-// shared Engine dispatch. No second command implementation or queued replay.
+// WebSocket framing calls shared operations directly; commands are never replayed.
 function watchSockets({ server, config, routes, watch, hub, throttle, flush = async () => {} }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   const clockEpoch = routes.clockEpoch;
@@ -23,15 +22,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
   }
-  async function request(client, route, data) {
-    const req = { headers: { ...client.headers }, method: data === undefined ? 'GET' : 'POST', url: route,
-      socket: client.socket, watchSocket: client.ws,
-      async *[Symbol.asyncIterator]() { yield JSON.stringify(data); } };
-    let status;
-    const res = { writeHead(code) { status = code; }, end(text) { this.value = JSON.parse(text); } };
-    await routes.route(req, res, new URL(route, config.publicUrl));
-    return { status, value: res.value };
-  }
+  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws }, path, data);
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
     if(client.publishing){client.dirty=true;return;}
@@ -103,7 +94,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             send(client, { type: 'clock', id: message.id, serverNow: Date.now(), timing: { serverReceivedAt, serverSentAt: Date.now(), serverProcessingMs: performance.now() - received, clockEpoch } }); return;
           }
           if (message.type !== 'request' || !Number.isSafeInteger(message.id) || message.id < 0 || client.inflight.has(message.id) || client.inflight.size >= 8 ||
-            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/watch\/(?:me|admin-mode|playback|rooms(?:\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe))?)?|library(?:\/(?:item|filters))?)(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
+            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|admin-mode|playback|rooms(?:\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe))?)?|library(?:\/(?:item|filters))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
           client.inflight.add(message.id);
           try {
             const result = await request(client, message.path, message.data);

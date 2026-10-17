@@ -53,7 +53,7 @@
   function validate(command) {
     if (!command || typeof command !== 'object') throw new Error('Invalid command');
     // Legacy management actions normalize before permission checks and execution.
-    const action = typeof command.action === 'string' ? command.action.replace(/^session\.(enable|disable|sharing|visibility|controls|autojoin)$/, 'room.$1') : command.action;
+    const action = command.action;
     const a = command.args || {};
     let args = {};
     switch (action) {

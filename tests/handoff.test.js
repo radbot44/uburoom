@@ -34,7 +34,8 @@ async function fixture(t) {
   app.hub.access = {refresh:async()=>member,isMember:()=>member,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve)); t.after(()=>app.close());
   const port = app.server.address().port; config.publicUrl = `https://localhost:${port}`;
-  const request = (route,data,headers={}) => new Promise((resolve,reject)=> {
+  const control=require('./helpers/control-client').controlClient(t,config,cert);
+  const request = (route,data,headers={}) => control.handles(route)?control.request(route,data,headers):new Promise((resolve,reject)=> {
     const req = https.request({hostname:'localhost',port,path:route,method:data === undefined?'GET':'POST',ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...headers}},res=>{
       const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>{const raw=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,body:res.headers['content-type']?.includes('json')?JSON.parse(raw):raw});});
     });req.on('error',reject);req.end(data === undefined?undefined:JSON.stringify(data));

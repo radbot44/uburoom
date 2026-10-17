@@ -19,10 +19,10 @@ test('server-owned playback uses the shared authorization engine, timeline, rest
   const host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web', name: 'Host' }, friend = { ...host, userId: 'friend', name: 'Friend' };
   const friendRoom = watch.rooms.get(watch.create(friend));
   assert.equal(friendRoom.s.hostId, friend.userId); assert.equal(friendRoom.s.ownerId, friend.userId);
-  watch.remove(friendRoom.s.sessionId);
+  watch.remove(friendRoom.s.roomId);
   assert.throws(() => watch.create({ ...friend, surface: 'discord' }));
   const id = watch.create(host), room = watch.rooms.get(id), viewer = randomUUID();
-  const dispatch = (actor, action, args) => hub.dispatch(actor, { sessionId: id, action, args });
+  const dispatch = (actor, action, args) => hub.dispatch(actor, { roomId: id, action, args });
   assert.equal(room.s.enabled, false); assert.equal(room.s.mode, 'guild'); assert.equal(room.s.visibility, 'public');
   assert.equal((await watch.list(friend))[0].id, id, 'remote off does not hide a public viewing room');
   assert.deepEqual(await hub.list(friend), [], 'the remote only lists controllable players');
@@ -72,7 +72,7 @@ test('each server member owns their watch session; administrators cannot manage 
   const actor = userId => ({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
   const a = actor('a'), b = actor('b'), admin = actor('admin'), id = watch.create(a), room = watch.rooms.get(id);
   const bRoom = watch.rooms.get(watch.create(b));
-  const dispatch = (who, action, args) => hub.dispatch(who,{sessionId:id,action,args});
+  const dispatch = (who, action, args) => hub.dispatch(who,{roomId:id,action,args});
   assert.equal(watch.snapshot(room,a,randomUUID()).canManage,true);
   assert.equal(watch.snapshot(bRoom,b,randomUUID()).canManage,true);
   assert.equal((await dispatch(admin,'room.enable')).status,'forbidden');
@@ -96,7 +96,7 @@ test('watch controls require a current viewer or same-call member; locked Activi
   const actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
   const host=actor('host'),site=actor('site'),admin=actor('admin'),voice=actor('voice');
   const id=watch.create(host),room=watch.rooms.get(id),h=randomUUID(),v=randomUUID();watch.snapshot(room,host,h);
-  const dispatch=(who,action,args)=>hub.dispatch(who,{sessionId:id,action,args});
+  const dispatch=(who,action,args)=>hub.dispatch(who,{roomId:id,action,args});
   await dispatch(host,'media.load',{mediaId:'demo',quality:'direct'});await dispatch(host,'room.enable');
   assert.equal((await dispatch(site,'media.pause')).status,'forbidden','a server member must join the session or call');
   watch.snapshot(room,site,v);assert.equal((await dispatch({...site,surface:'discord'},'media.pause')).status,'applied','site viewers can use chat controls without voice');
@@ -152,7 +152,7 @@ test('initial readiness honors deliberate pause; episode navigation and host suc
   const actor = id => ({ userId: id, guildId: 'guild', channelId: 'commands', surface: 'web', name: id });
   const host = actor('host'), a = actor('a'), b = actor('b'), late = actor('late');
   const id = watch.create(host), room = watch.rooms.get(id), hId = randomUUID(), aId = randomUUID(), bId = randomUUID(), lateId = randomUUID();
-  const dispatch = (who, action, args) => hub.dispatch(who, { sessionId: id, action, args });
+  const dispatch = (who, action, args) => hub.dispatch(who, { roomId: id, action, args });
   watch.snapshot(room, host, hId);
   await dispatch(host, 'room.sharing', { mode: 'guild' }); await dispatch(host, 'room.enable');
   watch.snapshot(room, a, aId); room.viewers.get(aId).joinedAt -= 100;
@@ -199,12 +199,12 @@ test('host election skips revoked or expired viewers and respects session privac
     room.viewers.get(viewer).joinedAt += ['expired', 'revoked', 'eligible'].indexOf(id);
   }
   await watch.leave(room, host, hostViewer); assert.equal(room.s.hostId, 'eligible');
-  watch.remove(room.s.sessionId);
+  watch.remove(room.s.roomId);
   const privateRoom = create(), privateHost = randomUUID();
   watch.snapshot(privateRoom, host, privateHost); privateRoom.s.enabled = true; privateRoom.s.mode = 'guild';
   watch.snapshot(privateRoom, actor('eligible'), randomUUID()); privateRoom.s.visibility = 'private';
   await watch.leave(privateRoom, host, privateHost);
-  assert.equal(watch.rooms.has(privateRoom.s.sessionId), false, 'revoked viewers cannot take over a private room');
+  assert.equal(watch.rooms.has(privateRoom.s.roomId), false, 'revoked viewers cannot take over a private room');
   watch.close();
 });
 
@@ -215,7 +215,7 @@ test('host heartbeat expiry revokes remote consent before a guest takes over', a
   const actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
   const host=actor('host'),guest=actor('guest'),id=watch.create(host),room=watch.rooms.get(id),hostId=randomUUID(),guestId=randomUUID();
   watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
-  assert.equal((await hub.dispatch(host,{sessionId:id,action:'room.enable'})).status,'applied');
+  assert.equal((await hub.dispatch(host,{roomId:id,action:'room.enable'})).status,'applied');
   const epoch=room.s.epoch;
   room.viewers.get(hostId).at=Date.now()-11000;
   watch.refresh(room);
@@ -233,10 +233,10 @@ test('privacy removal releases the initial playback gate when the remaining host
   const actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
   const host=actor('host'),guest=actor('guest'),id=watch.create(host),room=watch.rooms.get(id),hostId=randomUUID(),guestId=randomUUID();
   watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
-  assert.equal((await hub.dispatch(host,{sessionId:id,action:'media.load',args:{mediaId:'demo',quality:'direct'}})).status,'applied');
+  assert.equal((await hub.dispatch(host,{roomId:id,action:'media.load',args:{mediaId:'demo',quality:'direct'}})).status,'applied');
   await watch.ready(room,host,hostId,room.mediaVersion,true);
   assert.equal(room.initialGate,true,'unready guest holds the initial start');
-  assert.equal((await hub.dispatch(host,{sessionId:id,action:'room.visibility',args:{visibility:'private'}})).status,'applied');
+  assert.equal((await hub.dispatch(host,{roomId:id,action:'room.visibility',args:{visibility:'private'}})).status,'applied');
   assert.equal(room.viewers.has(guestId),false);
   assert.equal(room.initialGate,false);
   assert.equal(room.s.state.paused,false,'ready host starts after the guest is removed');
@@ -298,7 +298,7 @@ test('an empty timed-out room admits only its eligible host tab and revokes old 
   watch.refresh(room);
   assert.equal(watch.rooms.get(id),room);assert.equal(room.reconnecting,true);
   assert.equal(hub.rooms.has(id),false,'dormant rooms cannot receive commands');
-  assert.equal((await hub.dispatch(host,{sessionId:id,action:'room.enable'})).status,'forbidden');
+  assert.equal((await hub.dispatch(host,{roomId:id,action:'room.enable'})).status,'forbidden');
   assert.equal(room.s.enabled,false);assert.notEqual(room.s.epoch,oldEpoch);
   assert.deepEqual(stopped,[old.media]);assert.equal(room.viewers.size,0,'old media grants have no matching viewer');
   assert.equal(await watch.canView(room,guest),false);assert.deepEqual(await watch.list(guest,true),[]);
@@ -327,12 +327,12 @@ test('retained host rooms count toward the limit and expire on grace, media chan
   assert.throws(()=>watch.create(host),/Close an existing/);
   const [expired,changed,left,closed]=rooms;
   const deadline=expired.room.disconnectedViewers.get(expired.viewerId).expires;
-  watch.refresh(expired.room,deadline-1);assert.equal(watch.rooms.has(expired.room.s.sessionId),true);
-  watch.refresh(expired.room,deadline);assert.equal(watch.rooms.has(expired.room.s.sessionId),false);
+  watch.refresh(expired.room,deadline-1);assert.equal(watch.rooms.has(expired.room.s.roomId),true);
+  watch.refresh(expired.room,deadline);assert.equal(watch.rooms.has(expired.room.s.roomId),false);
   assert.throws(()=>watch.snapshot(expired.room,host,expired.viewerId),/unavailable/,'expired room cannot be resurrected');
-  changed.room.mediaVersion=randomUUID();watch.refresh(changed.room);assert.equal(watch.rooms.has(changed.room.s.sessionId),false);
-  await watch.leave(left.room,host,left.viewerId);assert.equal(watch.rooms.has(left.room.s.sessionId),false);
-  watch.remove(closed.room.s.sessionId);assert.equal(watch.rooms.size,0);
+  changed.room.mediaVersion=randomUUID();watch.refresh(changed.room);assert.equal(watch.rooms.has(changed.room.s.roomId),false);
+  await watch.leave(left.room,host,left.viewerId);assert.equal(watch.rooms.has(left.room.s.roomId),false);
+  watch.remove(closed.room.s.roomId);assert.equal(watch.rooms.size,0);
   watch.close();
 });
 
@@ -360,7 +360,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.notEqual(room.viewers.get(a).media,room.viewers.get(b).media,'each viewer has its own stream');
   const version=room.mediaVersion, other=room.viewers.get(a).media, guestOld=room.viewers.get(b).media;
   room.s.controls.playback=false;
-  const command=(actor,viewerId,action,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{sessionId:id,action,args});
+  const command=(actor,viewerId,action,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{roomId:id,action,args});
   assert.equal((await command(guest,b,'media.pause')).status,'forbidden');
   assert.equal((await command(guest,b,'media.volume.set',{percent:25})).status,'applied');
   await command(guest,b,'media.mute');
@@ -370,7 +370,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p');
   assert.ok(stopped.includes(guestOld));
   assert.equal((await command(guest,a,'media.mute')).status,'unsupported','cannot spoof another viewer');
-  assert.equal((await hub.dispatch({...host,surface:'discord'},{sessionId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
+  assert.equal((await hub.dispatch({...host,surface:'discord'},{roomId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
   assert.equal((await command(guest,b,'zoom.set',{value:1.2})).status,'applied');
   room.s.enabled=false;
   assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'applied','personal quality works with remote off');
@@ -398,7 +398,7 @@ test('slow personal quality preparation has a bounded completion budget and reta
     room.media={kind:'plex',id:'12',duration:60};
     const viewer=room.viewers.get(viewerId),old={kind:'plex',duration:60};viewer.media=old;viewer.mediaVersion=room.mediaVersion;
     const originalCanView=watch.canView.bind(watch);watch.canView=async(...args)=>allowed&&await originalCanView(...args);
-    const command=(action,args,expiresAt=now+2500)=>hub.dispatch({...host,watchViewerId:viewerId},{sessionId:id,action,args,expiresAt});
+    const command=(action,args,expiresAt=now+2500)=>hub.dispatch({...host,watchViewerId:viewerId},{roomId:id,action,args,expiresAt});
     const result=command('media.quality.set',{quality:'720p4'},outcome==='stale-input'?now-1:now+2500);
     if(outcome==='stale-input') {
       assert.equal((await result).status,'unavailable');assert.equal(viewer.media,old);watch.close();hub.close();continue;
@@ -437,7 +437,7 @@ test('HLS recovery replaces only the authorized viewer stream and preserves pers
   await watch.prepareViewer(room,host,a);await watch.prepareViewer(room,guest,b);
   const viewer=room.viewers.get(b),other=room.viewers.get(a).media,old=viewer.media,version=room.mediaVersion,epoch=room.s.epoch;
   viewer.trackChoice={audioId:'1042',subtitleId:'1044'};
-  const command=(actor,viewerId,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{sessionId:id,action:'media.stream.refresh',args});
+  const command=(actor,viewerId,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{roomId:id,action:'media.stream.refresh',args});
   const args={mediaVersion:version,streamVersion:viewer.streamVersion};
   assert.equal((await command(guest,b,args)).status,'applied');
   assert.notEqual(viewer.media,old);assert.equal(room.viewers.get(a).media,other);
@@ -468,7 +468,9 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   app.hub.access = { refresh: async () => member, isMember: () => member, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); t.after(() => app.close());
   const port = app.server.address().port; config.publicUrl = `https://localhost:${port}`;
+  const control = require('./helpers/control-client').controlClient(t, config, cert);
   async function request(route, method = 'GET', data, headers = {}) {
+    if (control.handles(route)) return control.request(route,data,headers);
     return new Promise((resolve, reject) => {
       const req = https.request({ hostname: 'localhost', port, path: route, method, ca: cert, headers: { 'Content-Type': 'application/json', Origin: config.publicUrl, ...headers } }, res => {
         const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => {
@@ -496,7 +498,7 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const created = await request('/api/watch/rooms', 'POST', {userId:'host'}, activityHeaders);
   assert.equal(created.status, 201, 'verified member can create a room');
   assert.equal(app.watch.rooms.get(created.body.id).s.hostId, 'demo-guest', 'creator comes from verified identity');
-  assert.equal((await request('/api/watch/library?session=' + created.body.id, 'GET', undefined, activityHeaders)).status, 200);
+  assert.equal((await request('/api/watch/library?room=' + created.body.id, 'GET', undefined, activityHeaders)).status, 200);
   app.watch.remove(created.body.id);
   for (const route of ['/', '/activity', '/watch/test', '/auth/discord']) {
     const redirected = await request(route + '?frame_id=fixture');
@@ -649,7 +651,7 @@ test('shared seeks wait for fresh viewer buffers and reject superseded readiness
   const host = {userId:'host',name:'Host',guildId:'guild',channelId:'commands',surface:'web'};
   const room = watch.rooms.get(watch.create(host)), first = randomUUID(), second = randomUUID();
   watch.snapshot(room,host,first); watch.snapshot(room,host,second);
-  const dispatch = (action,args) => hub.dispatch(host,{sessionId:room.s.sessionId,action,args});
+  const dispatch = (action,args) => hub.dispatch(host,{roomId:room.s.roomId,action,args});
   const ready = viewer => watch.ready(room,host,viewer,room.mediaVersion,true,room.readinessVersion);
   assert.equal((await dispatch('media.load',{mediaId:'demo',quality:'direct'})).status,'applied');
   await ready(first); await ready(second);
@@ -683,7 +685,7 @@ test('toggle treats startup and seek readiness as playing intent', async () => {
   const host = {userId:'host',name:'Host',guildId:'guild',channelId:'commands',surface:'web'};
   const room = watch.rooms.get(watch.create(host)), viewer = randomUUID();
   watch.snapshot(room,host,viewer);
-  const dispatch = (action,args) => hub.dispatch(host,{sessionId:room.s.sessionId,action,args});
+  const dispatch = (action,args) => hub.dispatch(host,{roomId:room.s.roomId,action,args});
   await dispatch('media.load',{mediaId:'demo',quality:'direct'});
   assert.equal(watch.snapshot(room,host,viewer).state.waitingForReady,true);
   await dispatch('media.toggle');

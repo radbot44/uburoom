@@ -51,7 +51,7 @@
 /**
  * Room descriptor managed by the Hub.
  * @typedef {Object} RoomDescriptor
- * @property {string} sessionId - Unique room UUID.
+ * @property {string} roomId - Unique room UUID.
  * @property {string} epoch - Epoch UUID rotated on consent revocation or host changes.
  * @property {string} alias - User-facing or generated room alias (e.g. 'plex', 'plex.ab12cd34').
  * @property {'watch'|'remote'} kind - Room type ('watch' for watch rooms, 'remote' for extension).

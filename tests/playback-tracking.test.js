@@ -7,7 +7,7 @@ const { Accounts,credentialVault } = require('../server/accounts');
 function fixture(registry) {
   let now = 100000;
   const tracking = new PlaybackTracking(registry,()=>now);
-  const room = {s:{sessionId:randomUUID()},media:{id:'42',duration:300},mediaVersion:randomUUID()};
+  const room = {s:{roomId:randomUUID()},media:{id:'42',duration:300},mediaVersion:randomUUID()};
   const viewer = () => ({userId:'user',observationEpoch:randomUUID(),streamVersion:randomUUID(),mediaVersion:room.mediaVersion,media:{kind:'plex',format:'av1'}});
   const data = (v,seq,position,state='playing',extra={}) => ({observationEpoch:v.observationEpoch,streamVersion:v.streamVersion,mediaVersion:room.mediaVersion,sequence:seq,sampleAt:seq*1000,observedAt:now,position,state,rate:1,frames:seq*30,discontinuity:0,...extra});
   return {tracking,room,viewer,data,tick:(ms=1000)=>now+=ms};

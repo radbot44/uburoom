@@ -14,7 +14,7 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-auth-test-'));
   const cert = fs.readFileSync(certFile), config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
     publicUrl: 'https://localhost:6767', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret',
-    deviceFile: path.join(directory, 'devices.json'), loginFile: path.join(directory, 'logins.json') };
+    accountFile: path.join(directory, 'accounts.sqlite'), credentialKeyFile: path.join(directory, 'credentials.key') };
   let app, renewals = 0, renewalStatus = 200;
   const oauthFetch = async (url, options) => {
     if (!url.endsWith('/token')) return new Response(JSON.stringify({ id: 'owner', username: 'alice' }));
@@ -35,8 +35,10 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
   async function restart(edit) {
     await app.close(); app = undefined;
     if (edit) {
-      const data = JSON.parse(fs.readFileSync(config.loginFile, 'utf8')); edit(data);
-      fs.writeFileSync(config.loginFile, JSON.stringify(data));
+      const {Accounts,credentialVault}=require('../server/accounts');
+      const registry=new Accounts(config.accountFile,credentialVault(config.credentialKeyFile));
+      const store=require('../server/storage').loginStore(JSON.stringify([config.publicUrl,config.ownerId,config.guildId,config.clientId]),registry.vault,registry);
+      edit({logins:[...store.logins]});await store.save();await registry.close();
     }
     await start();
   }
@@ -64,8 +66,9 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
     assert.match(result.headers['set-cookie'][0], /Max-Age=31536000/);
     return headers;
   }
+  const saved=()=>({logins:app.registry.db.prepare('SELECT id,record FROM browser_logins').all().map(({id,record})=>{const value=JSON.parse(record);return [id,{...value,oauth:app.registry.vault.open(value.oauth)}];})});
   const headers = await login(), csrf = headers['X-CSRF-Token'];
-  const persisted = JSON.parse(fs.readFileSync(config.loginFile, 'utf8'));
+  const persisted = saved();
   assert.equal(persisted.logins[0][1].expires, null, 'no arbitrary login deadline');
   assert.equal(persisted.logins[0][0], hash(headers.Cookie.slice('uburoom='.length)), 'only a hash of the browser credential is stored');
   assert.equal(JSON.stringify(persisted).includes('private-fixture-access'), false, 'unused access tokens are not retained');
@@ -73,17 +76,17 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
   app.store.devices.push({ id: deviceId, ownerId: 'owner', credentialHash: hash(credential) }); app.store.save();
   const socket = { readyState: 1, send() {}, close() { this.readyState = 3; } };
   assert.equal(app.hub.authenticate(socket, deviceId, credential), true);
-  app.hub.update(socket, { sessionId: randomUUID(), epoch: randomUUID(), alias: '', mode: 'owner', enabled: true, reachable: true });
+  app.hub.update(socket, { roomId: randomUUID(), epoch: randomUUID(), alias: '', mode: 'owner', enabled: true, reachable: true });
   await restart();
   const me = await request('/api/me', headers);
   assert.equal(me.body.loggedIn, true); assert.equal(me.body.csrf, csrf);
   assert.match(me.headers['set-cookie'][0], /Max-Age=31536000/, 'returning renews the browser cookie');
   assert.equal(app.hub.ownerName, 'alice'); assert.equal(app.store.devices.length, 1);
-  assert.deepEqual((await request('/api/sessions', headers)).body.sessions, [], 'live players and consent are not persisted');
+  assert.equal(app.hub.rooms.size,0, 'live players and consent are not persisted');
   await restart(data => { data.logins[0][1].oauth.expires = 0; });
   const results = await Promise.all([request('/api/me', headers), request('/api/me', headers)]);
   assert.ok(results.every(result => result.body.loggedIn)); assert.equal(renewals, 1, 'concurrent requests share one renewal');
-  assert.equal(JSON.parse(fs.readFileSync(config.loginFile, 'utf8')).logins[0][1].oauth.refreshToken, 'rotated-private-refresh');
+  assert.equal(saved().logins[0][1].oauth.refreshToken, 'rotated-private-refresh');
   await restart(); assert.equal((await request('/api/me', headers)).body.loggedIn, true);
   assert.equal((await request('/api/logout', headers, 'POST')).status, 200);
   await restart(); assert.equal((await request('/api/me', headers)).body.loggedIn, false, 'logout remains effective after restart');
@@ -91,7 +94,7 @@ test('logins survive restart, renew Discord tokens, persist logout/revocation an
   await restart(data => { data.logins[0][1].oauth.expires = 0; });
   renewalStatus = 503;
   assert.equal((await request('/api/me', second)).status, 503, 'temporary Discord outage does not erase login');
-  assert.equal(JSON.parse(fs.readFileSync(config.loginFile, 'utf8')).logins.length, 1);
+  assert.equal(saved().logins.length, 1);
   renewalStatus = 400;
   assert.equal((await request('/api/me', second)).body.loggedIn, false, 'Discord rejecting renewal requires a fresh sign-in');
   await restart(); assert.equal((await request('/api/me', second)).body.loggedIn, false, 'revocation is durable');

@@ -192,7 +192,7 @@
       }
     };
   }
-  function mount(host, { execute, close, compact = false, volumeInterval = 25, website, trustedSessionControls = false, trustedRoomControls = trustedSessionControls, headerSlot, showAutoJoin = true, settingsOnly = false } = {}) {
+  function mount(host, { execute, close, compact = false, volumeInterval = 25, website, trustedRoomControls = false, headerSlot, showAutoJoin = true, settingsOnly = false } = {}) {
     const doc = host.ownerDocument, shadow = host.attachShadow({ mode: 'open' });
     node(doc, shadow, 'style', CSS);
     const root = node(doc, shadow, 'section', undefined, { class: 'remote' + (compact ? ' compact' : '') + (settingsOnly ? ' settings-only' : ''), 'aria-label': settingsOnly ? 'Remote permissions' : 'uburoom remote' });
@@ -357,7 +357,7 @@
       if (options.canPlayback !== undefined) canPlayback = options.canPlayback;
       canAudio = options.canAudio ?? canPlayback;
       if (options.canTransform !== undefined) canTransform = options.canTransform;
-      if (options.room !== undefined || options.session !== undefined) room = options.room ?? options.session;
+      if (options.room !== undefined) room = options.room;
       const picture = state.picture || {};
       for (const b of root.querySelectorAll('button,input')) b.disabled = !available;
       for (const b of media.querySelectorAll('button,input')) b.disabled = !available || !canPlayback;

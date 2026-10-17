@@ -28,7 +28,7 @@ test('frozen supported frame callbacks cannot be replaced with advancing native 
 });
 test('client clock steps in both directions retain exactly observed decoded credit',async()=>{
   const f=client(),tracking=new PlaybackTracking(undefined,()=>f.sent.at(-1)?.sampleAt+99000||100000);
-  const room={s:{sessionId:'room'},mediaVersion:'media',media:{id:'fixture',duration:100}},viewer={userId:'user',observationEpoch:'epoch',streamVersion:'stream',mediaVersion:'media',media:{kind:'demo'}};
+  const room={s:{roomId:'room'},mediaVersion:'media',media:{id:'fixture',duration:100}},viewer={userId:'user',observationEpoch:'epoch',streamVersion:'stream',mediaVersion:'media',media:{kind:'demo'}};
   try {
     for(const wallStep of [0,5745,-9000,1000]){
       if(f.sent.length)f.tick(1000,wallStep);

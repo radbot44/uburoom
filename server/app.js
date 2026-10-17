@@ -23,12 +23,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   try {
   oauthFetch=resilientFetch(oauthFetch,{timeoutMs:10000});
   if(config.accountFile&&!config.credentialKeyFile)throw new Error('Configure a private uburoom credential key file outside the project');
+  if(config.accountFile&&!fs.existsSync(config.accountFile)&&['devices.json','logins.json'].some(name=>fs.existsSync(path.join(path.dirname(config.accountFile),name))))throw new Error('Legacy private state found without a baseline database; review a backup and manual transfer or reset before starting');
   if(config.accountFile&&fs.existsSync(config.accountFile)&&!fs.existsSync(config.credentialKeyFile))throw new Error('The uburoom credential key is missing; restore the original key before starting');
   const vault=config.accountFile||config.unifiedAccounts?credentialVault(config.credentialKeyFile):undefined;
   registry=vault?new Accounts(config.accountFile,vault):undefined;
-  const store = deviceStore(config.deviceFile,registry);
-  if(vault&&config.loginFile&&fs.existsSync(config.loginFile)&&!fs.existsSync(config.loginFile+'.pre-accounts.encrypted.json'))fs.writeFileSync(config.loginFile+'.pre-accounts.encrypted.json',JSON.stringify(vault.seal(JSON.parse(fs.readFileSync(config.loginFile,'utf8')))),{flag:'wx',mode:0o600});
-  const accounts = loginStore(config.loginFile, JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),vault,registry);
+  const store = deviceStore(registry);
+  const accounts = loginStore(JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),vault,registry);
   // Browsers require a finite cookie lifetime; renew it on each account visit.
   // Server logins have no fixed lifetime; Discord renewal/revocation governs them.
   const loginSeconds = 365 * 24 * 60 * 60, renewals = new Map(), cookieRenewedAt = new Map();
@@ -47,7 +47,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     return {...identity,userId:account.id,accountRevision:account.revision};
   }
   function validIdentity(identity) {if(!registry)return true;const account=registry.canonical(identity.userId);return !!account&&account.id===identity.userId&&account.revision===identity.accountRevision;}
-  if(registry){for(const login of logins.values())if(!UUID.test(login.userId))Object.assign(login,discordIdentity(login));accounts.save();}
   const publicDir = path.join(__dirname, '../web');
   const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
   const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
@@ -156,7 +155,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
   }
   const watch = new Watch(hub, plex, fs.existsSync(demoFile) ? { kind: 'demo', title: 'uburoom synchronization test', duration: 60, format: 'file', quality: 'direct', file: demoFile } : undefined, registry);
-  hub.watchCanView=(session,actor)=>watch.canView(watch.rooms.get(session.sessionId),actor);
+  hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
   const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry });
   async function discordStart(req,res,linkLogin,extension) {
     const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
@@ -279,19 +278,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!login || !hub.isOwner(webActor(login)) || typeof data.enabled !== 'boolean') return json(res,403,{error:'Only the owner can change Admin mode'});
         hub.setAdminMode(webActor(login),data.enabled); return json(res,200,{adminMode:hub.isAdmin(webActor(login))});
       }
-      if (req.method === 'GET' && (route === '/api/rooms' || route === '/api/sessions')) {
-        const login = await user(req); if (!login) return json(res, 401, { error: 'Log in with Discord' });
-        renewCookie(req, res, login);
-        return json(res, 200, { [route === '/api/rooms' ? 'rooms' : 'sessions']: await hub.list(webActor(login)) });
-      }
-      if (req.method === 'POST' && route === '/api/command') {
-        const login = await protectedPost(req); if (!login) return json(res, 403, { error: 'Not authorized' });
-        if (!throttle('command:' + login.userId, 120)) return json(res, 429, { error: 'Too many commands; try again shortly' });
-        const data = await body(req);
-        data.sessionId = data.roomId ?? data.sessionId;
-        if (!UUID.test(data.sessionId || '')) return json(res, 400, { error: 'Select a player' });
-        return json(res, 200, await hub.dispatch(webActor(login), { ...data.command, roomId: data.sessionId, sessionId: data.sessionId }));
-      }
       if (req.method === 'GET' && route === '/auth/discord') {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const loginId = url.searchParams.get('extension');
@@ -392,12 +378,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           clearTimeout(authTimer); ws.send(JSON.stringify({ type: 'auth-ok' })); return;
         }
         ws.lastSeen = Date.now();
-        if (m.type === 'session') hub.update(ws, m);
+        if (m.type === 'room') hub.update(ws, m);
         else if (m.type === 'sharing-options') {
           ws.send(JSON.stringify({ type: 'sharing-options', ownerName: hub.ownerName, ...(hub.access?.options() || { available: false }) }));
           ws.send(JSON.stringify(hub.voiceMessage()));
         }
-        else if (m.type === 'remove') hub.remove(ws, m.sessionId);
+        else if (m.type === 'remove') hub.remove(ws, m.roomId);
         else if (m.type === 'ack') hub.ack(ws, m);
         else if (m.type === 'heartbeat') ws.send(JSON.stringify({ type: 'heartbeat-ack' }));
         else ws.close(4002, 'Invalid message');

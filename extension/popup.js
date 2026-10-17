@@ -10,7 +10,7 @@ for (const origin of serverOrigins) {
 let current, selectedServer = serverOrigins[0], serverEdited = false, refreshing = false;
 const remote = uburoomUI.mount($('local-remote'), { compact: true, execute: async command => {
   const id = current?.id;
-  const result = await request({ type: 'local-command', sessionId: id, command });
+  const result = await request({ type: 'local-command', roomId: id, command });
   if (current?.id !== id) return { status: 'unavailable', message: 'Selected tab changed.' };
   if (command.action.startsWith('room.')) await refresh();
   return result;
@@ -20,7 +20,7 @@ async function refresh() {
   if (refreshing) return; refreshing = true;
   try {
     const state = await request({ type: 'popup-state' });
-    current = state.session; if (!serverEdited || state.paired) selectedServer = state.serverUrl;
+    current = state.room; if (!serverEdited || state.paired) selectedServer = state.serverUrl;
     $('open-website').href = selectedServer + '/';
     $('status').textContent = state.signingIn || state.paired && !state.connected ? state.status : '';
     $('signin-area').hidden = state.paired; $('forget').hidden = !state.paired;
@@ -37,12 +37,12 @@ async function refresh() {
 }
 function button(id, action) { $(id).addEventListener('click', async () => { $('error').textContent = ''; try { await action(); await refresh(); } catch (e) { $('error').textContent = e.message; } }); }
 $('alias').addEventListener('change', async () => {
-  try { await request({ type: 'rename', sessionId: current?.id, alias: $('alias').value.trim().toLowerCase() }); await refresh(); }
+  try { await request({ type: 'rename', roomId: current?.id, alias: $('alias').value.trim().toLowerCase() }); await refresh(); }
   catch (e) { $('error').textContent = e.message; }
 });
 button('signin', () => request({ type: 'sign-in', serverUrl: selectedServer }));
 button('forget', () => request({ type: 'forget' }));
-button('open-controls', async () => { await request({ type: 'open-controls', sessionId: current?.id }); window.close(); });
+button('open-controls', async () => { await request({ type: 'open-controls', roomId: current?.id }); window.close(); });
 button('settings-toggle', () => { $('settings-panel').hidden = !$('settings-panel').hidden; $('settings-toggle').setAttribute('aria-expanded', String(!$('settings-panel').hidden)); });
 for (const b of $('servers').children) b.addEventListener('click', () => { serverEdited = true; selectedServer = b.dataset.server; for (const other of $('servers').children) other.setAttribute('aria-pressed', String(other === b)); });
 refresh().catch(e => { $('error').textContent = e.message; });

@@ -10,7 +10,7 @@ const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
-const {ObservationError}=require('./playback-tracking');
+const { watchOperations } = require('./watch-operations');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
   const identities = new Map(), grants = new Map();
@@ -34,11 +34,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   async function authorized(req, write = false) {
     const identity = await login(req);
-    if (!identity || req.watchSocket && req.watchSocket.readyState !== 1 || write && (!allowedOrigin(req) || !req.headers.authorization && req.headers['x-csrf-token'] !== identity.csrf)) return;
+    if (!identity || req.controlSocket && req.controlSocket.readyState !== 1 || write && (!allowedOrigin(req) || !req.headers.authorization && req.headers['x-csrf-token'] !== identity.csrf)) return;
     return { identity, actor: webActor(identity) };
   }
   async function validGrant(grant) {
-    return grant && grant.expires > Date.now() && await grant.alive() && watch.rooms.get(grant.room.s.sessionId) === grant.room &&
+    return grant && grant.expires > Date.now() && await grant.alive() && watch.rooms.get(grant.room.s.roomId) === grant.room &&
       grant.version === grant.room.mediaVersion && grant.room.viewers.get(grant.viewerId)?.media === grant.media &&
       grant.streamVersion === grant.room.viewers.get(grant.viewerId)?.streamVersion && await watch.canView(grant.room, grant.actor);
   }
@@ -137,7 +137,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
       res.writeHead(range ? 206 : 200, headers); if (req.method === 'HEAD') return res.end();
       const source = fs.createReadStream(media.file, { start, end });
-      const check = setInterval(async () => { if (!await validGrant(grant)) source.destroy(); }, 2000);
+      const check = setInterval(async () => { try { if (!await validGrant(grant)) source.destroy(); } catch { source.destroy(); } }, 2000);
       try { await pipeline(source, res); } catch { res.destroy(); } finally { clearInterval(check); } return;
     }
     const target = key === 'start' ? media.start : media.resources.get(key);
@@ -167,7 +167,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const headers = { 'Content-Type': type };
       for (const name of ['content-length', 'content-range', 'accept-ranges']) if (response.headers.has(name)) headers[name] = response.headers.get(name);
       res.writeHead(response.status, headers); if (req.method === 'HEAD') return res.end();
-      const check = setInterval(async () => { if (!await validGrant(grant)) abort.abort(); }, 2000);
+      const check = setInterval(async () => { try { if (!await validGrant(grant)) abort.abort(); } catch { abort.abort(); } }, 2000);
       try { await pipeline(Readable.fromWeb(response.body), res); } finally { clearInterval(check); }
     } catch (error) {
       if (!res.headersSent) json(res, media.transcodeId && ([404,410].includes(error.status)||media.hlsLease&&[401,403].includes(error.status)) ? 410 : 502,
@@ -176,15 +176,15 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     finally { clearTimeout(timer); res.off('close', disconnect); }
   }
+  const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch });
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
-    const serverReceivedAt=Date.now(), receivedMono=performance.now();
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
       const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
       await stream(req, res, grants.get(match[1]), match[2]); return true;
     }
-    if (!req.watchSocket && !throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
+    if (!throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
     try {
       if (req.method === 'POST' && ['/api/watch/handoff/claim', '/api/watch/handoff/redeem'].includes(url.pathname)) {
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
@@ -206,7 +206,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         attempt.redeeming = true;
         try {
           const room = watch.rooms.get(attempt.roomId);
-          const roomId = await watch.canView(room, webActor(attempt.source)) ? room.s.sessionId : undefined;
+          const roomId = await watch.canView(room, webActor(attempt.source)) ? room.s.roomId : undefined;
           if (!await alive() || !handoff.consume(attempt)) { json(res,410,{error:'Activity sign-in expired or was cancelled'}); return true; }
           if (existing?.userId !== attempt.source.userId) browserLogin(res,attempt.source);
           else res.setHeader('Set-Cookie','uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
@@ -214,7 +214,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
-        json(res, 200, { watchVersion: 17,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
+        json(res, 200, { watchVersion: 18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/demo-login') {
         if (!config.demo || !allowedOrigin(req) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { json(res, 403, { error: 'Demo login is disabled' }); return true; }
@@ -238,6 +238,16 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         const login = discordIdentity({ userId: identity.id, name: EngineName(identity.global_name || identity.username), activity:true });
         json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
+      if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
+        const reply = await operations.execute({ headers: req.headers }, url.href);
+        if (reply.resource) {
+          const art = reply.resource;
+          res.writeHead(reply.status, { 'Content-Type': art.type, 'Content-Length': art.bytes.length, 'Cache-Control': 'private, no-store' });
+          res.end(art.bytes);
+        } else json(res, reply.status, reply.value);
+        return true;
+      }
+      if (!['/api/watch/handoff', '/api/watch/handoff/status', '/api/watch/handoff/action'].includes(url.pathname)) { json(res, 404, { error: 'Room controls require an authenticated WebSocket' }); return true; }
       const auth = await authorized(req, req.method !== 'GET');
       if (!auth) { json(res, 401, { error: 'Log in with Discord' }); return true; }
       if (url.pathname === '/api/watch/handoff' && req.method === 'POST') {
@@ -260,104 +270,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         else if (data.action !== 'approve' || !handoff.approve(attempt,data.verification)) {json(res,409,{error:'Wait for the browser and check its code before approving'});return true;}
         json(res,200,{ok:true});return true;
       }
-      if (req.method === 'GET' && url.pathname === '/api/watch/me') {
-        json(res, 200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminMode:hub.isAdmin(auth.actor),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) }); return true;
-      }
-      if (req.method === 'POST' && url.pathname === '/api/watch/admin-mode') {
-        const data = await body(req);
-        if (!hub.isOwner(auth.actor) || typeof data.enabled !== 'boolean') {json(res,403,{error:'Only the owner can change Admin mode'});return true;}
-        hub.setAdminMode(auth.actor, data.enabled); json(res,200,{adminMode:hub.isAdmin(auth.actor)}); return true;
-      }
-      if (req.method === 'GET' && ['/api/watch/library','/api/watch/library/item','/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
-        const room = watch.rooms.get(url.searchParams.get('room') ?? url.searchParams.get('session'));
-        const eligible = async () => room && watch.rooms.get(room.s.sessionId) === room && hub.canManage(room.s, auth.actor) &&
-          await watch.canView(room, auth.actor) && (await login(req))?.userId === auth.actor.userId;
-        if (!await eligible()) { json(res, 403, { error: 'Library access requires the current host or active Admin mode' }); return true; }
-        const plex=hub.plexFor?await hub.plexFor(auth.actor):watch.plex;
-        const scopeCurrent=async()=>!hub.plexFor||(await hub.plexFor(auth.actor)).principal===plex.principal;
-        const itemVisible=async()=>plex.principal==='discord-shared'||!hub.plexFor||await plex.visible(url.searchParams.get('item'),url.searchParams.get('type'));
-        let data;
-        if (url.pathname.endsWith('/art')) {
-          const art = await plex.artwork(url.searchParams.get('item'), url.searchParams.get('kind') || 'poster', url.searchParams.get('type'));
-          if (!await eligible()||!await scopeCurrent()||!await itemVisible()) { json(res, 403, {error:'Library access was revoked'}); return true; }
-          res.writeHead(200, {'Content-Type':art.type,'Content-Length':art.bytes.length,'Cache-Control':'private, no-store'}); res.end(art.bytes); return true;
-        } else if (url.pathname.endsWith('/item')) data = { item:await plex.details(url.searchParams.get('item'),url.searchParams.get('type')) };
-        else if (url.pathname.endsWith('/filters')) data = await plex.filters(url.searchParams.get('section'));
-        else {
-          const query = Object.fromEntries(['section','parent','collection','tab','q','genre','year','sort','order','offset','seed'].filter(key => url.searchParams.has(key)).map(key => [key,url.searchParams.get(key)]));
-          data = plex.configured ? await plex.browse(query) : {items:[],total:0,offset:0,nextOffset:null};
-          data.testVideo = !!watch.demoMedia;
-        }
-        if (!await eligible()||!await scopeCurrent()||url.pathname.endsWith('/item')&&!await itemVisible()) { json(res, 403, {error:'Library access was revoked'}); return true; }
-        json(res, 200, data); return true;
-      }
-      if (url.pathname === '/api/watch/playback' && req.method === 'GET') {
-        json(res,200,watch.tracking.history(auth.actor.userId)); return true;
-      }
-      if (url.pathname === '/api/watch/rooms') {
-        if (req.method === 'POST') json(res, 201, { id: watch.create(auth.actor) });
-        else if (req.method === 'GET') json(res, 200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
-        else json(res, 405, { error: 'Method not allowed' }); return true;
-      }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe))?$/.exec(url.pathname);
-      if (!match || !UUID.test(match[1])) { json(res, 404, { error: 'Room unavailable' }); return true; }
-      const room = watch.rooms.get(match[1]);
-      if (!await watch.canView(room, auth.actor)) { json(res, 403, { error: 'Room unavailable or private' }); return true; }
-      if(req.watchSocket&&req.watchSocket.readyState!==1){json(res,409,{error:'Room connection changed; retry manually'});return true;}
-      if (req.method === 'POST' && match[2] === 'command') {
-        if (!throttle('watch-command:' + auth.actor.userId, 120)) { json(res, 429, { error: 'Too many commands' }); return true; }
-        const data = await body(req);
-        if (data.epoch !== room.s.epoch || !Number.isFinite(data.expiresAt) || data.expiresAt <= Date.now() || data.expiresAt > Date.now() + 3000) {
-          json(res, 409, { error: 'Room changed or command expired; retry manually' }); return true;
-        }
-        const viewer = room.viewers.get(data.viewerId);
-        if (data.viewerId !== undefined && (!viewer || viewer.userId !== auth.actor.userId)) throw new Error('Invalid viewer');
-        const result = await hub.dispatch({ ...auth.actor, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, roomId: room.s.sessionId, sessionId: room.s.sessionId, expiresAt: data.expiresAt }); json(res, 200, result); return true;
-      }
-      if (req.method === 'POST' && match[2] === 'close') {
-        if (!hub.canManage(room.s, auth.actor)) { json(res, 403, { error: 'Only the host or an active administrator can close the room' }); return true; }
-        watch.remove(room.s.sessionId); json(res, 200, { ok: true }); return true;
-      }
-      if (req.method === 'POST' && match[2] === 'leave') {
-        const data = await body(req); await watch.leave(room, auth.actor, data.viewerId);
-        json(res, 200, { ok: true }); return true;
-      }
-      if (req.method === 'POST' && match[2] === 'observe') {
-        const data = await body(req), viewer = room.viewers.get(data.viewerId);
-        if (!viewer || viewer.userId !== auth.actor.userId || viewer.alive && !await viewer.alive() || !await watch.canView(room,auth.actor)) {
-          json(res,403,{error:'Playback viewer unavailable'}); return true;
-        }
-        try { json(res,200,watch.tracking.observe(room,viewer,data.viewerId,data)); }
-        catch(error) { json(res,error instanceof ObservationError?409:503,{error:'Playback observation unavailable',rejection:error instanceof ObservationError?error.rejection:'storage-failure'}); }
-        return true;
-      }
-      if (req.method === 'POST' && match[2] === 'ready') {
-        const data = await body(req); await watch.ready(room, auth.actor, data.viewerId, data.mediaVersion, data.ready, data.readinessVersion);
-        json(res, 200, { ok: true }); return true;
-      }
-      if (req.method !== 'GET' || match[2]) { json(res, 405, { error: 'Method not allowed' }); return true; }
-      const viewerId = url.searchParams.get('viewer');
-      if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
-      const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-      const alive = async () => (!req.watchSocket || req.watchSocket.readyState === 1) && (await login({ headers }))?.userId === auth.actor.userId;
-      watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
-      // Capability is set before the first source preparation and never grants access.
-      const viewer=room.viewers.get(viewerId);
-      if(req.watchSocket)viewer.watchSocket=req.watchSocket;
-      if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
-      room.viewers.get(viewerId).browserLoginHash=req.headers.authorization?undefined:cookies(req).uburoom&&hash(cookies(req).uburoom);
-      await watch.prepareViewer(room, auth.actor, viewerId);
-      if (!await watch.canView(room, auth.actor) || !await alive()) { json(res, 403, { error: 'Viewing access was revoked' }); return true; }
-      const state = watch.snapshot(room, auth.actor, viewerId, alive);
-      const grant = mediaGrant(room, auth, req, viewerId);
-      if (grant) {
-        state.mediaUrl = `/api/watch/media/${grant}/start`;
-        const media=room.viewers.get(viewerId).media;
-        if (media.selection?.subtitle?.available && media.selection.subtitle.delivery==='text') state.subtitleUrl=`/api/watch/media/${grant}/captions-${media.captionVersion}`;
-        else if(media.selection?.subtitle?.available && ['ass','pgs','vobsub'].includes(media.selection.subtitle.delivery))state.subtitleUrl=`/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
-      }
-      state.timing={serverReceivedAt,serverSentAt:Date.now(),serverProcessingMs:performance.now()-receivedMono,clockEpoch};
-      json(res, 200, state); return true;
+      json(res, 404, { error: 'Room controls require an authenticated WebSocket' }); return true;
     } catch (error) { json(res, 400, { error: error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); return true; }
   }
   const EngineName = value => require('../extension/engine').senderName(value);
@@ -369,6 +282,6 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function logout(loginHash){
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash)await watch.leave(room,viewer.actor,id,'logout');
   }
-  return { route, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
+  return { route, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
 }
 module.exports = { watchHttp };

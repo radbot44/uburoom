@@ -35,12 +35,12 @@ async function extension(saved, serverOrigins) {
     let listen,disconnect;const messages=[],id=randomUUID();
     const port={name:'uburoom-player',sender:{tab:{id:tabId},frameId:0,url:'https://tv.youtube.com/'},
       postMessage:m=>messages.push(m),onMessage:event(fn=>listen=fn),onDisconnect:event(fn=>disconnect=fn)};
-    onConnect(port);await listen({type:'hello',sessionId:id});await listen({type:'presence',reachable:true,state:{picture:{...Engine.DEFAULT}}});
-    const report=ws.sent.findLast(m=>m.type==='session');
-    await receive({type:'session-ack',sessionId:id,epoch:report.epoch,serverNow:Date.now(),live:false});
+    onConnect(port);await listen({type:'hello',roomId:id});await listen({type:'presence',reachable:true,state:{picture:{...Engine.DEFAULT}}});
+    const report=ws.sent.findLast(m=>m.type==='room');
+    await receive({type:'room-ack',roomId:id,epoch:report.epoch,serverNow:Date.now(),live:false});
     return {id,messages,disconnect,state:()=>messages.findLast(m=>m.type==='remote-state')};
   }
-  return {ws,receive,player,sockets,timers,command:(id,command)=>onMessage({type:'local-command',sessionId:id,command},{url:'moz-extension://fixture/popup.html'})};
+  return {ws,receive,player,sockets,timers,command:(id,command)=>onMessage({type:'local-command',roomId:id,command},{url:'moz-extension://fixture/popup.html'})};
 }
 
 test('remembered On join survives fresh background and tab sessions, without restoring consent or replaying voice snapshots', async () => {
@@ -78,19 +78,19 @@ test('a configured upgrade retains the paired device and exact stored origin wit
   assert.equal(tab.state().autoJoin, true);
 });
 
-test('legacy server management commands normalize before disabled-room admission', async () => {
+test('canonical server management commands enforce disabled-room admission', async () => {
   const ext=await extension({deviceId:randomUUID(),credential:'a'.repeat(64),serverUrl:'https://localhost:6767'}),tab=await ext.player();
-  const report=ext.ws.sent.findLast(m=>m.type==='session');
-  const envelope={type:'command',id:randomUUID(),sessionId:tab.id,epoch:report.epoch,ownerId:'owner',actorId:'owner',expiresAt:Date.now()+2000};
-  await ext.receive({...envelope,action:'session.enable'});
+  const report=ext.ws.sent.findLast(m=>m.type==='room');
+  const envelope={type:'command',id:randomUUID(),roomId:tab.id,epoch:report.epoch,ownerId:'owner',actorId:'owner',expiresAt:Date.now()+2000};
+  await ext.receive({...envelope,action:'room.enable'});
   assert.equal(tab.state().enabled,true);
   assert.equal(ext.ws.sent.findLast(m=>m.type==='ack').status,'applied');
-  const enabled=ext.ws.sent.findLast(m=>m.type==='session');
+  const enabled=ext.ws.sent.findLast(m=>m.type==='room');
   envelope.epoch=enabled.epoch;
-  await ext.receive({type:'session-ack',sessionId:tab.id,epoch:enabled.epoch,serverNow:Date.now(),live:true});
-  await ext.receive({...envelope,id:randomUUID(),action:'session.disable'});
+  await ext.receive({type:'room-ack',roomId:tab.id,epoch:enabled.epoch,serverNow:Date.now(),live:true});
+  await ext.receive({...envelope,id:randomUUID(),action:'room.disable'});
   assert.equal(tab.state().enabled,false);
   assert.equal(ext.ws.sent.findLast(m=>m.type==='ack').disabled,true);
-  await ext.receive({...envelope,id:randomUUID(),actorId:'guest',action:'session.enable'});
-  assert.equal(tab.state().enabled,false,'legacy alias does not bypass owner authorization');
+  await ext.receive({...envelope,id:randomUUID(),actorId:'guest',action:'room.enable'});
+  assert.equal(tab.state().enabled,false,'room enable does not bypass owner authorization');
 });
