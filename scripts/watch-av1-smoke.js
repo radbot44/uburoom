@@ -61,7 +61,7 @@ async function main() {
     await evaluate(host,'preferredQuality="direct";document.getElementById("create").click()');await until(host,'!!state','room');
     await evaluate(host,'execute({action:"media.load",args:{mediaId:"123",quality:"direct"}}).then(()=>true)');
     await until(host,'videoFrames>0','original decoded');assert.equal(await evaluate(host,'state.format'),'file');
-    await evaluate(host,'execute({action:"session.sharing",args:{mode:"guild"}}).then(()=>execute({action:"session.enable"})).then(()=>true)');
+    await evaluate(host,'execute({action:"room.sharing",args:{mode:"guild"}}).then(()=>execute({action:"room.enable"})).then(()=>true)');
     await evaluate(host,'compatibleFallback("Simulated H.264 decode failure").then(()=>true)');
     await until(host,'state.format==="av1" && videoFrames>0','AV1 frames');
     console.log('PASS: original retained until simulated decode failure; AV1 WebM/Opus decodes through actual MediaSource.');

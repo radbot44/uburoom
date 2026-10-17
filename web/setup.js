@@ -1,21 +1,21 @@
 'use strict';
 const $ = id => document.getElementById(id);
 for (const [id, icon] of [['manage', 'settings'], ['logout', 'logout'], ['refresh', 'refresh'], ['close-devices', 'close'], ['admin-mode','admin']]) $(id).replaceChildren(uburoomUI.icon(document, icon));
-let me, selected, sessions = [], polling = false, commandPending = false, commandVersion = 0;
+let me, selected, rooms = [], polling = false, commandPending = false, commandVersion = 0;
 const remote = uburoomUI.mount($('remote'), { headerSlot: 'players', volumeInterval: 600, execute: async command => {
   if (!selected || commandPending) throw new Error('Select an available player');
   const id = selected; commandPending = true; commandVersion++;
   try {
-    const result = await post('/api/command', { sessionId: id, command });
+    const result = await post('/api/command', { roomId: id, command });
     if (id !== selected) return { status: 'unavailable', message: 'Player selection changed.' };
-    if (result.state) { const s = sessions.find(s => s.id === id); if (s) s.state = result.state; }
-    if (result.status === 'applied' && command.action.startsWith('session.')) {
-      const s = sessions.find(s => s.id === id);
+    if (result.state) { const s = rooms.find(s => s.id === id); if (s) s.state = result.state; }
+    if (result.status === 'applied' && command.action.startsWith('room.')) {
+      const s = rooms.find(s => s.id === id);
       if (s) {
-        if (command.action === 'session.sharing') s.mode = command.args.mode;
-        else if (command.action === 'session.controls') s.controls = { ...s.controls, [command.args.control]: command.args.allowed };
-        else if (command.action === 'session.autojoin') s.autoJoin = command.args.enabled;
-        else s.enabled = command.action === 'session.enable';
+        if (command.action === 'room.sharing') s.mode = command.args.mode;
+        else if (command.action === 'room.controls') s.controls = { ...s.controls, [command.args.control]: command.args.allowed };
+        else if (command.action === 'room.autojoin') s.autoJoin = command.args.enabled;
+        else s.enabled = command.action === 'room.enable';
       }
       renderSelection();
     }
@@ -29,13 +29,13 @@ async function post(path, body = {}) {
   const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Request failed'); return result;
 }
 function renderSelection() {
-  const session = sessions.find(s => s.id === selected);
-  remote.render(session?.state, { available: !!session && session.enabled !== false, canSave: !!session?.canSave,
-    canPlayback: session?.canPlayback !== false, canTransform: session?.canTransform !== false,
-    session: session?.canManage ? { ...session, connected: true, reachable: true, paired: true, live: session.enabled } : null });
+  const room = rooms.find(s => s.id === selected);
+  remote.render(room?.state, { available: !!room && room.enabled !== false, canSave: !!room?.canSave,
+    canPlayback: room?.canPlayback !== false, canTransform: room?.canTransform !== false,
+    room: room?.canManage ? { ...room, connected: true, reachable: true, paired: true, live: room.enabled } : null });
   $('status').textContent = '';
   for (const button of $('players').children) {
-    const s = sessions.find(s => s.id === button.dataset.id);
+    const s = rooms.find(s => s.id === button.dataset.id);
     if (s) button.textContent = s.alias + (s.enabled === false ? ' · Off' : '');
     button.setAttribute('aria-pressed', String(button.dataset.id === selected)); button.disabled = commandPending;
   }
@@ -45,35 +45,35 @@ async function refreshPlayers() {
   polling = true;
   const version = commandVersion;
   try {
-    const response = await fetch('/api/sessions', { signal: AbortSignal.timeout(5000) });
+    const response = await fetch('/api/rooms', { signal: AbortSignal.timeout(5000) });
     if (!response.ok) {
       if (response.status === 401) { me.loggedIn = false; $('welcome').hidden = false; $('signed-in').hidden = true; }
       throw new Error(response.status === 401 ? 'Sign-in expired. Log in again.' : 'Players unavailable.');
     }
-    const next = (await response.json()).sessions;
+    const next = (await response.json()).rooms;
     if (commandPending || version !== commandVersion) return;
-    sessions = next;
-    if (!sessions.some(s => s.id === selected)) { if (selected) remote.stop(); selected = undefined; }
+    rooms = next;
+    if (!rooms.some(s => s.id === selected)) { if (selected) remote.stop(); selected = undefined; }
     if (!selected) {
-      const live = sessions.filter(s => s.enabled !== false);
+      const live = rooms.filter(s => s.enabled !== false);
       const own = live.filter(s => s.canManage);
       if (own.length === 1) selected = own[0].id;
       else if (!own.length && live.length === 1) selected = live[0].id;
-      else if (sessions.length === 1) selected = sessions[0].id;
+      else if (rooms.length === 1) selected = rooms[0].id;
     }
-    $('player-picker').hidden = sessions.length > 0;
+    $('player-picker').hidden = rooms.length > 0;
     $('players').replaceChildren();
-    for (const session of sessions) {
-      const b = document.createElement('button'); b.type = 'button'; b.textContent = session.alias + (session.enabled === false ? ' · Off' : ''); b.dataset.id = session.id;
+    for (const room of rooms) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = room.alias + (room.enabled === false ? ' · Off' : ''); b.dataset.id = room.id;
       b.title = b.textContent;
-      b.addEventListener('click', () => { if (commandPending) return; remote.stop(); selected = session.id; renderSelection(); }); $('players').append(b);
+      b.addEventListener('click', () => { if (commandPending) return; remote.stop(); selected = room.id; renderSelection(); }); $('players').append(b);
     }
-    $('empty').hidden = sessions.length > 0; renderSelection();
+    $('empty').hidden = rooms.length > 0; renderSelection();
   } catch (e) {
     remote.stop();
-    sessions = []; selected = undefined; $('players').replaceChildren(); $('empty').hidden = false;
+    rooms = []; selected = undefined; $('players').replaceChildren(); $('empty').hidden = false;
     $('player-picker').hidden = false;
-    remote.render(undefined, { available: false, canSave: false, session: null }); $('status').textContent = e.message;
+    remote.render(undefined, { available: false, canSave: false, room: null }); $('status').textContent = e.message;
   } finally { polling = false; }
 }
 async function refreshAccount() {
@@ -91,7 +91,7 @@ async function refreshAccount() {
     li.append(name, revoke); $('devices').append(li);
   }
   if (me.loggedIn) await refreshPlayers();
-  else { sessions = []; selected = undefined; remote.stop(); remote.render(undefined, { available: false, session: null }); $('status').textContent = me.oauthReady ? '' : 'Configure Discord OAuth on the server.'; }
+  else { rooms = []; selected = undefined; remote.stop(); remote.render(undefined, { available: false, room: null }); $('status').textContent = me.oauthReady ? '' : 'Configure Discord OAuth on the server.'; }
 }
 async function action(fn) { $('result').textContent = ''; try { await fn(); } catch (e) { $('result').textContent = e.message; } }
 $('manage').addEventListener('click', () => { $('devices-panel').hidden = !$('devices-panel').hidden; });

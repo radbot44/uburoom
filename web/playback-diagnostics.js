@@ -3,7 +3,7 @@
   'use strict';
   const choices = {
     reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','leave','end','logout','fallback','decoder','fatal','complete','source-changed','unavailable'],
-    action:['media.load','media.play','media.pause','media.toggle','media.seek.absolute','media.seek.relative','media.quality.set','media.tracks.set','media.stream.refresh','session.enable','session.disable','session.visibility'],
+    action:['media.load','media.play','media.pause','media.toggle','media.seek.absolute','media.seek.relative','media.quality.set','media.tracks.set','media.stream.refresh','room.enable','room.disable','room.visibility'],
     request:['room-poll','rooms','observe','ready','command','identity','other'],
     failure:['http','network','timeout','abort','decode','other'],
     category:['network','media','other'],

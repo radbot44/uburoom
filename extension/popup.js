@@ -12,7 +12,7 @@ const remote = uburoomUI.mount($('local-remote'), { compact: true, execute: asyn
   const id = current?.id;
   const result = await request({ type: 'local-command', sessionId: id, command });
   if (current?.id !== id) return { status: 'unavailable', message: 'Selected tab changed.' };
-  if (command.action.startsWith('session.')) await refresh();
+  if (command.action.startsWith('room.')) await refresh();
   return result;
 } });
 async function request(message) { const result = await browser.runtime.sendMessage(message); if (result?.error) throw new Error(result.error); return result; }
@@ -32,7 +32,7 @@ async function refresh() {
     $('alias').disabled = !current;
     if (document.activeElement !== $('alias') && current) $('alias').value = current.alias;
     remote.render(current?.state, { available: !!current?.reachable, canSave: true,
-      session: current ? { ...current, canManage: true, connected: state.connected, paired: state.paired, sharingAvailable: state.sharing.available } : null });
+      room: current ? { ...current, canManage: true, connected: state.connected, paired: state.paired, sharingAvailable: state.sharing.available } : null });
   } finally { refreshing = false; }
 }
 function button(id, action) { $(id).addEventListener('click', async () => { $('error').textContent = ''; try { await action(); await refresh(); } catch (e) { $('error').textContent = e.message; } }); }

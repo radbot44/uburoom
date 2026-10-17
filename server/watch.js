@@ -3,7 +3,7 @@
 /** @typedef {import('./types').Room} Room */
 /** @typedef {import('./types').Viewer} Viewer */
 /** @typedef {import('./types').Actor} Actor */
-/** @typedef {import('./types').SessionDescriptor} SessionDescriptor */
+/** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
 const { randomUUID } = require('node:crypto');
@@ -15,14 +15,14 @@ const Tracks = require('./media-tracks');
 const SubtitleResources = require('./subtitle-resources');
 const RECONNECT_GRACE_MS = 60000;
 // Covers the normal 1 s state poll plus a 300+ ms RTT and scheduling margin.
-// Only the initial readiness release waits; ongoing recovery never reschedules it.
+// Startup and shared seeks wait; ongoing recovery never reschedules playback.
 const INITIAL_START_LEAD_MS = 1750;
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) { this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map(); }
   create(actor) {
-    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing session');
-    if (this.rooms.size >= 4) throw new Error('Close an existing viewing session first');
+    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing room');
+    if (this.rooms.size >= 4) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = randomUUID();
     const s = { sessionId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
       ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility: 'public', mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
@@ -31,7 +31,7 @@ class Watch {
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
     s.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
     s.viewers = room.viewers;
-    this.rooms.set(id, room); this.hub.sessions.set(id, s); return id;
+    this.rooms.set(id, room); this.hub.rooms.set(id, s); return id;
   }
   position(room, now = Date.now()) {
     const elapsed=room.startAt?Math.max(0,now-Math.max(room.changedAt,room.startAt)):now-room.changedAt;
@@ -114,7 +114,7 @@ class Watch {
       if (savedHost?.userId === room.s.hostId) {
         // An empty room has no command target. Only its original host tab may
         // reactivate it during the bounded, same-media reconnect grace.
-        room.reconnecting = true; this.hub.sessions.delete(room.s.sessionId); return;
+        room.reconnecting = true; this.hub.rooms.delete(room.s.sessionId); return;
       }
       this.remove(room.s.sessionId); return;
     }
@@ -175,13 +175,18 @@ class Watch {
     this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
     if (!room.viewers.size) { this.remove(room.s.sessionId); return; }
-    if (hostLeft) this.revokeConsent(room);
+    if (hostLeft) {
+      if (reason === 'left') {
+        // An intentional handoff retains room settings, but never old commands.
+        room.s.epoch = randomUUID(); this.hub.cancel(room.s.sessionId);
+      } else this.revokeConsent(room);
+    }
     if (![...room.viewers.values()].some(v => v.userId === room.s.hostId)) await this.transfer(room);
     await this.maybeStart(room);
   }
-  async ready(room, actor, viewerId, version, ready) {
+  async ready(room, actor, viewerId, version, ready, readinessVersion) {
     const viewer = room.viewers.get(viewerId);
-    if (!viewer || viewer.userId !== actor.userId || room.mediaVersion !== version || typeof ready !== 'boolean') throw new Error('Invalid readiness');
+    if (!viewer || viewer.userId !== actor.userId || room.mediaVersion !== version || typeof ready !== 'boolean' || room.readinessVersion !== readinessVersion) throw new Error('Invalid readiness');
     viewer.ready = ready; viewer.version = version; viewer.at = Date.now();
     await this.maybeStart(room);
   }
@@ -191,30 +196,30 @@ class Watch {
     const host = [...room.viewers.values()].find(v => v.userId === room.s.hostId);
     if (!viewers.length || !host || viewers.some(v => !v.ready || v.version !== room.mediaVersion)) return;
     room.starting = true;
-    const version = room.mediaVersion;
+    const version = room.mediaVersion, readinessVersion = room.readinessVersion;
     try {
       if (host.alive && !await host.alive()) return;
-      if (room.manualPaused || room.mediaVersion !== version || [...room.initialViewers].some(id => {
+      if (room.manualPaused || room.mediaVersion !== version || room.readinessVersion !== readinessVersion || [...room.initialViewers].some(id => {
         const viewer = room.viewers.get(id); return viewer && (!viewer.ready || viewer.version !== version);
       })) return;
       room.initialGate = false;
-      const result = await this.hub.dispatch({ ...host.actor, watchAutoplayVersion: version }, { sessionId: room.s.sessionId, action: 'media.play' });
-      if (result.status !== 'applied' && room.mediaVersion === version) room.initialGate = true;
+      const result = await this.hub.dispatch({ ...host.actor, watchAutoplayVersion: version, watchReadinessVersion: readinessVersion }, { sessionId: room.s.sessionId, action: 'media.play' });
+      if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion) room.initialGate = true;
     } finally { room.starting = false; }
   }
   snapshot(room, actor, viewerId, alive, quality = '720p') {
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
-    if (this.rooms.get(room.s.sessionId) !== room) throw new Error('Session unavailable');
+    if (this.rooms.get(room.s.sessionId) !== room) throw new Error('Room unavailable');
     // A new host page never silently inherits remote consent from a previous
-    // host tab. Existing viewers can keep the server session alive in between.
+    // host tab. Existing viewers can keep the room alive in between.
     const oldViewer = room.viewers.get(viewerId);
     if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
     const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
     if (saved && saved.userId !== actor.userId) throw new Error('Viewer identity mismatch');
     if (room.reconnecting && (!saved || viewerId !== room.hostViewerId || actor.surface !== 'web' || actor.userId !== room.s.hostId ||
-      !viewEligible(room.s, actor, this.hub.config, now, this.hub.access))) throw new Error('Session unavailable');
+      !viewEligible(room.s, actor, this.hub.config, now, this.hub.access))) throw new Error('Room unavailable');
     if (saved) room.disconnectedViewers.delete(viewerId);
-    if (room.reconnecting) { room.reconnecting = false; this.hub.sessions.set(room.s.sessionId, room.s); }
+    if (room.reconnecting) { room.reconnecting = false; this.hub.rooms.set(room.s.sessionId, room.s); }
     if (isHost(room.s, actor) && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
       room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.sessionId);
     }
@@ -241,7 +246,7 @@ class Watch {
         subtitleError:viewer.media.selection.subtitle && !viewer.media.selection.subtitle.available ? viewer.media.selection.subtitle.reason : undefined}} : {}),
       qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
       hasPrevious: !!room.media?.previousId, hasNext: !!room.media?.nextId,
-      waitingForReady: room.initialGate && !room.manualPaused, hostName: room.s.hostName, canBrowse: owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
+      readinessVersion: room.readinessVersion, waitingForReady: room.initialGate && !room.manualPaused, hostName: room.s.hostName, canBrowse: owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
       state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, enabled: room.s.enabled, mode: room.s.mode, controls: { ...room.s.controls },
       visibility: room.s.visibility,
       sharingAvailable: !!this.hub.access?.options?.().available, canPlayback: owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback,
@@ -250,7 +255,7 @@ class Watch {
   }
   async execute(room, input, actor, permitted) {
     const command = Engine.validate(input), { action, args } = command, s = room.s;
-    if (!permitted()) return { status: 'unavailable', message: 'Session changed or command expired.' };
+    if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
     if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute'].includes(action)) {
       const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId) return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
@@ -270,7 +275,7 @@ class Watch {
           catch (error) { if (error instanceof PlaybackError) return {status:'failed', message:error.message}; throw error; }
           const authorized=await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
           if (!authorized || !permitted() || version !== room.mediaVersion || room.viewers.get(actor.watchViewerId) !== viewer) {
-            await this.plex.stop(media); return { status: 'unavailable', message: 'Session changed or command expired.' };
+            await this.plex.stop(media); return { status: 'unavailable', message: 'Room changed or command expired.' };
           }
           this.tracking.end(viewer, 'stream-changed'); const old = viewer.media; viewer.media = media; viewer.mediaVersion = version; viewer.streamVersion = randomUUID();
           viewer.quality = args.quality; viewer.compatible = args.compatible === true || !!viewer.compatible; void this.plex.stop(old);
@@ -283,7 +288,7 @@ class Watch {
       else viewer.muted = action === 'media.mute';
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
     }
-    if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
+    if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion || room.readinessVersion !== actor.watchReadinessVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
     let prepared;
     const previous = action === 'media.previous' && this.position(room) < 3 && room.media?.previousId;
     const next = action === 'media.next' && room.media?.nextId;
@@ -292,15 +297,15 @@ class Watch {
       const id = action === 'media.load' ? args.mediaId : previous || next || room.media.id;
       prepared = id === 'demo' ? this.demoMedia && { ...this.demoMedia, id: 'demo', resources: new Map() } : await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(id, 'direct',false,undefined,undefined,{sourceOnly:true});
       if (!prepared) return { status: 'unsupported', message: 'Test video is unavailable.' };
-      if (!permitted()) { await this.plex.stop(prepared); return { status: 'unavailable', message: 'Session changed or command expired.' }; }
+      if (!permitted()) { await this.plex.stop(prepared); return { status: 'unavailable', message: 'Room changed or command expired.' }; }
     }
-    if (!action.startsWith('session.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
+    if (!action.startsWith('room.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
     const now = Date.now(); room.position = this.position(room, now); room.changedAt = now;
     if(['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action)||action.startsWith('media.seek.'))room.startAt=undefined;
     switch (action) {
       case 'media.load': case 'media.next': {
-        const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.position = 0;
+        const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; room.position = 0;
         this.dropMedia(room);
         s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
         for (const viewer of room.viewers.values()) viewer.ready = false;
@@ -309,7 +314,7 @@ class Watch {
       case 'media.previous':
         room.position = 0;
         if (prepared) {
-          const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); void this.plex.stop(old);
+          const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; void this.plex.stop(old);
           this.dropMedia(room);
           s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
           for (const viewer of room.viewers.values()) viewer.ready = false;
@@ -330,10 +335,10 @@ class Watch {
       case 'media.seek.absolute': room.position = Math.max(0, Math.min(room.media.duration - .05, args.seconds)); break;
       case 'media.seek.start': room.position = 0; break;
       case 'media.seek.end': room.position = Math.max(0, room.media.duration - .05); break;
-      case 'session.enable': s.enabled = true; break;
-      case 'session.disable': s.enabled = false; break;
-      case 'session.sharing': s.mode = args.mode; break;
-      case 'session.visibility':
+      case 'room.enable': s.enabled = true; break;
+      case 'room.disable': s.enabled = false; break;
+      case 'room.sharing': s.mode = args.mode; break;
+      case 'room.visibility':
         s.visibility = args.visibility;
         room.disconnectedViewers.clear();
         if (s.visibility === 'private') for (const [id, viewer] of room.viewers) {
@@ -341,18 +346,28 @@ class Watch {
           this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id);
         }
         break;
-      case 'session.controls': s.controls[args.control] = args.allowed; break;
-      case 'session.autojoin': return { status: 'unsupported', message: 'On join applies to Firefox player devices.' };
+      case 'room.controls': s.controls[args.control] = args.allowed; break;
+      case 'room.autojoin': return { status: 'unsupported', message: 'On join applies to Firefox player devices.' };
       case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
       case 'profile.load': if (!room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' }; s.state.picture = { ...room.profiles[args.slot] }; break;
       case 'status.get': case 'help.get': break;
       default: s.state.picture = Engine.picture(s.state.picture, command);
     }
-    if (action.startsWith('session.')) { s.epoch = randomUUID(); this.hub.cancel(s.sessionId); }
+    if (action.startsWith('media.seek.') || action === 'media.previous' && !prepared) {
+      // Freeze the new target and discard acknowledgements from earlier seeks.
+      // An explicit pause remains paused; seeking during playback resumes together.
+      if (!s.state.paused || room.initialGate) {
+        room.readinessVersion = randomUUID();
+        room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
+        s.state.paused = true;
+        for (const viewer of room.viewers.values()) viewer.ready = false;
+      }
+    }
+    if (action.startsWith('room.')) { s.epoch = randomUUID(); this.hub.cancel(s.sessionId); }
     s.state.profileSlots = Object.keys(room.profiles).map(Number); room.revision++; room.lastActivity = now; this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
-    if (['media.play', 'media.toggle', 'session.visibility'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
-    return { status: 'applied', message: 'Viewing session updated.', ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}) };
+    if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
+    return { status: 'applied', message: 'Viewing room updated.', ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}) };
   }
   async changeTracks(room,viewer,args,actor,permitted) {
     const current = viewer.media, version = room.mediaVersion;
@@ -380,7 +395,7 @@ class Watch {
       const access = await this.canView(room,actor);
       if (!alive || !access || !permitted() || version!==room.mediaVersion || viewer.media!==current || room.viewers.get(actor.watchViewerId)!==viewer) {
         if (replacement) await this.plex.stop(replacement);
-        return {status:'unavailable',message:'Session changed or command expired.'};
+        return {status:'unavailable',message:'Room changed or command expired.'};
       }
       if (replacement) {
         this.tracking.end(viewer,'stream-changed'); viewer.media=replacement; viewer.mediaVersion=version; viewer.streamVersion=randomUUID(); void this.plex.stop(current);
@@ -412,7 +427,7 @@ class Watch {
         {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.sessionId,version],excludeLease:current.hlsLease,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
       if (!permitted() || version!==room.mediaVersion || room.viewers.get(actor.watchViewerId)!==viewer || viewer.media!==current ||
         !await this.canView(room,actor) || viewer.alive && !await viewer.alive()) {
-        await this.plex.stop(replacement); return {status:'unavailable',message:'Session changed or command expired.'};
+        await this.plex.stop(replacement); return {status:'unavailable',message:'Room changed or command expired.'};
       }
       if (replacement.format!=='hls') { await this.plex.stop(replacement); return {status:'failed',message:'Plex could not refresh this stream.'}; }
       this.tracking.end(viewer,'stream-changed'); viewer.media=replacement; viewer.mediaVersion=version; viewer.streamVersion=randomUUID();
@@ -427,7 +442,7 @@ class Watch {
     const room = this.rooms.get(id); if (!room) return;
     room.s.enabled = false; room.s.state.paused = true; room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
-    this.hub.cancel(id); this.hub.sessions.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
+    this.hub.cancel(id); this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
   }
   sweep() { for (const room of this.rooms.values()) this.refresh(room); }
   close() { for (const id of this.rooms.keys()) this.remove(id); this.tracking.close(); return this.plex.close?.(); }

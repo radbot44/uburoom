@@ -47,7 +47,7 @@ test('remembered On join survives fresh background and tab sessions, without res
   const saved={deviceId:randomUUID(),credential:'a'.repeat(64),serverUrl:'https://localhost:6767'};
   const first=await extension(saved),tab=await first.player();
   assert.equal(tab.state().autoJoin,false);assert.equal(tab.state().enabled,false);
-  assert.equal((await first.command(tab.id,{action:'session.autojoin',args:{enabled:true}})).status,'applied');
+  assert.equal((await first.command(tab.id,{action:'room.autojoin',args:{enabled:true}})).status,'applied');
   assert.equal(saved.autoJoin,true,'preference is written to private extension storage');
   tab.disconnect();
   const replacement=await first.player();assert.equal(replacement.state().autoJoin,true);assert.equal(replacement.state().enabled,false);
@@ -58,10 +58,10 @@ test('remembered On join survives fresh background and tab sessions, without res
   assert.equal(newTab.state().enabled,false,'expired joins are discarded');
   await restarted.receive({type:'voice-state',sequence:3,available:true,joined:true,channelId:'other-call',serverNow:Date.now(),expiresAt:Date.now()+3000});
   assert.equal(newTab.state().enabled,true,'fresh join enables the opted-in tab');
-  await restarted.command(newTab.id,{action:'session.disable'});
+  await restarted.command(newTab.id,{action:'room.disable'});
   await restarted.receive({type:'voice-state',sequence:3,available:true,joined:true,channelId:'other-call',serverNow:Date.now(),expiresAt:Date.now()+3000});
   assert.equal(newTab.state().enabled,false,'duplicate voice events cannot override a later manual disable');
-  const extra=await restarted.player(2);await restarted.command(newTab.id,{action:'session.autojoin',args:{enabled:false}});
+  const extra=await restarted.player(2);await restarted.command(newTab.id,{action:'room.autojoin',args:{enabled:false}});
   assert.equal(extra.state().autoJoin,false,'device preference is consistent across existing tabs');
   assert.equal(saved.autoJoin,false);assert.equal(extra.state().enabled,false);
 });
@@ -76,4 +76,21 @@ test('a configured upgrade retains the paired device and exact stored origin wit
   assert.equal(tab.state().enabled, false);
   assert.equal(tab.state().live, false);
   assert.equal(tab.state().autoJoin, true);
+});
+
+test('legacy server management commands normalize before disabled-room admission', async () => {
+  const ext=await extension({deviceId:randomUUID(),credential:'a'.repeat(64),serverUrl:'https://localhost:6767'}),tab=await ext.player();
+  const report=ext.ws.sent.findLast(m=>m.type==='session');
+  const envelope={type:'command',id:randomUUID(),sessionId:tab.id,epoch:report.epoch,ownerId:'owner',actorId:'owner',expiresAt:Date.now()+2000};
+  await ext.receive({...envelope,action:'session.enable'});
+  assert.equal(tab.state().enabled,true);
+  assert.equal(ext.ws.sent.findLast(m=>m.type==='ack').status,'applied');
+  const enabled=ext.ws.sent.findLast(m=>m.type==='session');
+  envelope.epoch=enabled.epoch;
+  await ext.receive({type:'session-ack',sessionId:tab.id,epoch:enabled.epoch,serverNow:Date.now(),live:true});
+  await ext.receive({...envelope,id:randomUUID(),action:'session.disable'});
+  assert.equal(tab.state().enabled,false);
+  assert.equal(ext.ws.sent.findLast(m=>m.type==='ack').disabled,true);
+  await ext.receive({...envelope,id:randomUUID(),actorId:'guest',action:'session.enable'});
+  assert.equal(tab.state().enabled,false,'legacy alias does not bypass owner authorization');
 });

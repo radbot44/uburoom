@@ -5,7 +5,7 @@
   const sessionId = crypto.randomUUID();
   let state = { ...uburoom.DEFAULT }, profiles = {}, selectedSlot = 1, fast = false;
   let enabled = false, live = false, epoch, liveUntil = 0, port, hideTimer, lastUrl = location.href;
-  let sessionControls = { canManage: true, mode: 'owner', controls: { ...uburoom.CONTROLS }, autoJoin: false, paired: false, connected: false, sharingAvailable: false };
+  let roomControls = { canManage: true, mode: 'owner', controls: { ...uburoom.CONTROLS }, autoJoin: false, paired: false, connected: false, sharingAvailable: false };
   const frameWindows = new WeakSet();
   let root, osd, panel, remoteUI, badge;
   const audio = { volume: undefined, muted: undefined }, watched = new WeakSet();
@@ -54,7 +54,7 @@
       if (style.textContent !== css) style.textContent = css;
     }
   }
-  function show(message, sender = sessionControls.ownerName || 'You', symbol) {
+  function show(message, sender = roomControls.ownerName || 'You', symbol) {
     mount();
     sender = uburoom.senderName(sender, 'You');
     osd.removeAttribute('aria-hidden');
@@ -65,7 +65,7 @@
   }
   function refresh() {
     styles(); title(); mount();
-    remoteUI?.render(snapshot(), { available: !!video(), canSave: true, session: { ...sessionControls, enabled, live, reachable: !!video() } });
+    remoteUI?.render(snapshot(), { available: !!video(), canSave: true, room: { ...roomControls, enabled, live, reachable: !!video() } });
   }
   function applyAudio(v, force = false) {
     if (!v?.isConnected) return;
@@ -141,7 +141,7 @@
       const command = uburoom.validate(input);
       const permitted = () => !remote || remote.sessionId === sessionId && enabled && live &&
         epoch === remote.epoch && Date.now() < liveUntil && Date.now() < remote.localExpiresAt && location.href === lastUrl && !!video() &&
-        (!remote.guest || uburoom.controlAllowed(sessionControls.controls, command));
+        (!remote.guest || uburoom.controlAllowed(roomControls.controls, command));
       if (!permitted()) return { status: 'unavailable' };
       const { action, args } = command;
       if (action === 'status.get' || action === 'help.get') return { status: 'applied', state: snapshot() };
@@ -221,8 +221,8 @@
     osd = document.createElement('div'); osd.id = 'osd'; osd.setAttribute('role', 'status'); osd.setAttribute('aria-atomic', 'true'); shadow.append(osd);
     badge = uburoomUI.mountBadge(osd);
     panel = document.createElement('div'); panel.id = 'panel'; panel.hidden = true; shadow.append(panel);
-    remoteUI = uburoomUI.mount(panel, { trustedSessionControls: true, execute: async command => {
-      if (!command.action.startsWith('session.')) return execute(command);
+    remoteUI = uburoomUI.mount(panel, { trustedRoomControls: true, execute: async command => {
+      if (!command.action.startsWith('room.')) return execute(command);
       const result = await browser.runtime.sendMessage({ type: 'local-session-command', sessionId, command });
       if (result?.error) throw new Error(result.error); return result;
     }, website: () => browser.runtime.sendMessage({ type: 'open-website', sessionId }), close: () => toggle(false) });
@@ -233,15 +233,15 @@
     port.postMessage({ type: 'hello', sessionId });
     port.onMessage.addListener(m => {
       if (m.type === 'remote-state') {
-        sessionControls = { canManage: true, mode: m.mode, controls: uburoom.controls(m.controls), autoJoin: m.autoJoin,
+        roomControls = { canManage: true, mode: m.mode, controls: uburoom.controls(m.controls), autoJoin: m.autoJoin,
           ownerName: m.ownerName, paired: m.paired, connected: m.connected, sharingAvailable: m.sharingAvailable };
         enabled = m.enabled === true; live = m.live === true; epoch = m.epoch; liveUntil = live ? Date.now() + 8000 : 0; title();
         refresh();
-      } else if (m.type === 'command-feedback' && m.sessionId === sessionId && m.command?.action?.startsWith('session.')) {
+      } else if (m.type === 'command-feedback' && m.sessionId === sessionId && m.command?.action?.startsWith('room.')) {
         show(uburoom.validate(m.command), m.senderName);
       }
     });
-    port.onDisconnect.addListener(() => { port = undefined; enabled = live = false; sessionControls.connected = false; remoteUI.stop(); refresh(); setTimeout(connect, 3000); });
+    port.onDisconnect.addListener(() => { port = undefined; enabled = live = false; roomControls.connected = false; remoteUI.stop(); refresh(); setTimeout(connect, 3000); });
   }
   browser.runtime.onMessage.addListener(m => {
     if (m.type === 'remote-command') return execute(m, m);

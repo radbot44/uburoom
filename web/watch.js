@@ -53,11 +53,11 @@ async function finishSoak(reason) {
         if(selected===id){selected=undefined;browseSession=undefined;unavailable('','leave');await refreshRooms();cleanup=true;}}
         finally{pending=false;renderTransport();}}
     }
-  } catch { /* Export even if the current authorized session cannot be cleaned up. */ }
+  } catch { /* Export even if the current authorized room cannot be cleaned up. */ }
   finally {
     soak.done=true;diagnosticSample('soak-end',{reason,cleanup,elapsedMs:performance.now()-soak.startedAt});
     saveDiagnostics('uburoom-playback-soak.json');
-    $('soak-status').textContent=reason==='complete'?'Soak complete. Diagnostic download requested'+(cleanup?'; test room closed.':'; check playback cleanup.'):'Soak stopped because the session changed. Diagnostic download requested.';
+    $('soak-status').textContent=reason==='complete'?'Soak complete. Diagnostic download requested'+(cleanup?'; test room closed.':'; check playback cleanup.'):'Soak stopped because the room changed. Diagnostic download requested.';
   }
 }
 const controlProbe=params.get('playbackProbe')==='1'?uburoomDiagnostics.controlProbe():undefined;
@@ -212,8 +212,8 @@ async function renewIdentity() {
 function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = undefined; volumeDragging = false; }
 // Move the actual shells so their controls, state and listeners stay shared.
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
-drawer.setAttribute('aria-label', 'Sessions and library'); document.body.append(drawer);
-const shells = ['account','welcome','session-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+drawer.setAttribute('aria-label', 'Rooms and library'); document.body.append(drawer);
+const shells = ['account','welcome','room-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -233,8 +233,8 @@ function setTheater(enabled) {
   placeSessionBar();
 }
 function placeSessionBar() {
-  $('session-bar').hidden = !me;
-  $('session-lobby').hidden = !theater || !!selected || !me;
+  $('room-bar').hidden = !me;
+  $('room-lobby').hidden = !theater || !!selected || !me;
 }
 for (const name of ['options','library']) $(name + '-collapse').addEventListener('click', () => {
   const button = $(name + '-collapse'), content = $(name + '-content');
@@ -544,7 +544,7 @@ async function unlockLocal() {
   } finally { clearTimeout(playTimer); probing = false; renderTransport(); }
 }
 async function execute(command) {
-  if (!selected || !state || pending) throw new Error('Wait for an available viewing session');
+  if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
   const qualityChange=command.action==='media.quality.set';
   if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
   if (['media.play','media.toggle'].includes(command.action) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
@@ -559,7 +559,7 @@ async function execute(command) {
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
     diagnostics.record('command-ok',{action:command.action});
-    await refreshState(); if (command.action === 'session.visibility') await refreshRooms(); return result;
+    await refreshState(); if (command.action === 'room.visibility') await refreshRooms(); return result;
   } catch(error) {
     diagnostics.record('command-failed',{action:command.action});
     if(qualityChange&&selected===id)await refreshState();
@@ -574,7 +574,7 @@ async function execute(command) {
 function renderRemote() {
   const options = { available: !!state, canSave: !!state?.canManage,
     canPlayback: !!state?.canPlayback, canAudio: !!state?.mediaUrl, canTransform: !!state?.canTransform,
-    session: state?.canManage ? { ...state, connected: true, paired: true, reachable: true, live: state.enabled } : null };
+    room: state?.canManage ? { ...state, connected: true, paired: true, reachable: true, live: state.enabled } : null };
   remote.render(state?.state, options); settings.render(state?.state, options);
 }
 function renderVisibility() {
@@ -584,7 +584,7 @@ function renderVisibility() {
     const button = $(id), privateSession = state?.visibility === 'private';
     button.hidden = !state; button.disabled = pending || !state?.canManage;
     button.textContent = privateSession ? 'Private - No one can join' : 'Public'; button.classList.toggle('private', privateSession);
-    button.setAttribute('aria-label', state?.canManage ? (privateSession ? 'Private session: make public' : 'Public session: make private') : 'Public session');
+    button.setAttribute('aria-label', state?.canManage ? (privateSession ? 'Private room: make public' : 'Public room: make private') : 'Public room');
     button.title = state?.canManage ? (privateSession ? 'Only you can watch. Make public.' : 'Server members can watch. Make private.') : 'Only the host can change visibility';
   }
 }
@@ -597,8 +597,8 @@ async function changeVisibility() {
     const accepted = new Promise(resolve => dialog.addEventListener('close',()=>resolve(dialog.returnValue === 'private'),{once:true}));
     dialog.showModal();
     if (!await accepted || selected !== id || state?.visibility !== 'public' || !state?.canManage) return;
-    await execute({action:'session.visibility',args:{visibility:'private'}});
-  } else await execute({action:'session.visibility',args:{visibility:'public'}});
+    await execute({action:'room.visibility',args:{visibility:'private'}});
+  } else await execute({action:'room.visibility',args:{visibility:'public'}});
 }
 for (const id of ['visibility','drawer-visibility']) $(id).addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
 function renderTransport() {
@@ -707,13 +707,16 @@ for (const event of ['playing','pause','waiting','seeking','seeked','ended','err
 setInterval(() => { void reportObservation(); },1000);
 async function reportReadiness() {
   if (readyPending || !selected || !state?.mediaUrl) return;
-  const id = selected, version = state.mediaVersion;
-  const ready = video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
-  const key = id + ':' + version + ':' + ready;
+  const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
+  const target = expected(), required = Math.min(2, Math.max(0, state.state.duration-target));
+  const seekReady = !readinessVersion || !video.seeking && Math.abs(video.currentTime-target) <= .15 &&
+    uburoomPlayback.bufferedAhead(video.buffered,target) >= required;
+  const ready = seekReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
+  const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
   if (readinessSent === key || !state.waitingForReady && !ready) return;
   readyPending = true;
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
-    ready }); readinessSent = key; } catch {} finally { readyPending = false; }
+    ready, readinessVersion }); readinessSent = key; } catch {} finally { readyPending = false; }
 }
 function startKey(value=state) {
   return value && [selected,value.mediaVersion,value.streamVersion,value.epoch,value.revision,value.startAt].join(':');
@@ -757,6 +760,7 @@ async function synchronize() {
     }
     hlsPreparationUntil=0;
   }
+  if (state.waitingForReady) video.pause();
   const bufferedTarget = state.format === 'av1' && [...Array(video.buffered.length)].some((_, i) =>
     target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
   // A shared seek/restart can supersede a native seek still waiting for old
@@ -766,7 +770,7 @@ async function synchronize() {
   // Let an in-flight alignment refill before chasing a moving playing target.
   // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
   const canAlign=!syncSeekPending||state.state.paused||!playerWaiting&&video.readyState>=3&&targetBuffered;
-  if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
+  if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
     try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05));syncSeekPending=true; } catch {}
   }
   const correctionInput={now:performance.now(),error:difference,context:startKey(),
@@ -836,7 +840,7 @@ function applyState(next) {
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = 'Host: ' + next.hostName;
   $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library below.' : 'The host chooses the video.';
-  $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End session' : 'Leave session';
+  $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End room' : 'Leave room';
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
   const choices = next.qualities || uburoom.QUALITIES;
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
@@ -900,13 +904,13 @@ async function refreshRooms() {
 function applyRooms(rooms) {
   for (const id of ['rooms','lobby-rooms']) renderRooms($(id), rooms);
   if (!rooms.some(room => room.id === selected && !room.locked)) {
-    if (selected) { selected = undefined; unavailable('Session ended or was made private.'); if (theater) toggleDrawer(false); }
+    if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (theater) toggleDrawer(false); }
   }
-  $('status').textContent = selected ? '' : rooms.length ? 'Choose an active session or create your own.' : 'No active sessions. Create a session to start watching.';
-  $('create').textContent = selected ? 'New session' : 'Create session';
+  $('status').textContent = selected ? '' : rooms.length ? 'Choose an active room or create your own.' : 'No active rooms. Create a room to start watching.';
+  $('create').textContent = selected ? 'New room' : 'Create room';
   $('create').className = selected ? 'quiet' : 'primary';
   if (!selected) { $('viewers').textContent = ''; $('close-room').hidden = true; $('library-panel').hidden = true;
-    $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a session'; $('empty-hint').textContent = 'Choose an active session or create your own.'; }
+    $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.'; }
   placeSessionBar();
 }
 function renderLibrary() {

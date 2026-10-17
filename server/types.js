@@ -48,12 +48,12 @@
  */
 
 /**
- * Low-level room session descriptor managed by the Hub.
- * @typedef {Object} SessionDescriptor
+ * Room descriptor managed by the Hub.
+ * @typedef {Object} RoomDescriptor
  * @property {string} sessionId - Unique room UUID.
  * @property {string} epoch - Epoch UUID rotated on consent revocation or host changes.
  * @property {string} alias - User-facing or generated room alias (e.g. 'plex', 'plex.ab12cd34').
- * @property {'watch'|'remote'} kind - Session type ('watch' for watch rooms, 'remote' for extension).
+ * @property {'watch'|'remote'} kind - Room type ('watch' for watch rooms, 'remote' for extension).
  * @property {string} ownerId - Account UUID of the room creator.
  * @property {string} ownerName - Display name of the room creator.
  * @property {string} hostId - Account UUID of the current room host.
@@ -61,7 +61,7 @@
  * @property {'public'|'private'} visibility - Room visibility gate.
  * @property {'owner'|'voice'|'guild'} mode - Authorization mode.
  * @property {boolean} enabled - Whether remote control consent is currently granted.
- * @property {boolean} reachable - Whether the session is actively connected and reachable.
+ * @property {boolean} reachable - Whether the room is actively connected and reachable.
  * @property {number} lastSeen - Timestamp (ms) of last presence ping or activity.
  * @property {Controls} controls - Current allowed control categories.
  * @property {RoomPlaybackState} state - Live playback and picture state.
@@ -104,7 +104,7 @@
 /**
  * An active watch room instance managing shared timeline and viewers.
  * @typedef {Object} Room
- * @property {SessionDescriptor} s - Underlying hub session descriptor.
+ * @property {RoomDescriptor} s - Underlying hub room descriptor.
  * @property {any} media - Currently loaded Plex media metadata object (or null).
  * @property {string} mediaVersion - Random UUID rotated on media load/change.
  * @property {number} revision - Monotonically increasing room revision counter.
@@ -113,7 +113,8 @@
  * @property {Map<string, Viewer>} viewers - Active viewers keyed by viewer ID.
  * @property {Map<string, any>} disconnectedViewers - Recently disconnected viewers preserving state across reconnects.
  * @property {number} [startAt] - Scheduled start timestamp (ms) for synchronized initial play.
- * @property {boolean} initialGate - Whether the initial readiness gate is currently held.
+ * @property {string} [readinessVersion] - Shared seek readiness generation.
+ * @property {boolean} initialGate - Whether startup or seek readiness is currently held.
  * @property {boolean} manualPaused - Whether playback was paused deliberately by user action.
  * @property {Set<string>} initialViewers - Viewers present when media was loaded.
  * @property {boolean} hadViewers - Whether any viewer has ever joined this room.

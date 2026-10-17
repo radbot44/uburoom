@@ -14,6 +14,6 @@ test('badges describe applied state, resolved toggles and actual seek distances;
   assert.deepEqual(badgeDetails({ action:'media.seek.relative', args:{seconds:-60} }, state),
     {symbol:'back',value:'',label:'Seek back',color:'#F8F7F4',seekSeconds:60});
   assert.equal(badgeDetails({ action:'pan.step',args:{axis:'x',sign:-1} }, state).value, 'X -2.5%');
-  assert.equal(badgeDetails({ action:'session.enable' }, state).value, 'Enabled', 'enabled does not claim confirmed reachability');
+  assert.equal(badgeDetails({ action:'room.enable' }, state).value, 'Enabled', 'enabled does not claim confirmed reachability');
   for (const action of ['status.get','help.get']) assert.equal(badgeDetails({action},state),undefined);
 });

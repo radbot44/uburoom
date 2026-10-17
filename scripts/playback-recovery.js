@@ -249,7 +249,7 @@ async function main(){
     await check('sole host rejoins an empty room after timeout',async()=>{
       await evaluate(guest,'selectRoom(undefined).then(()=>true)');
       await until(host,'state.viewers===1','Sole host');
-      await command(host,'session.enable');
+      await command(host,'room.enable');
       const before=await snapshot(host);
       await evaluate(host,'transport.interrupt(12000);true');
       await until(host,'state===undefined && mediaSource===undefined','Host disconnect unloads playback',6000);
@@ -269,7 +269,7 @@ async function main(){
     await check('opt-in private control reconnect probe',async()=>{
       assert.equal(await evaluate(guest,'document.getElementById("probe-control").hidden'),true,'ordinary pages have no probe control');
       assert.equal(await evaluate(host,'document.getElementById("probe-control").disabled'),true,'public rooms cannot run the probe');
-      await command(host,'session.visibility',{visibility:'private'});
+      await command(host,'room.visibility',{visibility:'private'});
       await until(host,'!document.getElementById("probe-control").disabled','Private single-viewer probe eligibility');
       const before=await snapshot(host);
       await evaluate(host,'document.getElementById("probe-control").click();true');

@@ -53,7 +53,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P7 | In-depth UI/UX review and restructure | Planned; review complete user journeys before restructuring | Existing design guide, rendered surfaces and playback/permission behavior |
 | M1-P8 | Separate remote extension repository and uburoom compatibility | Planned; define the integration and shared-source boundaries before extraction | Stable command/protocol contract and cross-repository compatibility checks |
 | M1-P9 | Render styled and bitmap subtitles in the browser | Implementation complete; verification and licensing pending | M1-P2/M1-P3 track delivery; existing player and shared conversion boundaries |
-| M1-P10 | Transition "session" terminology to "room" | Next; clear user-facing and API ambiguity | M1-P7 UI/UX review and command engine consistency |
+| M1-P10 | Transition "session" terminology to "room" | Complete locally; compatibility aliases retained | M1-P7 UI/UX review and command engine consistency |
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Implemented locally; migration, transport and fault checks recorded; live rollout verification pending | M1-P1 and M1-P5 real-world measurements |
 | M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 
@@ -116,7 +116,7 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 **Target:** Aim for ≤50 ms p95 presentation-time skew, with ≤100 ms p99 as an initial engineering target, subject to real-world testing.
 
-**Current increment:** Timing/clock/shared-target diagnostics now include repeated, counterbalanced startup comparisons and a minimal browser callback probe. Initial readiness releases use a shared future start with paused preparation; ongoing buffering and ordinary resume remain independent/immediate. Local Firefox 24 fps and Chrome 59.94 fps startup trials needed no rate corrections. M1-P6 adds recovery/visibility guards and an experimental bounded gentle policy; its observed skew/drop regressions prevent default enablement. Default rate gain/deadband and hard-seek thresholds remain unchanged. Scheduled ordinary controls, prompt event delivery, alternative frame-aware correction experiments and physical/geographic validation remain open. Firefox's sparse high-rate callbacks and interval outliers remain measurement limits. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
+**Current increment:** Timing/clock/shared-target diagnostics now include repeated, counterbalanced startup comparisons and a minimal browser callback probe. Initial readiness and shared seeks release with a shared future start after paused preparation; seeks require fresh viewer readiness at the new target. Ongoing buffering and ordinary resume remain independent/immediate. Local Firefox 24 fps and Chrome 59.94 fps startup trials needed no rate corrections. M1-P6 adds recovery/visibility guards and an experimental bounded gentle policy; its observed skew/drop regressions prevent default enablement. Default rate gain/deadband and hard-seek thresholds remain unchanged. Scheduled ordinary controls, prompt event delivery, alternative frame-aware correction experiments and physical/geographic validation remain open. Firefox's sparse high-rate callbacks and interval outliers remain measurement limits. See [measurements and open gates](docs/testing.md#real-time-playback-synchronization).
 
 **Architecture:**
 
@@ -133,7 +133,7 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 - Never pause or delay healthy viewers because another viewer buffers, disconnects or experiences poor performance during ongoing playback.
 - Buffering viewers recover independently and catch up to the current authoritative timeline.
 - Preserve individual quality selection and stream recovery.
-- Preserve the initial readiness gate for starting new media, separately from ongoing playback recovery.
+- Preserve readiness gates for starting new media and explicit shared seeks, separately from ongoing playback recovery.
 
 **Verification:** Measure actual inter-viewer presentation-time skew across different network RTTs, including 20–300+ ms, and test that a buffering viewer doesn't interrupt healthy viewers. Record actual percentiles and limitations in [testing status](docs/testing.md#real-time-playback-synchronization).
 
@@ -202,7 +202,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P10 — Transition "session" terminology to "room"
 
-**Goal:** Standardize on "room" across user-facing surfaces, API schemas, and internal concepts to match uburoom branding and eliminate confusion with technical session contexts.
+**Outcome:** Completed locally on 2026-10-17. Watch/lobby/privacy/account copy, Discord help, shared management actions, room descriptors and the remote listing API use room terminology. Legacy action, route, ID and extension wire aliases remain compatible. The host-handoff follow-up preserves remote settings on intentional leave; unit/integration and full Firefox watch smoke checks pass. Evidence and browser limitations: [room terminology verification](docs/testing.md#room-terminology-m1-p10).
 
 - Inventory and rename all user-facing instances of "session" in the web UI, dialogs, status toasts, Discord bot command options/descriptions (`/ubu`, `!ubu`), and Discord Activity lobby views to "room" (e.g. "Room Lobby", "Create Room", "Room Settings").
 - Reserve the technical term "session" strictly for low-level connection and auth contexts: HTTP cookie sessions, WebSocket connection sessions, and Plex transcode sessions.

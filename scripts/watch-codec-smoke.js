@@ -72,7 +72,7 @@ async function main() {
     await until(host,`hlsRecoveryCount===1 && !!hls && !playbackError && videoFrames>${framesBeforeRecovery} && !video.paused`,'bounded MediaSource recovery');
     console.log('[Codec Chromium] PASS: MediaSource reset recovers the authorized stream without changing the room.');
     const oldHostSource=await evaluate(host,'state.mediaUrl');
-    await evaluate(host,"execute({action:'session.sharing',args:{mode:'guild'}}).then(()=>execute({action:'session.enable'})).then(()=>true)");
+    await evaluate(host,"execute({action:'room.sharing',args:{mode:'guild'}}).then(()=>execute({action:'room.enable'})).then(()=>true)");
     const guest=await page('guest');
     await until(guest,'document.getElementById("rooms").querySelector("button")','session chooser');
     await evaluate(guest,'document.getElementById("rooms").querySelector("button").click()');

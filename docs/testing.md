@@ -6,6 +6,16 @@ Automated tests cover parsing/target resolution, permissions/private visibility,
 
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
+## Room terminology (M1-P10)
+
+Completed locally on 2026-10-17. Watch room creation, chooser/lobby, privacy, leave/end, account merge instructions, accessible labels, Discord help and room errors use room terminology. Canonical management actions use `room.*`; Engine aliases preserve the six former `session.*` actions. Hub room descriptors and web library/remote state use room names; technical authentication, connection, transcode and playback-observation sessions retain their meaning. Compatibility details are in [development](development.md#room-terminology-and-compatibility).
+
+Final `npm test`: **208 passed, zero failures/skips**. Explicit checks cover alias normalization and invalid arguments, admission of legacy server commands before remote consent is enabled, owner authorization, epoch/acknowledgement handling, original outgoing action names for installed extensions, and authenticated canonical/legacy listing and command endpoints. Early sandbox runs could not open local HTTPS connections or write/clean up SQLite temporary files; the final suite ran outside that sandbox.
+
+Firefox 158.0 watch smoke reached and passed room creation/lobby selection, private confirmation and viewer revocation, shared commands, actual decoded playback, independent remote toggles, desktop/phone/theater layout and simulated Activity/PIP checks. Inspected generated lobby, privacy and phone renders; room copy fits the existing layout. The first attempt exposed an old fixture DOM selector, which was updated with the renamed room chooser IDs.
+
+**Host handoff follow-up (2026-10-17):** The owner clarified that an intentional host leave must preserve the room’s remote enablement, sharing mode and control permissions. The earlier failure came from revoking consent on that intentional leave. The implementation now preserves those settings while rotating the command epoch and cancelling pending commands before election; a disabled remote remains disabled. Timeout and logout still revoke consent, and new tabs/restarts do not inherit it. Updated lifecycle and HTTPS regressions cover enabled handoff, disabled handoff, preserved permissions, logout and stale epochs. Final `npm test`: **209 passed, zero failures/skips**. The full Firefox 158.0 watch smoke now passes public/private visibility, room creation, decoded playback, controls/settings separation, simulated Activity layout/navigation, late join, host succession, continued playback, cleanup and phone layout. This supersedes the two earlier `handoff retains sharing` failures. Actual Discord gateway/Activity, installed Firefox extension and production deployment remain unverified by this phase.
+
 ## Architecture hardening (M1-P11)
 
 Final automated verification: `npm test` passes all 206 tests with zero failures or skips. The final Firefox 158.0 recovery/layout run passes all twelve cases, including the actual socket probe and autonomous bounded-archive cleanup. Chrome passes the nine playback/recovery cases through sole-host rejoin; its earlier fixture stopped on a probe-end sampling race, which is corrected and covered by the final Firefox run. This does not constitute a new two-hour soak.
@@ -381,3 +391,10 @@ Before release, separately verify:
 - Full publication history, ZIP contents, private information/secrets and code/media/artwork attribution.
 
 Server acknowledgement is not playback evidence. Never replay stale commands or restore remote consent.
+
+
+## Shared seek readiness (M1-P5, 2026-10-17)
+
+Explicit shared seeks during playback freeze the authoritative target, invalidate previous viewer readiness, and reuse the coordinated future start after all current viewers report readiness. The client requires completed seek alignment and two seconds of forward buffer (or the remaining duration near the end). Seek generations reject delayed acknowledgements from superseded seeks without replacing personal streams. Explicit pauses prevent automatic resume; ordinary playback buffering remains independent.
+
+Verification: `npm test` passed all 210 tests with zero skips. New regression coverage exercises two viewers, repeated seeks, stale readiness rejection, coordinated release, deliberate pause, viewer departure and independent ongoing buffering. Live multi-browser/Plex delayed-fragment seek validation remains unfinished; unit results do not establish decoded presentation skew or actual network buffering behavior.

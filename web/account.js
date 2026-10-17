@@ -52,7 +52,7 @@ for(const provider of ['discord','plex'])$('match-'+provider).addEventListener('
 $('match-preview').addEventListener('click',async()=>{
   accountError();accountPreview=undefined;$('match-confirm').hidden=true;
   try{accountPreview=await api('/api/account/admin/preview',{discordId:$('match-discord').value.trim(),plexId:$('match-plex').value.trim()});
-    $('match-summary').textContent='Discord '+accountPreview.discordName+' ('+accountPreview.discordId+') ↔ Plex '+accountPreview.plexName+' ('+accountPreview.plexId+'). '+(accountPreview.accounts.length>1?'Merge '+accountPreview.accounts.map(a=>a.name).join(' and ')+'. Both must leave their watch sessions and sign in again.':accountPreview.accounts.length?'Attach to '+accountPreview.accounts[0].name+'.':'Reserve one account before either identity signs in.');
+    $('match-summary').textContent='Discord '+accountPreview.discordName+' ('+accountPreview.discordId+') ↔ Plex '+accountPreview.plexName+' ('+accountPreview.plexId+'). '+(accountPreview.accounts.length>1?'Merge '+accountPreview.accounts.map(a=>a.name).join(' and ')+'. Both must leave their watch rooms and sign in again.':accountPreview.accounts.length?'Attach to '+accountPreview.accounts[0].name+'.':'Reserve one account before either identity signs in.');
     $('match-confirm').hidden=false;
   }catch(error){accountError(error.message);}
 });

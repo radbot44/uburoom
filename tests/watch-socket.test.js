@@ -39,9 +39,9 @@ test('watch socket pushes shared Engine commands, rejects stale/foreign viewers,
   await guest.call(target+'?viewer='+guestId);
   const command=(client,command,extra={})=>client.call(target+'/command',{epoch:state.epoch,expiresAt:Date.now()+2500,viewerId:viewer,command,...extra});
   assert.equal((await command(guest,{action:'media.pause'})).status,400,'a different account cannot claim the host viewer');
-  assert.equal((await command(host,{action:'session.enable',args:{enabled:true}},{expiresAt:Date.now()-1})).status,409);
+  assert.equal((await command(host,{action:'room.enable',args:{enabled:true}},{expiresAt:Date.now()-1})).status,409);
   const before=guest.events.length;
-  assert.equal((await command(host,{action:'session.enable',args:{enabled:true}})).value.status,'applied');
+  assert.equal((await command(host,{action:'room.enable',args:{enabled:true}})).value.status,'applied');
   await new Promise(resolve=>setTimeout(resolve,100));
   assert.ok(guest.events.slice(before).some(message=>message.type==='state'&&message.value.enabled),'other viewer receives a pushed state without requesting it');
   state=(await host.call(target+'?viewer='+viewer)).value;
@@ -53,7 +53,7 @@ test('watch socket pushes shared Engine commands, rejects stale/foreign viewers,
   const rejoined=await f.connect(await f.login('host'));
   state=(await rejoined.call(target+'?viewer='+viewer)).value;assert.equal(state.enabled,false,'same tab rejoin cannot restore consent');
   guest=await f.connect(await f.login('guest'));await guest.call(target+'?viewer='+guestId);
-  assert.equal((await command(rejoined,{action:'session.visibility',args:{visibility:'private'}})).value.status,'applied');
+  assert.equal((await command(rejoined,{action:'room.visibility',args:{visibility:'private'}})).value.status,'applied');
   assert.deepEqual((await guest.call('/api/watch/rooms')).value.rooms,[]);
   assert.equal((await guest.call(target+'?viewer='+guestId)).status,403);
   f.revoke();const denied=once(rejoined.ws,'close');rejoined.ws.send(JSON.stringify({type:'clock',id:999}));assert.equal((await denied)[0],4003);

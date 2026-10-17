@@ -27,7 +27,7 @@ Use the canonical uburoom logo asset/HTTP path. Preserve the established typogra
 - Picture retains separate Zoom/Width/Height rows: minus above reset at left, editable value/label in the middle, larger plus at right, beside the pad. Resets are independent; Reset all is quiet gray. Keep hold/Ctrl, profiles and phone layouts.
 - Applied-command badges use a 112px shared symbol, useful applied value and literal sender name; each command restarts the 2.5-second lifetime. Avoid verbose status.
 - Watch retains reading order, hover/focus overlays, pause feedback and theater behavior. Personal quality/audio are separate from shared playback/picture. Video-surface click does not toggle play.
-- Theater has a half-width drawer, full width on portrait phones. Activity is locked to theater; PIP is video-only. Preserve private confirmation/revocation and session chooser behavior.
+- Theater has a half-width drawer, full width on portrait phones. Activity is locked to theater; PIP is video-only. Preserve private confirmation/revocation and room chooser behavior.
 - Library preserves poster/list views, explicit library/show/season/episode breadcrumbs, navigation/view selectors, paging and search/scroll restoration. Episodes use scene-only detail art; movie posters match grid sizing. Row details stay separate from enlarged Play controls. Artwork is authenticated.
 - Account/privacy/handoff dialogs use existing dark inputs, quiet/primary buttons and shared symbols. Browser logout retains bottom placement/spacing and is hidden for Activity bearer identity.
 

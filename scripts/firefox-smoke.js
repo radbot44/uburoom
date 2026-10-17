@@ -346,14 +346,14 @@ async function main() {
     await pause(850);
     await evaluate(web,"document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=stretchX] .plus').dispatchEvent(new PointerEvent('pointerup',{button:0}));true");
     await pause(200);
-    const held=app.hub.sessions.get(state.session.id).state.picture.stretchX;
+    const held=app.hub.rooms.get(state.session.id).state.picture.stretchX;
     assert.ok(held>1.1,'holding width repeats through acknowledged web commands');
-    await pause(350);assert.equal(app.hub.sessions.get(state.session.id).state.picture.stretchX,held,'release stops repeating');
+    await pause(350);assert.equal(app.hub.rooms.get(state.session.id).state.picture.stretchX,held,'release stops repeating');
     for (const field of ['zoom','stretchX','stretchY']) {
-      const before={...app.hub.sessions.get(state.session.id).state.picture};
+      const before={...app.hub.rooms.get(state.session.id).state.picture};
       await evaluate(web,`document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=${field}] .size-reset').click();true`);
       await until(web,`document.getElementById('remote').shadowRoot.querySelector('.size-control[data-field=${field}] .size-number').textContent==='100%'`,'web reset '+field);
-      assert.deepEqual(app.hub.sessions.get(state.session.id).state.picture,{...before,[field]:1},'authenticated web reset preserves other sizes and pan');
+      assert.deepEqual(app.hub.rooms.get(state.session.id).state.picture,{...before,[field]:1},'authenticated web reset preserves other sizes and pan');
     }
     await evaluate(web,"document.getElementById('remote').shadowRoot.querySelector('.reset-all').click();true");
     await until(web,"document.getElementById('remote').shadowRoot.querySelector('.position-text output').textContent==='Centered'",'web Reset all also recenters');
@@ -400,7 +400,7 @@ async function main() {
     await evaluate(web, 'fetch=realFetch;selected=undefined;refreshPlayers()');
     console.log('[Firefox] PASS: login cookie, automatic and explicit player selection, web-to-player action, shared colors/CSP and phone layout. Screenshot:', path.join(temp, 'web-remote.png'));
     await command('browsingContext.activate', { context: player });
-    assert.equal((await app.hub.dispatch(actor, { action: 'media.pause' })).status, 'applied', 'fixture session before pause: '+JSON.stringify([...app.hub.sessions.values()].map(s=>({enabled:s.enabled,reachable:s.reachable,mode:s.mode,age:Date.now()-s.lastSeen}))));
+    assert.equal((await app.hub.dispatch(actor, { action: 'media.pause' })).status, 'applied', 'fixture session before pause: '+JSON.stringify([...app.hub.rooms.values()].map(s=>({enabled:s.enabled,reachable:s.reachable,mode:s.mode,age:Date.now()-s.lastSeen}))));
     assert.equal(await evaluate(player, "document.querySelector('video').paused"), true);
     await evaluate(player, "document.title='Fixture program'");
     await pause(100);
@@ -417,7 +417,7 @@ async function main() {
     // Firefox BiDi cannot resize/capture privileged extension documents. The
     // real popup height is checked above; capture its shared compact component
     // in a normal web document for visual comparison.
-    await evaluate(web,`document.querySelector('main').hidden=true;pictureLayoutHost.hidden=false;pictureLayoutHost.style.cssText='width:358px;max-width:calc(100% - 32px);margin:12px auto';volumeFixture.shadow.querySelector('.remote').classList.add('compact');volumeFixture.render(${JSON.stringify(app.hub.sessions.get(state.session.id).state)},{available:true,session:{canManage:true,enabled:true,reachable:true,connected:true,paired:true,sharingAvailable:true,mode:'voice',controls:{playback:true,transform:true},autoJoin:false}});true`);
+    await evaluate(web,`document.querySelector('main').hidden=true;pictureLayoutHost.hidden=false;pictureLayoutHost.style.cssText='width:358px;max-width:calc(100% - 32px);margin:12px auto';volumeFixture.shadow.querySelector('.remote').classList.add('compact');volumeFixture.render(${JSON.stringify(app.hub.rooms.get(state.session.id).state)},{available:true,session:{canManage:true,enabled:true,reachable:true,connected:true,paired:true,sharingAvailable:true,mode:'voice',controls:{playback:true,transform:true},autoJoin:false}});true`);
     const compactShot=await command('browsingContext.captureScreenshot',{context:web,origin:'document'});fs.writeFileSync(path.join(project,'artifacts','picture-toolbar-component-0.3.1-qa.png'),Buffer.from(compactShot.data,'base64'));
     await evaluate(web,"document.querySelector('main').hidden=false;pictureLayoutHost.hidden=true;volumeFixture.shadow.querySelector('.remote').classList.remove('compact');volumeFixture.stop();true");
 
@@ -431,7 +431,7 @@ async function main() {
     assert.equal((await app.hub.dispatch(friendActor,{action:'media.mute'})).status,'forbidden');
     assert.equal((await app.hub.dispatch(actor,{action:'media.pause'})).status,'applied','host playback unaffected');
     const pictureAcks=[];const originalAck=app.hub.ack.bind(app.hub);
-    app.hub.ack=async (socket,message)=>{const p=app.hub.pending.get(message.id),s=p&&app.hub.sessions.get(p.sessionId);if(p)pictureAcks.push({action:p.command.action,result:message.status,epoch:p.epoch===s?.epoch,mode:p.mode===s?.mode,controls:s?.controls,voice:p.hostVoiceChannelId,currentVoice:hostVoice});return originalAck(socket,message);};
+    app.hub.ack=async (socket,message)=>{const p=app.hub.pending.get(message.id),s=p&&app.hub.rooms.get(p.sessionId);if(p)pictureAcks.push({action:p.command.action,result:message.status,epoch:p.epoch===s?.epoch,mode:p.mode===s?.mode,controls:s?.controls,voice:p.hostVoiceChannelId,currentVoice:hostVoice});return originalAck(socket,message);};
     const pictureReply=await app.hub.dispatch(friendActor,{action:'zoom.set',args:{value:1.5}});app.hub.ack=originalAck;
     if(pictureReply.status!=='applied')console.log('[Firefox] Picture trace:',JSON.stringify({reply:pictureReply,closures:fixtureClosures,acks:pictureAcks,popup:JSON.parse(await evaluate(popup,'browser.runtime.sendMessage({type:"popup-state"}).then(s=>JSON.stringify(s.session))'))}));
     assert.equal(pictureReply.status,'applied','picture remains independently shared');
@@ -458,8 +458,8 @@ async function main() {
     await until(player,"!document.title.includes('🟢')",'disconnect clears remote');
     await pause(3500);
     await until(popup,"browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.connected && s.session?.autoJoin && !s.session.enabled)",'reconnect retains preference with remote off');
-    for(let n=0;n<30&&!app.hub.sessions.has(state.session.id);n++)await pause(50);
-    assert.ok(app.hub.sessions.has(state.session.id),'reconnect reports fresh tab presence');
+    for(let n=0;n<30&&!app.hub.rooms.has(state.session.id);n++)await pause(50);
+    assert.ok(app.hub.rooms.has(state.session.id),'reconnect reports fresh tab presence');
     await pause(300);assert.equal(await evaluate(player,"document.title.includes('🟢')"),false,'reconnect baseline does not enable an existing call');
     hostVoice=fixtureVoice;app.hub.publishVoice(true);
     await until(player,"document.title.includes('🟢')",'a later fresh join works after reconnect');
@@ -475,10 +475,10 @@ async function main() {
     friendVoice = undefined;
     assert.equal((await app.hub.dispatch(friendActor, { action: 'media.unmute' })).status, 'forbidden');
     console.log('[Firefox] PASS: guest controls follow the host voice channel, deny departure and retain host authority. Discord membership is simulated.');
-    assert.equal((await app.hub.dispatch(actor, { action: 'session.disable' })).status, 'applied');
+    assert.equal((await app.hub.dispatch(actor, { action: 'room.disable' })).status, 'applied');
     await pause(100);
     assert.equal(await evaluate(player, 'document.title'), '🔵 Fixture program');
-    assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.querySelector('#osd .uburoom-badge').dataset.action"), 'session.disable', 'management commands show a badge even after remote is off');
+    assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.querySelector('#osd .uburoom-badge').dataset.action"), 'room.disable', 'management commands show a badge even after remote is off');
     console.log('[Firefox] PASS: 112px shared Player badge, applied values, local/web/remote sender names, literal sender text, 2.5s dismissal and management feedback.');
     assert.equal((await app.hub.dispatch(actor, { action: 'media.mute' })).status, 'forbidden');
     await command('browsingContext.navigate', { context: player, url: 'https://localhost:9443/', wait: 'complete' });

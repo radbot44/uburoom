@@ -122,7 +122,7 @@ test('Discord sign-in pairs automatically only through the fixed Firefox return 
   assert.equal(claimed.status, 200); assert.equal(claimed.body.deviceId, deviceId);
   assert.equal(app.store.devices[0].credentialHash, hash(claimed.body.credential));
   assert.equal(app.store.devices[0].credential, undefined);
-  assert.equal(app.hub.sessions.size, 0, 'automatic pairing never enables remote access');
+  assert.equal(app.hub.rooms.size, 0, 'automatic pairing never enables remote access');
   assert.equal((await request('/api/login/finish', 'POST', { id: start.body.id, verifier, code: result.get('code') }, extensionHeaders)).status, 400);
   assert.equal((await request('/api/devices/revoke', 'POST', { id: deviceId }, authenticated)).status, 403, 'CSRF header required');
   authenticated['X-CSRF-Token'] = me.body.csrf;

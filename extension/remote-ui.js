@@ -150,21 +150,21 @@
       case 'reset.all': symbol = 'refresh'; value = 'Reset all'; label = value; break;
       case 'profile.load': case 'profile.save':
         symbol = 'bookmark'; value = (action === 'profile.load' ? '↥ Load ' : '↧ Save ') + args.slot; label = value; break;
-      case 'session.enable': symbol = 'website'; value = 'Enabled'; label = 'Enable remote'; break;
-      case 'session.disable': symbol = 'close'; value = 'Off'; label = 'Disable remote'; break;
-      case 'session.controls':
+      case 'room.enable': symbol = 'website'; value = 'Enabled'; label = 'Enable remote'; break;
+      case 'room.disable': symbol = 'close'; value = 'Off'; label = 'Disable remote'; break;
+      case 'room.controls':
         symbol = args.control === 'playback' ? 'play' : 'zoom';
         value = (args.control === 'playback' ? 'Playback' : 'Picture') + (args.allowed ? ' shared' : ' private'); label = value; break;
-      case 'session.autojoin': symbol = 'mic'; value = 'On join ' + (args.enabled ? 'on' : 'off'); label = value; break;
-      case 'session.sharing':
+      case 'room.autojoin': symbol = 'mic'; value = 'On join ' + (args.enabled ? 'on' : 'off'); label = value; break;
+      case 'room.sharing':
         symbol = { owner:'lock', voice:'mic', guild:'users' }[args.mode];
         value = { owner:'Owner only', voice:'Voice channel', guild:'Server members' }[args.mode]; label = value; break;
-      case 'session.visibility': symbol = args.visibility === 'private' ? 'lock' : 'users'; value = args.visibility === 'private' ? 'Private' : 'Public'; label = value; break;
+      case 'room.visibility': symbol = args.visibility === 'private' ? 'lock' : 'users'; value = args.visibility === 'private' ? 'Private' : 'Public'; label = value; break;
       case 'status.get': case 'help.get': return;
       default: return;
     }
     const color = { zoom:'#FF9954', stretchX:'#FF9954', stretchY:'#FF9954' }[symbol] ||
-      (action === 'session.disable' || action === 'reset.all' ? '#ea3035' : '#F8F7F4');
+      (action === 'room.disable' || action === 'reset.all' ? '#ea3035' : '#F8F7F4');
     return { symbol, value, label, color, ...(action === 'media.seek.relative' ? { seekSeconds: Math.abs(args.seconds) } : {}) };
   }
   function mountBadge(host) {
@@ -192,17 +192,17 @@
       }
     };
   }
-  function mount(host, { execute, close, compact = false, volumeInterval = 25, website, trustedSessionControls = false, headerSlot, showAutoJoin = true, settingsOnly = false } = {}) {
+  function mount(host, { execute, close, compact = false, volumeInterval = 25, website, trustedSessionControls = false, trustedRoomControls = trustedSessionControls, headerSlot, showAutoJoin = true, settingsOnly = false } = {}) {
     const doc = host.ownerDocument, shadow = host.attachShadow({ mode: 'open' });
     node(doc, shadow, 'style', CSS);
     const root = node(doc, shadow, 'section', undefined, { class: 'remote' + (compact ? ' compact' : '') + (settingsOnly ? ' settings-only' : ''), 'aria-label': settingsOnly ? 'Remote permissions' : 'uburoom remote' });
     let state = {}, available = false, canSave = true, canPlayback = true, canAudio = true, canTransform = true, slot = 1, busy = false, holdTimer, holdId = 0, generation = 0;
-    let session, pendingVolume, volumeDraft, dragging = false, volumeTimer, lastVolumeAt = 0, volumeSettledAt = 0;
+    let room, pendingVolume, volumeDraft, dragging = false, volumeTimer, lastVolumeAt = 0, volumeSettledAt = 0;
     const message = node(doc, root, 'p', '', { class: 'message', role: 'status' });
     function notify(text, error = false) { message.textContent = text; message.classList.toggle('error', error); }
     async function act(command, event) {
-      const policy = command.action.startsWith('session.');
-      if (busy || (policy ? !session?.canManage : !available) || policy && trustedSessionControls && !event?.isTrusted) return;
+      const policy = command.action.startsWith('room.');
+      if (busy || (policy ? !room?.canManage : !available) || policy && trustedRoomControls && !event?.isTrusted) return;
       const audio = ['media.volume.set','media.mute','media.unmute'].includes(command.action);
       if (!policy && (audio ? !canAudio : command.action.startsWith('media.') ? !canPlayback : !canTransform)) return;
       if (policy || ['media.mute', 'media.unmute'].includes(command.action)) { clearTimeout(volumeTimer); pendingVolume = volumeDraft = undefined; dragging = false; }
@@ -244,9 +244,9 @@
     ]) {
       if (field === 'autoJoin' && !showAutoJoin) continue;
       const b = button(field === 'enabled' || field === 'autoJoin' ? masterRow : sharingRow, description, 'control', field === 'queue' ? undefined :
-        () => field === 'enabled' ? { action: session?.enabled ? 'session.disable' : 'session.enable' } :
-          field === 'autoJoin' ? { action:'session.autojoin', args:{enabled:!session?.autoJoin} } :
-          { action:'session.controls', args:{control:field,allowed:!session?.controls?.[field]} });
+        () => field === 'enabled' ? { action: room?.enabled ? 'room.disable' : 'room.enable' } :
+          field === 'autoJoin' ? { action:'room.autojoin', args:{enabled:!room?.autoJoin} } :
+          { action:'room.controls', args:{control:field,allowed:!room?.controls?.[field]} });
       b.dataset.control = field; b.setAttribute('role','switch'); b.setAttribute('aria-checked','false');
       node(doc,b,'span',label,{class:'control-label'});
       const track = node(doc,b,'span',undefined,{class:'control-track','aria-hidden':'true'});
@@ -357,21 +357,21 @@
       if (options.canPlayback !== undefined) canPlayback = options.canPlayback;
       canAudio = options.canAudio ?? canPlayback;
       if (options.canTransform !== undefined) canTransform = options.canTransform;
-      if (options.session !== undefined) session = options.session;
+      if (options.room !== undefined || options.session !== undefined) room = options.room ?? options.session;
       const picture = state.picture || {};
       for (const b of root.querySelectorAll('button,input')) b.disabled = !available;
       for (const b of media.querySelectorAll('button,input')) b.disabled = !available || !canPlayback;
       for (const b of [mute, range, volumeValue, volumeEdit]) b.disabled = !available || !canAudio;
       for (const b of root.querySelectorAll('.transform button,.transform input,.dpad button,.footer button,.profile-actions button')) b.disabled = !available || !canTransform;
       for (const b of [profileToggle, ...slotButtons, closeButton, ...headerActions.querySelectorAll('button')]) b.disabled = false;
-      sharingPanel.hidden = !session?.canManage;
+      sharingPanel.hidden = !room?.canManage;
       toggleRemote.setAttribute('aria-label', 'Allow others to control the media');
       toggleRemote.title = 'Allow others to control the media';
       for (const b of controlButtons) {
         const field = b.dataset.control;
-        b.setAttribute('aria-checked', String(field === 'playback' || field === 'transform' ? session?.controls?.[field] !== false : !!session?.[field]));
-        b.disabled = field === 'queue' || (field === 'playback' || field === 'transform') && !session?.enabled || busy || !session?.reachable || field === 'enabled' && !session?.enabled && (!session?.connected || !session?.paired) ||
-          field === 'autoJoin' && !session?.autoJoin && (!session?.connected || !session?.sharingAvailable);
+        b.setAttribute('aria-checked', String(field === 'playback' || field === 'transform' ? room?.controls?.[field] !== false : !!room?.[field]));
+        b.disabled = field === 'queue' || (field === 'playback' || field === 'transform') && !room?.enabled || busy || !room?.reachable || field === 'enabled' && !room?.enabled && (!room?.connected || !room?.paired) ||
+          field === 'autoJoin' && !room?.autoJoin && (!room?.connected || !room?.sharingAvailable);
       }
 
       back.disabled = forward.disabled = start.disabled = end.disabled = !available || !canPlayback || state.seekable !== true;

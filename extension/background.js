@@ -69,7 +69,7 @@ async function connect() {
           sharing.available = voiceReady;
           for (const s of sessions.values()) {
             if (wasReady && voiceReady && uburoom.joinEligible(s, m, Date.now(), serverOffset)) {
-              try { changeSession(s, { action: 'session.enable' }); } catch { /* No deferred enable or retry. */ }
+              try { changeSession(s, { action: 'room.enable' }); } catch { /* No deferred enable or retry. */ }
             }
             tell(s);
           }
@@ -82,19 +82,19 @@ async function connect() {
         } else if (m.type === 'command') {
           const s = sessions.get(m.sessionId);
           const ack = (result) => send({ type: 'ack', id: m.id, sessionId: m.sessionId, epoch: m.epoch, ...result });
-          const management = uburoom.MANAGEMENT.includes(m.action);
+          const command = uburoom.validate(m);
+          const management = uburoom.MANAGEMENT.includes(command.action);
           if (!s || !s.reachable || !management && (!s.enabled || !s.live) || s.epoch !== m.epoch || Date.now() - s.lastAck > 8000 || Date.now() + serverOffset >= m.expiresAt) {
             ack({ status: 'unavailable' }); return;
           }
-          if (management || m.action === 'session.disable') {
+          if (management || command.action === 'room.disable') {
             if (m.actorId !== m.ownerId) { ack({ status: 'unavailable' }); return; }
             try {
-              await changeSession(s, uburoom.validate(m), false, uburoom.senderName(m.senderName));
-              ack({ status: 'applied', disabled: m.action === 'session.disable', state: s.state }); report(s);
+              await changeSession(s, command, false, uburoom.senderName(m.senderName));
+              ack({ status: 'applied', disabled: command.action === 'room.disable', state: s.state }); report(s);
             } catch { ack({ status: 'unavailable' }); }
             return;
           }
-          const command = uburoom.validate(m);
           const guest = m.actorId !== m.ownerId;
           if (guest && !uburoom.controlAllowed(s.controls, command)) { ack({ status: 'unavailable' }); return; }
           const result = await browser.tabs.sendMessage(s.tabId, { type: 'remote-command', id: m.id,
@@ -121,7 +121,7 @@ function setSharing(s, m) {
 }
 function changeSession(s, input, notify = true, senderName = uburoom.senderName(ownerName, 'You')) {
   const command = uburoom.validate(input);
-  if (command.action === 'session.autojoin') {
+  if (command.action === 'room.autojoin') {
     if (command.args.enabled && (!authenticated || !sharing.available || !s.reachable)) throw new Error('Connect Discord and a player before enabling On join');
     // A remembered device preference arms new tabs; it never restores remote consent.
     const armedAt = Date.now();
@@ -135,15 +135,15 @@ function changeSession(s, input, notify = true, senderName = uburoom.senderName(
       return { status: 'applied', state: s.state };
     });
   }
-  if (command.action === 'session.disable') turnOff(s, false);
+  if (command.action === 'room.disable') turnOff(s, false);
   else {
-    if (command.action === 'session.enable') {
+    if (command.action === 'room.enable') {
       if (!authenticated || !s.reachable) throw new Error('A connected server and an available player are required');
       if (s.mode !== 'owner' && !sharing.available) throw new Error('Wait for Discord to connect before sharing');
       s.enabled = true;
-    } else if (command.action === 'session.sharing') setSharing(s, command.args);
-    else if (command.action === 'session.controls') s.controls[command.args.control] = command.args.allowed;
-    else throw new Error('Unsupported session action');
+    } else if (command.action === 'room.sharing') setSharing(s, command.args);
+    else if (command.action === 'room.controls') s.controls[command.args.control] = command.args.allowed;
+    else throw new Error('Unsupported room action');
     s.epoch = crypto.randomUUID(); s.live = false; s.lastAck = Date.now(); tell(s);
   }
   if (notify) report(s);
@@ -260,7 +260,7 @@ browser.runtime.onMessage.addListener((m, sender) => {
       const s = [...sessions.values()].find(s => s.tabId === tabs[0]?.id && s.id === m.sessionId);
       if (!s) throw new Error('Select the YouTube TV tab');
       const command = m.type === 'local-command' ? uburoom.validate(m.command) : undefined;
-      if (command && command.action.startsWith('session.')) return changeSession(s, command);
+      if (command && command.action.startsWith('room.')) return changeSession(s, command);
       const result = await browser.tabs.sendMessage(s.tabId, m.type === 'open-controls' ? { type: 'open-controls' } :
         { type: 'local-command', senderName: uburoom.senderName(ownerName, 'You'), ...command }, { frameId: 0 });
       if (result.state) { s.state = uburoom.snapshot(result.state); report(s); }
@@ -280,13 +280,13 @@ browser.runtime.onMessage.addListener((m, sender) => {
         s.alias = alias;
         if (m.type === 'rename') { report(s); return {}; }
       }
-      if (m.type === 'disable') return changeSession(s, { action: 'session.disable' });
+      if (m.type === 'disable') return changeSession(s, { action: 'room.disable' });
       if (m.type === 'sharing') {
-        return changeSession(s, { action: 'session.sharing', args: { mode: m.mode } });
+        return changeSession(s, { action: 'room.sharing', args: { mode: m.mode } });
       }
       if (!authenticated || !s.reachable) throw new Error('A connected server and an available player are required');
       setSharing(s, m);
-      return changeSession(s, { action: 'session.enable' });
+      return changeSession(s, { action: 'room.enable' });
     }
   })().catch(error => ({ error: error.message }));
 });

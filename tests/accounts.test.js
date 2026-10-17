@@ -98,7 +98,7 @@ test('legacy Discord login migration keeps device identities, encrypts refresh c
     assert.match(id,/^[a-f0-9-]{36}$/);assert.notEqual(id,config.ownerId);assert.equal(stored.oauth.encrypted,1);assert.equal(JSON.stringify(stored).includes('private-legacy-refresh'),false);
     assert.deepEqual(JSON.parse(fs.readFileSync(config.loginFile,'utf8')),legacy,'legacy import files are not rewritten');
     const vault=credentialVault(config.credentialKeyFile);assert.deepEqual(vault.open(JSON.parse(fs.readFileSync(config.loginFile+'.pre-accounts.encrypted.json','utf8'))),legacy);
-    assert.equal(app.store.devices[0].ownerId,config.ownerId);assert.equal(app.hub.sessions.size,0);
+    assert.equal(app.store.devices[0].ownerId,config.ownerId);assert.equal(app.hub.rooms.size,0);
     await app.close();app=createApp(config);assert.equal(app.registry.identity('discord',config.ownerId).userId,id);assert.equal(JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record).userId,id);
     await app.close();app=undefined;fs.renameSync(config.credentialKeyFile,config.credentialKeyFile+'.saved');assert.throws(()=>createApp(config),/key is missing/);assert.equal(fs.existsSync(config.credentialKeyFile),false,'missing keys are never silently replaced');
   }finally{if(app)await app.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}

@@ -46,7 +46,7 @@
     const landing = node('div',host,undefined,'library-landing'); landing.hidden = true;
     overview.before(landing);
     const navigationControls = [home,libraryTab,collectionsTab,search,sort,filterButton,...viewButtons];
-    let session, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
+    let room, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false, testOpen = false;
     const homes = new Map(), images = new Map();
@@ -55,7 +55,7 @@
     function context(section, tab = 'library') { return { section,tab,title:sections.find(x => x.id === section)?.title || 'Test video',kind:'library',q:'',genre:'',year:'',sort:'title',order:'asc',seed:newSeed(),items:[],total:null,nextOffset:null,scroll:0,minHeight:0 }; }
     function homeContext() { return {...context(),title:'Libraries',kind:'home'}; }
     // Browser history holds only opaque indices. Private catalog data remains in
-    // session-scoped memory, and is discarded when viewing eligibility changes.
+    // room-scoped memory, and is discarded when viewing eligibility changes.
     function historyState(index = visitIndex) { return {...history.state,uburoomLibrary:{epoch:historyEpoch,index}}; }
     function saveVisit() { if (screen) visits[visitIndex] = {screen,trail:[...trail],testOpen}; }
     function beginHistory() {
@@ -71,7 +71,7 @@
       if (root?.section) homes.set(root.section + ':' + root.tab,root);
     }
     function prepareNavigation() { rememberScroll(); saveVisit(); saveHome(); cancelReads(); reserveHeight(); }
-    function goHistory(delta) { if (historyMoving || !session || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return; historyMoving = true; history.go(delta); }
+    function goHistory(delta) { if (historyMoving || !room || visitIndex + delta < 0 || visitIndex + delta >= visits.length) return; historyMoving = true; history.go(delta); }
     window.addEventListener('popstate',event => {
       const entry = event.state?.uburoomLibrary;
       if (!historyEpoch) return;
@@ -79,16 +79,16 @@
       if (entry?.epoch !== historyEpoch || !visits[entry.index]) { history.replaceState(historyState(),''); historyMoving = false; return; }
       rememberScroll(); saveVisit(); saveHome(); cancelReads(); visitIndex = entry.index;
       ({screen,trail,testOpen} = visits[visitIndex]); historyMoving = false;
-      if (!session || !screen) return;
+      if (!room || !screen) return;
       restoreScreen(); if (testOpen) showTest?.(); else hideTest?.();
       if (screen.section && screen.section !== filterSection) void fetchFacets(screen.section);
     });
     function goHome() {
-      if (!session || screen.kind === 'home') return;
+      if (!room || screen.kind === 'home') return;
       prepareNavigation(); screen = homeContext(); trail = []; pushVisit(); renderResults(); positionLibrary();
     }
     function openTest() {
-      if (!session || testOpen) return;
+      if (!room || testOpen) return;
       rememberScroll(); saveVisit(); testOpen = true; pushVisit(); renderTools(); showTest?.();
     }
     function closeTest() { if (testOpen) goHistory(-1); }
@@ -136,16 +136,16 @@
       if (item) { const b = item.getBoundingClientRect(), top = Math.max(viewport(root).top,tools.getBoundingClientRect().bottom); const offset = Math.max(anchor.offset,-Math.max(0,b.height - 44)); desired = Math.max(0,root.scrollTop + b.top - top - offset); }
       roomForScroll(desired); root.scrollTop = desired;
     }
-    function restoreScroll(value) { const current = screen, version = generation; requestAnimationFrame(() => { if (session && screen === current && generation === version) scrollElement().scrollTop = value; }); }
+    function restoreScroll(value) { const current = screen, version = generation; requestAnimationFrame(() => { if (room && screen === current && generation === version) scrollElement().scrollTop = value; }); }
     function positionLibrary() { const root = scrollElement(), desired = Math.max(0,root.scrollTop + host.getBoundingClientRect().top - viewport(root).top); roomForScroll(desired); root.scrollTop = desired; }
     const pageObserver = new IntersectionObserver(entries => {
-      if (entries.some(x => x.isIntersecting) && session && screen?.kind !== 'details' && screen?.kind !== 'home' && screen?.nextOffset != null && !screen.loading && !screen.pageError) void loadPage(true);
+      if (entries.some(x => x.isIntersecting) && room && screen?.kind !== 'details' && screen?.kind !== 'home' && screen?.nextOffset != null && !screen.loading && !screen.pageError) void loadPage(true);
     }, {rootMargin:'320px 0px'});
     function watchNextPage() {
       pageObserver.unobserve(sentinel); sentinel.hidden = !screen || ['details','home'].includes(screen.kind) || screen.nextOffset == null;
       if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
     }
-    function endpoint(path, query = {}) { return path + '?' + new URLSearchParams({session,...query}); }
+    function endpoint(path, query = {}) { return path + '?' + new URLSearchParams({room,...query}); }
     function playable(item) { return ['movie','episode','demo'].includes(item.type); }
     function identity(item) { return item.title + (item.edition ? ' · ' + item.edition : ''); }
     function runtime(seconds) { const minutes = Math.round(seconds / 60); return minutes >= 60 ? Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm' : minutes + 'm'; }
@@ -189,9 +189,9 @@
     }
     function signalError(message, action) { note.textContent = message; note.classList.add('library-error'); retry.hidden = false; errorAction = action; }
     function resetStatus() { note.textContent = ''; note.classList.remove('library-error'); retry.hidden = true; errorAction = undefined; }
-    function setBusy(value) { busy = value; for (const b of host.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !session; }
+    function setBusy(value) { busy = value; for (const b of host.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room; }
     async function play(item) {
-      if (busy || playing || !session) return;
+      if (busy || playing || !room) return;
       const version = generation; playing = item.id; setBusy(busy); resetStatus(); note.textContent = 'Loading ' + identity(item) + '…';
       try {
         const result = await load(item);
@@ -327,7 +327,7 @@
       summary(screen.detail); watchNextPage(); setBusy(busy);
     }
     async function loadPage(append = false) {
-      if (!session || !screen || ['details','home'].includes(screen.kind)) return;
+      if (!room || !screen || ['details','home'].includes(screen.kind)) return;
       if (append && (screen.loading || screen.nextOffset == null)) return;
       if (append && screen.dirty) { await query(); return; }
       controller?.abort(); controller = new AbortController(); const version = ++requestVersion, current = screen, sessionVersion = generation;
@@ -413,8 +413,8 @@
     viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
     async function setSession(id) {
-      if (session === id) { setBusy(busy); return; }
-      session = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
+      if (room === id) { setBusy(busy); return; }
+      room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
       hideTest?.(); testVideo = false; screen = homeContext(); beginHistory();
       pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
       navigationControls.forEach(n => { n.disabled = true; }); direction.disabled = true;

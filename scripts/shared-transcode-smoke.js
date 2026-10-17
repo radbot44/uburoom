@@ -52,7 +52,7 @@ async function main(){
     await browsers[0].evaluate(pages[0],'document.getElementById("close-room").click();true');await browsers[0].until(pages[0],'!selected','Host leaves');
     assert.equal(plex.hlsPool.groups.size,1);report.checks.unusedOutputReleased=true;
     await browsers[1].until(pages[1],'state.isHost','Host transfer');
-    await browsers[1].evaluate(pages[1],'execute({action:"session.visibility",args:{visibility:"private"}}).then(()=>true)');
+    await browsers[1].evaluate(pages[1],'execute({action:"room.visibility",args:{visibility:"private"}}).then(()=>true)');
     await browsers[2].until(pages[2],'!state','Private room removes another account');
     const before=await browsers[1].evaluate(pages[1],'videoFrames');await pause(1500);
     assert.ok(await browsers[1].evaluate(pages[1],'!video.paused&&videoFrames>'+Number(before+10)),'remaining viewer keeps decoded playback after its producer viewer leaves');

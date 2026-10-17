@@ -79,7 +79,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         if(!merge||merge.id!==data.id||merge.expires<=Date.now()||merge.sourceId!==login.userId)throw new Error('Merge verification expired; connect the account again');
         const a=registry.canonical(merge.sourceId),b=registry.canonical(merge.otherId);
         if(JSON.stringify([a.revision,b.revision])!==merge.version)throw new Error('Accounts changed; connect again');
-        if(busy([a.id,b.id]))throw new Error('Leave all watch sessions for both accounts before merging');
+        if(busy([a.id,b.id]))throw new Error('Leave all watch rooms for both accounts before merging');
         registry.merge(a.id,b.id,a.id);if(merge.credential)registry.credential(merge.subject,merge.credential);
         invalidate([a.id,b.id]);merges.delete(sourceHash(req));session(res,registry.canonical(a.id),a.name);json(res,200,{merged:true});return true;
       }
@@ -98,7 +98,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       if(req.method==='POST'&&route==='/api/account/admin/assign'){
         const data=await body(req),preview=previews.get(data.id);previews.delete(data.id);
         if(!preview||preview.sourceHash!==sourceHash(req)||preview.expires<=Date.now())throw new Error('Match preview expired; preview again');
-        if(busy(preview.users.map(u=>u.id)))throw new Error('Both accounts must leave their watch sessions before matching');
+        if(busy(preview.users.map(u=>u.id)))throw new Error('Both accounts must leave their watch rooms before matching');
         const id=registry.assign(preview,login.userId);invalidate(preview.users.map(u=>u.id));json(res,200,{account:registry.summary(id)});return true;
       }
       json(res,404,{error:'Account action unavailable'});return true;

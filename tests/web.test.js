@@ -60,6 +60,8 @@ test('web login, visibility, explicit UUID routing and writes enforce current pe
   const friendList = (await request('/api/sessions', 'GET', undefined, friend.headers)).body.sessions;
   assert.deepEqual(friendList.map(s => s.id).sort(), [publicSession.sessionId, duplicate.sessionId].sort());
   assert.equal(JSON.stringify(friendList).includes('private-name'), false); assert.equal(JSON.stringify(friendList).includes('disabled-name'), false);
+  assert.equal((await request('/api/rooms')).status, 401);
+  assert.deepEqual((await request('/api/rooms', 'GET', undefined, friend.headers)).body.rooms, friendList);
   const ownerList = (await request('/api/sessions', 'GET', undefined, owner.headers)).body.sessions;
   assert.equal(ownerList.length, 4);
   assert.equal(ownerList.find(s => s.id === disabled.sessionId).enabled, false);
@@ -68,12 +70,13 @@ test('web login, visibility, explicit UUID routing and writes enforce current pe
   assert.equal((await request('/api/command', 'POST', input, { ...friend.headers, Origin: 'https://evil.example' })).status, 403);
   assert.equal((await request('/api/command', 'POST', input, { ...friend.headers, 'X-CSRF-Token': '' })).status, 403);
   assert.equal((await request('/api/command', 'POST', { command: input.command }, friend.headers)).status, 400, 'web must select an explicit player');
+  assert.equal((await request('/api/command', 'POST', {roomId:input.sessionId,command:input.command}, friend.headers)).body.status, 'applied');
   const applied = (await request('/api/command', 'POST', input, friend.headers)).body;
-  assert.equal(applied.status, 'applied'); assert.equal(applied.state.volume, 72); assert.equal(commandCount, 1, 'duplicate aliases do not interfere with UUID targeting');
+  assert.equal(applied.status, 'applied'); assert.equal(applied.state.volume, 72); assert.equal(commandCount, 2, 'duplicate aliases do not interfere with UUID targeting');
   assert.equal(lastCommand.senderName, 'friend-name', 'web commands use the login name despite forged sender fields');
   const spoof = (await request('/api/command', 'POST', { ...input, sessionId: privateSession.sessionId, userId: 'owner' }, friend.headers)).body;
   assert.equal(spoof.status, 'forbidden'); assert.equal(spoof.state, undefined);
-  for (const action of ['profile.save', 'session.disable', 'session.enable', 'session.sharing', 'session.controls', 'session.autojoin']) {
+  for (const action of ['profile.save', 'room.disable', 'room.enable', 'room.sharing', 'room.controls', 'room.autojoin']) {
     assert.notEqual((await request('/api/command', 'POST', { ...input, command: { action, args: { slot: 1, mode: 'guild',control:'playback',allowed:true,enabled:true } } }, friend.headers)).body.status, 'applied');
   }
   assert.equal((await request('/api/devices/revoke', 'POST', { id: deviceId }, friend.headers)).status, 403);
@@ -92,16 +95,17 @@ test('web login, visibility, explicit UUID routing and writes enforce current pe
   member = false;
   assert.equal((await request('/api/sessions', 'GET', undefined, friend.headers)).status, 401);
   assert.equal((await request('/api/command', 'POST', { ...input, sessionId: duplicate.sessionId }, friend.headers)).status, 403);
-  assert.equal(commandCount, 2, 'denied writes never reach the device');
+  assert.equal(commandCount, 3, 'denied writes never reach the device');
   const hostEnable = { sessionId: disabled.sessionId, command: { action: 'session.enable' } };
   assert.equal((await request('/api/command', 'POST', hostEnable, friend.headers)).status, 403);
   assert.equal((await request('/api/command', 'POST', hostEnable, { ...owner.headers, 'X-CSRF-Token': '' })).status, 403);
   assert.equal((await request('/api/command', 'POST', { ...hostEnable, command: { action: 'media.pause' } }, owner.headers)).body.status, 'forbidden', 'off session cannot accept playback commands');
   assert.equal((await request('/api/command', 'POST', hostEnable, owner.headers)).body.status, 'applied');
-  assert.equal(app.hub.sessions.get(disabled.sessionId).enabled, true);
-  assert.equal((await request('/api/command', 'POST', { ...hostEnable, command: { action: 'session.sharing', args: { mode: 'owner' } } }, owner.headers)).body.status, 'applied');
-  assert.equal(app.hub.sessions.get(disabled.sessionId).mode, 'owner');
-  const control = {sessionId:publicSession.sessionId,command:{action:'session.controls',args:{control:'playback',allowed:false}}};
+  assert.equal(app.hub.rooms.get(disabled.sessionId).enabled, true);
+  assert.equal(lastCommand.action, 'session.enable', 'installed extensions retain the legacy wire command');
+  assert.equal((await request('/api/command', 'POST', { ...hostEnable, command: { action: 'room.sharing', args: { mode: 'owner' } } }, owner.headers)).body.status, 'applied');
+  assert.equal(app.hub.rooms.get(disabled.sessionId).mode, 'owner');
+  const control = {sessionId:publicSession.sessionId,command:{action:'room.controls',args:{control:'playback',allowed:false}}};
   assert.equal((await request('/api/command','POST',control,owner.headers)).body.status,'applied');
   member=true;hostVoice=voice=firstVoice;
   assert.equal((await request('/api/command','POST',input,friend.headers)).body.status,'forbidden','web enforces category permissions');

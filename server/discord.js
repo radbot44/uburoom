@@ -45,7 +45,7 @@ function helpText(website) {
     'Blank player names use the host’s Discord username: `bob`, or `bob #1` / `bob #2` with multiple players.',
     'Examples: `!ubu.livingroom volume 50`, `!ubu.bob#1 pause`',
     'Slash commands: `/ubu command:volume 50 target:livingroom` (target optional with one player).',
-    'Enable and permissions: Firefox controls or the host’s website. Guests must share the host’s current voice channel or be actively watching that session. The owner can opt into Admin mode on the website.',
+    'Enable and permissions: Firefox controls or the host’s website. Guests must share the host’s current voice channel or be actively watching that room. The owner can opt into Admin mode on the website.',
     `**Web remote:** ${website}`
   ].join('\n');
 }

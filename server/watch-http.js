@@ -243,7 +243,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (url.pathname === '/api/watch/handoff' && req.method === 'POST') {
         if (!auth.identity.activity || !req.headers.authorization || !throttle('handoff-issue:' + auth.actor.userId, 6)) {json(res,403,{error:'Open in Browser requires an authenticated Activity'});return true;}
         const data = await body(req), room = watch.rooms.get(data.roomId);
-        if (data.roomId !== undefined && (!UUID.test(data.roomId) || !await watch.canView(room,auth.actor))) {json(res,403,{error:'Session unavailable or private'});return true;}
+        if (data.roomId !== undefined && (!UUID.test(data.roomId) || !await watch.canView(room,auth.actor))) {json(res,403,{error:'Room unavailable or private'});return true;}
         const issued = handoff.issue(auth.identity,data.roomId);
         handoff.get(issued.id).authorization = req.headers.authorization;
         json(res,200,{id:issued.id,expires:issued.expires,url:config.publicUrl+'/auth/handoff#'+issued.code});return true;
@@ -269,7 +269,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         hub.setAdminMode(auth.actor, data.enabled); json(res,200,{adminMode:hub.isAdmin(auth.actor)}); return true;
       }
       if (req.method === 'GET' && ['/api/watch/library','/api/watch/library/item','/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
-        const room = watch.rooms.get(url.searchParams.get('session'));
+        const room = watch.rooms.get(url.searchParams.get('room') ?? url.searchParams.get('session'));
         const eligible = async () => room && watch.rooms.get(room.s.sessionId) === room && hub.canManage(room.s, auth.actor) &&
           await watch.canView(room, auth.actor) && (await login(req))?.userId === auth.actor.userId;
         if (!await eligible()) { json(res, 403, { error: 'Library access requires the current host or active Admin mode' }); return true; }
@@ -300,22 +300,22 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         else json(res, 405, { error: 'Method not allowed' }); return true;
       }
       const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe))?$/.exec(url.pathname);
-      if (!match || !UUID.test(match[1])) { json(res, 404, { error: 'Session unavailable' }); return true; }
+      if (!match || !UUID.test(match[1])) { json(res, 404, { error: 'Room unavailable' }); return true; }
       const room = watch.rooms.get(match[1]);
-      if (!await watch.canView(room, auth.actor)) { json(res, 403, { error: 'Session unavailable or private' }); return true; }
+      if (!await watch.canView(room, auth.actor)) { json(res, 403, { error: 'Room unavailable or private' }); return true; }
       if(req.watchSocket&&req.watchSocket.readyState!==1){json(res,409,{error:'Room connection changed; retry manually'});return true;}
       if (req.method === 'POST' && match[2] === 'command') {
         if (!throttle('watch-command:' + auth.actor.userId, 120)) { json(res, 429, { error: 'Too many commands' }); return true; }
         const data = await body(req);
         if (data.epoch !== room.s.epoch || !Number.isFinite(data.expiresAt) || data.expiresAt <= Date.now() || data.expiresAt > Date.now() + 3000) {
-          json(res, 409, { error: 'Session changed or command expired; retry manually' }); return true;
+          json(res, 409, { error: 'Room changed or command expired; retry manually' }); return true;
         }
         const viewer = room.viewers.get(data.viewerId);
         if (data.viewerId !== undefined && (!viewer || viewer.userId !== auth.actor.userId)) throw new Error('Invalid viewer');
-        const result = await hub.dispatch({ ...auth.actor, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, sessionId: room.s.sessionId, expiresAt: data.expiresAt }); json(res, 200, result); return true;
+        const result = await hub.dispatch({ ...auth.actor, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, roomId: room.s.sessionId, sessionId: room.s.sessionId, expiresAt: data.expiresAt }); json(res, 200, result); return true;
       }
       if (req.method === 'POST' && match[2] === 'close') {
-        if (!hub.canManage(room.s, auth.actor)) { json(res, 403, { error: 'Only the host or an active administrator can close the session' }); return true; }
+        if (!hub.canManage(room.s, auth.actor)) { json(res, 403, { error: 'Only the host or an active administrator can close the room' }); return true; }
         watch.remove(room.s.sessionId); json(res, 200, { ok: true }); return true;
       }
       if (req.method === 'POST' && match[2] === 'leave') {
@@ -332,7 +332,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         return true;
       }
       if (req.method === 'POST' && match[2] === 'ready') {
-        const data = await body(req); await watch.ready(room, auth.actor, data.viewerId, data.mediaVersion, data.ready);
+        const data = await body(req); await watch.ready(room, auth.actor, data.viewerId, data.mediaVersion, data.ready, data.readinessVersion);
         json(res, 200, { ok: true }); return true;
       }
       if (req.method !== 'GET' || match[2]) { json(res, 405, { error: 'Method not allowed' }); return true; }

@@ -37,7 +37,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   hub.setOwnerName = name => {
     if (typeof name !== 'string' || !name || name === accounts.ownerName) return;
     hub.ownerName = accounts.ownerName = name.slice(0, 100);
-    for (const s of hub.sessions.values()) s.ownerName = hub.ownerName;
+    for (const s of hub.rooms.values()) s.ownerName = hub.ownerName;
     accounts.save();
   };
   const logins = accounts.logins, oauthStates = new Map(), limits = new Map();
@@ -279,17 +279,18 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!login || !hub.isOwner(webActor(login)) || typeof data.enabled !== 'boolean') return json(res,403,{error:'Only the owner can change Admin mode'});
         hub.setAdminMode(webActor(login),data.enabled); return json(res,200,{adminMode:hub.isAdmin(webActor(login))});
       }
-      if (req.method === 'GET' && route === '/api/sessions') {
+      if (req.method === 'GET' && (route === '/api/rooms' || route === '/api/sessions')) {
         const login = await user(req); if (!login) return json(res, 401, { error: 'Log in with Discord' });
         renewCookie(req, res, login);
-        return json(res, 200, { sessions: await hub.list(webActor(login)) });
+        return json(res, 200, { [route === '/api/rooms' ? 'rooms' : 'sessions']: await hub.list(webActor(login)) });
       }
       if (req.method === 'POST' && route === '/api/command') {
         const login = await protectedPost(req); if (!login) return json(res, 403, { error: 'Not authorized' });
         if (!throttle('command:' + login.userId, 120)) return json(res, 429, { error: 'Too many commands; try again shortly' });
         const data = await body(req);
+        data.sessionId = data.roomId ?? data.sessionId;
         if (!UUID.test(data.sessionId || '')) return json(res, 400, { error: 'Select a player' });
-        return json(res, 200, await hub.dispatch(webActor(login), { ...data.command, sessionId: data.sessionId }));
+        return json(res, 200, await hub.dispatch(webActor(login), { ...data.command, roomId: data.sessionId, sessionId: data.sessionId }));
       }
       if (req.method === 'GET' && route === '/auth/discord') {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
