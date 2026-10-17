@@ -28,6 +28,12 @@
     for (let i = 0; i < buffered.length; i++) if (position >= buffered.start(i) - .05 && position < buffered.end(i)) return buffered.end(i) - position;
     return 0;
   }
+  function readinessBuffered(buffered,position,duration) {
+    // Muxed audio/video may start a few frames after zero. Only tolerate this
+    // bounded leading gap at the source origin, never holes elsewhere.
+    const start = position === 0 && buffered.length && buffered.start(0) <= .25 ? Math.max(0,buffered.start(0)) : position;
+    return bufferedAhead(buffered,start) >= Math.min(2,Math.max(0,duration-start));
+  }
   function timeline(buffered,duration,position) {
     if (!(duration > 0) || !Number.isFinite(duration)) return 'var(--border)';
     const percent = value => (Math.min(100,Math.max(0,value * 100 / duration))).toFixed(3) + '%';
@@ -77,7 +83,7 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  const api = {BUFFER,hlsConfig,chunkWindow,ranges,bufferedAhead,timeline,needsCompatible,observationClock,observationFrames};
+  const api = {BUFFER,hlsConfig,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

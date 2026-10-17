@@ -33,3 +33,17 @@ test('capability negatives choose conversion; HEVC Main10 hints and unknown code
   assert.equal(p.needsCompatible({videoCodec:'unknown',audioCodec:'unknown'},none),false);
   assert.equal(p.needsCompatible({videoCodec:'hevc'},()=>{throw new Error('unavailable');}),false);
 });
+
+
+test('startup and seek-to-zero readiness accepts bounded mux offsets without accepting missing buffer',()=>{
+  const offset=timeRanges([[.083422,18.024749]]);
+  assert.equal(p.bufferedAhead(offset,0),0,'ordinary gap detection stays strict');
+  assert.equal(p.readinessBuffered(offset,0,120),true);
+  assert.equal(p.readinessBuffered(timeRanges([[0,3]]),0,120),true);
+  assert.equal(p.readinessBuffered(timeRanges([]),0,120),false);
+  assert.equal(p.readinessBuffered(timeRanges([[.083422,1]]),0,120),false);
+  assert.equal(p.readinessBuffered(timeRanges([[.3,18]]),0,120),false,'large leading holes remain unready');
+  assert.equal(p.readinessBuffered(timeRanges([[15.083422,18]]),15,120),false,'middle-of-stream holes remain unready');
+  assert.equal(p.readinessBuffered(timeRanges([[0,1],[1.2,18]]),0,120),false,'disjoint ranges do not add up to readiness');
+  assert.equal(p.readinessBuffered(timeRanges([[119,120]]),119,120),true,'near the end only the remainder is required');
+});

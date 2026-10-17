@@ -708,9 +708,9 @@ setInterval(() => { void reportObservation(); },1000);
 async function reportReadiness() {
   if (readyPending || !selected || !state?.mediaUrl) return;
   const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
-  const target = expected(), required = Math.min(2, Math.max(0, state.state.duration-target));
-  const bufferedReady = !state.state.paused || !video.seeking && Math.abs(video.currentTime-target) <= (readinessVersion ? .15 : .65) &&
-    uburoomPlayback.bufferedAhead(video.buffered,target) >= required;
+  const target = expected();
+  const bufferedReady = !state.state.paused || !video.seeking && Math.abs(video.currentTime-target) <= (target === 0 ? .25 : readinessVersion ? .15 : .65) &&
+    uburoomPlayback.readinessBuffered(video.buffered,target,state.state.duration);
   const ready = bufferedReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
   const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
   if (readinessSent === key || !state.waitingForReady && !ready) return;

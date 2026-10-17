@@ -39,6 +39,15 @@ async function main(){
     for(const index of[1,2])await browsers[index].evaluate(pages[index],'preferredQuality='+JSON.stringify(index===1?'1080p20':'720p4')+';selectRoom('+JSON.stringify(room)+').then(()=>true)');
     await browsers[0].evaluate(pages[0],'execute({action:"media.load",args:{mediaId:"104",quality:"1080p20"}}).then(()=>true)');
     for(const index of[0,1,2])await browsers[index].until(pages[index],'!state.waitingForReady&&!video.paused&&videoFrames>5','Three-viewer playback',30000);
+    for(const action of ['media.seek.absolute','media.seek.start','media.previous']) {
+      if(action!=='media.seek.absolute') {
+        await browsers[0].evaluate(pages[0],'execute({action:"media.seek.absolute",args:{seconds:20}}).then(()=>true)');
+        for(const index of[0,1,2])await browsers[index].until(pages[index],'!state.waitingForReady&&!video.paused&&video.currentTime>19','Seek away from origin',15000);
+      }
+      await browsers[0].evaluate(pages[0],'execute({action:'+JSON.stringify(action)+',args:{seconds:0}}).then(()=>true)');
+      for(const index of[0,1,2])await browsers[index].until(pages[index],'!state.waitingForReady&&!video.paused&&video.currentTime>.3&&video.currentTime<10','Shared return to beginning: '+action,15000);
+    }
+    report.checks.startupAndSharedReturnToZero=true;
     const first=await Promise.all([0,1,2].map(media));
     assert.equal(starts(),2);assert.equal(first[0].transcodeId,first[1].transcodeId);assert.notEqual(first[0].transcodeId,first[2].transcodeId);
     assert.equal(new Set(first.map(m=>m.plexContext.principal)).size,3,'viewers retain separate Plex scopes');report.checks.threeViewersTwoConversions=true;
@@ -59,6 +68,9 @@ async function main(){
     assert.equal(starts(),2);assert.equal(plex.hlsPool.groups.size,1);report.checks.producerDepartureAndPrivacyPreservePlayback=true;
     app.watch.remove(room);assert.equal(plex.hlsPool.groups.size,0);assert.equal(plex.hlsPool.bytes,0);report.checks.finalReferenceCleanup=true;
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+  }catch(error){
+    for(let i=0;i<browsers.length;i++)console.error('[Viewer '+i+']',await browsers[i].evaluate(pages[i],'JSON.stringify({position:video.currentTime,seeking:video.seeking,ready:video.readyState,buffer:Array.from({length:video.buffered.length},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),waiting:state?.waitingForReady,target:expected(),error:playbackError})').catch(()=>''));
+    throw error;
   }finally{await Promise.allSettled(browsers.map(browser=>browser.close()));await app.close();}
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
