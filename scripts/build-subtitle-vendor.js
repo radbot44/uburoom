@@ -16,7 +16,19 @@ await bundle(path.join(root,'node_modules/jassub/dist/jassub.js'),'jassub.js',[{
     return {contents:contents.replace(original,'await Promise.race([(async()=>{await this.ready;await this.renderer?.[releaseProxy]();})(),new Promise(resolve=>setTimeout(resolve,1000))]);'),loader:'js'};
   });
 }}]);
-await bundle(path.join(root,'node_modules/jassub/dist/worker/worker.js'),'jassub-worker.js');
+await bundle(path.join(root,'node_modules/jassub/dist/worker/worker.js'),'jassub-worker.js',[{name:'transparent-ass-compositing',setup(build){
+  build.onLoad({filter:/jassub[\\/]dist[\\/]worker[\\/]worker\.js$/},args=>{
+    const contents=fs.readFileSync(args.path,'utf8');
+    const selection=/        try \{\n            const testCanvas = new OffscreenCanvas\(1, 1\);[\s\S]*?        this\._gpurender\.setCanvas\(ctrl\);/;
+    if(!selection.test(contents))throw new Error('Review JASSUB transparent compositor integration after upstream update.');
+    // Avoid a second GPU compositing surface over hardware-decoded video.
+    // libass still renders all authored styles; only bitmap composition changes.
+    return {contents:contents.replace(selection,'        this._gpurender = new Canvas2DRenderer();\n        this._gpurender.setCanvas(ctrl);'),loader:'js'};
+  });
+  build.onLoad({filter:/jassub[\\/]dist[\\/]worker[\\/]renderers[\\/]2d-renderer\.js$/},args=>({
+    contents:fs.readFileSync(args.path,'utf8').replaceAll('desynchronized: true','desynchronized: false'),loader:'js'
+  }));
+}}]);
 await bundle(path.join(root,'node_modules/libbitsub/dist/wrapper.js'),'libbitsub-renderer.js',[{name:'subtitle-asset-urls',setup(build){
   build.onLoad({filter:/libbitsub[\\/]dist[\\/]ts[\\/]wasm\.js$/},args=>({contents:fs.readFileSync(args.path,'utf8').replaceAll("new URL('../../pkg/","new URL('./"),loader:'js'}));
   build.onLoad({filter:/libbitsub[\\/]dist[\\/]ts[\\/]renderers\.js$/},args=>{
@@ -54,6 +66,7 @@ notices.push('JASSUB native components: see ../licenses/JASSUB-components.txt an
 notices.push('uburoom modifies libbitsub asset URLs and overlay geometry during bundling. See scripts/build-subtitle-vendor.js. Upstream copyright and licenses are retained.');
 notices.push('uburoom exposes libbitsub initialization completion and an optional forced manual repaint that invalidates prior presentation work.');
 notices.push('uburoom bounds JASSUB worker disposal to one second if startup or worker IPC does not settle. See scripts/build-subtitle-vendor.js.');
+notices.push('uburoom selects JASSUB transparent Canvas2D composition with synchronized presentation to avoid GPU overlays obscuring decoded video. libass layout and fonts are unchanged.');
 fs.writeFileSync(path.join(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n-----\n\n'));
 console.log('Built pinned subtitle modules, workers, WASM and notices.');
 }

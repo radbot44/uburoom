@@ -52,7 +52,15 @@ async function main(){
     await browser.evaluate(page,'window.subtitleProbeSeeks=0;video.addEventListener("seeked",()=>window.subtitleProbeSeeks++);true');
     const overlayPixels=(frame,bounds)=>{
       const decoded=spawnSync('ffmpeg',['-v','error','-i',frame,'-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,maxBuffer:10*1024*1024});
-      assert.equal(decoded.status,0);let white=0;
+      assert.equal(decoded.status,0);let white=0,backgroundDelta=0,backgroundSamples=0;
+      // A subtitle can be visible while an opaque canvas hides the video.
+      // Check the fixture's subtitle-free middle area against the Off frame.
+      for(let y=Math.ceil(bounds.y+bounds.height*.4);y<Math.min(1000,bounds.y+bounds.height*.6);y++)
+        for(let x=Math.ceil(bounds.x+bounds.width*.2);x<Math.min(1280,bounds.x+bounds.width*.4);x++){
+          const at=(y*1280+x)*3;
+          for(let c=0;c<3;c++){backgroundDelta+=Math.abs(decoded.stdout[at+c]-off.stdout[at+c]);backgroundSamples++;}
+        }
+      assert.ok(backgroundSamples>0&&backgroundDelta/backgroundSamples<3,'Video remains visible behind the subtitle canvas');
       const y0=Math.max(0,Math.floor(bounds.y+bounds.height*.73)),y1=Math.min(1000,Math.floor(bounds.y+bounds.height*.96));
       for(let y=y0;y<y1;y++)for(let x=Math.max(0,Math.floor(bounds.x+bounds.width*.3));x<Math.min(1280,Math.floor(bounds.x+bounds.width*.7));x++){
         const at=(y*1280+x)*3,color=[...decoded.stdout.subarray(at,at+3)],delta=color.reduce((sum,v,c)=>sum+Math.abs(v-off.stdout[at+c]),0);
@@ -90,7 +98,7 @@ async function main(){
       await command('media.tracks.set',{...version,subtitleId:'off'});await browser.until(page,'!document.querySelector(".subtitle-layer")','Overlay cleanup');
     }
     }
-    report.pausedStartupWithoutSeek=true;report.pausedDelay=true;
+    report.pausedStartupWithoutSeek=true;report.pausedDelay=true;report.videoVisibleBehindOverlay=true;
     const versions=JSON.parse(await browser.evaluate(page,'JSON.stringify({mediaVersion:state.mediaVersion,streamVersion:state.streamVersion})'));
     await command('media.tracks.set',{...versions,subtitleId:'902'});await browser.until(page,'captions.loaded&&!!captions.renderer','Layout overlay');
     await command('zoom.set',{value:1.1});await command('stretch.set',{axis:'stretchX',value:1.15});await command('pan.set',{x:.03,y:-.02});

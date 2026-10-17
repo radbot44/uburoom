@@ -66,7 +66,9 @@ class uburoomSubtitles {
           const bytes=new Uint8Array(size);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.length;}return bytes;
         };
         const data=await asset(value.data,value.format==='ass'?4*1024*1024:64*1024*1024),index=value.index?await asset(value.index,1024*1024):undefined;
+        if(value.fonts.length)this.status({message:'Loading subtitle fonts…',error:false});
         const fonts=[];let fontSize=0;for(const font of value.fonts){const bytes=await asset(font,16*1024*1024-fontSize);fontSize+=bytes.length;fonts.push(bytes);}
+        this.status({message:'Preparing subtitles…',error:false});
         const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,index,fonts,fileName:value.fileName},this.offset||0,abort.signal);
         if(generation!==this.generation || url!==this.url){renderer.destroy();return;}
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);

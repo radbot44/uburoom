@@ -1007,3 +1007,6 @@ uburoom exposes libbitsub initialization completion and an optional forced manua
 -----
 
 uburoom bounds JASSUB worker disposal to one second if startup or worker IPC does not settle. See scripts/build-subtitle-vendor.js.
+-----
+
+uburoom selects JASSUB transparent Canvas2D composition with synchronized presentation to avoid GPU overlays obscuring decoded video. libass layout and fonts are unchanged.
