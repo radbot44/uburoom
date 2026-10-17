@@ -1,6 +1,6 @@
 # uburoom design guide
 
-Keep the established layout and behavior. The shared remote source is `extension/remote-ui.js` (styles, SVGs, controls/badges); shells live in `extension/popup.css`, `web/style.css` and `web/watch*.css`. Inspect affected renders before UI changes and use shared safe-DOM components.
+Keep the established layout and behavior. The remote-only homepage is slated for retirement in M1-P8; the watch remote drawer remains part of the product. The shared remote source is `extension/remote-ui.js` (styles, SVGs, controls/badges); shells live in `extension/popup.css`, `web/style.css` and `web/watch*.css`. Inspect affected renders before UI changes and use shared safe-DOM components.
 
 ## Visual language
 
@@ -16,7 +16,7 @@ The primary standalone oomark is `assets/branding/uburoom-oomark-brand.svg` (298
 
 Use the full-color wordmark for site headers and the oomark for favicons and toolbar icons. Do not stretch the wordmark into a square icon.
 
-Raster/source exports in `assets/branding` include the 1848 px wide transparent wordmark PNG, 512 px transparent square icon, and 1024 px background square wordmark/oomark PNGs with matching SVGs. The prior blue/green assets are archived in `assets/branding/old/`.
+Raster/source exports in `assets/branding` include the 1848 px wide transparent wordmark PNG, 512 px transparent square icon, and 1024 px background square wordmark/oomark PNGs with matching SVGs. The prior blue/green assets currently reside in `assets/branding/old/`; M1 release cleanup will replace the old wordmark dependency in demo-media generation and remove that archive from the active tree (Git history retains it).
 
 Use the canonical uburoom logo asset/HTTP path. Preserve the established typography and component layout rules above.
 

@@ -2,7 +2,7 @@
 
 Self-hosted Plex watch parties with a web interface and Discord integration.
 
-Run your own server, connect your own Plex and Discord applications, and watch together in a browser or Discord Activity. The same server supports the included Firefox YouTube TV picture-control remote. A separate repository for the remote is planned in [phase M1-P8](ROADMAP.md#m1-p8--separate-remote-extension-repository-and-uburoom-compatibility); native-player integration remains future work.
+Run your own server, connect your own Plex and Discord applications, and watch together in a browser or Discord Activity. The current tree also contains the Firefox YouTube TV picture-control remote. Its extraction into a separate repository, consolidation on `/watch` as the main site, and removal of private pre-release compatibility paths are planned for [Milestone 1](ROADMAP.md#m1--verified-self-hosted-release); native-player integration remains future work.
 
 This source is undergoing release preparation. The approved wordmark and oo icons are integrated; the remaining asset-provenance and integration checks are pending. No managed room-hosting service is included.
 
@@ -27,13 +27,13 @@ See [self-hosting](docs/self-hosting.md) for your own server and [development](d
 - Plex browsing and linked Plex/Discord accounts; personal volume, quality and media-access checks.
 - Discord Activity and browser handoff, plus bot commands through the shared validated command engine.
 - Firefox local zoom/stretch/pan and profiles, with optional explicitly enabled remote control.
-- Native per-viewer observations; Plex timeline/watch-state reporting is not enabled.
+- Native per-viewer observations and persisted playback history, retained for planned Plex resume/watched-state updates across clients and servers; Plex reporting is not enabled yet. Queueing and durable room restoration are later work.
 
 See the [roadmap](ROADMAP.md) for priorities, milestones and release gates. Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage; the [playback reliability plan](docs/playback-reliability.md) contains the detailed requirements.
 
 The player includes personal audio/subtitle selection, external SRT/WebVTT captions and Plex burn-in requests for styled or embedded subtitles. Live Plex and Discord coverage remains under verification; see [testing status](docs/testing.md).
 
-Discord commands are `/ubu` and `!ubu`; there are no previous-name aliases. Fixtures do not establish compatibility with every Plex server, Discord client or YouTube TV player. See [remaining verification](docs/testing.md). Preserve account data and the original encryption key on upgrades; see [upgrading](docs/upgrading.md).
+Discord commands are `/ubu` and `!ubu`; there are no previous-name aliases. Fixtures do not establish compatibility with every Plex server, Discord client or YouTube TV player. See [remaining verification](docs/testing.md). Preserve account data and the original encryption key when retaining existing state; private pre-release migration support will be removed before the first public release. See [upgrading](docs/upgrading.md).
 
 ## License and attribution
 

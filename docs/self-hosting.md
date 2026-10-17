@@ -1,6 +1,6 @@
 # Self-hosting
 
-Each installation needs Node 22.13.0+, its own Plex access, its own Discord application and a reachable HTTPS origin. A TLS reverse proxy can forward to the single HTTPS Node server; no particular hostname/cloud service is required. Unrelated-host clean-install and existing-instance upgrade validation remain pending.
+Each installation needs Node 22.13.0+, its own Plex access, its own Discord application and a reachable HTTPS origin. A TLS reverse proxy can forward to the single HTTPS Node server; no particular hostname/cloud service is required. Unrelated-host clean-install and backup/restore validation remain pending. There is no supported upgrade promise from private pre-release revisions to the first public release.
 
 ## Configuration
 
@@ -32,7 +32,7 @@ Configure your Plex server token privately. Linked viewers use their verified ac
 
 ## Optional Firefox remote
 
-Source permits localhost only. Prepare an isolated build for your server:
+The remote extension remains bundled at this pre-release revision; M1-P8 will move its build and installation documentation to the independent remote repository. Currently, source permits localhost only. Prepare an isolated build for your server:
 
 ```powershell
 node scripts/configure-remote.js --server=https://watch.example --out=releases/remote
@@ -45,7 +45,7 @@ Temporary test: use a separate Firefox profile, about:debugging → This Firefox
 
 ## Backups and upgrades
 
-After the one-time M1-P11 import, devices, browser logins, account links, encrypted credentials and playback history all live in accounts.sqlite. Back up that database through SQLite online backup or an approved maintenance stop, plus private configuration/TLS and the original external key. Preserve the legacy JSON files with the pre-upgrade backup until migration is verified; they are not current runtime state. Verify integrity/authenticated decryption offline. Raw live SQLite copying is insufficient. Use an approved final stop/copy at cutover; see [upgrading](upgrading.md).
+Devices, browser logins, account links, encrypted credentials and playback history live in `accounts.sqlite`. The current pre-release build may import old JSON files once; that import is being removed before the first public release, so private pre-release data requires an intentional owner-only backup and reset or manual transfer, not an automatic migration guarantee. Back up SQLite through its online backup mechanism or an approved maintenance stop, plus private configuration/TLS and the original external key. Until the cleanup is implemented, retain any old JSON with the matched private rollback backup, not as current runtime state. Verify integrity/authenticated decryption offline. Raw live SQLite copying is insufficient. Use an approved final stop/copy at cutover; see [upgrading](upgrading.md).
 
 Forward WebSocket upgrades at `/watch-socket` for the watch client and `/ws` for the Firefox remote. The watch connection uses the HTTPS origin's cookie plus CSRF, or an Activity bearer sent inside the encrypted socket, never in the URL. Heartbeats detect dead connections; consent stays off after reconnect. Verify the actual Discord Activity proxy mapping separately. Discord startup/network failure is logged and retried every 30 seconds without shutting down HTTPS; current authorization still fails closed when provider access cannot be established.
 
