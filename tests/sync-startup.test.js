@@ -104,3 +104,37 @@ test('immediate comparison removes only the fixture autoplay deadline and retain
     assert.equal(denied.status,'unavailable');assert.equal(f.room.s.state.paused,false);
   }finally{f.watch.close();}
 });
+
+
+test('startup and seek buffering consume the start lead; late readiness uses only the delivery margin',async(t)=>{
+  let now=100000;
+  t.mock.method(Date,'now',()=>now);
+  const f=roomFixture();
+  const ready=viewer=>f.watch.ready(f.room,viewer===f.h?f.host:f.guest,viewer,f.room.mediaVersion,true,f.room.readinessVersion);
+  try {
+    await f.dispatch('media.load',{mediaId:'demo'});
+    const startup=f.room.readinessStartAt;
+    assert.equal(startup,now+1750);
+    now+=1000; await ready(f.h); await ready(f.g);
+    assert.equal(f.room.startAt,startup,'startup buffering overlaps the countdown');
+    await f.dispatch('media.seek.relative',{seconds:15});
+    const seek=f.room.readinessStartAt;
+    now+=1200; await ready(f.h); await ready(f.g);
+    assert.equal(f.room.startAt,seek,'buffered seek retains its original deadline');
+    assert.equal(f.watch.position(f.room,seek-1),15);
+    await f.dispatch('media.seek.absolute',{seconds:40});
+    const slow=f.room.readinessStartAt;
+    now+=2500; await ready(f.h);
+    assert.equal(f.room.s.state.paused,true,'expiry alone cannot release unready viewers');
+    assert.equal(f.watch.position(f.room),40);
+    await ready(f.g);
+    assert.ok(f.room.startAt>slow);
+    assert.equal(f.room.startAt,now+400,'slow buffering adds a delivery margin, not a second full lead');
+    await f.dispatch('media.seek.start'); await f.dispatch('media.pause');
+    assert.equal(f.room.readinessStartAt,undefined);
+    now+=2000; await ready(f.h); await ready(f.g);
+    assert.equal(f.room.s.state.paused,true);
+    await f.dispatch('media.play');
+    assert.equal(f.room.startAt,now+1750,'deliberate pause cancels the old countdown');
+  } finally {f.watch.close();}
+});

@@ -192,7 +192,7 @@
     try {
       const clean = Object.fromEntries(Object.keys(DEFAULT).map(key => [key, value.picture?.[key]]));
       const result = { picture: picture(clean, { action: 'pan.move', args: { x: 0, y: 0 } }) };
-      for (const field of ['paused', 'muted', 'seekable']) if (typeof value[field] === 'boolean') result[field] = value[field];
+      for (const field of ['paused', 'muted', 'seekable', 'waitingForReady']) if (typeof value[field] === 'boolean') result[field] = value[field];
       if (typeof value.volume === 'number') result.volume = numeric(value.volume, 0, 100);
       if (typeof value.position === 'number') result.position = numeric(value.position, 0, 1e9);
       if (typeof value.duration === 'number') result.duration = numeric(value.duration, 0, 1e9);

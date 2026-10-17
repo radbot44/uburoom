@@ -22,9 +22,9 @@ async function main() {
   const app = createApp(config,accountProvider?{plexFetch:accountProvider.fetch,oauthFetch:accountProvider.discordFetch,plexDemo:accountProvider}:undefined);
   let holdReadiness = false, holdPreviousVersion, releaseReadiness;
   const reportReady = app.watch.ready.bind(app.watch);
-  app.watch.ready = async (room, actor, viewerId, version, ready) => {
+  app.watch.ready = async (room, actor, viewerId, version, ready, readinessVersion) => {
     if (holdReadiness && version !== holdPreviousVersion && actor.userId === 'demo-guest' && ready) await new Promise(resolve => { releaseReadiness = resolve; });
-    return reportReady(room, actor, viewerId, version, ready);
+    return reportReady(room, actor, viewerId, version, ready, readinessVersion);
   };
   app.hub.access = { refresh: async () => true, isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); config.publicUrl = `https://localhost:${app.server.address().port}`;
@@ -65,6 +65,49 @@ async function main() {
     };
     const session = await command('session.new', { capabilities: { alwaysMatch: { acceptInsecureCerts: true } } });
     console.log('[Watch Firefox]', session.capabilities.browserVersion);
+    if (process.argv.includes('--readiness') || process.argv.includes('--readiness-baseline')) {
+      const baseline = process.argv.includes('--readiness-baseline');
+      const artifacts = path.join(root,'artifacts'); fs.mkdirSync(artifacts,{recursive:true});
+      const {context:host} = await command('browsingContext.create',{type:'tab'});
+      await command('browsingContext.setViewport',{context:host,viewport:{width:1360,height:900}});
+      await command('browsingContext.navigate',{context:host,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
+      await until(host,'typeof me!=="undefined" && !!me','fixture login');
+      await evaluate(host,'document.getElementById("create").click()');
+      await until(host,'!!state && !!selected','fixture room');
+      let held = true, release;
+      app.watch.ready = async (...args) => { if (held && args[4]) await new Promise(resolve => { release=resolve; }); return reportReady(...args); };
+      await until(host,'document.getElementById("library-content").querySelector("[data-action=play]")','fixture library');
+      await evaluate(host,'document.getElementById("library-content").querySelector("[data-action=play]").click()');
+      await until(host,'state?.waitingForReady && video.readyState>=3','startup held for readiness');
+      const shot = async label => {
+        const result=await command('browsingContext.captureScreenshot',{context:host,origin:'viewport'});
+        fs.writeFileSync(path.join(artifacts,'readiness-'+label+'.png'),Buffer.from(result.data,'base64'));
+      };
+      await shot(baseline?'before':'startup');
+      if (baseline) { await command('session.end'); return; }
+      assert.equal(await evaluate(host,'document.getElementById("player-play").getAttribute("aria-label")'),'Pause');
+      assert.equal(await evaluate(host,'document.getElementById("join-playback").hidden'),true);
+      await click(host,'player-play');
+      await until(host,'!!state && !state.waitingForReady && state.state.paused','deliberate startup pause');
+      assert.equal(await evaluate(host,'document.getElementById("player-play").getAttribute("aria-label")'),'Play');
+      held=false; release?.();
+      await click(host,'player-play');
+      await until(host,'!video.paused && video.currentTime>1','startup resumes');
+      held=true;
+      await click(host,'seek-forward');
+      await until(host,'state.waitingForReady && video.paused','seek held for readiness');
+      assert.equal(await evaluate(host,'document.getElementById("player-play").getAttribute("aria-label")'),'Pause');
+      await shot('seek');
+      await evaluate(host,'setTheater(true)'); await shot('theater');
+      await command('browsingContext.setViewport',{context:host,viewport:{width:390,height:800}});
+      await shot('phone');
+      await click(host,'player-play');
+      await until(host,'!!state && !state.waitingForReady && state.state.paused','deliberate seek pause');
+      held=false; release?.(); await click(host,'player-play');
+      await until(host,'!video.paused && video.currentTime>16','seek resumes');
+      await command('session.end');
+      console.log('[Watch Firefox] PASS: startup/seek Pause intent, deliberate pause, resumed playback, desktop/theater/phone captures.'); return;
+    }
     if (process.argv.includes('--tracking')) {
       const {context:host}=await command('browsingContext.create',{type:'window'});
       const {context:guest}=await command('browsingContext.create',{type:'window'});

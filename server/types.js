@@ -39,6 +39,7 @@
  * @typedef {Object} RoomPlaybackState
  * @property {PictureState} picture - Current viewport transformation state.
  * @property {boolean} paused - Whether playback is currently paused.
+ * @property {boolean} [waitingForReady] - Playback intent is playing while startup/seek preparation holds the timeline.
  * @property {boolean} muted - Whether audio is muted.
  * @property {number} volume - Volume percentage (0-100).
  * @property {boolean} seekable - Whether the current stream supports seeking.
@@ -112,7 +113,8 @@
  * @property {number} changedAt - Timestamp (ms) when position or pause state last changed.
  * @property {Map<string, Viewer>} viewers - Active viewers keyed by viewer ID.
  * @property {Map<string, any>} disconnectedViewers - Recently disconnected viewers preserving state across reconnects.
- * @property {number} [startAt] - Scheduled start timestamp (ms) for synchronized initial play.
+ * @property {number} [startAt] - Confirmed synchronized startup/seek release timestamp (ms).
+ * @property {number} [readinessStartAt] - Earliest release timestamp, counted alongside buffering.
  * @property {string} [readinessVersion] - Shared seek readiness generation.
  * @property {boolean} initialGate - Whether startup or seek readiness is currently held.
  * @property {boolean} manualPaused - Whether playback was paused deliberately by user action.

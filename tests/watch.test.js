@@ -674,3 +674,32 @@ test('shared seeks wait for fresh viewer buffers and reject superseded readiness
   assert.equal(room.s.state.paused,false,'departed viewers do not hold the seek gate');
   watch.close();
 });
+
+
+test('toggle treats startup and seek readiness as playing intent', async () => {
+  const hub = new Hub({ownerId:'host',guildId:'guild',channels:['commands']}, []);
+  hub.access = {isMember:()=>true,refresh:async()=>true};
+  const watch = new Watch(hub,{stop:async()=>{}},{title:'fixture',duration:60,format:'file',kind:'demo'});
+  const host = {userId:'host',name:'Host',guildId:'guild',channelId:'commands',surface:'web'};
+  const room = watch.rooms.get(watch.create(host)), viewer = randomUUID();
+  watch.snapshot(room,host,viewer);
+  const dispatch = (action,args) => hub.dispatch(host,{sessionId:room.s.sessionId,action,args});
+  await dispatch('media.load',{mediaId:'demo',quality:'direct'});
+  assert.equal(watch.snapshot(room,host,viewer).state.waitingForReady,true);
+  await dispatch('media.toggle');
+  assert.equal(room.manualPaused,true,'toggle deliberately pauses pending startup');
+  await watch.ready(room,host,viewer,room.mediaVersion,true);
+  assert.equal(room.s.state.paused,true);
+  assert.equal(watch.snapshot(room,host,viewer).state.waitingForReady,false);
+  await dispatch('media.toggle');
+  assert.equal(room.s.state.paused,false);
+  await dispatch('media.seek.relative',{seconds:15});
+  assert.equal(watch.snapshot(room,host,viewer).state.waitingForReady,true);
+  await dispatch('media.toggle');
+  assert.equal(room.manualPaused,true,'toggle deliberately pauses pending seek');
+  await watch.ready(room,host,viewer,room.mediaVersion,true,room.readinessVersion);
+  assert.equal(room.s.state.paused,true);
+  await dispatch('media.toggle');
+  assert.equal(room.s.state.paused,false);
+  watch.close();
+});

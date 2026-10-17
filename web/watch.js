@@ -547,7 +547,7 @@ async function execute(command) {
   if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
   const qualityChange=command.action==='media.quality.set';
   if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
-  if (['media.play','media.toggle'].includes(command.action) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
+  if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused && expected() < state.state.duration - .1) await unlockLocal();
   const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
   if(qualityChange)qualityPending=qualityRequest;else pending=true;
   fail('');renderTransport();
@@ -608,8 +608,8 @@ function renderTransport() {
   $('player-mute').disabled = !available || pending; $('player-volume').disabled = !available;
   $('next').disabled = !playback || !state?.hasNext || pending;
   $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
-  const paused = state?.state.paused !== false;
-  $('stage').classList.toggle('paused', paused); $('stage').classList.toggle('blocked', autoplayBlocked);
+  const paused = state?.state.paused !== false && !state?.waitingForReady;
+  $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
   glyph('player-mute', state?.state.muted ? 'muted' : 'mute'); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
   $('player-mute').title = state?.state.muted ? 'Unmute' : 'Mute';
@@ -709,9 +709,9 @@ async function reportReadiness() {
   if (readyPending || !selected || !state?.mediaUrl) return;
   const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
   const target = expected(), required = Math.min(2, Math.max(0, state.state.duration-target));
-  const seekReady = !readinessVersion || !video.seeking && Math.abs(video.currentTime-target) <= .15 &&
+  const bufferedReady = !state.state.paused || !video.seeking && Math.abs(video.currentTime-target) <= (readinessVersion ? .15 : .65) &&
     uburoomPlayback.bufferedAhead(video.buffered,target) >= required;
-  const ready = seekReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
+  const ready = bufferedReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
   const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
   if (readinessSent === key || !state.waitingForReady && !ready) return;
   readyPending = true;
@@ -942,7 +942,7 @@ $('player-volume').addEventListener('change', () => { volumeDragging = false; vo
 $('player-volume').addEventListener('pointercancel', () => { volumeDragging = false; });
 for (const [id, command] of [['previous',{action:'media.previous'}],['seek-back',{action:'media.seek.relative',args:{seconds:-15}}],
   ['seek-forward',{action:'media.seek.relative',args:{seconds:15}}],['next',{action:'media.next'}]]) $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
-$('player-play').addEventListener('click', () => execute({ action: state?.state.paused ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
+$('player-play').addEventListener('click', () => execute({ action: state?.state.paused && !state?.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
 $('player-mute').addEventListener('click', () => execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)));
 $('join-playback').addEventListener('click', async () => {
   if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void synchronize(); }
@@ -984,7 +984,7 @@ document.addEventListener('keydown', event => {
   if (event.code === 'Escape' && !drawer.hidden) { toggleDrawer(false); $('drawer-open').focus(); return; }
   if (event.code === 'F8' || event.code === 'KeyC' && event.altKey && event.shiftKey) { event.preventDefault(); if (!event.repeat) toggleRemote(); return; }
   if (!state || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button,input,select,textarea,[contenteditable=true]')) return;
-  const command = event.code === 'Space' ? {action:state.state.paused?'media.play':'media.pause'} : ['ArrowLeft','ArrowRight'].includes(event.code) ?
+  const command = event.code === 'Space' ? {action:state.state.paused && !state.waitingForReady?'media.play':'media.pause'} : ['ArrowLeft','ArrowRight'].includes(event.code) ?
     {action:'media.seek.relative',args:{seconds:event.code==='ArrowLeft'?-15:15}} : event.code==='KeyM' ? {action:state.state.muted?'media.unmute':'media.mute'} : undefined;
   if (command) { event.preventDefault(); execute(command).catch(error => fail(error.message)); }
 });

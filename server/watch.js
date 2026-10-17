@@ -14,9 +14,10 @@ const { PlaybackTracking } = require('./playback-tracking');
 const Tracks = require('./media-tracks');
 const SubtitleResources = require('./subtitle-resources');
 const RECONNECT_GRACE_MS = 60000;
-// Covers the normal 1 s state poll plus a 300+ ms RTT and scheduling margin.
-// Startup and shared seeks wait; ongoing recovery never reschedules playback.
+// Run the startup/seek lead alongside buffering. State changes push immediately.
+// Late readiness retains a short delivery margin for a 300+ ms RTT.
 const INITIAL_START_LEAD_MS = 1750;
+const READY_START_MARGIN_MS = 400;
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) { this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map(); }
@@ -84,6 +85,7 @@ class Watch {
   }
   refresh(room, now = Date.now()) {
     room.s.lastSeen = now;
+    room.s.state.waitingForReady = room.initialGate && !room.manualPaused;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false, hostTimedOut = false;
     for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion) room.disconnectedViewers.delete(id);
@@ -307,7 +309,7 @@ class Watch {
       case 'media.load': case 'media.next': {
         const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; room.position = 0;
         this.dropMedia(room);
-        s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
+        s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
         for (const viewer of room.viewers.values()) viewer.ready = false;
         s.state.seekable = true; void this.plex.stop(old); break;
       }
@@ -316,20 +318,22 @@ class Watch {
         if (prepared) {
           const old = room.media; room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined; void this.plex.stop(old);
           this.dropMedia(room);
-          s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
+          s.state.paused = true; room.manualPaused = false; room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
           for (const viewer of room.viewers.values()) viewer.ready = false;
         }
         break;
-      case 'media.pause': s.state.paused = true; room.manualPaused = true; break;
+      case 'media.pause': s.state.paused = true; room.manualPaused = true; room.readinessStartAt = undefined; break;
       case 'media.play':
         if (room.position >= room.media.duration - .1) room.position = 0;
+        if (room.manualPaused && room.initialGate) room.readinessStartAt = now + INITIAL_START_LEAD_MS;
         room.manualPaused = false; s.state.paused = room.initialGate;
-        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=now+INITIAL_START_LEAD_MS;
+        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.readinessStartAt || 0, now + READY_START_MARGIN_MS);
         break;
       case 'media.toggle':
         // A play intent at the end restarts even before the expiry sweep pauses it.
         if (room.position >= room.media.duration - .1) { room.position = 0; s.state.paused = true; }
-        room.manualPaused = !s.state.paused;
+        room.manualPaused = !s.state.paused || room.initialGate && !room.manualPaused;
+        if (room.initialGate) room.readinessStartAt = room.manualPaused ? undefined : now + INITIAL_START_LEAD_MS;
         s.state.paused = room.manualPaused || room.initialGate; break;
       case 'media.seek.relative': room.position = Math.max(0, Math.min(room.media.duration - .05, room.position + args.seconds)); break;
       case 'media.seek.absolute': room.position = Math.max(0, Math.min(room.media.duration - .05, args.seconds)); break;
@@ -358,7 +362,7 @@ class Watch {
       // An explicit pause remains paused; seeking during playback resumes together.
       if (!s.state.paused || room.initialGate) {
         room.readinessVersion = randomUUID();
-        room.initialGate = true; room.initialViewers = new Set(room.viewers.keys());
+        room.initialGate = true; room.readinessStartAt = now + INITIAL_START_LEAD_MS; room.initialViewers = new Set(room.viewers.keys());
         s.state.paused = true;
         for (const viewer of room.viewers.values()) viewer.ready = false;
       }

@@ -377,7 +377,7 @@
       back.disabled = forward.disabled = start.disabled = end.disabled = !available || !canPlayback || state.seekable !== true;
       back.title = forward.title = state.seekable ? 'Seek 15 seconds' : 'Seeking unavailable for this player';
       start.title = state.seekable ? 'Back to available start' : 'Seeking unavailable for this player'; end.title = state.seekable ? 'Go to end / live' : 'Seeking unavailable for this player';
-      play.replaceChildren(icon(doc, state.paused ? 'play' : 'pause')); play.setAttribute('aria-label', state.paused ? 'Play' : 'Pause');
+      play.replaceChildren(icon(doc, state.paused && !state.waitingForReady ? 'play' : 'pause')); play.setAttribute('aria-label', state.paused && !state.waitingForReady ? 'Play' : 'Pause');
       mute.replaceChildren(icon(doc, state.muted ? 'muted' : 'mute')); mute.setAttribute('aria-label', state.muted ? 'Unmute' : 'Mute'); mute.setAttribute('aria-pressed', String(!!state.muted));
       if (volumeDraft !== undefined && !dragging && pendingVolume === undefined && !busy && volumeSettledAt && Date.now() - volumeSettledAt > 1000) volumeDraft = undefined;
       const shownVolume = volumeDraft ?? state.volume;

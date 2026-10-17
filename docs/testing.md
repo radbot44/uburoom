@@ -398,3 +398,17 @@ Server acknowledgement is not playback evidence. Never replay stale commands or 
 Explicit shared seeks during playback freeze the authoritative target, invalidate previous viewer readiness, and reuse the coordinated future start after all current viewers report readiness. The client requires completed seek alignment and two seconds of forward buffer (or the remaining duration near the end). Seek generations reject delayed acknowledgements from superseded seeks without replacing personal streams. Explicit pauses prevent automatic resume; ordinary playback buffering remains independent.
 
 Verification: `npm test` passed all 210 tests with zero skips. New regression coverage exercises two viewers, repeated seeks, stale readiness rejection, coordinated release, deliberate pause, viewer departure and independent ongoing buffering. Live multi-browser/Plex delayed-fragment seek validation remains unfinished; unit results do not establish decoded presentation skew or actual network buffering behavior.
+
+
+### Startup and seek playback intent (2026-10-17)
+
+Startup and seek readiness holds retain playing intent: transport controls show Pause, the center Play overlay stays hidden, and the controls remain visible while the timeline is held. Pause, Space and the shared remote toggle deliberately pause preparation and prevent automatic resume. Play is shown after that deliberate pause. Browser autoplay restrictions still expose the personal Join playback action. Both startup and seek readiness require two seconds of forward buffer, capped by remaining duration. The shared 1.75-second start lead begins when startup/seek preparation starts and runs alongside buffering. Once all viewers are ready, release uses the later of that deadline and a 400 ms delivery margin; expiry alone never releases unready viewers.
+
+Verification: `npm test` passed all 211 tests, zero skips. `node scripts/watch-smoke.js --readiness` passed in Firefox 158 against an isolated fixture, exercising startup and seek holds, Pause controls, hidden center Play overlay, deliberate pauses and resumed decoded playback. Desktop, theater and phone renders were inspected before/after. A new server regression covers shared-toggle intent and snapshot propagation during both holds. Real Plex/network-delayed multi-viewer timing and Discord Activity remain unverified for this follow-up.
+
+
+### Overlapping buffer and start preparation (2026-10-17)
+
+Startup, episode changes, shared seeks and restart-to-beginning begin their 1.75-second lead when preparation starts. Early readiness retains that deadline; late readiness adds only a 400 ms delivery margin for the pushed release. Explicit pause cancels the preparation deadline, and resuming a held readiness gate starts a fresh lead. Ordinary pause/resume and independent ongoing recovery retain their existing behavior.
+
+Verification: all 212 tests passed with zero skips. Clock-controlled regressions cover startup and seek buffering overlapping the lead, expiry while a viewer remains unready, the bounded late-readiness margin and explicit pause/resume cancellation. The isolated Firefox 158 `node scripts/watch-smoke.js --readiness` check passed again. These checks establish scheduling and local playback behavior; they do not establish actual inter-viewer skew or guarantee two-second startup on real Plex/network/browser combinations. The 400 ms delivery margin assumes prompt WebSocket delivery; unusually slow links can still miss a scheduled release and recover locally.
