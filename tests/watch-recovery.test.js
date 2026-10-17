@@ -9,6 +9,7 @@ const {create:diagnosticLog}=require('../web/playback-diagnostics');
 const source = fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8');
 function load(context,name,next) {
   context.qualityPending ??= false;
+  context.hlsTimelinePending ??= false;
   context.diagnostics ??= diagnosticLog();
   context.diagnosticSample ??= (event,fields)=>context.diagnostics.record(event,fields);
   if(context.Hls)context.Hls.ErrorDetails ??= {};
@@ -19,7 +20,7 @@ function alignmentFixture() {
   const timing=require('../web/playback-timing');
   const ctx={state:{mediaUrl:'/current',format:'hls',mediaVersion:'media',streamVersion:'stream',state:{duration:120,paused:false,volume:50,muted:false}},
     selected:'room',mediaSource:'/current',expected:()=>target,startKey:()=> 'current',probing:false,playbackError:'',hlsNetworkFailure:undefined,
-    hlsPreparationUntil:0,syncSeekPending:false,playerWaiting:true,autoplayBlocked:false,performance:{now:()=>now},document:{visibilityState:'visible'},
+    hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,playerWaiting:true,autoplayBlocked:false,performance:{now:()=>now},document:{visibilityState:'visible'},
     playbackClock:{read:()=>({valid:true})},gentleCorrectionEnabled:false,driftCorrection:timing.correction(),presentationTiming:timing.presentation(),
     uburoomPlayback:playback,video:{readyState:2,paused:false,seeking:false,playbackRate:1,buffered:{get length(){return ranges.length;},start:i=>ranges[i][0],end:i=>ranges[i][1]},
       pause(){this.paused=true;},async play(){this.paused=false;}},diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
@@ -45,6 +46,33 @@ test('new HLS playback fills ahead locally with a bounded wait and preserves sha
   f.ctx.hlsPreparationUntil=10000;f.ctx.syncSeekPending=false;f.ctx.video.paused=true;
   f.set({now:10001,target:75,ranges:[]});await f.ctx.synchronize();assert.equal(f.ctx.hlsPreparationUntil,0,'normal bounded recovery resumes after the preparation limit');
 });
+
+test('fresh HLS synchronization cannot seek or play before its timestamp origin is anchored',async()=>{
+  const f=alignmentFixture();f.ctx.hlsTimelinePending=true;f.ctx.video.readyState=4;f.ctx.playerWaiting=false;
+  f.set({position:0,target:95,ranges:[[0,1]]});await f.ctx.synchronize();
+  assert.equal(f.seeks(),0);assert.equal(f.ctx.video.paused,true);
+  let error;f.ctx.fail=message=>{error=message;};f.ctx.hlsNetworkFailure='Connection failed';
+  await f.ctx.synchronize();assert.equal(error,'Connection failed','anchoring failures remain visible');
+});
+
+test('only the current HLS stream anchors once, then loads the latest room target',()=>{
+  let resumed=0;
+  const loads=[],client={startLoad:target=>loads.push(target),resumeBuffering(){resumed++;}};
+  let target=65,synchronized=0;
+  const ctx={hls:client,hlsTimelinePending:true,hlsPreparationUntil:0,syncSeekPending:false,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,
+    state:{mediaUrl:'/current',state:{duration:120}},mediaSource:'/current',expected:()=>target,performance:{now:()=>1000},
+    uburoomPlayback:playback,video:{currentTime:0,buffered:{length:1,start:()=>0,end:()=>1}},clearTimeout(){},synchronize:()=>{synchronized++;}};
+  load(ctx,'handleHlsFragmentBuffered','handleHlsError');
+  ctx.handleHlsFragmentBuffered({});assert.equal(ctx.hlsTimelinePending,true,'obsolete event cannot establish the new origin');
+  target=95;ctx.handleHlsFragmentBuffered(client);
+  assert.equal(ctx.hlsTimelinePending,false);assert.equal(ctx.video.currentTime,95);assert.deepEqual(loads,[95]);
+  assert.equal(ctx.hlsPreparationUntil,11000);assert.equal(synchronized,1);
+  target=100;ctx.handleHlsFragmentBuffered(client);assert.deepEqual(loads,[95],'ordinary fragments cannot anchor again');
+  assert.equal(resumed,1);
+  ctx.hlsTimelinePending=true;ctx.video.currentTime=target=0;ctx.handleHlsFragmentBuffered(client);
+  assert.equal(resumed,2,'starting at zero must also resume ordinary fragment buffering');
+  assert.deepEqual(loads,[95],'initial playback needs no middle-of-stream jump');
+});
 test('HLS retries the current stream with backoff, retains buffered media, and ignores superseded timers',() => {
   const timers = [], client = {loads:0,startLoad(){this.loads++;}};
   const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}},mediaSource:'/current',
@@ -58,6 +86,17 @@ test('HLS retries the current stream with backoff, retains buffered media, and i
   assert.match(context.hlsNetworkFailure,/connection/);
   timers[0].action(); assert.equal(client.loads,1);
   context.hls = undefined; timers[1].action(); assert.equal(client.loads,1,'old stream cannot restart');
+});
+
+test('a failed timestamp anchor retries segment zero rather than normalizing a middle fragment',()=>{
+  const timers=[],loads=[],client={startLoad:target=>loads.push(target)};
+  const ctx={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},hlsTimelinePending:true,
+    state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:120}},mediaSource:'/current',
+    selected:'room',navigator:{onLine:true},performance:{now:()=>0},receivedAt:0,expected:()=>95,video:{readyState:0,currentTime:0},
+    hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,clearTimeout(){},setTimeout:callback=>{timers.push(callback);return timers.length;}};
+  load(ctx,'handleHlsError','unavailable');
+  ctx.handleHlsError(client,{fatal:true,type:'network'});timers[0]();assert.deepEqual(loads,[0]);
+  ctx.hlsTimelinePending=false;ctx.handleHlsError(client,{fatal:true,type:'network'});timers[1]();assert.deepEqual(loads,[0,95]);
 });
 
 test('slow fatal HLS recovery is capped and requires the current online stream, fresh control and valid timeline',() => {
@@ -91,7 +130,7 @@ test('exhausted HLS delivery failure allows cached playback and surfaces the err
   let paused = false, message;
   const context = {state:{mediaUrl:'/current',state:{paused:false,volume:50,muted:false}},probing:false,playbackError:'',
     video:{readyState:4,currentTime:12,paused:false,buffered:{length:1,start:()=>0,end:()=>20},pause:()=>{paused=true;}},
-    hlsPreparationUntil:0,syncSeekPending:false,hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
+    hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
     performance:{now:()=>0},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
     presentationTiming:require('../web/playback-timing').presentation(),playerWaiting:false,
     fail:value=>{message=value;},renderTransport:()=>{},checkVideoFrames:()=>{}};

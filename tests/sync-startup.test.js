@@ -36,7 +36,7 @@ test('a superseded native play promise cannot mark replacement media ready or au
     let resolve,reject;const play=new Promise((a,b)=>{resolve=a;reject=b;});
     const ctx={state:{mediaUrl:'fixture',mediaVersion:'old',streamVersion:'old-stream',state:{paused:false,volume:50,muted:false}},
       selected:'room',mediaSource:'old-source',readyVersion:undefined,playbackClock:{read:()=>({valid:true})},expected:()=>0,
-      hlsPreparationUntil:0,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,
+      hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,
       performance:{now:()=>0},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
       presentationTiming:require('../web/playback-timing').presentation(),uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,
       video:{readyState:4,currentTime:0,seeking:false,paused:true,playbackRate:1,buffered:{length:0},play:()=>play},

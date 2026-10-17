@@ -23,6 +23,7 @@ let preparedStartKey;
 let syncSeekPending=false;
 let qualityPending=false;
 let hlsPreparationUntil=0;
+let hlsTimelinePending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
@@ -358,7 +359,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
-  syncSeekPending=false;hlsPreparationUntil=0;
+  syncSeekPending=false;hlsPreparationUntil=0;hlsTimelinePending=false;
   startAlarm.cancel();preparedStartKey=undefined;
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
@@ -388,6 +389,7 @@ function unsupportedDecoder() {
   fail(playbackError);
 }
 function restartHlsForSeek(target) {
+  if(hlsTimelinePending)return;
   if (!hls || !hlsNetworkInterrupted || state?.mediaUrl !== mediaSource || uburoomPlayback.bufferedAhead(video.buffered,target) > .05) return;
   // A new authorized room seek supersedes the old segment's retry timer.
   // stopLoad keeps MediaSource and its cached ranges attached.
@@ -415,6 +417,20 @@ async function refreshHlsSession(client) {
 }
 function handleHlsFragmentBuffered(client) {
   if (hls !== client || !state?.state || state.mediaUrl !== mediaSource) return;
+  if(hlsTimelinePending) {
+    // Plex advertises estimated segment durations. Starting a fresh transmuxer
+    // in the middle normalizes its first PTS against that estimate, moving the
+    // actual pictures relative to currentTime. Anchor every private stream at
+    // segment zero before seeking, keeping that origin for the stream lifetime.
+    hlsTimelinePending=false;hlsPreparationUntil=performance.now()+10000;
+    const target=expected();
+    if(target>.65) {
+      try{diagnosticSample('hls-anchor');video.currentTime=target;syncSeekPending=true;}catch{}
+      client.startLoad(target);
+    }
+    client.resumeBuffering();
+    void synchronize();
+  }
   // A buffered fragment from an obsolete seek does not establish that the
   // shared playback position can advance again.
   const target = expected(), ahead = uburoomPlayback.bufferedAhead(video.buffered,target);
@@ -456,7 +472,7 @@ function handleHlsError(client, data) {
           state.mediaVersion !== version || state.streamVersion !== stream) return;
         // Wait for online state and a recent authorized poll before loading.
         if (navigator.onLine === false || performance.now()-receivedAt > 3000) { diagnostics.record('retry-deferred',{attempt:attempt+1,delayMs:delay});hlsRecoveryTimer = setTimeout(retry,delay); return; }
-        const target = expected();
+        const target = hlsTimelinePending?0:expected();
         if (!Number.isFinite(target) || target < 0 || target >= state.state.duration) return;
         // Once the delivery error pauses local playback, normal synchronization
         // is suspended. Retarget MSE too, or hls.js can refill the old position.
@@ -474,7 +490,7 @@ function handleHlsError(client, data) {
   else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsRecoveryCount++ === 0) {
     // Retry the current authorized stream once. No shared command or timeline change.
     hlsRecoveryTimer = setTimeout(() => {
-      if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(expected()); }
+      if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(hlsTimelinePending?0:expected()); }
     }, 0);
     return;
   }
@@ -496,7 +512,7 @@ function unavailable(message,reason='room-unavailable') {
   renderRemote(); renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
 }
 async function unlockLocal() {
-  if (!state?.mediaUrl || video.readyState < 2 || probing || playbackError) return false;
+  if (!state?.mediaUrl || video.readyState < 2 || probing || playbackError || hlsTimelinePending) return false;
   const version = state.mediaVersion, source = mediaSource; probing = true; let playTimer;
   try {
     await Promise.race([video.play(), new Promise((resolve,reject) => { playTimer = setTimeout(() => {
@@ -710,6 +726,11 @@ function holdForStart(timing,target) {
 }
 async function synchronize() {
   if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
+  if(hlsTimelinePending){
+    video.pause();resetDriftCorrection();
+    if(hlsNetworkFailure){playbackError=hlsNetworkFailure;fail(playbackError);}
+    renderTransport();return;
+  }
   const target = expected(), difference = target - video.currentTime, timing=playbackClock.read(),clockValid=timing.valid;
   if(state.startAt>state.serverNow && holdForStart(timing,target))return;
   if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
@@ -776,15 +797,18 @@ function applyState(next) {
         try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
-        hlsPreparationUntil=performance.now()+10000;
-        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate,expected()));
+        hlsTimelinePending=true;
+        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
+        // Finish appending the anchor without requesting segment one before
+        // the target seek; aborting that speculative load adds recovery noise.
+        client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&hlsTimelinePending)client.pauseBuffering();});
         client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }
   }
-  if (!changed && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
+  if (!changed && !hlsTimelinePending && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
     syncSeekPending=false;
     if(hlsPreparationUntil&&hls){hlsPreparationUntil=performance.now()+10000;hls.startLoad(expected());}
     else restartHlsForSeek(expected());

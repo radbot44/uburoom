@@ -81,7 +81,7 @@ async function main() {
       const result={quality,elapsedMs:Date.now()-started,before:{position:before.position,target:before.target},after:{position:after.position,target:after.target,ready:after.ready,paused:after.paused},
         firstPlayingFrameMs:Number.isFinite(resumed)?resumed-(entries[0]?.ms??resumed):null,
         lastSecondFrames:after.frames-samples.at(-6).frames,
-        syncSeeks:entries.filter(e=>e.event==='sync-seek').length,lateSyncSeeks:entries.filter(e=>e.event==='sync-seek'&&e.ms>resumed+500).length,
+        anchorSeeks:entries.filter(e=>e.event==='hls-anchor').length,syncSeeks:entries.filter(e=>e.event==='sync-seek').length,lateSyncSeeks:entries.filter(e=>e.event==='sync-seek'&&e.ms>resumed+500).length,
         waits:entries.filter(e=>e.event==='waiting').length,errors:entries.filter(e=>e.event==='hls-error'),requests:requests.slice(requestIndex).map(r=>({ms:r.at-started,segment:r.segment})),
         guestAdvanced:otherAfter.position-other.position,guestStreamUnchanged:otherAfter.stream===other.stream,mediaUnchanged:after.media===before.media,
         streamChanged:after.stream!==before.stream,roomPlaying:!after.roomPaused,consentOff:!after.enabled};
@@ -93,7 +93,8 @@ async function main() {
       assert.ok(result.lastSecondFrames>3,'Decoded callbacks keep advancing after refill');
       assert.equal(result.lateSyncSeeks,0,'No recurring correction seeks after replacement settles');
       assert.ok(result.syncSeeks<=1,'At most one initial alignment');assert.equal(result.errors.length,0,'No HLS stalls/errors after quality replacement');
-      assert.ok(!result.requests.some(r=>r.segment==='segment-000.ts'),'Mid-video replacement must not fetch the beginning');
+      assert.equal(result.anchorSeeks,1,'One target jump after establishing the stream origin');
+      assert.equal(result.requests.filter(r=>r.segment==='segment-000.ts').length,1,'Each replacement anchors its timestamp origin exactly once');
     }
     await host.evaluate(h,'execute({action:"media.pause"}).then(()=>execute({action:"media.seek.absolute",args:{seconds:45}})).then(()=>true)');
     await host.until(h,'video.paused&&!video.seeking&&Math.abs(video.currentTime-45)<.5','Paused seek');

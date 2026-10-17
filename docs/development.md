@@ -71,6 +71,15 @@ The same browser, TLS and FFmpeg prerequisites apply. Use a new output directory
 
 ### Playback synchronization baseline
 
+For source-picture alignment, use the independent decoded pixel clock. It generates a ten-minute procedural source with binary frame numbers, then exercises coarse HLS playlist duration estimates through the actual watch player. It checks late join, paused/playing quality changes, forward/backward seek, private stream refresh and decoder reset. FFmpeg/FFprobe, local test TLS and the requested installed browser are required; no `.env`, production credentials or live providers are used. Run browsers sequentially with fresh output directories.
+
+```powershell
+node scripts/source-timeline-smoke.js --browser=chrome --output=artifacts/source-timeline-chrome
+node scripts/source-timeline-smoke.js --browser=firefox --output=artifacts/source-timeline-firefox
+```
+
+`report.json` retains source-frame numbers, media clocks, room targets, picture differences, source-to-media mapping differences and local diagnostics. Paused pictures and the two source-to-media mappings must match within two source frames; baked source time must agree with its media timestamp within three frames. Playing pixels are captured inside their own `requestVideoFrameCallback` and paired with its `mediaTime`, because `currentTime` can lead or lag the displayed frame. The two viewers are sampled sequentially, so their moving-picture difference is informational and mapping agreement is checked separately. These checks establish source mapping, not photon/speaker timing, Plex transcoding capacity or Android support. Each fresh HLS stream intentionally requests segment zero once to establish its origin; subsequent loading targets the current room position.
+
 The player records `requestVideoFrameCallback` media/compositor timestamps when available, frame intervals/callback gaps, clock offset/uncertainty, request/network RTT and server processing time, shared-timeline presentation/position errors, rate changes and seeks. Schema 2 exports retain 7,200 recent frames separately from events and one-second samples (36,000 frames in soak mode). Frame eviction counts are explicit; this is a recent-frame window, not a full two-hour frame trace. Full physical refresh repetitions, exact photon timing and speaker timing cannot be measured through these APIs. No automatic upload or new server-side viewer telemetry is added.
 
 Use local test TLS, installed Firefox and FFmpeg. This runner creates an isolated localhost service, procedural media and two disposable browser processes; it never reads `.env` or uses live providers. Output directories must be new. Delay injection affects room-state fetches only, symmetrically in each direction; the recovery test locally interrupts just the guest. This does not simulate a whole network link or packet loss.
