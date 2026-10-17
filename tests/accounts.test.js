@@ -33,7 +33,7 @@ test('previous JWT credentials still renew through their registered signing key'
   await auth.validate(verified.credential,'101');assert.ok(verified.credential.expires>Date.now());assert.ok(provider.requests.some(r=>r.path==='/api/v2/auth/token'));
 });
 
-test('account IDs persist, owner reservations resolve exact subjects, conflicting merges roll back, and credentials are authenticated ciphertext',()=>{
+test('account IDs persist, owner reservations resolve exact subjects, conflicting merges roll back, and credentials are authenticated ciphertext',async()=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-accounts-')),vault=credentialVault(path.join(directory,'key')),file=path.join(directory,'accounts.sqlite');
   let accounts=new Accounts(file,vault);
   try{
@@ -46,8 +46,8 @@ test('account IDs persist, owner reservations resolve exact subjects, conflictin
     assert.equal(accounts.credential('101').token,'private-test-token');assert.equal(accounts.canonical(survivor).revision,1);
     const reserved=accounts.assign(accounts.preview('456','102'),discord.id);assert.equal(accounts.resolve('plex','102','Bob').id,reserved);assert.equal(accounts.resolve('discord','456','Bob D').id,reserved);
     const conflict=accounts.resolve('discord','789','Other');assert.throws(()=>accounts.merge(survivor,conflict.id,discord.id));assert.equal(accounts.identity('discord','789').userId,conflict.id);
-    accounts.close();accounts=new Accounts(file,vault);assert.equal(accounts.resolve('plex','101','Alice again').id,survivor);
-  }finally{accounts.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
+    await accounts.close();accounts=new Accounts(file,vault);assert.equal(accounts.resolve('plex','101','Alice again').id,survivor);
+  }finally{await accounts.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
 });
 
 async function fixture(t){
@@ -94,11 +94,12 @@ test('legacy Discord login migration keeps device identities, encrypts refresh c
   fs.writeFileSync(config.loginFile,JSON.stringify(legacy));const device={id:randomUUID(),ownerId:config.ownerId,credentialHash:'c'.repeat(64)};fs.writeFileSync(config.deviceFile,JSON.stringify([device]));
   let app;
   try{
-    app=createApp(config);const stored=JSON.parse(fs.readFileSync(config.loginFile,'utf8')),id=stored.logins[0][1].userId;
-    assert.match(id,/^[a-f0-9-]{36}$/);assert.notEqual(id,config.ownerId);assert.equal(stored.logins[0][1].oauth.encrypted,1);assert.equal(JSON.stringify(stored).includes('private-legacy-refresh'),false);
+    app=createApp(config);const stored=JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record),id=stored.userId;
+    assert.match(id,/^[a-f0-9-]{36}$/);assert.notEqual(id,config.ownerId);assert.equal(stored.oauth.encrypted,1);assert.equal(JSON.stringify(stored).includes('private-legacy-refresh'),false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(config.loginFile,'utf8')),legacy,'legacy import files are not rewritten');
     const vault=credentialVault(config.credentialKeyFile);assert.deepEqual(vault.open(JSON.parse(fs.readFileSync(config.loginFile+'.pre-accounts.encrypted.json','utf8'))),legacy);
     assert.equal(app.store.devices[0].ownerId,config.ownerId);assert.equal(app.hub.sessions.size,0);
-    await app.close();app=createApp(config);assert.equal(app.registry.identity('discord',config.ownerId).userId,id);assert.equal(JSON.parse(fs.readFileSync(config.loginFile,'utf8')).logins[0][1].userId,id);
+    await app.close();app=createApp(config);assert.equal(app.registry.identity('discord',config.ownerId).userId,id);assert.equal(JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record).userId,id);
     await app.close();app=undefined;fs.renameSync(config.credentialKeyFile,config.credentialKeyFile+'.saved');assert.throws(()=>createApp(config),/key is missing/);assert.equal(fs.existsSync(config.credentialKeyFile),false,'missing keys are never silently replaced');
   }finally{if(app)await app.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
 });

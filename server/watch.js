@@ -227,7 +227,8 @@ class Watch {
     room.viewers.set(viewerId, viewer);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
-    return { id: room.s.sessionId, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
+    room.transportSequence=(room.transportSequence||0)+1;
+    return { id: room.s.sessionId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
       startAt:room.startAt,
       title: room.media?.title || 'Choose something to watch', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,

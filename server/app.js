@@ -11,19 +11,24 @@ const RemoteUI = require('../extension/remote-ui');
 const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
+const { watchSockets } = require('./watch-socket');
 const { Accounts, credentialVault } = require('./accounts');
 const { PlexAuth } = require('./plex-auth');
 const { accountHttp } = require('./account-http');
 const version = require('../package.json').version;
+const { resilientFetch } = require('./resilience');
 
 function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {}) {
-  const store = deviceStore(config.deviceFile);
+  let registry;
+  try {
+  oauthFetch=resilientFetch(oauthFetch,{timeoutMs:10000});
   if(config.accountFile&&!config.credentialKeyFile)throw new Error('Configure a private uburoom credential key file outside the project');
   if(config.accountFile&&fs.existsSync(config.accountFile)&&!fs.existsSync(config.credentialKeyFile))throw new Error('The uburoom credential key is missing; restore the original key before starting');
   const vault=config.accountFile||config.unifiedAccounts?credentialVault(config.credentialKeyFile):undefined;
-  const registry=vault?new Accounts(config.accountFile,vault):undefined;
+  registry=vault?new Accounts(config.accountFile,vault):undefined;
+  const store = deviceStore(config.deviceFile,registry);
   if(vault&&config.loginFile&&fs.existsSync(config.loginFile)&&!fs.existsSync(config.loginFile+'.pre-accounts.encrypted.json'))fs.writeFileSync(config.loginFile+'.pre-accounts.encrypted.json',JSON.stringify(vault.seal(JSON.parse(fs.readFileSync(config.loginFile,'utf8')))),{flag:'wx',mode:0o600});
-  const accounts = loginStore(config.loginFile, JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),vault);
+  const accounts = loginStore(config.loginFile, JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),vault,registry);
   // Browsers require a finite cookie lifetime; renew it on each account visit.
   // Server logins have no fixed lifetime; Discord renewal/revocation governs them.
   const loginSeconds = 365 * 24 * 60 * 60, renewals = new Map(), cookieRenewedAt = new Map();
@@ -146,7 +151,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     hub.accountActor=actor=>registry.canonical(actor.userId)?actor:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex');
-      if(!identity||!registry.credential(identity.subject))return plex;
+      if(!identity||!registry.hasCredential(identity.subject))return plex;
       const scoped=await plexAuth.forUser(actor.userId);if(!scoped)throw new Error('Connect your Plex account again');return scoped;
     };
   }
@@ -162,6 +167,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   const accountRoutes=accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore:accounts,discordStart,throttle});
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
+    if(registry&&req.url?.split('?')[0]!=='/health'){
+      const end=res.end.bind(res);
+      res.end=(...args)=>{registry.flush().then(()=>end(...args),()=>res.destroy());return res;};
+    }
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -218,7 +227,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const source = fs.createReadStream(sampleFile, { start, end });
         source.on('error', () => res.destroy()); res.on('close', () => source.destroy()); source.pipe(res); return;
       }
-      if (req.method === 'GET' && route === '/health') return json(res, 200, { ok: true, version });
+      if (req.method === 'GET' && route === '/health') return json(res, registry?.persistence.error?503:200, { ok: !registry?.persistence.error, version });
       if(req.method==='GET'&&['/demo-plex','/demo-discord'].includes(route)&&!config.demo)return json(res,404,{error:'Not found'});
       if (req.method === 'GET' && route === '/auth/handoff') {
         res.setHeader('Set-Cookie', cookie('uburoom_handoff', randomBytes(32).toString('hex'), 60));
@@ -242,6 +251,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/playback-policy.js':['playback-policy.js','text/javascript'],
         '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
         '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
+        '/watch-transport.js':['watch-transport.js','text/javascript'],
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
@@ -360,8 +370,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     }); else res.end(); });
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;
+  const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle,flush:()=>registry?.flush()});
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
   server.on('upgrade', (req, socket, head) => {
+    if(req.url==='/watch-socket')return;
     if (req.url !== '/ws' || !extensionRequest(req) || !throttle('ws:' + req.socket.remoteAddress, 30)) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws));
   });
@@ -396,17 +408,18 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();hub.sweep(); deviceLogin.sweep();
     let expired = false;
     for (const [id, s] of logins) if (s.expires !== null && s.expires <= Date.now()) { logins.delete(id); expired = true; }
-    if (expired) accounts.save();
+    if (expired) Promise.resolve(accounts.save()).catch(()=>console.error('[uburoom] Login storage unavailable'));
     for (const id of cookieRenewedAt.keys()) if (!logins.has(id)) cookieRenewedAt.delete(id);
     for (const [id, attempt] of oauthStates) if (attempt.expires <= Date.now()) oauthStates.delete(id);
     for (const [id, bucket] of limits) if (Date.now() - bucket.at > 60000) limits.delete(id);
   }, 1000);
   sweep.unref();
   function close() {
-    clearInterval(sweep); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close();
+    clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close();
     for (const ws of wss.clients) ws.terminate();
-    wss.close(); return Promise.all([mediaClosed, new Promise(resolve => server.close(resolve))]).then(() => {registry?.close();});
+    wss.close(); return Promise.all([mediaClosed, new Promise(resolve => server.close(resolve))]).then(() => registry?.close());
   }
   return { server, hub, store, watch, close, registry, plexAuth };
+  } catch(error) { Promise.resolve(registry?.persistence.abort()).catch(()=>{});throw error; }
 }
 module.exports = { createApp };

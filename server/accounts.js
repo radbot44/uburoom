@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { openDatabase } = require('./database');
+const { migrate } = require('./storage');
 
 function privateFile(file) {
   if (process.platform !== 'win32') { fs.chmodSync(file,0o600); return; }
@@ -26,14 +28,9 @@ function credentialVault(file) {
 class Accounts {
   constructor(file,vault) {
     if (file) fs.mkdirSync(path.dirname(file),{recursive:true});
-    const {DatabaseSync}=require('node:sqlite');this.db=new DatabaseSync(file||':memory:');this.vault=vault;
-    this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE;
-      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT);
-      CREATE TABLE IF NOT EXISTS identities(provider TEXT NOT NULL,subject TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,assigned INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,subject),UNIQUE(provider,userId));
-      CREATE TABLE IF NOT EXISTS credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,detail TEXT NOT NULL);`);
-    if(file)privateFile(file);
+    this.persistence=openDatabase(file,migrate);this.db=this.persistence.db;this.vault=vault;
+    this.credentialCache=new Map();
+    if(file)try{privateFile(file);}catch(error){Promise.resolve(this.persistence.abort()).catch(()=>{});throw error;}
   }
   transaction(action) {this.db.exec('BEGIN IMMEDIATE');try{const result=action();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
   canonical(id) {let row=this.db.prepare('SELECT * FROM users WHERE id=?').get(id);for(let n=0;row?.retiredInto && n<20;n++)row=this.db.prepare('SELECT * FROM users WHERE id=?').get(row.retiredInto);return row&&!row.retiredInto?row:undefined;}
@@ -83,9 +80,20 @@ class Accounts {
   }
   summary(id) {const user=this.canonical(id);return user&&{...user,identities:this.identities(user.id).map(i=>({...i,authenticated:!!i.verified,credentialStored:i.provider==='plex'&&!!this.credential(i.subject)}))};}
   list(){return this.db.prepare('SELECT id FROM users WHERE retiredInto IS NULL ORDER BY name LIMIT 200').all().map(u=>this.summary(u.id));}
-  credential(subject,value) {if(value!==undefined)this.db.prepare('INSERT INTO credentials(subject,value) VALUES(?,?) ON CONFLICT(subject) DO UPDATE SET value=excluded.value').run(subject,JSON.stringify(this.vault.seal(value)));const row=this.db.prepare('SELECT value FROM credentials WHERE subject=?').get(subject);if(!row)return;const envelope=JSON.parse(row.value);if(envelope.encrypted!==1)throw new Error('Invalid encrypted credential record');return this.vault.open(envelope);}
+  hasCredential(subject) {return !!this.db.prepare('SELECT 1 FROM credentials WHERE subject=?').get(subject);}
+  credential(subject,value) {
+    if(value!==undefined&&JSON.stringify(this.credentialCache.get(subject))!==JSON.stringify(value)){
+      this.db.prepare('INSERT INTO credentials(subject,value) VALUES(?,?) ON CONFLICT(subject) DO UPDATE SET value=excluded.value').run(subject,JSON.stringify(this.vault.seal(value)));
+      this.credentialCache.set(subject,structuredClone(value));
+    }
+    if(this.credentialCache.has(subject))return structuredClone(this.credentialCache.get(subject));
+    const row=this.db.prepare('SELECT value FROM credentials WHERE subject=?').get(subject);if(!row)return;
+    const envelope=JSON.parse(row.value);if(envelope.encrypted!==1)throw new Error('Invalid encrypted credential record');
+    const decoded=this.vault.open(envelope);this.credentialCache.set(subject,decoded);return structuredClone(decoded);
+  }
   meta(key,value) {if(value!==undefined)this.db.prepare('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);return this.db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value;}
   audit(actor,action,detail){this.db.prepare('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)').run(Date.now(),actor,action,JSON.stringify(detail));}
-  close(){this.db.close();}
+  flush(){return this.persistence.flush();}
+  close(){this.credentialCache.clear();return this.persistence.close();}
 }
 module.exports={Accounts,credentialVault};

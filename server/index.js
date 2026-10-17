@@ -37,10 +37,17 @@ async function main() {
   console.log(`[uburoom] Setup / connected devices: ${config.publicUrl}`);
   console.log(`[uburoom] Private credential key: ${path.resolve(config.credentialKeyFile)} (preserve and back up separately)`);
   console.log('[uburoom] Remote off by default. On disconnect, re-enable in Firefox or the host website. Ctrl+C stops the server.');
-  let bot;
-  async function stop() { await bot?.destroy(); await app.close(); process.exit(0); }
+  let bot, retry, stopped=false;
+  async function stop() { stopped=true;clearTimeout(retry);await bot?.destroy(); await app.close(); process.exit(0); }
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
-  try { bot = await startBot(config, app.hub); } catch (e) { await app.close(); throw e; }
+  async function connect() {
+    try { const connected=await startBot(config, app.hub); if(stopped)await connected?.destroy();else bot=connected; }
+    catch(error) {
+      console.error('[Discord] '+error.message+' Web playback remains available; retrying in 30 seconds.');
+      if(!stopped){retry=setTimeout(()=>{void connect();},30000);retry.unref();}
+    }
+  }
+  void connect();
 }
 main().catch(error => {
   const missing = error.code === 'ENOENT';

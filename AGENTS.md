@@ -15,7 +15,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 | **Shared command engine** | [extension/engine.js](extension/engine.js) |
 | **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js) |
 | **Remote UI, SVGs & styles** | [extension/remote-ui.js](extension/remote-ui.js), [extension/popup.html](extension/popup.html) |
-| **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js) |
+| **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
 | **Plex integration** | [server/plex.js](server/plex.js), [server/plex-auth.js](server/plex-auth.js), [server/media-tracks.js](server/media-tracks.js) |
 | **Discord bot & Activity** | [server/discord.js](server/discord.js), [web/vendor/discord-sdk.js](web/vendor/discord-sdk.js) |
 
@@ -36,7 +36,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - **All config via `.env` file** (loaded by `--env-file-if-exists=.env`). Not `config.json`, not environment variables set externally. The `.env` file is gitignored.
 - Key variables: `HOST`, `PORT`, `PUBLIC_URL` (must be HTTPS), `TLS_CERT`/`TLS_KEY`, Discord credentials (`DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_COMMAND_CHANNEL_IDS`), Plex credentials (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MACHINE_IDENTIFIER`), `UBUROOM_CREDENTIAL_KEY_FILE`, `FFMPEG_PATH`/`FFPROBE_PATH`.
-- Device and login state are stored in `data/devices.json` and `data/logins.json` (scheduled for SQLite migration in M1-P11).
+- Device and login state live in `data/accounts.sqlite`. M1-P11 imports legacy `data/devices.json` and `data/logins.json` once; those files are retained only as pre-upgrade rollback inputs. Runtime SQLite work uses an in-memory mirror and a bounded writer worker; await persistence before acknowledging durable changes. Rooms and consent remain ephemeral.
 - See [docs/self-hosting.md](docs/self-hosting.md) for the full configuration reference.
 
 ---

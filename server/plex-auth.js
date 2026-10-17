@@ -1,8 +1,9 @@
 'use strict';
 const {randomUUID,sign}=require('node:crypto');
+const { resilientFetch } = require('./resilience');
 class PlexAccessError extends Error {constructor(message,revoked=false){super(message);this.revoked=revoked;}}
 class PlexAuth {
-  constructor(config,accounts,plex,fetcher=fetch){this.config=config;this.accounts=accounts;this.plex=plex;this.fetch=fetcher;this.cache=new Map();this.inflight=new Map();this.generation=0;}
+  constructor(config,accounts,plex,fetcher=fetch){this.config=config;this.accounts=accounts;this.plex=plex;this.fetch=resilientFetch(fetcher,{timeoutMs:10000});this.cache=new Map();this.inflight=new Map();this.generation=0;}
   async request(resource,{token,clientId,method='GET',data}={}) {
     const response=await this.fetch('https://clients.plex.tv/api/v2'+resource,{method,redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json','X-Plex-Product':'uburoom','X-Plex-Client-Identifier':clientId||'uburoom-auth',...(token?{'X-Plex-Token':token}:{}),...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});
     if(!response.ok)throw new PlexAccessError([401,403,498].includes(response.status)?'Plex authorization expired or was revoked':'Plex is temporarily unavailable; try again',[401,403,498].includes(response.status));

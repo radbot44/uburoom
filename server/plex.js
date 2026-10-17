@@ -5,12 +5,13 @@ const { AV1, PlaybackError } = require('./av1');
 const Tracks = require('./media-tracks');
 const {HLSPool}=require('./hls-pool');
 const SubtitleResources=require('./subtitle-resources');
+const { resilientFetch } = require('./resilience');
 
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
 class Plex {
   constructor(config, fetcher = fetch) {
-    this.fetch = fetcher; this.token = config.plexToken; this.av1 = new AV1(this, config);
+    this.rawFetch = fetcher; this.fetch = resilientFetch(fetcher); this.token = config.plexToken; this.av1 = new AV1(this, config);
     this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
@@ -24,7 +25,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{fetch:this.fetch,token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {

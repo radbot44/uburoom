@@ -68,7 +68,7 @@ test('player uses the mapped server target and tolerates clock loss without drif
 });
 test('late room polls and failures cannot overwrite a newer authorized state',async()=>{
   const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),pending=[],applied=[];
-  const ctx={selected:'room',stateRequestSequence:0,Date,performance,viewerId:'viewer',preferredQuality:'direct',
+  const ctx={selected:'room',stateRequestSequence:0,stateTransportSequence:0,Date,performance,viewerId:'viewer',preferredQuality:'direct',
     playbackClock:{begin:()=>({sent:performance.now()}),add(){},read:()=>({})},diagnostics:{record(){}},
     api:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),observationClock:{update:()=>0},observationClockRevision:0,
     playbackError:'',applyState:v=>applied.push(v.marker),fail(){},reportReadiness(){},unavailable(){throw new Error('Old failure must not clear new state');}};

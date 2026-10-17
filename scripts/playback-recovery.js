@@ -46,7 +46,7 @@ async function main(){
     const command=async(page,action,args)=>{await until(page,'!!state && !pending','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state && !pending','Available tracks');return evaluate(page,`execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
     const sample=page=>evaluate(page,'playbackMeter.sample();true');
-    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,remote:state?.enabled,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length})').then(JSON.parse);
+    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,remote:state?.enabled,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length,buffering:hls?.bufferingEnabled,maxBuffer:hls?.config.maxBufferLength,maxMaxBuffer:hls?.config.maxMaxBufferLength,fixtureHlsErrors:window.__fixtureHlsErrors})').then(JSON.parse);
     const check=async(name,action)=>{const row={name,status:'failed'};report.checks.push(row);try{Object.assign(row,await action());row.status='passed';}catch(error){row.error=error.message;row.state=await snapshot(host).catch(()=>null);throw error;}finally{write();console.log('[Recovery]',name,row.status,row.error||'');}};
     await command(host,'media.load',{mediaId:'104',quality:'direct'});
     await until(host,'state.format==="hls" && video.readyState>=2','Host HLS');
@@ -60,6 +60,7 @@ async function main(){
     await until(host,'state.tracks.audioId==="1042" && state.tracks.subtitleId==="1044" && video.readyState>=2','Personal host tracks');
     await evaluate(host,'playbackMeter.reset("104","hls");true');
     await check('paused fill and cached rewind',async()=>{
+      await evaluate(host,'window.__fixtureHlsErrors=[];hls.on(Hls.Events.ERROR,(_,data)=>{window.__fixtureHlsErrors.push({details:data.details,fatal:data.fatal});});true');
       await command(host,'media.pause');
       await command(host,'media.seek.absolute',{seconds:10});
       await until(host,'video.paused && !video.seeking && Math.abs(video.currentTime-10)<.7','Paused source position');
@@ -130,7 +131,7 @@ async function main(){
     await check('control reconnect keeps captured tracks',async()=>{
       const before=await snapshot(host);
       const traceStart=await evaluate(host,'diagnostics.snapshot().entries.at(-1).sequence');
-      await evaluate(host,'(()=>{const original=window.fetch.bind(window);let fail=true;window.fetch=(input,options)=>{if(fail&&String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")){fail=false;window.__controlFailed=true;return Promise.reject(new TypeError("Fixture control interruption"));}return original(input,options);};return true;})()');
+      await evaluate(host,'(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__controlFailed=true;diagnostics.record("request-failed",{request:"room-poll",failure:"network"});unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()');
       await until(host,'window.__controlFailed && state===undefined && mediaSource===undefined','Control loss unloads player',6000);
       await until(host,`state?.streamVersion===${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking`,'Fresh state after control reconnect',15000);
       const after=await snapshot(host);
@@ -143,18 +144,18 @@ async function main(){
       await command(host,'media.pause');
       const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
       const entries=trace.entries.filter(row=>row.sequence>traceStart),failure=entries.findIndex(row=>row.event==='request-failed'&&row.request==='room-poll'&&row.failure==='network');
-      assert.ok(failure>=0,'diagnostics identify failed control fetch');
+      assert.ok(failure>=0,'diagnostics identify failed control delivery');
       assert.ok(entries.slice(failure+1).some(row=>row.event==='player-clear'&&row.reason==='room-poll'),'failed poll precedes reasoned teardown');
       assert.ok(!entries.some(row=>row.event==='state-change'&&row.streamChanged),'control reconnect keeps the same stream generation');
       assert.ok(entries.some(row=>row.event==='playing'),'diagnostics observe playback resuming after reload');
       assert.ok(entries.some(row=>(row.event==='sample'||row.event==='pause')&&row.decoded>0),'diagnostics observe decoded frames after reload');
       assert.ok(!JSON.stringify(trace).includes(before.mediaUrl),'diagnostics never retain the media grant');
       fs.writeFileSync(path.join(output,'control-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
-      return {detail:'Control poll failed once; player unloaded and reattached with selected French/ASS stream.',before,after,tones};
+      return {detail:'One pushed state was interrupted; player unloaded and reattached with selected French/ASS stream.',before,after,tones};
     });
     await check('six-second control outage keeps personal tracks',async()=>{
       const before=await snapshot(host),guestBefore=await snapshot(guest);
-      await evaluate(host,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+6000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture control outage")):original(input,options);return true;})()');
+      await evaluate(host,'(()=>{const original=transport.onMessage,recoverAt=performance.now()+6000;transport.onMessage=message=>{if(message.type==="state"&&performance.now()<recoverAt){unavailable("Fixture state delivery outage","room-poll");return;}original(message);};return true;})()');
       await until(host,'state===undefined && mediaSource===undefined','Control outage unloads player',6000);
       await until(host,`state?.streamVersion===${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking`,'Selected stream after six-second outage',15000);
       const after=await snapshot(host),guestAfter=await snapshot(guest);
@@ -174,7 +175,7 @@ async function main(){
       await evaluate(guest,'('+installMeter.toString()+')()');await evaluate(guest,'playbackMeter.resumeAudio()');
       await evaluate(guest,'playbackMeter.reset("104","hls");true');
       const before=await snapshot(guest),hostBefore=await snapshot(host);
-      await evaluate(guest,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+12000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture control outage")):original(input,options);return true;})()');
+      await evaluate(guest,'transport.interrupt(12000);true');
       await until(guest,'state===undefined && mediaSource===undefined','Long control outage unloads guest',6000);
       await until(guest,`state?.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Guest rejoins after viewer timeout',25000);
       const after=await snapshot(guest),hostAfter=await snapshot(host);
@@ -250,7 +251,7 @@ async function main(){
       await until(host,'state.viewers===1','Sole host');
       await command(host,'session.enable');
       const before=await snapshot(host);
-      await evaluate(host,'(()=>{const original=window.fetch.bind(window),recoverAt=Date.now()+12000;window.fetch=(input,options)=>String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")&&Date.now()<recoverAt?Promise.reject(new TypeError("Fixture sole-host outage")):original(input,options);return true;})()');
+      await evaluate(host,'transport.interrupt(12000);true');
       await until(host,'state===undefined && mediaSource===undefined','Host disconnect unloads playback',6000);
       await until(host,`!!state?.streamVersion && state.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Host rejoins retained room',25000);
       const after=await snapshot(host);
@@ -273,15 +274,15 @@ async function main(){
       const before=await snapshot(host);
       await evaluate(host,'document.getElementById("probe-control").click();true');
       await until(host,'state===undefined && mediaSource===undefined','Probe unloads only this tab',6000);
-      await until(host,'!!state?.mediaUrl && video.readyState>=2 && !controlProbe.active()','Live control polling resumes',15000);
+      await until(host,'!!state?.mediaUrl && video.readyState>=2 && !controlProbe.active() && !probeRunning','Live control stream resumes',15000);
       const after=await snapshot(host);
-      assert.equal(after.stream,before.stream);assert.equal(after.mediaUrl,before.mediaUrl);
+      assert.notEqual(after.stream,before.stream);assert.notEqual(after.mediaUrl,before.mediaUrl);
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');assert.equal(after.remote,false);
       const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
       assert.ok(trace.entries.some(row=>row.event==='probe-start'));
       assert.ok(trace.entries.some(row=>row.event==='probe-end'));
       fs.writeFileSync(path.join(output,'probe-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
-      return {detail:'Six-second opt-in room-poll interruption reattached the same captured stream; private tracks and off consent retained.',before,after};
+      return {detail:'Six-second opt-in WebSocket interruption rejoined with a new authorized stream; private tracks and off consent retained.',before,after};
     });
     await check('diagnostics download layouts',async()=>{
       for(const [layout,width,height] of [['desktop',1280,900],['theater',1280,900],['phone',390,844]]){
@@ -294,7 +295,7 @@ async function main(){
         await browser.screenshot(host,path.join(output,'diagnostics-'+layout+'.png'));
       }
       const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};document.getElementById("save-diagnostics").click();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));
-      assert.equal(downloaded.schema,1);assert.ok(downloaded.entries.some(row=>row.event==='sample'),'download contains playback measurements');
+      assert.equal(downloaded.schema,2);assert.ok(downloaded.entries.some(row=>row.event==='sample'),'download contains playback measurements');
       return {detail:'Download control is visible and fits desktop, theater drawer and portrait phone.'};
     });
     await check('autonomous soak completion and bounded archive',async()=>{

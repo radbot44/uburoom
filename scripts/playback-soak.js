@@ -124,7 +124,7 @@ async function main(){
       if(!controlDone&&controlAt&&elapsed>=controlAt){
         await record('control poll interruption',async()=>{
           const before=await snapshot(host);
-          await evaluate(host,'(()=>{const original=window.fetch.bind(window);let fail=true;window.fetch=(input,options)=>{if(fail&&String(input).startsWith("/api/watch/rooms/"+selected+"?viewer=")){fail=false;window.__soakControlFailed=true;return Promise.reject(new TypeError("Fixture control interruption"));}return original(input,options);};return true;})()');
+          await evaluate(host,'(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__soakControlFailed=true;unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()');
           await until(host,'window.__soakControlFailed&&state===undefined&&mediaSource===undefined','Control loss unloads player',6000);
           await until(host,`state?.streamVersion===${JSON.stringify(before.streamVersion)}&&video.readyState>=3&&!video.paused`,'Control reconnect playback',20000);
           const after=await snapshot(host);assert.equal(after.mediaUrl,before.mediaUrl);assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');assert.equal(after.remote,false);

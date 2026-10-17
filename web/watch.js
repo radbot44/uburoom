@@ -1,7 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const viewerId = crypto.randomUUID(), params = new URLSearchParams(location.search);
-let token, me, config, selected, state, receivedAt, offset = 0, pending = false, polling = false, creating = false;
+let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
+let stateTransportSequence=0;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
 let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseSession, preferredQuality = '720p4';
@@ -65,6 +66,7 @@ $('probe-control').hidden=!controlProbe;
 $('probe-control').onclick=()=>{
   if(!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!controlProbe?.start(selected))return;
   probeRunning=true;diagnosticSample('probe-start',{delayMs:6000});
+  transport?.interrupt(6000);
 };
 function diagnosticSample(event='sample',fields={}) {
   // Diagnostics must never interrupt playback, even during MediaSource teardown.
@@ -89,6 +91,9 @@ function diagnosticSample(event='sample',fields={}) {
 }
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
+    // Decoding has resumed after refill. Permit one alignment to the current
+    // room target even when a long outage left that target outside this buffer.
+    if(event==='playing'&&!hlsTimelinePending)syncSeekPending=false;
     if(['playing','pause','waiting','seeking','emptied'].includes(event))lastPresentationBreak=performance.now();
     if(event==='seeking'||event==='emptied')presentationTiming.reset();
     if(['pause','waiting','seeking','emptied'].includes(event))resetDriftCorrection();
@@ -159,6 +164,9 @@ async function api(path, data, options = {}) {
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
   try {
   if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
+  if(transport && /^\/api\/watch\/(rooms|me|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
+    try {return await transport.request(path,data,options);} catch(error){rejection=error.rejection;if(error.status)response={status:error.status,ok:false};throw error;}
+  }
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
   const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw new Error(value.error || 'Request failed');} return value;
@@ -174,6 +182,7 @@ function acceptIdentity(auth) {
   identityRenewAt = identityExpiresAt - Math.min(60000, Math.floor((identityExpiresAt - Date.now()) / 5));
   identityRetryAt = 0; identityGeneration++;
   diagnostics.record('identity-renewed',{identity:identityGeneration});
+  transport?.reauthenticate();
 }
 async function activityIdentity() {
   const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
@@ -781,6 +790,8 @@ async function synchronize() {
   checkVideoFrames();
 }
 function applyState(next) {
+  if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
+  stateTransportSequence=next.transportSequence;
   if(startKey()!==startKey(next))startAlarm.cancel();
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
@@ -850,7 +861,7 @@ async function refreshState() {
   if (!selected) return;
   const id = selected, before = Date.now(), sent=performance.now(), exchange=playbackClock.begin(), sequence=++stateRequestSequence;
   try {
-    const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality+(globalThis.uburoomSubtitleRenderers?.supported()?'&subtitles=browser':'')); if (id !== selected || sequence!==stateRequestSequence) return;
+    const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality+(globalThis.uburoomSubtitleRenderers?.supported()?'&subtitles=browser':'')); if (id !== selected || sequence!==stateRequestSequence || next.transportSequence<=stateTransportSequence) return;
     playbackClock.add(exchange,next.timing);
     diagnostics.record('clock-sample',{...playbackClock.read(),requestRttMs:performance.now()-exchange.sent,serverProcessingMs:next.timing?.serverProcessingMs});
     const revision=observationClock.update(next.observationEpoch,next.serverNow,sent,performance.now());
@@ -861,6 +872,7 @@ async function refreshState() {
 async function selectRoom(id) {
   if (id === selected) return;
   qualityPending=false;
+  stateTransportSequence=0;
   stateRequestSequence++;
   playbackClock.reset();
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
@@ -883,6 +895,9 @@ function renderRooms(host, rooms) {
 }
 async function refreshRooms() {
   const { rooms } = await api('/api/watch/rooms');
+  applyRooms(rooms);
+}
+function applyRooms(rooms) {
   for (const id of ['rooms','lobby-rooms']) renderRooms($(id), rooms);
   if (!rooms.some(room => room.id === selected && !room.locked)) {
     if (selected) { selected = undefined; unavailable('Session ended or was made private.'); if (theater) toggleDrawer(false); }
@@ -996,7 +1011,8 @@ $('admin-end-room').addEventListener('click', async () => {
   catch(error){fail(error.message);} finally {pending=false;}
 });
 $('refresh').addEventListener('click', () => refreshRooms().catch(error => fail(error.message)));
-window.addEventListener('pagehide', () => { stopBrowserHandoff(true); if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }, { keepalive:true }).catch(() => {}); });
+window.addEventListener('pagehide', () => { stopBrowserHandoff(true); transport?.close(); });
+window.addEventListener('pageshow',event=>{if(event.persisted&&transport)void transport.connect().catch(error=>fail(error.message));});
 setInterval(() => {
   const timeline = $('timeline'), duration = state?.state.duration || 0;
   const value = seekDragging ? Number(timeline.value) : state ? expected() : 0;
@@ -1009,7 +1025,7 @@ setInterval(() => {
 setInterval(() => { if (state) void synchronize(); }, 500);
 async function start() {
   config = await api('/api/watch/config');
-  if (config.watchVersion !== 15) throw new Error('The player and server versions differ. Reload after the server update.');
+  if (config.watchVersion !== 16) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});
@@ -1023,7 +1039,32 @@ async function start() {
   try { me = await api('/api/watch/me'); } catch (error) { $('status').textContent = ''; if (activity) throw error; return; }
   renderAccount(); $('welcome').hidden = true; $('app').hidden = false;
   $('diagnostic-actions').hidden=false;
+  transport=new uburoomWatchTransport({
+    url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
+    onReady:async()=>{await refreshState();await refreshRooms();},
+    onClose:()=>{diagnostics.record('request-failed',{request:'room-poll',failure:'network'});playbackClock.reset();unavailable('Disconnected. Reconnecting…','room-poll');},
+    beginClock:()=>({exchange:playbackClock.begin(),sent:performance.now(),before:Date.now()}),
+    onClock:(message,sample)=>{
+      playbackClock.add(sample.exchange,message.timing);
+      offset=message.serverNow-(sample.before+Date.now())/2;
+      if(state){const revision=observationClock.update(state.observationEpoch,message.serverNow,sample.sent,performance.now());
+        if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}}
+    },
+    onMessage:message=>{
+      if(message.type==='identity'){me=message.value;renderAccount();}
+      else if(message.type==='rooms'&&message.status===200)applyRooms(message.value.rooms);
+      else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
+        if(message.status===200){applyState(message.value);fail(playbackError);void reportReadiness();}
+        else unavailable(message.value?.error||'Room unavailable','room-poll');
+      } else if(message.type==='unavailable')unavailable(message.value?.error||'Room connection unavailable','room-poll');
+    }
+  });
   $('create').hidden = false; $('library-panel').hidden = true; renderTransport();
+  setInterval(async () => {
+    try { await renewIdentity(); }
+    catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); }
+  }, 1000);
+  await transport.connect();
   await refreshRooms();
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/watch');if(typeof showAccount==='function')await showAccount();}
   const requestedRoom = params.get('room');
@@ -1031,11 +1072,5 @@ async function start() {
     history.replaceState(history.state,'','/watch');
     await selectRoom(requestedRoom);
   }
-  let roomPoll = 0;
-  setInterval(async () => {
-    if (polling) return; polling = true;
-    try { if (!pending) { await renewIdentity(); if (!selected || ++roomPoll % 5 === 0) {me = await api('/api/watch/me');renderAccount();await refreshRooms();} await refreshState(); } }
-    catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); } finally { polling = false; }
-  }, 1000);
 }
 start().catch(error => fail(error.message));

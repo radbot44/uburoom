@@ -79,14 +79,15 @@ async function main() {
       await until(host,'api("/api/watch/playback").then(h=>h.totals.some(t=>t.watchedSeconds>1))','native reports earn actual playback');
       const creditedBefore=app.watch.tracking.history('demo-host').totals[0].watchedSeconds;
       const timingStart=performance.now();
-      await evaluate(host,`globalThis.trackingClockNow=Date.now;globalThis.trackingFetch=fetch;
+      await evaluate(host,`globalThis.trackingClockNow=Date.now;globalThis.trackingFetch=fetch;globalThis.trackingMessage=transport.socket.onmessage;
         Date.now=()=>trackingClockNow()+4745;
-        globalThis.trackingPolls=0;
-        fetch=async(...args)=>{const response=await trackingFetch(...args);
-          if(uburoomDiagnostics.requestKind(args[0])==='room-poll'&&++trackingPolls%2)await new Promise(resolve=>setTimeout(resolve,700));return response;};true`);
+        globalThis.trackingPolls=0;globalThis.trackingControlHttp=0;
+        fetch=(...args)=>{if(/^\\/api\\/watch\\/(rooms|me)(?:[/?]|$)/.test(args[0]))trackingControlHttp++;return trackingFetch(...args);};
+        transport.socket.onmessage=event=>{if(JSON.parse(event.data).type==='clock'&&++trackingPolls%2)setTimeout(()=>trackingMessage(event),700);else trackingMessage(event);};true`);
       try {
         await pause(3200);await evaluate(host,'Date.now=()=>trackingClockNow()-4745;true');await pause(3200);
-      } finally {await evaluate(host,'Date.now=trackingClockNow;fetch=trackingFetch;true');}
+      } finally {await evaluate(host,'Date.now=trackingClockNow;fetch=trackingFetch;transport.socket.onmessage=trackingMessage;true');}
+      assert.ok(await evaluate(host,'trackingPolls>2 && trackingControlHttp===0'),'clock jitter reaches WebSocket exchanges without HTTP room polling');
       const timingElapsed=(performance.now()-timingStart)/1000;
       const timingCredit=app.watch.tracking.history('demo-host').totals[0].watchedSeconds-creditedBefore;
       assert.ok(timingCredit>=timingElapsed-1.5&&timingCredit<=timingElapsed+1.5,'clock steps and poll jitter retain bounded decoded credit');

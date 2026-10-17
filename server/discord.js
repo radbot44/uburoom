@@ -92,7 +92,7 @@ function watchVoice(config, client, hub) {
 async function startBot(config, hub, { createClient = options => new Client(options) } = {}) {
   if (!config.botToken) { console.log('[Discord] Not configured. Local picture controls and HTTPS setup are available.'); return; }
   if (!config.ownerId || !config.guildId || !config.channels.length) throw new Error('Configure Discord owner, guild and command channels');
-  const client = createClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
+  const client = createClient({ rest: { timeout:10000,retries:0,rejectOnRateLimit:()=>true }, intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
   hub.access = discordAccess(client, config.guildId);
   watchVoice(config, client, hub);
   const buckets = new Map();

@@ -58,7 +58,7 @@ test('failed control requests preserve errors while recording safe HTTP, decodin
     ['timeout',undefined,new DOMException('private URL','TimeoutError')],
     ['abort',undefined,new DOMException('private URL','AbortError')]
   ]){
-    const diagnostics=create(),context={token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
+    const diagnostics=create(),context={transport:undefined,token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
       fetch:async()=>{if(error)throw error;return response;}};
     vm.runInNewContext(source.slice(source.indexOf('async function api('),source.indexOf('function acceptIdentity(')),context);
     await assert.rejects(context.api('/api/watch/rooms/private-room?viewer=secret'),error?value=>value===error:undefined);
@@ -96,7 +96,7 @@ test('automatic soak cleanup refuses changed rooms, media, permissions and concu
 
 test('observation diagnostics retain only known rejection/credit reasons and bounded ring entries',async()=>{
   const source=fs.readFileSync(path.join(__dirname,'../web/watch.js'),'utf8'),diagnostics=create();
-  const ctx={token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
+  const ctx={transport:undefined,token:undefined,me:undefined,controlProbe:undefined,diagnostics,uburoomDiagnostics:{requestKind},performance,AbortSignal,TypeError,
     fetch:async()=>({status:409,ok:false,json:async()=>({error:'secret token URL',rejection:'sample-stale'})})};
   vm.runInNewContext(source.slice(source.indexOf('async function api('),source.indexOf('function acceptIdentity(')),ctx);
   await assert.rejects(ctx.api('/api/watch/rooms/secret/observe',{}));

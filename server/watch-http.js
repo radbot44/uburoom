@@ -34,7 +34,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   async function authorized(req, write = false) {
     const identity = await login(req);
-    if (!identity || write && (!allowedOrigin(req) || !req.headers.authorization && req.headers['x-csrf-token'] !== identity.csrf)) return;
+    if (!identity || req.watchSocket && req.watchSocket.readyState !== 1 || write && (!allowedOrigin(req) || !req.headers.authorization && req.headers['x-csrf-token'] !== identity.csrf)) return;
     return { identity, actor: webActor(identity) };
   }
   async function validGrant(grant) {
@@ -184,7 +184,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
       await stream(req, res, grants.get(match[1]), match[2]); return true;
     }
-    if (!throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
+    if (!req.watchSocket && !throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
     try {
       if (req.method === 'POST' && ['/api/watch/handoff/claim', '/api/watch/handoff/redeem'].includes(url.pathname)) {
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
@@ -214,7 +214,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
-        json(res, 200, { watchVersion: 15,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
+        json(res, 200, { watchVersion: 16,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/demo-login') {
         if (!config.demo || !allowedOrigin(req) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { json(res, 403, { error: 'Demo login is disabled' }); return true; }
@@ -303,6 +303,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (!match || !UUID.test(match[1])) { json(res, 404, { error: 'Session unavailable' }); return true; }
       const room = watch.rooms.get(match[1]);
       if (!await watch.canView(room, auth.actor)) { json(res, 403, { error: 'Session unavailable or private' }); return true; }
+      if(req.watchSocket&&req.watchSocket.readyState!==1){json(res,409,{error:'Room connection changed; retry manually'});return true;}
       if (req.method === 'POST' && match[2] === 'command') {
         if (!throttle('watch-command:' + auth.actor.userId, 120)) { json(res, 429, { error: 'Too many commands' }); return true; }
         const data = await body(req);
@@ -338,10 +339,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const viewerId = url.searchParams.get('viewer');
       if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
       const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-      const alive = async () => (await login({ headers }))?.userId === auth.actor.userId;
+      const alive = async () => (!req.watchSocket || req.watchSocket.readyState === 1) && (await login({ headers }))?.userId === auth.actor.userId;
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
+      if(req.watchSocket)viewer.watchSocket=req.watchSocket;
       if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
       room.viewers.get(viewerId).browserLoginHash=req.headers.authorization?undefined:cookies(req).uburoom&&hash(cookies(req).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);
@@ -367,6 +369,6 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function logout(loginHash){
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash)await watch.leave(room,viewer.actor,id,'logout');
   }
-  return { route, sweep, logout, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
+  return { route, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
 }
 module.exports = { watchHttp };

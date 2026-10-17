@@ -11,10 +11,11 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { QUALITIES, qualityId } = require('../extension/engine');
 const CHUNK = require('../web/playback-policy').BUFFER.chunkSeconds;
+const { processMemory } = require('./process-memory');
 const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
 class PlaybackError extends Error {}
 
-async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic) {
+async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic, { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000 } = {}) {
   if (signal?.aborted) throw new PlaybackError('AV1 preparation cancelled.');
   const split = args.includes('pipe:3');
   const webm = args.includes('webm') && args.includes('pipe:1');
@@ -36,14 +37,14 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     const output = await new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('AV1 preparation cancelled.'));
     const child = spawn(binary, args, { windowsHide:true, stdio:['ignore','pipe','pipe'] });
-    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false;
+    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer;
     const finish = (error, output) => {
-      if (settled) return; settled = true; clearTimeout(timer); clearInterval(sizeCheck); signal?.removeEventListener('abort', cancel);
+      if (settled) return; settled = true; clearTimeout(timer); clearTimeout(drainTimer); clearInterval(sizeCheck); clearInterval(memoryCheck); signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve(output);
     };
     // Wait for process close before rejecting, so cleanup can delete open files
     // on Windows and server shutdown can await it.
-    const stop = error => { failure ||= error; child.kill(); };
+    const stop = error => { failure ||= error; child.kill('SIGKILL'); };
     const cancel = () => stop(new PlaybackError('AV1 preparation cancelled.'));
     const timer = setTimeout(() => stop(new PlaybackError('AV1 encoder timed out. Check the server GPU/FFmpeg support.')), timeout);
     const sizeCheck = webm ? setInterval(async () => {
@@ -53,16 +54,24 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
         if (sizes.reduce((a,b) => a + b, 0) > maxOutput) stop(new PlaybackError('AV1 output exceeded the supported limit.'));
       } finally { checking = false; }
     }, 250) : undefined;
+    const memoryCheck = setInterval(async () => {
+      if(checkingMemory||settled||failure||!child.pid)return;checkingMemory=true;
+      try { if(await memory(child.pid)>memoryLimit)stop(new PlaybackError('AV1 process exceeded the server memory limit.')); }
+      catch { if(!settled&&!failure)stop(new PlaybackError('AV1 process resource monitoring unavailable.')); }
+      finally {checkingMemory=false;}
+    },memoryInterval);
     signal?.addEventListener('abort', cancel, {once:true});
     child.stdout.on('data', bytes => {
       size += bytes.length;
       if (size > maxOutput) stop(new PlaybackError('AV1 output exceeded the supported limit.'));
-      else chunks.push(bytes);
+      else if(!failure)chunks.push(bytes);
     });
     // Drain, but never log stderr: FFmpeg may print its input URL.
     if (diagnostic) child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
     else child.stderr.resume();
     child.on('error', () => finish(new PlaybackError('AV1 unavailable: configure an existing FFmpeg/FFprobe installation on the server.')));
+    // An exited tool cannot keep shutdown waiting on inherited pipe handles.
+    child.on('exit',()=>{child.stdout.resume();child.stderr.resume();drainTimer=setTimeout(()=>{child.stdout.destroy();child.stderr.destroy();},250);});
     child.on('close', code => {
       diagnostic?.(code, stderr);
       finish(failure || (code === 0 ? null : new PlaybackError('AV1 hardware encoding/probing failed. Run the AV1 probe on the server; no CPU encoder was used.')), Buffer.concat(chunks));

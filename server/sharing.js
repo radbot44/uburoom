@@ -1,11 +1,13 @@
 'use strict';
 const { Events, Status } = require('discord.js');
 const { COMMAND_MS } = require('./core');
+const { CircuitBreaker } = require('./resilience');
 
 // Gateway voice state is authoritative only while this guild's shard is ready.
 // Guild membership is fetched afresh for each friend command and acknowledgement.
 function discordAccess(client, guildId) {
   const members = new Map(), inflight = new Map();
+  const circuit = new CircuitBreaker();
   let generation = 0;
   const guild = () => {
     const g = client.guilds.cache.get(guildId);
@@ -24,7 +26,7 @@ function discordAccess(client, guildId) {
       members.set(userId, request);
       try {
         const member = await Promise.race([
-          g.members.fetch({ user: userId, force: true, cache: false }),
+          circuit.run(()=>g.members.fetch({ user: userId, force: true, cache: false })),
           new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('Membership timeout')), 2000); })
         ]);
         if (generation !== epoch || !guild() || members.get(userId) !== request) return false;
