@@ -15,6 +15,8 @@ test('HLS uses explicit time limits and reduces high-bitrate buffering toward th
   assert.equal(high.maxBufferLength,14); assert.equal(high.backBufferLength,7);
   assert.equal(normal.maxMaxBufferLength,normal.maxBufferLength);
   assert.equal(p.hlsConfig(NaN).maxBufferLength,60);
+  assert.equal(p.hlsConfig(4000,65.25).startPosition,65.25);
+  for(const position of[-5,NaN,Infinity,undefined])assert.equal(p.hlsConfig(4000,position).startPosition,0);
 });
 test('buffer display preserves holes and clamps values without including external text',() => {
   const ranges = timeRanges([[-1,10],[20,35],[80,Infinity]]);

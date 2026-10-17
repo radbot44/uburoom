@@ -79,6 +79,8 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 
 Details: [playback decisions and implementation order](docs/playback-reliability.md).
 
+**Quality replacement follow-up:** A reported Chrome/Android quality-switch failure reproduced repeated HLS catch-up seeks and stalls in an isolated delayed-fragment check. The client now starts a replacement near the current room position, refills locally before resuming and avoids repeated unbuffered alignment seeks. Other viewers keep their streams and timeline. Verify actual Plex/Android behavior and the separately reported API timeouts; local delivery results do not establish their cause. Evidence: [mid-playback quality replacement](docs/testing.md#mid-playback-quality-replacement).
+
 ### M1-P3 — Audio, subtitles and content fidelity
 
 **Outcome:** The selected content is delivered faithfully through a verified path, including non-default and accessibility tracks.

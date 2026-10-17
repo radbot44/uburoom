@@ -13,6 +13,37 @@ function load(context,name,next) {
   if(context.Hls)context.Hls.ErrorDetails ??= {};
   vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context);
 }
+function alignmentFixture() {
+  let now=0,target=65,position=0,seeks=0,ranges=[];
+  const timing=require('../web/playback-timing');
+  const ctx={state:{mediaUrl:'/current',format:'hls',mediaVersion:'media',streamVersion:'stream',state:{duration:120,paused:false,volume:50,muted:false}},
+    selected:'room',mediaSource:'/current',expected:()=>target,startKey:()=> 'current',probing:false,playbackError:'',hlsNetworkFailure:undefined,
+    hlsPreparationUntil:0,syncSeekPending:false,playerWaiting:true,autoplayBlocked:false,performance:{now:()=>now},document:{visibilityState:'visible'},
+    playbackClock:{read:()=>({valid:true})},gentleCorrectionEnabled:false,driftCorrection:timing.correction(),presentationTiming:timing.presentation(),
+    uburoomPlayback:playback,video:{readyState:2,paused:false,seeking:false,playbackRate:1,buffered:{get length(){return ranges.length;},start:i=>ranges[i][0],end:i=>ranges[i][1]},
+      pause(){this.paused=true;},async play(){this.paused=false;}},diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
+  Object.defineProperty(ctx.video,'currentTime',{get:()=>position,set:value=>{position=value;seeks++;}});
+  ctx.resetDriftCorrection=()=>{ctx.driftCorrection.reset();ctx.video.playbackRate=1;};
+  vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
+  return {ctx,set:(values)=>{now=values.now??now;target=values.target??target;position=values.position??position;ranges=values.ranges??ranges;},seeks:()=>seeks};
+}
+test('an unbuffered alignment waits for refill instead of repeatedly cancelling the moving target',async()=>{
+  const f=alignmentFixture();await f.ctx.synchronize();assert.equal(f.seeks(),1);
+  for(let i=1;i<=8;i++){f.set({now:i*500,target:65+i*.5});await f.ctx.synchronize();}
+  assert.equal(f.seeks(),1,'no repeated out-of-buffer seek while waiting');
+  f.ctx.playerWaiting=false;f.ctx.video.readyState=4;f.set({ranges:[[64,72]]});await f.ctx.synchronize();assert.equal(f.seeks(),2,'buffered recovery can catch up');
+  f.set({position:69.3,target:69.3});await f.ctx.synchronize();assert.equal(f.ctx.syncSeekPending,false,'advancing aligned playback releases the guard');
+  f.ctx.syncSeekPending=false;f.set({target:90});await f.ctx.synchronize();assert.equal(f.seeks(),3,'a superseding shared seek can align outside the old buffer');
+});
+test('new HLS playback fills ahead locally with a bounded wait and preserves shared play intent',async()=>{
+  const f=alignmentFixture();f.ctx.hlsPreparationUntil=10000;f.ctx.video.paused=true;f.ctx.video.readyState=3;f.ctx.playerWaiting=false;
+  f.set({position:65,target:67,ranges:[[65,68]],now:1000});await f.ctx.synchronize();
+  assert.equal(f.seeks(),0);assert.equal(f.ctx.video.paused,true);assert.equal(f.ctx.state.state.paused,false);
+  f.set({target:68,ranges:[[65,72]],now:2000});await f.ctx.synchronize();
+  assert.equal(f.ctx.hlsPreparationUntil,0);assert.equal(f.ctx.video.paused,false);assert.equal(f.ctx.video.currentTime,68);
+  f.ctx.hlsPreparationUntil=10000;f.ctx.syncSeekPending=false;f.ctx.video.paused=true;
+  f.set({now:10001,target:75,ranges:[]});await f.ctx.synchronize();assert.equal(f.ctx.hlsPreparationUntil,0,'normal bounded recovery resumes after the preparation limit');
+});
 test('HLS retries the current stream with backoff, retains buffered media, and ignores superseded timers',() => {
   const timers = [], client = {loads:0,startLoad(){this.loads++;}};
   const context = {hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'}},state:{mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream',state:{duration:60}},mediaSource:'/current',
@@ -59,7 +90,7 @@ test('exhausted HLS delivery failure allows cached playback and surfaces the err
   let paused = false, message;
   const context = {state:{mediaUrl:'/current',state:{paused:false,volume:50,muted:false}},probing:false,playbackError:'',
     video:{readyState:4,currentTime:12,paused:false,buffered:{length:1,start:()=>0,end:()=>20},pause:()=>{paused=true;}},
-    hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
+    hlsPreparationUntil:0,syncSeekPending:false,hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
     performance:{now:()=>0},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
     presentationTiming:require('../web/playback-timing').presentation(),playerWaiting:false,
     fail:value=>{message=value;},renderTransport:()=>{},checkVideoFrames:()=>{}};

@@ -2,11 +2,12 @@
 (function (root) {
   'use strict';
   const BUFFER = Object.freeze({ahead:60,behind:30,maxBytes:64 * 1024 * 1024,chunkSeconds:6});
-  function hlsConfig(bitrateKbps) {
+  function hlsConfig(bitrateKbps,startPosition=0) {
     const rate = Number(bitrateKbps), seconds = rate > 0 && Number.isFinite(rate) ? BUFFER.maxBytes * 8 / (rate * 1000) : 90;
     const ahead = Math.min(BUFFER.ahead,Math.max(12,Math.floor(seconds * 2 / 3)));
     const behind = Math.min(BUFFER.behind,Math.max(0,Math.floor(seconds / 3)));
-    return {enableWorker:true,maxBufferLength:ahead,maxMaxBufferLength:ahead,backBufferLength:behind,maxBufferSize:BUFFER.maxBytes};
+    return {enableWorker:true,startPosition:Number.isFinite(startPosition)?Math.max(0,startPosition):0,
+      maxBufferLength:ahead,maxMaxBufferLength:ahead,backBufferLength:behind,maxBufferSize:BUFFER.maxBytes};
   }
   function chunkWindow(position,duration) {
     const current = Math.max(0,Math.min(position,Math.max(0,duration - .05)));

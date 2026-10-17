@@ -20,6 +20,8 @@ const driftCorrection=uburoomTiming.correction();
 let gentleCorrectionEnabled=false;
 const startAlarm=uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
 let preparedStartKey;
+let syncSeekPending=false;
+let hlsPreparationUntil=0;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
@@ -355,6 +357,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  syncSeekPending=false;hlsPreparationUntil=0;
   startAlarm.cancel();preparedStartKey=undefined;
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
@@ -698,12 +701,26 @@ async function synchronize() {
   if (hlsNetworkFailure && !state.state.paused && uburoomPlayback.bufferedAhead(video.buffered,target) < .5) {
     playbackError = hlsNetworkFailure; video.pause(); fail(playbackError); return;
   }
+  if(hlsPreparationUntil&&!state.state.paused) {
+    // A replacement has discarded this viewer's old buffer. Fill ahead of the
+    // moving room target before starting locally; healthy viewers keep playing.
+    const required=Math.min(2,Math.max(0,state.state.duration-target));
+    if(performance.now()<hlsPreparationUntil&&uburoomPlayback.bufferedAhead(video.buffered,target)<required) {
+      video.pause();resetDriftCorrection();renderTransport();return;
+    }
+    hlsPreparationUntil=0;
+  }
   const bufferedTarget = state.format === 'av1' && [...Array(video.buffered.length)].some((_, i) =>
     target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
   // A shared seek/restart can supersede a native seek still waiting for old
   // chunks. Retarget it once the new source-time window is buffered.
-  if ((clockValid || state.state.paused) && (!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
-    try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05)); } catch {}
+  const targetBuffered=uburoomPlayback.bufferedAhead(video.buffered,target)>=Math.min(.5,Math.max(0,state.state.duration-target));
+  if(!video.seeking&&!playerWaiting&&video.readyState>=3&&Math.abs(difference)<=.65)syncSeekPending=false;
+  // Let an in-flight alignment refill before chasing a moving playing target.
+  // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
+  const canAlign=!syncSeekPending||state.state.paused||!playerWaiting&&video.readyState>=3&&targetBuffered;
+  if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > .65) {
+    try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05));syncSeekPending=true; } catch {}
   }
   const correctionInput={now:performance.now(),error:difference,context:startKey(),
     eligible:clockValid&&document.visibilityState==='visible'&&!state.state.paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
@@ -745,14 +762,19 @@ function applyState(next) {
         try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
-        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
+        hlsPreparationUntil=performance.now()+10000;
+        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate,expected()));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }
   }
-  if (!changed && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) restartHlsForSeek(expected());
+  if (!changed && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
+    syncSeekPending=false;
+    if(hlsPreparationUntil&&hls){hlsPreparationUntil=performance.now()+10000;hls.startLoad(expected());}
+    else restartHlsForSeek(expected());
+  }
   captions.update(next);
   if(next.mediaError)playbackError=next.mediaError;
   const picture = next.state.picture;

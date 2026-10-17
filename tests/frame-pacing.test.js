@@ -73,7 +73,7 @@ test('default keeps the existing gain with recovery guards; gentle correction re
     playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
     driftCorrection:correction(),presentationTiming:presentation(),gentleCorrectionEnabled:false,performance:{now:()=>now},document:{visibilityState:'visible'},
     video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
-    uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
+    hlsPreparationUntil:0,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
     renderTransport(){},checkVideoFrames(){}};
   vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
   await ctx.synchronize();assert.equal(ctx.video.playbackRate,1.04);

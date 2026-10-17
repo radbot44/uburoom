@@ -59,7 +59,7 @@ test('player uses the mapped server target and tolerates clock loss without drif
     playbackClock:{read:()=>({valid,serverTime:valid?serverTime:undefined})},uburoomTiming:{target},receivedAt:100,
     performance:{now:()=>100},document:{visibilityState:'visible'},gentleCorrectionEnabled:false,driftCorrection:correction(),startKey:()=> 'fixture',presentationTiming:presentation(),playerWaiting:false,
     uburoomPlayback:require('../web/playback-policy'),video:{currentTime:10.3,readyState:4,seeking:false,playbackRate:1,paused:false,buffered:{length:0}},
-    probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
+    hlsPreparationUntil:0,syncSeekPending:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,autoplayBlocked:false,diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
   vm.runInNewContext(source.slice(source.indexOf('function expected('),source.indexOf('async function reportObservation(')),ctx);
   vm.runInNewContext(source.slice(source.indexOf('async function synchronize('),source.indexOf('function applyState(')),ctx);
   assert.equal(ctx.expected(),10.3);await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);

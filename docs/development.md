@@ -113,6 +113,16 @@ Repeat at `24000/1001`, `24`, `25`, `30`, `50` and `60` fps, in each browser, wi
 
 ### Bounded playback and recovery check
 
+For mid-playback HLS quality replacement, use a generated corpus at least 120 seconds long. This runner delays each synthetic two-second HLS fragment by 1.2 seconds, starts two separate browser processes and switches only the host's quality around the middle of the source. It checks repeated up/down switches, current-position fragment selection, decoded advancement, drift, absence of recurring alignment/stall errors and the other viewer's unchanged stream. It also checks a paused quality switch and a shared seek during replacement preparation. Quality labels share pre-generated rendition bytes, so the check does not measure live Plex conversion or bandwidth requirements of different encodes.
+
+```powershell
+node scripts/build-playback-fixtures.js --out=artifacts/quality-media --duration=120
+node scripts/quality-switch-smoke.js --media=artifacts/quality-media --output=artifacts/quality-chrome
+node scripts/quality-switch-smoke.js --browser=firefox --media=artifacts/quality-media --output=artifacts/quality-firefox
+```
+
+Keep runs sequential and use fresh output directories. `report.json` records requests, refill/first-frame timing, seek/wait/error counts and viewer isolation. Raw per-viewer diagnostics stay in the output directory. `--delay=0` removes the fixture delivery delay; the default exercises a cold replacement with limited initial headroom. Desktop software decoding does not certify Android or physical A/V output.
+
 The watch page keeps a local diagnostic ring: up to 600 one-second playback samples and 300 events, with separate eviction counts. **Save playback diagnostics** downloads a JSON snapshot from the current tab, including after a control disconnect. Reloading or closing the tab loses the capture; background timer throttling can reduce sample frequency. Nothing is uploaded automatically. Exports contain wall/monotonic timing, decoded/dropped frame counters where available, buffer/readiness state, track ordinals/delivery, classified request failures, teardown reasons and local generation counters for room/media/stream/grant/observation changes. They exclude URLs, credentials, account/room/source IDs, titles, track labels and raw error text. Frame counters do not prove the intended audio or subtitle content, and browser diagnostics do not measure server/Plex memory or explain every upstream failure.
 
 Observation failures also include allowlisted rejection reasons. Accepted reports that earned no watch-time credit record a reason and bounded interval deltas; credited reports do not add an event every second. Reports suppressed without fresh clock evidence are classified locally. Reasons distinguish replay/staleness/stream changes from frozen frames, discontinuities, timing jitter and position mismatch. Unexpected processing/storage failures are sanitized HTTP 503 responses. These events share the existing event cap and are not persisted server-side. Run `node scripts/watch-smoke.js --tracking --blocked` for isolated decoded-playback, client clock-step/poll-jitter, frame-counter disagreement and overlap/expiry coverage; it uses separate visible windows and checks both callback counters before asserting overlap credit.
