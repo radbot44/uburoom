@@ -105,6 +105,28 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
   } finally {for(const lease of [a,b,c,missing])manager.release(lease);await manager.close();}
 });
 
+test('AV1 room outputs share across principals and each new chunk uses its requesting lease source',async()=>{
+  let encodes=0;const inputs=[];
+  const manager=new AV1({}, {ffmpegPath:'fixture'},async(_binary,args)=>{
+    if(args.includes('-show_entries'))return Buffer.from(JSON.stringify({streams:[{index:0,codec_type:'video',width:640,height:360},{index:2,codec_type:'audio'}]}));
+    if(args.includes('-ss'))encodes++;
+    return args.includes('pipe:3')?{video:Buffer.alloc(200),audio:Buffer.alloc(50)}:Buffer.alloc(200);
+  });
+  manager.input=async(source,_signal,action)=>{inputs.push(source.principal);return action('http://fixture');};
+  const source={id:'1',partId:'5',sourceKey:'same-authorized-file',shareKey:['room','generation'],principal:'alice',duration:60,audioIndex:2,audioOrdinal:0};
+  const a=manager.acquire(source,'720p4'),b=manager.acquire({...source,principal:'bob'},'720p4');
+  const otherRoom=manager.acquire({...source,shareKey:['other-room','generation']},'720p4');
+  const otherSource=manager.acquire({...source,sourceKey:'another-file'},'720p4');
+  const otherAudio=manager.acquire({...source,audioIndex:4},'720p4');
+  const signal=new AbortController().signal;
+  try{
+    assert.equal(a.group,b.group);for(const lease of[otherRoom,otherSource,otherAudio])assert.notEqual(lease.group,a.group);
+    const [first,second]=await Promise.all([manager.chunk(a,0,signal),manager.chunk(b,0,signal)]);
+    assert.equal(first,second);assert.equal(encodes,1);assert.deepEqual(inputs,['alice'],'later acquisition cannot switch the first requesting lease credential');
+    manager.release(a);await manager.chunk(b,1,signal);assert.deepEqual(inputs,['alice','bob']);assert.equal(encodes,2);
+  }finally{for(const lease of[a,b,otherRoom,otherSource,otherAudio])manager.release(lease);await manager.close();}
+});
+
 test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disconnected work', async () => {
   assert.throws(() => new AV1({},{}).acquire({id:'1'},'direct'), /FFMPEG_PATH/);
   let calls=0;

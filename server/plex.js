@@ -3,6 +3,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../extension/engine');
 const { AV1, PlaybackError } = require('./av1');
 const Tracks = require('./media-tracks');
+const {HLSPool}=require('./hls-pool');
 
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
@@ -12,6 +13,7 @@ class Plex {
     this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
+    this.hlsPool=new HLSPool(media=>(media.plexContext||this).stop(media));
     if (config.plexUrl) {
       this.base = new URL(config.plexUrl);
       if (!['http:', 'https:'].includes(this.base.protocol) || this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/') throw new Error('PLEX_URL must be an HTTP(S) origin');
@@ -21,7 +23,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{fetch:this.fetch,token,clientId:principal,base:this.base,av1:this.av1,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{fetch:this.fetch,token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
@@ -243,14 +245,27 @@ class Plex {
     media.tracks = Tracks.catalog(part);
     media.selection = Tracks.select(media.tracks,choices);
     media.sourceStart = this.url(part.key).href; media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);
+    media.sourceKey=JSON.stringify([this.base.origin,id,media.partId,this.url(part.key).pathname,part.size,item.duration,item.Media[0].id]);
     media.captionVersion = randomUUID(); media.subtitleAbort = new AbortController();
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
+    if(choices.shareKey&&!choices.sourceOnly&&fallback!=='av1'&&!(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)) {
+      if(choices.authorized&&!await choices.authorized())throw new PlaybackError('Viewing access or stream selection expired.');
+      const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null]);
+      let shared;
+      try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs);}
+      catch(error){media.subtitleAbort.abort();if(error instanceof PlaybackError){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}throw error;}
+      for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate'])media[field]=shared.media[field];
+      media.compatible=compatible;
+      media.hlsContext=shared.media.plexContext;
+      if(shared.lease)media.hlsLease=shared.lease;
+      return media;
+    }
     if (choices.sourceOnly) { media.format='file'; media.start=media.sourceStart; }
     else if (fallback === 'av1') {
       if (burn) throw new PlaybackError('These subtitles require Plex video transcoding. This AV1 fallback cannot preserve them; try a browser that can play the Plex stream.');
-      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal };
+      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey };
       media.format = 'av1'; media.videoCodec = 'av1'; media.audioCodec = 'opus'; media.compatible = true;
       media.av1Lease = this.av1.acquire(original, quality);
     }
@@ -385,12 +400,13 @@ class Plex {
   }
   async stop(media) {
     media?.subtitleAbort?.abort(); media?.subtitleCache?.clear();
+    if(media?.hlsLease){await media.hlsLease.release();return;}
     if (media?.av1Lease) this.av1.release(media.av1Lease);
-    if (media?.transcodeId) await (media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
+    if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
   }
   async ping(media) {
-    if (media?.transcodeId) await (media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
+    if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
   }
-  close() { this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return this.av1.close(); }
+  close() { this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
 }
 module.exports = { Plex };

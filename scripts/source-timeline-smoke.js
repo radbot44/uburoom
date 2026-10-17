@@ -103,7 +103,8 @@ async function main(){
     for(const row of report.cases){
       if(row.host.paused&&row.guest.paused)assert.ok(Math.abs(row.pictureSkewSeconds)<=2/fps,row.name+': paused decoded pictures agree within two source frames');
       assert.ok(Math.abs(row.mappingSkewSeconds)<=2/fps,row.name+': source-to-media mappings agree within two source frames');
-      for(const viewer of[row.host,row.guest])assert.ok(Math.abs(viewer.sourceSeconds-viewer.sampleMediaTime)<=3/fps,row.name+': baked source time agrees with its media timestamp within three source frames');
+      // MPEG-TS timestamps quantize at 90 kHz; allow one tick at the frame limit.
+      for(const viewer of[row.host,row.guest])assert.ok(Math.abs(viewer.sourceSeconds-viewer.sampleMediaTime)<=3/fps+1/90000,row.name+': baked source time agrees with its media timestamp within three source frames');
     }
     app.watch.remove(room);
   }finally{await Promise.allSettled([host?.close(),guest?.close()]);await app.close();}

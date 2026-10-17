@@ -131,7 +131,8 @@ class AV1 {
   acquire(source, quality) {
     if (!this.ffmpeg) throw new PlaybackError('AV1 unavailable: set FFMPEG_PATH after running the encoder probe on the server.');
     if (this.closed) throw new PlaybackError('Server is shutting down.');
-    const key = createHash('sha256').update(JSON.stringify([source.principal,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality)])).digest('hex');
+    const scope=source.shareKey?[source.shareKey,source.sourceKey]:source.principal;
+    const key = createHash('sha256').update(JSON.stringify([scope,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality)])).digest('hex');
     let group = this.groups.get(key);
     if (!group) {
       if (this.groups.size >= 8) throw new PlaybackError('AV1 is busy; close an unused player or choose a shared quality.');
@@ -139,9 +140,9 @@ class AV1 {
       this.groups.set(key, group);
     }
     group.refs++;
-    // Freshly authorized viewers may replace a departed viewer's source credential.
+    // Each lease keeps its authorized source for future uncached chunk work.
     group.source = source;
-    return { group, released:false };
+    return { group, source, released:false };
   }
   release(lease) {
     if (!lease || lease.released) return; lease.released = true;
@@ -199,8 +200,8 @@ class AV1 {
   }
   async chunk(lease, index, signal) {
     if (lease.released || this.closed) throw new PlaybackError('AV1 stream was replaced.');
-    const group = lease.group, start = index * CHUNK;
-    if (!Number.isSafeInteger(index) || index < 0 || start >= group.source.duration) throw new PlaybackError('Invalid AV1 chunk.');
+    const group = lease.group, source=lease.source||group.source, start = index * CHUNK;
+    if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration) throw new PlaybackError('Invalid AV1 chunk.');
     let entry = group.chunks.get(index);
     if (entry?.controller.signal.aborted && !entry.error) {
       group.chunks.delete(index); entry = undefined;
@@ -217,17 +218,17 @@ class AV1 {
       entry.promise = this.slot(controller.signal, async () => {
         this.probePromise ||= probeEncoder(this.ffmpeg, this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal, this.run);
         await this.probePromise;
-        return this.input(group.source, controller.signal, async url => {
+        return this.input(source, controller.signal, async url => {
           if (!group.info) group.info = JSON.parse((await this.run(this.ffprobe, ['-v','error','-show_entries',
             'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal)).toString());
           const spec = outputSpec(group.info, group.quality);
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
-          const selectedAudio = group.source.audioIndex !== undefined ? audioStreams.find(s=>s.index===group.source.audioIndex) : audioStreams[group.source.audioOrdinal ?? 0];
+          const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];
           if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
-          const audioMap = group.source.audioIndex !== undefined ? '0:'+group.source.audioIndex : '0:a:'+(group.source.audioOrdinal ?? 0);
+          const audioMap = source.audioIndex !== undefined ? '0:'+source.audioIndex : '0:a:'+(source.audioOrdinal ?? 0);
           const args = ['-hide_banner','-loglevel','error','-nostdin','-threads','2','-ss',String(start),'-i',url];
           if (!spec.audio) args.push('-f','lavfi','-i','anullsrc=r=48000:cl=stereo');
-          const duration = String(Math.min(CHUNK, group.source.duration - start));
+          const duration = String(Math.min(CHUNK, source.duration - start));
           args.push('-t',duration, '-map','0:v:0','-an',
             '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',spec.filter,
             ...encoderArgs(),'-b:v',`${spec.bitrate}k`,'-maxrate',`${spec.bitrate}k`,'-bufsize',`${spec.bitrate * 2}k`,

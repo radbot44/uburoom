@@ -116,6 +116,8 @@ Subtitle burn negotiation may require changes to Plex's stored part selection. E
 
 Any shared conversion/cache key must include all output-affecting choices: eligible source/version/file, audio, subtitles/rendering, quality, color and timing. Share bytes only when content and authorization boundaries permit it; never share a viewer's credentials as the authority for another viewer.
 
+Current Plex HLS and custom AV1 reuse is scoped to one room/media generation across independently authorized accounts. Source, quality and audio must match; HLS also distinguishes burned subtitle selections. External text captions and offsets remain personal. A bounded immutable HLS segment-zero cache preserves the shared timestamp origin without rewinding the producer for each join; unsupported or over-budget anchors use independent conversions. Each viewer retains its own grants and access checks, and the final reference releases the encoder. Producer credential failure can trigger the existing authorized stream-refresh path. See [verification and remaining live checks](testing.md#shared-room-transcodes).
+
 ## Browser and Discord verification targets
 
 The matrix below describes required test targets, not current support claims. Record exact browser/client, OS, device/GPU and acceleration state for results. Establish supported versions from completed tests and repeat on meaningful browser, SDK, server or player changes.

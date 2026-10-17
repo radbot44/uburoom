@@ -14,7 +14,7 @@ const https=require('node:https');
 const {createApp}=require('../server/app');
 
 function provider() {
-  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,decisionAudio:'confirmed',deny:false};
+  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,decisionAudio:'confirmed',deny:false,heldPlaylists:new Set()};
   const streams=()=>[
     {id:10,index:0,streamType:1,codec:'h264'},
     {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:state.audio==='11',channels:6},
@@ -48,7 +48,8 @@ function provider() {
     if(url.pathname.endsWith('/child.m3u8')) {
       const body='#EXTM3U\n#EXTINF:6\nsegment.ts\n';
       if(state.holdPlaylist)return new Response(new ReadableStream({start(controller){
-        state.playlistStarted?.();state.releasePlaylist=()=>{controller.enqueue(new TextEncoder().encode(body));controller.close();};
+        const release=()=>{controller.enqueue(new TextEncoder().encode(body));controller.close();state.heldPlaylists.delete(release);};
+        state.heldPlaylists.add(release);state.releasePlaylist=()=>{for(const resume of [...state.heldPlaylists])resume();};state.playlistStarted?.();
       }}),{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
       return new Response(body,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
     }

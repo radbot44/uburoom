@@ -70,9 +70,9 @@ async function main() {
       console.log(JSON.stringify(report.slowPreparation));app.watch.remove(room);return;
     }
     await host.evaluate(h,'execute({action:"media.play"}).then(()=>true)');
-    await host.evaluate(h,'execute({action:"media.seek.absolute",args:{seconds:65}}).then(()=>true)');
-    await Promise.all([[host,h],[guest,g]].map(([browser,page])=>browser.until(page,'!video.seeking&&video.readyState>=3&&video.currentTime>65&&Math.abs(video.currentTime-expected())<.5&&uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>2','Stable mid-video position',30000)));
-    for(const quality of['1080p8','720p2','720p4']) {
+    await host.evaluate(h,'execute({action:"media.seek.absolute",args:{seconds:35}}).then(()=>true)');
+    await Promise.all([[host,h],[guest,g]].map(([browser,page])=>browser.until(page,'!video.seeking&&video.readyState>=3&&video.currentTime>35&&Math.abs(video.currentTime-expected())<.5&&uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>2','Stable mid-video position',30000)));
+    for(const quality of['1080p12','720p2','1080p20']) {
       const before=await capture(host,h),other=await capture(guest,g),started=Date.now(),requestIndex=requests.length;
       await host.evaluate(h,'execute({action:"media.quality.set",args:{quality:'+JSON.stringify(quality)+'}}).then(()=>true)');
       const samples=[];for(let i=0;i<60;i++){samples.push(await capture(host,h));await pause(200);}

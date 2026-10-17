@@ -132,7 +132,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const timer = setTimeout(() => abort.abort(), 12000);
     const disconnect = () => { if (!res.writableEnded) abort.abort(); }; res.on('close', disconnect);
     try {
-      response = await (media.plexContext||watch.plex).request(target, { method: req.method, signal: abort.signal, headers: { Accept: '*/*',
+      // The grant's own source access is checked before cached or producer bytes.
+      response = (media.plexContext||watch.plex).hlsPool?.response(media.hlsLease,target,req.method,req.headers.range) || await (media.hlsContext||media.plexContext||watch.plex).request(target, { method: req.method, signal: abort.signal, headers: { Accept: '*/*',
         ...(media.transcodeId ? { 'X-Plex-Client-Identifier': media.transcodeId } : {}), ...(req.headers.range ? { Range: req.headers.range } : {}) } });
       clearTimeout(timer);
       if (!await validGrant(grant)) { abort.abort(); return json(res, 403, { error: 'Viewing access was revoked' }); }
@@ -149,7 +150,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const check = setInterval(async () => { if (!await validGrant(grant)) abort.abort(); }, 2000);
       try { await pipeline(Readable.fromWeb(response.body), res); } finally { clearInterval(check); }
     } catch (error) {
-      if (!res.headersSent) json(res, media.transcodeId && [404,410].includes(error.status) ? 410 : 502,
+      if (!res.headersSent) json(res, media.transcodeId && ([404,410].includes(error.status)||media.hlsLease&&[401,403].includes(error.status)) ? 410 : 502,
         { error: 'Plex playback failed; try a different quality or check server access' });
       else res.destroy();
     }

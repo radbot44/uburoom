@@ -81,6 +81,8 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 **Quality replacement follow-up:** Local refill and a seek guard address repeated HLS catch-up seeks; a separate preparation budget keeps polling and playback controls available during slow Plex decisions. A source-frame oracle then exposed matching clocks with pictures half a second apart after a late join or quality change: cold HLS starts normalized transport timestamps against coarse middle-of-playlist estimates. Fresh players now anchor their timestamp origin from segment zero before jumping to the current room position and refilling. Chrome/Firefox source-frame and delayed-fragment checks pass; other viewers keep their streams and timeline. Complete actual Plex/Android picture/audio validation; local evidence does not establish every reported timeout or stutter's cause. Evidence: [mid-playback quality replacement](docs/testing.md#mid-playback-quality-replacement).
 
+**Shared conversions:** Matching Plex HLS and custom AV1 outputs now reuse work within one room/media generation across independently authorized accounts. Audio and burned subtitles participate in matching; browser text captions remain personal. Bounded anchor caching preserves the source timestamp origin for HLS late joins. Live Plex process counts and Android playback remain verification gates. Evidence: [shared room transcodes](docs/testing.md#shared-room-transcodes).
+
 ### M1-P3 — Audio, subtitles and content fidelity
 
 **Outcome:** The selected content is delivered faithfully through a verified path, including non-default and accessibility tracks.

@@ -120,6 +120,17 @@ node scripts/sync-startup.js --browser=chrome --fps=24 --comparison=legacy --dri
 
 Repeat at `24000/1001`, `24`, `25`, `30`, `50` and `60` fps, in each browser, with fresh output paths and sequential runs to avoid competing fixtures. Use more repeats for calibration; a single trial per mode/cadence is only a regression probe. Raw captures are saved before comparison. A clock reset or regressing presentation timestamp withholds that segment's skew report; `invalid-presentation-segment` is not a pass. Full startup/injection and steady segments are validated separately, so an invalid transition does not invalidate an independently continuous steady window. Other fixture errors still fail the runner. The live M1-P5/M1-P6 procedure is in [testing](testing.md#joint-m1-p5m1-p6-human-verification).
 
+### Shared room conversion check
+
+`shared-transcode-smoke.js` starts three disposable browser processes against local TLS and synthetic Plex scopes. Use a generated track corpus at least 120 seconds long and run browsers sequentially with fresh output directories:
+
+```powershell
+node scripts/shared-transcode-smoke.js --media=artifacts/playback-media-recovery-120 --output=artifacts/shared-chrome
+node scripts/shared-transcode-smoke.js --browser=firefox --media=artifacts/playback-media-recovery-120 --output=artifacts/shared-firefox
+```
+
+The runner never loads `.env`. It checks two matching qualities plus a different one, independent text captions, joining an existing output, producer departure and final cache/session cleanup. Reports record conversion counts and browser evidence. Synthetic quality labels share rendition bytes; live PMS encoder counts and Android need separate checks. Automated pool/HTTP tests additionally cover burned subtitles, audio separation, independent account authorization and credential refresh.
+
 ### Bounded playback and recovery check
 
 For mid-playback HLS quality replacement, use a generated corpus at least 120 seconds long. This runner delays each synthetic two-second HLS fragment by 1.2 seconds, starts two separate browser processes and switches only the host's quality around the middle of the source. It checks repeated up/down switches, current-position fragment selection, decoded advancement, drift, absence of recurring alignment/stall errors and the other viewer's unchanged stream. It also checks a paused quality switch and a shared seek during replacement preparation. Quality labels share pre-generated rendition bytes, so the check does not measure live Plex conversion or bandwidth requirements of different encodes.

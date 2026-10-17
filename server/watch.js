@@ -58,7 +58,7 @@ class Watch {
       }
       const authorized=async()=>room.mediaVersion===version && room.viewers.get(viewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
       let media;
-      try { media=room.media.kind === 'demo' ? room.media : await plex.prepare(room.media.id, viewer.quality, viewer.compatible, room.media, viewer.fallback,{...viewer.trackChoice,authorized}); }
+      try { media=room.media.kind === 'demo' ? room.media : await plex.prepare(room.media.id, viewer.quality, viewer.compatible, room.media, viewer.fallback,{...viewer.trackChoice,shareKey:[room.s.sessionId,version],shareWaitMs:8000,authorized}); }
       catch(error) {
         if(!(error instanceof PlaybackError) || !error.media)throw error;
         // Keep the private catalog reachable so a failed automatic subtitle
@@ -256,7 +256,7 @@ class Watch {
         viewer.updating = true;
         try {
           try { media = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id, args.quality, args.compatible === true || !!viewer.compatible, room.media, fallback,
-            {...viewer.trackChoice,authorized:async()=>permitted() && version===room.mediaVersion && room.viewers.get(actor.watchViewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())}); }
+            {...viewer.trackChoice,shareKey:[room.s.sessionId,version],shareWaitMs:8000,authorized:async()=>permitted() && version===room.mediaVersion && room.viewers.get(actor.watchViewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())}); }
           catch (error) { if (error instanceof PlaybackError) return {status:'failed', message:error.message}; throw error; }
           const authorized=await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
           if (!authorized || !permitted() || version !== room.mediaVersion || room.viewers.get(actor.watchViewerId) !== viewer) {
@@ -362,7 +362,7 @@ class Watch {
       const burnChanged=(selection.subtitle?.delivery==='burn' || current.selection.subtitle?.delivery==='burn') && selection.subtitle?.id!==current.selection.subtitle?.id;
       if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
         replacement = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id,viewer.quality,viewer.compatible,room.media,selection.subtitle?.delivery==='burn' ? undefined : viewer.fallback,
-          {...choices,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
+          {...choices,shareKey:[room.s.sessionId,version],authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
       }
       const alive = !viewer.alive || await viewer.alive();
       const access = await this.canView(room,actor);
@@ -397,7 +397,7 @@ class Watch {
     let replacement;
     try {
       replacement=await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id,viewer.quality,viewer.compatible,room.media,viewer.fallback,
-        {...viewer.trackChoice,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
+        {...viewer.trackChoice,shareKey:[room.s.sessionId,version],excludeLease:current.hlsLease,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
       if (!permitted() || version!==room.mediaVersion || room.viewers.get(actor.watchViewerId)!==viewer || viewer.media!==current ||
         !await this.canView(room,actor) || viewer.alive && !await viewer.alive()) {
         await this.plex.stop(replacement); return {status:'unavailable',message:'Session changed or command expired.'};
