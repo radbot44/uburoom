@@ -17,6 +17,8 @@ const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
 const driftCorrection=uburoomTiming.correction();
 const precisionDriftCorrection=uburoomTiming.precisionCorrection();
+const jumpDriftCorrection=uburoomTiming.jumpCorrection();
+let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
 // The local comparison runner enables this candidate. Native-drop and skew
 // regressions must be resolved before promoting it to the default policy.
@@ -34,7 +36,7 @@ let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
 const video = $('video');
 function resetDriftCorrection() {
-  driftCorrection.reset();precisionDriftCorrection.reset();if(video.playbackRate!==1)video.playbackRate=1;
+  driftCorrection.reset();precisionDriftCorrection.reset();jumpDriftCorrection.interrupt();if(video.playbackRate!==1)video.playbackRate=1;
 }
 const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
 let soak;
@@ -79,7 +81,7 @@ function diagnosticSample(event='sample',fields={}) {
     diagnostics.record(event,{position:video.currentTime,target:expected(),ready:video.readyState,network:video.networkState,
       ...timing,clockValid:timing.valid,sharedTarget,arrivalTarget:arrivalExpected(),timelineRevision:state?.revision,
       positionErrorMs:sharedTarget===undefined?undefined:(video.currentTime-sharedTarget)*1000,
-      paused:video.paused,seeking:video.seeking,waiting:playerWaiting,rate:video.playbackRate,
+      paused:video.paused,seeking:video.seeking,waiting:playerWaiting,rate:video.playbackRate,syncMode:syncCorrectionMode,
       ranges:Array.from({length:Math.min(video.buffered.length,8)},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),
       bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),frames:quality?.totalVideoFrames,dropped:quality?.droppedVideoFrames,
       decoded:quality?quality.totalVideoFrames-quality.droppedVideoFrames:videoFrames,
@@ -243,7 +245,29 @@ for (const name of ['options','library']) $(name + '-collapse').addEventListener
   const button = $(name + '-collapse'), content = $(name + '-content');
   content.hidden = !content.hidden; button.setAttribute('aria-expanded', String(!content.hidden));
 });
+function renderSyncPreference() {
+  $('sync-correction').value=syncCorrectionMode;
+  $('sync-correction-hint').textContent=(syncCorrectionMode==='jumps'
+    ? 'Keep normal speed; occasionally skip or repeat a moment to catch up.'
+    : 'Adjust playback speed to stay together, with jumps for larger gaps.')+
+    (syncPreferenceStored?' Only your player in this browser.':' This tab only; browser storage is unavailable.');
+}
+function loadSyncPreference() {
+  const key='uburoom.syncCorrection.'+(me?.account?.id||'browser');
+  if(key===syncPreferenceKey)return;
+  syncPreferenceKey=key;syncCorrectionMode='speed';syncPreferenceStored=true;
+  try { if(localStorage.getItem(key)==='jumps')syncCorrectionMode='jumps'; } catch { syncPreferenceStored=false; }
+  jumpDriftCorrection.reset();resetDriftCorrection();renderSyncPreference();
+}
+function setSyncPreference(value) {
+  if(value!=='speed'&&value!=='jumps')return;
+  syncCorrectionMode=value;jumpDriftCorrection.reset();resetDriftCorrection();
+  try { localStorage.setItem(syncPreferenceKey,value);syncPreferenceStored=true; } catch { syncPreferenceStored=false; }
+  renderSyncPreference();diagnosticSample('sync-mode');
+}
+$('sync-correction').addEventListener('change',event=>setSyncPreference(event.target.value));
 function renderAccount() {
+  loadSyncPreference();
   $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
   $('admin-mode').hidden = !me.owner; $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
@@ -354,7 +378,7 @@ function watchFrames() {
       const target=uburoomTiming.target(state,timing.serverTime);
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
         timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs:target===undefined?undefined:(metadata.mediaTime-target)*1000,
-        paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,
+        paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
         settling:performance.now()-lastPresentationBreak<2000,
         visibility:document.visibilityState,bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)});
     } catch { /* Diagnostics cannot stop the decoded-frame evidence loop. */ }
@@ -372,6 +396,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  jumpDriftCorrection.reset();resetDriftCorrection();
   syncSeekPending=false;hlsPreparationUntil=0;hlsTimelinePending=false;
   startAlarm.cancel();pauseAlarm.cancel();preparedStartKey=undefined;
   diagnosticSample('player-clear',{reason});
@@ -787,14 +812,31 @@ async function synchronize() {
   // Let an in-flight alignment refill before chasing a moving playing target.
   // Repeated out-of-buffer seeks abort the very HLS fragments needed to recover.
   const canAlign=!syncSeekPending||state.state.paused||!playerWaiting&&video.readyState>=3&&targetBuffered;
+  const jumpContext=syncCorrectionMode==='jumps'?[selected,state.mediaVersion,state.streamVersion,state.epoch,state.readinessVersion].join(':'):undefined;
+  const align = (event='sync-seek') => {
+    const destination=Math.max(0,Math.min(target,(Number.isFinite(video.duration)?video.duration:state.state.duration)-.05));
+    try {
+      const seekDeltaMs=(destination-video.currentTime)*1000;
+      const frames=syncCorrectionMode==='jumps'?decodedFrames():undefined;
+      video.currentTime=destination;syncSeekPending=true;
+      if(syncCorrectionMode==='jumps')jumpDriftCorrection.committed({frames,target:destination,context:jumpContext});
+      diagnosticSample(event,{seekDeltaMs});
+    } catch { return false; }
+    return true;
+  };
   if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
-    try { diagnosticSample('sync-seek');video.currentTime = Math.max(0, Math.min(target, (Number.isFinite(video.duration) ? video.duration : state.state.duration) - .05));syncSeekPending=true; } catch {}
+    align();
   }
   const correctionInput={now:performance.now(),error:difference,context:startKey(),
     eligible:clockValid&&document.visibilityState==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
       uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
     uncertaintyMs:timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
-  const rate=precisionCorrectionEnabled?precisionDriftCorrection.update(correctionInput):gentleCorrectionEnabled?driftCorrection.update(correctionInput):
+  if(syncCorrectionMode==='jumps' && jumpDriftCorrection.update({...correctionInput,
+    context:jumpContext,
+    eligible:correctionInput.eligible&&!state.waitingForReady,
+    buffered:targetBuffered,settled:!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3,
+    frames:decodedFrames(),position:video.currentTime}) && canAlign && !syncSeekPending && !video.seeking)align('sync-jump');
+  const rate=syncCorrectionMode==='jumps'?1:precisionCorrectionEnabled?precisionDriftCorrection.update(correctionInput):gentleCorrectionEnabled?driftCorrection.update(correctionInput):
     !correctionInput.eligible||Math.abs(difference)<.15||Math.abs(difference)>.65?1:difference>0?1.04:.96;
   if(video.playbackRate!==rate)video.playbackRate=rate;
   video.volume = state.state.volume / 100; video.muted = state.state.muted;

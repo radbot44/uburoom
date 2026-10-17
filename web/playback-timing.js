@@ -166,6 +166,44 @@
     }
     return {update,reset};
   }
-  const api={clock,target,presentation,alarm,correction,precisionCorrection};
+  // Opt-in local seeks. Interruptions discard drift evidence, but never erase
+  // an outstanding seek or its cooldown. Only a new source/context resets those.
+  function jumpCorrection() {
+    let key, last, since, direction = 0, pending, quietUntil = 0;
+    function interrupt() { since = undefined; direction = 0; }
+    function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; }
+    /** @param {{now:number,error:number,eligible:boolean,context:string,uncertaintyMs?:number,buffered:boolean,settled:boolean,frames?:number,position:number}} input */
+    function update({now,error,eligible,context,uncertaintyMs,buffered,settled,frames,position}) {
+      if (key !== context) reset();
+      if (!Number.isFinite(now)) { interrupt(); return false; }
+      // Missing observations cannot count as sustained drift. Preserve cooldown
+      // through backgrounding/refill; performance.now is monotonic in the player.
+      if (last !== undefined && (now < last || now - last > 1500)) interrupt();
+      key = context; last = now;
+      if (pending) {
+        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && position >= pending.target - .1) {
+          pending = undefined; quietUntil = now + 8000;
+        }
+        interrupt(); return false;
+      }
+      const magnitude = Math.abs(error), sign = Math.sign(error);
+      if (!eligible || !buffered || !Number.isFinite(frames) || frames <= 0 || now < quietUntil || !Number.isFinite(error) || magnitude < .25 || magnitude > .65 ||
+          !Number.isFinite(uncertaintyMs) || uncertaintyMs < 0 || uncertaintyMs > 50 || uncertaintyMs / 1000 >= magnitude / 2) {
+        interrupt(); return false;
+      }
+      if (sign !== direction) { interrupt(); direction = sign; }
+      since ??= now;
+      return now - since >= 1000;
+    }
+    /** @param {{frames?:number,target:number,context:string}} input */
+    function committed({frames,target,context}) {
+      // Without decoded-frame evidence, remain blocked until source replacement
+      // or a deliberate mode change. Large-error recovery remains independent.
+      if (key !== context) reset();
+      key = context; pending = {frames:Number.isFinite(frames) ? frames : Infinity,target}; interrupt();
+    }
+    return {update,committed,interrupt,reset};
+  }
+  const api={clock,target,presentation,alarm,correction,precisionCorrection,jumpCorrection};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
 })(typeof globalThis==='object'?globalThis:this);

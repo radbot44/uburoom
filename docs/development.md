@@ -69,6 +69,24 @@ node scripts/playback-tracks.js --media=artifacts/playback-media-tracks --out=ar
 
 The same browser, TLS and FFmpeg prerequisites apply. Use a new output directory. Five cases per browser check native WebVTT, French SRT/Unicode/delay/Off, independent two-viewer audio via distinguishable decoded PCM tones, burned ASS dialogue/positioned colored signs via actual video pixels, and separate selected-audio AV1 caches with native text. Reports include desktop/theater/phone renders and synthetic provider events. The provider simulates Plex decisions, stored selections and session capture using generated media; it does not verify a real PMS decision, attachment font, PGS/VobSub, concurrent Plex seek/restart or Discord proxy. Test-only software AV1 substitution never enables production software fallback.
 
+### Personal jump correction checks
+
+Options → Sync correction offers Speed adjustments (the existing default) and Occasional jumps. This is a local player preference, stored for the account in this browser/origin when unified accounts are available, otherwise for this browser/origin. Storage refusal leaves a clearly labelled tab-only choice. It does not change room controls or other viewers, and persists independently of remote consent.
+
+Occasional jumps holds 1.00× playback. Moderate drift must remain at least 250 ms in one direction for one second, with a valid clock whose uncertainty is at most 50 ms and less than half the error. The current position needs one second of forward buffer and the destination needs half a second (capped by remaining duration). A committed seek blocks further moderate corrections until playback resumes with advancing decoded frames, then for eight more seconds. Seeking, buffering, backgrounding and missing samples clear drift evidence without erasing this guard. A room/media/stream/epoch/readiness generation change or deliberate mode switch resets it. Errors above 650 ms retain the existing independent guarded recovery; scheduled controls and explicit shared seeks retain their existing coordination. These starting values do not establish the 50 ms presentation target.
+
+Use disposable profiles and synthetic providers, one browser run at a time:
+
+```powershell
+node scripts/sync-jumps-smoke.js --browser=firefox
+node scripts/sync-jumps-smoke.js --browser=chrome
+node scripts/build-playback-fixtures.js --out=artifacts/playback-media-recovery-120 --duration=120 --tracks=on
+node scripts/sync-jumps-smoke.js --browser=firefox --hls
+node scripts/sync-jumps-smoke.js --browser=chrome --hls
+```
+
+The HLS checks require the generated corpus above, local test TLS and FFmpeg/FFprobe; the direct-file checks use the built-in procedural demo. The runner injects forward/backward local drift, verifies cooldown through native seeks, 1.00× sampled rates, continued host decoding, unchanged room revision/readiness, mode switching and preference reload. Outputs under `artifacts/sync-jumps-<browser>[-hls]` contain screenshots, bounded diagnostics, signed jump sizes, all observed seek/refill events and residual currentTime error. A passing check establishes functional recovery rather than a skew or physical motion guarantee. Reports overwrite the matching local fixture directory. `--baseline` captures the same Options surfaces before a UI change.
+
 ### Playback synchronization baseline
 
 For source-picture alignment, use the independent decoded pixel clock. It generates a ten-minute procedural source with binary frame numbers, then exercises coarse HLS playlist duration estimates through the actual watch player. It checks late join, paused/playing quality changes, forward/backward seek, private stream refresh and decoder reset. FFmpeg/FFprobe, local test TLS and the requested installed browser are required; no `.env`, production credentials or live providers are used. Run browsers sequentially with fresh output directories.
