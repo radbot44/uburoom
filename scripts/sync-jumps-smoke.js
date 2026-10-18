@@ -31,8 +31,10 @@ async function main() {
       for (const [label,width,height,theater] of [['desktop',1360,900,false],['theater',1360,900,true],['phone',390,844,false],['phone-theater',390,844,true]]) {
         await browser.viewport(page,width,height);
         await browser.evaluate(page,'setTheater('+theater+');'+(theater?'toggleDrawer(true);':'')+'document.getElementById("options-panel").scrollIntoView({block:"center"});true');
+        if(!baseline)await browser.evaluate(page,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');
         await browser.screenshot(page,path.join(output,(baseline?'before-':'after-')+prefix+label+'.png'));
         if(!baseline)assert.ok(await browser.evaluate(page,'(()=>{const r=document.getElementById("sync-correction").getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth;})()'),'Sync selector fits '+prefix+label);
+        if(!baseline)await browser.evaluate(page,'document.getElementById("tracks-dialog").close();true');
       }
       await browser.evaluate(page,'setTheater(false);true');
     }

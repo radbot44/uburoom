@@ -50,9 +50,10 @@ async function main() {
     assert.equal(await host.evaluate(h,'!pending&&!document.getElementById("player-play").disabled&&document.getElementById("quality").disabled'),true);
     for(const [layout,width,height]of[['normal',1280,900],['phone',390,844],['theater',1280,900]]) {
       await host.viewport(h,width,height);
-      await host.evaluate(h,'setTheater('+JSON.stringify(layout==='theater')+');document.getElementById("player-play").focus();document.getElementById("quality").scrollIntoView({block:"center"});true');
+      await host.evaluate(h,'setTheater('+JSON.stringify(layout==='theater')+');document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.getElementById("quality").scrollIntoView({block:"center"});true');
       await pause(250);
       await host.screenshot(h,path.join(output,'preparing-quality-'+layout+'.png'));
+      await host.evaluate(h,'document.getElementById("tracks-dialog").close();true');
     }
     await host.evaluate(h,'setTheater(false);true');
     await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');

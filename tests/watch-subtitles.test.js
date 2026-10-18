@@ -59,10 +59,11 @@ test('renderer delay and picture updates do not reload data or recreate the rend
 test('native caption delay and control clearance preserve explicit cue positions',async()=>{
   const {player,track}=fixture(async()=>({ok:true,json:async()=>({cues:[
     {start:1,end:3,text:'Dialogue'}, {start:2,end:5,text:'Sign',settings:'line:10% position:20% align:start'}]})}));
-  player.update({subtitleUrl:'/captions',tracks:{subtitleOffset:1}});await tick();player.layout(true,true);
+  player.update({subtitleUrl:'/captions',tracks:{subtitleOffset:1}});await tick();player.layout(true,7);
   assert.equal(track.cues[0].startTime,2);assert.equal(track.cues[0].line,-7);
   assert.equal(track.cues[1].line,10);assert.equal(track.cues[1].snapToLines,false);
-  player.layout(false,false);assert.equal(track.cues[0].line,-1);assert.equal(track.cues[1].line,10);
+  player.layout(true,5);assert.equal(track.cues[0].line,-5);assert.equal(track.cues[1].line,10);
+  player.layout(false);assert.equal(track.cues[0].line,-1);assert.equal(track.cues[1].line,10);
   player.update({subtitleUrl:'/captions',tracks:{subtitleOffset:-2}});
   assert.equal(track.cues[0].startTime,0);assert.equal(track.cues[0].endTime,1);player.destroy();
 });

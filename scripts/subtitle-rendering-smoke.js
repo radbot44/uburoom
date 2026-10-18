@@ -111,7 +111,7 @@ async function main(){
     assert.equal(await browser.evaluate(page,'getComputedStyle(document.querySelector(".subtitle-layer")).display!=="none"'),true,'Activity PIP layout retains subtitles');
     await browser.screenshot(page,path.join(output,'activity-pip-layout.png'));report.activityPipLayout=true;
     await browser.evaluate(page,'document.body.classList.remove("activity-pip");setTheater(false);true');await browser.viewport(page,1280,1000);await pause(300);
-    await browser.evaluate(page,'document.getElementById("tracks-open").click();true');await browser.screenshot(page,path.join(output,'tracks-dialog.png'));
+    await browser.evaluate(page,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');await browser.screenshot(page,path.join(output,'tracks-dialog.png'));
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({output,...report}));
   }finally{await browser?.close();await app.close();}
 }

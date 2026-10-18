@@ -86,7 +86,7 @@ async function main() {
       await shot(baseline?'before':'startup');
       if (baseline) { await command('session.end'); return; }
       assert.equal(await evaluate(host,'document.getElementById("player-play").getAttribute("aria-label")'),'Pause');
-      assert.equal(await evaluate(host,'document.getElementById("join-playback").hidden'),true);
+      assert.equal(await evaluate(host,'document.getElementById("join-playback").getAttribute("aria-label")'),"Pause");
       await click(host,'player-play');
       await until(host,'!!state && !state.waitingForReady && state.state.paused','deliberate startup pause');
       assert.equal(await evaluate(host,'document.getElementById("player-play").getAttribute("aria-label")'),'Play');
@@ -181,16 +181,16 @@ async function main() {
       const {context:accountHost}=await command('browsingContext.create',{type:'tab'});
       await command('browsingContext.setViewport',{context:accountHost,viewport:{width:1200,height:850}});
       await command('browsingContext.navigate',{context:accountHost,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
-      await until(accountHost,'!!me?.account && !document.getElementById("account-settings").hidden','unified Discord account');
+      await until(accountHost,'!!me?.account && !document.getElementById("identity").disabled','unified Discord account');
       const accountId=await evaluate(accountHost,'me.account.id');
-      await click(accountHost,'account-settings');await until(accountHost,'document.getElementById("account-dialog").open','account dialog');
+      await click(accountHost,'identity');await until(accountHost,'document.getElementById("account-dialog").open','account dialog');
       await click(accountHost,'connect-plex');await until(accountHost,'!!document.getElementById("demo-alice")','Plex provider fixture');await click(accountHost,'demo-alice');
       await until(accountHost,'location.pathname==="/watch" && typeof me!=="undefined" && me?.account?.identities.length===2 && document.getElementById("account-dialog").open','Plex link returns to account settings');
       assert.equal(await evaluate(accountHost,'me.account.id'),accountId);
       assert.equal(await evaluate(accountHost,'JSON.stringify(me).includes("fixture-user-") || JSON.stringify(me).includes("fixture-server-")'),false,'provider credentials never reach the page');
       const desktop=await command('browsingContext.captureScreenshot',{context:accountHost,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'accounts-linked-desktop-qa.png'),Buffer.from(desktop.data,'base64'));
       await click(accountHost,'account-close');await click(accountHost,'admin-mode');await until(accountHost,'me.adminMode','owner explicitly enables Admin mode');
-      await click(accountHost,'account-settings');await until(accountHost,'!document.getElementById("account-admin").hidden','owner matching UI');
+      await click(accountHost,'identity');await until(accountHost,'!document.getElementById("account-admin").hidden','owner matching UI');
       await command('browsingContext.setViewport',{context:accountHost,viewport:{width:390,height:900}});
       assert.equal(await evaluate(accountHost,'document.documentElement.scrollWidth<=390'),true,'account dialog fits phone width');
       await evaluate(accountHost,`document.getElementById('match-discord').value=${JSON.stringify(accountProvider.subjects.guest2)};document.getElementById('match-plex').value='102';document.getElementById('match-preview').click()`);
@@ -208,10 +208,10 @@ async function main() {
       const {context:activity}=await command('browsingContext.create',{type:'tab'});
       await command('browsingContext.navigate',{context:activity,url:config.publicUrl+'/watch?demo=host&frame_id=fixture',wait:'complete'});
       await until(activity,'typeof me!=="undefined" && me?.account?.identities.length===2','Activity observes linked identity registry');
-      await evaluate(activity,'toggleDrawer(true);document.getElementById("account-settings").click()');await until(activity,'document.getElementById("account-dialog").open','Activity account settings');
+      await evaluate(activity,'toggleDrawer(true);document.getElementById("identity").click()');await until(activity,'document.getElementById("account-dialog").open','Activity account settings');
       assert.equal(await evaluate(activity,'!document.getElementById("account-browser-hint").hidden && document.getElementById("account-admin").hidden'),true,'Activity sends credential linking to external browser');
       assert.equal(await evaluate(activity,'document.getElementById("account-logout").hidden'),true,'browser cookie logout is not offered for the Activity bearer identity');
-      await evaluate(accountHost,'toggleDrawer(true);document.getElementById("account-settings").click()');await until(accountHost,'document.getElementById("account-dialog").open','playing browser account settings');
+      await evaluate(accountHost,'toggleDrawer(true);document.getElementById("identity").click()');await until(accountHost,'document.getElementById("account-dialog").open','playing browser account settings');
       await command('browsingContext.activate',{context:accountHost});
       await until(accountHost,'api("/api/watch/playback").then(h=>h.totals.some(t=>t.watchedSeconds>0))','authenticated Plex account native playback');
       const nativeUser=await evaluate(accountHost,'me.account.id');
@@ -427,7 +427,7 @@ async function main() {
     console.log('[Watch Firefox] Frame:', await evaluate(host, "(() => { const c=document.createElement('canvas');c.width=64;c.height=36;const ctx=c.getContext('2d');ctx.drawImage(video,0,0,64,36);return JSON.stringify({width:video.videoWidth,pixels:[...ctx.getImageData(0,0,64,36).data].reduce((a,b)=>a+b,0),badge:getComputedStyle(document.querySelector('.badge-symbol svg')).width}); })()"));
     assert.equal(await evaluate(host, 'document.getElementById("remote").hidden'), true, 'remote starts closed');
     assert.equal(await evaluate(host, 'Math.abs(document.getElementById("stage").getBoundingClientRect().width-document.querySelector(".screen-column").getBoundingClientRect().width)<1'), true, 'video fills the content width');
-    assert.equal(await evaluate(host, '[...document.querySelector(".transport").children].map(x=>x.id).join(",")'), 'player-play,previous,seek-back,seek-forward,next,time,timeline,duration,player-mute,player-volume,quality,theater,fullscreen');
+    assert.equal(await evaluate(host, '[...document.querySelectorAll(".transport button,.transport input,.transport .time")].map(x=>x.id).join(",")'), 'time,timeline,duration,player-play,previous,seek-back,seek-forward,next,captions-toggle,tracks-open,player-mute,player-volume,theater,fullscreen');
     await evaluate(host, 'document.getElementById("video").click()');
     assert.equal(await evaluate(host, 'video.paused'), true, 'video clicks cannot toggle playback');
     await pause(2600);

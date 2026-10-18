@@ -71,7 +71,7 @@ async function main(){
   }
   assert.equal(await evaluate(context,'document.querySelectorAll(".library-tile").length'),250);
   assert.equal(await evaluate(context,'new Set([...document.querySelectorAll(".library-tile")].map(n=>n.dataset.item)).size'),250);
-  await evaluate(context,`globalThis.fixtureAnchor=()=>{const top=document.querySelector('.library-tools').getBoundingClientRect().bottom;const tile=[...document.querySelectorAll('.library-tile')].find(n=>n.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};};const tile=document.querySelectorAll('.library-tile')[220];window.scrollBy(0,tile.getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().height-12);`);
+  await evaluate(context,`globalThis.fixtureAnchor=()=>{const top=document.querySelector('.library-tools').getBoundingClientRect().bottom;const tile=[...document.querySelectorAll('.library-tile')].find(n=>n.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};};const tile=document.querySelectorAll('.library-tile')[220];document.getElementById('library-panel').scrollBy(0,tile.getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom-12);`);
   await pause(100);
   for(const view of ['list','poster','normal']){
    const anchor=JSON.parse(await evaluate(context,'JSON.stringify(fixtureAnchor())'));
@@ -84,7 +84,7 @@ async function main(){
   const anchor=JSON.parse(await evaluate(context,'JSON.stringify(fixtureAnchor())'));
   await evaluate(context,`document.querySelector('[data-item="${anchor.id}"] .library-open').click()`);await until(context,'document.querySelector(".library-summary")','deep item details');
   assert.ok(await evaluate(context,'document.querySelector(".library-overview").getBoundingClientRect().top-document.querySelector(".library-tools").getBoundingClientRect().bottom<50'),'Details appear directly below toolbar');
-  assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top)<2'),'Details remain at viewport top');
+  assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2'),'Details remain below the pinned library heading');
   await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Browser Back from deep details');await pause(100);
   assert.ok(Math.abs(await evaluate(context,`document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`)-anchor.offset)<2,'Back restores deep item position');
   await evaluate(context,'history.forward()');await until(context,'document.querySelector(".library-summary")','Browser Forward restores details');
@@ -112,11 +112,11 @@ async function main(){
 
   await evaluate(context,'document.querySelector(".library-views [data-view=poster]").click();document.activeElement.blur()');assert.equal(await evaluate(context,'getComputedStyle(document.querySelector(".library-copy")).opacity'),'0');
   await evaluate(context,'document.querySelector(".library-open").focus()');await pause(200);assert.equal(await evaluate(context,'getComputedStyle(document.querySelector(".library-copy")).opacity'),'1');
-  await evaluate(context,'document.querySelector(".library-tabs button:last-child").click()');await until(context,'document.querySelector(".library-title")?.textContent==="Sample collection"','collections');
+  await evaluate(context,'document.getElementById("library-home").click();document.querySelector(".library-home-card[data-tab=collections]").click()');await until(context,'document.querySelector(".library-title")?.textContent==="Sample collection"','collections');
   await evaluate(context,'document.querySelector(".library-open").click()');await until(context,'document.querySelectorAll(".library-tile").length===48','collection members');assert.equal(await evaluate(context,'document.querySelector(".library-title").textContent'),'Needle beyond the first two hundred');
   await evaluate(context,'search.value="A Sample Movie";search.dispatchEvent(new Event("input"))');await until(context,'document.querySelectorAll(".library-tile").length===2','whole collection search');
   await evaluate(context,'document.getElementById("library-filters-toggle").click();const gs=document.querySelector(".library-filters select");gs.value="5";gs.dispatchEvent(new Event("change"))');await until(context,'document.querySelector(".library-count").textContent==="2 items" && document.querySelector(".library-filter-chip")','collection genre filter');
-  await evaluate(context,'document.querySelector(".library-tabs button:first-child").click();document.querySelector(".library-choices .library-choice:nth-child(2)").click()');await until(context,'document.querySelector(".library-title")?.textContent==="A Sample Show"','show library');
+  await evaluate(context,'document.getElementById("library-home").click();[...document.querySelectorAll(".library-home-card[data-tab=library]")].find(n=>n.dataset.section==="2").click()');await until(context,'document.querySelector(".library-title")?.textContent==="A Sample Show"','show library');
   await evaluate(context,'document.querySelector(".library-open").click()');await until(context,'document.querySelectorAll(".library-tile").length===2','seasons');
   await evaluate(context,'search.value="Season 1";search.dispatchEvent(new Event("input"))');await until(context,'document.querySelectorAll(".library-tile").length===1 && document.querySelector(".library-title").textContent==="Season 1"','Filtering a multi-season show does not skip the season');
   assert.equal(await evaluate(context,'document.querySelectorAll(".library-tile.episode").length'),0);
@@ -160,7 +160,7 @@ async function main(){
   await evaluate(context,'history.forward()');await until(context,'document.querySelector(".library-overview h3")?.textContent==="Episode title 2"','Forward restores single-season episode');
   await evaluate(context,'[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Season 1").click()');await until(context,'!document.querySelector(".library").hidden && document.querySelectorAll(".library-tile.episode").length===1','Season breadcrumb returns to direct episode list');
   await evaluate(context,'document.querySelector(".library-choices .library-choice:first-child").click()');
-  await evaluate(context,'document.querySelector(".library-tabs button:first-child").click()');await until(context,'document.querySelectorAll(".library-tile").length>=48','library restored');
+  await until(context,'document.querySelectorAll(".library-tile").length>=48','library restored');
   await evaluate(context,'document.querySelector(".library-views [data-view=normal]").click();document.getElementById("library-filters-toggle").click()');await until(context,'document.querySelector(".library-filters select").options.length>1','facets');
   await evaluate(context,'const ys=document.querySelectorAll(".library-filters select")[1];ys.value="2023";ys.dispatchEvent(new Event("change"))');await until(context,'document.querySelector(".library-count").textContent.includes("125")','year filter');
   await evaluate(context,'document.querySelector(".library-filter-chip").click()');await until(context,'document.querySelector(".library-count").textContent.includes("250")','remove filter');
@@ -192,8 +192,8 @@ async function main(){
     await evaluate(context,'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');await until(context,'!document.querySelector(".library").hidden','Phone library restored');
    }
    if(theater && width>700){
-    await evaluate(context,'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');await pause(100);
-    assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top)<2'),'Sticky toolbar covers the page top');
+    await evaluate(context,'document.getElementById("library-content").scrollIntoView();document.getElementById("library-panel").scrollBy(0,600)');await pause(100);
+    assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2'),'Sticky toolbar stays below the library heading');
     const scrolled=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-scrolled-qa.png'),Buffer.from(scrolled.data,'base64'));
    }
   }

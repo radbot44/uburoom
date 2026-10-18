@@ -24,7 +24,7 @@ let qualityPending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
-let trackNotice='', trackNoticeError=false, trackActionError='', trackContext;
+let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI;
 const video = $('video');
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
@@ -129,6 +129,9 @@ for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbo
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
+playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
+  beforeSettings:()=>{trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
+  afterSettings:()=>{trackContext=undefined;}});
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
   artwork:async (path,signal) => {
@@ -210,11 +213,24 @@ function toggleDrawer(show = drawer.hidden) {
   if (!show) toggleRemote(false);
 }
 function setTheater(enabled) {
-  theater = !activity && !!enabled;
+  theater = !activity && !document.body.classList.contains('mobile-player') && !!enabled;
   document.body.classList.toggle('theater', theater);
   $('theater').setAttribute('aria-pressed', String(theater));
   $('theater').title = $('theater').ariaLabel = theater ? 'Exit theater mode' : 'Theater mode';
+  updateViewingLayout();
 }
+function updateMobilePlayer() {
+  const mobile=innerWidth<=700||matchMedia('(pointer:coarse) and (max-height:700px)').matches||!!document.fullscreenElement&&document.body.classList.contains('mobile-player');
+  document.body.classList.toggle('mobile-player',mobile);
+  if(mobile&&theater)setTheater(false);
+}
+function updateViewingLayout() {
+  document.documentElement.style.setProperty('--watch-room-bar-height',$('room-bar').offsetHeight+'px');
+  if (!immersive) document.documentElement.style.setProperty('--watch-header-height', ($('viewing-section').getBoundingClientRect().top + scrollY) + 'px');
+}
+const viewingLayoutObserver = new ResizeObserver(updateViewingLayout);
+viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section')); viewingLayoutObserver.observe($('room-bar'));
+window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');
   const drawerOpen = !drawer.hidden, remoteOpen = !$('remote').hidden;
@@ -224,6 +240,7 @@ function updateFullscreenLayout() {
   toggleDrawer(drawerOpen);
   toggleRemote(remoteOpen);
   placeRoomBar();
+  updateViewingLayout();
 }
 function placeRoomBar() {
   $('room-bar').hidden = !me;
@@ -324,15 +341,15 @@ function updateActivityLayout(event) {
   document.body.classList.toggle('activity-pip', pip);
   if (pip) { toggleDrawer(false); toggleRemote(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); }
   if(pip&&$('account-dialog').open)$('account-dialog').close();
-  if(pip&&$('tracks-dialog').open)$('tracks-dialog').close();
+  if(pip){playerUI?.reset();if($('tracks-dialog').open)$('tracks-dialog').close();}
 }
 document.body.classList.toggle('activity', activity); $('fullscreen').hidden = $('theater').hidden = activity;
 if (activity) {
   $('brand-link').href = '/watch' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
 }
-setTheater(false); updateFullscreenLayout(); updateActivityLayout();
-window.addEventListener('resize', () => { updateActivityLayout(); renderTransport(); });
+updateMobilePlayer(); setTheater(false); updateFullscreenLayout(); updateActivityLayout();
+window.addEventListener('resize', () => { updateMobilePlayer(); updateActivityLayout(); renderTransport(); });
 $('theater').addEventListener('click', () => setTheater(!theater));
 $('drawer-open').addEventListener('click', () => {
   if (!immersive) return;
@@ -384,6 +401,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  if(reason!=='state-change')playerUI?.reset();
   sync.reset();
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
@@ -626,9 +644,11 @@ function renderTransport() {
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
   glyph('player-mute', state?.state.muted ? 'muted' : 'mute'); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
   $('player-mute').title = state?.state.muted ? 'Unmute' : 'Mute';
-  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || !state?.state.paused && !autoplayBlocked || !paused && !autoplayBlocked;
+  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut;
   $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
-  $('join-playback').setAttribute('aria-label', autoplayBlocked ? 'Join playback' : 'Play'); $('join-playback').title = autoplayBlocked ? 'Join playback' : 'Play';
+  const centerLabel=autoplayBlocked?'Join playback':paused?'Play':'Pause';
+  glyph('join-playback',autoplayBlocked||paused?'play':'pause');
+  $('join-playback').setAttribute('aria-label',centerLabel); $('join-playback').title=centerLabel;
   $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
     state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
   if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
@@ -641,7 +661,6 @@ function renderTransport() {
   if (state?.readiness?.timedOut) $('player-play').disabled = true;
   if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
   renderTracks();
-  captions.layout($('stage').matches(':hover,:focus-within') || paused || autoplayBlocked || !$('remote').hidden,innerWidth<=700);
 }
 function trackLabel(track) {
   const roles=[track.forced && 'Forced',track.sdh && 'SDH',track.commentary && 'Commentary',track.description && 'Audio description'].filter(Boolean);
@@ -649,8 +668,6 @@ function trackLabel(track) {
 }
 function renderTracks() {
   const tracks=state?.tracks, available=!!tracks;
-  $('tracks-open').hidden=!available || !tracks.audio.length && !tracks.subtitles.length;
-  $('tracks-open').disabled=pending || qualityPending;
   const render=(id,rows,choices,value)=>{
     const options=[...choices,...(rows || []).map(row=>({id:row.id,label:trackLabel(row),disabled:!row.available}))];
     const element=$(id), signature=JSON.stringify(options);
@@ -669,23 +686,17 @@ function renderTracks() {
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
   $('subtitle-status').hidden=!trackNoticeError && !tracks?.subtitleError;
-  $('subtitle-status').textContent='Subtitles could not be shown. Open Audio and subtitles for details.';
+  $('subtitle-status').textContent='Subtitles could not be shown. Open Player settings for details.';
   $('subtitle-retry').hidden=!trackNoticeError || !state?.subtitleUrl;
+  playerUI?.render();
 }
-async function changeTrack(args) {
-  if(!$('tracks-dialog').open || !state || pending || !trackContext || trackContext.mediaVersion!==state.mediaVersion || trackContext.streamVersion!==state.streamVersion)return;
+async function changeTrack(args,context=trackContext) {
+  if(!state || pending || qualityPending || !context || context.mediaVersion!==state.mediaVersion || context.streamVersion!==state.streamVersion)return;
   trackActionError='';
-  try { await execute({action:'media.tracks.set',args:{...trackContext,...args}}); }
-  catch(error){trackActionError=error.message;}
+  try { await execute({action:'media.tracks.set',args:{...context,...args}}); }
+  catch(error){trackActionError=error.message;fail(error.message);}
   finally{renderTracks();}
 }
-$('tracks-open').addEventListener('click',()=>{
-  if(!state?.tracks || pending)return;
-  trackContext={mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}; trackActionError=''; renderTracks();
-  $('tracks-dialog').showModal(); $('audio-track').focus();
-});
-$('tracks-close').addEventListener('click',()=>$('tracks-dialog').close());
-$('tracks-dialog').addEventListener('close',()=>{trackContext=undefined; $('tracks-open').focus();});
 $('audio-track').addEventListener('change',()=>void changeTrack({audioId:$('audio-track').value}));
 $('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$('subtitle-track').value}));
 $('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
@@ -746,10 +757,10 @@ function applyState(next) {
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const previousTarget = state ? expected() : undefined;
-  if(trackContext && trackContext.mediaVersion!==next.mediaVersion){$('tracks-dialog').close();trackContext=undefined;}
+  if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
-  if($('tracks-dialog').open)trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
+  if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
     clearPlayer('state-change'); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
@@ -895,7 +906,7 @@ $('player-play').addEventListener('click', () => execute({ action: state?.pauseA
 $('player-mute').addEventListener('click', () => execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)));
 $('join-playback').addEventListener('click', async () => {
   if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void sync.synchronize(); }
-  else execute({ action: 'media.play' }).catch(error => fail(error.message));
+  else $('player-play').click();
 });
 $('quality').addEventListener('change', () => {
   preferredQuality = $('quality').value;
@@ -940,7 +951,7 @@ document.addEventListener('keydown', event => {
 $('open-remote').addEventListener('click', () => toggleRemote());
 document.addEventListener('pointerdown', event => { if (!$('remote').hidden && !event.composedPath().some(node => ['remote','open-remote'].includes(node.id))) toggleRemote(false); });
 $('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
-document.addEventListener('fullscreenchange', () => { updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
+document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
 async function createRoom() {
   if (creating) return; creating = true;
   for (const id of ['create','lobby-create']) $(id).disabled = true;

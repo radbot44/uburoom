@@ -67,7 +67,7 @@ async function main() {
         await openApp();
         browser=await playbackBrowser(name);const host=await browser.page(config.publicUrl+'/watch?demo=host');
         const evaluate=(page,code)=>browser.evaluate(page,code), until=(page,code,label,timeout)=>browser.until(page,code,label,timeout);
-        await until(host,'!!me','Login'); await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room');
+        await until(host,'!!me&&transport?.ready','Login'); await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room');
         await evaluate(host,'('+installMeter.toString()+')()');await evaluate(host,'playbackMeter.resumeAudio()');
         const command=async(page,action,args)=>{
           await until(page,'!!state && !pending','Available controls');
@@ -96,7 +96,7 @@ async function main() {
         await evaluate(host,'playbackMeter.reset("101",null);true');
         await check('native-WebVTT',async()=>{
           const stream=await evaluate(host,'state.streamVersion');
-          await evaluate(host,'document.getElementById("tracks-open").click();document.getElementById("subtitle-track").value="10190";document.getElementById("subtitle-track").dispatchEvent(new Event("change",{bubbles:true}));true');
+          await evaluate(host,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();document.getElementById("subtitle-track").value="10190";document.getElementById("subtitle-track").dispatchEvent(new Event("change",{bubbles:true}));true');
           await until(host,'state.tracks.subtitleId==="10190" && captions.loaded && captions.track.activeCues?.[0]?.text.includes("first caption")','Visible WebVTT cue');
           assert.equal(await evaluate(host,'state.streamVersion'),stream,'text selection keeps the current video');
           await evaluate(host,'document.getElementById("tracks-close").click();true');
@@ -124,7 +124,7 @@ async function main() {
           return {detail:'French 880 Hz / guest English 440 Hz, independent with remote consent off.',frenchSamples:french,englishSamples:english};
         });
         await check('ASS-style-and-sign-position',async()=>{
-          await position(2);await choose(host,{subtitleId:'1044'});
+          await position(2);await choose(host,{subtitleId:'1044',subtitleMode:'burn'});
           await until(host,'state.tracks.subtitleId==="1044" && video.readyState>=2 && !video.seeking && Math.abs(video.currentTime-2)<.1','ASS burn at paused position');
           const evidence=[];
           for(const [at,top] of [[2,false],[8.5,true]]){
@@ -136,7 +136,7 @@ async function main() {
           }
           assert.equal(await evaluate(host,'captions.track.mode'),'disabled','burned captions have no duplicate native text');
           assert.equal(await evaluate(guest,'!state.tracks.subtitleId'),true,'guest subtitles stay off');
-          await evaluate(host,'document.getElementById("tracks-open").click();true');
+          await evaluate(host,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');
           assert.equal(await evaluate(host,'document.getElementById("subtitle-offset").disabled'),true);
           assert.equal(await evaluate(host,'document.getElementById("subtitle-delay-hint").textContent.includes("fixed by Plex")'),true);
           await browser.screenshot(host,path.join(output,name+'-ass-dialog.png'));
@@ -147,13 +147,13 @@ async function main() {
         await check('AV1-selected-audio-and-text',async()=>{
           await position(2);await command(host,'media.quality.set',{quality:'direct',compatible:true,fallback:'av1'});
           await until(host,'state.format==="av1" && video.readyState>=2','French AV1',30000);
-          await choose(host,{subtitleId:'10490'});await until(host,'captions.loaded && captions.track.activeCues?.[0]?.text.includes("first caption")','AV1 native captions');
+          await choose(host,{subtitleId:'10490',subtitleMode:'auto'});await until(host,'captions.loaded && captions.track.activeCues?.[0]?.text.includes("first caption")','AV1 native captions');
           const french=await tone(host,880);await position(2);
           await command(guest,'media.quality.set',{quality:'direct',compatible:true,fallback:'av1'});await until(guest,'state.format==="av1" && video.readyState>=2','English AV1',30000);
           const english=await tone(guest,440);assert.equal(await evaluate(host,'state.tracks.audioId'),'1042');
           await command(host,'media.pause');await evaluate(host,'setTheater(true);true');await browser.screenshot(host,path.join(output,name+'-theater.png'));
-          await evaluate(host,'document.getElementById("tracks-open").click();true');await browser.viewport(host,390,1000);
-          await until(host,'captions.defaultLine===-7','Phone caption clearance');await pause(250);
+          await evaluate(host,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');await browser.viewport(host,390,1000);
+          await until(host,'captions.defaultLine<-1','Phone caption clearance');await pause(250);
           await browser.screenshot(host,path.join(output,name+'-phone-tracks.png'));
           assert.equal(await evaluate(host,'document.documentElement.scrollWidth<=innerWidth'),true);
           await evaluate(host,'document.getElementById("tracks-close").click();true');await browser.screenshot(host,path.join(output,name+'-phone-captions.png'));

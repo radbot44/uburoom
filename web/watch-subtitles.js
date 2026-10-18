@@ -40,8 +40,8 @@ class uburoomSubtitles {
       this.track.addCue(cue);
     }
   }
-  layout(visible,phone) {
-    const line=visible ? phone ? -7 : -3 : -1;
+  layout(visible,lines=3) {
+    const line=visible ? -lines : -1;
     if(this.defaultLine===line)return;this.defaultLine=line;
     for(const cue of Array.from(this.track.cues || []))if(cue.uburoomDefaultLine)cue.line=line;
   }

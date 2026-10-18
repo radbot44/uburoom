@@ -1,4 +1,4 @@
-/* One safe-DOM Plex browser for the website, theater drawer and Activity. */
+/* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 (function (global) {
   'use strict';
   function mount(host, { request, artwork, load, close, getPlayer }) {
@@ -18,9 +18,6 @@
     const home = button(navigation,'Libraries home','home'); home.id = 'library-home';
     const choices = node('div',navigation,undefined,'library-choices'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
     const crumbs = node('nav',navigation,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
-    const tabs = node('div',top,undefined,'library-tabs'); tabs.setAttribute('role','group'); tabs.setAttribute('aria-label','Browse library');
-    const libraryTab = button(tabs,'Library'); libraryTab.textContent = 'Library';
-    const collectionsTab = button(tabs,'Collections'); collectionsTab.textContent = 'Collections';
     const row = node('div',tools,undefined,'library-toolbar');
     const search = node('input',row); search.type = 'search'; search.id = 'search'; search.placeholder = 'Search this library'; search.setAttribute('aria-label','Search this library'); search.maxLength = 200;
     const sort = select(row,'Sort library'); sort.id = 'library-sort';
@@ -45,7 +42,7 @@
     const sentinel = node('div',host,undefined,'library-sentinel'); sentinel.setAttribute('aria-hidden','true'); sentinel.hidden = true;
     const landing = node('div',host,undefined,'library-landing'); landing.hidden = true;
     overview.before(landing);
-    const navigationControls = [home,libraryTab,collectionsTab,search,sort,filterButton,...viewButtons];
+    const navigationControls = [home,search,sort,filterButton,...viewButtons];
     let room, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false;
@@ -95,7 +92,7 @@
         if (target === host) {
           // Match the Normal/Poster grid, including its two-column phone layout.
           const width = host.getBoundingClientRect().width; if (!width) continue;
-          const gap = width <= 440 ? 12 : 14, columns = width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap)));
+          const gap = width <= 440 ? 12 : 14, columns = Number(getComputedStyle(host).getPropertyValue('--library-columns')) || (width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap))));
           updates.push([host,'--library-poster-width',(width - gap * (columns - 1)) / columns + 'px']);
         } else if (target.parentElement === results && target.getClientRects().length) {
           const css = getComputedStyle(target), padding = parseFloat(css.paddingTop), gap = parseFloat(css.columnGap);
@@ -110,8 +107,8 @@
       for (const [target,property,value] of updates) if (target.style.getPropertyValue(property) !== value) target.style.setProperty(property,value);
     });
     layoutObserver.observe(host);
-    function scrollElement() { return host.closest('#drawer') || doc.scrollingElement; }
-    function viewport(root = scrollElement()) { const top = root === doc.scrollingElement ? 0 : root.getBoundingClientRect().top + root.clientTop; return {top,bottom:top + root.clientHeight}; }
+    function scrollElement() { return host.closest('#drawer') || host.closest('#library-panel'); }
+    function viewport(root = scrollElement()) { const top = root.getBoundingClientRect().top + root.clientTop; return {top,bottom:top + root.clientHeight}; }
     function captureAnchor() {
       const root = scrollElement(), box = viewport(root), top = Math.max(box.top,tools.getBoundingClientRect().bottom);
       const item = [...results.querySelectorAll('.library-tile')].find(n => { const b = n.getBoundingClientRect(); return b.bottom > top && b.top < box.bottom; });
@@ -255,9 +252,6 @@
       navigationControls.forEach(n => { n.disabled = false; });
       previous.disabled = visitIndex === 0; next.disabled = visitIndex >= visits.length - 1;
       home.disabled = screen.kind === 'home';
-      libraryTab.disabled = collectionsTab.disabled = !screen.section;
-      libraryTab.setAttribute('aria-pressed',String(screen.tab === 'library')); collectionsTab.setAttribute('aria-pressed',String(screen.tab === 'collections'));
-      if (!screen.section) { libraryTab.setAttribute('aria-pressed','false'); collectionsTab.setAttribute('aria-pressed','false'); }
       choices.replaceChildren(); choices.hidden = screen.kind === 'home';
       sections.forEach(section => { const b = button(choices,section.title,undefined,'library-key library-choice'); b.textContent = section.title; b.dataset.section = section.id; b.setAttribute('aria-pressed',String(section.id === screen.section)); b.onclick = () => void chooseLibrary(section.id,screen.tab); });
       crumbs.replaceChildren();
@@ -399,8 +393,6 @@
     }
     async function query() { clearTimeout(timer); screen.dirty = false; screen.items = []; screen.nextOffset = null; reserveHeight(); const promise = loadPage(); positionLibrary(); await promise; }
     previous.onclick = () => goHistory(-1); next.onclick = () => goHistory(1); home.onclick = goHome;
-    libraryTab.onclick = () => void chooseLibrary(screen.section || 'demo','library');
-    collectionsTab.onclick = () => void chooseLibrary(screen.section,'collections');
     search.oninput = () => { screen.q = search.value.trim(); screen.dirty = true; clearTimeout(timer); timer = setTimeout(() => void query(),220); };
     sort.onchange = () => { screen.sort = sort.value; screen.order = ['added','year'].includes(screen.sort) ? 'desc' : 'asc'; if (screen.sort === 'random') screen.seed = newSeed(); void query(); };
     direction.onclick = () => { if (screen.sort === 'random') screen.seed = newSeed(); else screen.order = screen.order === 'asc' ? 'desc' : 'asc'; void query(); };

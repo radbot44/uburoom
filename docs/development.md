@@ -28,6 +28,8 @@ Keep production environment variables/configuration, databases, keys and certifi
 
 For the watch layout modes, run `node scripts/watch-layout-smoke.js`. It runs Chrome and Firefox sequentially with disposable profiles, isolated identities and synthetic library/media, using the development certificates without loading `.env`. Screenshots go into a fresh `artifacts/watch-layout-*` directory. It checks normal/sidebar, theater/stacked and phone layouts, real browser fullscreen with its drawer, restoration of both page layouts, decoded playback/pause/resume across transitions and simulated Activity/PIP layout restrictions. It does not authenticate with real Discord or Plex. `--before` captures the existing layouts without enforcing the new mode contract.
 
+For player menus and touch controls, run `node scripts/player-ui-smoke.js` after generating the track corpus under `artifacts/playback-media-tracks` using the track-fixture instructions below. It uses real browser pointer/touch protocol input in disposable Chrome/Firefox profiles, checks desktop left-opening menus, actual quality/CC changes, two-row mobile bounds at 320/390/700px, portrait theater, touch auto-hide and repeated-tap seeks, and opens mobile settings inside actual fullscreen. Native mobile hardware and Discord are separate checks; screenshots go into a fresh ignored `artifacts/player-ui-*` directory.
+
 Relevant Firefox fixtures:
 
 ```powershell

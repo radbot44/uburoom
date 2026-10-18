@@ -62,6 +62,8 @@
     zoom: ['M15 15l6 6', 'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0'],
     fullscreen: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5'],
     fullscreenExit: ['M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3'],
+    captions: ['M5 5h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z', 'M10 9H7v6h3M17 9h-3v6h3'],
+    captionsOn: ['M5 5h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3ZM6 8h5v2H8v4h3v2H6ZM13 8h5v2h-3v4h3v2h-5Z'],
     theater: ['M3 5h18v14H3zM7 5v14M17 5v14'], drawer: ['M3 4h18v16H3zM14 4v16M6 8h5M6 12h5M6 16h5'],
     stretchX: ['M3 12h18m-5-5 5 5-5 5M8 7l-5 5 5 5'], stretchY: ['M12 3v18m-5-5 5 5 5-5M7 8l5-5 5 5'],
     minus: ['M5 12h14'], plus: ['M5 12h14M12 5v14'], up: ['M12 20V4m-7 7 7-7 7 7'],
@@ -99,6 +101,7 @@
   function icon(doc, name, seekSeconds = 15) {
     const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
     for (const d of paths[name] || []) { const p = doc.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', d); svg.append(p); }
+    if(name==='captionsOn'){svg.firstChild.setAttribute('fill','currentColor');svg.firstChild.setAttribute('fill-rule','evenodd');svg.firstChild.setAttribute('stroke','none');}
     if (name === 'back' || name === 'forward') {
       const text = doc.createElementNS(svg.namespaceURI, 'text'); text.textContent = String(seekSeconds); text.setAttribute('x', '12'); text.setAttribute('y', '15');
       text.setAttribute('text-anchor', 'middle'); text.setAttribute('stroke', 'none'); text.setAttribute('fill', 'currentColor'); text.setAttribute('font-size', '7'); text.setAttribute('font-weight', '700'); svg.append(text);
