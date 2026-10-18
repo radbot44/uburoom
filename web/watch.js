@@ -8,7 +8,7 @@ let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = fal
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
 const activity = params.has('frame_id');
-let theater = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
+let theater = false, immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, av1FallbackVersion;
@@ -141,7 +141,7 @@ const library = uburoomLibrary.mount($('library-content'), {
 function fail(message) {
   const changed = $('error').textContent !== message;
   $('error').textContent = message;
-  if (message && changed && theater && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
+  if (message && changed && immersive && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
 async function api(path, data, options = {}) {
   const started=performance.now(); let response,decoded=false,rejection;
@@ -202,6 +202,7 @@ const shells = ['account','welcome','room-bar','options-panel','library-panel','
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
+  show = !!show && immersive && !document.body.classList.contains('activity-pip');
   const parent = document.fullscreenElement === $('stage') ? $('stage') : document.body;
   if (drawer.parentElement !== parent) parent.append(drawer);
   drawer.hidden = !show; $('stage').classList.toggle('drawer-open', show);
@@ -209,17 +210,24 @@ function toggleDrawer(show = drawer.hidden) {
   if (!show) toggleRemote(false);
 }
 function setTheater(enabled) {
-  enabled = activity || enabled;
-  theater = enabled; toggleDrawer(false); document.body.classList.toggle('theater', enabled);
-  for (const { element, marker } of shells) enabled ? drawer.append(element) : marker.after(element);
-  $('drawer-open').hidden = $('drawer-close').hidden = !enabled;
-  $('theater').setAttribute('aria-pressed', String(enabled));
-  $('theater').title = $('theater').ariaLabel = enabled ? 'Exit theater mode' : 'Theater mode';
+  theater = !activity && !!enabled;
+  document.body.classList.toggle('theater', theater);
+  $('theater').setAttribute('aria-pressed', String(theater));
+  $('theater').title = $('theater').ariaLabel = theater ? 'Exit theater mode' : 'Theater mode';
+}
+function updateFullscreenLayout() {
+  immersive = activity || document.fullscreenElement === $('stage');
+  const drawerOpen = !drawer.hidden, remoteOpen = !$('remote').hidden;
+  document.body.classList.toggle('immersive', immersive);
+  for (const { element, marker } of shells) immersive ? drawer.append(element) : marker.after(element);
+  $('drawer-open').hidden = $('drawer-close').hidden = !immersive;
+  toggleDrawer(drawerOpen);
+  toggleRemote(remoteOpen);
   placeRoomBar();
 }
 function placeRoomBar() {
   $('room-bar').hidden = !me;
-  $('room-lobby').hidden = !theater || !!selected || !me;
+  $('room-lobby').hidden = !immersive || !!selected || !me;
 }
 for (const name of ['options','library']) $(name + '-collapse').addEventListener('click', () => {
   const button = $(name + '-collapse'), content = $(name + '-content');
@@ -323,11 +331,11 @@ if (activity) {
   $('brand-link').href = '/watch' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
 }
-setTheater(activity); updateActivityLayout();
+setTheater(false); updateFullscreenLayout(); updateActivityLayout();
 window.addEventListener('resize', () => { updateActivityLayout(); renderTransport(); });
 $('theater').addEventListener('click', () => setTheater(!theater));
 $('drawer-open').addEventListener('click', () => {
-  if (!theater) return;
+  if (!immersive) return;
   toggleDrawer(); if (!drawer.hidden) $('drawer-close').focus();
 });
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
@@ -777,7 +785,7 @@ function applyState(next) {
   $('title').textContent = next.title; $('details').textContent = next.subtitle;
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = 'Host: ' + next.hostName;
-  $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library below.' : 'The host chooses the video.';
+  $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library.' : 'The host chooses the video.';
   $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End room' : 'Leave room';
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
   const choices = next.qualities || uburoom.QUALITIES;
@@ -821,7 +829,7 @@ async function selectRoom(id) {
   if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }).catch(() => {});
   clearPlayer('room-select'); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
   await refreshState(); await refreshRooms();
-  if (theater) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
+  if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
 }
 function renderRooms(host, rooms) {
   host.replaceChildren();
@@ -842,7 +850,7 @@ async function refreshRooms() {
 function applyRooms(rooms) {
   for (const id of ['rooms','lobby-rooms']) renderRooms($(id), rooms);
   if (!rooms.some(room => room.id === selected && !room.locked)) {
-    if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (theater) toggleDrawer(false); }
+    if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
   }
   $('status').textContent = selected ? '' : rooms.length ? 'Choose an active room or create your own.' : 'No active rooms. Create a room to start watching.';
   $('create').textContent = selected ? 'New room' : 'Create room';
@@ -932,7 +940,7 @@ document.addEventListener('keydown', event => {
 $('open-remote').addEventListener('click', () => toggleRemote());
 document.addEventListener('pointerdown', event => { if (!$('remote').hidden && !event.composedPath().some(node => ['remote','open-remote'].includes(node.id))) toggleRemote(false); });
 $('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
-document.addEventListener('fullscreenchange', () => { toggleDrawer(!drawer.hidden); toggleRemote(!$('remote').hidden); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
+document.addEventListener('fullscreenchange', () => { updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
 async function createRoom() {
   if (creating) return; creating = true;
   for (const id of ['create','lobby-create']) $(id).disabled = true;

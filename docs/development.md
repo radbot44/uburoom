@@ -26,6 +26,8 @@ Generate certificates only on a fresh checkout. The script refuses to overwrite 
 
 Keep production environment variables/configuration, databases, keys and certificates out of this checkout. Start/dev/demo npm scripts load `.env` if present. The explicit fixture-demo command does not load an environment file but still inherits process environment; use a clean shell without production Plex/Discord credentials.
 
+For the watch layout modes, run `node scripts/watch-layout-smoke.js`. It runs Chrome and Firefox sequentially with disposable profiles, isolated identities and synthetic library/media, using the development certificates without loading `.env`. Screenshots go into a fresh `artifacts/watch-layout-*` directory. It checks normal/sidebar, theater/stacked and phone layouts, real browser fullscreen with its drawer, restoration of both page layouts, decoded playback/pause/resume across transitions and simulated Activity/PIP layout restrictions. It does not authenticate with real Discord or Plex. `--before` captures the existing layouts without enforcing the new mode contract.
+
 Relevant Firefox fixtures:
 
 ```powershell

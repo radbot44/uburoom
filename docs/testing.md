@@ -2,6 +2,16 @@
 
 Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
 
+## Watch layout modes (2026-10-17)
+
+Normal viewing now places the Plex library to the right on wide screens, with the room bar below the video and above Options. Narrow screens stack the library below. Theater enlarges the video within the scrolling page and moves the library below. Actual browser fullscreen owns the previous theater drawer; exiting restores normal or theater. Discord Activity uses the viewport-filling drawer layout with theater unavailable, and PIP remains video-only.
+
+`watch-layout-smoke.js` passed in Chrome 155.0.8059.79 and Firefox 158.0 using isolated localhost identities/providers and disposable headless profiles. Checks cover sidebar/stacked geometry, room/options ordering, desktop/phone horizontal bounds, actual fullscreen entry from both normal and theater, drawer shell placement, restoration on exit, preserved paused position, decoded video and resumed playback. Simulated Activity checks verify unavailable theater/fullscreen buttons, rejected theater entry and hidden PIP drawer. Before/after desktop, theater, phone, fullscreen and Activity renders were inspected; transport layout responds to player width so the sidebar cannot squeeze controls outside the player. Narrow empty-player feedback no longer overlaps transport controls.
+
+The Firefox library smoke also passed catalog navigation, search/paging, view/detail/back scroll restoration, responsive detail sizing, sticky page toolbar and Activity drawer checks. The new sidebar exposes taller poster cards; its view-change assertion now accounts for the existing 44-pixel visibility clamp when changing to shorter list rows. The Firefox readiness smoke passed startup/seek pause intent, deliberate pause and resume with desktop/theater/phone captures. `npm run test:full` passed all 241 tests with zero failures, cancellations or skips.
+
+Remaining: real Discord SDK/proxy and desktop/mobile Activity transitions, physical mobile fullscreen behavior and owner review of the new layout. The Activity checks above are local layout simulations. The complete legacy watch smoke was not rerun; the focused readiness and new layout runners were used for this change. No production installation was changed.
+
 Automated tests cover parsing/target resolution, permissions/private visibility, stale commands, account linking/encryption/persistence, native tracking, isolated HTTP/media boundaries and configured extension origins. Generate local test TLS first; a suite with skipped tests is not a full baseline.
 
 `npm test` uses the Node dot reporter: one dot per passing test and full detail for failures only. `npm run test:full` runs the same suite with the complete TAP report, including pass/skip counts for evidence.

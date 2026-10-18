@@ -77,7 +77,9 @@ async function main(){
    const anchor=JSON.parse(await evaluate(context,'JSON.stringify(fixtureAnchor())'));
    await evaluate(context,`document.querySelector('.library-views [data-view="${view}"]').click()`);await pause(100);
    const offset=await evaluate(context,`document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`);
-   assert.ok(Math.abs(offset-anchor.offset)<2,`Keep ${anchor.id} at ${anchor.offset} after ${view}, got ${offset}`);
+   const height=await evaluate(context,`document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().height`);
+   const expected=Math.max(anchor.offset,-Math.max(0,height-44));
+   assert.ok(Math.abs(offset-expected)<2,`Keep ${anchor.id} visible at ${expected} after ${view}, got ${offset}`);
   }
   const anchor=JSON.parse(await evaluate(context,'JSON.stringify(fixtureAnchor())'));
   await evaluate(context,`document.querySelector('[data-item="${anchor.id}"] .library-open').click()`);await until(context,'document.querySelector(".library-summary")','deep item details');
@@ -93,7 +95,7 @@ async function main(){
   await evaluate(context,'document.querySelector(".library-tile .library-meta").click()');await until(context,'document.querySelector(".library").hidden','Row metadata also opens details');
   await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Back to list again');
   for(const [name,width,height,theater] of [['normal',3840,2160,false],['theater',3840,2160,true],['activity-size',1920,1080,true],['phone',390,1100,true]]){
-   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});${theater?'toggleDrawer(true);':''}document.querySelector('.library-views [data-view=normal]').click();`);await pause(120);
+   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});document.querySelector('.library-views [data-view=normal]').click();`);await pause(120);
    const posterWidth=await evaluate(context,'document.querySelector(".library-tile>.library-art").getBoundingClientRect().width');
    await evaluate(context,'document.querySelector(".library-views [data-view=poster]").click()');assert.ok(Math.abs(await evaluate(context,'document.querySelector(".library-tile>.library-art").getBoundingClientRect().width')-posterWidth)<1,'Normal and Poster sizes match at '+name);
    await evaluate(context,'document.querySelector(".library-title").click()');await until(context,'document.querySelector(".movie-detail") && document.querySelector(".library-summary")','Movie details at '+name);await pause(80);
@@ -130,7 +132,7 @@ async function main(){
   for(const text of ['TV-14','Comedy','Drama','Sample director','Sample actor eight','TMDB 7.9/10','1080p','h264','8.0 Mbps','aac','2 channels','mkv']) assert.equal(await evaluate(context,`document.querySelector('.library-overview').textContent.includes(${JSON.stringify(text)})`),true,'Detail retains '+text);
   await evaluate(context,'document.querySelector(".library-media-info").open=true');
   for(const [name,width,height,theater] of [['normal',3840,2160,false],['theater',3840,2160,true],['activity-size',1920,1080,true],['phone',390,1100,true]]){
-   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});${theater?'toggleDrawer(true);drawer.scrollTop=document.getElementById("library-content").offsetTop;':'document.getElementById("library-content").scrollIntoView();'}`);await pause(150);
+   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});document.getElementById("library-content").scrollIntoView();`);await pause(150);
    await evaluate(context,'[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Season 1").click()');await until(context,'!document.querySelector(".library").hidden && document.querySelectorAll(".library-tile.episode").length===2','Episode list at '+name);
    await evaluate(context,'document.querySelector(".library-open").click()');await until(context,'document.querySelector(".library-facts") && document.querySelectorAll(".library-detail-art .loaded").length===1','Episode details opened at '+name);
    await evaluate(context,'document.querySelector(".library-media-info").open=true');
@@ -181,7 +183,7 @@ async function main(){
   assert.equal(await evaluate(context,'document.getElementById("library-forward").disabled'),true,'New navigation discards Forward branch');
   fs.mkdirSync(path.join(root,'artifacts'),{recursive:true});
   for(const [name,width,height,theater] of [['normal',3840,2160,false],['theater',3840,2160,true],['activity-size',1920,1080,true],['phone',390,1100,true]]){
-   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});${theater?'toggleDrawer(true);':'document.getElementById("library-panel").scrollIntoView();'}`);await pause(200);
+   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});document.getElementById("library-panel").scrollIntoView();`);await pause(200);
    const report=JSON.parse(await evaluate(context,`(()=>{const area=document.getElementById('library-content').getBoundingClientRect();const overflow=[...document.querySelectorAll('#library-content button,#library-content input,#library-content select')].filter(n=>{const b=n.getBoundingClientRect();return b.width&&(b.left<area.left-1||b.right>area.right+1);}).map(n=>n.className);return JSON.stringify({width:innerWidth,overflow});})()`));assert.deepEqual(report.overflow,[],JSON.stringify(report));
    const shot=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-qa.png'),Buffer.from(shot.data,'base64'));
    if(width===390){
@@ -190,8 +192,8 @@ async function main(){
     await evaluate(context,'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');await until(context,'!document.querySelector(".library").hidden','Phone library restored');
    }
    if(theater && width>700){
-    await evaluate(context,'drawer.scrollTop=document.getElementById("library-content").offsetTop+600');await pause(100);
-    assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-drawer.getBoundingClientRect().top)<2'),'Sticky toolbar covers the drawer top');
+    await evaluate(context,'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');await pause(100);
+    assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top)<2'),'Sticky toolbar covers the page top');
     const scrolled=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-scrolled-qa.png'),Buffer.from(scrolled.data,'base64'));
    }
   }
@@ -201,7 +203,7 @@ async function main(){
   const {context:activity}=await command('browsingContext.create',{type:'tab'});
   await command('browsingContext.setViewport',{context:activity,viewport:{width:1920,height:1080}});await command('browsingContext.navigate',{context:activity,url:config.publicUrl+'/watch?demo=host&frame_id=fixture',wait:'complete'});
   await until(activity,'document.querySelector("#rooms button")','Activity rooms');await evaluate(activity,'document.querySelector("#rooms button").click()');await until(activity,'document.querySelectorAll(".library-home-card").length===5','Activity home');await evaluate(activity,'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');await until(activity,'document.querySelectorAll(".library-tile").length===48','Activity library');
-  await evaluate(activity,'toggleDrawer(true);document.getElementById("options-collapse").click()');assert.equal(await evaluate(activity,'theater && document.body.classList.contains("activity") && !document.getElementById("playback-test-link")'),true);
+  await evaluate(activity,'toggleDrawer(true);document.getElementById("options-collapse").click()');assert.equal(await evaluate(activity,'immersive && !theater && document.body.classList.contains("activity") && !document.getElementById("playback-test-link")'),true);
   const activityShot=await command('browsingContext.captureScreenshot',{context:activity,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-activity-qa.png'),Buffer.from(activityShot.data,'base64'));
   await evaluate(activity,'updateActivityLayout({layout_mode:1})');assert.equal(await evaluate(activity,'getComputedStyle(drawer).display'),'none','PIP stays video-only');
   await evaluate(activity,'updateActivityLayout({layout_mode:0});document.getElementById("close-room").click()');await until(activity,'document.getElementById("library-panel").hidden','Ended room clears library access');

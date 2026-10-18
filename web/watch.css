@@ -9,7 +9,9 @@ h1{font-size:22px;letter-spacing:-.5px;margin:0}h2{font-size:17px;margin:0}.hint
 .icon-button svg,.player-button svg,.center-play svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block;pointer-events:none}
 .primary{background:var(--orange);color:var(--background);text-decoration:none;text-align:center;border-radius:12px;padding:12px 17px;font-weight:600}.primary:hover{background:var(--orange-hover)}.quiet{background:var(--elevated);border-radius:12px;padding:10px 14px}.card{background:var(--card);border-radius:22px;padding:20px}.card p{color:var(--muted)}
 #welcome{max-width:500px;margin:50px auto}#welcome .primary{display:block;margin-top:22px}.room-bar{margin-bottom:16px;justify-content:flex-start;flex-wrap:wrap}.chips{display:flex;flex-wrap:wrap;gap:8px;flex:1}.chips button{background:var(--elevated);border-radius:12px;padding:10px 16px}.chips button[aria-pressed=true]{background:var(--orange)}#viewers{white-space:nowrap}
-.screen-column{min-width:0}.stage{position:relative;aspect-ratio:16/9;background:black;border-radius:22px;overflow:hidden;display:grid;place-items:center;isolation:isolate}.stage:fullscreen{border-radius:0;background:black;aspect-ratio:auto;width:100%;height:100%}
+#app{display:grid;grid-template-columns:minmax(0,2fr) minmax(320px,1fr);gap:24px;align-items:start}
+.screen-column{min-width:0}.screen-column>#room-bar{margin:18px 0 0}#app>#library-panel{margin-top:0;min-width:0}
+.stage{position:relative;aspect-ratio:16/9;background:black;border-radius:22px;overflow:hidden;display:grid;place-items:center;isolation:isolate;container-type:inline-size}.stage:fullscreen{border-radius:0;background:black;aspect-ratio:auto;width:100%;height:100%}
 #identity{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 video{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}#empty-stage{position:relative;text-align:center;color:var(--muted);padding:24px}#empty-stage h1{color:var(--text);font-size:20px}#empty-symbol svg{width:60px;height:60px;fill:none;stroke:var(--orange);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;margin-bottom:16px}
 video::cue{font-size:clamp(14px,2.4vw,32px)}
@@ -44,7 +46,6 @@ select,input[type=search]{border:1px solid var(--border);background:var(--elevat
 #acceleration-help{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
 @media(max-width:1000px){main{padding:0 12px}.transport{gap:6px}#player-volume{width:64px}}
 @media(max-width:700px){main{margin:12px auto;padding:0 8px}.account{margin-bottom:14px}.brand{width:130px;height:auto}.account-actions{gap:6px}.stage{border-radius:18px}.title-bar{padding:10px 12px 24px}.media-heading h1{font-size:15px}.media-heading p{font-size:11px}.player-button{width:30px;height:30px}.player-button svg{width:21px;height:21px}
-.transport{display:grid;grid-template-columns:repeat(5,30px) minmax(55px,1fr);gap:3px 6px;padding:22px 10px 8px}.transport #time{grid-column:6}.transport #timeline{grid-column:1/6;width:100%;min-width:0}.transport #duration{grid-column:6}.transport #player-volume{grid-column:2/5;width:100%}.transport #quality{grid-column:5/7;max-width:100%;padding:5px;font-size:12px}
 .center-play{top:39%;width:56px;height:56px}.center-play svg{width:32px;height:32px}#ready-status{top:calc(39% + 20px);font-size:10px;margin-top:8px}#badge{top:10px}
 .stage:not(:fullscreen) #remote{position:fixed;top:70px;right:8px;width:min(420px,calc(100vw - 16px));max-height:calc(100dvh - 86px)}
 }
@@ -53,19 +54,25 @@ select,input[type=search]{border:1px solid var(--border);background:var(--elevat
 @media(prefers-reduced-motion:reduce){.player-chrome,#badge{transition:none}}
 
 .stage.drawer-open .player-chrome{opacity:1;pointer-events:auto}
-body.theater{overflow:hidden;background:black}
-.theater main{margin:0;padding:0;max-width:none}
-.theater .stage{position:fixed;inset:0;width:100%;height:100dvh;aspect-ratio:auto;border-radius:0;background:black}
+.theater main{max-width:none}
+.theater #app{display:block}
+.theater .stage{max-height:calc(100dvh - 100px)}
+.theater #app>#library-panel{margin-top:18px}
+body.immersive{overflow:hidden;background:black}
+.immersive main{margin:0;padding:0;max-width:none}
+.immersive .stage{position:fixed;inset:0;width:100%;height:100dvh;max-height:none;aspect-ratio:auto;border-radius:0;background:black}
 #drawer{position:fixed;inset:0 0 0 auto;width:50vw;height:100dvh;overflow:auto;background:color-mix(in srgb,var(--card) 96%,transparent);border-left:1px solid var(--border);padding:0 20px 20px;z-index:30;box-shadow:-12px 0 40px #0008}
 #drawer .account{align-items:flex-start;flex-wrap:wrap;padding-top:20px}#drawer .account-actions{flex-wrap:wrap;justify-content:flex-end;flex:1}#drawer .brand{width:130px;height:auto}#drawer #identity{max-width:160px}
 #drawer .room-bar{margin-top:18px}#drawer #library-panel{padding:0;margin-top:24px}
 #drawer #options-panel{padding:0;margin-top:24px}
-.theater #remote{top:64px;z-index:40}
-.theater .stage.drawer-open .media-heading{max-width:calc(50vw - 30px)}
-.theater .stage.drawer-open #drawer-open{visibility:hidden}
+.immersive #remote{top:64px;z-index:40}
+.immersive .stage.drawer-open .media-heading{max-width:calc(50vw - 30px)}
+.immersive .stage.drawer-open #drawer-open{visibility:hidden}
 .player-button[aria-pressed=true]{background:var(--orange);color:var(--background)}
-@media(max-width:700px){.transport{grid-template-columns:repeat(5,minmax(0,1fr)) 42px}.transport .player-button{justify-self:center}.transport #player-volume{grid-column:2/3}.transport #quality{grid-column:3/5;min-width:0}.transport #theater{grid-column:5}.transport #fullscreen{grid-column:6;justify-self:end}}
-@media(orientation:portrait) and (max-width:700px){#drawer{width:100vw;padding:0 16px 16px}#drawer .account{padding-top:16px}.theater .stage.drawer-open .media-heading{max-width:100%}}
+@media(max-width:1100px){#app{grid-template-columns:minmax(0,1fr);gap:18px}}
+@container(max-width:900px){.transport{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) 42px;gap:3px 6px;padding:22px 10px 8px}.transport .player-button{justify-self:center}.transport #time{grid-column:6}.transport #timeline{grid-column:1/6;width:100%;min-width:0}.transport #duration{grid-column:6}.transport #player-volume{grid-column:2/3;width:100%}.transport #quality{grid-column:3/5;max-width:100%;min-width:0;padding:5px;font-size:12px}.transport #theater{grid-column:5}.transport #fullscreen{grid-column:6;justify-self:end}}
+@container(max-width:500px){body:not(.immersive) #empty-stage{position:absolute;top:60px;left:12px;right:12px;padding:0;max-height:calc(100% - 160px);overflow:auto}body:not(.immersive) #empty-symbol,body:not(.immersive) #empty-stage h1{display:none}body:not(.immersive) #empty-hint{margin:0;font-size:12px}}
+@media(orientation:portrait) and (max-width:700px){#drawer{width:100vw;padding:0 16px 16px}#drawer .account{padding-top:16px}.immersive .stage.drawer-open .media-heading{max-width:100%}}
 /* Discord's PIP surface is video-only, regardless of hover, focus or pause. */
 .activity-pip{overflow:hidden;background:black}
 #account-logout{margin-top:20px}

@@ -99,11 +99,21 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
     const viewport = (page,width,height) => firefox ? command('browsingContext.setViewport',{context:page,viewport:{width,height}}) :
       command('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false},page);
     const activate = page => firefox ? command('browsingContext.activate',{context:page}) : command('Page.bringToFront',{},page);
+    const click = async (page,id) => {
+      await activate(page);
+      const {x,y} = JSON.parse(await evaluate(page,'JSON.stringify((()=>{const r=document.getElementById('+JSON.stringify(id)+').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})())'));
+      if (firefox) await command('input.performActions',{context:page,actions:[{type:'pointer',id:'playback-pointer',parameters:{pointerType:'mouse'},actions:[
+        {type:'pointerMove',x,y,origin:'viewport'},{type:'pointerDown',button:0},{type:'pointerUp',button:0}]}]});
+      else {
+        await command('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1},page);
+        await command('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1},page);
+      }
+    };
     const screenshot = async (page,file) => {
       const result = firefox ? await command('browsingContext.captureScreenshot',{context:page,origin:'viewport'}) : await command('Page.captureScreenshot',{format:'png'},page);
       fs.writeFileSync(file,Buffer.from(result.data,'base64'));
     };
-    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,activate,screenshot,close};
+    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,activate,click,screenshot,close};
   } catch (error) { await close(); throw error; }
 }
 module.exports = { playbackBrowser, pause };
