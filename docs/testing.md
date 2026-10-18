@@ -1,5 +1,16 @@
 # Verification status
 
+## Login and account experience (2026-10-18)
+
+Sign-in checking overlays the rendered, inactive watch layout. Only an unauthenticated 401 reveals provider login choices; failed checks offer a retry. Account settings open immediately with loading feedback, show provider usernames and official icons without IDs, offer remove icons with confirmation and a right-aligned Connect button after removal, distinguish missing Plex credentials, and preserve browser logout and Activity browser handoff. Late account responses cannot reopen a dismissed dialog. Owner matching remains behind a collapsed disclosure.
+
+- `npm run test:full`: 256 passed, zero failures/skips; `npm test` also passed.
+- Chrome 155 and Firefox 158 isolated account UI checks passed actual fixture Plex linking, both provider removal/connection flows, removal cancellation/failure, stable UUID/link preservation, username-only display, missing credential state, account fetch errors/retry, delayed dialog dismissal, owner-tool visibility, simulated Activity and logout. Desktop/theater, 320/390px phone and light/dark renders were inspected before and after the change. Connect remains beside the provider on narrow screens.
+- The existing Firefox `scripts/watch-smoke.js --accounts` passes owner matching, Plex login/room/decoded playback, browser logout, simulated Activity and phone layout. Pointer checks scroll dialog controls into view before clicking.
+- Server removal checks cover CSRF, current subject ownership, last-sign-in protection, remaining provider access, active-room rejection, stale verification, UUID preservation, credential deletion and prior login/grant invalidation.
+- `scripts/account-ui-smoke.js` covers normal account actions without repeated reload checks. It uses disposable profiles and isolated provider fixtures without loading `.env`.
+- Real Discord/Plex OAuth, real Activity and physical mobile devices remain unverified. Provider artwork provenance is recorded in [third-party notices](third-party.md#provider-account-icons).
+
 ## Local appearance rendering follow-up (2026-10-18)
 
 Canonical branding SVGs now arrive with the initial theme script. Theme/accent changes use cached local data URLs for the header, shadow-DOM remote and SVG favicon; no image requests are issued by toggling. Server-side query recoloring was removed and image CSP permits local data URLs. The request limiter is unchanged.

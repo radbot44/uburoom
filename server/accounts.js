@@ -50,6 +50,20 @@ class Accounts {
     else this.db.prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,1)').run(provider,String(subject),user.id,name);
     return {user};
   }
+  unlink(userId,provider,subject) {
+    const user=this.canonical(userId),identities=this.identities(user.id);
+    if(!identities.some(i=>i.provider===provider&&i.subject===subject))throw new Error('Account connection changed; open Account again');
+    const remaining=identities.find(i=>i.provider!==provider&&i.verified&&(i.provider!=='plex'||this.hasCredential(i.subject)));
+    if(!remaining)throw new Error('Connect another sign-in method before removing this account');
+    this.transaction(()=>{
+      this.db.prepare('DELETE FROM identities WHERE userId=? AND provider=? AND subject=?').run(user.id,provider,subject);
+      if(provider==='plex')this.db.prepare('DELETE FROM credentials WHERE subject=?').run(subject);
+      this.db.prepare('UPDATE users SET name=?,revision=revision+1 WHERE id=?').run(remaining.name,user.id);
+      this.audit(user.id,'self-unlink',{provider,subject});
+    });
+    if(provider==='plex')this.credentialCache.delete(subject);
+    return this.canonical(user.id);
+  }
   merge(survivor,retired,actor,action='self-merge') {
     survivor=this.canonical(survivor).id;retired=this.canonical(retired).id;if(survivor===retired)return survivor;
     const all=[...this.identities(survivor),...this.identities(retired)];if(new Set(all.map(i=>i.provider)).size!==all.length)throw new Error('Accounts have conflicting login identities');

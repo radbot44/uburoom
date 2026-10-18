@@ -59,6 +59,7 @@ async function main() {
     };
     const click = async (context, id) => {
       await command('browsingContext.activate', { context });
+      await evaluate(context,'document.getElementById('+JSON.stringify(id)+')?.scrollIntoView({block:"nearest"});true');
       const point = JSON.parse(await evaluate(context, '(()=>{const r=document.getElementById(' + JSON.stringify(id) + ').getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()'));
       await command('input.performActions', { context, actions: [{ type:'pointer',id:'watch-pointer',parameters:{pointerType:'mouse'},actions:[
         {type:'pointerMove',x:point.x,y:point.y,origin:'viewport'},{type:'pointerDown',button:0},{type:'pointerUp',button:0} ] }] });
@@ -183,7 +184,7 @@ async function main() {
       await command('browsingContext.navigate',{context:accountHost,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
       await until(accountHost,'!!me?.account && !document.getElementById("identity").disabled','unified Discord account');
       const accountId=await evaluate(accountHost,'me.account.id');
-      await click(accountHost,'identity');await until(accountHost,'document.getElementById("account-dialog").open','account dialog');
+      await click(accountHost,'identity');await until(accountHost,'document.getElementById("account-dialog").open && !document.getElementById("account-content").hidden','account dialog');
       await click(accountHost,'connect-plex');await until(accountHost,'!!document.getElementById("demo-alice")','Plex provider fixture');await click(accountHost,'demo-alice');
       await until(accountHost,'location.pathname==="/watch" && typeof me!=="undefined" && me?.account?.identities.length===2 && document.getElementById("account-dialog").open','Plex link returns to account settings');
       assert.equal(await evaluate(accountHost,'me.account.id'),accountId);
@@ -191,13 +192,15 @@ async function main() {
       const desktop=await command('browsingContext.captureScreenshot',{context:accountHost,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'accounts-linked-desktop-qa.png'),Buffer.from(desktop.data,'base64'));
       await click(accountHost,'account-close');await click(accountHost,'admin-mode');await until(accountHost,'me.adminMode','owner explicitly enables Admin mode');
       await click(accountHost,'identity');await until(accountHost,'!document.getElementById("account-admin").hidden','owner matching UI');
+      await evaluate(accountHost,'document.getElementById("account-admin").open=true;true');
       await command('browsingContext.setViewport',{context:accountHost,viewport:{width:390,height:900}});
       assert.equal(await evaluate(accountHost,'document.documentElement.scrollWidth<=390'),true,'account dialog fits phone width');
       await evaluate(accountHost,`document.getElementById('match-discord').value=${JSON.stringify(accountProvider.subjects.guest2)};document.getElementById('match-plex').value='102';document.getElementById('match-preview').click()`);
       await until(accountHost,'!document.getElementById("match-confirm").hidden','manual match preview');
+      await evaluate(accountHost,'document.getElementById("match-confirm").scrollIntoView({block:"center"});true');
       const mobile=await command('browsingContext.captureScreenshot',{context:accountHost,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'accounts-owner-match-mobile-qa.png'),Buffer.from(mobile.data,'base64'));
       await click(accountHost,'match-confirm');await until(accountHost,'document.getElementById("match-summary").textContent==="Match assigned."','owner reserves pre-login identities');
-      await click(accountHost,'account-close');await command('browsingContext.navigate',{context:accountHost,url:config.publicUrl+'/auth/plex',wait:'complete'});await click(accountHost,'demo-bob');
+      await click(accountHost,'account-close');await command('browsingContext.navigate',{context:accountHost,url:config.publicUrl+'/auth/plex',wait:'complete'});await until(accountHost,'!!document.getElementById("demo-bob")','Plex provider sign-in');await click(accountHost,'demo-bob');
       await until(accountHost,'typeof me!=="undefined" && me?.account?.identities.some(i=>i.provider==="plex"&&i.subject==="102")','Plex login resolves owner reservation');
       assert.notEqual(await evaluate(accountHost,'me.account.id'),accountId);assert.equal(await evaluate(accountHost,'me.owner'),false);
       await until(accountHost,'transport?.ready && document.getElementById("account-dialog").open','Plex return account dialog and room connection');

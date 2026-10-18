@@ -7,8 +7,8 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
   const secret=()=>randomBytes(32).toString('hex');
   const sourceHash=req=>cookies(req).uburoom&&hash(cookies(req).uburoom);
   const busy=ids=>[...watch.rooms.values()].some(room=>ids.includes(room.s.hostId)||[...room.viewers.values()].some(v=>ids.includes(v.userId)));
-  function invalidate(ids){
-    if(ids.includes(registry.identity('discord',config.ownerId)?.userId)){hub.adminMode=false;hub.adminEpoch++;}
+  function invalidate(ids,ownerChanged=false){
+    if(ownerChanged||ids.includes(registry.identity('discord',config.ownerId)?.userId)){hub.adminMode=false;hub.adminEpoch++;}
     for(const [token,login] of logins)if(ids.includes(login.userId))logins.delete(token);
     for(const [id,pending]of hub.pending)if(ids.includes(pending.actor.userId))hub.finish(id,{status:'unavailable',message:'Account identities changed'});
     loginStore.save();plexAuth.clear();
@@ -74,6 +74,21 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),admin:hub.isAdmin(webActor(login))});return true;}
       if(req.method==='POST'&&route==='/api/account/plex/connect'){json(res,200,{url:await startPlex(req,res,login)});return true;}
       if(req.method==='POST'&&route==='/api/account/discord/connect'){await discordStart(req,res,login);return true;}
+      const remove=/^\/api\/account\/(discord|plex)\/remove$/.exec(route);
+      if(req.method==='POST'&&remove){
+        const provider=remove[1],data=await body(req),identities=registry.identities(login.userId);
+        const remaining=identities.find(i=>i.provider!==provider&&i.verified&&(i.provider!=='plex'||registry.hasCredential(i.subject)));
+        if(!remaining)throw new Error('Connect another sign-in method before removing this account');
+        const ownerChanged=hub.isOwner(webActor(login));
+        if(remaining.provider==='plex'){if(!await plexAuth.forUser(login.userId))throw new Error('Sign in to Plex before removing Discord');}
+        else if(!hub.access.isMember(login.userId)&&!await hub.access.refresh(login.userId))throw new Error('Discord access is unavailable; keep Plex connected');
+        if((await user(req))!==login)throw new Error('Account sign-in changed; open Account again');
+        if(remaining.provider==='discord'&&!hub.access.isMember(login.userId))throw new Error('Discord access changed; keep Plex connected');
+        if(busy([login.userId]))throw new Error('Leave your watch rooms before removing a connected account');
+        const account=registry.unlink(login.userId,provider,data.subject);
+        invalidate([account.id],ownerChanged);merges.delete(sourceHash(req));session(res,account,account.name);
+        json(res,200,{removed:true});return true;
+      }
       if(req.method==='POST'&&route==='/api/account/merge'){
         const data=await body(req),merge=merges.get(sourceHash(req));
         if(!merge||merge.id!==data.id||merge.expires<=Date.now()||merge.sourceId!==login.userId)throw new Error('Merge verification expired; connect the account again');

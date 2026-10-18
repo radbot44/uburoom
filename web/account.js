@@ -1,6 +1,6 @@
 'use strict';
 // Uses the watch page's existing authenticated API and shared safe-DOM controls.
-let accountPreview, accountMerge;
+let accountPreview, accountMerge, accountValue, removeProvider, accountLoad=0;
 const accountButton=$('identity');
 $('account-close').append(uburoomUI.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
@@ -10,38 +10,78 @@ function accountError(message=''){$('account-error').textContent=message;}
 function identityRows(host,account){
   host.replaceChildren();
   for(const identity of account.identities){const row=document.createElement('p'),name=document.createElement('strong'),detail=document.createElement('span');
-    name.textContent=(identity.provider==='plex'?'Plex':'Discord')+': '+identity.name;
-    detail.className='hint';detail.textContent=' · '+identity.subject+(identity.assigned&&!identity.authenticated?' · owner-assigned, awaiting sign-in':'');
+    name.textContent=(identity.provider==='plex'?'Plex':'Discord')+(identity.name!==identity.subject?': '+identity.name:'');
+    detail.className='hint';detail.textContent=identity.assigned&&!identity.authenticated?' · awaiting sign-in':'';
     row.append(name,detail);host.append(row);
   }
 }
 async function showAccount(){
+  const load=++accountLoad;
   accountError();accountPreview=undefined;$('match-confirm').hidden=true;
+  $('account-content').hidden=true;$('account-loading').hidden=false;$('account-retry').hidden=true;
+  $('account-admin').open=false;
   logoutButton.hidden=activity||!!token;
+  if(!$('account-dialog').open)$('account-dialog').showModal();
   try{
     const value=activity?{account:me.account}:await api('/api/account');if(!value.account)throw new Error('Restart the server to enable accounts');
-    $('account-id').hidden=!value.admin;$('account-id').textContent='uburoom account '+value.account.id;identityRows($('account-identities'),value.account);
-    const discord=value.account.identities.find(i=>i.provider==='discord'),plex=value.account.identities.find(i=>i.provider==='plex');
-    $('connect-discord').hidden=!!discord?.authenticated;$('connect-plex').textContent=plex?.credentialStored?'Reconnect Plex':'Connect Plex';
+    const known=value.admin&&!activity?await api('/api/account/admin'):undefined;
+    if(load!==accountLoad||!$('account-dialog').open)return;
+    for(const provider of ['discord','plex']){
+      const identity=value.account.identities.find(i=>i.provider===provider),label=provider==='discord'?'Discord':'Plex';
+      const connected=identity?.authenticated&&(provider!=='plex'||identity.credentialStored);
+      const name=identity&&identity.name!==identity.subject?identity.name:'';
+      $(provider+'-identity').textContent=identity?(connected?(name?'Connected as '+name:'Connected'):'Sign-in needed'+(name?' · '+name:'')):'Not connected';
+      const button=$('connect-'+provider);button.textContent='Connect '+label;button.hidden=!!identity;
+      button.disabled=provider==='plex'&&!config.plexConfigured;
+      if(button.disabled)$(provider+'-identity').textContent='Unavailable on this server'+(name?' · '+name:'');
+      const remove=$('remove-'+provider);remove.hidden=!identity;
+      remove.disabled=!activity&&!value.account.identities.some(i=>i.provider!==provider&&i.authenticated&&(i.provider!=='plex'||i.credentialStored));
+      remove.title=remove.disabled?'Connect another sign-in method before removing '+label:'Remove '+label;
+    }
     $('account-browser-hint').hidden=!activity;
+    $('account-connect-hint').hidden=activity;
     $('account-admin').hidden=activity||!value.admin;
     accountMerge=value.merge;$('account-merge').hidden=!accountMerge;
     if(accountMerge){$('account-merge-details').replaceChildren();for(const account of accountMerge.accounts){const section=document.createElement('div');identityRows(section,account);$('account-merge-details').append(section);}}
-    if(value.admin&&!activity){const {accounts}=await api('/api/account/admin');for(const provider of ['discord','plex']){const list=$('known-'+provider);list.replaceChildren();for(const account of accounts)for(const identity of account.identities.filter(i=>i.provider===provider)){const option=document.createElement('option');option.value=identity.subject;option.label=identity.name;list.append(option);}}}
-    if(!$('account-dialog').open)$('account-dialog').showModal();
-  }catch(error){accountError(error.message);if(!$('account-dialog').open)$('account-dialog').showModal();}
+    if(known){for(const provider of ['discord','plex']){const list=$('known-'+provider);list.replaceChildren();for(const account of known.accounts)for(const identity of account.identities.filter(i=>i.provider===provider)){const option=document.createElement('option');option.value=identity.subject;option.label=identity.name;list.append(option);}}}
+    accountValue=value.account;
+    $('account-content').hidden=false;
+  }catch(error){if(load===accountLoad&&$('account-dialog').open){accountError(error.message);$('account-retry').hidden=false;}}
+  finally{if(load===accountLoad)$('account-loading').hidden=true;}
 }
 accountButton.addEventListener('click',showAccount);
+$('account-retry').addEventListener('click',showAccount);
+$('account-dialog').addEventListener('close',()=>{accountLoad++;});
 logoutButton.addEventListener('click',async()=>{
   logoutButton.disabled=true;accountError();pending=true;
   try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer('logout');location.replace('/watch');}
   catch(error){accountError(error.message);logoutButton.disabled=false;pending=false;}
 });
 $('account-close').addEventListener('click',()=>$('account-dialog').close());
+for(const provider of ['discord','plex']){
+  const button=$('remove-'+provider);button.append(uburoomUI.icon(document,'close'));
+  button.addEventListener('click',()=>{
+    if(activity){$('account-dialog').close();void openInBrowser();return;}
+    removeProvider=provider;
+    const label=provider==='discord'?'Discord':'Plex',identity=accountValue.identities.find(i=>i.provider===provider);
+    $('account-remove-title').textContent='Remove '+label+'?';
+    $('account-remove-description').textContent=(identity.name!==identity.subject?identity.name+' will be removed from uburoom. ':'')+'You can connect '+label+' again afterward. Your other browsers will be signed out.';
+    $('account-remove-confirm').textContent='Remove '+label;$('account-remove-error').textContent='';
+    $('account-remove-dialog').showModal();
+  });
+}
+$('account-remove-confirm').addEventListener('click',async()=>{
+  const button=$('account-remove-confirm'),identity=accountValue.identities.find(i=>i.provider===removeProvider);
+  button.disabled=true;$('account-remove-error').textContent='';
+  try{await api('/api/account/'+removeProvider+'/remove',{subject:identity.subject});location.replace('/watch?account=1');}
+  catch(error){$('account-remove-error').textContent=error.message;}
+  finally{button.disabled=false;}
+});
 for(const provider of ['plex','discord'])$('connect-'+provider).addEventListener('click',async()=>{
   if(activity){$('account-dialog').close();void openInBrowser();return;}
-  const button=$('connect-'+provider);button.disabled=true;accountError();
-  try{const {url}=await api('/api/account/'+provider+'/connect',{});location.assign(url);}catch(error){accountError(error.message);button.disabled=false;}
+  const button=$('connect-'+provider),label=button.textContent;button.disabled=true;button.textContent='Opening '+(provider==='plex'?'Plex':'Discord')+'…';accountError();
+  try{const {url}=await api('/api/account/'+provider+'/connect',{});location.assign(url);}catch(error){accountError(error.message);}
+  finally{button.disabled=false;button.textContent=label;}
 });
 $('account-merge-confirm').addEventListener('click',async()=>{
   const button=$('account-merge-confirm');button.disabled=true;accountError();

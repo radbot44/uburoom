@@ -139,6 +139,57 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,401);
 });
 
+test('provider removal protects the last sign-in, checks CSRF and current ownership, preserves UUID and revokes old logins and credentials',tls,async t=>{
+  const f=await fixture(t),browser=f.browser(),other=f.browser();await browser.discord('guest');
+  const original=(await browser.request('/api/account')).body.account;
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'last sign-in cannot be removed');
+  await browser.plex('alice',true);await other.plex('alice');
+  const before=(await browser.request('/api/watch/me')).body,revision=f.app.registry.canonical(original.id).revision;
+  const activity=(await browser.request('/api/watch/demo-login',{persona:'guest',activity:true})).body;
+  assert.equal((await browser.request('/api/account/plex/remove',{subject:'101'})).status,401,'CSRF required');
+  assert.equal((await browser.post('/api/account/plex/remove',{subject:'102'})).status,400,'a stale or other account subject cannot be removed');
+  assert.equal(f.app.registry.canonical(original.id).revision,revision);
+  const room=(await browser.post('/api/watch/rooms',{})).body.id;
+  assert.equal((await browser.post('/api/account/plex/remove',{subject:'101'})).status,400,'active rooms must be left before changing identities');
+  await browser.post('/api/watch/rooms/'+room+'/close',{});
+  f.members.delete(f.provider.subjects.guest);
+  assert.equal((await browser.post('/api/account/plex/remove',{subject:'101'})).status,400,'ineligible Discord identity cannot be the remaining sign-in');
+  f.members.add(f.provider.subjects.guest);
+  assert.equal((await browser.post('/api/account/plex/remove',{subject:'101'})).status,200);
+  let account=(await browser.request('/api/account')).body.account;
+  assert.equal(account.id,original.id);assert.deepEqual(account.identities.map(i=>i.provider),['discord']);
+  assert.equal(f.app.registry.hasCredential('101'),false);assert.equal(f.app.registry.credentialCache.has('101'),false);
+  assert.equal((await other.request('/api/watch/me')).status,401,'other browsers are revoked');
+  assert.equal((await browser.request('/api/watch/me',undefined,{Authorization:'Bearer '+activity.token})).status,401,'previous Activity grants are revoked');
+  assert.equal((await browser.request('/api/account/discord/connect',{}, {'X-CSRF-Token':before.csrf})).status,401,'previous CSRF proof is revoked');
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400);
+  await browser.plex('alice',true);await other.plex('alice');
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,200);
+  account=(await browser.request('/api/account')).body.account;
+  assert.equal(account.id,original.id);assert.deepEqual(account.identities.map(i=>i.provider),['plex']);
+  assert.equal(f.app.registry.identity('discord',f.provider.subjects.guest),undefined);
+  assert.equal((await other.request('/api/watch/me')).status,401);
+  await browser.discord('guest',true);
+  account=(await browser.request('/api/account')).body.account;
+  assert.equal(account.id,original.id);assert.equal(account.identities.length,2,'both providers can be connected again');
+});
+
+test('provider removal rejects unusable Plex credentials and account changes during remaining-provider verification',tls,async t=>{
+  const f=await fixture(t),browser=f.browser();await browser.discord('guest');await browser.plex('alice',true);
+  const owner=f.browser();await owner.discord();await owner.plex('bob',true);f.members.delete(f.config.ownerId);
+  assert.equal((await owner.post('/api/account/plex/remove',{subject:'102'})).status,400,'owner also needs an eligible remaining sign-in');
+  f.members.add(f.config.ownerId);
+  const original=(await browser.request('/api/account')).body.account;
+  f.provider.revoked.add('101');f.app.plexAuth.clear();
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'revoked Plex cannot replace Discord sign-in');
+  assert.equal(f.app.registry.identities(original.id).length,2);
+  f.provider.revoked.delete('101');
+  const verify=f.app.plexAuth.forUser.bind(f.app.plexAuth);
+  f.app.plexAuth.forUser=async id=>{const result=await verify(id);f.app.registry.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(id);return result;};
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'stale sign-in cannot unlink after awaited verification');
+  assert.equal(f.app.registry.identities(original.id).length,2);
+});
+
 test('verified reverse linking offers an explicit offline merge, refuses stale proof and signs out both previous accounts',tls,async t=>{
   const f=await fixture(t),discord=f.browser(),plex=f.browser();await discord.discord('guest');await plex.plex('bob');
   const oldD=(await discord.request('/api/account')).body.account.id,oldP=(await plex.request('/api/account')).body.account.id;

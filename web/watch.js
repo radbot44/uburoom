@@ -156,7 +156,7 @@ async function api(path, data, options = {}) {
   }
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
-  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw new Error(value.error || 'Request failed');} return value;
+  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw Object.assign(new Error(value.error || 'Request failed'),{status:response.status});} return value;
   } catch(error) {
     diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
       rejection:uburoomDiagnostics.requestKind(path)==='observe'?rejection:undefined,
@@ -200,7 +200,7 @@ function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = 
 // Move the actual shells so their controls, state and listeners stay shared.
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
 drawer.setAttribute('aria-label', 'Rooms and library'); document.body.append(drawer);
-const shells = ['account','welcome','room-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+const shells = ['account','room-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -251,7 +251,7 @@ function updateFullscreenLayout() {
   updateViewingLayout();
 }
 function placeRoomBar() {
-  $('room-bar').hidden = !me;
+  $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('room-lobby').hidden = !immersive || !!selected || !me;
 }
 for (const name of ['options','library']) $(name + '-collapse').addEventListener('click', () => {
@@ -281,6 +281,7 @@ function setSyncPreference(value) {
 $('sync-correction').addEventListener('change',event=>setSyncPreference(event.target.value));
 function renderAccount() {
   loadSyncPreference();
+  $('open-remote').hidden = false;
   $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
   $('admin-mode').hidden = !me.owner; $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
@@ -624,7 +625,7 @@ function renderRemote() {
   settings.render(state?.state, state ? options : {...options,room:{canManage:true,enabled:false,reachable:false,controls:uburoom.CONTROLS}});
 }
 function renderVisibility() {
-  $('options-panel').hidden = !me; $('watch-settings').hidden = !!state && !state.canManage;
+  $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !!state && !state.canManage;
   $('options-panel').inert = !state;
   $('options-panel').setAttribute('aria-disabled', String(!state));
   $('admin-end-room').hidden = !state?.adminMode || state?.isHost; $('admin-end-room').disabled = pending;
@@ -890,7 +891,7 @@ function applyRooms(rooms) {
 }
 function renderBrowsing() {
   browseRoom = !transport?.ready ? undefined : !selected && me ? 'lobby' : state?.canBrowse ? state.id : undefined;
-  $('library-panel').hidden = !browseRoom;
+  $('library-panel').hidden = !browseRoom && $('auth-overlay').hidden;
   void library.setRoom(browseRoom); library.setBusy(pending);
 }
 function renderLibrary() {
@@ -1074,8 +1075,12 @@ async function start() {
     acceptIdentity(await activityIdentity());
     await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', updateActivityLayout);
   }
-  try { me = await api('/api/watch/me'); } catch (error) { $('status').textContent = ''; if (activity) throw error; return; }
-  renderAccount(); $('welcome').hidden = true; $('app').hidden = false;
+  try { me = await api('/api/watch/me'); } catch (error) {
+    if (activity || error.status !== 401) throw error;
+    $('auth-loading').hidden = true; $('welcome').hidden = false;
+    $('auth-overlay').setAttribute('aria-labelledby','welcome-title');return;
+  }
+  renderAccount(); $('welcome').hidden = true;
   $('diagnostic-actions').hidden=!controlProbe&&!soakMode;
   transport=new uburoomWatchTransport({
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
@@ -1104,6 +1109,9 @@ async function start() {
   }, 1000);
   await transport.connect();
   await refreshRooms();
+  $('auth-loading').hidden = $('auth-overlay').hidden = true;
+  document.querySelector('main').inert = false;document.body.classList.remove('auth-pending');
+  renderBrowsing();renderVisibility();placeRoomBar();
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/watch');if(typeof showAccount==='function')await showAccount();}
   const requestedRoom = params.get('room');
   if (!activity && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requestedRoom || '')) {
@@ -1111,4 +1119,12 @@ async function start() {
     await selectRoom(requestedRoom);
   }
 }
-start().catch(error => fail(error.message));
+$('auth-retry').addEventListener('click', () => location.reload());
+renderVisibility();renderRemote();renderTransport();
+start().catch(error => {
+  if (!$('auth-loading').hidden) {
+    $('auth-title').textContent = 'Couldn’t complete sign-in';
+    $('auth-status').textContent = error.message;
+    $('auth-retry').hidden = false;
+  } else fail(error.message);
+});

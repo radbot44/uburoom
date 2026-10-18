@@ -30,6 +30,8 @@ For the watch layout modes, run `node scripts/watch-layout-smoke.js`. It runs Ch
 
 For player menus and touch controls, run `node scripts/player-ui-smoke.js` after generating the track corpus under `artifacts/playback-media-tracks` using the track-fixture instructions below. It uses real browser pointer/touch protocol input in disposable Chrome/Firefox profiles, checks desktop left-opening menus, actual quality/CC changes, two-row mobile bounds at 320/390/700px, portrait theater, touch auto-hide and repeated-tap seeks, and opens mobile settings inside actual fullscreen. Native mobile hardware and Discord are separate checks; screenshots go into a fresh ignored `artifacts/player-ui-*` directory.
 
+For the login overlay, account dialog and provider removal/connection flow, run `node scripts/account-ui-smoke.js`. It uses Chrome and Firefox with disposable profiles and isolated providers; it does not reload repeatedly or use live accounts. Screenshots go to a fresh ignored `artifacts/account-ui-*` directory.
+
 Relevant Firefox fixtures:
 
 ```powershell

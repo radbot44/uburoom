@@ -36,6 +36,12 @@ The published abslink 1.3.1, lfa-ponyfill 1.1.1 and throughput 1.0.2 packages an
 
 The supplied Slate vector assets are `assets/branding/uburoom-wordmark-brand.svg`, `uburoom-wordmark-white.svg`, `uburoom-oomark-brand.svg`, and `uburoom-oomark-white.svg`. Web runtime branding and favicon are owned under `web/assets/`; the favicon derives from the brand oomark. The independent remote repository owns its extension icons and branding copies. Earlier blue/green branding sources and exports are archived in `assets/branding/old/`; the diagnostic demo media still use that wordmark. UI typography remains system-based; the subtitle renderer's bundled fallback font is separately reviewed above. No external image or icon libraries are used.
 
+## Provider account icons
+
+`web/assets/discord-symbol-white.svg` is the unmodified white Discord symbol from [Discord's official brand assets](https://discord.com/branding), retrieved 2026-10-18 ([original SVG](https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/66e3d7f4ef6498ac018f2c55_Symbol.svg)). It appears with the Discord name on the sign-in button and linked-account row, using Discord's #5865F2 blurple background. Discord's logo and other marks belong to Discord Inc. and remain subject to its brand guidelines; they are not first-party GPL artwork.
+
+`web/assets/plex-icon.png` is the Plex application icon served as the favicon by [Plex's official brand portal](https://brand.plex.tv/), retrieved 2026-10-18 without editing the artwork. The portal's Frontify-hosted source is `frontify/accounts/9a/58813/favicons/ce/58857/be5042f43a60cad2dc92024389bd5720-1571820507.png` (600 × 600). It identifies Plex account/sign-in controls. Plex and the Plex Play logo are trademarks of Plex, Inc.; see [Plex's trademark guidelines](https://www.plex.tv/about/privacy-legal/plex-trademarks-and-guidelines/). This third-party artwork is not relicensed as first-party GPL source.
+
 ## Remaining asset review
 
 - Confirm branding authorship and any separate asset terms as part of final release review; retain the supplied vector master and any applicable source notices.

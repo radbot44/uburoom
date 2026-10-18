@@ -169,6 +169,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Login/account increment (2026-10-18):** Sign-in checking overlays an inactive watch layout. Discord and Plex have official provider icons, username-only summaries and matching remove/confirm/Connect flows; Connect stays at the right of its provider row. Removal preserves the account UUID, protects the last sign-in and invalidates prior credentials/logins. Owner matching is collapsed. See [verification](docs/testing.md#login-and-account-experience-2026-10-18).
+
 **Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. Appearance changes recolor cached local SVG data URLs without network requests. See [appearance verification](docs/testing.md#appearance-themes-and-accents-2026-10-18).
 
 **Track-menu refinement (2026-10-18):** Quality labels include 1080p/720p; automatic audio/subtitle summaries show resolved tracks, with separate track-name captions and an indication of which track Automatic uses. Selected choices retain orange text without an edge stripe. See [verification](docs/testing.md#player-track-menu-labels-2026-10-18).
