@@ -6,7 +6,7 @@
   // Canonical SVG sources arrive with this script once. Recolor locally, including
   // the favicon and shadow-DOM remote, without fetching another image on changes.
   const branding=window.uburoomBrandAssets, images=new Map();
-  let sunrise=false, sunriseTimer;
+  let sunrise=false, sunriseTimer, lastSunriseClick=0;
   const clicks={'theme-toggle':[], 'accent-toggle':[]};
   function brandUrl(path) {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
@@ -30,7 +30,7 @@
       frame.querySelector('[data-brand-outgoing]')?.remove();
       const previous=img.cloneNode();previous.dataset.brandOutgoing='';previous.alt='';previous.setAttribute('aria-hidden','true');
       frame.append(previous);
-      previous.animate([{opacity:1},{opacity:0}],{duration:250,easing:'linear'}).finished.then(()=>previous.remove(),()=>previous.remove());
+      previous.animate([{opacity:1},{opacity:0}],{duration:100,easing:'linear'}).finished.then(()=>previous.remove(),()=>previous.remove());
     }
     img.src=next;
   }
@@ -59,20 +59,24 @@
   }
   function cycleAccent() {
     apply({theme:root.dataset.theme,accent:root.dataset.accent==='orange'?'pink':'orange'});
-    // Each 300 ms leg is a 250 ms fade followed by a 50 ms hold.
-    sunriseTimer=setTimeout(cycleAccent,300);
+    // Each 150 ms leg is a 100 ms fade followed by a 50 ms hold.
+    sunriseTimer=setTimeout(cycleAccent,150);
   }
   function clicked(id) {
+    const now=performance.now();
     if(id==='accent-toggle' && sunrise) {
+      // Let the activation clicking finish; a separate, slower click exits.
+      const rapid=now-lastSunriseClick<250;lastSunriseClick=now;
+      if(rapid)return;
       stopSunrise();apply({theme:root.dataset.theme,accent:'orange'},true);return;
     }
-    const now=performance.now();clicks[id]=clicks[id].filter(time=>now-time<=5000);clicks[id].push(now);
+    clicks[id]=clicks[id].filter(time=>now-time<=5000);clicks[id].push(now);
     apply({theme:id==='theme-toggle'?(root.dataset.theme==='dark'?'light':'dark'):root.dataset.theme,
       accent:id==='accent-toggle'?(root.dataset.accent==='orange'?'pink':'orange'):root.dataset.accent},true);
     if(clicks[id].length<20)return;
     clicks[id]=[];burst(document.getElementById(id),id==='theme-toggle');
     if(id==='accent-toggle') {
-      sunrise=true;root.dataset.sunrise='true';render();sunriseTimer=setTimeout(cycleAccent,300);
+      sunrise=true;lastSunriseClick=now;root.dataset.sunrise='true';render();sunriseTimer=setTimeout(cycleAccent,150);
     }
   }
   function render() {
@@ -83,7 +87,7 @@
       const icon=id==='theme-toggle' && window.uburoomUI?.icon(document,light?'sun':'moon');
       if(icon)button.querySelector('.appearance-thumb').replaceChildren(icon);
       button.title=button.ariaLabel=(id==='theme-toggle'?'Theme: ':'Accent: ')+label+'. Switch to '+next+'.';
-      if(id==='accent-toggle' && sunrise)button.title=button.ariaLabel='Sunrise Mode. Click to stop and return to orange.';
+      if(id==='accent-toggle' && sunrise)button.title=button.ariaLabel='Sunrise Mode. Pause rapid clicking, then click to stop and return to orange.';
     }
     for(const img of document.querySelectorAll('img.brand:not([data-brand-outgoing])'))updateBrand(img,'/assets/branding/uburoom-wordmark-brand.svg');
     for(const link of document.querySelectorAll('link[rel=icon][type="image/svg+xml"]'))link.href=brandUrl('/favicon.svg');

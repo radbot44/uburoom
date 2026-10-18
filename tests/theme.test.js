@@ -54,11 +54,23 @@ test('Sunrise needs 20 clicks within five seconds, cycles locally and exits to o
   assert.equal(f.dataset.sunrise,undefined);f.buttons['accent-toggle'].click();
   assert.equal(f.dataset.sunrise,'true');assert.equal(f.dataset.accent,'orange');
   const writes=f.writes.length;
-  f.advance(299);assert.equal(f.dataset.accent,'orange');
+  f.advance(149);assert.equal(f.dataset.accent,'orange');
   f.advance(1);assert.equal(f.dataset.accent,'pink');
-  f.advance(300);assert.equal(f.dataset.accent,'orange');assert.equal(f.writes.length,writes);
+  f.advance(150);assert.equal(f.dataset.accent,'orange');assert.equal(f.writes.length,writes);
   f.buttons['accent-toggle'].click();assert.equal(f.dataset.sunrise,undefined);assert.equal(f.dataset.accent,'orange');
   f.advance(1000);assert.equal(f.dataset.accent,'orange');assert.equal(f.timers.size,0);
+});
+test('Sunrise survives extra rapid clicks, then a separate click returns to orange',()=>{
+  const f=fixture(null);for(let i=0;i<20;i++)f.buttons['accent-toggle'].click();
+  const writes=f.writes.length;
+  for(let i=0;i<30;i++) {
+    f.advance(249);f.buttons['accent-toggle'].click();assert.equal(f.dataset.sunrise,'true');
+  }
+  assert.equal(f.writes.length,writes,'Overshoot clicks do not save animated colors');
+  assert.equal(f.timers.size,1,'Overshoot clicks do not start extra cycles');
+  f.advance(250);assert.equal(f.dataset.sunrise,'true','Releasing keeps Sunrise running');
+  f.buttons['accent-toggle'].click();assert.equal(f.dataset.sunrise,undefined);assert.equal(f.dataset.accent,'orange');
+  assert.equal(f.timers.size,0);
 });
 test('slow clicks do not activate Sunrise and rapid theme clicks only produce a dud',()=>{
   const f=fixture(null);

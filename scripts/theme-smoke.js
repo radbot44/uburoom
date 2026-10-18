@@ -32,9 +32,10 @@ async function main() {
     assert.equal(await run('document.documentElement.dataset.sunrise'),'true');
     assert.equal(await run('document.querySelector(".sunrise-burst").children.length'),80);
     await until('document.documentElement.dataset.accent==="pink"','Sunrise starts its pink leg');
-    const intermediate=await run('new Promise(resolve=>setTimeout(()=>resolve(getComputedStyle(document.documentElement).getPropertyValue("--primary")),100))');
+    const intermediate=await run('new Promise(resolve=>setTimeout(()=>resolve(getComputedStyle(document.documentElement).getPropertyValue("--primary")),20))');
     assert.notEqual(intermediate.trim(),'rgb(255, 153, 84)');assert.notEqual(intermediate.trim(),'rgb(255, 113, 151)','Accent interpolates during the fade');
     await browser.screenshot(page,path.join(output,'sunrise-active.png'));
+    await run('new Promise(resolve=>setTimeout(()=>resolve(true),250))');
     await browser.click(page,'accent-toggle');
     assert.equal(await run('document.documentElement.dataset.sunrise'),undefined);
     assert.equal(await run('document.documentElement.dataset.accent'),'orange');

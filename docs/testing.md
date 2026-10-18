@@ -1,5 +1,11 @@
 # Verification status
 
+## Sunrise click-release follow-up (2026-10-18)
+
+Sunrise now ignores continued accent clicks less than 250 ms apart after activation, updating the last-click timestamp each time. Releasing leaves the mode running; a click after a pause of at least 250 ms stops it and saves orange. Accent/slider/logo transitions now take 100 ms, with the existing 50 ms color hold (150 ms per leg). Continued clicks do not restart the cycle or write preferences.
+
+Regression cases were updated for the 150 ms cadence, extra rapid clicks, release without stopping, the 250 ms exit boundary and a single active cycle. No unit, browser or deployment tests were run, at the owner request. The diff was reviewed; runtime verification remains unfinished.
+
 ## Accent fade and Sunrise easter egg (2026-10-18)
 
 Semantic primary/secondary colors and logo crossfades use 250 ms transitions. Twenty accent clicks in a rolling five-second window produce a local 80-particle burst and enable Sunrise Mode: each 250 ms fade is followed by a 50 ms hold, with matching thumb movement. The next accent click stops the timer and saves orange. Twenty theme clicks produce only a ten-particle gray dud. Animation frames do not persist preferences or make network requests; external preference updates stop Sunrise. Reduced-motion preferences suppress particles, button movement and logo crossfades.
