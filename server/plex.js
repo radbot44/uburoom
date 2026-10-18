@@ -3,6 +3,8 @@ const { randomUUID, createHash } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../shared/engine');
 const { AV1, PlaybackError } = require('./av1');
 const Tracks = require('./media-tracks');
+const Output = require('./plex-output');
+const Sources = require('./plex-source');
 const {HLSPool}=require('./hls-pool');
 const SubtitleResources=require('./subtitle-resources');
 const { resilientFetch } = require('./resilience');
@@ -230,24 +232,23 @@ class Plex {
     return { previousId: episodes[index - 1] && String(episodes[index - 1].ratingKey), nextId: episodes[index + 1] && String(episodes[index + 1].ratingKey) };
   }
   qualities(media) {
-    const original = media?.source?.Media?.[0];
+    const original = media?.source && Sources.select(media.source,media.sourceSelection).media;
     return QUALITIES.filter(q => !q.bitrate || (!original?.bitrate || q.bitrate <= original.bitrate) &&
       (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)));
   }
   async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     const sameSource=source && (source.principal||'discord-shared')===this.principal;
-    const item = sameSource && source.source || (await this.json(`/library/metadata/${id}`)).Metadata?.[0];
+    const item = (await this.json(`/library/metadata/${id}`)).Metadata?.[0];
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
-    const part = item.Media?.[0]?.Part?.[0];
-    if (!part?.key || !/^\/library\/parts\/\d+\//.test(part.key) || !Number.isFinite(item.duration) || item.duration <= 0) throw new Error('Media is not playable');
+    const selected=Sources.select(item,source?.sourceSelection),{media:original,part}=selected;
     const media = { title: String(item.title).slice(0, 200), subtitle: this.subtitle(item), duration: item.duration / 1000, quality, kind: 'plex', resources: new Map(), id,
-      source: item, principal:this.principal, plexContext:this, videoCodec: item.Media[0].videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
-      audioCodec:item.Media[0].audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
+      source:item,sourceSelection:selected.identity,principal:this.principal, plexContext:this, videoCodec: original.videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
+      audioCodec:original.audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.neighbors(item)) };
     media.tracks = Tracks.catalog(part,{browserSubtitles:choices.browserSubtitles,extractSubtitles:!!this.av1.ffmpeg});
     media.selection = Tracks.select(media.tracks,choices);
     media.sourceStart = this.url(part.key).href; media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);
-    media.sourceKey=JSON.stringify([this.base.origin,id,media.partId,this.url(part.key).pathname,part.size,item.duration,item.Media[0].id]);
+    media.sourceKey=JSON.stringify([this.base.origin,id,media.partId,this.url(part.key).pathname,part.size,item.duration,original.id]);
     media.captionVersion = randomUUID(); media.subtitleAbort = new AbortController();
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
@@ -258,7 +259,7 @@ class Plex {
       let shared;
       try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs);}
       catch(error){media.subtitleAbort.abort();if(error instanceof PlaybackError){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}throw error;}
-      for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate'])media[field]=shared.media[field];
+      for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate','bitrateCeiling','output'])media[field]=shared.media[field];
       media.compatible=compatible;
       media.hlsContext=shared.media.plexContext;
       if(shared.lease)media.hlsLease=shared.lease;
@@ -280,11 +281,11 @@ class Plex {
       try {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
-      const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex: '0', partIndex: '0',
+      const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
         protocol: 'hls', directPlay: '0', directStream: '0', fastSeek: '1', hasMDE: '1',
         offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
         'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
-        maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, item.Media[0].bitrate || 0)) : String(QUALITIES.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
+        maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(QUALITIES.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
         'X-Plex-Client-Profile-Name': 'Generic',
         'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
       if (audio) params.set('audioStreamID',audio.id);
@@ -294,25 +295,10 @@ class Plex {
         const q = QUALITIES.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
       }
       const decision = await this.json('/video/:/transcode/universal/decision?' + params);
-      const output = decision.Metadata?.[0]?.Media?.[0];
-      const stream = output?.Part?.[0]?.Stream?.find(x => x.streamType === 1);
-      const listedAudio = output?.Part?.[0]?.Stream?.filter(x=>Number(x.streamType)===2) || [];
-      const selectedAudio = listedAudio.filter(s=>[true,1,'1'].includes(s.selected));
-      const decidedAudio = listedAudio.filter(s=>['copy','transcode'].includes(s.decision));
-      const outputAudio=selectedAudio.length ? selectedAudio : decidedAudio.length ? decidedAudio : listedAudio.length===1 ? listedAudio : [];
-      if (Number(decision.generalDecisionCode) >= 2000 || output && output.videoCodec && output.videoCodec !== 'h264' || stream?.codec && stream.codec !== 'h264') {
-        await this.stop(media); throw new PlaybackError('Plex could not provide H.264 video; check transcoding settings');
-      }
-      if (output?.audioCodec && output.audioCodec!=='aac' || outputAudio.some(s=>s.codec && s.codec!=='aac') ||
-        audio && (outputAudio.length!==1 || outputAudio[0].id==null || String(outputAudio[0].id)!==audio.id)) {
-        await this.stop(media); throw new PlaybackError('Plex did not confirm the requested audio stream and AAC output.');
-      }
-      if (burn) {
-        const carried=output?.Part?.[0]?.Stream?.find(s=>Number(s.streamType)===3 && String(s.id)===media.selection.subtitle.id && (s.decision==='burn' || output.subtitleDecision==='burn'));
-        if (!carried) throw new PlaybackError('Plex did not confirm burning the requested subtitle. Your previous player is unchanged.');
-      }
-      media.videoCodec = 'h264'; media.compatible = compatible;
-      media.audioCodec = 'aac'; media.bitrate = Number(params.get('maxVideoBitrate'));
+      const preset=quality!=='direct' ? QUALITIES.find(q=>q.id===qualityId(quality)) : undefined;
+      const ceiling={bitrate:Number(params.get('maxVideoBitrate')),width:preset?.width,height:preset?.height};
+      const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling});
+      Object.assign(media,confirmed,{compatible,bitrateCeiling:ceiling.bitrate,output:confirmed});
       media.start = this.url('/video/:/transcode/universal/start.m3u8?' + params).href;
       if (burn || audio) {
         if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
@@ -343,7 +329,7 @@ class Plex {
     // PMS chooses audio from the scoped user's part selection, ignoring the
     // universal audioStreamID hint on some versions. Capture a private session
     // under the part lock, then restore the preference before releasing it.
-    const read=async()=> (await this.json('/library/metadata/'+media.id)).Metadata?.[0]?.Media?.[0]?.Part?.[0];
+    const read=async()=>Sources.select((await this.json('/library/metadata/'+media.id)).Metadata?.[0] || {},media.sourceSelection).part;
     const selected=part=>part?.Stream?.filter(s=>Number(s.streamType)===2 && [true,1,'1'].includes(s.selected)) || [];
     const part=await read();
     if(!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===2 && String(s.id)===requested)) throw new PlaybackError('The requested audio no longer belongs to this source.');
@@ -374,7 +360,7 @@ class Plex {
     // PMS uses this user's stored part selection for burn-in. Hold the part
     // lock through decision AND session start so another viewer cannot replace
     // it before this conversion has captured its intended source stream.
-    const read=async()=> (await this.json('/library/metadata/'+media.id)).Metadata?.[0]?.Media?.[0]?.Part?.[0];
+    const read=async()=>Sources.select((await this.json('/library/metadata/'+media.id)).Metadata?.[0] || {},media.sourceSelection).part;
     const part=await read(), requested=media.selection.subtitle.id;
     if (!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested)) throw new PlaybackError('The requested subtitle no longer belongs to this source.');
     const selected=part=>{

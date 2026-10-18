@@ -82,6 +82,7 @@ class Watch {
     const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId || !room.media) return;
     const plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;
+    if(room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer)return;
     if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) { await viewer.preparing; return this.prepareViewer(room, actor, viewerId); }
@@ -91,23 +92,36 @@ class Watch {
         const requested = Engine.QUALITIES.find(q => q.id === Engine.qualityId(viewer.quality));
         viewer.quality = (choices.find(q => q.bitrate && q.bitrate <= requested?.bitrate && q.height <= requested?.height) || choices[0]).id;
       }
-      const authorized=async()=>room.mediaVersion===version && room.viewers.get(viewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
-      let media;
-      try { media=room.media.kind === 'demo' ? room.media : await plex.prepare(room.media.id, viewer.quality, viewer.compatible, room.media, viewer.fallback,{...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized}); }
-      catch(error) {
-        if(!(error instanceof PlaybackError) || !error.media)throw error;
-        // Keep the private catalog reachable so a failed automatic subtitle
-        // conversion still offers Off/another track rather than stranding UI.
-        media=error.media; media.format='unavailable'; media.playbackError=error.message;
-      }
-      if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer || !await this.canView(room, actor) || viewer.alive && !await viewer.alive()) {
-        if (media !== room.media) await this.plex.stop(media); return;
-      }
-      this.tracking.end(viewer, 'stream-changed'); const old=viewer.media;viewer.media = media; viewer.mediaVersion = version; viewer.streamVersion = randomUUID();if(old&&old!==media)void this.plex.stop(old);
+      await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
+        plex.prepare(source.id,viewer.quality,viewer.compatible,source,viewer.fallback,
+          {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized}),{retainUnavailable:true});
     };
     viewer.preparing = prepare();
     try { await viewer.preparing; } finally { viewer.preparing = undefined; }
     return viewer.media;
+  }
+  async replaceViewer(room,actor,viewerId,prepare,{permitted=()=>true,retainUnavailable=false,accept=()=>true}={}) {
+    const viewer=room.viewers.get(viewerId),version=room.mediaVersion,current=viewer?.media,stream=viewer?.streamVersion,source=room.media;
+    if(!viewer || viewer.userId!==actor.userId)return {status:'unavailable',message:'Room changed or command expired.'};
+    const matches=()=>room.mediaVersion===version && room.viewers.get(viewerId)===viewer && viewer.media===current && viewer.streamVersion===stream;
+    const authorized=async()=>matches() && permitted() && await this.canView(room,actor) && (!viewer.alive || await viewer.alive()) && matches() && permitted();
+    let media,adopted=false;
+    try {
+      if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
+      try {media=await prepare(authorized,source);}
+      catch(error) {
+        if(!retainUnavailable || !(error instanceof PlaybackError) || !error.media)throw error;
+        // Preserve the catalog so Off/another subtitle can recover a failed burn.
+        media=error.media;media.format='unavailable';media.playbackError=error.message;
+      }
+      if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
+      if(!accept(media))throw new PlaybackError('Plex could not refresh this stream.');
+      this.tracking.end(viewer,'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();adopted=true;
+      if(current && current!==media)void this.plex.stop(current);
+      return {status:'applied'};
+    } finally {
+      if(media && !adopted && media!==current && media!==room.media)await this.plex.stop(media);
+    }
   }
   refresh(room, now = Date.now()) {
     this.settle(room, now);
@@ -269,7 +283,7 @@ class Watch {
       title: room.media?.title || 'Choose something to watch', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
-      audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,
+      audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
       mediaError:viewer.media?.playbackError,
       ...(viewer.media?.tracks ? {tracks:{...Tracks.publicCatalog(viewer.media.tracks),audioChoice:viewer.trackChoice?.audioId || 'auto',subtitleChoice:viewer.trackChoice?.subtitleId || 'auto',
         audioId:viewer.media.selection.audio?.id,subtitleId:viewer.media.selection.subtitle?.id,subtitleOffset:viewer.subtitleOffset || 0,
@@ -322,23 +336,17 @@ class Watch {
         if (this.plex.qualities && !this.plex.qualities(room.media).some(q => q.id === Engine.qualityId(args.quality))) return { status:'unsupported', message:'This quality exceeds the original source.' };
         const version = room.mediaVersion;
         const fallback = args.fallback || viewer.fallback;
-        let media;
         viewer.updating = true;
         try {
-          try { media = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id, args.quality, args.compatible === true || !!viewer.compatible, room.media, fallback,
-            {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized:async()=>permitted() && version===room.mediaVersion && room.viewers.get(actor.watchViewerId)===viewer && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())}); }
-          catch (error) { if (error instanceof PlaybackError) return {status:'failed', message:error.message}; throw error; }
-          const authorized=await this.canView(room,actor) && (!viewer.alive || await viewer.alive());
-          if (!authorized || !permitted() || version !== room.mediaVersion || room.viewers.get(actor.watchViewerId) !== viewer) {
-            await this.plex.stop(media); return { status: 'unavailable', message: 'Room changed or command expired.' };
-          }
-          this.tracking.end(viewer, 'stream-changed'); const old = viewer.media; viewer.media = media; viewer.mediaVersion = version; viewer.streamVersion = randomUUID();
-          viewer.quality = args.quality; viewer.compatible = args.compatible === true || !!viewer.compatible; void this.plex.stop(old);
-          viewer.fallback = fallback;
+          const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
+            (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,args.quality,args.compatible===true || !!viewer.compatible,source,fallback,
+              {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized}),{permitted});
+          if(result.status!=='applied')return result;
+          viewer.quality=args.quality;viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
         } catch(error) {
-          if(media && viewer.media!==media)await this.plex.stop(media);
+          if(error instanceof PlaybackError)return {status:'failed',message:error.message};
           throw error;
-        } finally { viewer.updating = false; }
+        } finally {viewer.updating=false;}
       } else if (action === 'media.volume.set') { viewer.volume = args.percent; viewer.muted = false; }
       else viewer.muted = action === 'media.mute';
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
@@ -448,7 +456,7 @@ class Watch {
       subtitleMode:args.subtitleMode ?? viewer.trackChoice?.subtitleMode ?? 'auto'};
     if (args.audioId==='auto') choices.audioIntent=undefined;
     if (['auto','off'].includes(args.subtitleId)) choices.subtitleIntent=undefined;
-    let selection, replacement;
+    let selection;
     viewer.updating = true;
     try {
       selection = Tracks.select(current.tracks,choices);
@@ -458,19 +466,15 @@ class Watch {
       const burnChanged=(selection.subtitle?.delivery==='burn' || current.selection.subtitle?.delivery==='burn') &&
         (selection.subtitle?.id!==current.selection.subtitle?.id || selection.subtitle?.delivery!==current.selection.subtitle?.delivery);
       if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
-        replacement = await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id,viewer.quality,viewer.compatible,room.media,selection.subtitle?.delivery==='burn' ? undefined : viewer.fallback,
-          {...choices,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
-      }
-      const alive = !viewer.alive || await viewer.alive();
-      const access = await this.canView(room,actor);
-      if (!alive || !access || !permitted() || version!==room.mediaVersion || viewer.media!==current || room.viewers.get(actor.watchViewerId)!==viewer) {
-        if (replacement) await this.plex.stop(replacement);
-        return {status:'unavailable',message:'Room changed or command expired.'};
-      }
-      if (replacement) {
-        this.tracking.end(viewer,'stream-changed'); viewer.media=replacement; viewer.mediaVersion=version; viewer.streamVersion=randomUUID(); void this.plex.stop(current);
-        if (selection.subtitle?.delivery==='burn') viewer.fallback=undefined;
+        const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
+          (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,viewer.quality,viewer.compatible,source,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
+            {...choices,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],authorized}),{permitted});
+        if(result.status!=='applied')return result;
+        if(selection.subtitle?.delivery==='burn')viewer.fallback=undefined;
       } else {
+        const alive=!viewer.alive || await viewer.alive(),access=await this.canView(room,actor);
+        if(!alive || !access || !permitted() || version!==room.mediaVersion || viewer.media!==current || room.viewers.get(actor.watchViewerId)!==viewer)
+          return {status:'unavailable',message:'Room changed or command expired.'};
         if (selection.subtitle?.id!==current.selection.subtitle?.id) {
           current.subtitleAbort.abort(); current.subtitleAbort=new AbortController(); current.subtitleCache?.clear(); SubtitleResources.clear(current); current.captionVersion=randomUUID();
         }
@@ -481,7 +485,6 @@ class Watch {
       else if (args.subtitleOffset!==undefined) viewer.subtitleOffset=args.subtitleOffset;
       return {status:'applied',message:'Your audio and subtitles updated.'};
     } catch (error) {
-      if (replacement) await this.plex.stop(replacement);
       return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Audio and subtitles could not be updated. Your previous selection is unchanged.'};
     } finally { viewer.updating=false; }
   }
@@ -491,23 +494,17 @@ class Watch {
     if (viewer.preparing || viewer.updating) return {status:'unavailable',message:'Wait for your stream to finish loading.'};
     if (args.mediaVersion!==version || args.streamVersion!==viewer.streamVersion) return {status:'unavailable',message:'Stream refresh expired.'};
     viewer.updating=true;
-    let replacement;
     try {
-      replacement=await (this.hub.plexFor?await this.hub.plexFor(actor):this.plex).prepare(room.media.id,viewer.quality,viewer.compatible,room.media,viewer.fallback,
-        {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],excludeLease:current.hlsLease,authorized:async()=>permitted() && version===room.mediaVersion && viewer.media===current && await this.canView(room,actor) && (!viewer.alive || await viewer.alive())});
-      if (!permitted() || version!==room.mediaVersion || room.viewers.get(actor.watchViewerId)!==viewer || viewer.media!==current ||
-        !await this.canView(room,actor) || viewer.alive && !await viewer.alive()) {
-        await this.plex.stop(replacement); return {status:'unavailable',message:'Room changed or command expired.'};
-      }
-      if (replacement.format!=='hls') { await this.plex.stop(replacement); return {status:'failed',message:'Plex could not refresh this stream.'}; }
-      this.tracking.end(viewer,'stream-changed'); viewer.media=replacement; viewer.mediaVersion=version; viewer.streamVersion=randomUUID();
-      void this.plex.stop(current);
-      return {status:'applied',message:'Your stream refreshed.'};
+      const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
+        (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,viewer.quality,viewer.compatible,source,viewer.fallback,
+          {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],excludeLease:current.hlsLease,authorized}),
+        {permitted,accept:media=>media.format==='hls'});
+      return result.status==='applied'?{status:'applied',message:'Your stream refreshed.'}:result;
     } catch(error) {
-      if(replacement)await this.plex.stop(replacement);
       return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Plex could not refresh this stream.'};
-    } finally { viewer.updating=false; }
+    } finally {viewer.updating=false;}
   }
+
   remove(id) {
     const room = this.rooms.get(id); if (!room) return;
     room.s.enabled = false; room.s.state.paused = true; room.s.epoch = randomUUID();

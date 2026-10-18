@@ -124,6 +124,7 @@ test('Plex requests keep credentials server-side, restrict origins and prepare b
   const requests = [], token = 'private-fixture-token';
   const plex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: token }, async (url, options) => {
     requests.push({ url, options });
+    if(url.pathname.endsWith('/decision')) return new Response(JSON.stringify({MediaContainer:{Metadata:[{Media:[{videoCodec:'h264',Part:[{Stream:[{streamType:1,codec:'h264'}]}]}]}]}}));
     return new Response(JSON.stringify({ MediaContainer: { Metadata: [{ type: 'movie', title: 'Movie', duration: 60000,
       Media: [{ Part: [{ key: '/library/parts/123/0/file.mp4' }] }] }] } }));
   });
@@ -139,7 +140,7 @@ test('Plex requests keep credentials server-side, restrict origins and prepare b
     assert.equal(request.options.headers['X-Plex-Client-Identifier'], request.url.searchParams.get('session'));
   }
   for (const request of requests) { assert.equal(request.options.headers['X-Plex-Token'], token); assert.equal(request.options.redirect, 'manual'); assert.equal(String(request.url).includes(token), false); }
-  const refused = new Plex({plexUrl:'http://127.0.0.1:32400',plexToken:token}, async () => new Response(JSON.stringify({MediaContainer:{Metadata:[{Media:[{videoCodec:'hevc'}]}]}})));
+  const refused = new Plex({plexUrl:'http://127.0.0.1:32400',plexToken:token}, async url => new Response(JSON.stringify({MediaContainer:{Metadata:url.pathname.endsWith('/decision')?[{Media:[{videoCodec:'hevc'}]}]:[direct.source]}})));
   await assert.rejects(refused.prepare('12','720p',false,direct), /could not provide H.264/);
 });
 

@@ -55,8 +55,8 @@ test('AV1 retries an isolated failed chunk after cooldown without losing good ca
 
 test('quality tiers respect source bitrate/resolution; AV1 clamps Original and tonemaps PQ/HLG', () => {
   const plex = new Plex({});
-  assert.deepEqual(plex.qualities({source:{Media:[{height:1080,bitrate:13000}]}}).map(q => q.id), ['direct','1080p12','1080p8','720p4','720p2']);
-  assert.deepEqual(plex.qualities({source:{Media:[{height:720,bitrate:1500}]}}).map(q => q.id), ['direct']);
+  assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:1080,bitrate:13000,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct','1080p12','1080p8','720p4','720p2']);
+  assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:720,bitrate:1500,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct']);
   const info = {streams:[{codec_type:'video',width:7680,height:4320,color_transfer:'smpte2084'},{codec_type:'audio'}],format:{bit_rate:'80000000'}};
   const original = outputSpec(info,'direct');
   assert.equal(original.width,3840); assert.equal(original.height,2160); assert.equal(original.bitrate,40000);
