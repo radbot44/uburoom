@@ -139,7 +139,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ## Testing
 
-- Run `npm test` (invokes `node --test tests/*.test.js`). All tests must pass without unexpected skips.
+- Run `npm test` (dot reporter: one dot per passing test, failures fully reported, non-zero exit on failure). Use `npm run test:full` for the complete TAP report with pass/skip counts. All tests must pass without unexpected skips; the dot output does not show skip counts, so verify skips with `npm run test:full`.
 - Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both; there is no Firefox-first policy. Until M2-P10, extension installation/lifecycle checks apply to the supported Firefox build.
 - **No unexpected skips.** Generate development certificates before the suite. Without them, 18 TLS checks skip and three further TLS checks fail; that incomplete run is not a passing baseline. If a test is otherwise skipped, document why in [docs/testing.md](docs/testing.md).
 - Smoke and integration scripts live in `scripts/` and require a running server with fixture data (`scripts/account-fixture.js`). They are not part of the `npm test` suite. The playback baseline exercises actual watch playback in headless Firefox/Chrome/Edge, checking decoded pixels, PCM tones, startup, stalls, drift, pause/seek/resume across multiple codecs and frame rates.

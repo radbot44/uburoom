@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server/index.js",
     "dev": "node --env-file-if-exists=.env server/index.js",
-    "test": "node --test tests/*.test.js",
+    "test": "node --test --test-reporter=dot tests/*.test.js",
+    "test:full": "node --test tests/*.test.js",
     "test:playback": "node scripts/playback-baseline.js",
     "demo": "node --env-file-if-exists=.env scripts/watch-demo.js",
     "build:player": "node scripts/build-player-vendor.js && node scripts/build-subtitle-vendor.js"

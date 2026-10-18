@@ -4,6 +4,8 @@ Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. T
 
 Automated tests cover parsing/target resolution, permissions/private visibility, stale commands, account linking/encryption/persistence, native tracking, isolated HTTP/media boundaries and configured extension origins. Generate local test TLS first; a suite with skipped tests is not a full baseline.
 
+`npm test` uses the Node dot reporter: one dot per passing test and full detail for failures only. `npm run test:full` runs the same suite with the complete TAP report, including pass/skip counts for evidence.
+
 Firefox watch/account/tracking fixtures use real browser decoding with synthetic media/providers. Activity layout/metadata in fixtures is simulated; real Activity delivery and Plex permissions remain separate checks.
 
 ## P2 playback preparation audit
