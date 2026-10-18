@@ -66,3 +66,11 @@
 @container plex-library (min-width:441px) and (max-width:580px){.library-tile.episode{grid-template-columns:100px minmax(0,1fr) 55px}.library-tile.episode>.library-art{width:100px}}
 @media(pointer:coarse){.library-key,.library-crumb,.library-filter-chip{min-height:44px}.library-title{min-height:44px}[data-view=normal] .library-play,[data-view=normal] .library-browse{opacity:1;width:44px;height:44px;inset:auto 8px 8px auto;margin:0}.library-views .library-key{min-width:44px}}
 @media(prefers-reduced-motion:reduce){.library-art:after,.library-copy,.library-play,.library-browse{transition:none!important}}
+
+body.theater:not(.immersive) .library-tools{position:sticky;top:0}
+body.theater:not(.immersive) .library-top{flex-wrap:nowrap}
+body.theater:not(.immersive) .library-navigation{flex-wrap:nowrap}
+body.theater:not(.immersive) .library-crumbs{flex-wrap:nowrap;overflow:hidden;flex-basis:0}
+body.theater:not(.immersive) .library-crumbs>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+body.theater:not(.immersive) .library-crumbs>[aria-current]{flex:1 1 0}
+body.theater:not(.immersive) .library-crumb-divider{flex:none}

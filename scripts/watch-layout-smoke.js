@@ -10,27 +10,27 @@ async function main() {
   const before = process.argv.includes('--before');
   const output = path.resolve('artifacts/watch-layout-' + (before ? 'before-' : '') + Date.now());
   fs.mkdirSync(output,{recursive:true});
-  const fixture = accountFixture();
-  const config = {cert:fs.readFileSync('certs/server-cert.pem'),key:fs.readFileSync('certs/server-key.pem'),
-    publicUrl:'https://localhost',ownerId:fixture.subjects.host,guildId:'fixture',channels:['fixture'],demo:true,
-    unifiedAccounts:true,demoSubjects:fixture.subjects,clientId:'100000000000000010',clientSecret:'fixture-secret',
-    plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'};
-  const plexFetch = async (input,options) => {
-    if (new URL(input).pathname==='/library/sections/1/all') return new Response(JSON.stringify({MediaContainer:{totalSize:48,
-      Metadata:Array.from({length:48},(_,i)=>({ratingKey:String(i+1),type:'movie',title:'Layout fixture '+(i+1),year:2026,duration:60000}))}}),{headers:{'Content-Type':'application/json'}});
-    return fixture.fetch(input,options);
-  };
-  const app = createApp(config,{plexFetch,oauthFetch:fixture.discordFetch,plexDemo:fixture});
-  app.hub.access = {refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'fixture',validVoiceChannel:()=>true,options:()=>({available:true})};
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
-  config.publicUrl = 'https://localhost:' + app.server.address().port;
-  try {
-    for (const name of ['chrome','firefox']) {
+  for (const name of (process.argv.find(arg=>arg.startsWith('--browsers='))?.slice(11)||'chrome,firefox').split(',')) {
+    const fixture = accountFixture();
+    const config = {cert:fs.readFileSync('certs/server-cert.pem'),key:fs.readFileSync('certs/server-key.pem'),
+      publicUrl:'https://localhost',ownerId:fixture.subjects.host,guildId:'fixture',channels:['fixture'],demo:true,
+      unifiedAccounts:true,demoSubjects:fixture.subjects,clientId:'100000000000000010',clientSecret:'fixture-secret',
+      plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'};
+    const plexFetch = async (input,options) => {
+      if (new URL(input).pathname==='/library/sections/1/all') return new Response(JSON.stringify({MediaContainer:{totalSize:48,
+        Metadata:Array.from({length:48},(_,i)=>({ratingKey:String(i+1),type:'movie',title:'Layout fixture '+(i+1),year:2026,duration:60000}))}}),{headers:{'Content-Type':'application/json'}});
+      return fixture.fetch(input,options);
+    };
+    const app = createApp(config,{plexFetch,oauthFetch:fixture.discordFetch,plexDemo:fixture});
+    app.hub.access = {refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'fixture',validVoiceChannel:()=>true,options:()=>({available:true})};
+    await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
+    config.publicUrl = 'https://localhost:' + app.server.address().port;
+    try {
       const browser = await playbackBrowser(name);
       try {
         const page = await browser.page(config.publicUrl+'/watch?demo=host');
         const evaluate = expression=>browser.evaluate(page,expression);
-        await browser.until(page,'typeof me!=="undefined"&&!!me','Login');
+        await browser.until(page,'typeof me!=="undefined"&&!!me&&transport?.ready','Login');
         await evaluate('document.getElementById("create").click();true');
         await browser.until(page,'!!state&&document.querySelector(".library-home-card")','Library');
         await evaluate('document.querySelector(".library-home-card").click();true');
@@ -55,18 +55,20 @@ async function main() {
               assert.ok(label==='phone'||columns<4,'Narrow sidebar avoids four cramped posters');
             }
             const sideBySide=!wide&&width>1100;
+            assert.equal(await evaluate('getComputedStyle(document.getElementById("library-top")).display!=="none"'),wide&&width>700,'Back to top appears only in theater');
             assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).overflowY'),sideBySide?'auto':'visible','Only side-by-side library owns scrolling');
             if (!sideBySide) {
               assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).maxHeight'),'none','Stacked library height unrestricted');
-              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),'static','Stacked toolbar scrolls with page');
+              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),wide&&width>700?'sticky':'static','Theater navigation pins; other stacked toolbars scroll');
               await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
               assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Stacked library uses page scrolling');
               for (const view of ['list','normal']) {
-                const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>0);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top};})())'));
+                const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const top=Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom),tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};})())'));
                 await evaluate(`document.querySelector('.library-views [data-view="${view}"]').click();true`); await pause(120);
                 const rect=await evaluate(`JSON.stringify(document.querySelector('.library-tile[data-item="${anchor.id}"]').getBoundingClientRect().toJSON())`);
                 const tile=JSON.parse(rect), expected=Math.max(anchor.offset,-Math.max(0,tile.height-44));
-                assert.ok(Math.abs(tile.top-expected)<2,'Page scroll preserves visible item after '+view);
+                const top=await evaluate('Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom)');
+                assert.ok(Math.abs(tile.top-top-expected)<2,'Page scroll preserves visible item after '+view);
               }
               await evaluate('window.scrollTo(0,0);true');
             }
@@ -92,9 +94,16 @@ async function main() {
                 await pause(220);
                 await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
                 const pinnedTop=(await measure()).options.y;
+                assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).color'), 'rgb(255, 153, 84)','Active theater icon uses accent');
+                assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).backgroundColor'),'rgba(0, 0, 0, 0)','Active theater icon has no accent background');
                 await evaluate('window.scrollBy(0,400);true'); await pause(100);
                 assert.ok(Math.abs((await measure()).options.y-pinnedTop)<2,'Theater room options stay pinned during library page scrolling');
                 await browser.screenshot(page,path.join(output,name+'-theater-options-pinned.png'));
+                assert.ok(Math.abs(await evaluate('document.querySelector(".library-tools").getBoundingClientRect().top'))<2,'Theater library navigation sticks at page top');
+                assert.equal(await evaluate('document.getElementById("library-top").parentElement.className'), 'library-top','Back to top in navigation row');
+                await evaluate('document.querySelector(".library-crumbs [aria-current]").textContent="A very long breadcrumb title ".repeat(30);true');
+                assert.equal(await evaluate('(()=>{const c=document.querySelector(".library-crumbs [aria-current]"),b=document.getElementById("library-top");return getComputedStyle(c).textOverflow==="ellipsis"&&c.scrollWidth>c.clientWidth&&c.getBoundingClientRect().right<=b.getBoundingClientRect().left;})()'),true,'Breadcrumb ellipsis protects Back to top');
+                await browser.screenshot(page,path.join(output,name+'-theater-navigation.png'));
                 await evaluate('document.getElementById("library-top").click();true');
                 assert.equal(await evaluate('scrollY===0&&document.activeElement.id==="stage"'),true,'Library Back to top returns to player');
                 assert.equal(await evaluate('getComputedStyle(document.getElementById("library-top")).backgroundColor===getComputedStyle(document.getElementById("close-room")).backgroundColor'),true,'Back to top uses quiet button color');
@@ -146,13 +155,24 @@ async function main() {
           await browser.click(page,'drawer-open');
           assert.equal(await evaluate('!drawer.hidden&&drawer.parentElement===document.getElementById("stage")&&document.getElementById("library-panel").parentElement===drawer'),true,'Fullscreen drawer');
           await browser.screenshot(page,path.join(output,name+'-fullscreen.png'));
+          assert.equal(await evaluate('(()=>{const c=document.getElementById("drawer-close").getBoundingClientRect(),d=drawer.getBoundingClientRect();return !drawer.contains(document.getElementById("drawer-close"))&&c.right<d.left&&c.top<24;})()'),true,'Close button outside drawer top left');
+          await browser.click(page,'title');
+          assert.equal(await evaluate('drawer.hidden'),true,'Outside click closes fullscreen drawer');
+          await browser.click(page,'drawer-open');
+          await browser.click(page,'drawer-close');
+          assert.equal(await evaluate('drawer.hidden'),true,'External close button closes drawer');
           await evaluate('document.exitFullscreen().then(()=>true)');
+          await pause(250);
           await browser.until(page,'!immersive&&theater&&drawer.hidden','Restore theater');
           await evaluate('setTheater(false);true');
           await browser.click(page,'fullscreen');
           await browser.until(page,'immersive','Normal to fullscreen');
           await evaluate('document.exitFullscreen().then(()=>true)');
           await browser.until(page,'!immersive&&!theater','Restore normal');
+          await browser.click(page,'fullscreen');
+          await browser.until(page,'immersive','Fullscreen before theater selection');
+          await browser.click(page,'theater');
+          await browser.until(page,'!document.fullscreenElement&&!immersive&&theater','Fullscreen Theater button exits into theater');
           assert.ok(Math.abs(await evaluate('video.currentTime')-position)<1,'Layout changes preserve paused position');
           await evaluate('execute({action:"media.play"}).then(()=>true)');
           await browser.until(page,'!video.paused&&video.currentTime>'+position+'+0.5','Resume after fullscreen');
@@ -169,10 +189,21 @@ async function main() {
           assert.equal(await browser.evaluate(activity,'!theater&&drawer.hidden&&document.body.classList.contains("activity-pip")'),true,'Activity rejects theater; PIP hides drawer');
           await browser.screenshot(activity,path.join(output,name+'-pip.png'));
         }
+        if (!before) {
+          await evaluate('setTheater(true);true');
+          const restored=await browser.page(config.publicUrl+'/watch?mode-probe=theater');
+          await browser.until(restored,'typeof theater==="boolean"','Restored mode initialization');
+          assert.equal(await browser.evaluate(restored,'theater&&document.body.classList.contains("theater")'),true,'Page restores saved theater mode');
+          assert.ok(fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('/watch-layout.js')<fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('<main>'),'Saved mode script blocks before page content');
+          await evaluate('setTheater(false);true');
+          const normal=await browser.page(config.publicUrl+'/watch?mode-probe=normal');
+          await browser.until(normal,'typeof theater==="boolean"','Normal mode initialization');
+          assert.equal(await browser.evaluate(normal,'!theater&&!document.body.classList.contains("theater")'),true,'Page restores normal mode');
+        }
         console.log(name+' '+browser.version+': '+(before?'before captures':'PASS'));
       } finally { await browser.close(); }
-    }
-  } finally { await app.close(); }
+    } finally { await app.close(); }
+  }
   console.log(output);
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

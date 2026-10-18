@@ -251,6 +251,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
         '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
         '/watch-player-ui.js':['watch-player-ui.js','text/javascript'],
+        '/watch-layout.js':['watch-layout.js','text/javascript'],
         '/watch-player.css':['watch-player.css','text/css'],
         '/watch-transport.js':['watch-transport.js','text/javascript'],
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],

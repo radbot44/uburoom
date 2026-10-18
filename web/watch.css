@@ -42,7 +42,8 @@ select,input[type=search]{border:1px solid var(--border);background:var(--elevat
 #badge{position:absolute;top:72px;left:12px;pointer-events:none;opacity:0;transition:opacity .25s;z-index:3}#badge.visible{opacity:1}
 #library-panel{margin-top:18px;overflow:visible}.library-header{flex-wrap:wrap}
 #library-panel>.library-header{background:var(--card)}
-#library-top{font-size:12px;padding:8px 10px;white-space:nowrap}
+#library-top{display:none;font-size:12px;padding:8px 10px;white-space:nowrap}
+body.theater:not(.immersive) #library-top{display:block;flex:none}
 @media(min-width:1101px){
 body:not(.theater):not(.immersive) #app>#library-panel{max-height:calc(100dvh - var(--watch-header-height,95px) - 22px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 body:not(.theater):not(.immersive) #app>#library-panel>.library-header{position:sticky;top:0;z-index:6;isolation:isolate}
@@ -87,11 +88,13 @@ body.immersive{overflow:hidden;background:black}
 .immersive .stage.drawer-open .media-heading{max-width:calc(50vw - 30px)}
 .immersive .stage.drawer-open #drawer-open{visibility:hidden}
 .player-button[aria-pressed=true]{background:var(--orange);color:var(--background)}
+#theater[aria-pressed=true]{background:transparent;color:var(--orange)}
+#drawer-close{position:fixed;top:10px;right:calc(50vw + 10px);z-index:31;background:var(--elevated)}
 @media(max-width:1100px){#app,.theater #app{grid-template-columns:minmax(0,1fr);gap:18px}#app>#library-panel{position:relative;top:auto}.theater:not(.immersive) #options-panel,.theater #app>#library-panel{margin-inline:24px}}
 @media(max-width:700px){.theater main>#account{margin-inline:8px}.theater #room-bar{width:calc(100% - 16px)}.theater:not(.immersive) #options-panel,.theater #app>#library-panel{margin-inline:8px}}
 
 @container(max-width:500px){body:not(.immersive) #empty-stage{position:absolute;top:60px;left:12px;right:12px;padding:0;max-height:calc(100% - 160px);overflow:auto}body:not(.immersive) #empty-symbol,body:not(.immersive) #empty-stage h1{display:none}body:not(.immersive) #empty-hint{margin:0;font-size:12px}}
-@media(orientation:portrait) and (max-width:700px){#drawer{width:100vw;padding:0 16px 16px}#drawer .account{padding-top:16px}.immersive .stage.drawer-open .media-heading{max-width:100%}}
+@media(orientation:portrait) and (max-width:700px){#drawer{width:calc(100vw - 48px);padding:0 12px 16px}#drawer-close{right:auto;left:4px;padding:8px}#drawer .account{padding-top:16px}.immersive .stage.drawer-open .media-heading{max-width:100%}}
 /* Discord's PIP surface is video-only, regardless of hover, focus or pause. */
 .activity-pip{overflow:hidden;background:black}
 #account-logout{margin-top:20px}

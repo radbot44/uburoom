@@ -193,7 +193,7 @@ async function main(){
    }
    if(theater && width>700){
     await evaluate(context,'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');await pause(100);
-    assert.equal(await evaluate(context,'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector(".library-tools")).position==="static"&&document.querySelector(".library-tools").getBoundingClientRect().bottom<0'),true,'Theater library and toolbar scroll with the page');
+    assert.equal(await evaluate(context,'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector(".library-tools")).position==="sticky"&&Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top)<2'),true,'Theater library scrolls with page beneath sticky navigation');
     const scrolled=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-scrolled-qa.png'),Buffer.from(scrolled.data,'base64'));
    }
   }

@@ -8,7 +8,7 @@ let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = fal
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
 const activity = params.has('frame_id');
-let theater = false, immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
+let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, av1FallbackVersion;
@@ -208,6 +208,8 @@ function toggleDrawer(show = drawer.hidden) {
   show = !!show && immersive && !document.body.classList.contains('activity-pip');
   const parent = document.fullscreenElement === $('stage') ? $('stage') : document.body;
   if (drawer.parentElement !== parent) parent.append(drawer);
+  parent.append($('drawer-close'));
+  $('drawer-close').hidden = !show;
   drawer.hidden = !show; $('stage').classList.toggle('drawer-open', show);
   $('drawer-open').setAttribute('aria-expanded', String(show));
   if (!show) toggleRemote(false);
@@ -218,17 +220,18 @@ function returnToVideo() {
   $('stage').focus({preventScroll:true});
 }
 $('library-top').addEventListener('click', returnToVideo);
-function setTheater(enabled) {
+function setTheater(enabled, remember = true) {
   theater = !activity && !document.body.classList.contains('mobile-player') && !!enabled;
   document.body.classList.toggle('theater', theater);
   $('theater').setAttribute('aria-pressed', String(theater));
   $('theater').title = $('theater').ariaLabel = theater ? 'Exit theater mode' : 'Theater mode';
+  if (remember && !activity) { try { localStorage.setItem('uburoom.watchMode', theater ? 'theater' : 'normal'); } catch {} }
   updateViewingLayout();
 }
 function updateMobilePlayer() {
   const mobile=innerWidth<=700||matchMedia('(pointer:coarse) and (max-height:700px)').matches||!!document.fullscreenElement&&document.body.classList.contains('mobile-player');
   document.body.classList.toggle('mobile-player',mobile);
-  if(mobile&&theater)setTheater(false);
+  if(mobile&&theater&&!immersive&&!document.fullscreenElement)setTheater(false,false);
 }
 function updateViewingLayout() {
   document.documentElement.style.setProperty('--watch-room-bar-height',$('room-bar').offsetHeight+'px');
@@ -354,9 +357,15 @@ if (activity) {
   $('brand-link').href = '/watch' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
 }
-updateMobilePlayer(); setTheater(false); updateFullscreenLayout(); updateActivityLayout();
+updateMobilePlayer(); setTheater(theater,false); updateFullscreenLayout(); updateActivityLayout();
 window.addEventListener('resize', () => { updateMobilePlayer(); updateActivityLayout(); renderTransport(); });
-$('theater').addEventListener('click', () => setTheater(!theater));
+$('theater').addEventListener('click', async () => {
+  if (activity) return;
+  try {
+    if (document.fullscreenElement) { await document.exitFullscreen(); setTheater(true); }
+    else setTheater(!theater);
+  } catch (error) { fail(error.message); }
+});
 $('drawer-open').addEventListener('click', () => {
   if (!immersive) return;
   toggleDrawer(); if (!drawer.hidden) $('drawer-close').focus();
@@ -955,6 +964,12 @@ document.addEventListener('keydown', event => {
   if (command) { event.preventDefault(); execute(command).catch(error => fail(error.message)); }
 });
 $('open-remote').addEventListener('click', () => toggleRemote());
+document.addEventListener('pointerdown', event => {
+  if (!drawer.hidden && !event.composedPath().some(node => ['drawer','drawer-open','drawer-close'].includes(node.id)) && !event.composedPath().some(node => node instanceof HTMLDialogElement || node.classList?.contains('player-settings-menu'))) {
+    toggleDrawer(false);
+    $('stage').focus({preventScroll:true});
+  }
+});
 document.addEventListener('pointerdown', event => { if (!$('remote').hidden && !event.composedPath().some(node => ['remote','open-remote'].includes(node.id))) toggleRemote(false); });
 $('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
 document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });

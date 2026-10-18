@@ -12,7 +12,9 @@
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
     const tools = node('div',host,undefined,'library-tools');
     const top = node('div',tools,undefined,'library-top');
+    top.append(doc.getElementById('library-top'));
     const navigation = node('div',top,undefined,'library-navigation');
+    top.prepend(navigation);
     const previous = button(navigation,'Back','left'); previous.id = 'library-back';
     const next = button(navigation,'Forward','right'); next.id = 'library-forward';
     const home = button(navigation,'Libraries home','home'); home.id = 'library-home';

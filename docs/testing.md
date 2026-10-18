@@ -2,6 +2,14 @@
 
 Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
 
+## Saved modes and fullscreen drawer (2026-10-18)
+
+Normal/theater preference is stored in browser storage and applied by a synchronous external script before watch content is parsed, without an initial normal-layout render. Mobile/Activity exclude theater. Fullscreen preserves the underlying page mode; its Theater action exits fullscreen into theater, and the active icon uses orange without an accent background. Drawer outside clicks close it, and its close control sits outside the upper-left edge (portrait phones reserve a left gutter). Theater library navigation stays sticky; Back to top appears only there at the right, with long breadcrumbs truncated before it.
+
+Chrome 155.0.8059.84 and Firefox 158.0 passed the expanded layout smoke: native fullscreen/drawer ownership and outside/external-close input, restoration of both modes, fullscreen-to-theater selection, fresh-page preference restoration, parser ordering, icon colors, sticky navigation and breadcrumb overflow, theater-only Back to top, page-scroll anchors, decoded playback and simulated Activity/PIP. Player UI smoke passed both browsers, including mobile/fullscreen settings, CC, quality, volume layout and touch interaction. The Firefox library smoke passed navigation, paging, deep anchors and sticky theater navigation. Rendered fullscreen and scrolled theater navigation were inspected. `npm run test:full` passed 241 tests with zero failures, cancellations or skips.
+
+Earlier combined-fixture runs intermittently timed out during startup/mode initialization while sharing one server with bounded request limits. The layout runner now creates a separate fixture server per browser and waits for room-transport readiness, with production limits unchanged. Fullscreen resize handling preserves theater while immersive. Physical phone/real Discord verification remains open. Browser storage denial falls back to the current page mode without persistence.
+
 ## Theater options and return to player (2026-10-18)
 
 Wide theater Room options now stay sticky beside the scrolling library. A quiet Back to top button in the Plex library header returns to the page top/player; accepted library Play selections share that action, closing any drawer and moving focus to the player. Rejected playback retains the library error path. Narrow layouts keep options in normal page flow.
