@@ -41,6 +41,15 @@
     const rect=button.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
     const colors=dud?['#AAB0BC','#706D77']:['#FF9954','#FF7197','#FFD166','#FF537A'];
     const count=dud?10:80, duration=dud?450:1000;
+    if(!dud) {
+      const aura=document.createElement('div');aura.className='sunrise-aura';
+      aura.style.left=x+'px';aura.style.top=y+'px';
+      layer.append(aura);
+      aura.animate([{transform:'translate(-50%,-50%) scale(.1)',opacity:0},
+        {transform:'translate(-50%,-50%) scale(.5)',opacity:.95,offset:.15},
+        {transform:'translate(-50%,-50%) scale(2.8)',opacity:.5,offset:.65},
+        {transform:'translate(-50%,-50%) scale(4.2)',opacity:0}],{duration,easing:'cubic-bezier(.15,.65,.4,1)',fill:'forwards'});
+    }
     for(let i=0;i<count;i++) {
       const particle=document.createElement('span'), angle=Math.random()*Math.PI*2, distance=dud?15+Math.random()*25:90+Math.random()*300;
       const dx=Math.cos(angle)*distance, dy=Math.sin(angle)*distance;
