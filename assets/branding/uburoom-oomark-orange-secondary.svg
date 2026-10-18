@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="298.99" height="249.10610000000008" viewBox="528.41 544.4 298.99 249.10610000000008">
+  <title>uburoom oomark — accents swapped</title>
+  <desc>uburoom oomark using the slate brand palette: off-white #F8F7F4 eyes and a pink #FF9954 mouth.</desc>
+
+  <circle id="letter-o-first" cx="618.4600" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <circle id="letter-o-second" cx="737.3500" cy="634.4500" r="48.3813" fill="none" stroke="#F8F7F4" stroke-width="35.3374"/>
+  <line x1="601.9475" x2="753.8625" y1="743.0031" y2="743.0031" stroke="#FF9954" stroke-width="53.0061" stroke-linecap="butt"/>
+</svg>
