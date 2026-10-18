@@ -17,7 +17,10 @@ async function main() {
         media.width=1920;media.height=1080;
         for(const part of media.Part) {
           if(url.pathname.endsWith('/103'))part.Stream=part.Stream.filter(s=>s.streamType!==3);
-          for(const stream of part.Stream)if(String(stream.id)==='10190')stream.default=1;
+          for(const stream of part.Stream) {
+            if(stream.streamType===2){stream.title='Studio mix';stream.language='English';stream.languageCode='eng';}
+            if(String(stream.id)==='10190'){stream.default=1;stream.selected=1;stream.title='English accessibility captions';}
+          }
         }
       }
       return new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
@@ -46,11 +49,21 @@ async function main() {
       await browser.click(page,'tracks-open');await pause(100);
       assert.equal(await evaluate('document.getElementById("player-settings-menu").matches(":popover-open")'),true,'Desktop drop-up: '+await evaluate('JSON.stringify(playerUITestErrors)'));
       assert.equal(await evaluate('[...document.querySelectorAll("#player-settings-menu>button")].map(b=>b.childNodes[0].textContent).join("|")'),'Quality|Audio track|Subtitle track|More settings');
+      assert.equal(await evaluate('document.querySelector("#settings-audio-track .settings-value").textContent.includes("English") && !document.querySelector("#settings-audio-track .settings-value").textContent.includes("Automatic")'),true,'Main menu shows the resolved automatic audio');
+      assert.equal(await evaluate('document.querySelector("#settings-audio-track .settings-caption").textContent'),'Studio mix');
+      assert.equal(await evaluate('document.querySelector("#settings-quality .settings-caption")===null'),true,'Quality has no track caption');
+      await browser.click(page,'settings-audio-track');await shot('audio-menu');
+      assert.equal(await evaluate('document.querySelector(".settings-submenu [aria-checked=true]").dataset.value'),'auto');
+      assert.equal(await evaluate('!!document.querySelector(".settings-submenu .settings-auto")'),true,'Resolved audio is marked Used by Automatic');
+      assert.equal(await evaluate('getComputedStyle(document.querySelector(".settings-submenu [aria-checked=true]")).boxShadow'),'none');
       await browser.click(page,'settings-subtitle-track');await shot('subtitle-menu');
+      assert.equal(await evaluate('document.querySelector(".settings-submenu [aria-checked=true]").dataset.value'),'auto');
+      assert.equal(await evaluate('[...document.querySelectorAll(".settings-submenu button")].find(b=>b.dataset.value==="10190").querySelector(".settings-caption").textContent'),'English accessibility captions');
+      assert.equal(await evaluate('!![...document.querySelectorAll(".settings-submenu button")].find(b=>b.dataset.value==="10190").querySelector(".settings-auto")'),true);
       assert.equal(await evaluate('(()=>{const a=document.querySelector(".settings-submenu").getBoundingClientRect(),b=document.getElementById("player-settings-menu").getBoundingClientRect();return a.width>0&&b.width>0&&a.right<=b.left&&a.left>=0;})()'),true,'Submenu opens to the left');
       await browser.click(page,'settings-more');await until('document.getElementById("tracks-dialog").open','Full settings');
       assert.equal(await evaluate('document.getElementById("sync-correction").closest("dialog").id'),'tracks-dialog');await shot('full-settings');
-      await browser.click(page,'tracks-close');await browser.click(page,'captions-toggle');await until('state.tracks.subtitleId==="10190"&&captions.loaded','Default CC track');
+      await browser.click(page,'tracks-close');await until('state.tracks.subtitleId==="10190"&&captions.loaded','Default CC track');
       assert.equal(await evaluate('document.getElementById("captions-toggle").getAttribute("aria-pressed")'),'true');
       await browser.click(page,'captions-toggle');await until('!state.tracks.subtitleId','CC off');
       await browser.click(page,'captions-toggle');await until('state.tracks.subtitleId==="10190"','CC restored');

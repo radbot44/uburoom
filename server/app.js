@@ -242,9 +242,14 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && branding[route]) {
         const [file, type] = branding[route];
         res.writeHead(200, { 'Content-Type': type });
-        return res.end(fs.readFileSync(path.join(publicDir, 'assets', file)));
+        const asset=fs.readFileSync(path.join(publicDir, 'assets', file));
+        if (!file.endsWith('.svg')) return res.end(asset);
+        const light=url.searchParams.get('theme')==='light',pink=url.searchParams.get('accent')==='pink';
+        return res.end(asset.toString('utf8').replace(/#FF9954|#FF7197|#F8F7F4/g,color=>
+          color==='#F8F7F4' ? light?'#242329':color : pink ? color==='#FF9954'?'#FF7197':'#FF9954' : color));
       }
       const assets = { '/remote-ui.js': ['remote-ui.js', 'text/javascript'],
+        '/theme.js': ['theme.js', 'text/javascript'],
         '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
         '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
         '/playback-policy.js':['playback-policy.js','text/javascript'],

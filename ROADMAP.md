@@ -169,6 +169,10 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. See [appearance verification](docs/testing.md#appearance-themes-and-accents-2026-10-18).
+
+**Track-menu refinement (2026-10-18):** Quality labels include 1080p/720p; automatic audio/subtitle summaries show resolved tracks, with separate track-name captions and an indication of which track Automatic uses. Selected choices retain orange text without an edge stripe. See [verification](docs/testing.md#player-track-menu-labels-2026-10-18).
+
 **Goal:** Review the interface and complete user experience in depth, then restructure navigation, information hierarchy and interactions so common tasks are clear, consistent and easy to complete.
 
 - Map and inspect end-to-end journeys: sign-in and account linking, library browsing, room creation/joining, playback and personal tracks/quality, remote permissions, browser/Discord handoff and recovery from failures.

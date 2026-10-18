@@ -1,6 +1,16 @@
 /* Player menus and pointer interaction; playback still uses the shared command engine. */
 (function (global) {
   'use strict';
+  function trackLabel(track) {
+    let language=['und','unknown'].includes(track.languageName?.toLowerCase())?undefined:track.languageName;
+    const code=language && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(language)?language:!language?track.language:undefined;
+    if (code && !['und','unknown'].includes(code)) {
+      try { language=new Intl.DisplayNames(['en'],{type:'language'}).of(code); } catch {}
+    }
+    const channels=track.channels===1?'Mono':track.channels===2?'Stereo':track.channels===6?'5.1':track.channels===8?'7.1':track.channels?track.channels+' ch':'';
+    const codec=/^pcm/.test(track.codec || '')?'PCM':track.codec?.toUpperCase();
+    return [language || 'Unknown',codec,channels,track.forced && 'Forced',track.sdh && 'SDH',track.commentary && 'Commentary',track.description && 'Audio description',!track.available && 'Unavailable'].filter(Boolean).join(' · ');
+  }
   function mount({getState,execute,fail,beforeSettings,afterSettings,changeTrack,captions}) {
     const $ = id => document.getElementById(id), stage=$('stage'), cog=$('tracks-open'), dialog=$('tracks-dialog');
     const mobile=()=>document.body.classList.contains('mobile-player');
@@ -59,12 +69,23 @@
     }
     function renderChoices() {
       if(!activeChoice)return;
-      const select=$(activeChoice), signature=JSON.stringify([select.value,select.disabled,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
+      const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track';
+      const trackRows=activeChoice==='quality'?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
+      const resolved=audio?tracks?.audioId:tracks?.subtitleId;
+      const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
       if(signature===choiceSignature)return; choiceSignature=signature;
       const focused=submenu.contains(document.activeElement), previous=document.activeElement?.dataset.value;
       submenu.replaceChildren();
       for(const option of select.options) {
-        const b=button(submenu,option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
+        const track=trackRows.find(row=>row.id===option.value);
+        const b=button(submenu,track?trackLabel(track):option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
+        if (track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; b.append(caption); }
+        if (select.value==='auto' && option.value===resolved) {
+          const marker=document.createElement('span'); marker.className='settings-auto'; marker.textContent='Used by Automatic'; b.append(marker);
+        }
+        if (option.value==='auto' && activeChoice==='subtitle-track' && !resolved) {
+          const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent='Currently Off'; b.append(caption);
+        }
         b.setAttribute('role','menuitemradio'); b.setAttribute('aria-checked',String(option.value===select.value));
         b.onclick=()=>{select.value=option.value; select.dispatchEvent(new Event('change',{bubbles:true}));};
         if(focused&&option.value===previous)b.focus();
@@ -81,7 +102,14 @@
       const symbol=enabled?'captionsOn':'captions';
       if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomUI.icon(document,symbol));cc.dataset.symbol=symbol;}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
-      for(const {id,row,value} of rows) { const select=$(id); row.disabled=select.disabled; value.textContent=select.selectedOptions[0]?.textContent||'Unavailable'; value.title=value.textContent; }
+      for(const {id,row,value} of rows) {
+        const select=$(id), audio=id==='audio-track';
+        const track=id==='quality'?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
+        row.disabled=select.disabled;
+        value.textContent=id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
+        if (track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
+        value.title=value.textContent;
+      }
       if(opened){renderChoices(); placeMenu();}
       layoutCaptions();
     }
@@ -155,5 +183,6 @@
     document.addEventListener('fullscreenchange',()=>{if(opened)closeSettings();});
     return {render,closeSettings,reset,settingsOpen:()=>opened||dialog.open,showChrome};
   }
-  global.uburoomPlayerUI={mount};
+  global.uburoomPlayerUI={mount,trackLabel};
+  if(typeof module==='object')module.exports=global.uburoomPlayerUI;
 })(globalThis);

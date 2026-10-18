@@ -679,14 +679,10 @@ function renderTransport() {
   if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
   renderTracks();
 }
-function trackLabel(track) {
-  const roles=[track.forced && 'Forced',track.sdh && 'SDH',track.commentary && 'Commentary',track.description && 'Audio description'].filter(Boolean);
-  return [track.label,track.codec?.toUpperCase(),track.channels && track.channels+' ch',...roles,!track.available && 'Unavailable'].filter(Boolean).join(' · ');
-}
 function renderTracks() {
   const tracks=state?.tracks, available=!!tracks;
   const render=(id,rows,choices,value)=>{
-    const options=[...choices,...(rows || []).map(row=>({id:row.id,label:trackLabel(row),disabled:!row.available}))];
+    const options=[...choices,...(rows || []).map(row=>({id:row.id,label:[uburoomPlayerUI.trackLabel(row),row.title].filter(Boolean).join(' — '),disabled:!row.available}))];
     const element=$(id), signature=JSON.stringify(options);
     if(element.dataset.options!==signature){element.replaceChildren(...options.map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=row.label;option.disabled=!!row.disabled;return option;}));element.dataset.options=signature;}
     element.value=value || 'auto'; element.disabled=!available || pending || qualityPending;
@@ -695,7 +691,8 @@ function renderTracks() {
   render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic (Plex)'},{id:'off',label:'Off'}],tracks?.subtitleChoice);
   const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), delivery=tracks?.subtitleDelivery || subtitle?.delivery,burned=delivery==='burn';
   subtitleMode.value=tracks?.subtitleMode || 'auto';subtitleMode.disabled=!available || pending || qualityPending || !subtitle;
-  $('audio-track-status').textContent=audio ? audio.label+(state.format!=='file' ? ' · Stereo playback' : '') : '';
+  $('audio-track-status').textContent=audio ? [uburoomPlayerUI.trackLabel(audio),state.format!=='file' && audio.channels!==2 && 'Stereo playback'].filter(Boolean).join(' · ') : '';
+  for (const [id,track] of [['audio-track-name',audio],['subtitle-track-name',subtitle]]) { $(id).textContent=track?.title || ''; $(id).hidden=!track?.title; }
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
   $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';

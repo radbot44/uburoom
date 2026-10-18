@@ -5,11 +5,11 @@
   const CONTROLS = Object.freeze({ playback: true, transform: true });
   const QUALITIES = Object.freeze([
     { id:'direct', label:'Original' },
-    { id:'1080p20', label:'1080 · 20 Mbps', width:1920, height:1080, bitrate:20000 },
-    { id:'1080p12', label:'1080 · 12 Mbps', width:1920, height:1080, bitrate:12000 },
-    { id:'1080p8', label:'1080 · 8 Mbps', width:1920, height:1080, bitrate:8000 },
-    { id:'720p4', label:'720 · 4 Mbps', width:1280, height:720, bitrate:4000 },
-    { id:'720p2', label:'720 · 2 Mbps', width:1280, height:720, bitrate:2000 }
+    { id:'1080p20', label:'1080p · 20 Mbps', width:1920, height:1080, bitrate:20000 },
+    { id:'1080p12', label:'1080p · 12 Mbps', width:1920, height:1080, bitrate:12000 },
+    { id:'1080p8', label:'1080p · 8 Mbps', width:1920, height:1080, bitrate:8000 },
+    { id:'720p4', label:'720p · 4 Mbps', width:1280, height:720, bitrate:4000 },
+    { id:'720p2', label:'720p · 2 Mbps', width:1280, height:720, bitrate:2000 }
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
   const validQuality = id => QUALITIES.some(q => q.id === qualityId(id));

@@ -41,7 +41,7 @@
     for (const [start,end] of ranges(buffered,duration)) stops.push(`var(--border) ${percent(start)},var(--muted) ${percent(start)},var(--muted) ${percent(end)},var(--border) ${percent(end)}`);
     stops.push('var(--border) 100%');
     const progress = percent(Number.isFinite(position) ? position : 0);
-    return `linear-gradient(to right,var(--orange) 0%,var(--orange) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
+    return `linear-gradient(to right,var(--primary) 0%,var(--primary) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
   }
   function needsCompatible(source,canPlayType) {
     // Positive answers remain only hints. Only an explicit negative for every

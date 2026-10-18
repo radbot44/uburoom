@@ -1,5 +1,22 @@
 # Verification status
 
+## Appearance themes and accents (2026-10-18)
+
+The app defaults explicitly to dark/orange and persists independent light/dark and orange/pink preferences locally. Compact header switches use the Room options pill/thumb treatment; the theme thumb contains a sun/moon icon with no visible labels, and the icon-free accent thumb displays its selected brand color on a neutral track. Page, account/room/player dialogs, menus, library controls, shadow-DOM remote and playback badges inherit the palette. Video/chrome overlays retain dark surfaces and readable light controls. Wordmark, remote logo and SVG favicon adapt the canonical artwork without changing fixed-color source assets.
+
+- Chrome and Firefox `scripts/theme-smoke.js` pass all four palette/accent combinations, exact six-color tokens and fixed brand references, semantic accent swapping, SVG colors, remote/menu/dialog surfaces, black stage/light chrome text, phone layout, persistence across pages and cross-tab updates. Sampled text/card, muted/card, primary-button and selected-option contrast ratios meet 4.5:1. Rendered desktop, phone and settings examples were inspected.
+- Theme unit checks cover explicit defaults, invalid stored values, independent switches, persistence, blocked storage and storage-event propagation. Existing Chrome/Firefox player UI checks also pass decoded playback, settings, quality, captions, touch layouts and fullscreen behavior with dark/orange defaults.
+- Before the final accent-icon removal, `npm run test:full` passed 253 tests with zero failures/skips; `npm test` and both appearance browser runners also passed. The color-only accent follow-up was not retested, at the owner request.
+- Automated browser checks use isolated synthetic media/providers. Real Discord Activity and physical phones remain unverified; appearance never reads the system theme or changes playback/consent settings.
+
+## Player track menu labels (2026-10-18)
+
+Quality labels include 1080p/720p. Desktop selected choices retain their orange text/background with no left edge stripe. Main audio/subtitle settings summarize the resolved track, including Automatic; the selection menu keeps Automatic checked and marks its resolved track Used by Automatic. Language, codec and channel layout are formatted independently of Plex's display title; named tracks have separate muted captions. Native full-dialog choices retain track names and display selected-name captions below the controls.
+
+- `npm run test:full`: 250 passed, zero failures/skips, including label de-duplication, language fallback, PCM/channel layout and resolution suffix coverage.
+- `scripts/player-ui-smoke.js`: Chrome and Firefox pass decoded playback, resolved automatic audio/subtitles, custom-name captions, Automatic radio state, resolved-track indication, stripe removal, desktop submenu placement and existing quality/CC/settings/mobile/fullscreen behavior. Rendered desktop and phone settings were inspected with isolated synthetic media.
+- Actual Plex naming variations and real Discord Activity remain unverified for this increment.
+
 ## Single-viewer coordination delays (2026-10-18)
 
 A sole connected viewing tab uses zero coordination lead for initial playback, resume, pause/toggle and shared-seek readiness release. Decoder/buffer readiness, autoplay handling, clock sampling, drift tracking, authorization and command expiry remain active. Two tabs on the same account count as two playback devices. A second tab entering an outstanding readiness gate restores the group countdown; joining ongoing playback does not pause it. Departure, expiry or privacy removal releases a pending group deadline when one tab remains.
