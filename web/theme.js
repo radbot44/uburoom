@@ -6,7 +6,7 @@
   // Canonical SVG sources arrive with this script once. Recolor locally, including
   // the favicon and shadow-DOM remote, without fetching another image on changes.
   const branding=window.uburoomBrandAssets, images=new Map();
-  let sunrise=false, sunriseTimer, lastSunriseClick=0;
+  let sunrise=false, sunriseTimer, lastSunriseClick=0, themeLockUntil=0;
   const clicks={'theme-toggle':[], 'accent-toggle':[]};
   function brandUrl(path) {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
@@ -73,6 +73,7 @@
   }
   function clicked(id) {
     const now=performance.now();
+    if(id==='theme-toggle' && now<themeLockUntil)return;
     if(id==='accent-toggle' && sunrise) {
       // Let the activation clicking finish; a separate, slower click exits.
       const rapid=now-lastSunriseClick<250;lastSunriseClick=now;
@@ -83,10 +84,15 @@
     apply({theme:id==='theme-toggle'?(root.dataset.theme==='dark'?'light':'dark'):root.dataset.theme,
       accent:id==='accent-toggle'?(root.dataset.accent==='orange'?'pink':'orange'):root.dataset.accent},true);
     if(clicks[id].length<20)return;
-    clicks[id]=[];burst(document.getElementById(id),id==='theme-toggle');
-    if(id==='accent-toggle') {
-      sunrise=true;lastSunriseClick=now;root.dataset.sunrise='true';render();sunriseTimer=setTimeout(cycleAccent,150);
+    clicks[id]=[];
+    if(id==='theme-toggle') {
+      themeLockUntil=now+5000;
+      apply({theme:'dark',accent:root.dataset.accent},true);
+      burst(document.getElementById(id),true);
+      return;
     }
+    burst(document.getElementById(id),false);
+    sunrise=true;lastSunriseClick=now;root.dataset.sunrise='true';render();sunriseTimer=setTimeout(cycleAccent,150);
   }
   function render() {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
@@ -97,6 +103,7 @@
       if(icon)button.querySelector('.appearance-thumb').replaceChildren(icon);
       button.title=button.ariaLabel=(id==='theme-toggle'?'Theme: ':'Accent: ')+label+'. Switch to '+next+'.';
       if(id==='accent-toggle' && sunrise)button.title=button.ariaLabel='Sunrise Mode. Pause rapid clicking, then click to stop and return to orange.';
+      if(id==='theme-toggle' && performance.now()<themeLockUntil)button.title=button.ariaLabel='Theme locked to Dark.';
     }
     for(const img of document.querySelectorAll('img.brand:not([data-brand-outgoing])'))updateBrand(img,'/assets/branding/uburoom-wordmark-brand.svg');
     for(const link of document.querySelectorAll('link[rel=icon][type="image/svg+xml"]'))link.href=brandUrl('/favicon.svg');
@@ -114,5 +121,5 @@
     render();
     for(const id of ['theme-toggle','accent-toggle'])document.getElementById(id)?.addEventListener('click',()=>clicked(id));
   });
-  window.addEventListener('storage',event=>{if(event.key===key || event.key===null){stopSunrise();apply(saved());}});
+  window.addEventListener('storage',event=>{if(event.key===key || event.key===null){themeLockUntil=0;stopSunrise();apply(saved());}});
 })();
