@@ -94,7 +94,7 @@ async function main() {
     host=await playbackBrowser(name);guest=await playbackBrowser(name);report.versions=[host.version,guest.version];
     const h=await host.page(config.publicUrl+'/watch?demo=host'),g=await guest.page(config.publicUrl+'/watch?demo=guest'),clients=[[host,h],[guest,g]];
     for(const [browser,page]of clients){await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(comparison==='legacy'&&!precision)+','+precision+')');}
-    await host.evaluate(h,'document.getElementById("create").click();true');await host.until(h,'!!state','Fixture room');
+    await host.evaluate(h,'document.getElementById("create").click();document.getElementById("room-create").click();true');await host.until(h,'!!state','Fixture room');
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest room');
     for(const trial of trials(repeats,rtts,seed,comparison)) {
       if(app.watch.rooms.get(room).media)await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');

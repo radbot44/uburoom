@@ -233,7 +233,7 @@ async function main() {
         browser = await playbackBrowser(name,{acceleration});
         const page = await browser.page(config.publicUrl + '/watch?demo=host');
         await browser.until(page,'typeof me !== "undefined" && !!me','Synthetic login');
-        await browser.evaluate(page,'preferredQuality="direct"; document.getElementById("create").click(); true');
+        await browser.evaluate(page,'preferredQuality="direct"; document.getElementById("create").click();document.getElementById("room-create").click(); true');
         await browser.until(page,'!!state','Room creation');
         await browser.evaluate(page,'(' + installMeter.toString() + ')()');
         await browser.evaluate(page,'playbackMeter.resumeAudio()');

@@ -74,7 +74,7 @@ test('collection genre filters use complete tags when Plex listing rows omit the
   const result = await plex.browse({section:'1',collection:'9',genre:'5',sort:'default'}); assert.equal(result.total,1); assert.equal(result.items[0].id,'1');
 });
 
-test('every library route rejects guests and rechecks ownership before returning awaited private data or artwork', async () => {
+test('every room-scoped library route rejects guests and rechecks ownership before returning awaited private data or artwork', async () => {
   let manage = true, waiting, finish, calls = 0;
   const room = {s:{roomId:'room'}}, rooms = new Map([['room',room]]);
   const wait = () => { calls++; waiting?.(); return new Promise(resolve=>{finish=resolve;}); };
@@ -92,4 +92,25 @@ test('every library route rejects guests and rechecks ownership before returning
     assert.equal(res.status,403); assert.equal(JSON.stringify(res.data).includes('private title'),false);
   }
   routes.close();
+});
+
+test('lobby catalog, details, filters and artwork recheck identity and Plex scope after awaited reads', async () => {
+  let signedIn = true, principal = 'viewer', waiting, finish;
+  const wait = () => { waiting(); return new Promise(resolve => { finish = resolve; }); };
+  const plex = {configured:true,principal:'viewer',browse:wait,details:wait,filters:wait,artwork:wait,visible:async()=>true};
+  const hub = {access:{isMember:()=>true},plexFor:async()=>({...plex,principal})};
+  const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms:new Map()},
+    user:async()=>signedIn?{userId:'viewer'}:undefined,webActor:identity=>identity,throttle:()=>true,json:(res,status,data)=>{res.status=status;res.data=data;}});
+  try {
+    for (const suffix of ['','/item','/filters','/art']) {
+      for (const revoke of [()=>{signedIn=false;},()=>{principal='changed';}]) {
+        signedIn=true;principal='viewer';const ready=new Promise(resolve=>{waiting=resolve;}),res={};
+        const work=routes.route({method:'GET',headers:{},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix));
+        await ready;revoke();finish(suffix==='/art'?{type:'image/png',bytes:Buffer.from('private')}:{items:[{title:'private'}]});await work;
+        assert.equal(res.status,403);assert.equal(JSON.stringify(res.data).includes('private'),false);
+      }
+    }
+    signedIn=false;const denied={};await routes.route({method:'GET',headers:{},socket:{}},denied,new URL('https://localhost/api/watch/library'));
+    assert.equal(denied.status,401);
+  } finally { routes.close(); }
 });

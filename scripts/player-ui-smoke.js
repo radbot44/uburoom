@@ -33,7 +33,7 @@ async function main() {
       browser=await playbackBrowser(name);page=await browser.page(config.publicUrl+'/watch?demo=host');
       const evaluate=code=>browser.evaluate(page,code),until=(code,label)=>browser.until(page,code,label),shot=label=>browser.screenshot(page,path.join(output,name+'-'+label+'.png'));
       await browser.viewport(page,1440,1000);await until('typeof me!=="undefined"&&!!me','Login');
-      await evaluate('preferredQuality="direct";document.getElementById("create").click();true');await until('!!state','Room');
+      await evaluate('preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');await until('!!state','Room');
       await evaluate('execute({action:"media.load",args:{mediaId:"101",quality:"direct"}}).then(()=>true)');
       await until('!video.paused&&videoFrames>5','Decoded playback');
       const bounds=async id=>JSON.parse(await evaluate('JSON.stringify((()=>{const r=document.getElementById('+JSON.stringify(id)+').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom};})())'));

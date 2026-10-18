@@ -21,12 +21,13 @@ const READY_START_MARGIN_MS = 400;
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) { this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map(); }
-  create(actor) {
+  create(actor, visibility = 'public') {
+    if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
     if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing room');
     if (this.rooms.size >= 4) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = randomUUID();
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
-      ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility: 'public', mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
+      ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
       controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false, profileSlots: [] } };
     const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };

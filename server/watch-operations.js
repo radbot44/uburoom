@@ -35,8 +35,9 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       }
       if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
         const room = watch.rooms.get(url.searchParams.get('room'));
-        const eligible = async () => room && watch.rooms.get(room.s.roomId) === room && hub.canManage(room.s, auth.actor) &&
-         await watch.canView(room, auth.actor) && (await login(context))?.userId === auth.actor.userId;
+        const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
+        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && hub.canManage(room.s, auth.actor) &&
+         await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
         if (!await eligible()) { return result(403, { error: 'Library access requires the current host or active Admin mode' }); }
         const plex=hub.plexFor?await hub.plexFor(auth.actor):watch.plex;
         const scopeCurrent=async()=>!hub.plexFor||(await hub.plexFor(auth.actor)).principal===plex.principal;
@@ -59,7 +60,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (url.pathname === '/api/watch/playback' && !write) {
         return result(200,watch.tracking.history(auth.actor.userId));
       }
-      if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.create(auth.actor) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
+      if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       const room = watch.rooms.get(match[1]);

@@ -52,7 +52,7 @@ async function main() {
       return sessionId;
     };
     console.log('[Codec Chromium]',(await command('Browser.getVersion')).product,'GPU and accelerated video decoding disabled');
-    const host=await page('host');await evaluate(host,'document.getElementById("create").click()');await until(host,'!!state','session created');
+    const host=await page('host');await evaluate(host,'document.getElementById("create").click();document.getElementById("room-create").click()');await until(host,'!!state','session created');
     await evaluate(host,`execute({action:'media.load',args:{mediaId:${JSON.stringify(mediaId)},quality:'720p'}}).then(()=>true)`);
     await evaluate(host,"hls?.on(Hls.Events.BUFFER_CODECS,(_,data)=>{globalThis.codecProbeCodecs=Object.values(data).map(x=>x.codec);});true");
     if(expectUnsupported){

@@ -69,7 +69,7 @@ async function main(){
     report.versions=[host.version,guest.version];
     h=await host.page(config.publicUrl+'/watch?demo=host');g=await guest.page(config.publicUrl+'/watch?demo=guest');
     for(const [browser,page]of[[host,h],[guest,g]])await browser.until(page,'typeof me!=="undefined"&&!!me','Login');
-    await host.evaluate(h,'preferredQuality="720p4";document.getElementById("create").click();true');await host.until(h,'!!state','Room');
+    await host.evaluate(h,'preferredQuality="720p4";document.getElementById("create").click();document.getElementById("room-create").click();true');await host.until(h,'!!state','Room');
     const room=await host.evaluate(h,'selected');
     await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"104",quality:"720p4"}}).then(()=>true)');
     await host.until(h,'!state.waitingForReady&&!video.paused&&videoFrames>5','Initial playback',30000);

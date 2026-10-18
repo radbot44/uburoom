@@ -44,7 +44,7 @@ async function main() {
           })()`);
         };
         await setup(host,h,20);await setup(guest,g,rtt);
-        await host.evaluate(h,'document.getElementById("create").click();true');await host.until(h,'!!state','Fixture room');
+        await host.evaluate(h,'document.getElementById("create").click();document.getElementById("room-create").click();true');await host.until(h,'!!state','Fixture room');
         const room=await host.evaluate(h,'selected');
         await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');
         await guest.until(g,'!!state','Guest room');

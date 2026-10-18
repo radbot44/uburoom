@@ -34,7 +34,7 @@ async function main(){
       await browser.until(page,'typeof me!=="undefined"&&!!me','Login');
     }
     report.versions=browsers.map(browser=>browser.version);
-    await browsers[0].evaluate(pages[0],'preferredQuality="1080p20";document.getElementById("create").click();true');await browsers[0].until(pages[0],'!!state','Room');
+    await browsers[0].evaluate(pages[0],'preferredQuality="1080p20";document.getElementById("create").click();document.getElementById("room-create").click();true');await browsers[0].until(pages[0],'!!state','Room');
     room=await browsers[0].evaluate(pages[0],'selected');
     for(const index of[1,2])await browsers[index].evaluate(pages[index],'preferredQuality='+JSON.stringify(index===1?'1080p20':'720p4')+';selectRoom('+JSON.stringify(room)+').then(()=>true)');
     await browsers[0].evaluate(pages[0],'execute({action:"media.load",args:{mediaId:"104",quality:"1080p20"}}).then(()=>true)');

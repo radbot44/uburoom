@@ -31,7 +31,7 @@ async function main() {
         const page = await browser.page(config.publicUrl+'/watch?demo=host');
         const evaluate = expression=>browser.evaluate(page,expression);
         await browser.until(page,'typeof me!=="undefined"&&!!me&&transport?.ready','Login');
-        await evaluate('document.getElementById("create").click();true');
+        await evaluate('document.getElementById("create").click();document.getElementById("room-create").click();true');
         await browser.until(page,'!!state&&document.querySelector(".library-home-card")','Library');
         await evaluate('document.querySelector(".library-home-card").click();true');
         await browser.until(page,'document.querySelector(".library-tile")','Library items');

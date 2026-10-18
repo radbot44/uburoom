@@ -58,7 +58,7 @@ async function main() {
     const {context:host}=await command('browsingContext.create',{type:'tab'}),{context:guest}=await command('browsingContext.create',{type:'tab'});
     await command('browsingContext.navigate',{context:host,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
     await until(host,'!!me','login');
-    await evaluate(host,'preferredQuality="direct";document.getElementById("create").click()');await until(host,'!!state','room');
+    await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click()');await until(host,'!!state','room');
     await evaluate(host,'execute({action:"media.load",args:{mediaId:"123",quality:"direct"}}).then(()=>true)');
     await until(host,'videoFrames>0','original decoded');assert.equal(await evaluate(host,'state.format'),'file');
     await evaluate(host,'execute({action:"room.sharing",args:{mode:"guild"}}).then(()=>execute({action:"room.enable"})).then(()=>true)');

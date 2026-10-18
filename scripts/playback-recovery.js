@@ -41,7 +41,7 @@ async function main(){
     host=await browser.page(config.publicUrl+'/watch?demo=host&playbackProbe=1&soak=1');
     const evaluate=(page,code)=>browser.evaluate(page,code),until=(page,code,label,timeout)=>browser.until(page,code,label,timeout);
     await until(host,'!!me','Host login');
-    await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room creation');
+    await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');await until(host,'!!state','Room creation');
     await evaluate(host,'('+installMeter.toString()+')()');await evaluate(host,'playbackMeter.resumeAudio()');
     const command=async(page,action,args)=>{await until(page,'!!state && !pending','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state && !pending','Available tracks');return evaluate(page,`execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
@@ -284,19 +284,10 @@ async function main(){
       fs.writeFileSync(path.join(output,'probe-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
       return {detail:'Six-second opt-in WebSocket interruption rejoined with a new authorized stream; private tracks and off consent retained.',before,after};
     });
-    await check('diagnostics download layouts',async()=>{
-      for(const [layout,width,height] of [['desktop',1280,900],['theater',1280,900],['phone',390,844]]){
-        await browser.viewport(host,width,height);
-        await evaluate(host,`setTheater(${layout==='desktop'?'false':'true'});true`);
-        if(layout!=='desktop')await evaluate(host,'toggleDrawer(true);true');
-        await pause(200);
-        const bounds=JSON.parse(await evaluate(host,'(()=>{const button=document.getElementById("save-diagnostics");button.scrollIntoView({block:"center"});const r=button.getBoundingClientRect();return JSON.stringify({width:innerWidth,left:r.left,right:r.right,height:r.height,visible:!!button.getClientRects().length});})()'));
-        assert.ok(bounds.visible&&bounds.left>=0&&bounds.right<=bounds.width&&bounds.height>=30,'diagnostic download is reachable in '+layout);
-        await browser.screenshot(host,path.join(output,'diagnostics-'+layout+'.png'));
-      }
-      const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};document.getElementById("save-diagnostics").click();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));
+    await check('diagnostics developer export',async()=>{
+      const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};saveDiagnostics();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));
       assert.equal(downloaded.schema,2);assert.ok(downloaded.entries.some(row=>row.event==='sample'),'download contains playback measurements');
-      return {detail:'Download control is visible and fits desktop, theater drawer and portrait phone.'};
+      return {detail:'Developer export retains the current playback measurements.'};
     });
     await check('autonomous soak completion and bounded archive',async()=>{
       await browser.viewport(host,1280,900);await evaluate(host,'setTheater(false);true');

@@ -67,7 +67,7 @@ async function main() {
         await openApp();
         browser=await playbackBrowser(name);const host=await browser.page(config.publicUrl+'/watch?demo=host');
         const evaluate=(page,code)=>browser.evaluate(page,code), until=(page,code,label,timeout)=>browser.until(page,code,label,timeout);
-        await until(host,'!!me&&transport?.ready','Login'); await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();true');await until(host,'!!state','Room');
+        await until(host,'!!me&&transport?.ready','Login'); await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');await until(host,'!!state','Room');
         await evaluate(host,'('+installMeter.toString()+')()');await evaluate(host,'playbackMeter.resumeAudio()');
         const command=async(page,action,args)=>{
           await until(page,'!!state && !pending','Available controls');

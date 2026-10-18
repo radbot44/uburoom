@@ -143,7 +143,7 @@
       pageObserver.unobserve(sentinel); sentinel.hidden = !screen || ['details','home'].includes(screen.kind) || screen.nextOffset == null;
       if (!sentinel.hidden && !screen.loading && !screen.pageError) pageObserver.observe(sentinel);
     }
-    function endpoint(path, query = {}) { return path + '?' + new URLSearchParams({room,...query}); }
+    function endpoint(path, query = {}) { return path + '?' + new URLSearchParams({...(room === 'lobby' ? {} : {room}),...query}); }
     function playable(item) { return ['movie','episode','demo'].includes(item.type); }
     function identity(item) { return item.title + (item.edition ? ' · ' + item.edition : ''); }
     function runtime(seconds) { const minutes = Math.round(seconds / 60); return minutes >= 60 ? Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm' : minutes + 'm'; }
@@ -194,6 +194,7 @@
       try {
         const result = await load(item);
         if (version !== generation) return;
+        if (result?.status === 'cancelled') { note.textContent = ''; return; }
         if (result?.status !== 'applied') throw new Error('Playback was not accepted; try again.');
         note.textContent = ''; close();
       } catch (error) { if (version === generation) signalError(error.message,() => play(item)); }

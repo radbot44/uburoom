@@ -41,7 +41,7 @@ async function main(){
   let browser;const report={browser:name,repeats,cases:[],limitations:'Procedural local sources; does not certify real Plex extraction/fonts, complex authored subtitles, hardware or Discord Activity.'};
   try{
     browser=await playbackBrowser(name);report.version=browser.version;const page=await browser.page(config.publicUrl+'/watch?demo=host');await browser.viewport(page,1280,1000);
-    await browser.until(page,'typeof me!=="undefined"&&!!me','Login');await browser.evaluate(page,'preferredQuality="720p4";document.getElementById("create").click();true');
+    await browser.until(page,'typeof me!=="undefined"&&!!me','Login');await browser.evaluate(page,'preferredQuality="720p4";document.getElementById("create").click();document.getElementById("room-create").click();true');
     await browser.until(page,'!!state','Room');await browser.evaluate(page,'execute({action:"media.load",args:{mediaId:"101",quality:"720p4"}}).then(()=>true)');
     await browser.until(page,'!state.waitingForReady&&!video.paused&&videoFrames>3','Playback');
     await browser.evaluate(page,'execute({action:"media.pause"}).then(()=>true)');

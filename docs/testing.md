@@ -1,5 +1,17 @@
 # Verification status
 
+## Lobby library and room chooser (2026-10-18)
+
+Outside a room, Room options remain visible, faded and inert; authenticated catalog navigation remains available. Library Play opens a modal with public/private creation buttons in one row (Public is wider), plus accessible active rooms when present. Creating loads the selected title through the shared Engine; joining keeps the room's current playback. Cancel preserves the catalog view. Private visibility is applied at creation, before room listing, with remote consent off.
+
+- `npm run test:full`: 243 passed, zero failures/skips, including lobby identity/Plex-scope revocation checks for catalog/details/filters/artwork and private creation/access isolation.
+- Chrome and Firefox `scripts/lobby-library-smoke.js`: lobby browsing, inert settings, cancel, selected-title loading, public/private creation, private-room hiding, joining without replacing playback, restored library after leaving and normal/theater/phone screenshots. Public/Private button sizing is checked at phone width.
+- `scripts/watch-layout-smoke.js`: Chrome and Firefox pass existing normal/theater/phone/fullscreen layout coverage. `scripts/plex-library-smoke.js`: Firefox passes full navigation/search/filter/paging/artwork/details/history coverage with the new chooser and lobby restoration.
+- These are isolated fixture checks. Live Plex/provider accounts, real Discord Activity authentication and physical phone/touch use remain unverified for this increment.
+- Follow-up copy cleanup moves the empty-room message into the room bar, removes the public/private explanation and removes the diagnostics export button. No tests were run for this follow-up, at the owner's request; the results above precede it. Developer diagnostic export and opt-in probe/soak controls remain available.
+
+Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
+
 Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
 
 ## Saved modes and fullscreen drawer (2026-10-18)

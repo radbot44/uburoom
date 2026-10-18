@@ -72,7 +72,7 @@ async function main() {
       await command('browsingContext.setViewport',{context:host,viewport:{width:1360,height:900}});
       await command('browsingContext.navigate',{context:host,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
       await until(host,'typeof me!=="undefined" && !!me','fixture login');
-      await evaluate(host,'document.getElementById("create").click()');
+      await evaluate(host,'document.getElementById("create").click();document.getElementById("room-create").click()');
       await until(host,'!!state && !!selected','fixture room');
       let held = true, release;
       app.watch.ready = async (...args) => { if (held && args[4]) await new Promise(resolve => { release=resolve; }); return reportReady(...args); };
@@ -112,7 +112,7 @@ async function main() {
       const {context:host}=await command('browsingContext.create',{type:'window'});
       const {context:guest}=await command('browsingContext.create',{type:'window'});
       await command('browsingContext.navigate',{context:host,url:config.publicUrl+'/watch?demo=host',wait:'complete'});
-      await until(host,'!!me','host login');await evaluate(host,'document.getElementById("create").click()');await until(host,'!!state','host room');
+      await until(host,'!!me','host login');await evaluate(host,'document.getElementById("create").click();document.getElementById("room-create").click()');await until(host,'!!state','host room');
       await until(host,'document.querySelector("[data-action=play]")','local media');await evaluate(host,'document.querySelector("[data-action=play]").click()');
       if(process.argv.includes('--blocked')) {
         await until(host,'autoplayBlocked && video.paused','blocked autoplay');await pause(2200);
@@ -201,7 +201,7 @@ async function main() {
       await until(accountHost,'typeof me!=="undefined" && me?.account?.identities.some(i=>i.provider==="plex"&&i.subject==="102")','Plex login resolves owner reservation');
       assert.notEqual(await evaluate(accountHost,'me.account.id'),accountId);assert.equal(await evaluate(accountHost,'me.owner'),false);
       await until(accountHost,'transport?.ready && document.getElementById("account-dialog").open','Plex return account dialog and room connection');
-      await click(accountHost,'account-close');await click(accountHost,await evaluate(accountHost,'document.getElementById("lobby-create").getBoundingClientRect().width>0?"lobby-create":"create"'));await until(accountHost,'!!state && !!selected','Plex viewer creates room');
+      await click(accountHost,'account-close');await click(accountHost,await evaluate(accountHost,'document.getElementById("lobby-create").getBoundingClientRect().width>0?"lobby-create":"create"'));await click(accountHost,'room-create');await until(accountHost,'!!state && !!selected','Plex viewer creates room');
       await until(accountHost,'document.getElementById("library-content").querySelector("[data-action=play]")','Plex viewer host library');
       await evaluate(accountHost,'document.getElementById("library-content").querySelector("[data-action=play]").click()');
       await until(accountHost,'video.readyState>=2 && !video.paused','actual fixture video for Plex login');
@@ -226,7 +226,7 @@ async function main() {
       await command('browsingContext.setViewport',{context:activityHost,viewport:{width:1000,height:800}});
       await command('browsingContext.navigate',{context:activityHost,url:config.publicUrl+'/watch?demo=host&frame_id=fixture',wait:'complete'});
       await until(activityHost,'!!me && !document.getElementById("open-browser").hidden','demo Activity authenticated');
-      await evaluate(activityHost,'document.getElementById("create").click()');
+      await evaluate(activityHost,'document.getElementById("create").click();document.getElementById("room-create").click()');
       await until(activityHost,'!!state && !!selected','source room');
       await until(activityHost,'document.getElementById("library-content").querySelector("[data-action=play]")','source library');
       await evaluate(activityHost,'document.getElementById("library-content").querySelector("[data-action=play]").click()');
@@ -303,7 +303,7 @@ async function main() {
     await command('browsingContext.navigate', { context: host, url: config.publicUrl + '/watch?demo=host', wait: 'complete' });
     await until(host, '!document.getElementById("app").hidden', 'host authentication');
     assert.equal(await evaluate(host, 'document.getElementById("drawer-open").hidden && document.getElementById("drawer-open").getBoundingClientRect().width===0'), true, 'Library + Options drawer is hidden outside fullscreen');
-    await evaluate(host, 'document.getElementById("create").click()');
+    await evaluate(host, 'document.getElementById("create").click();document.getElementById("room-create").click()');
     await until(host, '!!state && !!selected', 'room created');
     assert.equal(await evaluate(host, 'document.getElementById("admin-mode").getAttribute("aria-checked")==="false" && !document.getElementById("admin-mode").hidden'),true,'owner Admin toggle defaults off');
     assert.equal(await evaluate(host, 'document.getElementById("remote-settings").shadowRoot.querySelector("[data-control=playback]").disabled && document.getElementById("remote-settings").shadowRoot.querySelector("[data-control=transform]").disabled && document.getElementById("remote-settings").shadowRoot.querySelector("[data-control=queue]").disabled'),true,'master off disables dependent switches and Queue remains unwired');
@@ -326,7 +326,7 @@ async function main() {
     assert.equal(await evaluate(host, 'state.enabled'), false);
     await command('browsingContext.navigate', { context: guest, url: config.publicUrl + '/watch?demo=guest', wait: 'complete' });
     await until(guest, '!document.getElementById("app").hidden', 'guest authentication');
-    await until(guest, 'document.getElementById("rooms").children.length===1', 'public room discoverable with remote off');
+    await until(guest, 'document.getElementById("rooms").querySelectorAll("button").length===1', 'public room discoverable with remote off');
     assert.equal(await evaluate(guest, '!document.getElementById("create").hidden && !selected'), true, 'members choose a room or create their own');
     await evaluate(guest, 'document.getElementById("rooms").querySelector("button").click()');
     await until(guest, 'video.readyState>=2 && state && !state.canPlayback && !state.enabled', 'guest watches with remote off');
@@ -341,7 +341,7 @@ async function main() {
     await until(host, 'state.visibility==="private" && document.getElementById("visibility").classList.contains("private") && document.getElementById("drawer-visibility").textContent==="Private - No one can join"', 'both visibility controls show Private');
     const privatePlayer = await command('browsingContext.captureScreenshot', {context:host,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-private-qa.png'),Buffer.from(privatePlayer.data,'base64'));
-    await until(guest, '!state && document.getElementById("rooms").children.length===0', 'private room revokes guest view');
+    await until(guest, '!state && document.getElementById("rooms").querySelectorAll("button").length===0', 'private room revokes guest view');
     const {context:lockedViewer}=await command('browsingContext.create',{type:'tab'});
     await command('browsingContext.setViewport',{context:lockedViewer,viewport:{width:1000,height:700}});
     await command('browsingContext.navigate',{context:lockedViewer,url:config.publicUrl+'/watch?demo=guest2&frame_id=fixture',wait:'complete'});
@@ -352,7 +352,7 @@ async function main() {
     const lockedShot=await command('browsingContext.captureScreenshot',{context:lockedViewer,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-locked-session-qa.png'),Buffer.from(lockedShot.data,'base64'));
     await command('browsingContext.close',{context:lockedViewer});
-    await evaluate(guest, 'document.getElementById("create").click()');
+    await evaluate(guest, 'document.getElementById("create").click();document.getElementById("room-create").click()');
     await until(guest, 'state && state.canManage && state.hostName==="Demo guest" && state.visibility==="public" && !state.enabled', 'second member creates their own public room');
     await evaluate(host,'document.getElementById("admin-mode").click()');
     await until(host,'me.adminMode && document.getElementById("admin-mode").getAttribute("aria-checked")==="true"','owner explicitly enables Admin mode');
@@ -367,7 +367,7 @@ async function main() {
     await evaluate(guest, 'document.getElementById("close-room").click()');
     await until(guest, '!selected && !state', 'second host ends their session');
     await evaluate(host, 'document.getElementById("drawer-visibility").click()');
-    await until(guest, 'document.getElementById("rooms").children.length===1', 'host public room reappears');
+    await until(guest, 'document.getElementById("rooms").querySelectorAll("button").length===1', 'host public room reappears');
     await evaluate(guest, 'document.getElementById("rooms").querySelector("button").click()');
     await evaluate(host, "execute({action:'room.sharing',args:{mode:'guild'}}).then(()=>execute({action:'room.enable'})).then(()=>true)");
     await until(guest, 'document.getElementById("video").readyState>=2', 'guest decoded video');
@@ -411,7 +411,7 @@ async function main() {
     await until(late, 'document.getElementById("rooms").querySelector("button")', 'Activity session picker');
     assert.equal(await evaluate(late,'drawer.hidden && document.getElementById("room-bar").parentElement===drawer && !document.getElementById("room-lobby").hidden && document.getElementById("lobby-create").getBoundingClientRect().width>0'),true,'theater shows session chooser without opening the drawer');
     await evaluate(late,'toggleDrawer(true)');
-    assert.equal(await evaluate(late,'document.getElementById("rooms").children.length===document.getElementById("lobby-rooms").children.length && document.getElementById("create").getBoundingClientRect().width>0 && document.getElementById("lobby-create").getBoundingClientRect().width>0 && getComputedStyle(document.querySelector("#rooms button")).color===getComputedStyle(document.querySelector("#lobby-rooms button")).color && getComputedStyle(document.querySelector("#rooms button")).backgroundColor===getComputedStyle(document.querySelector("#lobby-rooms button")).backgroundColor'),true,'drawer and lobby both show synchronized sessions, matching colors and Create controls');
+    assert.equal(await evaluate(late,'document.getElementById("rooms").querySelectorAll("button").length===document.getElementById("lobby-rooms").querySelectorAll("button").length && document.getElementById("create").getBoundingClientRect().width>0 && document.getElementById("lobby-create").getBoundingClientRect().width>0 && getComputedStyle(document.querySelector("#rooms button")).color===getComputedStyle(document.querySelector("#lobby-rooms button")).color && getComputedStyle(document.querySelector("#rooms button")).backgroundColor===getComputedStyle(document.querySelector("#lobby-rooms button")).backgroundColor'),true,'drawer and lobby both show synchronized sessions, matching colors and Create controls');
     const bothPickers=await command('browsingContext.captureScreenshot',{context:late,origin:'viewport'});fs.writeFileSync(path.join(artifacts,'watch-room-pickers-qa.png'),Buffer.from(bothPickers.data,'base64'));
     await evaluate(late,'toggleDrawer(false)');
     const lobby = await command('browsingContext.captureScreenshot',{context:late,origin:'viewport'});
@@ -522,7 +522,7 @@ async function main() {
     await until(late, 'state && state.canManage && state.hostName==="Demo guest 2"', 'second handoff');
     assert.equal(await evaluate(late, 'document.getElementById("close-room").textContent'), 'End room');
     await evaluate(late, 'document.getElementById("close-room").click()');
-    await until(late, 'document.getElementById("rooms").children.length===0', 'last viewer ends session');
+    await until(late, 'document.getElementById("rooms").querySelectorAll("button").length===0', 'last viewer ends session');
     assert.equal(await evaluate(guest, '!!document.getElementById("playback-test-link")'),false,'Header diagnostics link removed');
     console.log('[Watch Firefox] PASS: public/private visibility, member creation, actual video, controls/settings separation, locked Activity theater/navigation, late join, host handoff, cleanup and phone layout.');
     await command('browser.close').catch(() => {});
