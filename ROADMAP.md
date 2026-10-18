@@ -115,6 +115,8 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 ### M1-P5 — Real-time playback synchronization — Design requirements
 
+**Single-viewer refinement (2026-10-18):** A sole viewing tab skips startup/seek countdowns and pause/resume delivery margins while retaining decoder readiness, clock samples and drift tracking. Joining restores group coordination without interrupting ongoing playback; departure releases any remaining group countdown. Count viewing tabs rather than account identities. See [verification](docs/testing.md#single-viewer-coordination-delays-2026-10-18).
+
 **Goal:** Minimize the actual real-world playback difference between healthy viewers so reactions over Discord voice chat don't arrive before other viewers see the corresponding event.
 
 **Target:** Aim for ≤50 ms p95 presentation-time skew, with ≤100 ms p99 as an initial engineering target, subject to real-world testing.

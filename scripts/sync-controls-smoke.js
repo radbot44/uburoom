@@ -20,9 +20,25 @@ async function main() {
     const clients = [[host,h],[guest,g]];
     for (const [browser,page] of clients) await browser.until(page,'typeof transport!=="undefined" && transport?.ready','Fixture authentication');
     await host.evaluate(h,'createRoom().then(()=>true)'); const roomId = await host.evaluate(h,'selected');
-    await guest.evaluate(g,'selectRoom('+JSON.stringify(roomId)+').then(()=>true)');
+    const room = app.watch.rooms.get(roomId), solo = {};
     await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');
-    const room = app.watch.rooms.get(roomId);
+    await host.until(h,'!video.paused && videoFrames>5 && !state.waitingForReady','Solo decoded startup');
+    solo.startupLeadMs=room.startAt-room.changedAt;assert.equal(solo.startupLeadMs,0);
+    await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
+    await host.until(h,'video.paused && state.state.paused','Immediate solo pause');
+    assert.equal(room.pauseAt,undefined);
+    await host.evaluate(h,'execute({action:"media.play"}).then(()=>true)');
+    await host.until(h,'!video.paused && !state.state.paused','Immediate solo resume');
+    solo.resumeLeadMs=room.startAt-room.changedAt;assert.equal(solo.resumeLeadMs,0);
+    await host.evaluate(h,'execute({action:"media.seek.absolute",args:{seconds:15}}).then(()=>true)');
+    await host.until(h,'!video.paused && !state.waitingForReady && video.currentTime>=15','Solo seek decoded resume');
+    solo.seekResumeLeadMs=room.startAt-room.changedAt;assert.equal(solo.seekResumeLeadMs,0);
+    solo.clockValid=await host.evaluate(h,'playbackClock.read().valid');assert.equal(solo.clockValid,true);
+    const soloPosition=room.position;
+    await guest.evaluate(g,'selectRoom('+JSON.stringify(roomId)+').then(()=>true)');
+    assert.equal(room.initialGate,false);assert.equal(room.s.state.paused,false);assert.equal(room.position,soloPosition,'joining preserves solo playback');
+    assert.ok(app.watch.controlLead(room)>=400,'second viewing tab restores shared delivery lead');
+    await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');
     await host.until(h,'state?.readiness?.blockers.includes("Demo guest")','Named blocker after three seconds');
     // Unit tests verify exact deadlines; shorten only this fixture's wait for UI checks.
     room.readinessDeadline = performance.now()-1; app.watch.refresh(room);
@@ -57,7 +73,13 @@ async function main() {
     await guest.evaluate(g,'probing=true;video.pause();playerWaiting=true;true'); await pause(1500);
     assert.ok(await host.evaluate(h,'video.currentTime') > before+1,'A local stall must not stop healthy viewers');
     await guest.evaluate(g,'probing=false;playerWaiting=false;sync.synchronize().then(()=>true)');
-    const report = {browser:name,versions:[host.version,guest.version],passed:true,pausedPositions:paused,
+    await guest.evaluate(g,'document.getElementById("close-room").click();true');
+    await host.until(h,'state?.viewers===1','Solo again after guest leaves');
+    assert.equal(app.watch.controlLead(room),0);
+    await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
+    await host.until(h,'video.paused && state.state.paused','Solo pause after group');
+    assert.equal(room.pauseAt,undefined);
+    const report = {browser:name,versions:[host.version,guest.version],passed:true,solo,pausedPositions:paused,
       events:await Promise.all(clients.map(async([browser,page]) => JSON.parse(await browser.evaluate(page,'JSON.stringify(controlEvents)')))),
       limitations:'Local synthetic direct media; fixture-shortened timeout, no physical presentation or WAN accuracy claim.'};
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));

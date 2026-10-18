@@ -14,7 +14,8 @@ const { PlaybackTracking } = require('./playback-tracking');
 const Tracks = require('./media-tracks');
 const SubtitleResources = require('./subtitle-resources');
 const RECONNECT_GRACE_MS = 60000;
-// Run the startup/seek lead alongside buffering. State changes push immediately.
+// Multiple viewing tabs share a startup/seek lead alongside buffering.
+// A sole tab retains readiness and clock tracking without coordination delays.
 // Late readiness retains a short delivery margin for a 300+ ms RTT.
 const INITIAL_START_LEAD_MS = 1750;
 const READY_START_MARGIN_MS = 400;
@@ -41,6 +42,7 @@ class Watch {
     return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : elapsed / 1000)));
   }
   controlLead(room) {
+    if (room.viewers.size <= 1) return 0;
     const now = performance.now();
     let lead = READY_START_MARGIN_MS;
     for (const viewer of room.viewers.values()) {
@@ -54,9 +56,13 @@ class Watch {
     room.readinessSince = performance.now();
     room.readinessDeadline = room.readinessSince + waitMs;
     room.readinessTimedOut = false;
-    room.readinessStartAt = now + INITIAL_START_LEAD_MS;
+    room.readinessStartAt = now + (room.viewers.size > 1 ? INITIAL_START_LEAD_MS : 0);
   }
   settle(room, now = Date.now()) {
+    if (room.viewers.size === 1) {
+      if (room.startAt > now) { room.startAt = now; room.changedAt = now; room.revision++; }
+      if (room.pauseAt > now) room.pauseAt = now;
+    }
     if (room.pauseAt && now >= room.pauseAt) {
       room.position = this.position(room, room.pauseAt); room.changedAt = room.pauseAt;
       room.pauseAt = undefined; room.s.state.paused = true; room.revision++;
@@ -146,6 +152,7 @@ class Watch {
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
     if (hostTimedOut) this.revokeConsent(room);
+    if (pruned) this.settle(room, now);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
       for (const viewer of room.viewers.values()) if (viewer.media?.transcodeId) void this.plex.ping(viewer.media);
@@ -218,6 +225,7 @@ class Watch {
     const hostLeft = actor.userId === room.s.hostId;
     this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
+    this.settle(room);
     if (!room.viewers.size) { this.remove(room.s.roomId); return; }
     if (hostLeft) {
       if (reason === 'left') {
@@ -276,6 +284,9 @@ class Watch {
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
+    if (!oldViewer && room.viewers.size === 2 && room.initialGate) {
+      room.readinessStartAt = Math.max(room.readinessStartAt || 0, now + INITIAL_START_LEAD_MS);
+    }
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
     room.transportSequence=(room.transportSequence||0)+1;
@@ -396,7 +407,7 @@ class Watch {
         if (room.position >= room.media.duration - .1) room.position = 0;
         if (room.manualPaused && room.initialGate) this.beginReadiness(room, now);
         room.manualPaused = false; s.state.paused = room.initialGate;
-        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.readinessStartAt || 0, now + this.controlLead(room));
+        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.viewers.size > 1 ? room.readinessStartAt || 0 : 0, now + this.controlLead(room));
         else if (!room.initialGate && !wasPlaying) room.startAt = now + this.controlLead(room);
         break;
       case 'media.toggle':

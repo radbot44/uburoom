@@ -1,5 +1,13 @@
 # Verification status
 
+## Single-viewer coordination delays (2026-10-18)
+
+A sole connected viewing tab uses zero coordination lead for initial playback, resume, pause/toggle and shared-seek readiness release. Decoder/buffer readiness, autoplay handling, clock sampling, drift tracking, authorization and command expiry remain active. Two tabs on the same account count as two playback devices. A second tab entering an outstanding readiness gate restores the group countdown; joining ongoing playback does not pause it. Departure, expiry or privacy removal releases a pending group deadline when one tab remains.
+
+- `npm run test:full`: 248 passed, zero failures/skips. Added exact-clock coverage for solo controls/readiness, stale seek rejection, preserved RTT evidence, same-account tabs, joining during readiness/ongoing playback, and departure/expiry during pending deadlines.
+- Chrome and Firefox `scripts/sync-controls-smoke.js`: decoded solo startup/resume/seek all report zero server coordination lead with a valid browser clock, followed by group readiness timeout choices, scheduled pause/resume, independent stall recovery and immediate solo pause after guest departure. These local direct-media fixtures do not measure physical output or WAN latency.
+- Media loading, native decoder buffering and network round trips can still take time. HLS replacement/refill protection is retained. Real Plex transport/hardware and Discord Activity verification remain open.
+
 ## Lobby library and room chooser (2026-10-18)
 
 Outside a room, Room options remain visible, faded and inert; authenticated catalog navigation remains available. Library Play opens a modal with public/private creation buttons in one row (Public is wider), plus accessible active rooms when present. Creating loads the selected title through the shared Engine; joining keeps the room's current playback. Cancel preserves the catalog view. Private visibility is applied at creation, before room listing, with remote consent off.
