@@ -3,7 +3,19 @@
 (() => {
   const root=document.documentElement, key='uburoom.appearance';
   function saved() { try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; } }
-  function brandUrl(path) { return path+'?'+new URLSearchParams({theme:root.dataset.theme,accent:root.dataset.accent}); }
+  // Canonical SVG sources arrive with this script once. Recolor locally, including
+  // the favicon and shadow-DOM remote, without fetching another image on changes.
+  const branding=window.uburoomBrandAssets, images=new Map();
+  function brandUrl(path) {
+    const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
+    const cacheKey=path+'/'+light+'/'+pink;
+    if(!images.has(cacheKey)) {
+      const svg=branding[path].replace(/#FF9954|#FF7197|#F8F7F4/g,color=>
+        color==='#F8F7F4' ? light?'#242329':color : pink ? color==='#FF9954'?'#FF7197':'#FF9954' : color);
+      images.set(cacheKey,'data:image/svg+xml,'+encodeURIComponent(svg));
+    }
+    return images.get(cacheKey);
+  }
   function render() {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
     for(const [id,label,pressed,next] of [['theme-toggle',light?'Light':'Dark',light,light?'dark':'light'],['accent-toggle',pink?'Pink':'Orange',pink,pink?'orange':'pink']]) {

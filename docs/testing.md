@@ -1,5 +1,11 @@
 # Verification status
 
+## Local appearance rendering follow-up (2026-10-18)
+
+Canonical branding SVGs now arrive with the initial theme script. Theme/accent changes use cached local data URLs for the header, shadow-DOM remote and SVG favicon; no image requests are issued by toggling. Server-side query recoloring was removed and image CSP permits local data URLs. The request limiter is unchanged.
+
+Regression coverage was updated for 1,000 rapid changes, local image variants and a refresh that remains available. These checks and Chrome/Firefox rendering checks were not run, following the owner's no-tests instruction; only the diff was reviewed.
+
 Appearance follow-up (2026-10-18): header theme/accent switches retain transparent button backgrounds on hover. No tests were run for this cosmetic change, at the owner request.
 
 ## Appearance themes and accents (2026-10-18)

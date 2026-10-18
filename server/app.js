@@ -176,7 +176,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('Referrer-Policy', 'no-referrer');
     const styleHash = createHash('sha256').update(RemoteUI.CSS).digest('base64');
     const badgeHash = createHash('sha256').update(RemoteUI.BADGE_CSS).digest('base64');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self' 'sha256-${styleHash}'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self' 'sha256-${styleHash}'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     (async () => {
       const url = new URL(req.url, config.publicUrl), route = url.pathname;
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -196,7 +196,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
       const player = route === '/watch' || route === '/activity' || config.diagnostics === true && route === '/__diagnostics/codec';
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
@@ -242,14 +242,17 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && branding[route]) {
         const [file, type] = branding[route];
         res.writeHead(200, { 'Content-Type': type });
-        const asset=fs.readFileSync(path.join(publicDir, 'assets', file));
-        if (!file.endsWith('.svg')) return res.end(asset);
-        const light=url.searchParams.get('theme')==='light',pink=url.searchParams.get('accent')==='pink';
-        return res.end(asset.toString('utf8').replace(/#FF9954|#FF7197|#F8F7F4/g,color=>
-          color==='#F8F7F4' ? light?'#242329':color : pink ? color==='#FF9954'?'#FF7197':'#FF9954' : color));
+        return res.end(fs.readFileSync(path.join(publicDir, 'assets', file)));
+      }
+      if (req.method === 'GET' && route === '/theme.js') {
+        const sources={};
+        for(const asset of ['/assets/branding/uburoom-wordmark-brand.svg','/favicon.svg']) {
+          sources[asset]=fs.readFileSync(path.join(publicDir,'assets',branding[asset][0]),'utf8');
+        }
+        res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});
+        return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+fs.readFileSync(path.join(publicDir,'theme.js'),'utf8'));
       }
       const assets = { '/remote-ui.js': ['remote-ui.js', 'text/javascript'],
-        '/theme.js': ['theme.js', 'text/javascript'],
         '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
         '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
         '/playback-policy.js':['playback-policy.js','text/javascript'],

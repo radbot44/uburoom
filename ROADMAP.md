@@ -169,7 +169,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
-**Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. See [appearance verification](docs/testing.md#appearance-themes-and-accents-2026-10-18).
+**Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. Appearance changes recolor cached local SVG data URLs without network requests. See [appearance verification](docs/testing.md#appearance-themes-and-accents-2026-10-18).
 
 **Track-menu refinement (2026-10-18):** Quality labels include 1080p/720p; automatic audio/subtitle summaries show resolved tracks, with separate track-name captions and an indication of which track Automatic uses. Selected choices retain orange text without an edge stripe. See [verification](docs/testing.md#player-track-menu-labels-2026-10-18).
 

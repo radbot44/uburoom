@@ -20,7 +20,7 @@ Use the full-color wordmark for site headers and the oomark for favicons and too
 
 Raster/source exports in `assets/branding` include the 1848 px wide transparent wordmark PNG, 512 px transparent square icon, and 1024 px background square wordmark/oomark PNGs with matching SVGs. The prior blue/green assets currently reside in `assets/branding/old/`; M1 release cleanup will replace the old wordmark dependency in demo-media generation and remove that archive from the active tree (Git history retains it).
 
-Use the canonical uburoom logo asset/HTTP path. Preserve the established typography and component layout rules above.
+Use the canonical uburoom artwork. The initial theme script includes the SVG sources; appearance changes recolor cached local data URLs for header/remote logos and the favicon without network requests. Preserve the established typography and component layout rules above.
 
 ## Components
 

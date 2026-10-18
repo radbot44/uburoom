@@ -16,6 +16,8 @@ async function main() {
   const config={cert:fs.readFileSync('certs/server-cert.pem'),key:fs.readFileSync('certs/server-key.pem'),publicUrl:'https://localhost',ownerId:'demo-host',guildId:'fixture',channels:['fixture'],demo:true,plexUrl:'http://playback-fixture.invalid:32400',plexToken:'synthetic-playback-only'};
   const media=path.resolve('artifacts/playback-media-tracks'),manifest=JSON.parse(fs.readFileSync(path.join(media,'manifest.json')));
   const app=createApp(config,{plexFetch:fixturePlex(media,manifest)});app.hub.access={refresh:async()=>true,isMember:()=>true,options:()=>({available:true})};
+  const brandingRequests=[];
+  app.server.on('request',req=>{if(/^\/(?:assets\/branding\/|favicon\.|theme\.js)/.test(req.url))brandingRequests.push(req.url);});
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));config.publicUrl='https://localhost:'+app.server.address().port;
   let browser;
   try {
@@ -25,6 +27,10 @@ async function main() {
     assert.equal(await run('document.documentElement.dataset.theme+"/"+document.documentElement.dataset.accent'),'dark/orange');
     await run('createRoom().then(()=>true)');await run('execute({action:"media.load",args:{mediaId:"101",quality:"direct"}}).then(()=>true)');
     await until('videoFrames>2','Decoded media');await run('execute({action:"media.pause"}).then(()=>true)');
+    brandingRequests.length=0;
+    await run('(async()=>{for(let i=0;i<1000;i++)document.getElementById(i%2?"theme-toggle":"accent-toggle").click();await Promise.all([...document.querySelectorAll("img.brand")].map(img=>img.decode()));return true;})()');
+    assert.equal(brandingRequests.length,0,'Rapid appearance changes make no branding requests');
+    assert.equal(await run('fetch("/watch").then(r=>r.status)'),200,'Refresh remains available after rapid toggling');
     for(const [theme,accent] of [['dark','orange'],['dark','pink'],['light','pink'],['light','orange']]) {
       await browser.viewport(page,1360,1000);
       if(await run('document.documentElement.dataset.theme')!==theme)await browser.click(page,'theme-toggle');
@@ -43,10 +49,10 @@ async function main() {
       assert.equal(await run('getComputedStyle(document.querySelector("#accent-toggle .appearance-track")).backgroundColor'),theme==='dark'?'rgb(41, 46, 56)':'rgb(240, 236, 230)');
       assert.equal(await run('document.querySelectorAll(".appearance-label").length===0 && document.querySelectorAll("#theme-toggle .appearance-thumb svg").length===1 && !document.querySelector("#accent-toggle svg")'),true,'Theme uses a semantic icon; accent is color-only, with no visible labels');
       assert.equal(await run('document.querySelector(".appearance-track").offsetWidth<document.getElementById("remote-settings").shadowRoot.querySelector(".control-track").offsetWidth'),true,'Header switches are narrower than Room options');
-      const svg=await run('fetch(document.querySelector("img.brand").src).then(r=>r.text())');
+      const svg=await run('decodeURIComponent(document.querySelector("img.brand").src.split(",")[1])');
       assert.ok(svg.includes('fill="'+(theme==='dark'?'#F8F7F4':'#242329')+'"'));
       assert.ok(svg.includes('id="letter-u-first" fill="'+(accent==='orange'?'#FF9954':'#FF7197')+'"'));
-      const mark=await run('fetch([...document.querySelectorAll("link")].find(link=>link.type==="image/svg+xml").href).then(r=>r.text())');
+      const mark=await run('decodeURIComponent([...document.querySelectorAll("link")].find(link=>link.type==="image/svg+xml").href.split(",")[1])');
       assert.ok(mark.includes('stroke="'+(theme==='dark'?'#F8F7F4':'#242329')+'"'));
       assert.ok(mark.includes('stroke="'+(accent==='orange'?'#FF7197':'#FF9954')+'"'));
       await run('toggleRemote(true);true');
