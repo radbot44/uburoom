@@ -754,7 +754,7 @@ function applyState(next) {
         catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
-        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate));
+        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         // Finish appending the anchor without requesting segment one before
         // the target seek; aborting that speculative load adds recovery noise.
