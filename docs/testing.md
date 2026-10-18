@@ -1,5 +1,7 @@
 # Verification status
 
+Appearance follow-up (2026-10-18): header theme/accent switches retain transparent button backgrounds on hover. No tests were run for this cosmetic change, at the owner request.
+
 ## Appearance themes and accents (2026-10-18)
 
 The app defaults explicitly to dark/orange and persists independent light/dark and orange/pink preferences locally. Compact header switches use the Room options pill/thumb treatment; the theme thumb contains a sun/moon icon with no visible labels, and the icon-free accent thumb displays its selected brand color on a neutral track. Page, account/room/player dialogs, menus, library controls, shadow-DOM remote and playback badges inherit the palette. Video/chrome overlays retain dark surfaces and readable light controls. Wordmark, remote logo and SVG favicon adapt the canonical artwork without changing fixed-color source assets.
