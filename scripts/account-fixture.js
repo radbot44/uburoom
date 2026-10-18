@@ -37,7 +37,7 @@ function accountFixture(){
     const match=/^\/library\/metadata\/(\d+)$/.exec(url.pathname);
     if(match){if(match[1]==='999'&&profile?.id==='102')return response({},404);return response({MediaContainer:{Metadata:[{ratingKey:match[1],type:'movie',title:'Fixture movie',duration:60000,Media:[{videoCodec:'h264',bitrate:4000,width:640,height:360,Part:[{key:'/library/parts/'+match[1]+'/file.mp4'}]}]}]}});}
     if(url.pathname.startsWith('/library/parts/'))return new Response('fixture-media-bytes',{headers:{'content-type':'video/mp4'}});
-    if(url.pathname.includes('/transcode/universal/decision'))return response({MediaContainer:{}});
+    if(url.pathname.includes('/transcode/universal/decision'))return response({MediaContainer:{Metadata:[{Media:[{videoCodec:'h264',Part:[{Stream:[{streamType:1,codec:'h264'}]}]}]}]}});
     if(url.pathname.includes('/transcode/universal/'))return response({});
     return response({},404);
   };
