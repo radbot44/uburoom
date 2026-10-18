@@ -192,12 +192,13 @@ async function main(){
     await evaluate(context,'document.querySelector(".library-home-card[data-tab=library]:first-child").click()');await until(context,'!document.querySelector(".library").hidden','Phone library restored');
    }
    if(theater && width>700){
-    await evaluate(context,'document.getElementById("library-content").scrollIntoView();document.getElementById("library-panel").scrollBy(0,600)');await pause(100);
-    assert.ok(await evaluate(context,'Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2'),'Sticky toolbar stays below the library heading');
+    await evaluate(context,'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');await pause(100);
+    assert.equal(await evaluate(context,'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector(".library-tools")).position==="static"&&document.querySelector(".library-tools").getBoundingClientRect().bottom<0'),true,'Theater library and toolbar scroll with the page');
     const scrolled=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-scrolled-qa.png'),Buffer.from(scrolled.data,'base64'));
    }
   }
   await evaluate(context,'document.querySelector(".library-views [data-view=list]").click();document.querySelector("[data-item=\\\"2\\\"] [data-action=play]").click()');await until(context,'state?.mediaId==="2" && drawer.hidden','exact edition accepted and drawer closed');
+  assert.equal(await evaluate(context,'scrollY===0&&document.activeElement.id==="stage"'),true,'Accepted library playback returns to the video');
   assert.equal(await evaluate(context,'state.subtitle'),'The Final Cut');
   assert.equal(await evaluate(context,'document.querySelector(".library-overview").hidden'),true,'List Play does not also open details');
   const {context:activity}=await command('browsingContext.create',{type:'tab'});

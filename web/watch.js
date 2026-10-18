@@ -139,7 +139,7 @@ const library = uburoomLibrary.mount($('library-content'), {
     if (!response.ok) throw new Error('Artwork unavailable'); return response.blob();
   },
   load:item => execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality}}),
-  close:() => toggleDrawer(false), getPlayer:() => state
+  close:returnToVideo, getPlayer:() => state
 });
 function fail(message) {
   const changed = $('error').textContent !== message;
@@ -212,6 +212,12 @@ function toggleDrawer(show = drawer.hidden) {
   $('drawer-open').setAttribute('aria-expanded', String(show));
   if (!show) toggleRemote(false);
 }
+function returnToVideo() {
+  toggleDrawer(false);
+  window.scrollTo({top:0,behavior:'instant'});
+  $('stage').focus({preventScroll:true});
+}
+$('library-top').addEventListener('click', returnToVideo);
 function setTheater(enabled) {
   theater = !activity && !document.body.classList.contains('mobile-player') && !!enabled;
   document.body.classList.toggle('theater', theater);

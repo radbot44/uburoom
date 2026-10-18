@@ -92,7 +92,7 @@
         if (target === host) {
           // Match the Normal/Poster grid, including its two-column phone layout.
           const width = host.getBoundingClientRect().width; if (!width) continue;
-          const gap = width <= 440 ? 12 : 14, columns = Number(getComputedStyle(host).getPropertyValue('--library-columns')) || (width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap))));
+          const gap = width <= 440 ? 12 : 14, columns = width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap)));
           updates.push([host,'--library-poster-width',(width - gap * (columns - 1)) / columns + 'px']);
         } else if (target.parentElement === results && target.getClientRects().length) {
           const css = getComputedStyle(target), padding = parseFloat(css.paddingTop), gap = parseFloat(css.columnGap);
@@ -107,8 +107,12 @@
       for (const [target,property,value] of updates) if (target.style.getPropertyValue(property) !== value) target.style.setProperty(property,value);
     });
     layoutObserver.observe(host);
-    function scrollElement() { return host.closest('#drawer') || host.closest('#library-panel'); }
-    function viewport(root = scrollElement()) { const top = root.getBoundingClientRect().top + root.clientTop; return {top,bottom:top + root.clientHeight}; }
+    function scrollElement() {
+      const drawer = host.closest('#drawer'); if (drawer) return drawer;
+      const panel = host.closest('#library-panel');
+      return panel && getComputedStyle(panel).overflowY === 'auto' ? panel : document.scrollingElement;
+    }
+    function viewport(root = scrollElement()) { const top = root === document.scrollingElement ? 0 : root.getBoundingClientRect().top + root.clientTop; return {top,bottom:top + root.clientHeight}; }
     function captureAnchor() {
       const root = scrollElement(), box = viewport(root), top = Math.max(box.top,tools.getBoundingClientRect().bottom);
       const item = [...results.querySelectorAll('.library-tile')].find(n => { const b = n.getBoundingClientRect(); return b.bottom > top && b.top < box.bottom; });

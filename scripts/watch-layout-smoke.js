@@ -37,7 +37,7 @@ async function main() {
         await browser.until(page,'document.querySelector(".library-tile")','Library items');
         let normalWidth;
         const measure = async()=>JSON.parse(await evaluate('JSON.stringify((()=>{const rect=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right};};return {stage:rect("stage"),library:rect("library-panel"),room:rect("room-bar"),options:rect("options-panel"),overflow:document.documentElement.scrollWidth>innerWidth};})())'));
-        for (const [label,width,height,wide] of [['1080p',1920,1080,false],['4k',3840,2160,false],['normal',1440,1000,false],['theater',1440,1000,true],['phone',390,844,false],['phone-theater',390,844,true]]) {
+        for (const [label,width,height,wide] of [['1080p',1920,1080,false],['4k',3840,2160,false],['normal',1440,1000,false],['sidebar-small',1101,900,false],['stacked',1000,1000,false],['theater',1440,1000,true],['phone',390,844,false],['phone-theater',390,844,true]]) {
           await browser.viewport(page,width,height);
           await evaluate('setTheater('+wide+');window.scrollTo(0,0);true'); await pause(200);
           await browser.screenshot(page,path.join(output,name+'-'+label+'.png'));
@@ -47,7 +47,29 @@ async function main() {
             assert.ok(r.room.y>=r.stage.bottom && r.options.y>=r.room.bottom,'Room and options below video');
             if (!(wide&&width>700)&&width>1100) assert.ok(r.library.x>=r.stage.right,'Normal library beside video');
             else assert.ok(r.library.y>=r.stage.bottom,'Stacked library');
-            if (!(wide&&width>700)&&width>1100) assert.equal(await evaluate('getComputedStyle(document.querySelector(".library")).gridTemplateColumns.split(" ").length'),4,'Four normal-view posters per row');
+            const columns=await evaluate('getComputedStyle(document.querySelector(".library")).gridTemplateColumns.split(" ").length');
+            if (label==='1080p'||label==='4k'||label==='normal'||label==='sidebar-small'||label==='phone') {
+              const libraryWidth=await evaluate('document.getElementById("library-content").getBoundingClientRect().width');
+              const expected=libraryWidth<=440?2:Math.max(1,Math.floor((libraryWidth+14)/174));
+              assert.equal(columns,expected,'Poster count adapts to library width: '+label);
+              assert.ok(label==='phone'||columns<4,'Narrow sidebar avoids four cramped posters');
+            }
+            const sideBySide=!wide&&width>1100;
+            assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).overflowY'),sideBySide?'auto':'visible','Only side-by-side library owns scrolling');
+            if (!sideBySide) {
+              assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).maxHeight'),'none','Stacked library height unrestricted');
+              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),'static','Stacked toolbar scrolls with page');
+              await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
+              assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Stacked library uses page scrolling');
+              for (const view of ['list','normal']) {
+                const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>0);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top};})())'));
+                await evaluate(`document.querySelector('.library-views [data-view="${view}"]').click();true`); await pause(120);
+                const rect=await evaluate(`JSON.stringify(document.querySelector('.library-tile[data-item="${anchor.id}"]').getBoundingClientRect().toJSON())`);
+                const tile=JSON.parse(rect), expected=Math.max(anchor.offset,-Math.max(0,tile.height-44));
+                assert.ok(Math.abs(tile.top-expected)<2,'Page scroll preserves visible item after '+view);
+              }
+              await evaluate('window.scrollTo(0,0);true');
+            }
             assert.equal(await evaluate('drawer.hidden&&document.getElementById("drawer-open").hidden'),true);
             if (label==='normal') normalWidth=r.stage.width;
             if (label==='theater') assert.ok(r.stage.width>normalWidth,'Theater enlarges video');
@@ -69,7 +91,14 @@ async function main() {
                 await evaluate('window.scrollTo(0,document.getElementById("options-panel").getBoundingClientRect().top+scrollY-18);true');
                 await pause(220);
                 await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
-                await evaluate('window.scrollTo(0,0);true'); await pause(220);
+                const pinnedTop=(await measure()).options.y;
+                await evaluate('window.scrollBy(0,400);true'); await pause(100);
+                assert.ok(Math.abs((await measure()).options.y-pinnedTop)<2,'Theater room options stay pinned during library page scrolling');
+                await browser.screenshot(page,path.join(output,name+'-theater-options-pinned.png'));
+                await evaluate('document.getElementById("library-top").click();true');
+                assert.equal(await evaluate('scrollY===0&&document.activeElement.id==="stage"'),true,'Library Back to top returns to player');
+                assert.equal(await evaluate('getComputedStyle(document.getElementById("library-top")).backgroundColor===getComputedStyle(document.getElementById("close-room")).backgroundColor'),true,'Back to top uses quiet button color');
+                await pause(220);
               }
               assert.ok(await evaluate('Number(getComputedStyle(document.getElementById("room-bar")).opacity)<.5'),'Room bar dims at page top');
               await evaluate('window.scrollTo(0,20);true'); await pause(220);
@@ -88,6 +117,9 @@ async function main() {
               await evaluate('document.getElementById("library-panel").scrollTop=500;true');
               assert.equal(await evaluate('document.getElementById("library-panel").scrollTop'),500,'Library scrolls independently');
               assert.equal((await measure()).stage.y,top,'Library scroll leaves video in place');
+              await pause(100);
+              await browser.screenshot(page,path.join(output,name+'-library-scrolled.png'));
+              assert.equal(await evaluate('(()=>{const p=document.getElementById("library-panel").getBoundingClientRect(),h=document.querySelector("#library-panel>.library-header").getBoundingClientRect();return document.elementFromPoint(h.x+40,p.y+10).closest(".library-header")!==null;})()'),true,'Pinned header covers top padding above posters');
               await evaluate('document.getElementById("library-panel").scrollTop=0;true');
               assert.equal(await evaluate('!document.querySelector(".library-tabs")&&!document.getElementById("account-settings")&&document.getElementById("create").previousElementSibling.id==="refresh"'),true,'Toolbar and header arrangement');
               assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).backgroundColor===getComputedStyle(document.getElementById("library-panel")).backgroundColor'),true,'Unified library surface');
@@ -98,7 +130,12 @@ async function main() {
           }
         }
         if (!before) {
-          await evaluate('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');
+          await evaluate('document.getElementById("library-home").click();true');
+          await browser.until(page,'document.querySelector("[data-play=demo]")','Synchronization video in library');
+          await evaluate('document.querySelector("[data-play=demo]").scrollIntoView();true');
+          assert.ok(await evaluate('scrollY>0'),'Playback selection begins below video');
+          await evaluate('document.querySelector("[data-play=demo]").click();true');
+          await browser.until(page,'state?.mediaId==="demo"&&scrollY===0&&document.activeElement.id==="stage"','Library Play returns to video');
           await browser.until(page,'!state.waitingForReady&&!video.paused&&videoFrames>5','Decoded playback');
           await evaluate('execute({action:"media.pause"}).then(()=>true)');
           await browser.until(page,'video.paused&&state.state.paused&&document.getElementById("stage").classList.contains("paused")','Pause');

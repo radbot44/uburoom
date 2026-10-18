@@ -2,6 +2,18 @@
 
 Use [ROADMAP.md](../ROADMAP.md) for priorities and milestone/phase sequencing. This document records actual evidence, known failures and unfinished verification; a planned feature is not a support claim.
 
+## Theater options and return to player (2026-10-18)
+
+Wide theater Room options now stay sticky beside the scrolling library. A quiet Back to top button in the Plex library header returns to the page top/player; accepted library Play selections share that action, closing any drawer and moving focus to the player. Rejected playback retains the library error path. Narrow layouts keep options in normal page flow.
+
+`watch-layout-smoke.js` passed Chrome 155.0.8059.79 and Firefox 158.0, including fixed screen coordinates for theater options across page scrolling, quiet button colors, Back to top focus/scroll, and actual library-selected decoded playback returning from below the video. Scrolled theater/sidebar renders were inspected. The Firefox library smoke passed with accepted exact-edition Play returning to the player, plus navigation, deep anchors, theater page scrolling and simulated Activity. `npm run test:full` passed 241 tests with zero failures, cancellations or skips. Physical devices and live providers remain unverified. Changes remain local and undeployed.
+
+## Responsive library scrolling correction (2026-10-18)
+
+Poster columns now follow available library width rather than a fixed four-column normal layout. Independent scrolling and pinned heading/toolbar apply only to wide normal layouts where the library sits beside the video. Theater and narrow libraries use page scrolling; navigation/view restoration chooses the active scroll container. The sidebar heading covers the card's top padding so scrolled artwork cannot appear above it.
+
+`watch-layout-smoke.js` passed Chrome 155.0.8059.79 and Firefox 158.0 at 1101/1440/1920/3840px, stacked 1000px, theater and phone widths. Checks cover adaptive columns, sidebar-only overflow, page scrolling and visible-item restoration through view changes, top-padding hit coverage, fullscreen/drawer restoration and decoded playback. Before/after renders and scrolled sidebar/theater surfaces were inspected. The Firefox library smoke passed navigation, paging, deep view/detail/back anchors, grid-sized detail posters and actual page scrolling in theater. `npm run test:full` passed 241 tests with zero failures, cancellations or skips. One concurrent fixture run timed out awaiting library startup; a standalone rerun passed. These remain isolated headless fixtures; physical devices and live Plex/Discord were not checked. Changes are local; no deployment was performed for this correction.
+
 ## Player controls and mobile settings (2026-10-18)
 
 The player now uses an edge-to-edge, square-corner mobile surface and two transport rows, with timestamps/progress above Play, Beginning, End, CC, Settings, mute/visible volume slider and Fullscreen. Mobile cannot enter theater. Desktop corners are reduced; theater/fullscreen remain square. Theater stays landscape on large portrait viewports and dims all content below the video. Hover/focus exposes the center Play/Pause button. Desktop settings open upward with left-opening quality/audio/subtitle choices; More settings and the mobile cog open the full grouped dialog, including personal Sync correction and subtitle rendering/delay. Room options contain room controls. CC restores the previous/default available subtitle track, fades when none exists, and switches between outline and solid/cutout SVGs. Cog badges show ORIG/HD as appropriate.
