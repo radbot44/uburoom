@@ -8,6 +8,8 @@ Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. D
 
 Two compact switches immediately precede the username: Light/Dark and Orange/Pink, using the Room options pill/thumb styling at a narrower width. The theme thumb has a sun/moon icon, while the accent thumb has no icon. Both switches use accessible names rather than visible labels. The accent track stays neutral while its thumb shows the selected brand color. Persist appearance locally and apply it before rendering on watch, sign-in and handoff pages. Wordmark, remote logo and SVG favicon reuse the canonical artwork with theme-appropriate neutral ink and swapped primary/secondary colors; preserve the fixed-color source assets.
 
+Accent changes interpolate primary/secondary colors and crossfade logos over 250 ms. Twenty accent clicks within five seconds reveal Sunrise Mode with a color burst, 250 ms fades and 50 ms holds; clicking again stops it and saves orange. The corresponding theme gesture produces a gray dud only. Keep effects local, transient and non-interactive, and suppress particle/button/logo motion for reduced-motion preferences.
+
 Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and approximately 1.9px width. Preserve rounded surfaces, subtle borders, spacing, focus and accessible names. Do not substitute emoji/icon libraries.
 
 ## Approved branding

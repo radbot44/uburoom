@@ -1,5 +1,11 @@
 # Verification status
 
+## Accent fade and Sunrise easter egg (2026-10-18)
+
+Semantic primary/secondary colors and logo crossfades use 250 ms transitions. Twenty accent clicks in a rolling five-second window produce a local 80-particle burst and enable Sunrise Mode: each 250 ms fade is followed by a 50 ms hold, with matching thumb movement. The next accent click stops the timer and saves orange. Twenty theme clicks produce only a ten-particle gray dud. Animation frames do not persist preferences or make network requests; external preference updates stop Sunrise. Reduced-motion preferences suppress particles, button movement and logo crossfades.
+
+Local verification: all seven theme unit checks pass with zero skips. Chrome and Firefox appearance runners pass activation/exit, intermediate color interpolation, both bursts, rapid-click request isolation, all four palettes, remote/player/menu/dialog and phone surfaces, persistence and cross-tab updates. Rendered Sunrise and phone examples were inspected. The Firefox layout assertion initially measured the button during its burst scaling; the runner now waits for that animation before measuring alignment. The full suite and real Discord/physical-device checks were not run. Deployment tests are skipped at the owner request.
+
 ## Login and account experience (2026-10-18)
 
 Sign-in checking overlays the rendered, inactive watch layout. Only an unauthenticated 401 reveals provider login choices; failed checks offer a retry. Account settings open immediately with loading feedback, show provider usernames and official icons without IDs, offer remove icons with confirmation and a right-aligned Connect button after removal, distinguish missing Plex credentials, and preserve browser logout and Activity browser handoff. Late account responses cannot reopen a dismissed dialog. Owner matching remains behind a collapsed disclosure.

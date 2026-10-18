@@ -6,6 +6,8 @@
   // Canonical SVG sources arrive with this script once. Recolor locally, including
   // the favicon and shadow-DOM remote, without fetching another image on changes.
   const branding=window.uburoomBrandAssets, images=new Map();
+  let sunrise=false, sunriseTimer;
+  const clicks={'theme-toggle':[], 'accent-toggle':[]};
   function brandUrl(path) {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
     const cacheKey=path+'/'+light+'/'+pink;
@@ -16,6 +18,63 @@
     }
     return images.get(cacheKey);
   }
+  function updateBrand(img,path) {
+    const next=brandUrl(path);
+    if(img.src===next)return;
+    if(img.src.startsWith('data:') && img.complete && img.naturalWidth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      let frame=img.parentElement;
+      if(!frame.classList.contains('brand-frame')) {
+        frame=document.createElement('span');frame.className='brand-frame';
+        img.replaceWith(frame);frame.append(img);
+      }
+      frame.querySelector('[data-brand-outgoing]')?.remove();
+      const previous=img.cloneNode();previous.dataset.brandOutgoing='';previous.alt='';previous.setAttribute('aria-hidden','true');
+      frame.append(previous);
+      previous.animate([{opacity:1},{opacity:0}],{duration:250,easing:'linear'}).finished.then(()=>previous.remove(),()=>previous.remove());
+    }
+    img.src=next;
+  }
+  function burst(button,dud=false) {
+    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    document.querySelector('.sunrise-burst')?.remove();
+    const layer=document.createElement('div');layer.className='sunrise-burst';layer.setAttribute('aria-hidden','true');document.body.append(layer);
+    const rect=button.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
+    const colors=dud?['#AAB0BC','#706D77']:['#FF9954','#FF7197','#FFD166','#FF537A'];
+    const count=dud?10:80, duration=dud?450:1000;
+    for(let i=0;i<count;i++) {
+      const particle=document.createElement('span'), angle=Math.random()*Math.PI*2, distance=dud?15+Math.random()*25:90+Math.random()*300;
+      const dx=Math.cos(angle)*distance, dy=Math.sin(angle)*distance;
+      particle.style.left=x+'px';particle.style.top=y+'px';particle.style.background=colors[i%colors.length];
+      particle.style.width=particle.style.height=(dud?3:4+Math.random()*9)+'px';layer.append(particle);
+      particle.animate([{transform:'translate(-50%,-50%) scale(.2)',opacity:1},
+        {transform:`translate(${dx*.6}px,${dy*.6}px) scale(1)`,opacity:1,offset:.3},
+        {transform:`translate(${dx}px,${dy+(dud?45:150)}px) rotate(${i*37}deg) scale(.1)`,opacity:0}],{duration,easing:'cubic-bezier(.15,.65,.4,1)',fill:'forwards'});
+    }
+    const animation=button.animate(dud?[{transform:'rotate(0deg)'},{transform:'rotate(-8deg)'},{transform:'rotate(5deg)'},{transform:'rotate(0deg)'}]:[{transform:'scale(1)'},{transform:'scale(1.35)'},{transform:'scale(1)'}],{duration});
+    animation.finished.then(()=>layer.remove(),()=>layer.remove());
+  }
+  function stopSunrise() {
+    clearTimeout(sunriseTimer);sunrise=false;delete root.dataset.sunrise;
+    for(const id of Object.keys(clicks))clicks[id]=[];
+  }
+  function cycleAccent() {
+    apply({theme:root.dataset.theme,accent:root.dataset.accent==='orange'?'pink':'orange'});
+    // Each 300 ms leg is a 250 ms fade followed by a 50 ms hold.
+    sunriseTimer=setTimeout(cycleAccent,300);
+  }
+  function clicked(id) {
+    if(id==='accent-toggle' && sunrise) {
+      stopSunrise();apply({theme:root.dataset.theme,accent:'orange'},true);return;
+    }
+    const now=performance.now();clicks[id]=clicks[id].filter(time=>now-time<=5000);clicks[id].push(now);
+    apply({theme:id==='theme-toggle'?(root.dataset.theme==='dark'?'light':'dark'):root.dataset.theme,
+      accent:id==='accent-toggle'?(root.dataset.accent==='orange'?'pink':'orange'):root.dataset.accent},true);
+    if(clicks[id].length<20)return;
+    clicks[id]=[];burst(document.getElementById(id),id==='theme-toggle');
+    if(id==='accent-toggle') {
+      sunrise=true;root.dataset.sunrise='true';render();sunriseTimer=setTimeout(cycleAccent,300);
+    }
+  }
   function render() {
     const light=root.dataset.theme==='light', pink=root.dataset.accent==='pink';
     for(const [id,label,pressed,next] of [['theme-toggle',light?'Light':'Dark',light,light?'dark':'light'],['accent-toggle',pink?'Pink':'Orange',pink,pink?'orange':'pink']]) {
@@ -24,8 +83,9 @@
       const icon=id==='theme-toggle' && window.uburoomUI?.icon(document,light?'sun':'moon');
       if(icon)button.querySelector('.appearance-thumb').replaceChildren(icon);
       button.title=button.ariaLabel=(id==='theme-toggle'?'Theme: ':'Accent: ')+label+'. Switch to '+next+'.';
+      if(id==='accent-toggle' && sunrise)button.title=button.ariaLabel='Sunrise Mode. Click to stop and return to orange.';
     }
-    for(const img of document.querySelectorAll('img.brand'))img.src=brandUrl('/assets/branding/uburoom-wordmark-brand.svg');
+    for(const img of document.querySelectorAll('img.brand:not([data-brand-outgoing])'))updateBrand(img,'/assets/branding/uburoom-wordmark-brand.svg');
     for(const link of document.querySelectorAll('link[rel=icon][type="image/svg+xml"]'))link.href=brandUrl('/favicon.svg');
     document.querySelector('meta[name=theme-color]')?.setAttribute('content',light?'#F8F6F2':'#101217');
   }
@@ -35,12 +95,11 @@
     if(persist)try{localStorage.setItem(key,JSON.stringify({theme:root.dataset.theme,accent:root.dataset.accent}));}catch{}
     render();window.dispatchEvent(new Event('uburoom-theme'));
   }
-  window.uburoomTheme={brandUrl};
+  window.uburoomTheme={brandUrl,updateBrand};
   apply(saved());
   document.addEventListener('DOMContentLoaded',()=>{
     render();
-    document.getElementById('theme-toggle')?.addEventListener('click',()=>apply({theme:root.dataset.theme==='dark'?'light':'dark',accent:root.dataset.accent},true));
-    document.getElementById('accent-toggle')?.addEventListener('click',()=>apply({theme:root.dataset.theme,accent:root.dataset.accent==='orange'?'pink':'orange'},true));
+    for(const id of ['theme-toggle','accent-toggle'])document.getElementById(id)?.addEventListener('click',()=>clicked(id));
   });
-  window.addEventListener('storage',event=>{if(event.key===key || event.key===null)apply(saved());});
+  window.addEventListener('storage',event=>{if(event.key===key || event.key===null){stopSunrise();apply(saved());}});
 })();

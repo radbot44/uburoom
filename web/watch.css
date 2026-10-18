@@ -1,8 +1,14 @@
 :root{--background:#101217;--card:#1B1E26;--elevated:#292E38;--border:#393F4D;--text:#F8F7F4;--muted:#AAB0BC;--orange:#FF9954;--pink:#FF7197;--primary:var(--orange);--secondary:var(--pink);--on-primary:#101217;--accent-text:var(--primary);--error:#ff9ca1;--hover:color-mix(in srgb,var(--elevated),var(--text) 8%);--primary-hover:color-mix(in srgb,var(--primary),var(--text) 10%);--orange-hover:var(--primary-hover);color-scheme:dark;font:14px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:var(--background)}
 :root[data-theme=light]{--background:#F8F6F2;--card:#FFFEFC;--elevated:#F0ECE6;--border:#DDD7CF;--text:#242329;--muted:#706D77;--accent-text:color-mix(in srgb,var(--primary) 30%,var(--text));--error:#a52439;color-scheme:light}
+@property --primary{syntax:'<color>';inherits:true;initial-value:#FF9954}
+@property --secondary{syntax:'<color>';inherits:true;initial-value:#FF7197}
+:root{transition:--primary .25s linear,--secondary .25s linear}
 :root[data-accent=pink]{--primary:var(--pink);--secondary:var(--orange)}
+.brand-frame{display:inline-grid;vertical-align:middle}.brand-frame>.brand{grid-area:1/1;display:block}
+#accent-toggle .appearance-thumb{transition:translate .25s linear}
+.sunrise-burst{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:2147483647}.sunrise-burst span{position:absolute;border-radius:50%;pointer-events:none}
 .appearance-controls{display:flex;gap:4px;flex:none}.appearance-toggle{display:grid;place-items:center;min-width:44px;height:44px;padding:0 1px;border-radius:8px;background:none;color:var(--text)}.appearance-track{position:relative;display:block;width:42px;height:24px;border-radius:999px;background:var(--elevated)}.appearance-thumb{position:absolute;left:3px;top:3px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--text);color:var(--background);transition:translate 120ms ease}.appearance-thumb svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.appearance-toggle[aria-checked=true] .appearance-thumb{translate:18px}#accent-toggle .appearance-thumb{background:var(--primary);color:var(--on-primary)}
-@media(prefers-reduced-motion:reduce){.appearance-thumb{transition:none}}
+@media(prefers-reduced-motion:reduce){.appearance-thumb,#accent-toggle .appearance-thumb{transition:none}}
 @media(max-width:700px){#account{flex-wrap:wrap;gap:8px}#account .account-actions{flex:1}#account .identity-group{margin-left:auto}#account #identity{max-width:75px}}
 @media(max-width:500px){#account>.account-actions{flex:1 1 100%;flex-wrap:nowrap}#account .identity-group{margin-left:0;flex:1}}
 /* Video chrome stays dark; its sibling dialogs and menus inherit the page palette. */
