@@ -84,6 +84,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 [data-view=cards] .queue-upcoming-view>.queue-column-heading{display:none}
 [data-view=cards] .queue-empty{flex:0 0 var(--queue-card-width);align-self:center;text-align:center}
 [data-view=cards] .queue-history-older{flex:0 0 110px;align-self:center;min-height:44px;font-size:12px}
+@container queue (max-width:560px){[data-view=cards] .queue-history-entry .queue-card-caption{display:none}[data-view=cards] .queue-history-entry .queue-entry-actions{justify-content:flex-end}}
 
 /* List view retains both columns, with the current video spanning their width. */
 [data-view=list]>.queue-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 14px}

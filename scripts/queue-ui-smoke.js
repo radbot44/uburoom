@@ -71,8 +71,8 @@ async function main() {
       assert.equal(await run('[...document.querySelectorAll(".queue-entry .queue-rank")].map(el=>el.textContent).join("|")'), '1 · UP NEXT in 0:43|2 · UP NEXT in 1:43|3 · UP NEXT in 2:43');
       assert.equal(await run('document.querySelector(".queue-history-status").getBoundingClientRect().height===document.querySelector(".queue-entry-top").getBoundingClientRect().height'), true, 'History and upcoming headers align');
       const wheelStart = await run('document.querySelector(".queue-layout").scrollLeft');
-      assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), false);
-      assert.ok(await run('document.querySelector(".queue-layout").scrollLeft') > wheelStart + 100, 'Wheel down browses right');
+      assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true);
+      assert.equal(await run('document.querySelector(".queue-layout").scrollLeft'), wheelStart, 'Vertical wheel input no longer scrolls cards horizontally');
       await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:-120,bubbles:true,cancelable:true}));$("queue-center").click()');
       await until(centerError + '<2', 'Recenter after wheel');
       assert.equal(await run('document.querySelector(".queue-history-entry:last-child").dataset.entryId===state.queueSummary.current.id'), false);
@@ -122,6 +122,16 @@ async function main() {
       }
       assert.deepEqual(await run('queueDuplicates'), [], 'Current item never temporarily duplicates in the lists');
       await run('queueObserver.disconnect();execute({action:"media.pause"})');
+      await run('queueUI.add({mediaId:"demo",type:"movie",title:"Skip fixture",duration:60})');
+      await until('!document.querySelector(".queue-current-skip").disabled', 'Current skip enabled');
+      assert.equal(await run('document.querySelector(".queue-current-toggle").nextElementSibling.classList.contains("queue-current-skip")'), true);
+      await run('document.querySelector(".queue-current-skip").click()');
+      await until('state.queueSummary.current.title==="Skip fixture" && !document.querySelector(".queue-entry")', 'Current skip advances');
+      await run('execute({action:"media.pause"})');
+      const restoredCount = await run('state.queueSummary.historyCount');
+      await run('globalThis.queueReturnRow=[...document.querySelectorAll(".queue-history-entry")].at(-1);globalThis.queueReturnTitle=queueReturnRow.querySelector(".queue-entry-title").textContent;queueReturnRow.querySelector(".queue-item-go-back").click()');
+      await until('state.queueSummary.current.title===queueReturnTitle && state.queueSummary.historyCount===0 && state.queueSummary.pendingCount===' + restoredCount, 'Go back restores the timeline into Upcoming');
+      await run('execute({action:"media.pause"})');
       await run('queueUI.add({mediaId:"1",type:"movie",title:"Artwork fixture",duration:60})');
       await until('[...document.querySelectorAll(".queue-art img")].some(img=>img.dataset.item==="1")', 'Artwork row');
       await run('document.querySelector(".queue-art img").scrollIntoView({block:"center"})');
@@ -138,6 +148,7 @@ async function main() {
       await pause(150); await shot('list-light-pink');
       for (const mode of ['cards', 'list']) {
         await browser.viewport(page, 390, 844);
+        await run('$("section-tab-queue").click()');
         await run('$("queue-view-' + mode + '").click();$("queue-panel").scrollIntoView({block:"start"})');
         await pause(150);
         assert.equal(await run('document.documentElement.scrollWidth<=innerWidth'), true, 'Phone has no page overflow');
@@ -145,6 +156,33 @@ async function main() {
         else assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), 1);
         await shot('phone-' + mode);
       }
+      let panelWidth;
+      for (const [key, panel] of [['room','options-panel'],['queue','queue-panel'],['media','library-panel']]) {
+        await run('$("section-tab-' + key + '").click();$("' + panel + '").scrollIntoView({block:"start"})');
+        await until('getComputedStyle($("' + panel + '")).display!=="none"', 'Mobile ' + key + ' tab');
+        assert.equal(await run('["options-panel","queue-panel","library-panel"].filter(id=>getComputedStyle($(id)).display!=="none").length'), 1);
+        const width = await run('$("' + panel + '").getBoundingClientRect().width');
+        if (panelWidth === undefined) panelWidth = width; else assert.ok(Math.abs(panelWidth - width) < 1, 'Mobile panels share the same width: ' + key + ' ' + width + ' vs Room ' + panelWidth);
+        await shot('phone-tab-' + key);
+      }
+      assert.equal(await run('$("options-collapse").textContent.trim()'), 'Room');
+      assert.equal(await run('$("library-heading").textContent'), 'Media');
+      assert.equal(await run('document.querySelector(".queue-heading").textContent'), 'Queue');
+      assert.equal(await run('$("drawer-open").getAttribute("aria-label")'), 'Menu');
+      assert.equal(await run('getComputedStyle($("room-symbol")).maskImage.includes("oomark-mono.svg")'), true);
+      assert.equal(await run('fetch("/assets/branding/uburoom-oomark-mono.svg").then(response=>response.ok)'), true);
+      assert.equal(await run('$("media-symbol").querySelector("svg").isEqualNode($("drawer-symbol").querySelector("svg"))'), true);
+      await run('$("section-tab-room").focus();$("section-tabs").dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight",bubbles:true}))');
+      assert.equal(await run('document.activeElement.id'), 'section-tab-queue');
+      await run('window.scrollTo(0,0)');
+      await browser.click(page, 'fullscreen');
+      await until('immersive', 'Phone fullscreen');
+      await run('toggleDrawer(true);$("section-tab-media").click()');
+      assert.equal(await run('drawer.contains($("section-tabs")) && getComputedStyle($("library-panel")).display!=="none"'), true);
+      await shot('phone-menu-media');
+      await run('document.exitFullscreen()');
+      await until('!immersive', 'Phone fullscreen exit');
+      assert.equal(await run('!drawer.contains($("section-tabs")) && $("section-tab-media").getAttribute("aria-selected")==="true"'), true);
       await browser.viewport(page, 1600, 1100);
       await run('$("theme-toggle").click();$("accent-toggle").click();setTheater(true);$("queue-view-cards").click();$("queue-panel").scrollIntoView({block:"start"})');
       await until(centerError + '<2', 'Theater centered');
@@ -163,7 +201,7 @@ async function main() {
       await run('$("queue-view-list").click()');
       const restored = await browser.page(config.publicUrl + '/watch?demo=host');
       await browser.until(restored, 'document.getElementById("queue-view-list")?.getAttribute("aria-pressed")==="true"', 'Saved list preference');
-      console.log(name + ' ' + browser.version + ': direct Play now/Skip to, consumed history replay without transient duplicates, repeated moves with scroll/focus following, wheel navigation, start estimates, matching rows, cards/list, artwork/cache/fallback, saved preference, themes, phone, theater and fullscreen drawer passed');
+      console.log(name + ' ' + browser.version + ': current skip, Go back timeline restoration, Room/Queue/Media mobile tabs and equal widths, section icons/Menu, native wheel behavior, queue actions/replay/moves, start estimates, artwork/cache, themes, phone/theater/fullscreen passed');
     } catch (error) {
       if (browser && page) console.error(await browser.evaluate(page, '({selected,state:!!state,pending,error:$("error").textContent,notice:document.querySelector(".queue-notice").textContent,ranks:[...document.querySelectorAll(".queue-entry .queue-rank")].map(el=>el.textContent),position:state?.state?.position,duration:state?.state?.duration,summary:state?.queueSummary})'));
       if (browser && page) await browser.screenshot(page, path.join(output, name + '-failure.png'));

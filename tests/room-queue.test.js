@@ -270,6 +270,48 @@ test('historyReplay consumes the selected history row, preserves the interrupted
   assert.equal(f.queue.history(room.id).items[0].title, 'Episode 1');
 });
 
+test('Go back restores newer history and current ahead of pending items with fresh identities and durable order', async t => {
+  const f = fixture(t, { disk: true }), room = await f.store.create(f.creator);
+  const first = (await f.queue.playNow(room.id, f.creator, sampleItem(1))).current;
+  const target = (await f.queue.playNow(room.id, f.creator, sampleItem(2), 200)).current;
+  const newer = (await f.queue.playNow(room.id, f.creator, sampleItem(3), 300)).current;
+  const current = (await f.queue.playNow(room.id, f.creator, sampleItem(4), 400)).current;
+  const pending = (await f.queue.add(room.id, f.creator, sampleItem(5))).added;
+  const revision = f.queue.summary(room.id).queueRevision;
+  await assert.rejects(f.queue.historyReplay(room.id, f.viewer, target.id, { restore:true }), /permission required/);
+  await assert.rejects(f.queue.historyReplay(room.id, f.creator, target.id, { restore:true, expectedRevision:revision - 1 }), /Queue changed/);
+  const result = await f.queue.historyReplay(room.id, f.creator, target.id, { restore:true, expectedRevision:revision });
+  assert.equal(result.replayed.title, 'Episode 2');
+  assert.equal(result.replayed.position, 300);
+  assert.notEqual(result.replayed.id, target.id);
+  const next = f.queue.list(room.id).items;
+  assert.deepEqual(next.map(item => item.title), ['Episode 3', 'Episode 4', 'Episode 5']);
+  assert.deepEqual(next.map(item => item.rank), [0, 1, 2]);
+  assert.deepEqual(next.map(item => item.position), [0, 0, 0]);
+  assert.notEqual(next[0].id, newer.id); assert.notEqual(next[1].id, current.id); assert.equal(next[2].id, pending.id);
+  assert.deepEqual(f.queue.history(room.id).items.map(item => item.id), [first.id]);
+  await f.restart();
+  assert.deepEqual(f.queue.list(room.id).items.map(item => item.id), next.map(item => item.id));
+  assert.equal(f.queue.current(room.id).id, result.replayed.id);
+});
+
+test('Go back capacity failures are atomic and completed targets restart from zero', async t => {
+  const f = fixture(t), room = await f.store.create(f.creator);
+  const target = (await f.queue.playNow(room.id, f.creator, sampleItem(1))).current;
+  await f.queue.completeCurrent(room.id);
+  await f.queue.playNow(room.id, f.creator, sampleItem(2));
+  await f.queue.addBulk(room.id, f.creator, Array.from({ length:MAX_PENDING }, (_, i) => sampleItem(i + 3)));
+  const revision = f.queue.summary(room.id).queueRevision;
+  await assert.rejects(f.queue.historyReplay(room.id, f.creator, target.id, { restore:true }), /exceed the queue limit/);
+  assert.equal(f.queue.summary(room.id).queueRevision, revision);
+  assert.equal(f.queue.current(room.id).title, 'Episode 2');
+  assert.equal(f.queue.history(room.id).items[0].id, target.id);
+  await f.queue.clear(room.id, f.creator, revision);
+  const result = await f.queue.historyReplay(room.id, f.creator, target.id, { restore:true });
+  assert.equal(result.replayed.position, 0);
+  assert.equal(f.queue.list(room.id).items[0].title, 'Episode 2');
+});
+
 test('historyClear removes history without touching queue or current', async t => {
   const f = fixture(t);
   const room = await f.store.create(f.creator);

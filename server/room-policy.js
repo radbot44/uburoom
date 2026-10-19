@@ -43,7 +43,7 @@ function allowed(room, userId, capability) {
 function commandCapability(action) {
   if (action.startsWith('media.autoplay.')) return 'autoplay';
   if (['queue.add','queue.bulk'].includes(action)) return 'addQueue';
-  if (['queue.playNow','queue.playEntry','queue.skipTo','queue.history.replay'].includes(action)) return 'chooseMedia';
+  if (['queue.playNow','queue.playEntry','queue.skipTo','queue.history.replay','queue.history.goBack'].includes(action)) return 'chooseMedia';
   if (action.startsWith('queue.')) return 'editQueue';
   if (['media.play', 'media.pause', 'media.toggle'].includes(action)) return 'playPause';
   if (action.startsWith('media.seek.')) return 'seek';

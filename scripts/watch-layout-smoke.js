@@ -40,11 +40,14 @@ async function main() {
         for (const [label,width,height,wide] of [['1080p',1920,1080,false],['4k',3840,2160,false],['normal',1440,1000,false],['sidebar-small',1101,900,false],['stacked',1000,1000,false],['theater',1440,1000,true],['phone',390,844,false],['phone-theater',390,844,true]]) {
           await browser.viewport(page,width,height);
           await evaluate('setTheater('+wide+');window.scrollTo(0,0);true'); await pause(200);
+          if (width <= 700) await evaluate('selectSection("media");true');
           await browser.screenshot(page,path.join(output,name+'-'+label+'.png'));
           const r = await measure();
           if (!before) {
             assert.equal(r.overflow,false,name+' '+label+' horizontal overflow');
-            assert.ok(r.room.y>=r.stage.bottom && r.options.y>=r.room.bottom,'Room and options below video');
+            assert.ok(r.room.y>=r.stage.bottom,'Room bar below video');
+            if (width > 700) assert.ok(r.options.y>=r.room.bottom,'Room controls below video');
+            else assert.equal(await evaluate('getComputedStyle(document.getElementById("options-panel")).display==="none" && document.getElementById("section-tab-media").getAttribute("aria-selected")==="true"'),true,'Mobile shows the selected tab');
             if (!(wide&&width>700)&&width>1100) assert.ok(r.library.x>=r.stage.right,'Normal library beside video');
             else assert.ok(r.library.y>=r.stage.bottom,'Stacked library');
             const columns=await evaluate('getComputedStyle(document.querySelector(".library")).gridTemplateColumns.split(" ").length');

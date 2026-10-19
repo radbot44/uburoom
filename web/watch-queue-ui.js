@@ -88,7 +88,7 @@
     host.dataset.view = view;
     const header = node('header', host, undefined, 'queue-header');
     const heading = node('h2', header, undefined, 'queue-heading');
-    heading.append(root.uburoomUI.icon(doc, 'queue'), doc.createTextNode('Playback queue'));
+    heading.append(root.uburoomUI.icon(doc, 'queue'), doc.createTextNode('Queue'));
     const views = node('div', header, undefined, 'queue-view-switch');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Queue layout');
     const viewButtons = ['cards', 'list'].map(value => {
@@ -317,12 +317,6 @@
     }
 
     layout.addEventListener('scroll', updateNavigation, { passive: true });
-    layout.addEventListener('wheel', event => {
-      if (view !== 'cards' || event.ctrlKey || event.shiftKey || !event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
-      const scale = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? layout.clientWidth : 1;
-      event.preventDefault();
-      layout.scrollBy({ left: event.deltaY * scale, behavior: 'instant' });
-    }, { passive: false });
     layout.addEventListener('keydown', event => {
       if (event.target !== layout || view !== 'cards') return;
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -448,12 +442,14 @@
           try { await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' }); }
           catch (error) { notice.textContent = error.message; }
         }, !state?.mediaId || !state?.capabilities?.playPause, 'icon-button quiet queue-current-toggle');
+        action(actions, 'Skip to next video', 'end', () => execute({ action: 'media.next' }), !state?.hasNext || !state?.capabilities?.chooseMedia, 'queue-current-skip');
       }
       nowPlayingBox.querySelector('.queue-playback-state').textContent = current || state?.mediaId ? state?.state?.paused ? 'Paused' : 'Playing' : '';
       nowPlayingBox.querySelector('.queue-now-playing-meta').textContent = formatTime(position) + ' / ' + formatTime(duration);
       const progress = nowPlayingBox.querySelector('progress');
       progress.max = duration || 1; progress.value = Math.min(position, duration);
       const toggle = nowPlayingBox.querySelector('.queue-current-toggle');
+      nowPlayingBox.querySelector('.queue-current-skip').disabled = !state?.hasNext || !state?.capabilities?.chooseMedia;
       const label = state?.state?.paused ? 'Play' : 'Pause';
       if (toggle.title !== label) {
         toggle.title = label; toggle.setAttribute('aria-label', label);
@@ -488,7 +484,7 @@
       node('h3', upcomingView, 'Upcoming →', 'queue-column-heading');
       const state = getState(), items = currentQueue.items || [];
       const canEdit = !!state?.capabilities?.editQueue, canChoose = !!state?.capabilities?.chooseMedia;
-      if (!items.length) node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from the Plex library to line up videos.', 'hint queue-empty');
+      if (!items.length) node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from Media to line up videos.', 'hint queue-empty');
       const list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
       list.id = 'queue-upcoming-list';
       items.forEach((item, i) => {
@@ -568,6 +564,7 @@
         node('span', info, outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' / ' + formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'History', 'queue-card-caption');
+        action(actions, 'Go back to', 'start', () => replayHistory(item.id, true, true), !canChoose, 'queue-item-go-back');
         if (outcome !== 'completed') action(actions, 'Resume now', 'play', () => replayHistory(item.id, true), !canChoose, 'queue-item-resume');
         action(actions, 'Start over now', 'refresh', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
         action(actions, 'Add to queue', 'queue', () => add({ ...item, position: 0 }), !state?.capabilities?.addQueue, 'queue-item-add');
@@ -719,13 +716,14 @@
       await changed();
     }
 
-    async function replayHistory(entryId, resume) {
+    async function replayHistory(entryId, resume, restore = false) {
       const state = getState();
       if (!state?.id) return;
       await request('/api/watch/rooms/' + state.id + '/history', {
-        action: 'replay',
+        action: restore ? 'goBack' : 'replay',
         entryId,
-        resume
+        resume,
+        expectedRevision: queueRevision(state)
       }, { timeoutMs: 35000 });
       await fetchData(true);
       await changed();

@@ -133,7 +133,7 @@ async function main() {
       await until('!$("queue-auto-dialog").open && state?.queueSummary?.autoQueue?.mode==="random"','Random configuration saved');
       assert.equal(await run('state.queueSummary.autoQueue.scope.type'),'show');
       await browser.viewport(host,390,844);
-      await run('$("queue-auto-open").click()');
+      await run('selectSection("queue");$("queue-auto-open").click()');
       await until('$("queue-auto-dialog").open','Phone auto-queue dialog');
       await shot('phone-auto');
       assert.equal(await run('$("queue-auto-dialog").scrollWidth <= $("queue-auto-dialog").clientWidth'),true);

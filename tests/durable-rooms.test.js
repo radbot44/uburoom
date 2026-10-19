@@ -268,6 +268,15 @@ test('queue Play now and Skip to dispatch through validation and history replay 
   assert.equal(state.state.position, 0);
   assert.equal(state.queueSummary.current.title, 'Fourth');
   assert.equal(f.app.watch.roomState.queue.getEntry(entries[3].id), null);
+  const oldest = (await creator.call(route + '/history')).body.items.at(-1);
+  const goBack = { action:'goBack', entryId:oldest.id, expectedRevision:state.queueSummary.queueRevision };
+  assert.equal((await guest.call(route + '/history', goBack)).status, 403);
+  assert.equal((await creator.call(route + '/history', { ...goBack, expectedRevision:0 })).status, 409);
+  assert.equal((await creator.call(route + '/history', goBack)).status, 200);
+  state = (await creator.call(route + '?viewer=' + viewer)).body;
+  assert.equal(state.queueSummary.current.title, oldest.title);
+  assert.equal(state.queueSummary.historyCount, 0);
+  assert.deepEqual((await creator.call(route + '/queue')).body.items.map(item => item.title), ['First', 'Second', 'Third', 'Fourth', 'Fifth']);
 });
 
 test('live bulk and auto-queue commands normalize Plex episodes, enforce capabilities before catalog access and reject stale revisions',tls,async t => {

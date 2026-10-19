@@ -1,5 +1,13 @@
 # Verification status
 
+## Mobile section tabs, names and queue return controls (2026-10-19)
+
+Mobile layouts show Room, Queue and Media tabs with one panel visible at a time. Panels share the same width and spacing; removing nested Room margins and retaining the native page scrollbar avoids width changes between short and long tabs. Tab icons/keyboard navigation, focus, library state and active selection survive fullscreen Menu entry/exit. Desktop layouts retain their sections. Section headings are Queue, Room and Media; the player drawer button is Menu. Room uses a monochrome SVG derived from the canonical oomark, and Media reuses the drawer icon. Vertical wheel scrolling keeps its native page behavior; card scrollbars, arrows and horizontal gestures remain available.
+
+The current queue item includes Skip immediately after Play/Pause, respecting choose-media authority and next-item availability. History Go back to precedes Resume and restores the selected point: unfinished selections resume at their recorded position, completed selections restart at zero, newer history and current playback return to the front of Upcoming at position zero, and the existing pending queue retains order. Restored entries receive fresh occurrence identities. Capacity, authorization and revision failures preserve state; media preparation and durable commit still precede live adoption.
+
+Verification: all 347 tests passed with zero failures/skips. New coverage exercises durable restoration order/positions/identities, retained older history, queue capacity atomicity, completed targets, authenticated Go back dispatch, viewer denial and stale revisions. Expanded Chrome 155.0.8059.84 and Firefox 158.0 checks cover current Skip and Go back buttons, mobile panel widths/exclusive visibility/tab keyboard navigation, headings/icons, native wheel handling, fullscreen Menu restoration and the existing queue/layout/room flows. Normal, theater, phone tabs and fullscreen renders were inspected. Real Plex/Discord Activity and physical touch-device verification remain open.
+
 ## Queue selection, replay and interaction follow-up (2026-10-19)
 
 Play now and Skip to now pass the shared validator into the existing capability/revision-checked queue handlers. Skip to reindexes the remaining pending entries from zero. Explicit history Resume/Start over consumes the selected history row while creating a fresh occurrence identity and preserving the interrupted current video. Preparation failure retains the original history row. Queue/history responses carry matching revisions; the client publishes both lists and current playback together, avoiding transient duplicates during selection/replay.

@@ -124,7 +124,7 @@ video.volume = .5;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
@@ -216,9 +216,52 @@ async function renewIdentity() {
 }
 function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = undefined; volumeDragging = false; }
 // Move the actual shells so their controls, state and listeners stay shared.
+const sections = [['room','Room','options-panel'],['queue','Queue','queue-panel'],['media','Media','library-panel']];
+let mobileSection = 'room', sectionChosen = false;
+const sectionTabs = document.createElement('nav');
+sectionTabs.id = 'section-tabs'; sectionTabs.hidden = true;
+sectionTabs.setAttribute('role', 'tablist'); sectionTabs.setAttribute('aria-label', 'Room sections');
+$('viewing-section').after(sectionTabs);
+for (const [key, label, panel] of sections) {
+  const tab = document.createElement('button');
+  tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
+  tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
+  if (key === 'room') {
+    const icon = document.createElement('span'); icon.className = 'oomark-icon'; icon.setAttribute('aria-hidden', 'true'); tab.append(icon);
+  } else tab.append(uburoomUI.icon(document, key === 'queue' ? 'queue' : 'drawer'));
+  tab.append(document.createTextNode(label));
+  tab.addEventListener('click', () => selectSection(key));
+  sectionTabs.append(tab);
+}
+function selectSection(key, focus = false) {
+  mobileSection = key; sectionChosen = true;
+  updateSectionTabs();
+  if (focus) $('section-tab-' + key).focus();
+}
+function updateSectionTabs() {
+  const mobile = document.body.classList.contains('mobile-player');
+  if (!sectionChosen) mobileSection = state?.durable ? 'room' : 'media';
+  if (mobileSection === 'queue' && !state?.durable) mobileSection = 'media';
+  sectionTabs.hidden = !mobile;
+  for (const [key,, id] of sections) {
+    const panel = $(id), tab = $('section-tab-' + key), active = key === mobileSection;
+    tab.disabled = key === 'queue' && !state?.durable;
+    tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1;
+    panel.classList.toggle('section-tab-inactive', mobile && !active);
+    if (mobile) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', tab.id); }
+    else { panel.removeAttribute('role'); panel.removeAttribute('aria-labelledby'); }
+  }
+}
+sectionTabs.addEventListener('keydown', event => {
+  const tabs = [...sectionTabs.querySelectorAll('button:not(:disabled)')];
+  const index = tabs.indexOf(document.activeElement);
+  const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length :
+    event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+  if (next >= 0) { event.preventDefault(); selectSection(tabs[next].dataset.section, true); }
+});
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
-drawer.setAttribute('aria-label', 'Rooms and library'); document.body.append(drawer);
-const shells = ['account','room-bar','queue-panel','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+drawer.setAttribute('aria-label', 'Menu'); document.body.append(drawer);
+const shells = ['account','room-bar','section-tabs','queue-panel','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -249,6 +292,7 @@ function updateMobilePlayer() {
   const mobile=innerWidth<=700||matchMedia('(pointer:coarse) and (max-height:700px)').matches||!!document.fullscreenElement&&document.body.classList.contains('mobile-player');
   document.body.classList.toggle('mobile-player',mobile);
   if(mobile&&theater&&!immersive&&!document.fullscreenElement)setTheater(false,false);
+  updateSectionTabs();
 }
 function updateViewingLayout() {
   document.documentElement.style.setProperty('--watch-room-bar-height',$('room-bar').offsetHeight+'px');
@@ -266,6 +310,7 @@ function updateFullscreenLayout() {
   toggleDrawer(drawerOpen);
   toggleRemote(remoteOpen);
   placeRoomBar();
+  updateSectionTabs();
   updateViewingLayout();
 }
 function placeRoomBar() {
@@ -658,6 +703,7 @@ function renderVisibility() {
     button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : 'Public room');
     button.title = state?.canManage ? (privateRoom ? 'Creator and hosts can watch. Make public.' : 'Server members can watch. Make private.') : 'Room settings permission required';
   }
+  updateSectionTabs();
 }
 async function changeVisibility() {
   if (!state?.canManage || pending || $('privacy-dialog').open) return;

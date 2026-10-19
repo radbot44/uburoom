@@ -113,7 +113,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if (write) {
           if (!throttle('room-queue:' + auth.actor.userId, 60)) return result(429, { error: 'Too many queue operations' });
           if (!data || typeof data !== 'object') return result(400, { error: 'Invalid history data' });
-          if (['clear','replay'].includes(data.action)) {
+          if (['clear','replay','goBack'].includes(data.action)) {
             const applied = await hub.dispatch({...auth.actor,watchCurrent:current}, { roomId:match[1], action:'queue.history.' + data.action,
               args:{...data,resume:!!data.resume} });
             return applied.status === 'applied' ? result(200,applied) : result(applied.httpStatus ||

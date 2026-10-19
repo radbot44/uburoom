@@ -208,7 +208,7 @@ class Hub {
       // preparation can take longer than a remote button's delivery lifetime.
       // Keep completion bounded and recheck the same live authorization below.
       const preparing = personal && command.action === 'media.quality.set' || s.permissions &&
-        ['queue.bulk','queue.auto','queue.history.replay','queue.playNow','queue.playEntry','queue.skipTo','media.load','media.next','media.previous'].includes(command.action);
+        ['queue.bulk','queue.auto','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','media.load','media.next','media.previous'].includes(command.action);
       const deadline = preparing ? acceptedAt + 30000 : admissionDeadline;
       const epoch = s.epoch, mode = s.mode, adminEpoch = this.adminEpoch;
       const permitted = () => this.rooms.get(s.roomId) === s && s.epoch === epoch && s.mode === mode && Date.now() < deadline &&

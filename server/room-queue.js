@@ -704,10 +704,11 @@ class RoomQueue {
     return { action: 'replayed', current: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
   }
 
-  async historyReplay(roomId, userId, historyEntryId, { resume = false } = {}, currentPosition = 0) {
+  async historyReplay(roomId, userId, historyEntryId, { resume = false, restore = false, expectedRevision } = {}, currentPosition = 0) {
     this.healthy();
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'chooseMedia');
+    this.assertRevision(room, expectedRevision);
 
     const historyEntry = this.getEntry(historyEntryId);
     if (!historyEntry || historyEntry.roomId !== roomId || historyEntry.state !== 'history') {
@@ -715,11 +716,20 @@ class RoomQueue {
     }
 
     const current = this.current(roomId);
-    const targetPosition = resume ? Math.min(Math.max(0, historyEntry.position), historyEntry.duration) : 0;
+    const history = restore ? this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC").all(roomId).map(rowToEntry) : [];
+    const restored = restore ? [...history.slice(0, history.findIndex(item => item.id === historyEntryId)).reverse(), ...(current ? [current] : [])] : [];
+    if (restore && this.pending(roomId).length + restored.length > MAX_PENDING) throw error('Going back would exceed the queue limit (maximum 100 upcoming items)');
+    const targetPosition = (restore ? historyEntry.outcome !== 'completed' : resume) ? Math.min(Math.max(0, historyEntry.position), historyEntry.duration) : 0;
     const id = randomUUID(), at = this.now();
+    let restoredIds = [];
 
     this.registry.transaction(() => {
-      if (current) {
+      if (restore) {
+        this.db.prepare("UPDATE watch_queue_entries SET rank = rank + ?, updatedAt = ? WHERE roomId = ? AND state = 'pending'").run(restored.length, at, roomId);
+        restoredIds = this.insertPending(roomId, restored.map(item => ({ ...item, position: 0 })), 0, at);
+        const remove = this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?');
+        for (const item of restored) remove.run(item.id);
+      } else if (current) {
         const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
         this.db.prepare(`
           UPDATE watch_queue_entries
@@ -753,7 +763,7 @@ class RoomQueue {
     });
 
     await this.store.commit();
-    return { replayed: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
+    return { replayed: this.getEntry(id), previous: current, restored: restoredIds.map(id => this.getEntry(id)), queueRevision: room.queueRevision + 1 };
   }
 
   async historyClear(roomId, userId) {

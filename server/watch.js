@@ -441,12 +441,12 @@ class Watch {
       else if (action === 'queue.clear') value = await queue.clear(id,actor.userId,revision);
       else if (action === 'queue.shuffle') value = await queue.shuffle(id,actor.userId,revision);
       else if (action === 'queue.history.clear') value = await queue.historyClear(id,actor.userId);
-      else if (action === 'queue.history.replay') {
+      else if (action === 'queue.history.replay' || action === 'queue.history.goBack') {
         if (room) {
           room.queueEditing = false;
           return this.changeQueueMedia(room,command,actor,permitted);
         }
-        value = await queue.historyReplay(id,actor.userId,args.entryId,{resume:args.resume});
+        value = await queue.historyReplay(id,actor.userId,args.entryId,{resume:args.resume,restore:action === 'queue.history.goBack',expectedRevision:revision});
       }
       if (room && this.rooms.get(id) === room) { this.roomState.apply(room,this.roomState.store.get(id)); room.revision++; room.autoQueueError = undefined; }
       return {status:'applied',...value};
@@ -511,7 +511,7 @@ class Watch {
         this.hub.canRoom(room.s,actor,'autoplay'));
     if (!valid()) return {status:'unavailable',message:'Autoplay or media selection was cancelled.'};
     let target, prepared, adopted = false;
-    const old = room.media, oldPosition = this.position(room), replay = action === 'queue.history.replay', playEntry = action === 'queue.playEntry';
+    const old = room.media, oldPosition = this.position(room), restore = action === 'queue.history.goBack', replay = action === 'queue.history.replay' || restore, playEntry = action === 'queue.playEntry';
     if (replay) {
       target = queue.getEntry(args.entryId);
       if (!target || target.roomId !== id || target.state !== 'history') throw Object.assign(new Error('History entry unavailable'),{status:404});
@@ -549,7 +549,7 @@ class Watch {
         let saving;
         if (action === 'media.next') saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid});
-        else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume},position);
+        else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
         else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid});
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
         else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie'},prepared.roomServerId),position);
