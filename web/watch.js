@@ -121,10 +121,10 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 const subtitleMode=$('subtitle-mode');
 video.volume = .5;
-function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
+function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['queue-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
