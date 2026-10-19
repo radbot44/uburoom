@@ -477,6 +477,103 @@ class RoomQueue {
     return { current: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
   }
 
+  async playEntry(roomId, userId, entryId, { skipPrevious = false, currentPosition = 0, expectedRevision, autoCorpus, corpus, guard } = {}) {
+    this.healthy();
+    const room = this.room(roomId);
+    this.assertAllowed(room, userId, 'chooseMedia');
+    this.assertRevision(room, expectedRevision);
+    if (guard && guard() !== true) throw error('Playback changed before queue advance', 409);
+
+    const target = this.getEntry(entryId);
+    if (!target || target.roomId !== roomId || target.state !== 'pending') {
+      throw error('Queue entry unavailable', 404);
+    }
+
+    const current = this.current(roomId);
+    const generationCorpus = autoCorpus ?? corpus;
+    const validatedCorpus = generationCorpus === undefined ? undefined : this.validateCorpus(generationCorpus);
+    const at = this.now();
+    let generated = [];
+
+    this.registry.transaction(() => {
+      if (current) {
+        const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(clamped, at, at, current.id);
+      }
+
+      if (skipPrevious) {
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET state = 'history', rank = NULL, outcome = 'skipped', endedAt = ?, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending' AND rank < ?
+        `).run(at, at, roomId, target.rank);
+
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET rank = rank - ?, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending' AND rank > ?
+        `).run(target.rank, at, roomId, target.rank);
+      } else {
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET rank = rank - 1, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending' AND rank > ?
+        `).run(at, roomId, target.rank);
+      }
+
+      this.db.prepare(`
+        UPDATE watch_queue_entries
+        SET state = 'current', rank = NULL, startedAt = ?, updatedAt = ?
+        WHERE id = ?
+      `).run(at, at, target.id);
+
+      const bookmark = {
+        serverId: target.serverId, mediaId: target.mediaId, type: target.type,
+        title: target.title, duration: target.duration, position: target.position || 0
+      };
+      this.db.prepare(`
+        UPDATE watch_rooms
+        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        WHERE id = ?
+      `).run(JSON.stringify(bookmark), at, roomId);
+
+      if (validatedCorpus) generated = this.generatePending(roomId, validatedCorpus, 1, at).ids;
+      this.pruneHistory(roomId);
+    });
+
+    await this.store.commit();
+    return { current: this.getEntry(target.id), previous: current, generated: generated.map(id => this.getEntry(id)), queueRevision: room.queueRevision + 1 };
+  }
+
+  async completeCurrent(roomId) {
+    this.healthy();
+    const room = this.room(roomId);
+    const current = this.current(roomId);
+    if (!current) return { queueRevision: room.queueRevision };
+    const at = this.now();
+    this.registry.transaction(() => {
+      this.db.prepare(`
+        UPDATE watch_queue_entries
+        SET state = 'history', rank = NULL, position = duration, outcome = 'completed', endedAt = ?, updatedAt = ?
+        WHERE id = ?
+      `).run(at, at, current.id);
+
+      this.db.prepare(`
+        UPDATE watch_rooms
+        SET bookmark = NULL, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        WHERE id = ?
+      `).run(at, roomId);
+
+      this.pruneHistory(roomId);
+    });
+    await this.store.commit();
+    return { completed: current, queueRevision: room.queueRevision + 1 };
+  }
+
   async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard } = {}) {
     this.healthy();
     const room = this.room(roomId);

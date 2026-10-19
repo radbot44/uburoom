@@ -90,7 +90,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if (write) {
           if (!throttle('room-queue:' + auth.actor.userId, 60)) return result(429, { error: 'Too many queue operations' });
           if (!data || typeof data !== 'object') return result(400, { error: 'Invalid queue data' });
-          const actions = ['add','move','remove','clear','playNow','bulk','shuffle','auto'];
+          const actions = ['add','move','remove','clear','playNow','playEntry','skipTo','bulk','shuffle','auto'];
           if (actions.includes(data.action)) {
             const applied = await hub.dispatch({...auth.actor,watchCurrent:current}, { roomId:match[1], action:'queue.' + data.action,
               args:{ ...data, unfinished:data.unfinished ?? false, includeSpecials:data.includeSpecials ?? false } });

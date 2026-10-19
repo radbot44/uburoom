@@ -359,9 +359,19 @@ class Watch {
     return items.map(item => this.queueItem(item,serverId));
   }
   queueItem(item, serverId) {
+    let parentTitle = item.parentTitle;
+    const epNum = Number.isInteger(item.index) ? item.index : (typeof item.episode === 'number' && Number.isInteger(item.episode)) ? item.episode : undefined;
+    if (item.type === 'episode' && Number.isInteger(epNum)) {
+      const epStr = 'Episode ' + epNum;
+      if (parentTitle && !parentTitle.includes('Episode')) {
+        parentTitle = parentTitle + ' · ' + epStr;
+      } else if (!parentTitle) {
+        parentTitle = epStr;
+      }
+    }
     return { ...item, serverId, mediaId:String(item.mediaId || item.id || ''),
       type:item.type === 'demo' || item.mediaId === 'demo' || item.id === 'demo' ? 'movie' : item.type,
-      parentTitle:item.parentTitle, grandparentTitle:item.grandparentTitle || item.showTitle };
+      parentTitle, grandparentTitle:item.grandparentTitle || item.showTitle };
   }
   async queueCommand(id, command, actor, permitted) {
     if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'),{status:400});
@@ -392,6 +402,13 @@ class Watch {
           return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted);
         }
         value = action === 'queue.add' ? await queue.add(id,actor.userId,item,{expectedRevision:revision}) : await queue.playNow(id,actor.userId,item);
+      } else if (action === 'queue.playEntry' || action === 'queue.skipTo') {
+        const skipPrevious = action === 'queue.skipTo' || !!args.skipPrevious;
+        if (room) {
+          room.queueEditing = false;
+          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:args.entryId,skipPrevious}},actor,permitted);
+        }
+        value = await queue.playEntry(id,actor.userId,args.entryId,{skipPrevious,expectedRevision:revision});
       } else if (action === 'queue.bulk') {
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
         const serverId = await this.roomState.identify({id:args.mediaId});
@@ -441,7 +458,26 @@ class Watch {
     room.endedVersion = room.mediaVersion;
     room.position = room.media.duration; room.changedAt = Date.now(); room.s.state.paused = true; room.revision++;
     const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id), next = this.roomState.queue.peekNext(record.id);
-    if (!record.autoplay || !current || !next) return;
+    if (!current || !next) {
+      if (current) await this.roomState.queue.completeCurrent(record.id);
+      const oldMedia = room.media;
+      room.media = undefined;
+      room.mediaVersion = randomUUID();
+      room.readinessVersion = undefined;
+      room.position = 0;
+      room.changedAt = Date.now();
+      room.pauseAt = room.startAt = undefined;
+      room.s.state.paused = true;
+      room.s.state.position = 0;
+      room.s.state.duration = 0;
+      room.s.state.seekable = false;
+      this.dropMedia(room, 'end');
+      if (oldMedia) void this.plex.stop(oldMedia);
+      await this.roomState.save(room);
+      this.roomState.apply(room, this.roomState.store.get(record.id));
+      room.revision++;
+      return;
+    }
     const controller = [...room.viewers.entries()].find(([,person]) => this.hub.canRoom(room.s,person.actor,'chooseMedia') && this.hub.canRoom(room.s,person.actor,'autoplay'));
     if (!controller) return;
     const [viewerId, person] = controller;
@@ -475,10 +511,13 @@ class Watch {
         this.hub.canRoom(room.s,actor,'autoplay'));
     if (!valid()) return {status:'unavailable',message:'Autoplay or media selection was cancelled.'};
     let target, prepared, adopted = false;
-    const old = room.media, oldPosition = this.position(room), replay = action === 'queue.history.replay';
+    const old = room.media, oldPosition = this.position(room), replay = action === 'queue.history.replay', playEntry = action === 'queue.playEntry';
     if (replay) {
       target = queue.getEntry(args.entryId);
       if (!target || target.roomId !== id || target.state !== 'history') throw Object.assign(new Error('History entry unavailable'),{status:404});
+    } else if (playEntry) {
+      target = queue.getEntry(args.entryId);
+      if (!target || target.roomId !== id || target.state !== 'pending') throw Object.assign(new Error('Queue entry unavailable'),{status:404});
     } else if (action === 'media.next') {
       target = record ? next : old?.nextId && {mediaId:old.nextId};
       if (!target) return {status:'unsupported',message:'No next video is available.'};
@@ -511,6 +550,7 @@ class Watch {
         if (action === 'media.next') saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid});
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume},position);
+        else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid});
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
         else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie'},prepared.roomServerId),position);
         room.transitionCommit = saving;

@@ -134,6 +134,7 @@ const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
   request:api,getState:()=>state,getMe:()=>me,fail,execute,
   serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
+  openLibraryItem: item => library?.openItem(item),
   changed:async()=>{if(selected)await refreshState();}
 });
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
@@ -214,7 +215,7 @@ function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = 
 // Move the actual shells so their controls, state and listeners stay shared.
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
 drawer.setAttribute('aria-label', 'Rooms and library'); document.body.append(drawer);
-const shells = ['account','room-bar','options-panel','queue-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+const shells = ['account','room-bar','queue-panel','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -268,7 +269,7 @@ function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('room-lobby').hidden = !immersive || !!selected || !me;
 }
-for (const name of ['options','queue','library']) $(name + '-collapse').addEventListener('click', () => {
+for (const name of ['options','library']) $(name + '-collapse').addEventListener('click', () => {
   const button = $(name + '-collapse'), content = $(name + '-content');
   content.hidden = !content.hidden; button.setAttribute('aria-expanded', String(!content.hidden));
 });

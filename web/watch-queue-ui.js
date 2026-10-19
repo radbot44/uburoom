@@ -12,9 +12,23 @@
     return m + ':' + String(s % 60).padStart(2, '0');
   }
 
-  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime }) {
+  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem }) {
     const doc = host.ownerDocument;
     let activeTab = 'upcoming';
+
+    function formatSubtitle(item) {
+      if (!item) return '';
+      const parts = [];
+      if (item.grandparentTitle) parts.push(item.grandparentTitle);
+      if (item.parentTitle) parts.push(item.parentTitle);
+      if (item.type === 'episode' && Number.isInteger(item.index)) {
+        const hasEpisode = parts.some(p => /episode/i.test(p));
+        if (!hasEpisode) {
+          parts.push('Episode ' + item.index);
+        }
+      }
+      return parts.join(' · ');
+    }
     let currentQueue = { items: [], total: 0, queueRevision: 0 };
     let currentHistory = { items: [], total: 0 };
     let fetching = false;
@@ -77,15 +91,25 @@
     const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
     countdown.id = 'queue-autoplay-countdown';
     countdown.hidden = true;
-    const countdownText = node('span', countdown);
+    const countdownText = node('span', countdown, undefined, 'queue-countdown-text');
     countdownText.setAttribute('role', 'status');
-    const cancelAutoplay = button(countdown, 'Cancel autoplay', undefined, async () => {
+    const countdownActions = node('div', countdown, undefined, 'queue-countdown-actions');
+    const playNowAutoplay = button(countdownActions, 'Play now', undefined, async () => {
       if (cancelPending) return;
-      cancelPending = true; cancelAutoplay.disabled = true;
+      cancelPending = true; playNowAutoplay.disabled = cancelAutoplay.disabled = true;
+      try { await execute({ action: 'media.next' }); }
+      catch (error) { notice.textContent = error.message; }
+      finally { cancelPending = false; renderContinuation(); }
+    }, false, 'primary queue-autoplay-now');
+    playNowAutoplay.id = 'queue-autoplay-play-now';
+    playNowAutoplay.textContent = 'Play now';
+    const cancelAutoplay = button(countdownActions, 'Cancel autoplay', undefined, async () => {
+      if (cancelPending) return;
+      cancelPending = true; playNowAutoplay.disabled = cancelAutoplay.disabled = true;
       try { await execute({ action: 'media.autoplay.cancel' }); }
       catch (error) { notice.textContent = error.message; }
       finally { cancelPending = false; renderContinuation(); }
-    }, false, 'quiet');
+    }, false, 'quiet queue-autoplay-cancel');
     cancelAutoplay.id = 'queue-autoplay-cancel';
     cancelAutoplay.textContent = 'Cancel';
 
@@ -112,7 +136,7 @@
         const seconds = Math.max(0, Math.ceil((next.endsAt - now) / 1000));
         countdownText.textContent = 'Up next: ' + next.title + ' in ' + seconds + (seconds === 1 ? ' second' : ' seconds');
       }
-      cancelAutoplay.disabled = cancelPending || !state?.capabilities?.autoplay;
+      playNowAutoplay.disabled = cancelAutoplay.disabled = cancelPending || !state?.capabilities?.autoplay;
       if (state?.autoplay?.error) notice.textContent = state.autoplay.error;
       else if (lastAutoplayError && notice.textContent === lastAutoplayError) notice.textContent = '';
       lastAutoplayError = state?.autoplay?.error || '';
@@ -264,7 +288,7 @@
         return;
       }
       const title = current?.title || media?.title || 'Unknown title';
-      const subtitle = [current?.grandparentTitle, current?.parentTitle].filter(Boolean).join(' · ') || media?.subtitle || '';
+      const subtitle = formatSubtitle(current) || [current?.grandparentTitle, current?.parentTitle].filter(Boolean).join(' · ') || media?.subtitle || '';
       const duration = current?.duration || state?.state?.duration || 0;
       const position = state?.state?.position ?? current?.position ?? 0;
 
@@ -275,7 +299,21 @@
       }
 
       const body = node('div', nowPlayingBox, undefined, 'queue-now-playing-body');
-      node('strong', body, title, 'queue-now-playing-title');
+      const titleTargetId = current?.mediaId || current?.id || media?.id;
+      if (titleTargetId && openLibraryItem) {
+        const titleBtn = node('button', body, title, 'queue-title-link queue-now-playing-title');
+        titleBtn.type = 'button';
+        titleBtn.title = 'View in library: ' + title;
+        titleBtn.addEventListener('click', () => {
+          openLibraryItem({
+            id: titleTargetId,
+            type: current?.type || media?.type || 'movie',
+            title
+          });
+        });
+      } else {
+        node('strong', body, title, 'queue-now-playing-title');
+      }
       if (subtitle) node('p', body, subtitle, 'hint queue-now-playing-subtitle');
 
       const meta = node('div', body, undefined, 'queue-now-playing-meta');
@@ -304,8 +342,21 @@
         node('span', row, '#' + (i + 1), 'queue-rank');
 
         const info = node('div', row, undefined, 'queue-entry-info');
-        node('strong', info, item.title, 'queue-entry-title');
-        const sub = [item.grandparentTitle, item.parentTitle].filter(Boolean).join(' · ');
+        if (openLibraryItem) {
+          const titleBtn = node('button', info, item.title, 'queue-title-link queue-entry-title');
+          titleBtn.type = 'button';
+          titleBtn.title = 'View in library: ' + item.title;
+          titleBtn.addEventListener('click', () => {
+            openLibraryItem({
+              id: item.mediaId || item.id,
+              type: item.type || 'movie',
+              title: item.title
+            });
+          });
+        } else {
+          node('strong', info, item.title, 'queue-entry-title');
+        }
+        const sub = formatSubtitle(item);
         if (sub) node('p', info, sub, 'hint queue-entry-subtitle');
         node('span', info, formatTime(item.duration), 'queue-meta');
 
@@ -315,13 +366,25 @@
           if (busy) return;
           busy = true;
           try {
-            await playNow(item);
+            await playEntry(item.id, false);
           } catch (err) {
             notice.textContent = err.message;
           } finally {
             busy = false;
           }
         }, !canChoose, 'icon-button quiet queue-action-play');
+
+        button(actions, 'Skip to', 'end', async () => {
+          if (busy) return;
+          busy = true;
+          try {
+            await playEntry(item.id, true);
+          } catch (err) {
+            notice.textContent = err.message;
+          } finally {
+            busy = false;
+          }
+        }, !canChoose, 'icon-button quiet queue-action-skip');
 
         button(actions, 'Move up', 'up', async () => {
           if (busy) return;
@@ -405,18 +468,36 @@
 
         const outcome = item.outcome || 'interrupted';
         const badgeLabel = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
-        node('span', row, badgeLabel, 'queue-badge outcome-' + outcome);
+        const statusIcon = node('span', row, undefined, 'queue-history-status outcome-' + outcome);
+        statusIcon.setAttribute('role', 'img');
+        statusIcon.setAttribute('aria-label', badgeLabel);
+        statusIcon.title = badgeLabel;
+        const iconName = outcome === 'completed' ? 'check' : outcome === 'skipped' ? 'end' : 'pause';
+        if (root.uburoomUI?.icon) statusIcon.append(root.uburoomUI.icon(doc, iconName));
 
         const info = node('div', row, undefined, 'queue-entry-info');
-        node('strong', info, item.title, 'queue-entry-title');
-        const sub = [item.grandparentTitle, item.parentTitle].filter(Boolean).join(' · ');
+        if (openLibraryItem) {
+          const titleBtn = node('button', info, item.title, 'queue-title-link queue-entry-title');
+          titleBtn.type = 'button';
+          titleBtn.title = 'View in library: ' + item.title;
+          titleBtn.addEventListener('click', () => {
+            openLibraryItem({
+              id: item.mediaId || item.id,
+              type: item.type || 'movie',
+              title: item.title
+            });
+          });
+        } else {
+          node('strong', info, item.title, 'queue-entry-title');
+        }
+        const sub = formatSubtitle(item);
         if (sub) node('p', info, sub, 'hint queue-entry-subtitle');
         const posText = outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' of ' + formatTime(item.duration);
         node('span', info, posText, 'queue-meta');
 
         const actions = node('div', row, undefined, 'queue-entry-actions');
 
-        button(actions, 'Resume', undefined, async () => {
+        button(actions, 'Resume now', 'play', async () => {
           if (busy) return;
           busy = true;
           try {
@@ -426,9 +507,9 @@
           } finally {
             busy = false;
           }
-        }, !canChoose, 'quiet queue-item-resume');
+        }, !canChoose || outcome === 'completed', 'icon-button quiet queue-item-resume');
 
-        button(actions, 'Start over', undefined, async () => {
+        button(actions, 'Start over now', 'start', async () => {
           if (busy) return;
           busy = true;
           try {
@@ -438,7 +519,19 @@
           } finally {
             busy = false;
           }
-        }, !canChoose, 'quiet queue-item-restart');
+        }, !canChoose, 'icon-button quiet queue-item-restart');
+
+        button(actions, 'Add to queue', 'queue', async () => {
+          if (busy) return;
+          busy = true;
+          try {
+            await add({ ...item, position: 0 });
+          } catch (err) {
+            notice.textContent = err.message;
+          } finally {
+            busy = false;
+          }
+        }, !state?.capabilities?.addQueue, 'icon-button quiet queue-item-add');
       }
 
       const footer = node('div', historyView, undefined, 'queue-footer');
@@ -528,7 +621,7 @@
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const expectedRevision = queueRevision(state);
       const result = await request('/api/watch/rooms/' + state.id + '/queue', { action, ...args, expectedRevision },
-        ['bulk', 'auto'].includes(action) ? { timeoutMs: 35000 } : {});
+        ['bulk', 'auto', 'playEntry', 'skipTo'].includes(action) ? { timeoutMs: 35000 } : {});
       await fetchData(true);
       return result;
     }
@@ -567,6 +660,13 @@
         expectedRevision: rev
       });
       await fetchData(true);
+    }
+
+    async function playEntry(entryId, skipPrevious = false) {
+      const state = getState();
+      if (!state?.id) return;
+      await mutate(skipPrevious ? 'skipTo' : 'playEntry', { entryId, skipPrevious });
+      await changed();
     }
 
     async function playNow(item) {

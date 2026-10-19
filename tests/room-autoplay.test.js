@@ -120,15 +120,26 @@ test('Cancel, pause, seek, queue edits and disabling autoplay immediately cancel
   });
 });
 
-test('autoplay off and an empty upcoming queue retain current media paused at its verified ending', async t => {
-  for (const mode of ['off', 'empty']) await t.test(mode, async sub => {
-    const f = await fixture(sub), current = f.queue.current(f.id).id;
-    if (mode === 'off') await f.command('media.autoplay.set', { enabled: false });
-    else await f.command('queue.clear');
-    await f.end(); await delay(60);
-    assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.room.s.state.paused, true); assert.equal(f.room.position, 100);
-    assert.equal(f.queue.current(f.id).id, current); assert.equal(f.queue.history(f.id).total, 0);
-  });
+test('autoplay off retains current media paused at its verified ending when queue has upcoming items', async t => {
+  const f = await fixture(t), current = f.queue.current(f.id).id;
+  await f.command('media.autoplay.set', { enabled: false });
+  await f.end(); await delay(60);
+  assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.room.s.state.paused, true); assert.equal(f.room.position, 100);
+  assert.equal(f.queue.current(f.id).id, current); assert.equal(f.queue.history(f.id).total, 0);
+});
+
+test('empty upcoming queue archives completed media and leaves the player', async t => {
+  const f = await fixture(t), before = f.queue.current(f.id);
+  await f.command('queue.clear');
+  await f.end(); await delay(60);
+  assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.room.s.state.paused, true); assert.equal(f.room.position, 0);
+  assert.equal(f.room.media, undefined);
+  assert.equal(f.queue.current(f.id), null);
+  const history = f.queue.history(f.id);
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].id, before.id);
+  assert.equal(history.items[0].outcome, 'completed');
+  assert.equal(history.items[0].position, 100);
 });
 
 test('queue revisions fence countdowns even when the pending head remains the same', async t => {

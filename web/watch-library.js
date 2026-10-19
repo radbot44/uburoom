@@ -216,7 +216,7 @@
       if (large) b.append(node('span',null,'Play now')); b.addEventListener('click',() => void play(item)); return b;
     }
     function queueButton(parent, item, large = false) {
-      const b = button(parent, 'Add ' + identity(item) + ' to queue', 'queue', large ? 'library-queue-add library-play-now' : 'library-queue-add library-play');
+      const b = button(parent, 'Add ' + identity(item) + ' to queue', 'queue', large ? 'library-queue-add library-play-now' : 'library-queue-add');
       b.dataset.queue = item.id; b.disabled = busy || !room || !canAddQueue();
       if (large) b.append(node('span', null, 'Add to queue'));
       b.addEventListener('click', async event => {
@@ -282,10 +282,19 @@
       node('p',copy,metadata(item),'library-meta');
       if (row) { extras(copy,item); if (episode && item.summary) node('p',copy,item.summary,'library-episode-summary'); }
       if (playable(item)) {
-        playButton(row ? card : picture,item);
-        if (addToQueue && getPlayer()?.durable) queueButton(row ? card : picture,item);
+        if (row) {
+          const actions = node('div', card, undefined, 'library-row-actions');
+          playButton(actions, item);
+          if (addToQueue && getPlayer()?.durable) queueButton(actions, item);
+        } else {
+          playButton(picture, item);
+          if (addToQueue && getPlayer()?.durable) queueButton(picture, item);
+        }
+      } else {
+        const target = row ? node('div', card, undefined, 'library-row-actions') : picture;
+        const b = button(target, 'Browse ' + item.title, 'right', 'library-browse');
+        b.addEventListener('click', () => void openItem(item));
       }
-      else { const b = button(row ? card : picture,'Browse ' + item.title,'right','library-browse'); b.addEventListener('click',() => void openItem(item)); }
     }
     function summary(item) {
       overview.replaceChildren(); overview.hidden = !item;
@@ -427,10 +436,12 @@
       } catch (error) { if (version === generation && screen === current && error.name !== 'AbortError') signalError('Details could not load. ' + error.message,() => void getDetails(item,current)); }
     }
     async function openItem(item) {
+      if (!screen) screen = homeContext();
       prepareNavigation(); screen.focusItem = item.id; trail.push(screen);
       screen = {...context(screen.section,screen.tab),title:item.title,kind:playable(item) ? 'details' : item.type,detail:item,sort:'default'};
       if (item.type === 'collection') screen.collection = item.id; else if (!playable(item)) screen.parent = item.id;
       pushVisit(); renderResults(); positionLibrary();
+      doc.getElementById('library-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       void getDetails(item,screen); if (!playable(item)) await loadPage();
     }
     function navigateCrumb(entry) {
@@ -492,7 +503,7 @@
       }
       await start();
     }
-    return {setRoom,setBusy};
+    return {setRoom,setBusy,openItem};
   }
   global.uburoomLibrary = {mount};
 })(globalThis);
