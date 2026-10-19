@@ -721,7 +721,8 @@ function renderVisibility() {
   if (state) {
     if ($('current-room-name')) $('current-room-name').textContent = state.roomName || 'Room';
     const role = state.roomRole || (state.isHost ? 'host' : 'participant');
-    $('current-room-meta').textContent = role === 'creator' ? 'Creator' : role === 'host' ? 'Host' : 'Participant';
+    const roleText = role === 'creator' ? 'Room Leader' : role === 'host' ? 'Host' : 'Participant';
+    $('current-room-meta').replaceChildren(uburoomUI.icon(document, role === 'creator' ? 'creator' : role === 'host' ? 'host' : 'users'), document.createTextNode(roleText));
     $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'));
     $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').classList.toggle('private', state.visibility === 'private');
@@ -784,7 +785,7 @@ function renderTransport() {
     state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
   if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
   if (state?.readiness?.timedOut) $('ready-status').textContent = state.canBrowse ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
-  if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a creator or host joins.';
+  if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a room leader or host joins.';
   $('readiness-choice').hidden = !state?.readiness?.timedOut || !state.canBrowse;
   $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
   $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
@@ -1162,7 +1163,12 @@ function syncButtonGroup(selectId, groupId) {
 }
 syncButtonGroup('room-create-visibility', 'room-create-visibility-group');
 syncButtonGroup('room-create-preset', 'room-create-preset-group');
+syncButtonGroup('room-settings-visibility', 'room-settings-visibility-group');
+syncButtonGroup('room-permission-preset', 'room-permission-preset-group');
 for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') || []) {
+  btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
+}
+for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button') || []) {
   btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
 let roomNameDraft = '';

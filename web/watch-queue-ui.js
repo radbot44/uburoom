@@ -130,7 +130,7 @@
     autoplayToggle.type = 'checkbox';
     autoplayToggle.id = 'queue-autoplay';
     autoplayLabel.append(doc.createTextNode('Autoplay'));
-    const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'quiet');
+    const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
     autoOpen.id = 'queue-auto-open';
     const autoStatus = node('p', footer, '', 'hint queue-auto-status');
     const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
@@ -247,8 +247,34 @@
     node('h4', autoDialog, 'Auto-queue').id = 'queue-auto-title';
     const autoModeLabel = node('label', autoDialog, 'Mode');
     const autoMode = node('select', autoModeLabel); autoMode.id = 'queue-auto-mode';
+    autoMode.hidden = true;
     for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
       const option = node('option', autoMode, label); option.value = value;
+    }
+    const autoModeGroup = node('div', autoDialog, undefined, 'button-group');
+    autoModeGroup.id = 'queue-auto-mode-group';
+    autoModeGroup.setAttribute('role', 'group');
+    autoModeGroup.setAttribute('aria-label', 'Mode');
+    const modeButtons = new Map();
+    for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
+      const btn = node('button', autoModeGroup, label, 'group-button');
+      btn.type = 'button';
+      btn.dataset.value = value;
+      btn.setAttribute('aria-pressed', String(value === 'off'));
+      btn.addEventListener('click', () => {
+        if (autoMode.value !== value) {
+          autoMode.value = value;
+          autoMode.dispatchEvent(new Event('change', { bubbles: true }));
+          syncAutoModeButtons();
+        }
+      });
+      modeButtons.set(value, btn);
+    }
+    function syncAutoModeButtons() {
+      for (const [val, btn] of modeButtons) {
+        btn.setAttribute('aria-pressed', String(autoMode.value === val));
+        btn.disabled = autoMode.disabled || (val === 'following' && draftScope.type !== 'show');
+      }
     }
     const autoSource = node('p', autoDialog, '', 'hint'); autoSource.id = 'queue-auto-source';
     const sourceChange = button(autoDialog,'Change source',undefined,() => { sourcePicker.hidden = false; void browseSources(); }); sourceChange.id = 'queue-source-change';
@@ -315,6 +341,7 @@
       autoSpecialLabel.hidden = off || draftScope.type !== 'show';
       autoMode.querySelector('[value=following]').disabled = draftScope.type !== 'show';
       if (off) sourcePicker.hidden = true;
+      syncAutoModeButtons();
     }
     autoMode.addEventListener('change',() => { hasAutoDraft = true; updateAutoFields(); });
     const autoSpecialLabel = node('label', autoDialog, undefined, 'queue-check');

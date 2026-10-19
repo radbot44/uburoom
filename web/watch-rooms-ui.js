@@ -94,7 +94,6 @@
       selectSection(targetSection);
       const ticket = ++generation; details = undefined; $('room-settings-content').hidden = true;
       $('room-settings-status').textContent = 'Loading room settings…';
-      dialog.querySelector('header').after($('room-settings-status'));
       if (!dialog.open) show(dialog);
       try {
         const result = await request('/api/watch/rooms/' + id + '/settings');
@@ -107,7 +106,6 @@
     function renderSettings() {
       const value = details; if (!value) return;
       $('room-settings-content').hidden = false; $('room-settings-status').textContent = '';
-      dialog.querySelector('[data-room-section="' + section + '"]').prepend($('room-settings-status'));
       $('room-role').textContent = getMe()?.adminMode ? 'Admin mode' : '';
       $('room-settings-title').textContent = value.name; $('room-settings-title').title = value.name;
       if ($('room-rename').value !== renameDraft) $('room-rename').value = renameDraft;
@@ -117,9 +115,9 @@
       for (const person of value.candidates) {
         const isCreator = person.id === value.creator.id;
         const isHost = value.hosts.some(host => host.id === person.id);
-        const role = isCreator ? 'Creator' : isHost ? 'Host' : 'Participant';
+        const role = isCreator ? 'Room Leader' : isHost ? 'Host' : 'Participant';
         const row = node('div',roster,undefined,'room-person'); node('span',row,person.name);
-        const badge = node('small',row,undefined,'room-role-badge ' + role.toLowerCase());
+        const badge = node('small',row,undefined,'room-role-badge ' + (isCreator ? 'creator' : role.toLowerCase()));
         badge.append(root.uburoomUI.icon(document, isCreator ? 'creator' : isHost ? 'host' : 'users'), document.createTextNode(role));
         if (!isCreator && value.capabilities.manageHosts) {
           const action = button(row, isHost ? 'Remove host' : 'Make host', () => void edit({action: isHost ? 'host.remove' : 'host.add', userId: person.id}), busy);
@@ -127,7 +125,24 @@
         }
       }
       $('room-transfer-target').replaceChildren();
-      for (const person of value.hosts) { const option = node('option',$('room-transfer-target'),person.name); option.value = person.id; }
+      const transferGroup = $('room-transfer-target-group');
+      if (transferGroup) transferGroup.replaceChildren();
+      for (const person of value.hosts) {
+        const option = node('option',$('room-transfer-target'),person.name); option.value = person.id;
+        if (transferGroup) {
+          const btn = node('button', transferGroup, person.name, 'group-button');
+          btn.type = 'button';
+          btn.dataset.value = person.id;
+          btn.addEventListener('click', () => {
+            $('room-transfer-target').value = person.id;
+            for (const b of transferGroup.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.value === person.id));
+          });
+        }
+      }
+      if (transferGroup && value.hosts.length) {
+        if (!$('room-transfer-target').value) $('room-transfer-target').value = value.hosts[0].id;
+        for (const b of transferGroup.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.value === $('room-transfer-target').value));
+      }
       $('room-transfer-target').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
       $('room-transfer').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
       $('room-permission-apply').disabled = $('room-permission-preset').disabled = busy || !value.capabilities.managePermissions;
@@ -135,7 +150,8 @@
       $('room-permission-preset').value = preset;
       $('room-permission-summary').textContent = describe(value.permissions,true);
       $('room-transfer-empty').hidden = !!value.hosts.length;
-      $('room-transfer-target').hidden = $('room-transfer').hidden = !value.hosts.length;
+      $('room-transfer-target').hidden = true;
+      if (transferGroup) transferGroup.hidden = $('room-transfer').hidden = !value.hosts.length;
       const current = getState()?.id === value.id;
       $('room-playback-unavailable').hidden = current;
       $('room-playback-controls').hidden = !current;
@@ -150,12 +166,19 @@
           const row = node('tr',$('room-permissions')); node('th',row,label).scope = 'row';
           for (const role of ['host','viewer']) {
             const cell = node('td',row), input = node('input',cell); cell.dataset.permissionRole = role; input.type = 'checkbox'; input.setAttribute('role','switch');
-            const inherited = role === 'host' && value.permissions.viewer[key];
-            input.checked = value.permissions[role][key] || inherited;
-            input.disabled = busy || !value.capabilities.managePermissions || inherited;
+            input.checked = !!value.permissions[role][key];
+            input.disabled = busy || !value.capabilities.managePermissions;
             input.setAttribute('aria-label',role + ': ' + label); input.dataset.role = role; input.dataset.permission = key;
-            if (inherited) { const indicator = node('small',cell,'↳','permission-inherited'); indicator.title = 'Inherited from participant permissions'; input.setAttribute('aria-description','Inherited from participant permissions'); }
-            input.addEventListener('change',() => void edit({action:'permissions',role,permissions:{[key]:input.checked}}));
+            input.addEventListener('change',() => {
+              if (role === 'host' && !input.checked) {
+                const viewerInput = row.querySelector('input[data-role="viewer"]');
+                if (viewerInput) viewerInput.checked = false;
+              } else if (role === 'viewer' && input.checked) {
+                const hostInput = row.querySelector('input[data-role="host"]');
+                if (hostInput) hostInput.checked = true;
+              }
+              void edit({action:'permissions',role,permissions:{[key]:input.checked}});
+            });
           }
         }
       }
@@ -198,8 +221,6 @@
       $('room-settings-section').value = value;
       for (const panel of dialog.querySelectorAll('[data-room-section]')) panel.hidden = panel.dataset.roomSection !== value;
       for (const control of $('room-settings-nav').children) control.setAttribute('aria-current', String(control.dataset.section === value));
-      const active = dialog.querySelector('[data-room-section="' + value + '"]');
-      active.prepend($('room-settings-status'));
       $('room-settings-panels').scrollTop = 0;
     }
     for (const [key, label] of [['general','General'],['people','People'],['permissions','Permissions'],['playback','Playback & queue'],['manage','Manage']]) {
@@ -209,7 +230,7 @@
     $('room-rename').addEventListener('input',event => { renameDraft = event.target.value; });
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
     $('room-more-permissions').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'permissions'); });
-    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen'],['switch-room','users'],['close-room','logout']]) $(id).prepend(root.uburoomUI.icon(document,icon));
+    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen'],['close-room','logout']]) $(id).prepend(root.uburoomUI.icon(document,icon));
     let quickBusy = false, quickRoom, quickStatusTimer;
     function setQuickStatus(text, transient = false) {
       clearTimeout(quickStatusTimer);
@@ -279,7 +300,7 @@
 
     $('room-transfer').addEventListener('click',async () => {
       const userId = $('room-transfer-target').value;
-      if (await confirm('Transfer room ownership to this host? You will remain a host.')) await edit({action:'creator.transfer',userId});
+      if (await confirm('Transfer room leadership to this host? You will remain a host.')) await edit({action:'creator.transfer',userId});
     });
     $('room-permission-apply').addEventListener('click',() => { const preset = $('room-permission-preset').value; if (preset !== 'custom') void edit({action:'permissions.preset',preset}); });
     $('room-settings-delete').addEventListener('click',async () => { if (await confirm('Permanently delete this room? This cannot be undone.')) await edit({action:'delete'}); });

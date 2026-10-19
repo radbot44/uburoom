@@ -141,17 +141,24 @@ class RoomStore {
         case 'permissions': {
           if (!['host', 'viewer'].includes(change.role)) throw error('Choose host or viewer permissions');
           room.permissions[change.role] = Policy.permissions(change.permissions, room.permissions[change.role]);
+          for (const key of Policy.CAPABILITIES) {
+            if (change.role === 'host' && room.permissions.host[key] === false) {
+              room.permissions.viewer[key] = false;
+            } else if (change.role === 'viewer' && room.permissions.viewer[key] === true) {
+              room.permissions.host[key] = true;
+            }
+          }
           break;
         }
         case 'host.add': {
           const target = this.account(change.userId);
-          if (target === room.creatorId) throw error('The creator is already a host');
+          if (target === room.creatorId) throw error('The room leader is already a host');
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, target);
           break;
         }
         case 'host.remove': {
           const target = this.account(change.userId);
-          if (target === room.creatorId) throw error('Transfer creatorship before removing the creator');
+          if (target === room.creatorId) throw error('Transfer room leadership before removing the room leader');
           for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
             if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
           }
@@ -159,7 +166,7 @@ class RoomStore {
         }
         case 'creator.transfer': {
           const target = this.account(change.userId);
-          if (target === room.creatorId || !room.hosts.includes(target)) throw error('Transfer creatorship to another assigned host');
+          if (target === room.creatorId || !room.hosts.includes(target)) throw error('Transfer room leadership to another assigned host');
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, room.creatorId);
           for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
             if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);

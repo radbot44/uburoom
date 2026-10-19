@@ -50,7 +50,7 @@ async function main() {
       await until('state?.roomName==="Friday room"','Named room');
       const id = await run('selected');
       assert.equal(await run('state.capabilities.seek && state.roomRole==="creator"'),true);
-      assert.match(await run('$("current-room-meta").textContent'),/Creator/);
+      assert.match(await run('$("current-room-meta").textContent'),/Room Leader/);
       assert.equal(await run('document.querySelectorAll(".queue-now-playing progress").length'),0);
       assert.equal(await run('$("queue-autoplay").closest(".queue-header")!==null'),true);
       await run('document.querySelector("[data-quick-permission=addQueue]").click()');
@@ -78,7 +78,7 @@ async function main() {
       assert.equal(await run('$("room-rename").value'),'Unfinished rename');
       await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true');
       await shot('permissions');
-      assert.ok(await run('document.querySelector("#room-permissions input[aria-description]")!==null'));
+      assert.ok(await run('document.querySelector("#room-permissions input[role=switch]")!==null'));
       await run('$("room-permission-preset").value="shared-queue";$("room-permission-apply").click()');
       await until('$("room-settings-status").textContent==="Saved" && $("room-permission-preset").value==="shared-queue"','Apply preset');
       assert.equal(await run('$("room-rename").value'),'Unfinished rename');

@@ -191,13 +191,13 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #lobby-error{flex-basis:100%;font-size:12px}#lobby-error:empty{display:none}
 
 .current-room-heading,.current-room-info{display:flex;gap:8px;align-items:center}.current-room-heading h3{flex:1;margin:0;font-size:22px;overflow-wrap:anywhere}
-.current-room-info{flex-wrap:wrap;margin:4px 0 12px}.current-room-info button{display:flex;align-items:center;gap:6px;min-height:44px;padding:8px}.current-room-info svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}#current-room-meta{margin:0}#current-room .icon-button{min-width:44px;min-height:44px}#room-visibility{padding:8px 12px;min-width:36px}
+.current-room-info{flex-wrap:wrap;margin:4px 0 12px}.current-room-info button{display:flex;align-items:center;gap:6px;min-height:44px;padding:8px}.current-room-info svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}#current-room-meta{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:8px 14px;border-radius:10px;background:var(--elevated);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:500;box-sizing:border-box;margin:0}#current-room-meta svg{width:18px;height:18px;stroke:currentColor;fill:none;flex:none}#current-room .icon-button{min-width:44px;min-height:44px}#room-visibility{padding:8px 12px;min-width:36px}
 #room-quick-permissions h4{font-size:13px;margin:8px 0 4px}#room-quick-switches{display:flex;flex-wrap:wrap;gap:12px}.room-quick-switch{display:flex;align-items:center;gap:6px;font-size:12px;min-height:44px}
 #room-quick-readonly{margin:4px 0 8px;font-size:12px;color:var(--muted)}#room-quick-readonly:empty{display:none}
 #room-more-permissions{display:flex;align-items:center;gap:4px;padding:6px 0;color:var(--muted);background:none;font:inherit;font-size:12px}#room-more-permissions svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}#room-more-permissions:hover{color:var(--text)}#room-quick-status{font-size:12px;margin-left:10px}
 #room-role:empty{display:none}
 
-#room-bar{align-items:center}#options-content>#room-bar{margin:12px 0 0;gap:8px}#room-bar #close-room{width:auto;order:0;padding:10px;background:transparent;color:var(--muted)}#room-bar #close-room:hover{background:var(--hover);color:var(--text)}
+#room-bar{align-items:center}#options-content>#room-bar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:16px 0 0;padding-top:14px;border-top:1px solid var(--border);width:100%}#room-bar #close-room{width:auto;order:0;padding:10px;background:transparent;color:var(--muted)}#room-bar #close-room:hover{background:var(--hover);color:var(--text)}
 .remote-toggle{color:var(--muted);font-size:14px}#watch-settings-content{margin-top:10px}
 
 #room-dialog{width:min(620px,calc(100vw - 32px));box-sizing:border-box}#room-dialog header h2{margin-right:auto}
@@ -232,7 +232,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #room-settings-title{font-size:18px;margin:0 auto 0 0!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #room-settings-dialog>header .icon-button{width:44px;height:44px;padding:10px;flex:none}
 #room-settings-dialog svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-#room-settings-status{min-height:0;font-size:12px;margin:0 0 8px;color:var(--muted);flex:none;overflow-wrap:anywhere}#room-settings-status:empty{display:none}
+#room-settings-status{min-height:0;font-size:12px;margin:0 8px 0 auto;color:var(--muted);flex:none;white-space:nowrap}#room-settings-status:empty{display:none}
 #room-settings-section{margin:0 0 10px;min-height:44px}#room-settings-dialog .room-mobile-section{display:none}
 #room-settings-content{display:grid;grid-template-columns:175px minmax(0,1fr);gap:24px;min-height:0;flex:1}
 #room-settings-nav{display:flex;flex-direction:column;gap:6px;align-self:start}#room-settings-nav button{text-align:left;background:transparent;padding:12px;border-radius:10px}
@@ -268,9 +268,10 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
   #room-settings-content{display:block;min-height:0;overflow:hidden}
   #room-settings-panels{height:100%;box-sizing:border-box;padding-top:0}
   #room-settings-panels>section>h3{display:none}
-  #room-settings-nav{display:none}
-  #room-settings-dialog .room-mobile-section{display:block;flex:none}
-  label.room-mobile-section{font-size:12px;color:var(--muted);margin:0 0 5px}#room-settings-section{width:100%}
+  #room-settings-nav{display:flex;flex-direction:row;overflow-x:auto;gap:6px;margin-bottom:12px;padding-bottom:4px;scrollbar-width:none}
+  #room-settings-nav button{padding:8px 12px;white-space:nowrap;font-size:13px;min-height:38px}
+  #room-settings-dialog .room-mobile-section{display:none}
+  label.room-mobile-section{display:none}
   #room-permission-roles{display:flex;gap:4px;background:var(--elevated);padding:4px;border-radius:10px;margin-bottom:8px}
   #room-permission-roles button{flex:1;min-height:44px;border-radius:8px;background:none;color:var(--text)}
   #room-permission-roles [aria-selected=true]{background:var(--card);color:var(--accent-text)}
