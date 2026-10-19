@@ -1224,7 +1224,14 @@ $('room-show-active').addEventListener('click',() => roomChooserSection('active'
 $('room-show-saved').addEventListener('click',() => roomChooserSection('saved'));
 $('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved(0); void refreshRooms().catch(error => $('room-dialog-error').textContent = error.message); });
 $('room-create-preset').addEventListener('change',event => { $('room-create-summary').textContent = event.target.value === 'server-defaults' && me?.roomPermissionDefaults ? uburoomRoomUI.describe(me.roomPermissionDefaults, true) : uburoomRoomUI.summary(event.target.value); });
-$('empty-browse').addEventListener('click', () => { if (immersive) { toggleDrawer(true); selectSection('media'); } else { selectSection('media'); $('library-panel').scrollIntoView({behavior:'smooth'}); } });
+$('empty-browse').addEventListener('click', () => {
+  const panel = $('library-panel');
+  panel.classList.remove('media-glow');
+  void panel.offsetWidth;
+  panel.classList.add('media-glow');
+  if (immersive) { toggleDrawer(true); selectSection('media'); }
+  else { selectSection('media'); panel.scrollIntoView({behavior:'smooth'}); }
+});
 $('close-room').addEventListener('click', async () => {
   if (!selected || pending) return;
   const id = selected; pending = true;
