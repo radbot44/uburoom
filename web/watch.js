@@ -122,7 +122,7 @@ const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;tr
 const subtitleMode=$('subtitle-mode');
 video.volume = .5;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
+for (const pair of [['refresh','refresh'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
@@ -720,7 +720,8 @@ function renderVisibility() {
     $('current-room-name').textContent = state.roomName || 'Room';
     const role = state.roomRole || (state.isHost ? 'host' : 'participant');
     $('current-room-meta').textContent = role === 'creator' ? 'Creator' : role === 'host' ? 'Host' : 'Participant';
-    $('room-visibility').replaceChildren(...(state.visibility === 'private' ? [uburoomUI.icon(document,'lock')] : []), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'),uburoomUI.icon(document,'chevron'));
+    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'));
+    $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').disabled = pending || !state.canManage;
     $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(String(state.viewers)));
   }
@@ -732,10 +733,11 @@ function renderVisibility() {
   $('admin-end-room').hidden = true;
   for (const id of ['visibility', 'drawer-visibility']) {
     const button = $(id), privateRoom = state?.visibility === 'private';
+    if (!button) continue;
     button.hidden = !state || id === 'drawer-visibility' && state.durable; button.disabled = pending || !state?.canManage;
-    button.textContent = privateRoom ? state?.durable ? 'Private · Hosts only' : 'Private · No one can join' : 'Public';
-    if (privateRoom) button.prepend(uburoomUI.icon(document,'lock')); button.classList.toggle('private', privateRoom);
-    button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : 'Public room');
+    button.replaceChildren(uburoomUI.icon(document, privateRoom ? 'lock' : 'website'), document.createTextNode(privateRoom ? state?.durable ? 'Private · Hosts only' : 'Private · No one can join' : 'Public'));
+    button.classList.toggle('private', privateRoom);
+    button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : (privateRoom ? 'Private room' : 'Public room'));
     button.title = state?.canManage ? (privateRoom ? 'Creator and hosts can watch. Make public.' : 'Server members can watch. Make private.') : 'Room settings permission required';
   }
   updateSectionTabs();
@@ -975,7 +977,7 @@ function renderRooms(host, rooms, join = id => selectRoom(id)) {
   }
   for (const room of rooms) {
     const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
-    if (room.visibility === 'private') button.append(uburoomUI.icon(document,'lock'));
+    button.append(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
     const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomUI.icon(document,'users'));
     const count = document.createElement('span'); count.textContent = String(room.viewers); button.append(count);
     button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
@@ -989,7 +991,10 @@ async function refreshRooms() {
 }
 function applyRooms(rooms) {
   renderRooms($('rooms'), rooms); renderRoomChoices(rooms,$('lobby-rooms'));
-  if ($('room-dialog').open && !creating) renderRoomChoices(rooms);
+  if ($('room-dialog').open && !creating) {
+    renderRoomChoices(rooms);
+    if (!$('room-reopen').hidden) void roomUI.loadSaved();
+  }
   if (!rooms.some(room => room.id === selected && !room.locked)) {
     if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
   }
@@ -1108,18 +1113,55 @@ function renderRoomChoices(rooms, container = $('room-choices')) {
   for (const room of rooms) {
     const row = document.createElement('div'); row.className = 'saved-room';
     const copy = document.createElement('div'), name = document.createElement('strong'), info = document.createElement('p');
-    name.textContent = room.name || room.hostName; info.className = 'hint';
+    name.textContent = room.name || room.hostName;
+    name.prepend(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
+    info.className = 'hint';
     info.textContent = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers'); copy.append(name,info);
-    const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = 'Join'; button.prepend(uburoomUI.icon(document,'play')); button.disabled = !!room.locked;
+    const actions = document.createElement('div'); actions.className = 'room-actions';
+    const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = 'Join'; button.prepend(uburoomUI.icon(document,'login')); button.disabled = !!room.locked;
     button.addEventListener('click',async () => {
       if (creating) return;
       creating = true; button.disabled = true; $('lobby-error').textContent = '';
       try { await selectRoom(room.id); if (!state || selected !== room.id) throw new Error('Room unavailable. Choose another room.'); $('room-dialog').close('joined'); returnToVideo(); }
       catch (error) { $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message; }
       finally { creating = false; button.disabled = !!room.locked; }
-    }); row.append(copy,button); container.append(row);
+    }); actions.append(button); row.append(copy,actions); container.append(row);
   }
   if (focusedRoom) [...container.querySelectorAll('button')].find(button => button.dataset.joinRoom === focusedRoom)?.focus({preventScroll:true});
+}
+function syncButtonGroup(selectId, groupId) {
+  const select = $(selectId), group = $(groupId);
+  if (!select || !group) return;
+  function update() {
+    for (const btn of group.querySelectorAll('button')) {
+      const match = btn.dataset.value === select.value;
+      btn.setAttribute('aria-pressed', String(match));
+    }
+  }
+  for (const btn of group.querySelectorAll('button')) {
+    btn.addEventListener('click', () => {
+      if (select.value !== btn.dataset.value) {
+        select.value = btn.dataset.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        update();
+      }
+    });
+  }
+  const prop = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(select, 'value', {
+    get() { return prop.get.call(this); },
+    set(val) {
+      prop.set.call(this, val);
+      update();
+    },
+    configurable: true
+  });
+  update();
+}
+syncButtonGroup('room-create-visibility', 'room-create-visibility-group');
+syncButtonGroup('room-create-preset', 'room-create-preset-group');
+for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') || []) {
+  btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
 let roomNameDraft = '';
 $('room-name').addEventListener('input', event => { roomNameDraft = event.target.value; });
@@ -1129,9 +1171,10 @@ function roomChooserSection(section) {
   $('room-reopen').hidden = section !== 'saved' || !me?.durableRooms;
   $('room-chooser-nav').hidden = section === 'new';
   $('room-chooser-new').hidden = section === 'new';
+  $('room-create-back').hidden = section !== 'new' || !me?.durableRooms;
   $('room-dialog-title').textContent = section === 'new' ? 'New room' : 'Rooms';
   for (const [id,value] of [['room-show-active','active'],['room-show-saved','saved']]) $(id).setAttribute('aria-pressed',String(section === value));
-  $('room-show-saved').hidden = $('room-create-back').hidden = !me?.durableRooms;
+  $('room-show-saved').hidden = !me?.durableRooms;
   $('room-dialog-hint').textContent = roomChoice ? 'Create a room to watch ' + roomChoice.title + '. Joining follows current playback; reopening restores the saved video.' : section === 'new' ? 'Choose a name and who can join.' : 'Choose an active room or restore one of your saved rooms.';
 }
 async function chooseRoom(item, section = 'active') {

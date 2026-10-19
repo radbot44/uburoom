@@ -784,3 +784,15 @@ Added the shared media SVG (overlapping video cards and play triangle), used by 
 - `node scripts/room-ui-smoke.js`: Chrome/Firefox passed actual fixture natural-end countdown/cancel/advance, bounded phone countdown with separate seconds, host/creator transfer, read-only ordinary-host permission shortcuts, private cohosts, Admin mode, queues and generation sources, close/reopen and deletion.
 - `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox`: library cancellation/context, private/public creation and access filtering, joining without replacing playback, and responsive layouts passed.
 - Inspected rendered Chrome/Firefox desktop, phone, theater and fullscreen surfaces, including lobby actions, compact permission role tabs, roster, source/queue settings and countdown. All runs used isolated fixture accounts/media; no production deployment, schema change or real-provider operations. Real Activity/device and Plex/Discord gates remain separate.
+
+### Reopen icon and login glyph (2026-10-19)
+
+Added reopen (clock return arrow), login (entering counterpart of logout), creator (crown), and host (clapperboard) glyphs to the shared icon library. Active and saved room actions use login for Join and reopen for Reopen.
+
+### Room discovery, People tab, and lobby refinements (2026-10-19)
+
+- `npm run test:full`: 348 passing tests, zero failures or skips across the entire test suite.
+- `node scripts/lobby-library-smoke.js`: Chrome passed lobby browse, disabled settings, cancel, private/public creation, Play selection, private hiding, join and responsive layouts.
+- `node scripts/room-redesign-smoke.js --browsers=chrome,firefox`: Chrome and Firefox passed room discovery, New room header reopen button, draft retention, presets, save feedback, mobile sections, queue settings, close/reopen and fullscreen.
+- `node scripts/room-ui-smoke.js --browsers=chrome,firefox`: Chrome and Firefox passed named room creation, button groups for visibility and presets, queue management, shuffle, random configuration, autoplay, countdown, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at position, deletion, and responsive desktop/phone/theater views.
+- Verified saved-room copy ("Paused at"), rotating refresh icon with auto-updates without loading text, transparent right icon buttons, settings back navigation to Reopen menu, People tab enlarged role badges with `creator`/`host`/`users` icons, unauthorized "Make host" suppression, removal of video-view visibility toggle, universal `website` globe icon for Public with semantic toggle in Room section, and integrated brand oomark in empty video/rooms lobby.

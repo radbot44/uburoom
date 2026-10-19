@@ -44,9 +44,10 @@
     function button(parent, text, action, disabled = false) {
       const control = node('button',parent,text,'quiet'); control.type = 'button'; control.disabled = disabled;
       if (text === 'Settings') { control.replaceChildren(root.uburoomUI.icon(document,'settings')); control.className = 'icon-button'; control.setAttribute('aria-label','Room settings'); control.title = 'Room settings'; }
-      if (['Join','Reopen'].includes(text)) control.prepend(root.uburoomUI.icon(document,text === 'Join' ? 'play' : 'refresh'));
+      if (['Join','Reopen'].includes(text)) control.prepend(root.uburoomUI.icon(document,text === 'Join' ? 'login' : 'reopen'));
       control.addEventListener('click',action); return control;
     }
+    let openedFromSaved = false;
     function show(target) {
       (document.fullscreenElement || document.body).append(target); target.returnValue = ''; target.showModal();
     }
@@ -60,7 +61,7 @@
     async function loadSaved(nextOffset = offset) {
       if (!getMe()?.durableRooms) { $('room-reopen').hidden = true; return; }
       const ticket = ++savedGeneration; offset = nextOffset;
-      $('room-saved-status').textContent = 'Loading saved rooms…';
+      $('room-chooser-refresh').classList.add('spinning');
       try {
         const result = await request('/api/watch/rooms/saved?offset=' + offset);
         if (ticket !== savedGeneration || !$('room-dialog').open) return;
@@ -68,7 +69,7 @@
         for (const room of result.rooms) {
           const row = node('div',$('saved-rooms'),undefined,'saved-room');
           const copy = node('div',row); node('strong',copy,room.name);
-          node('p',copy,(room.active ? 'Open' : 'Closed') + ' · ' + (room.title ? room.title + ' · Saved at ' + format(room.position) : 'No video selected'),'hint');
+          node('p',copy,(room.active ? 'Open' : 'Closed') + ' · ' + (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),'hint');
           const actions = node('div',row,undefined,'room-actions');
           button(actions,room.active ? 'Join' : 'Reopen',async () => {
             const original = [...actions.querySelectorAll('button')]; original.forEach(control => control.disabled = true);
@@ -78,12 +79,13 @@
             } catch (error) { $('room-dialog-error').textContent = error.message; }
             finally { original.forEach(control => control.disabled = false); }
           });
-          button(actions,'Settings',() => { $('room-dialog').close('settings'); void open(room.id); });
+          button(actions,'Settings',() => { openedFromSaved = true; $('room-dialog').close('settings'); void open(room.id); });
         }
         $('room-saved-status').textContent = total > 50 ? (offset + 1) + '–' + Math.min(offset + 50,total) + ' of ' + total : total ? '' : 'No saved rooms yet.';
         $('room-saved-pagination').hidden = $('room-saved-previous').hidden = $('room-saved-next').hidden = total <= 50;
         $('room-saved-previous').disabled = offset === 0; $('room-saved-next').disabled = offset + 50 >= total;
       } catch (error) { if (ticket === savedGeneration) $('room-saved-status').textContent = error.message; }
+      finally { if (ticket === savedGeneration) $('room-chooser-refresh').classList.remove('spinning'); }
     }
     function format(position) {
       const seconds = Math.floor(position || 0); return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2,'0');
@@ -113,10 +115,16 @@
       for (const id of ['room-rename','room-rename-save','room-settings-visibility']) $(id).disabled = busy || !value.capabilities.roomSettings;
       const roster = $('room-current-people'); roster.replaceChildren();
       for (const person of value.candidates) {
-        const role = person.id === value.creator.id ? 'Creator' : value.hosts.some(host => host.id === person.id) ? 'Host' : 'Participant';
+        const isCreator = person.id === value.creator.id;
+        const isHost = value.hosts.some(host => host.id === person.id);
+        const role = isCreator ? 'Creator' : isHost ? 'Host' : 'Participant';
         const row = node('div',roster,undefined,'room-person'); node('span',row,person.name);
-        node('small',row,role,'room-role-badge');
-        if (role !== 'Creator') { const action = button(row,role === 'Host' ? 'Remove host' : 'Make host',() => void edit({action:role === 'Host' ? 'host.remove' : 'host.add',userId:person.id}),busy || !value.capabilities.manageHosts); action.id = 'room-host-' + person.id; }
+        const badge = node('small',row,undefined,'room-role-badge ' + role.toLowerCase());
+        badge.append(root.uburoomUI.icon(document, isCreator ? 'creator' : isHost ? 'host' : 'users'), document.createTextNode(role));
+        if (!isCreator && value.capabilities.manageHosts) {
+          const action = button(row, isHost ? 'Remove host' : 'Make host', () => void edit({action: isHost ? 'host.remove' : 'host.add', userId: person.id}), busy);
+          action.id = 'room-host-' + person.id;
+        }
       }
       $('room-transfer-target').replaceChildren();
       for (const person of value.hosts) { const option = node('option',$('room-transfer-target'),person.name); option.value = person.id; }
@@ -201,7 +209,7 @@
     $('room-rename').addEventListener('input',event => { renameDraft = event.target.value; });
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
     $('room-more-permissions').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'permissions'); });
-    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','refresh'],['room-chooser-new','plus'],['room-create-back','refresh'],['switch-room','users'],['close-room','logout']]) $(id).prepend(root.uburoomUI.icon(document,icon));
+    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen'],['switch-room','users'],['close-room','logout']]) $(id).prepend(root.uburoomUI.icon(document,icon));
     let quickBusy = false, quickRoom, quickStatusTimer;
     function setQuickStatus(text, transient = false) {
       clearTimeout(quickStatusTimer);
@@ -256,7 +264,14 @@
     selectPermissionRole('viewer');
     for (const [id,icon,label] of [['room-settings-open','settings','Room settings'],['room-settings-refresh','refresh','Refresh settings'],['room-settings-dismiss','close','Close settings'],['room-chooser-refresh','refresh','Refresh rooms']]) { $(id).replaceChildren(root.uburoomUI.icon(document,icon)); $(id).setAttribute('aria-label',label); $(id).title = label; }
     $('room-settings-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id); });
-    $('room-settings-dismiss').addEventListener('click',() => dialog.close());
+    $('room-settings-dismiss').addEventListener('click',() => {
+      const fromSaved = openedFromSaved; openedFromSaved = false;
+      dialog.close();
+      if (fromSaved) void showChooser('saved');
+    });
+    dialog.addEventListener('cancel',() => {
+      if (openedFromSaved) { openedFromSaved = false; void showChooser('saved'); }
+    });
     dialog.addEventListener('close',() => { if (!dialog.open) { generation++; details = undefined; draftRoom = undefined; } });
     $('room-settings-refresh').addEventListener('click',() => { if (details && !busy) void open(details.id, section); });
     $('room-rename-save').addEventListener('click',() => void edit({action:'rename',name:$('room-rename').value}));
