@@ -516,7 +516,7 @@ class RoomQueue {
           UPDATE watch_queue_entries
           SET rank = rank - ?, updatedAt = ?
           WHERE roomId = ? AND state = 'pending' AND rank > ?
-        `).run(target.rank, at, roomId, target.rank);
+        `).run(target.rank + 1, at, roomId, target.rank);
       } else {
         this.db.prepare(`
           UPDATE watch_queue_entries
@@ -735,6 +735,9 @@ class RoomQueue {
         historyEntry.title, historyEntry.parentTitle, historyEntry.grandparentTitle, historyEntry.thumb, historyEntry.duration,
         targetPosition, null, historyEntry.provenance, at, at, null, at
       );
+      // Explicit replay moves this selection out of history. The new occurrence
+      // keeps a fresh identity so stale observations cannot target its timeline.
+      this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(historyEntryId);
 
       const bookmark = {
         serverId: historyEntry.serverId, mediaId: historyEntry.mediaId, type: historyEntry.type,
@@ -798,7 +801,7 @@ class RoomQueue {
     const rows = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT ? OFFSET ?")
       .all(roomId, limit, offset);
     const count = this.db.prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'history'").get(roomId).count;
-    return { items: rows.map(rowToEntry), total: count };
+    return { items: rows.map(rowToEntry), total: count, queueRevision: this.room(roomId).queueRevision };
   }
 
   summary(roomId) {

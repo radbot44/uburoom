@@ -62,6 +62,19 @@ async function main() {
       }
       await until('document.querySelectorAll(".queue-history-entry").length===3 && document.querySelectorAll(".queue-entry").length===3', 'Both sides loaded');
       await until(centerError + '<2', 'Current video starts centered');
+      assert.equal(await run('!!document.querySelector(".queue-more")'), false, 'Queued actions have no dropdown');
+      assert.equal(await run('document.querySelector(".queue-now-playing").textContent.includes("Current video")'), false);
+      assert.equal(await run('[...document.querySelectorAll(".queue-entry-actions .queue-action-play,.queue-entry-actions .queue-action-skip")].length'), 6, 'Both playback choices are directly visible');
+      await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
+      await until('Math.abs(state.state.position-17)<.01', 'Stable remaining duration');
+      await until('document.querySelector(".queue-entry .queue-rank").textContent==="1 · UP NEXT in 0:43"', 'First start estimate');
+      assert.equal(await run('[...document.querySelectorAll(".queue-entry .queue-rank")].map(el=>el.textContent).join("|")'), '1 · UP NEXT in 0:43|2 · UP NEXT in 1:43|3 · UP NEXT in 2:43');
+      assert.equal(await run('document.querySelector(".queue-history-status").getBoundingClientRect().height===document.querySelector(".queue-entry-top").getBoundingClientRect().height'), true, 'History and upcoming headers align');
+      const wheelStart = await run('document.querySelector(".queue-layout").scrollLeft');
+      assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), false);
+      assert.ok(await run('document.querySelector(".queue-layout").scrollLeft') > wheelStart + 100, 'Wheel down browses right');
+      await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:-120,bubbles:true,cancelable:true}));$("queue-center").click()');
+      await until(centerError + '<2', 'Recenter after wheel');
       assert.equal(await run('document.querySelector(".queue-history-entry:last-child").dataset.entryId===state.queueSummary.current.id'), false);
       const original = await run('document.querySelector(".queue-layout").scrollLeft');
       await run('$("queue-scroll-next").click()');
@@ -76,14 +89,39 @@ async function main() {
       await run('$("queue-center").click();$("queue-panel").scrollIntoView({block:"start"})');
       await until(centerError + '<2', 'Recenter for rendering');
       await shot('cards');
+      await run('globalThis.queueMovingId=document.querySelectorAll(".queue-entry")[2].dataset.entryId;document.querySelectorAll(".queue-entry")[2].scrollIntoView({block:"nearest",inline:"center",behavior:"instant"})');
+      const movingLeft = await run('[...document.querySelectorAll(".queue-entry")].find(row=>row.dataset.entryId===queueMovingId).getBoundingClientRect().left');
+      for (let rank = 1; rank >= 0; rank--) {
+        await run('[...document.querySelectorAll(".queue-entry")].find(row=>row.dataset.entryId===queueMovingId).querySelector(".queue-action-up").focus();document.activeElement.click()');
+        await until('document.querySelectorAll(".queue-entry")[' + rank + ']?.dataset.entryId===queueMovingId', 'Move earlier applied');
+        await until('Math.abs([...document.querySelectorAll(".queue-entry")].find(row=>row.dataset.entryId===queueMovingId).getBoundingClientRect().left-' + movingLeft + ')<2', 'Scroll follows the moved card');
+        if (rank > 0) assert.equal(await run('document.activeElement.getAttribute("aria-label")'), 'Move earlier', 'Repeated moves retain the active control');
+      }
+      await run('$("queue-center").click()');
+      await until(centerError + '<2', 'Center after moving');
       await run('$("queue-view-list").click()');
       assert.equal(await run('$("queue-view-list").getAttribute("aria-pressed")'), 'true');
       assert.equal(await run('localStorage.getItem("uburoom-queue-view")'), 'list');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), 2);
+      assert.equal(await run('document.querySelector(".queue-entry").getBoundingClientRect().height===document.querySelector(".queue-history-entry").getBoundingClientRect().height'), true, 'List rows have matching heights');
+      assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true, 'List retains vertical wheel behavior');
       assert.equal(await run('document.querySelector(".queue-history-entry").dataset.entryId'), await run('api("/api/watch/rooms/"+state.id+"/history").then(page=>page.items[0].id)'));
       await shot('list');
       await run('document.querySelector(".queue-current-toggle").focus();queueUI.render(state.queueSummary)');
       assert.equal(await run('document.activeElement.classList.contains("queue-current-toggle")'), true, 'Snapshot preserves focused current control');
+      await run('globalThis.queueDuplicates=[];globalThis.queueObserver=new MutationObserver(()=>{const id=document.querySelector(".queue-now-playing").dataset.entryId;if([...document.querySelectorAll(".queue-entry,.queue-history-entry")].some(row=>row.dataset.entryId===id))queueDuplicates.push(id)});queueObserver.observe($("queue-content"),{childList:true,subtree:true});globalThis.queueSelection=document.querySelectorAll(".queue-entry")[1].dataset.entryId;document.querySelectorAll(".queue-entry")[1].querySelector(".queue-action-play").click()');
+      await until('state.queueSummary.current.id===queueSelection&&document.querySelector(".queue-now-playing").dataset.entryId===queueSelection', 'Play now selects the pending occurrence');
+      await until('document.querySelectorAll(".queue-entry").length===2', 'Play now preserves earlier items');
+      await run('globalThis.queueSelection=document.querySelectorAll(".queue-entry")[1].dataset.entryId;globalThis.queueSkipped=document.querySelector(".queue-entry").dataset.entryId;document.querySelectorAll(".queue-entry")[1].querySelector(".queue-action-skip").click()');
+      await until('state.queueSummary.current.id===queueSelection&&document.querySelectorAll(".queue-entry").length===0', 'Skip to selects and archives earlier entries');
+      assert.equal(await run('[...document.querySelectorAll(".queue-history-entry")].find(row=>row.dataset.entryId===queueSkipped).querySelector(".queue-outcome-label").textContent'), 'SKIPPED');
+      for (const mode of ['resume', 'restart']) {
+        await run('execute({action:"media.pause"})');
+        await run('globalThis.queueReplayRow=[...document.querySelectorAll(".queue-history-entry")].find(row=>row.querySelector(".queue-item-' + mode + '"));globalThis.queueReplayId=queueReplayRow.dataset.entryId;queueReplayRow.querySelector(".queue-item-' + mode + '").click()');
+        await until('![...document.querySelectorAll(".queue-history-entry")].some(row=>row.dataset.entryId===queueReplayId)', 'Replay consumes selected history');
+      }
+      assert.deepEqual(await run('queueDuplicates'), [], 'Current item never temporarily duplicates in the lists');
+      await run('queueObserver.disconnect();execute({action:"media.pause"})');
       await run('queueUI.add({mediaId:"1",type:"movie",title:"Artwork fixture",duration:60})');
       await until('[...document.querySelectorAll(".queue-art img")].some(img=>img.dataset.item==="1")', 'Artwork row');
       await run('document.querySelector(".queue-art img").scrollIntoView({block:"center"})');
@@ -125,9 +163,9 @@ async function main() {
       await run('$("queue-view-list").click()');
       const restored = await browser.page(config.publicUrl + '/watch?demo=host');
       await browser.until(restored, 'document.getElementById("queue-view-list")?.getAttribute("aria-pressed")==="true"', 'Saved list preference');
-      console.log(name + ' ' + browser.version + ': cards/list, history order, centering/arrows/keyboard, stable scroll/focus, artwork/cache/fallback, saved preference, themes, phone, theater and fullscreen drawer passed');
+      console.log(name + ' ' + browser.version + ': direct Play now/Skip to, consumed history replay without transient duplicates, repeated moves with scroll/focus following, wheel navigation, start estimates, matching rows, cards/list, artwork/cache/fallback, saved preference, themes, phone, theater and fullscreen drawer passed');
     } catch (error) {
-      if (browser && page) console.error(await browser.evaluate(page, '({selected,state:!!state,pending,error:$("error").textContent,notice:document.querySelector(".queue-notice").textContent})'));
+      if (browser && page) console.error(await browser.evaluate(page, '({selected,state:!!state,pending,error:$("error").textContent,notice:document.querySelector(".queue-notice").textContent,ranks:[...document.querySelectorAll(".queue-entry .queue-rank")].map(el=>el.textContent),position:state?.state?.position,duration:state?.state?.duration,summary:state?.queueSummary})'));
       if (browser && page) await browser.screenshot(page, path.join(output, name + '-failure.png'));
       throw error;
     } finally { await browser?.close(); await app.close(); }

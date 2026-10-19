@@ -238,8 +238,8 @@ test('previous restarts current if position >= 5s, otherwise replays history as 
   assert.equal(hist.items[0].outcome, 'interrupted');
 });
 
-test('historyReplay can resume or start over, creating a fresh occurrence', async t => {
-  const f = fixture(t);
+test('historyReplay consumes the selected history row, preserves the interrupted video and persists a fresh occurrence', async t => {
+  const f = fixture(t, { disk: true });
   const room = await f.store.create(f.creator);
   await f.queue.playNow(room.id, f.creator, sampleItem(1));
   await f.queue.playNow(room.id, f.creator, sampleItem(2), 600); // archives item 1 at 600s
@@ -253,12 +253,21 @@ test('historyReplay can resume or start over, creating a fresh occurrence', asyn
   assert.equal(resumed.replayed.title, 'Episode 1');
   assert.notEqual(resumed.replayed.id, item1HistId); // Fresh UUID
   assert.equal(resumed.replayed.position, 600);
+  assert.equal(f.queue.getEntry(item1HistId), null);
+  assert.equal(f.queue.history(room.id).total, 1);
+  assert.equal(f.queue.history(room.id).items[0].title, 'Episode 2');
+  await assert.rejects(f.queue.historyReplay(room.id, f.creator, item1HistId, { resume: true }), /History entry unavailable/);
 
   // Start over item 2
   const item2Hist = f.queue.history(room.id).items[0];
   const restarted = await f.queue.historyReplay(room.id, f.creator, item2Hist.id, { resume: false });
   assert.equal(restarted.replayed.title, 'Episode 2');
   assert.equal(restarted.replayed.position, 0);
+  assert.equal(f.queue.getEntry(item2Hist.id), null);
+  await f.restart();
+  assert.equal(f.queue.current(room.id).id, restarted.replayed.id);
+  assert.equal(f.queue.history(room.id).total, 1);
+  assert.equal(f.queue.history(room.id).items[0].title, 'Episode 1');
 });
 
 test('historyClear removes history without touching queue or current', async t => {

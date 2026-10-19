@@ -223,6 +223,53 @@ test('durable room queue supports add, move, remove, playNow, next, previous, hi
   assert.equal(restoredState.queueSummary.next.title, 'Demo Item 1');
 });
 
+test('queue Play now and Skip to dispatch through validation and history replay consumes only the selected row',tls,async t => {
+  const f = await fixture(t), creator = await f.login('host'), guest = await f.login('guest');
+  const id = (await creator.call('/api/watch/rooms', { name:'Queue selections' })).body.id, viewer = randomUUID();
+  const route = '/api/watch/rooms/' + id;
+  await command(creator, id, viewer, 'media.load', { mediaId:'demo', quality:'direct' });
+  const entries = [];
+  for (const title of ['First', 'Second', 'Third', 'Fourth', 'Fifth']) {
+    const added = await creator.call(route + '/queue', { action:'add', item:{ serverId:'local-demo', mediaId:'demo', type:'movie', title, duration:f.app.watch.demoMedia.duration } });
+    assert.equal(added.status, 200); entries.push(added.body.added);
+  }
+  const play = { action:'playEntry', entryId:entries[2].id, expectedRevision:f.app.watch.roomState.queue.summary(id).queueRevision };
+  assert.equal((await guest.call(route + '/queue', play)).status, 403);
+  assert.equal((await creator.call(route + '/queue', { ...play, expectedRevision:0 })).status, 409);
+  assert.equal((await creator.call(route + '/queue', play)).status, 200);
+  let state = (await creator.call(route + '?viewer=' + viewer)).body;
+  assert.equal(state.queueSummary.current.id, entries[2].id);
+  assert.deepEqual((await creator.call(route + '/queue')).body.items.map(item => item.title), ['First', 'Second', 'Fourth', 'Fifth']);
+  await command(creator, id, viewer, 'media.pause');
+  await command(creator, id, viewer, 'media.seek.absolute', { seconds:17 });
+  const skipped = await creator.call(route + '/queue', { action:'skipTo', entryId:entries[3].id, expectedRevision:state.queueSummary.queueRevision });
+  assert.equal(skipped.status, 200);
+  const remaining = (await creator.call(route + '/queue')).body.items;
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].title, 'Fifth');
+  assert.equal(remaining[0].rank, 0, 'Skip to reindexes the remaining queue from zero');
+  const history = (await creator.call(route + '/history')).body;
+  assert.equal(history.items.find(item => item.id === entries[0].id).outcome, 'skipped');
+  assert.equal(history.items.find(item => item.id === entries[1].id).outcome, 'skipped');
+  const savedDemo = f.app.watch.demoMedia;
+  f.app.watch.demoMedia = undefined;
+  assert.equal((await creator.call(route + '/history', { action:'replay', entryId:entries[2].id, resume:true })).status, 400);
+  assert.ok(f.app.watch.roomState.queue.getEntry(entries[2].id), 'failed preparation preserves the source history');
+  f.app.watch.demoMedia = savedDemo;
+  assert.equal((await creator.call(route + '/history', { action:'replay', entryId:entries[2].id, resume:true })).status, 200);
+  state = (await creator.call(route + '?viewer=' + viewer)).body;
+  assert.equal(state.state.position, 17);
+  assert.equal(state.queueSummary.current.title, 'Third');
+  assert.notEqual(state.queueSummary.current.id, entries[2].id);
+  assert.equal(f.app.watch.roomState.queue.getEntry(entries[2].id), null);
+  assert.equal(state.queueSummary.historyCount, history.total);
+  assert.equal((await creator.call(route + '/history', { action:'replay', entryId:entries[3].id, resume:false })).status, 200);
+  state = (await creator.call(route + '?viewer=' + viewer)).body;
+  assert.equal(state.state.position, 0);
+  assert.equal(state.queueSummary.current.title, 'Fourth');
+  assert.equal(f.app.watch.roomState.queue.getEntry(entries[3].id), null);
+});
+
 test('live bulk and auto-queue commands normalize Plex episodes, enforce capabilities before catalog access and reject stale revisions',tls,async t => {
   const f = await fixture(t), creator = await f.login('host'), guest = await f.login('guest');
   const id = (await creator.call('/api/watch/rooms',{name:'Bulk queue room'})).body.id, a = randomUUID(), b = randomUUID();

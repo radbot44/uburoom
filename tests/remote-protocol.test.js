@@ -47,3 +47,16 @@ test('the same protocol fixtures run as browser scripts without Node, DOM or net
   }
   checkContract(context.uburoom, context.uburoomRoomProtocol, context.uburoomViewport);
 });
+
+test('web queue selection commands validate entry identity and revision in Node and browser dispatch', () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(source, 'room-protocol.js'), 'utf8'), context);
+  const entryId = '11111111-2222-4333-8444-555555555555';
+  for (const validate of [Engine.validate, context.uburoomRoomProtocol.validate]) {
+    for (const action of ['queue.playEntry', 'queue.skipTo']) {
+      assert.deepEqual(plain(validate({ action, args: { entryId, expectedRevision: 7 } })), { action, args: { entryId, expectedRevision: 7 } });
+      assert.throws(() => validate({ action, args: { entryId: 'bad' } }), /Choose a queue entry/);
+      assert.throws(() => validate({ action, args: { entryId, expectedRevision: -1 } }), /Invalid queue revision/);
+    }
+  }
+});

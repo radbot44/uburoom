@@ -74,6 +74,7 @@
         }
         break;
       case 'queue.move': case 'queue.remove': case 'queue.history.replay':
+      case 'queue.playEntry': case 'queue.skipTo':
         if (typeof a.entryId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.entryId)) throw new Error('Choose a queue entry');
         args.entryId = a.entryId;
         if (action === 'queue.move') args.targetRank = numeric(a.targetRank, 0, 99);

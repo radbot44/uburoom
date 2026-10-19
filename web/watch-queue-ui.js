@@ -37,8 +37,9 @@
     }
     let currentQueue = { items: [], total: 0, queueRevision: 0 };
     let currentHistory = { items: [], total: 0 };
-    let fetching = false;
+    let fetching = null;
     let refetchNeeded = false;
+    let refetchForce = false;
     let busy = false;
     let autoplayPending = false;
     let cancelPending = false;
@@ -47,6 +48,7 @@
     let lastAutoplayError = '';
     let lastFetchedRevision = -1;
     let lastFetchedRoomId = null;
+    let moveFollow = null;
 
     function node(tag, parent, text, className) {
       const el = doc.createElement(tag);
@@ -315,6 +317,12 @@
     }
 
     layout.addEventListener('scroll', updateNavigation, { passive: true });
+    layout.addEventListener('wheel', event => {
+      if (view !== 'cards' || event.ctrlKey || event.shiftKey || !event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const scale = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? layout.clientWidth : 1;
+      event.preventDefault();
+      layout.scrollBy({ left: event.deltaY * scale, behavior: 'instant' });
+    }, { passive: false });
     layout.addEventListener('keydown', event => {
       if (event.target !== layout || view !== 'cards') return;
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -425,6 +433,7 @@
         currentId = current?.id; currentKey = key;
         if (changedItem) centerPending = centerAfterFetch = true;
         nowPlayingBox.replaceChildren();
+        nowPlayingBox.dataset.entryId = current?.id || '';
         const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
         node('span', top, 'Now playing', 'queue-section-label');
         node('span', top, '', 'queue-badge queue-playback-state');
@@ -435,7 +444,6 @@
         const progress = node('progress', body, undefined, 'queue-progress');
         progress.setAttribute('aria-label', 'Current video progress');
         const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
-        node('span', actions, 'Current video', 'queue-card-caption');
         button(actions, 'Play', 'play', async () => {
           try { await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' }); }
           catch (error) { notice.textContent = error.message; }
@@ -464,13 +472,15 @@
       }, disabled, 'icon-button quiet ' + className);
     }
 
-    function moreActions(parent) {
-      const details = node('details', parent, undefined, 'queue-more');
-      const summary = node('summary', details);
-      summary.title = 'More queue actions'; summary.setAttribute('aria-label', 'More queue actions');
-      summary.append(root.uburoomUI.icon(doc, 'chevron'));
-      const menu = node('div', details, undefined, 'queue-more-actions');
-      return menu;
+    function updateUpcomingTimes() {
+      const state = getState();
+      const duration = state?.queueSummary?.current?.duration || state?.state?.duration || 0;
+      let remaining = Math.max(0, duration - (state?.state?.position || 0));
+      const ranks = upcomingView.querySelectorAll('.queue-rank');
+      (currentQueue.items || []).forEach((item, i) => {
+        if (ranks[i]) ranks[i].textContent = (i + 1) + ' · UP NEXT in ' + formatTime(remaining);
+        remaining += Math.max(0, item.duration - (item.position || 0));
+      });
     }
 
     function renderUpcoming() {
@@ -483,7 +493,12 @@
       list.id = 'queue-upcoming-list';
       items.forEach((item, i) => {
         const row = node('article', list, undefined, 'queue-entry'); row.dataset.entryId = item.id;
-        node('span', row, 'Up next · ' + (i + 1), 'queue-rank');
+        const top = node('div', row, undefined, 'queue-entry-top');
+        node('span', top, '', 'queue-rank');
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(moves, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
+        action(moves, 'Move earlier', view === 'cards' ? 'left' : 'up', () => moveItem(item.id, item.rank - 1), !canEdit || i === 0, 'queue-action-up');
+        action(moves, 'Move later', view === 'cards' ? 'right' : 'down', () => moveItem(item.id, item.rank + 1), !canEdit || i === items.length - 1, 'queue-action-down');
         art(row, item);
         const info = node('div', row, undefined, 'queue-entry-info');
         title(info, item, 'queue-entry-title');
@@ -491,12 +506,9 @@
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'Queue', 'queue-card-caption');
         action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
-        const more = moreActions(actions);
-        action(more, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
-        action(more, 'Move up', 'up', () => moveItem(item.id, item.rank - 1), !canEdit || i === 0, 'queue-action-up');
-        action(more, 'Move down', 'down', () => moveItem(item.id, item.rank + 1), !canEdit || i === items.length - 1, 'queue-action-down');
-        action(more, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
+        action(actions, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
       });
+      updateUpcomingTimes();
       const actions = node('div', footer, undefined, 'queue-footer-actions');
       const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
       shuffle.id = 'queue-shuffle';
@@ -534,7 +546,7 @@
           older.disabled = true;
           try {
             const page = await request('/api/watch/rooms/' + roomId + '/history?limit=100&offset=' + items.length);
-            if (getState()?.id !== roomId || lastFetchedRevision !== revision) return;
+            if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
             currentHistory = { items: [...items, ...page.items], total: page.total };
             renderTab();
           } catch (error) { notice.textContent = error.message; }
@@ -547,10 +559,9 @@
         const row = node('article', list, undefined, 'queue-history-entry'); row.dataset.entryId = item.id;
         const outcome = item.outcome || 'interrupted';
         const label = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
-        const status = node('span', row, undefined, 'queue-history-status outcome-' + outcome);
+        const status = node('span', row, undefined, 'queue-history-status queue-rank outcome-' + outcome);
         status.title = label;
-        status.append(root.uburoomUI.icon(doc, outcome === 'completed' ? 'check' : outcome === 'skipped' ? 'end' : 'pause'));
-        node('span', status, label, 'queue-outcome-label');
+        node('span', status, label.toUpperCase(), 'queue-outcome-label');
         art(row, item);
         const info = node('div', row, undefined, 'queue-entry-info');
         title(info, item, 'queue-entry-title');
@@ -559,7 +570,7 @@
         node('span', actions, 'History', 'queue-card-caption');
         if (outcome !== 'completed') action(actions, 'Resume now', 'play', () => replayHistory(item.id, true), !canChoose, 'queue-item-resume');
         action(actions, 'Start over now', 'refresh', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
-        action(actions, 'Add to queue', 'plus', () => add({ ...item, position: 0 }), !state?.capabilities?.addQueue, 'queue-item-add');
+        action(actions, 'Add to queue', 'queue', () => add({ ...item, position: 0 }), !state?.capabilities?.addQueue, 'queue-item-add');
       }
     }
 
@@ -568,45 +579,53 @@
       footer.querySelector('.queue-footer-actions')?.remove();
       renderUpcoming(); renderHistory();
       for (const img of observedImages) if (!img.isConnected) { imageObserver.unobserve(img); observedImages.delete(img); }
-      if (centerPending) requestAnimationFrame(() => centerCurrent());
+      layout.scrollLeft = scroll;
+      if (moveFollow && view === 'cards') {
+        const follow = moveFollow;
+        requestAnimationFrame(() => {
+          const row = [...upcomingView.querySelectorAll('.queue-entry')].find(item => item.dataset.entryId === follow.entryId);
+          if (!row || moveFollow !== follow) return;
+          const delta = row.getBoundingClientRect().left - layout.getBoundingClientRect().left - follow.offset;
+          layout.scrollTo({ left: layout.scrollLeft + delta, behavior: motion() });
+          if (follow.focus) row.querySelector(follow.direction < 0 ? '.queue-action-up' : '.queue-action-down')?.focus({ preventScroll: true });
+        });
+      } else if (centerPending) requestAnimationFrame(() => centerCurrent());
       else { layout.scrollLeft = scroll; updateNavigation(); }
     }
 
-    async function fetchData(force = false) {
-      if (fetching) {
-        refetchNeeded = true;
-        return;
-      }
-      const state = getState();
-      if (!state?.durable || !state?.id) return;
-      const roomId = state.id;
-      const rev = state.queueSummary?.queueRevision ?? 0;
-      if (!force && lastFetchedRoomId === roomId && lastFetchedRevision >= rev) return;
-
-      fetching = true;
-      refetchNeeded = false;
-      try {
-        const [qRes, hRes] = await Promise.all([
-          request('/api/watch/rooms/' + roomId + '/queue?limit=100'),
-          request('/api/watch/rooms/' + roomId + '/history?limit=100')
-        ]);
-        if (getState()?.id !== roomId) return;
-        currentQueue = qRes || { items: [], total: 0, queueRevision: rev };
-        currentHistory = hRes || { items: [], total: 0 };
-        lastFetchedRevision = currentQueue.queueRevision ?? rev;
-        lastFetchedRoomId = roomId;
-        if (centerAfterFetch) { centerPending = true; centerAfterFetch = false; }
-        renderHeaderBadge(state.queueSummary);
-        renderTab();
-      } catch (err) {
-        notice.textContent = err.message;
-      } finally {
-        fetching = false;
-        if (refetchNeeded) {
+    function fetchData(force = false) {
+      refetchForce ||= force;
+      if (fetching) { refetchNeeded = true; return fetching; }
+      fetching = (async () => {
+        do {
           refetchNeeded = false;
-          void fetchData();
-        }
-      }
+          const force = refetchForce; refetchForce = false;
+          const state = getState();
+          if (!state?.durable || !state.id) break;
+          const roomId = state.id, rev = state.queueSummary?.queueRevision ?? 0;
+          if (!force && lastFetchedRoomId === roomId && lastFetchedRevision >= rev) break;
+          try {
+            const [qRes, hRes] = await Promise.all([
+              request('/api/watch/rooms/' + roomId + '/queue?limit=100'),
+              request('/api/watch/rooms/' + roomId + '/history?limit=100')
+            ]);
+            if (getState()?.id !== roomId) { refetchNeeded = true; continue; }
+            if ((getState()?.queueSummary?.queueRevision ?? 0) < qRes.queueRevision) await changed();
+            if (getState()?.id !== roomId || qRes.queueRevision !== hRes.queueRevision ||
+                qRes.queueRevision !== getState()?.queueSummary?.queueRevision) {
+              refetchNeeded = true; continue;
+            }
+            // Publish the current item and both lists together from one revision.
+            currentQueue = qRes; currentHistory = hRes;
+            lastFetchedRevision = qRes.queueRevision; lastFetchedRoomId = roomId;
+            renderHeaderBadge(getState().queueSummary);
+            renderNowPlaying();
+            if (centerAfterFetch) { centerPending = true; centerAfterFetch = false; }
+            renderTab();
+          } catch (error) { notice.textContent = error.message; break; }
+        } while (refetchNeeded);
+      })().finally(() => { fetching = null; });
+      return fetching;
     }
 
     function queueRevision(state) {
@@ -642,14 +661,21 @@
     async function moveItem(entryId, targetRank) {
       const state = getState();
       if (!state?.id) return;
-      const rev = queueRevision(state);
-      await request('/api/watch/rooms/' + state.id + '/queue', {
-        action: 'move',
-        entryId,
-        targetRank,
-        expectedRevision: rev
-      });
-      await fetchData(true);
+      const item = currentQueue.items.find(item => item.id === entryId);
+      const row = [...upcomingView.querySelectorAll('.queue-entry')].find(row => row.dataset.entryId === entryId);
+      const follow = view === 'cards' && row ? { entryId, direction: targetRank - item.rank,
+        offset: row.getBoundingClientRect().left - layout.getBoundingClientRect().left,
+        focus: row.contains(doc.activeElement) } : null;
+      moveFollow = follow;
+      try {
+        await request('/api/watch/rooms/' + state.id + '/queue', {
+          action: 'move', entryId, targetRank, expectedRevision: queueRevision(state)
+        });
+        await changed();
+        await fetchData(true);
+        // renderTab schedules the follow after the new order has been laid out.
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      } finally { if (moveFollow === follow) moveFollow = null; }
     }
 
     async function removeItem(entryId) {
@@ -736,7 +762,9 @@
         lastFetchedRoomId = state.id; lastFetchedRevision = -1;
         renderTab();
       }
-      renderNowPlaying();
+      if (lastFetchedRevision < 0 || lastFetchedRevision === queueSummary?.queueRevision) {
+        renderNowPlaying(); updateUpcomingTimes();
+      }
       const permissions = JSON.stringify(state.capabilities);
       if (permissions !== capabilityKey) { capabilityKey = permissions; renderTab(); }
       if (queueSummary) {
