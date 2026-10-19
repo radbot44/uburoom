@@ -247,9 +247,9 @@
       if (!canEdit) {
         const allowed = [['playPause','Play/pause'],['seek','Seek'],['addQueue','Add to queue']].filter(([k]) => state?.participantPermissions?.[k]).map(([,l]) => l);
         $('room-quick-readonly').textContent = allowed.length ? 'Participant controls: ' + allowed.join(', ') : 'Participants: no playback or queue controls';
-        $('room-more-permissions').textContent = 'View permissions';
+        $('room-more-permissions').replaceChildren(root.uburoomUI.icon(document,'settings'),document.createTextNode('View permissions'));
       } else {
-        $('room-more-permissions').textContent = 'More permissions';
+        $('room-more-permissions').replaceChildren(root.uburoomUI.icon(document,'settings'),document.createTextNode('More permissions'));
       }
     }
     let permissionRole = 'viewer';

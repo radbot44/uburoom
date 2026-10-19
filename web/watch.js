@@ -124,7 +124,7 @@ video.volume = .5;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
@@ -715,12 +715,12 @@ function renderVisibility() {
   $('refresh').hidden = true;
   $('room-bar').hidden = !state;
   $('create').hidden = !!state;
-  $('remote-consent-summary').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
+  $('remote-consent-text').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
   if (state) {
     $('current-room-name').textContent = state.roomName || 'Room';
     const role = state.roomRole || (state.isHost ? 'host' : 'participant');
     $('current-room-meta').textContent = role === 'creator' ? 'Creator' : role === 'host' ? 'Host' : 'Participant';
-    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'));
+    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'));
     $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').disabled = pending || !state.canManage;
     $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(String(state.viewers)));
@@ -755,6 +755,11 @@ async function changeVisibility() {
   } else await execute({action:'room.visibility',args:{visibility:'public'}});
 }
 for (const id of ['visibility','drawer-visibility','room-visibility']) $(id).addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
+$('remote-consent-summary').addEventListener('click', () => {
+  const expanded = $('remote-consent-summary').getAttribute('aria-expanded') === 'true';
+  $('remote-consent-summary').setAttribute('aria-expanded', String(!expanded));
+  $('watch-settings-content').hidden = expanded;
+});
 function renderTransport() {
   const available = !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;

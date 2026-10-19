@@ -24,6 +24,38 @@ Raster/source exports in `assets/branding` include the 1848 px wide transparent 
 
 Use the canonical uburoom artwork. The initial theme script includes the SVG sources; appearance changes recolor cached local data URLs for header/remote logos without network requests. Preserve the established typography and component layout rules above.
 
+## Button hierarchy and interaction patterns
+
+Four button classes cover all interactive controls. Never mix their semantic roles.
+
+- **`.primary`** — Filled accent background (`--primary`), dark text. The single dominant action per context (Create room, Connect Plex, Approve, Add to queue). Never use for toggles, state indicators, or secondary actions.
+- **`.quiet`** — Elevated background (`--elevated`), normal text. Standard secondary and action buttons: navigation choices (Active rooms, Your rooms), action buttons with icon+text (Switch room, Browse media, Cancel), state-toggle buttons with text (visibility toggle). The default for most interactive buttons.
+- **`.icon-button`** — Transparent background, muted icon color (`--muted`). Icon-only controls in panel headers and dialogs: settings cog, refresh, close, collapse. No solid background by default; receives `--hover` background only on hover/focus. Always include `aria-label` and `title`. Icon size 24×24.
+- **`.danger-button`** — Red filled. Destructive irreversible actions only (Delete room, Remove account). Always confirm before executing.
+- **`.solid-button`** — Reserved for player title-bar actions (Menu button) where contrast against the video gradient is needed. Do not use inside card panel bodies.
+
+### Icon button rules
+- Icon-only buttons must always have `aria-label` and `title`. No visible text label is needed when the icon is universally understood (⚙ settings, × close, ↻ refresh).
+- Do not mix icon-only and icon+text buttons in the same visual row without a clear grouping separator.
+- Use 24×24 SVG paths from the shared `remote-ui.js` icon set (`currentColor` stroke, 1.9px width, rounded caps/joins). No emoji or icon library substitutions.
+- Panel-header secondary icon buttons (settings, refresh, close, collapse) use `.icon-button`. Content-area action icon buttons (queue move, remove, play) use `'icon-button quiet'` to add the elevated hover state.
+
+### Toggles
+- Binary room/permission toggles (Play/pause, Seek, Add to queue, Autoplay) use the custom CSS track/thumb toggle (`control-track` / `control-thumb` pattern in `remote-ui.js`), not native checkboxes. This applies in the Room panel, remote overlay, and queue settings.
+- State-indicating toggles with visible text (room visibility: Public / Private) use `.quiet`. The current state is communicated by both the icon (globe / lock) and text label; no filled background is needed.
+- `aria-pressed` or `aria-checked` must be set on every toggle to reflect the current state.
+
+### Borders
+- Panel cards (`--card` background) do not need borders. Use background elevation (`--elevated` for buttons/controls) to create visual depth.
+- Borders (`1px solid var(--border)`) apply only to: form inputs and selects, provider rows in account settings, and dialog elements (`.privacy-dialog`).
+- Do not add borders to icon buttons, quiet buttons, or section panel outlines.
+
+### Label economy
+- Avoid visible text labels for icon buttons with unambiguous universal icons. `title` and `aria-label` supply the accessible name.
+- Section headings (Room, Queue, Media) are not repeated in button text within the same section.
+- Avoid redundant captions below icons when the icon itself is self-explanatory; use `aria-label` for context instead.
+- Muted hint text (`color: var(--muted); font-size: 12px`) is appropriate for secondary status or instructions, not for primary actions.
+
 ## Components
 
 - Playback queue defaults to horizontal cards: chronological history on the left, the current video centered initially and after media changes, and upcoming entries on the right. Allow native scrolling, previous/next browsing arrows and explicit recentering; ordinary snapshots preserve browsing position and focused controls. Remember Cards/List locally. List puts current playback above history/upcoming columns, stacking upcoming before history on narrow panels. Keep Queue below Room in the right column in normal and theater modes. Reuse authenticated library artwork and existing icons; preserve replay, resume, queue editing, autoplay, generation settings and confirmed clearing through the shared command path.
