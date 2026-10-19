@@ -14,7 +14,7 @@
       return ['host','viewer'].every(role => Object.keys(labels).every(key => permissions[role][key] === policy[role][key]));
     }) || 'custom';
   }
-  function mount({ request, getState, getMe, join, changed, showChooser, fail }) {
+  function mount({ request, getState, getMe, join, changed, showChooser, fail, createDraft, draftChanged, execute }) {
     const $ = id => document.getElementById(id), dialog = $('room-settings-dialog');
     let details, section = 'general', renameDraft = '', draftRoom, generation = 0, busy = false, offset = 0, total = 0, savedGeneration = 0;
     function node(tag, parent, text, className) {
@@ -29,7 +29,7 @@
       if (['Join','Reopen'].includes(text)) control.prepend(root.uburoomUI.icon(document,text === 'Join' ? 'login' : 'reopen'));
       control.addEventListener('click',action); return control;
     }
-    let openedFromSaved = false;
+    let openedFromSaved = false, draftRecord;
     function show(target) {
       (document.fullscreenElement || document.body).append(target); target.returnValue = ''; target.showModal();
     }
@@ -87,6 +87,44 @@
         renderSettings();
       } catch (error) { if (ticket === generation && dialog.open) $('room-settings-status').textContent = error.message; }
     }
+    function draftOptions() {
+      if (!draftRecord) return {};
+      return {name:draftRecord.name,visibility:draftRecord.visibility,permissions:structuredClone(draftRecord.permissions),autoplay:draftRecord.autoplay.enabled,autoQueue:structuredClone(draftRecord.queueSummary.autoQueue)};
+    }
+    function openDraft(options) {
+      const person = {id:getMe().account.id,name:getMe().name};
+      const base = draftRecord || {id:'draft-' + crypto.randomUUID(),draft:true,creator:person,candidates:[person],hosts:[],viewers:[],role:'creator',active:false,hasLiveRoom:false,hasBookmark:false,revision:0,
+        permissions:presetPolicy(options.permissionPreset || 'host-control'),autoplay:{enabled:true},queueSummary:{queueRevision:0,autoQueue:{mode:'off',includeSpecials:false}},
+        capabilities:Object.fromEntries([...Object.keys(labels),'manageHosts','managePermissions','transferCreator'].map(key=>[key,!['deleteRoom','closeRoom','transferCreator'].includes(key)]))};
+      draftRecord = {...base,name:options.name?.trim() || 'Room',visibility:options.visibility};
+      details = draftRecord; draftRoom = details.id; renameDraft = details.name; openedFromSaved = false; generation++;
+      selectSection('general'); if (!dialog.open) show(dialog); renderSettings();
+    }
+    async function savePlayback(change) {
+      if (!details) throw new Error('Open room settings first');
+      const target = details, id = target.id;
+      if (target.draft) {
+        if (change.autoplay !== undefined) target.autoplay.enabled = change.autoplay;
+        if (change.autoQueue) {
+          if (change.autoQueue.mode !== 'off' && !change.autoQueue.scope?.id) throw new Error('Choose an auto-queue source');
+          target.queueSummary.autoQueue = structuredClone(change.autoQueue);
+        }
+        draftRecord = target; draftChanged?.(draftOptions()); renderSettings(); return target;
+      }
+      let result;
+      if (change.autoplay !== undefined) {
+        if (getState()?.id === id && target.active) {
+          await execute({action:'media.autoplay.set',args:{enabled:change.autoplay}});
+          result = await request('/api/watch/rooms/' + id + '/settings');
+        } else result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'autoplay',enabled:change.autoplay}});
+      }
+      else {
+        await request('/api/watch/rooms/' + id + '/queue',{action:'auto',...change.autoQueue,expectedRevision:target.queueSummary.queueRevision},{timeoutMs:35000});
+        result = await request('/api/watch/rooms/' + id + '/settings');
+      }
+      if (details?.id === id && dialog.open) { details = result; renderSettings(); }
+      await changed(); return result;
+    }
     function renderSettings() {
       const value = details; if (!value) return;
       $('room-settings-content').hidden = false; $('room-settings-status').textContent = '';
@@ -116,7 +154,7 @@
         if (transferGroup) {
           const btn = node('button', transferGroup, person.name, 'group-button');
           btn.type = 'button';
-          btn.dataset.value = person.id;
+          btn.dataset.value = person.id; btn.title = 'Transfer room leadership to ' + person.name;
           btn.addEventListener('click', () => {
             $('room-transfer-target').value = person.id;
             for (const b of transferGroup.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.value === person.id));
@@ -133,18 +171,18 @@
       const preset = presetName(value.permissions);
       $('room-permission-preset').value = preset;
       for (const button of $('room-permission-preset-group').querySelectorAll('button')) {
-        const custom = button.dataset.value === 'custom';
-        button.hidden = custom && preset !== 'custom';
-        button.disabled = custom || busy || !value.capabilities.managePermissions;
+        button.hidden = false;
+        button.disabled = busy || !value.capabilities.managePermissions;
       }
-      $('room-permission-preset').querySelector('[value=custom]').hidden = preset !== 'custom';
+      $('room-permission-preset').querySelector('[value=custom]').hidden = false;
       $('room-transfer-empty').hidden = !!value.hosts.length;
       $('room-transfer-target').hidden = true;
       if (transferGroup) transferGroup.hidden = $('room-transfer').hidden = !value.hosts.length;
-      const current = getState()?.id === value.id;
-      $('room-playback-unavailable').hidden = current;
-      $('room-playback-controls').hidden = !current;
-      if (current) document.dispatchEvent(new CustomEvent('room-playback-settings'));
+      $('room-playback-controls').hidden = false;
+      document.dispatchEvent(new CustomEvent('room-playback-settings'));
+      const launch = $('room-settings-primary');
+      launch.hidden = !(value.draft || !value.active || openedFromSaved && getState()?.id !== value.id);
+      launch.textContent = value.draft ? 'Create room' : 'Reopen room'; launch.disabled = busy;
       $('room-permissions').replaceChildren();
       const header = node('tr',$('room-permissions'));
       for (const [label,role] of [['Permission',''],['Host','host'],['Participant','viewer']]) { const cell = node('th',header,label); cell.scope = 'col'; if (role) cell.dataset.permissionRole = role; }
@@ -185,6 +223,19 @@
     }
     async function edit(change) {
       if (!details || busy) return;
+      if (details.draft) {
+        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name'); return; } details.name = change.name.trim(); }
+        else if (change.action === 'visibility') details.visibility = change.visibility;
+        else if (change.action === 'permissions.preset') details.permissions = presetPolicy(change.preset);
+        else if (change.action === 'permissions') {
+          Object.assign(details.permissions[change.role],change.permissions);
+          for (const key of Object.keys(labels)) {
+            if (change.role === 'host' && !details.permissions.host[key]) details.permissions.viewer[key] = false;
+            if (change.role === 'viewer' && details.permissions.viewer[key]) details.permissions.host[key] = true;
+          }
+        }
+        draftRecord = details; draftChanged?.(draftOptions()); renderSettings(); setSettingsStatus('Updated',true); return;
+      }
       const id = details.id, revision = details.revision, ticket = generation;
       const focused = document.activeElement;
       const focusSelector = focused?.dataset.permission ? 'input[data-role="' + focused.dataset.role + '"][data-permission="' + focused.dataset.permission + '"]' : focused?.id ? '#' + CSS.escape(focused.id) : undefined;
@@ -283,7 +334,7 @@
       if (openedFromSaved) { openedFromSaved = false; void showChooser('saved'); }
     });
     dialog.addEventListener('close',() => { if (!dialog.open) { generation++; details = undefined; draftRoom = undefined; } });
-    $('room-settings-refresh').addEventListener('click',() => { if (details && !busy) void open(details.id, section); });
+    $('room-settings-refresh').addEventListener('click',() => { if (details && !busy) { if (details.draft) renderSettings(); else void open(details.id, section); } });
     $('room-rename-save').addEventListener('click',() => void edit({action:'rename',name:$('room-rename').value}));
     $('room-settings-visibility').addEventListener('change',() => void edit({action:'visibility',visibility:$('room-settings-visibility').value}));
 
@@ -292,6 +343,16 @@
       if (await confirm('Transfer room leadership to this host? You will remain a host.')) await edit({action:'creator.transfer',userId});
     });
     $('room-permission-preset').addEventListener('change',() => { const preset = $('room-permission-preset').value; if (preset !== 'custom') void edit({action:'permissions.preset',preset}); });
+    $('room-settings-primary').addEventListener('click',async () => {
+      if (!details || busy) return;
+      const target = details; busy = true; renderSettings();
+      try {
+        if (target.draft) { await createDraft(draftOptions()); draftRecord = undefined; }
+        else { const opened = await request('/api/watch/rooms/' + target.id + '/reopen',{}); await join(opened.id); }
+        openedFromSaved = false; dialog.close('opened');
+      } catch (error) { setSettingsStatus(error.message); }
+      finally { busy = false; if (dialog.open) { const notice = $('room-settings-status').textContent; renderSettings(); $('room-settings-status').textContent = notice; } }
+    });
     $('room-settings-delete').addEventListener('click',async () => { if (await confirm('Permanently delete this room? This cannot be undone.')) await edit({action:'delete'}); });
     $('room-clear-video').addEventListener('click',async () => { if (await confirm('Clear this saved video and its position? The room and hosts will be kept.')) await edit({action:'bookmark.clear'}); });
     $('room-settings-close-live').addEventListener('click',async () => {
@@ -304,10 +365,10 @@
     for (const id of ['reopen','lobby-reopen']) $(id).addEventListener('click',() => void showChooser('saved'));
     $('room-saved-previous').addEventListener('click',() => void loadSaved(Math.max(0,offset - 50)));
     $('room-saved-next').addEventListener('click',() => void loadSaved(offset + 50));
-    return { loadSaved, open, render() {
+    return { loadSaved, open, openDraft, draftOptions, clearDraft() { draftRecord = undefined; }, updateDraftPreset(name) { if (draftRecord) draftRecord.permissions = presetPolicy(name); }, playbackContext() { return dialog.open && details ? {...details,durable:true} : getState(); }, savePlayback, render() {
       $('reopen').hidden = !!getState() || !getMe()?.durableRooms; $('lobby-reopen').hidden = !getMe()?.durableRooms;
       renderQuick();
-      $('room-create-details').hidden = $('room-create-policy').hidden = !getMe()?.durableRooms;
+      $('room-create-details').hidden = $('room-create-policy').hidden = $('room-create-settings').hidden = !getMe()?.durableRooms;
       $('room-people-open').hidden = !getState()?.durable;
       $('room-settings-open').hidden = !getState()?.durable;
       $('room-save-error').textContent = getState()?.saveError || '';

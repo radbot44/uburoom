@@ -826,3 +826,15 @@ Verification uses isolated synthetic fixtures. Real Plex/Discord Activity remain
 - Selection is local presentation state exposed as an occurrence ID and accessible current marker. It does not change playback or introduce a controller/remote command path. Explicit current removal requires both chooseMedia and editQueue, preserves unrelated occurrences, and only discards on a successfully committed transition. The forward action prepares the next item before committing the discard.
 
 Checks use isolated synthetic accounts/media; real Plex and Discord Activity verification remains separate. No schema change or credential/state migration is needed.
+
+
+### Prospective room settings and compact queue presentation (2026-10-19)
+
+- `npm run test:full`: 361 passed, zero failures/skips. New persistence coverage checks atomic creation with custom permissions, Auto-play and Auto-queue configuration, invalid drafts leaving no saved room, closed-room Auto-play authorization, stale revision rejection and restart retention.
+- `node scripts/room-redesign-smoke.js`: Chrome and Firefox pass footer creation/settings actions, explanatory group tooltips, prospective configuration with no premature saved room, retained local drafts, authenticated source selection and persistence on creation, always-visible cosmetic Custom, closed-room Auto-play/Auto-queue edits without joining, and reopening from the settings footer. Existing permission/people/mobile/fullscreen flows remain covered.
+- `node scripts/queue-ui-smoke.js`: Chrome 155 and Firefox 158 pass removal of direction controls, shared toolbar row, nonzero past/queued counts, NEXT, hidden scrollbars, cached poster backdrops, Cards/List position retention across mobile tabs, title links activating Media, matching section widths at 720/900/1100 pixels, and existing selection, replay, moves, current removal, themes and fullscreen behavior.
+- `node scripts/queue-ui-smoke.js --navigation-only`: both browsers additionally verify returning from the first queued item to Now Playing when history is empty, in Cards and List.
+- `node scripts/room-ui-smoke.js`: both browsers pass the broader queue, natural-end/countdown, permissions, host transfer, private-room/Admin-mode and close/reopen lifecycle regression.
+- Inspected creation, prospective and closed playback settings, Permissions, Cards/List and mobile renders. Fixture artwork is reused for blurred/dark List backgrounds without an additional image request.
+
+These checks use disposable synthetic accounts and media. Real Plex and Discord Activity verification remains separate. No schema migration or production deployment is part of this change.

@@ -71,6 +71,16 @@ async function main() {
       await until('state?.mediaId==="demo"', 'Current media');
       await run('execute({action:"media.pause"})');
       for (let i = 1; i <= 6; i++) await run('queueUI.add({mediaId:"demo",title:"Queue video ' + i + '",duration:60})');
+      for (const mode of ['cards','list']) {
+        await run('$("queue-view-' + mode + '").click()');
+        await until('queueUI.selectedEntryId===state.queueSummary.current.id','Initial '+mode+' center');
+        await run('$("queue-scroll-next").click()');
+        await until('queueUI.selectedEntryId===document.querySelector(".queue-entry").dataset.entryId','First queued '+mode+' entry');
+        await run('$("queue-scroll-previous").click()');
+        await until('queueUI.selectedEntryId===state.queueSummary.current.id','Return to current without history in '+mode);
+      }
+      if (process.argv.includes('--navigation-only')) { console.log(name+': Cards/List arrows return to current when history is empty'); continue; }
+      await run('$("queue-view-cards").click()');
       for (let i = 0; i < 3; i++) {
         await run('execute({action:"media.next"})');
         await until('state.queueSummary.historyCount===' + (i + 1), 'Advance creates history');
@@ -82,14 +92,14 @@ async function main() {
       assert.equal(await run('document.querySelector(".queue-current-earlier").disabled && document.querySelector(".queue-current-remove").parentElement.lastElementChild.classList.contains("queue-current-remove")'), true);
       assert.equal(await run('document.querySelector(".queue-playback-state").parentElement.classList.contains("queue-entry-actions")'), true);
       assert.equal(await run('document.querySelector(".queue-notice").parentElement.classList.contains("queue-footer")'), true);
-      assert.equal(await run('$("queue-tab-history").parentElement.classList.contains("queue-toolbar") && $("queue-tab-upcoming").parentElement.classList.contains("queue-toolbar")'), true);
-      await run('$("queue-tab-upcoming").click()');
+      assert.equal(await run('!document.querySelector(".queue-directions") && document.querySelector(".queue-view-switch").parentElement===$("queue-center").parentElement'), true);
+      await run('$("queue-scroll-next").click()');
       await until('queueUI.selectedEntryId===document.querySelector(".queue-entry").dataset.entryId','Upcoming selects its first item');
-      await run('$("queue-tab-history").click()');
+      await run('$("queue-scroll-previous").click()');
       await until('queueUI.selectedEntryId===document.querySelector(".queue-history-entry:last-child").dataset.entryId','History jumps across Upcoming to most recent history');
-      await run('$("queue-tab-history").click()');
+      await run('$("queue-scroll-previous").click()');
       await until('queueUI.selectedEntryId===document.querySelectorAll(".queue-history-entry")[1].dataset.entryId','History steps toward older entries');
-      await run('$("queue-tab-upcoming").click()');
+      await run('$("queue-scroll-next").click()');
       await until('queueUI.selectedEntryId===document.querySelector(".queue-entry").dataset.entryId','Upcoming jumps across History to next item');
       await run('$("queue-center").click()');
       await until(centerError + '<2','Center after section navigation');
@@ -100,7 +110,10 @@ async function main() {
       await until('Math.abs(state.state.position-17)<.01', 'Stable remaining duration');
       await until('document.querySelector(".queue-entry .queue-card-caption").textContent==="Up in 0:43"', 'First start estimate');
       assert.equal(await run('[...document.querySelectorAll(".queue-entry .queue-card-caption")].map(el=>el.textContent).join("|")'), 'Up in 0:43|Up in 1:43|Up in 2:43');
-      assert.equal(await run('document.querySelector(".queue-history-entry .queue-entry-top").getBoundingClientRect().height===document.querySelector(".queue-entry-top").getBoundingClientRect().height'), true, 'History and upcoming headers align');
+      assert.equal(await run('document.querySelector(".queue-entry .queue-rank").textContent'),'NEXT');
+      assert.equal(await run('$("queue-scroll-previous").querySelector(".queue-navigation-count").textContent'),'3 past');
+      assert.equal(await run('$("queue-scroll-next").querySelector(".queue-navigation-count").textContent'),'3 queued');
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).scrollbarWidth'),'none');
       const wheelStart = await run('document.querySelector(".queue-layout").scrollLeft');
       assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true);
       assert.equal(await run('document.querySelector(".queue-layout").scrollLeft'), wheelStart, 'Vertical wheel input no longer scrolls cards horizontally');
@@ -144,9 +157,9 @@ async function main() {
       assert.equal(await run('document.querySelector(".queue-history-entry").dataset.entryId'), await run('api("/api/watch/rooms/"+state.id+"/history").then(page=>page.items.at(-1).id)'));
       assert.ok(await run('(()=>{const a=document.querySelector(".queue-layout").getBoundingClientRect(),b=document.querySelector(".queue-now-playing").getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)<2})()'), 'List opens centered on Now Playing');
       assert.equal(await run('document.querySelector(".queue-layout").clientHeight'), 592, 'List viewport fits about five rows');
-      await run('$("queue-tab-upcoming").click()');
+      await run('$("queue-scroll-next").click()');
       await until('queueUI.selectedEntryId===document.querySelector(".queue-entry").dataset.entryId','List navigates down to Upcoming');
-      await run('$("queue-tab-history").click()');
+      await run('$("queue-scroll-previous").click()');
       await until('queueUI.selectedEntryId===document.querySelector(".queue-history-entry:last-child").dataset.entryId','List jumps up to most recent history');
       await run('$("queue-center").click()');
       await until('queueUI.selectedEntryId===state.queueSummary.current.id','List recentered selection');
@@ -183,6 +196,7 @@ async function main() {
       await run('document.querySelector(".queue-art img").scrollIntoView({block:"center"})');
       await until('[...document.querySelectorAll(".queue-art img")].some(img=>img.complete&&img.naturalWidth===1)', 'Authenticated artwork decodes without a stored thumbnail');
       assert.equal(artworkRequests, 1);
+      assert.equal(await run('[...document.querySelectorAll(".queue-entry")].some(row=>getComputedStyle(row.querySelector(".queue-row-backdrop")).backgroundImage.startsWith("url("))'),true,'List rows share the fetched poster backdrop');
       await run('$("queue-view-cards").click();$("queue-view-list").click()');
       assert.equal(artworkRequests, 1, 'View changes reuse cached artwork');
       await run('queueUI.add({mediaId:"2",type:"movie",title:"Missing artwork",duration:60})');
@@ -201,7 +215,18 @@ async function main() {
         if (mode === 'cards') await until(centerError + '<2', 'Phone centered');
         else assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).flexDirection'), 'column');
         await shot('phone-' + mode);
+        await run('$("queue-scroll-next").click()');
+        await pause(600);
+        const savedScroll = await run('({left:document.querySelector(".queue-layout").scrollLeft,top:document.querySelector(".queue-layout").scrollTop})');
+        await run('$("section-tab-media").click()');
+        await pause(300);
+        await run('$("section-tab-queue").click()');
+        await pause(300);
+        const restoredScroll = await run('({left:document.querySelector(".queue-layout").scrollLeft,top:document.querySelector(".queue-layout").scrollTop})');
+        assert.ok(Math.abs(savedScroll.left-restoredScroll.left)<2 && Math.abs(savedScroll.top-restoredScroll.top)<2,'Mobile '+mode+' preserves queue position');
       }
+      await run('[...document.querySelectorAll("button.queue-title-link")].find(button=>button.textContent==="Artwork fixture").click()');
+      await until('$("section-tab-media").getAttribute("aria-selected")==="true" && getComputedStyle($("library-panel")).display!=="none"','Queue title activates Media tab');
       let panelWidth;
       for (const [key, panel] of [['room','options-panel'],['queue','queue-panel'],['media','library-panel']]) {
         await run('$("section-tab-' + key + '").click();$("' + panel + '").scrollIntoView({block:"start"})');
@@ -229,6 +254,11 @@ async function main() {
       await run('document.exitFullscreen()');
       await until('!immersive', 'Phone fullscreen exit');
       assert.equal(await run('!drawer.contains($("section-tabs")) && $("section-tab-media").getAttribute("aria-selected")==="true"'), true);
+      for (const width of [720,900,1100]) {
+        await browser.viewport(page,width,1100);
+        await pause(200);
+        assert.ok(await run('Math.abs($("library-panel").getBoundingClientRect().width-$("queue-panel").getBoundingClientRect().width)<2'),'Panels match at '+width+'px');
+      }
       await browser.viewport(page, 1600, 1100);
       await run('$("theme-toggle").click();$("accent-toggle").click();setTheater(true);$("queue-view-cards").click();$("queue-panel").scrollIntoView({block:"start"})');
       await until(centerError + '<2', 'Theater centered');

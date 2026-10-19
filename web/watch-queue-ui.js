@@ -12,7 +12,7 @@
     return m + ':' + String(s % 60).padStart(2, '0');
   }
 
-  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork, openSettings, browseMedia }) {
+  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork, openSettings, browseMedia, getSettingsState = getState, saveSettings }) {
     const doc = host.ownerDocument;
     let view = 'cards';
     try { if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list'; } catch {}
@@ -102,19 +102,16 @@
       b.id = 'queue-view-' + value; return b;
     });
     const body = node('div', host); body.id = 'queue-body';
-    const toolbar = node('div', header, undefined, 'queue-toolbar');
-    const historyTab = button(toolbar, 'History', undefined, () => browseDirection(-1), false, 'queue-directions queue-direction');
-    historyTab.id = 'queue-tab-history';
-    const upcomingTab = button(toolbar, 'Upcoming', undefined, () => browseDirection(1), false, 'queue-directions queue-direction');
-    upcomingTab.id = 'queue-tab-upcoming';
-    header.append(views);
+    const toolbar = node('div', header, undefined, 'queue-toolbar'); toolbar.append(views);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
     centerButton.id = 'queue-center'; node('span', centerButton, 'Center Now Playing');
     const timeline = node('div', body, undefined, 'queue-timeline');
     const navigation = node('div', timeline, undefined, 'queue-navigation');
     const previousCard = button(navigation, 'Scroll toward history', 'left', () => scrollCards(-1));
     previousCard.id = 'queue-scroll-previous';
+    const previousCount = node('span',previousCard,'','queue-navigation-count');
     const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
+    const nextCount = node('span',nextCard,'','queue-navigation-count');
     nextCard.id = 'queue-scroll-next';
     const layout = node('div', timeline, undefined, 'queue-layout');
     layout.tabIndex = 0; layout.setAttribute('role', 'region'); layout.setAttribute('aria-label', 'Playback queue timeline');
@@ -259,9 +256,9 @@
     settingsAutoplayLabel.append(doc.createTextNode('Auto-play next video'));
     settingsAutoplay.addEventListener('change',async () => {
       settingsAutoplay.disabled = true; setAutoNotice('Saving…');
-      try { await execute({action:'media.autoplay.set',args:{enabled:settingsAutoplay.checked}}); setAutoNotice('Saved', true); }
+      try { await saveSettings({autoplay:settingsAutoplay.checked}); setAutoNotice('Saved', true); }
       catch (error) { setAutoNotice(error.message); }
-      finally { settingsAutoplay.checked = getState()?.autoplay?.enabled !== false; settingsAutoplay.disabled = !getState()?.capabilities?.autoplay; }
+      finally { settingsAutoplay.checked = getSettingsState()?.autoplay?.enabled !== false; settingsAutoplay.disabled = !getSettingsState()?.capabilities?.autoplay; }
     });
     autoDialog.id = 'queue-auto-dialog'; autoDialog.setAttribute('aria-labelledby', 'queue-auto-title');
     node('h4', autoDialog, 'Auto-queue').id = 'queue-auto-title';
@@ -280,6 +277,7 @@
       const btn = node('button', autoModeGroup, label, 'group-button');
       btn.type = 'button';
       btn.dataset.value = value;
+      btn.title = value === 'off' ? 'Do not generate queued videos automatically.' : value === 'following' ? 'Queue the following episodes from the selected show.' : 'Choose videos at random from the selected source.';
       btn.setAttribute('aria-pressed', String(value === 'off'));
       btn.addEventListener('click', () => {
         if (autoMode.value !== value) {
@@ -312,7 +310,7 @@
       autoNotice.textContent = text;
       if (transient) autoNoticeTimer = setTimeout(() => { if (autoNotice.textContent === text) autoNotice.textContent = ''; }, 2500);
     }
-    function sourceKey(scope, state = getState()) {
+    function sourceKey(scope, state = getSettingsState()) {
       return scope.type + ':' + (scope.id || ('current:' + (state?.queueSummary?.current?.grandparentTitle || state?.mediaId || 'none')));
     }
     function chooseSource(scope,title) {
@@ -322,11 +320,11 @@
       sourcePicker.hidden = true; sourceChange.focus(); updateAutoFields();
     }
     async function browseSources(query = {}, title = 'Libraries') {
-      const ticket = ++sourceTicket, roomId = getState()?.id;
+      const ticket = ++sourceTicket, roomId = getSettingsState()?.id;
       sourceTitle.textContent = title; sourceRows.replaceChildren(); sourceNotice.textContent = 'Loading…';
       try {
         const data = await request('/api/watch/library?' + new URLSearchParams(query));
-        if (ticket !== sourceTicket || roomId !== getState()?.id || sourcePicker.hidden) return;
+        if (ticket !== sourceTicket || roomId !== getSettingsState()?.id || sourcePicker.hidden) return;
         sourceNotice.textContent = data.items.length ? '' : 'No sources available.';
         for (const item of data.items) {
           const row = node('div',sourceRows,undefined,'source-row'); node('span',row,item.title);
@@ -352,7 +350,7 @@
         if (!scope.id) title = state.queueSummary?.current?.grandparentTitle;
         else if (scope.type === 'library') title = (await request('/api/watch/library')).items.find(item => item.id === scope.id)?.title;
         else title = (await request('/api/watch/library/item?' + new URLSearchParams({item:scope.id,type:scope.type}))).item.title;
-        if (ticket !== autoTicket || getState()?.id !== state.id || draftScope !== scope) return;
+        if (ticket !== autoTicket || getSettingsState()?.id !== state.id || draftScope !== scope) return;
         autoSource.textContent = title || 'Choose a source'; if (title) sourceNames.set(key,title);
       } catch (error) { if (ticket === autoTicket && draftScope === scope) autoSource.textContent = 'Source unavailable: ' + error.message; }
     }
@@ -372,12 +370,12 @@
     const autoActions = node('div', autoDialog, undefined, 'room-actions queue-settings-footer');
     const autoCancel = button(autoActions, 'Reset changes', undefined, () => { hasAutoDraft = false; void openAuto(); });
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
-    doc.addEventListener('room-playback-settings',() => { if (!autoPending && !hasAutoDraft) void openAuto(); });
+    doc.addEventListener('room-playback-settings',() => { if (!autoPending && (!hasAutoDraft || autoRoom !== getSettingsState()?.id)) void openAuto(); });
     async function openAuto(source) {
-      const state = getState(), roomId = state?.id;
+      const state = getSettingsState(), roomId = state?.id;
       if (!roomId) return;
       if (source) await openSettings();
-      if (getState()?.id !== roomId) return;
+      if (getSettingsState()?.id !== roomId) return;
       const config = state.queueSummary?.autoQueue;
       if (autoRoom !== roomId) { hasAutoDraft = false; sourceNames.clear(); }
       autoRoom = roomId;
@@ -395,15 +393,15 @@
       sourceChange.disabled = !state.capabilities?.editQueue; updateAutoFields();
 
       autoSave.onclick = async () => {
-        if (getState()?.id !== roomId || !getState()?.capabilities?.editQueue) { return; }
+        if (getSettingsState()?.id !== roomId || !getSettingsState()?.capabilities?.editQueue) { return; }
         autoPending = true; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = true; setAutoNotice('Saving…');
         try {
           const selectedScope = { ...draftScope };
-          await mutate('auto', { mode: autoMode.value, scope: selectedScope, includeSpecials: draftScope.type === 'show' && autoSpecials.checked });
+          await saveSettings({autoQueue:{ mode: autoMode.value, scope: selectedScope, includeSpecials: draftScope.type === 'show' && autoSpecials.checked }});
           hasAutoDraft = false;
           setAutoNotice('Saved', true); await changed();
         } catch (error) { setAutoNotice(error.message); }
-        finally { autoPending = false; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = !getState()?.capabilities?.editQueue; }
+        finally { autoPending = false; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = !getSettingsState()?.capabilities?.editQueue; }
       };
 
     }
@@ -463,17 +461,15 @@
     }
     function directionTarget(direction, crossSection = false) {
       const rows = entries(), selected = nearestEntry();
-      if (crossSection && direction < 0 && selected?.classList.contains('queue-entry')) return historyView.querySelector('.queue-history-entry:last-child');
-      if (crossSection && direction > 0 && selected?.classList.contains('queue-history-entry')) return upcomingView.querySelector('.queue-entry');
+      if (crossSection && direction < 0 && selected?.classList.contains('queue-entry') && historyView.querySelector('.queue-history-entry:last-child')) return historyView.querySelector('.queue-history-entry:last-child');
+      if (crossSection && direction > 0 && selected?.classList.contains('queue-history-entry') && upcomingView.querySelector('.queue-entry')) return upcomingView.querySelector('.queue-entry');
       if (selected === nowPlayingBox || !selected) return direction < 0 ? historyView.querySelector('.queue-history-entry:last-child') : upcomingView.querySelector('.queue-entry');
       return rows[rows.indexOf(selected) + direction];
     }
-    function browseDirection(direction) { centerEntry(directionTarget(direction, true)); }
-    function scrollCards(direction) { centerEntry(directionTarget(direction)); }
+    function scrollCards(direction) { centerEntry(directionTarget(direction,true)); }
     function updateNavigation() {
       if (!layout.clientWidth) return;
       previousCard.disabled = !directionTarget(-1); nextCard.disabled = !directionTarget(1);
-      historyTab.disabled = !directionTarget(-1, true); upcomingTab.disabled = !directionTarget(1, true);
       selectCenteredEntry();
     }
     function scheduleSelection() {
@@ -484,7 +480,9 @@
     function updateView() {
       renderHeaderBadge(getState()?.queueSummary);
       viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
-      navigation.hidden = view !== 'cards';
+      navigation.hidden = false;
+      previousCard.querySelector('svg')?.replaceWith(root.uburoomUI.icon(doc,view === 'cards' ? 'left' : 'up'));
+      nextCard.querySelector('svg')?.replaceWith(root.uburoomUI.icon(doc,view === 'cards' ? 'right' : 'down'));
       layout.tabIndex = 0;
       layout.style.paddingBlock = '';
       if (view === 'list') layout.style.paddingInline = '';
@@ -498,7 +496,12 @@
         event.preventDefault(); event.stopPropagation(); scrollCards(['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1);
       } else if (event.key === 'Home') { event.preventDefault(); event.stopPropagation(); centerCurrent(true); }
     });
-    new ResizeObserver(() => { centerCurrent(); }).observe(layout);
+    let measuredWidth = 0;
+    new ResizeObserver(() => {
+      if (!layout.clientWidth) return;
+      const resized = measuredWidth !== layout.clientWidth; measuredWidth = layout.clientWidth;
+      if (resized || centerPending) centerCurrent();
+    }).observe(layout);
     updateView();
 
     const images = new Map();
@@ -552,13 +555,14 @@
           }
           await imageRequests.get(key);
         }
-        if (!signal.aborted && img.isConnected && images.has(key)) img.src = images.get(key);
+        if (!signal.aborted && img.isConnected && images.has(key)) { img.src = images.get(key); img.parentElement.parentElement.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + images.get(key) + ')'; }
       } catch {
         if (!signal.aborted) { imageRequests.delete(key); img.parentNode?.setAttribute('title', 'Artwork unavailable'); img.remove(); }
       }
     }
 
     function art(parent, item) {
+      node('div',parent,undefined,'queue-row-backdrop').setAttribute('aria-hidden','true');
       const box = node('div', parent, undefined, 'queue-art');
       box.append(root.uburoomUI.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
       if (!artwork || !/^\d{1,20}$/.test(item.mediaId || item.id || '')) return;
@@ -566,15 +570,15 @@
       img.alt = ''; img.decoding = 'async';
       img.dataset.item = item.mediaId || item.id; img.dataset.type = item.type || 'movie';
       const cached = images.get(img.dataset.item + ':' + img.dataset.type);
-      if (cached) img.src = cached;
+      if (cached) { img.src = cached; parent.querySelector('.queue-row-backdrop').style.backgroundImage = 'url(' + cached + ')'; }
       else { observedImages.add(img); imageObserver.observe(img); }
     }
 
     function renderHeaderBadge(summary) {
       const qLen = summary?.pendingCount ?? currentQueue.total ?? 0;
       const hLen = summary?.historyCount ?? currentHistory.total ?? 0;
-      upcomingTab.textContent = 'Upcoming (' + qLen + ')' + (view === 'cards' ? ' →' : ' ↓');
-      historyTab.textContent = (view === 'cards' ? '← ' : '↑ ') + 'History (' + hLen + ')';
+      previousCount.textContent = hLen ? hLen + ' past' : '';
+      nextCount.textContent = qLen ? qLen + ' queued' : '';
       const badge = doc.getElementById('queue-count-badge');
       if (badge) { badge.textContent = String(qLen); badge.hidden = qLen === 0; }
     }
@@ -676,7 +680,7 @@
       let remaining = Math.max(0, duration - (state?.state?.position || 0));
       const ranks = upcomingView.querySelectorAll('.queue-rank');
       (currentQueue.items || []).forEach((item, i) => {
-        if (ranks[i]) ranks[i].textContent = '#' + (i + 1);
+        if (ranks[i]) { ranks[i].textContent = i === 0 ? 'NEXT' : '#' + (i + 1); ranks[i].classList.toggle('queue-next',i === 0); }
         const caption = upcomingView.querySelectorAll('.queue-card-caption')[i];
         if (caption) caption.textContent = 'Up in ' + formatTime(remaining);
         remaining += Math.max(0, item.duration - (item.position || 0));
@@ -995,7 +999,10 @@
       }
     }
 
+    let rememberedPosition;
     return {
+      rememberPosition() { if (layout.clientWidth) rememberedPosition = {room:getState()?.id,view,left:layout.scrollLeft,top:layout.scrollTop}; },
+      restorePosition() { const saved = rememberedPosition; if (saved?.room === getState()?.id && saved.view === view) requestAnimationFrame(() => { layout.scrollTo({left:saved.left,top:saved.top,behavior:'instant'}); updateNavigation(); }); },
       render,
       add,
       bulk,

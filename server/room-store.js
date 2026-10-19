@@ -3,6 +3,7 @@
 
 const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
+const { validateAuto } = require('./room-queue');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
@@ -84,16 +85,22 @@ class RoomStore {
     catch (failure) { this.failure = failure; this.healthy(); }
     return result;
   }
-  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset } = {}) {
+  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'} } = {}) {
     this.healthy();
     const creatorId = this.account(userId), id = randomUUID(), at = this.now();
     name = text(name, 100, 'room name');
     selectedVisibility = visibility(selectedVisibility);
     if (typeof fullPermissions !== 'boolean') throw error('Choose full participant permissions on or off');
-    const permissions = permissionPreset === undefined || permissionPreset === 'server-defaults' ? Policy.policy(this.defaults) : Policy.preset(permissionPreset);
+    let permissions = permissionPreset === undefined || permissionPreset === 'server-defaults' ? Policy.policy(this.defaults) : Policy.preset(permissionPreset);
     if (fullPermissions) permissions.viewer = Policy.preset('queue').viewer;
-    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null);
+    if (customPermissions !== undefined) {
+      Policy.policy(customPermissions);
+      permissions = {host:Policy.permissions(customPermissions.host ?? {},permissions.host),viewer:Policy.permissions(customPermissions.viewer ?? {},permissions.viewer,{role:'viewer'})};
+    }
+    if (typeof autoplay !== 'boolean') throw error('Choose auto-play on or off');
+    const automatic = validateAuto(autoQueue);
+    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic));
     return this.commit(this.get(id));
   }
   list(userId, { offset = 0, limit = 50 } = {}) {
@@ -123,7 +130,7 @@ class RoomStore {
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
     const capabilities = {
       rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'manageHosts',
-      'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
+      'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
     };
     const capability = Object.hasOwn(capabilities, change.action) && capabilities[change.action];
     if (!capability) throw error('Unsupported room change');
@@ -134,6 +141,10 @@ class RoomStore {
       switch (change.action) {
         case 'rename': room.name = text(change.name, 100, 'room name'); break;
         case 'visibility': room.visibility = visibility(change.visibility); break;
+        case 'autoplay':
+          if (typeof change.enabled !== 'boolean') throw error('Choose auto-play on or off');
+          this.db.prepare('UPDATE watch_rooms SET autoplay=? WHERE id=?').run(change.enabled ? 1 : 0,id);
+          break;
         case 'permissions.preset': {
           room.permissions = Policy.preset(change.preset);
           break;

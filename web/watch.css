@@ -172,7 +172,7 @@ body.immersive{overflow:hidden;background:black}
 #options-content>#room-bar{width:100%;margin:0 0 16px}
 .queue-heading .section-toggle>svg:first-child{color:var(--accent-text)}
 body:not(.mobile-player) #options-panel.section-collapsed #options-content,
-body:not(.mobile-player) #queue-panel.section-collapsed :is(#queue-body,.queue-toolbar,.queue-directions),
+body:not(.mobile-player) #queue-panel.section-collapsed :is(#queue-body,.queue-toolbar),
 body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.library-header-right,.library-header-left>:not(h2)){display:none!important}
 .mobile-player .section-toggle:disabled{opacity:1;cursor:default}
 .mobile-player :is(#options-panel,#queue-panel,#library-panel) .section-toggle>:last-child{display:none}
@@ -291,3 +291,10 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 }
 
 #empty-browse{display:inline-flex;align-items:center;gap:8px}#empty-browse[hidden]{display:none}#empty-browse svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+@media(min-width:701px) and (max-width:1100px){body:not(.theater):not(.immersive) :is(#app,.screen-column)>#library-panel{margin-inline:0}}
+
+#room-dialog-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px}
+.room-create-actions{display:flex;align-items:center;gap:8px}.room-create-actions[hidden]{display:none}#room-dialog-footer>button{margin-left:auto}
+#room-create-settings{display:grid;place-items:center;width:44px;height:44px}#room-create-settings svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#room-settings-footer{flex:none;padding-top:14px;display:flex;justify-content:flex-start}#room-settings-footer:has(button[hidden]){display:none}

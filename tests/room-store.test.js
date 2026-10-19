@@ -269,3 +269,29 @@ test('old stored picture flags are retired and participant management stays off 
   assert.equal(restored.creatorId, room.creatorId);
   assert.equal(restored.revision, room.revision);
 });
+
+
+test('prospective room settings save atomically and closed autoplay changes enforce permissions and revisions', async t => {
+  const f = fixture(t, {disk:true});
+  const permissions = Policy.preset('host-control'); permissions.viewer.seek = true;
+  let room = await f.store.create(f.creator,{name:'Configured before opening',permissions,autoplay:false,autoQueue:{mode:'random',scope:{type:'library',id:'1',serverId:'fixture-server'},includeSpecials:true}});
+  assert.deepEqual(room.permissions,permissions);
+  assert.equal(room.autoplay,false);
+  assert.equal(room.autoQueue.mode,'random');
+  await assert.rejects(f.store.edit(room.id,f.viewer,room.revision,{action:'autoplay',enabled:true}),status(403));
+  room = await f.store.edit(room.id,f.creator,room.revision,{action:'host.add',userId:f.host});
+  const revision = room.revision;
+  room = await f.store.edit(room.id,f.host,revision,{action:'autoplay',enabled:true});
+  assert.equal(room.autoplay,true);
+  await assert.rejects(f.store.edit(room.id,f.creator,revision,{action:'autoplay',enabled:false}),status(409));
+  await f.restart();
+  const saved = f.store.get(room.id);
+  assert.equal(saved.autoplay,true);
+  assert.deepEqual(saved.permissions,permissions);
+  assert.equal(saved.autoQueue.scope.serverId,'fixture-server');
+  const count = f.store.list(f.creator).total;
+  for (const options of [{autoplay:'false'},{autoQueue:{mode:'unknown'}},{autoQueue:{mode:'random',scope:{type:'library',id:'invalid'}}},{permissions:{...permissions,viewer:{...permissions.viewer,roomSettings:true}}}]) {
+    await assert.rejects(f.store.create(f.creator,options));
+    assert.equal(f.store.list(f.creator).total,count,'Invalid drafts do not create saved rooms');
+  }
+});

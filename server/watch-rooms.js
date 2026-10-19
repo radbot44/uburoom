@@ -59,7 +59,18 @@ class WatchRooms {
   async create(actor, options, current) {
     await this.eligible(actor, current); this.reserve(); this.creating++;
     try {
-      const record = await this.store.create(actor.userId, options);
+      let creation = options;
+      if (options?.autoQueue && options.autoQueue.mode !== 'off') {
+        const config = options.autoQueue, scope = config.scope;
+        if (!scope?.id || !['show','library','collection'].includes(scope.type)) throw failure('Choose an auto-queue source');
+        const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+        await plex.queueItems({...scope,includeSpecials:!!config.includeSpecials});
+        const serverId = await this.identify(scope);
+        if (this.watch.hub.plexFor && (await this.watch.hub.plexFor(actor)).principal !== plex.principal) throw failure('Plex access changed',403);
+        creation = {...options,autoQueue:{...config,scope:{type:scope.type,id:scope.id,serverId}}};
+        await this.eligible(actor,current);
+      }
+      const record = await this.store.create(actor.userId, creation);
       await this.eligible(actor, current);
       return this.watch.create(actor, record.visibility, record);
     } finally { this.creating--; }
@@ -134,7 +145,7 @@ class WatchRooms {
     const candidates = [...new Set([record.creatorId, ...record.hosts, ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])];
     return { id, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
       creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
-      role:Policy.role(record, actor.userId), permissions:record.permissions,
+      role:Policy.role(record, actor.userId), permissions:record.permissions, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
       capabilities:Object.fromEntries([...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].map(key =>
         [key, this.watch.hub.isAdmin(actor) || Policy.allowed(record, actor.userId, key)])) };
   }
@@ -151,7 +162,8 @@ class WatchRooms {
     }
     if (room && this.watch.rooms.get(id) === room) {
       this.apply(room, record); room.revision++;
-      if (change.action !== 'rename') {
+      if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
+      else if (change.action !== 'rename') {
         this.watch.revokeConsent(room); this.watch.refresh(room); await this.elect(room);
       }
     }

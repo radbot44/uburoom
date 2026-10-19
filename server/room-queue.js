@@ -76,6 +76,19 @@ function rowToEntry(row) {
   };
 }
 
+function validateAuto(config) {
+  if (!config || typeof config !== 'object' || !['off','following','random'].includes(config.mode) ||
+    config.includeSpecials !== undefined && typeof config.includeSpecials !== 'boolean') throw error('Invalid auto-queue settings');
+  let scope = null;
+  if (config.mode !== 'off') {
+    const selected = config.scope;
+    if (!selected || !['show','library','collection'].includes(selected.type) || config.mode === 'following' && selected.type !== 'show' ||
+      typeof selected.id !== 'string' || !/^\d{1,20}$/.test(selected.id)) throw error('Invalid auto-queue scope');
+    scope = { type: selected.type, id: selected.id, serverId: cleanText(selected.serverId, 200, 'Plex server identity') };
+  }
+  return {mode:config.mode,scope,includeSpecials:!!config.includeSpecials,cycle:0,used:[]};
+}
+
 class RoomQueue {
   /**
    * @param {import('./accounts').Accounts} registry
@@ -249,15 +262,7 @@ class RoomQueue {
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'editQueue');
     this.assertRevision(room, expectedRevision);
-    if (!config || typeof config !== 'object' || !['off','following','random'].includes(config.mode) ||
-        config.includeSpecials !== undefined && typeof config.includeSpecials !== 'boolean') throw error('Invalid auto-queue settings');
-    let scope = null;
-    if (config.mode !== 'off') {
-      const selected = config.scope;
-      if (!selected || !['show','library','collection'].includes(selected.type) || config.mode === 'following' && selected.type !== 'show' ||
-          typeof selected.id !== 'string' || !/^\d{1,20}$/.test(selected.id)) throw error('Invalid auto-queue scope');
-      scope = { type: selected.type, id: selected.id, serverId: cleanText(selected.serverId, 200, 'Plex server identity') };
-    }
+    const { scope } = validateAuto(config);
     const same = room.autoQueue.mode === config.mode && JSON.stringify(room.autoQueue.scope) === JSON.stringify(scope) && room.autoQueue.includeSpecials === !!config.includeSpecials;
     const current = this.current(roomId);
     const active = [...this.pending(roomId), ...(current ? [current] : [])];
@@ -873,4 +878,4 @@ class RoomQueue {
   }
 }
 
-module.exports = { RoomQueue, MAX_PENDING, MAX_HISTORY };
+module.exports = { RoomQueue, MAX_PENDING, MAX_HISTORY, validateAuto };

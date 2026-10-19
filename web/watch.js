@@ -128,20 +128,21 @@ for (const pair of [['refresh','refresh'],['open-remote','remote'],['fullscreen'
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
-const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,
+const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
   join:async id=>{await selectRoom(id);if(!state)throw new Error('Room unavailable');returnToVideo();},
-  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail });
+  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
+  createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = preset === 'custom' ? '' : preset; } });
 async function fetchArtwork(path, signal) {
   const response = await fetch(path, { signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]), headers: token ? { Authorization: 'Bearer ' + token } : {} });
   if (!response.ok) throw new Error('Artwork unavailable');
   return response.blob();
 }
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
-  request:api,getState:()=>state,getMe:()=>me,fail,execute,
+  request:api,getState:()=>state,getMe:()=>me,fail,execute,getSettingsState:()=>roomUI.playbackContext(),saveSettings:change=>roomUI.savePlayback(change),
   openSettings:()=>roomUI.open(state.id,'playback'),
   browseMedia,
   serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
-  openLibraryItem: item => library?.openItem(item),
+  openLibraryItem: item => { selectSection('media'); return library?.openItem(item); },
   artwork: fetchArtwork,
   changed:async()=>{if(selected)await refreshState();}
 });
@@ -253,8 +254,10 @@ for (const [key, label, panel] of sections) {
   sectionTabs.append(tab);
 }
 function selectSection(key, focus = false) {
+  if (mobileSection === 'queue' && key !== 'queue') queueUI.rememberPosition();
   mobileSection = key; sectionChosen = true;
   updateSectionTabs();
+  if (key === 'queue') queueUI.restorePosition();
   if (focus) $('section-tab-' + key).focus();
 }
 function updateSectionTabs() {
@@ -1175,10 +1178,21 @@ for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') 
 for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button') || []) {
   btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
+const roomOptionHints = {
+  public:'Eligible viewers can find and join this room.', private:'Only the room leader and assigned hosts can join.',
+  'host-control':'Hosts control playback and the queue. Participants have no controls.',
+  'play-pause':'Participants can play and pause. Hosts control seeking, video choice and the queue.',
+  queue:'Participants can use all playback and queue controls. Room management stays with hosts.',
+  custom:'Custom permissions. Selecting this option does not change any permissions.'
+};
+for (const group of ['room-create-visibility-group','room-create-preset-group','room-settings-visibility-group','room-permission-preset-group']) {
+  for (const button of $(group).querySelectorAll('button')) button.title = roomOptionHints[button.dataset.value];
+}
 let roomNameDraft = '';
 $('room-name').addEventListener('input', event => { roomNameDraft = event.target.value; });
 function roomChooserSection(section) {
   $('room-create-form').hidden = section !== 'new';
+  $('room-create-actions').hidden = section !== 'new';
   $('room-join').hidden = section !== 'active';
   $('room-reopen').hidden = section !== 'saved' || !me?.durableRooms;
   $('room-chooser-nav').hidden = section === 'new';
@@ -1192,7 +1206,7 @@ function roomChooserSection(section) {
 async function chooseRoom(item, section = 'active') {
   const dialog = $('room-dialog');
   if (dialog.open || creating) return {status:'cancelled'};
-  roomChoice = item;
+  roomUI.clearDraft(); roomChoice = item;
   $('room-dialog-error').textContent = ''; delete $('room-choices').dataset.roomList; $('room-choices').replaceChildren();
   $('room-name').value = roomNameDraft; $('room-create-visibility').value = 'public'; $('room-create-preset').value = 'host-control';
   roomChooserSection(section);
@@ -1208,27 +1222,30 @@ async function chooseRoom(item, section = 'active') {
 }
 $('room-dialog').addEventListener('cancel', event => { if (creating) event.preventDefault(); });
 $('room-dialog').querySelector('form').addEventListener('submit', event => { if (creating) event.preventDefault(); });
-async function createRoom() {
+async function createRoom(advanced = roomUI.draftOptions()) {
   if (creating) return; creating = true;
   $('room-create').disabled = true;
   try {
-    const room = await api('/api/watch/rooms', {visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || 'Room',...(me?.durableRooms ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
+    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || 'Room',...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice;
     roomNameDraft = ''; $('room-name').value = '';
-    $('room-dialog').close('created'); renderLibrary();
+    $('room-dialog').close('created'); roomUI.clearDraft(); renderLibrary();
     if (item) {
       const result = await loadLibraryItem(item);
       if (result?.status !== 'applied') throw new Error('Playback was not accepted; try again from the library.');
       returnToVideo();
     }
   }
-  catch (error) { if ($('room-dialog').open) $('room-dialog-error').textContent = error.message; else fail(error.message); }
+  catch (error) { if ($('room-dialog').open) $('room-dialog-error').textContent = error.message; else fail(error.message); if (advanced && Object.keys(advanced).length) throw error; }
   finally { creating = false; $('room-create').disabled = false; }
 }
 for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
 for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
-$('room-create').addEventListener('click', () => void createRoom());
+$('room-create').addEventListener('click', () => void createRoom().catch(error=>fail(error.message)));
+$('room-create-settings').append(uburoomUI.icon(document,'settings'));
+$('room-create-settings').addEventListener('click',()=>roomUI.openDraft({name:$('room-name').value,visibility:$('room-create-visibility').value,permissionPreset:$('room-create-preset').value}));
+$('room-create-preset').addEventListener('change',()=>roomUI.updateDraftPreset($('room-create-preset').value));
 $('room-chooser-new').addEventListener('click',() => { roomChooserSection('new'); if (roomNameDraft) $('room-name').value = roomNameDraft; $('room-name').focus(); });
 $('room-create-back').addEventListener('click',() => { roomChooserSection('saved'); void roomUI.loadSaved(0); });
 $('room-show-active').addEventListener('click',() => roomChooserSection('active'));
