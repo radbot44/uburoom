@@ -73,7 +73,7 @@ async function main(){
   assert.equal(await evaluate(context,'new Set([...document.querySelectorAll(".library-tile")].map(n=>n.dataset.item)).size'),250);
   await evaluate(context,`globalThis.fixtureAnchor=()=>{const top=document.querySelector('.library-tools').getBoundingClientRect().bottom;const tile=[...document.querySelectorAll('.library-tile')].find(n=>n.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};};const tile=document.querySelectorAll('.library-tile')[220];document.getElementById('library-panel').scrollBy(0,tile.getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom-12);`);
   await pause(100);
-  for(const view of ['list','poster','normal']){
+  for(const view of ['list','posters','cards']){
    const anchor=JSON.parse(await evaluate(context,'JSON.stringify(fixtureAnchor())'));
    await evaluate(context,`document.querySelector('.library-views [data-view="${view}"]').click()`);await pause(100);
    const offset=await evaluate(context,`document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`);
@@ -89,15 +89,15 @@ async function main(){
   assert.ok(Math.abs(await evaluate(context,`document.querySelector('[data-item="${anchor.id}"]').getBoundingClientRect().top-document.querySelector('.library-tools').getBoundingClientRect().bottom`)-anchor.offset)<2,'Back restores deep item position');
   await evaluate(context,'history.forward()');await until(context,'document.querySelector(".library-summary")','Browser Forward restores details');
   await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Browser Back restores library again');
-  for(const view of ['list','poster','normal']){await evaluate(context,`document.querySelector('.library-views [data-view="${view}"]').click()`);assert.equal(await evaluate(context,'document.getElementById("library-content").dataset.view'),view);}
+  for(const view of ['list','posters','cards']){await evaluate(context,`document.querySelector('.library-views [data-view="${view}"]').click()`);assert.equal(await evaluate(context,'document.getElementById("library-content").dataset.view'),view);}
   await evaluate(context,'document.querySelector(".library-views [data-view=list]").click();document.querySelector(".library-tile").click()');await until(context,'document.querySelector(".library-summary") && document.querySelector(".library").hidden','Whole movie row opens details');
   await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Back to list');
   await evaluate(context,'document.querySelector(".library-tile .library-meta").click()');await until(context,'document.querySelector(".library").hidden','Row metadata also opens details');
   await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Back to list again');
   for(const [name,width,height,theater] of [['normal',3840,2160,false],['theater',3840,2160,true],['activity-size',1920,1080,true],['phone',390,1100,true]]){
-   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});document.querySelector('.library-views [data-view=normal]').click();`);await pause(120);
+   await command('browsingContext.setViewport',{context,viewport:{width,height}});await evaluate(context,`setTheater(${theater});document.querySelector('.library-views [data-view=cards]').click();`);await pause(120);
    const posterWidth=await evaluate(context,'document.querySelector(".library-tile>.library-art").getBoundingClientRect().width');
-   await evaluate(context,'document.querySelector(".library-views [data-view=poster]").click()');assert.ok(Math.abs(await evaluate(context,'document.querySelector(".library-tile>.library-art").getBoundingClientRect().width')-posterWidth)<1,'Normal and Poster sizes match at '+name);
+   await evaluate(context,'document.querySelector(".library-views [data-view=posters]").click()');assert.ok(Math.abs(await evaluate(context,'document.querySelector(".library-tile>.library-art").getBoundingClientRect().width')-posterWidth)<1,'Cards and Posters sizes match at '+name);
    await evaluate(context,'document.querySelector(".library-title").click()');await until(context,'document.querySelector(".movie-detail") && document.querySelector(".library-summary")','Movie details at '+name);await pause(80);
    assert.ok(Math.abs(await evaluate(context,'document.querySelector(".movie-detail .library-art").getBoundingClientRect().width')-posterWidth)<1,'Movie detail poster matches grid at '+name);
    assert.ok(await evaluate(context,'document.getElementById("library-content").scrollWidth<=document.getElementById("library-content").clientWidth+1'),'Movie details fit '+name);
@@ -108,9 +108,9 @@ async function main(){
    for(const row of rows) assert.ok(row.size===55 && Math.abs(row.top-row.bottom)<1 && Math.abs(row.right-rows[0].right)<1,'Play is larger with consistent edge spacing at '+name+': '+JSON.stringify(row));
    const listShot=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-list-'+name+'-qa.png'),Buffer.from(listShot.data,'base64'));
   }
-  await evaluate(context,'setTheater(false);document.querySelector(".library-views [data-view=normal]").click()');await command('browsingContext.setViewport',{context,viewport:{width:1360,height:1200}});
+  await evaluate(context,'setTheater(false);document.querySelector(".library-views [data-view=cards]").click()');await command('browsingContext.setViewport',{context,viewport:{width:1360,height:1200}});
 
-  await evaluate(context,'document.querySelector(".library-views [data-view=poster]").click();document.activeElement.blur()');assert.equal(await evaluate(context,'getComputedStyle(document.querySelector(".library-copy")).opacity'),'0');
+  await evaluate(context,'document.querySelector(".library-views [data-view=posters]").click();document.activeElement.blur()');assert.equal(await evaluate(context,'getComputedStyle(document.querySelector(".library-copy")).opacity'),'0');
   await evaluate(context,'document.querySelector(".library-open").focus()');await pause(200);assert.equal(await evaluate(context,'getComputedStyle(document.querySelector(".library-copy")).opacity'),'1');
   await evaluate(context,'document.getElementById("library-home").click();document.querySelector(".library-home-card[data-tab=collections]").click()');await until(context,'document.querySelector(".library-title")?.textContent==="Sample collection"','collections');
   await evaluate(context,'document.querySelector(".library-open").click()');await until(context,'document.querySelectorAll(".library-tile").length===48','collection members');assert.equal(await evaluate(context,'document.querySelector(".library-title").textContent'),'Needle beyond the first two hundred');
@@ -161,7 +161,7 @@ async function main(){
   await evaluate(context,'[...document.querySelectorAll(".library-crumb")].find(n=>n.textContent==="Season 1").click()');await until(context,'!document.querySelector(".library").hidden && document.querySelectorAll(".library-tile.episode").length===1','Season breadcrumb returns to direct episode list');
   await evaluate(context,'document.querySelector(".library-choices .library-choice:first-child").click()');
   await until(context,'document.querySelectorAll(".library-tile").length>=48','library restored');
-  await evaluate(context,'document.querySelector(".library-views [data-view=normal]").click();document.getElementById("library-filters-toggle").click()');await until(context,'document.querySelector(".library-filters select").options.length>1','facets');
+  await evaluate(context,'document.querySelector(".library-views [data-view=cards]").click();document.getElementById("library-filters-toggle").click()');await until(context,'document.querySelector(".library-filters select").options.length>1','facets');
   await evaluate(context,'const ys=document.querySelectorAll(".library-filters select")[1];ys.value="2023";ys.dispatchEvent(new Event("change"))');await until(context,'document.querySelector(".library-count").textContent.includes("125")','year filter');
   await evaluate(context,'document.querySelector(".library-filter-chip").click()');await until(context,'document.querySelector(".library-count").textContent.includes("250")','remove filter');
   await evaluate(context,'document.getElementById("library-filters-toggle").click();document.getElementById("options-collapse").click()');

@@ -398,7 +398,7 @@ class RoomQueue {
     this.assertRevision(room, expectedRevision);
 
     const entry = this.getEntry(entryId);
-    if (!entry || entry.roomId !== roomId || entry.state !== 'pending') {
+    if (!entry || entry.roomId !== roomId || !['pending', 'history'].includes(entry.state)) {
       throw error('Queue item unavailable', 404);
     }
 
@@ -433,10 +433,11 @@ class RoomQueue {
     return { cleared: true, queueRevision: room.queueRevision + 1 };
   }
 
-  async playNow(roomId, userId, rawItem, currentPosition = 0) {
+  async playNow(roomId, userId, rawItem, currentPosition = 0, { initialAdd = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
-    this.assertAllowed(room, userId, 'chooseMedia');
+    this.assertAllowed(room, userId, initialAdd ? 'addQueue' : 'chooseMedia');
+    if (initialAdd && (this.current(roomId) || this.pending(roomId).length)) throw error('Queue is no longer empty', 409);
     const item = validateItem(rawItem);
 
     const at = this.now(), id = randomUUID();
@@ -477,10 +478,11 @@ class RoomQueue {
     return { current: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
   }
 
-  async playEntry(roomId, userId, entryId, { skipPrevious = false, currentPosition = 0, expectedRevision, autoCorpus, corpus, guard } = {}) {
+  async playEntry(roomId, userId, entryId, { skipPrevious = false, currentPosition = 0, expectedRevision, autoCorpus, corpus, guard, initialAdd = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
-    this.assertAllowed(room, userId, 'chooseMedia');
+    this.assertAllowed(room, userId, initialAdd ? 'addQueue' : 'chooseMedia');
+    if (initialAdd && (this.current(roomId) || this.pending(roomId)[0]?.id !== entryId)) throw error('Queue selection changed', 409);
     this.assertRevision(room, expectedRevision);
     if (guard && guard() !== true) throw error('Playback changed before queue advance', 409);
 

@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const labels = { playPause:'Play / pause', seek:'Seek', chooseMedia:'Choose video', addQueue:'Add to queue',
-    editQueue:'Edit queue', autoplay:'Manage autoplay', picture:'Adjust picture', roomSettings:'Room settings',
+    editQueue:'Edit queue', autoplay:'Manage auto-play', picture:'Adjust picture', roomSettings:'Room settings',
     closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts' };
   function presetPolicy(name) {
     return { host:Object.fromEntries(Object.keys(labels).map(key => [key,key !== 'deleteRoom'])),

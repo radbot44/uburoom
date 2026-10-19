@@ -89,7 +89,7 @@ Use one flat ordered list of concrete playable entries. Add show/season expands 
 
 - Each occurrence has a UUID. Media ID is not entry identity: replaying an episode must not overwrite previous progress/outcomes.
 - Present **Now playing**, **Up next** and **History**. Keep occurrence position, start/end times and outcomes such as completed, skipped or interrupted. Removal is not evidence of watching.
-- **Add to queue** appends without disturbing playback. **Play now** interrupts the current entry and preserves partial progress in History with Resume. Never silently clear upcoming entries.
+- **Add to queue** appends without disturbing playback. In an empty active timeline, its first entry becomes current through the shared preparation/transition path, and starts only when Auto-play is enabled. **Play now** interrupts the current entry and preserves partial progress in History with Resume. Never silently clear upcoming entries.
 - **Add show/season** offers all available episodes or episodes unfinished by this room, in Plex season/episode order. Specials are optional and current/upcoming duplicates are excluded. Historical episodes may be rewatched as new occurrences. This uses room history rather than silently importing Plex watched flags.
 - Bulk add is not a subscription to future releases. Resolve all pages within bounds, show the count before unusually large additions, allow cancellation and commit the expansion atomically. Do not silently truncate shows.
 - Reorder/remove pending entries using stable IDs and an expected queue revision. Moving pending entries cannot replace the current item. Removing the current item and deleting/resetting history are distinct explicit actions.
@@ -178,3 +178,5 @@ Regression anchors: `tests/watch.test.js`, `tests/watch-socket.test.js`, `tests/
 7. Play now preserves the interrupted video in History with Resume. Without a creator/host present, playback pauses unless the relevant viewer permission allows continuation.
 
 No additional product answer blocks this core. The implementation repeats exhausted random cycles, excludes active occurrences and uses a ten-second countdown with autoplay initially enabled. Later UI review may revisit presentation and the continuation override; P13-6/P13-7 retain the real-provider and Activity verification gates.
+
+The queue UI follow-up uses portrait poster cards and one chronological List viewport centered on Now playing. Auto-play and Auto-queue are separate header toggles; enabling Auto-queue without a selected source opens Playback & queue settings. Individual history entries can be removed through the permission/revision-checked queue removal command; current entries remain protected.

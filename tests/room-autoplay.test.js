@@ -243,3 +243,49 @@ test('seeking to the end and reaching duration on the room clock do not start co
     assert.equal(f.queue.history(f.id).total, 0); assert.equal(f.room.endedVersion, undefined);
   });
 });
+
+for (const enabled of [false, true]) test('first queue addition selects current media and respects auto-play ' + enabled, async t => {
+  const f = await fixture(t);
+  const id = await f.watch.roomState.create(f.creator, { name: 'Empty queue' });
+  const room = f.watch.rooms.get(id), actor = f.creator;
+  f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
+  const command = (action, args) => f.hub.dispatch(actor, { roomId:id, action, args });
+  assert.equal((await command('media.autoplay.set', { enabled })).status, 'applied');
+  const item = { serverId:'fixture-plex', mediaId:'105', type:'movie', title:'First', duration:100 };
+  assert.equal((await command('queue.add', { item, expectedRevision:0 })).status, 'applied');
+  assert.equal(room.media.id, '105');
+  assert.equal(f.queue.current(id).mediaId, '105');
+  assert.equal(f.queue.pending(id).length, 0);
+  await f.watch.prepareViewer(room, actor, actor.watchViewerId);
+  await f.watch.ready(room, actor, actor.watchViewerId, room.mediaVersion, true, room.readinessVersion);
+  assert.equal(room.manualPaused, !enabled);
+  assert.equal(room.initialGate, !enabled);
+  assert.equal(room.s.state.paused, !enabled);
+  const current = f.queue.current(id).id;
+  assert.equal((await command('queue.add', { item:{...item,mediaId:'106'}, expectedRevision:1 })).status, 'applied');
+  assert.equal(f.queue.current(id).id, current);
+  assert.equal(f.queue.pending(id).length, 1);
+});
+
+test('an add-only participant can populate empty playback but cannot replace it, including bulk additions', async t => {
+  const f = await fixture(t);
+  for (const bulk of [false, true]) {
+    const id = await f.watch.roomState.create(f.creator, { name:'Participant additions' });
+    const room = f.watch.rooms.get(id);
+    const record = f.store.get(id);
+    f.watch.roomState.apply(room, await f.store.edit(id, f.creator.userId, record.revision, {
+      action:'permissions', role:'viewer', permissions:{addQueue:true,chooseMedia:false}
+    }));
+    await f.queue.setAutoplay(id, f.creator.userId, false);
+    f.watch.snapshot(room, f.guest, f.guest.watchViewerId, async () => true, 'direct');
+    f.plex.queueItems = async () => ['105','106'].map(id => ({id,type:'movie',title:'Video ' + id,duration:100}));
+    const item = {serverId:'fixture-plex',mediaId:'105',type:'movie',title:'Video 105',duration:100};
+    const result = await f.hub.dispatch(f.guest, {roomId:id,action:bulk ? 'queue.bulk' : 'queue.add',
+      args:bulk ? {type:'show',mediaId:'50',unfinished:false,includeSpecials:false} : {item}});
+    assert.equal(result.status, 'applied', result.message);
+    assert.equal(f.queue.current(id).mediaId, '105');
+    assert.equal(f.queue.pending(id).length, bulk ? 1 : 0);
+    assert.equal(room.manualPaused, true);
+    assert.equal((await f.hub.dispatch(f.guest, {roomId:id,action:'queue.playNow',args:{item}})).status, 'forbidden');
+  }
+});

@@ -139,7 +139,7 @@ async function fetchArtwork(path, signal) {
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
   request:api,getState:()=>state,getMe:()=>me,fail,execute,
   openSettings:()=>roomUI.open(state.id,'playback'),
-  browseMedia:()=>{ if (immersive) { toggleDrawer(true); selectSection('media'); } else { selectSection('media'); $('library-panel').scrollIntoView({behavior:'smooth'}); } },
+  browseMedia,
   serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
   openLibraryItem: item => library?.openItem(item),
   artwork: fetchArtwork,
@@ -288,6 +288,7 @@ const shells = ['account','section-tabs','options-panel','queue-panel','library-
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
+  $('library-panel').classList.remove('media-glow');
   show = !!show && immersive && !document.body.classList.contains('activity-pip');
   const parent = document.fullscreenElement === $('stage') ? $('stage') : document.body;
   if (drawer.parentElement !== parent) parent.append(drawer);
@@ -1232,14 +1233,17 @@ $('room-show-active').addEventListener('click',() => roomChooserSection('active'
 $('room-show-saved').addEventListener('click',() => roomChooserSection('saved'));
 $('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved(0); void refreshRooms().catch(error => $('room-dialog-error').textContent = error.message); });
 $('room-create-preset').addEventListener('change',event => { $('room-create-summary').textContent = event.target.value === 'server-defaults' && me?.roomPermissionDefaults ? uburoomRoomUI.describe(me.roomPermissionDefaults, true) : uburoomRoomUI.summary(event.target.value); });
-$('empty-browse').addEventListener('click', () => {
+function browseMedia() {
   const panel = $('library-panel');
+  if (immersive) { toggleDrawer(true); selectSection('media'); }
+  else { selectSection('media'); panel.scrollIntoView({behavior:'smooth'}); }
   panel.classList.remove('media-glow');
   void panel.offsetWidth;
   panel.classList.add('media-glow');
-  if (immersive) { toggleDrawer(true); selectSection('media'); }
-  else { selectSection('media'); panel.scrollIntoView({behavior:'smooth'}); }
-});
+}
+$('library-panel').addEventListener('animationend', event => { if (event.animationName === 'media-glow') $('library-panel').classList.remove('media-glow'); });
+$('empty-browse').prepend(uburoomUI.icon(document, 'media'));
+$('empty-browse').addEventListener('click', browseMedia);
 $('close-room').addEventListener('click', async () => {
   if (!selected || pending) return;
   const id = selected; pending = true;

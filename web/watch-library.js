@@ -38,7 +38,7 @@
     const filterHolder = node('div',toolControls,undefined,'filter-holder');
     const filterButton = button(filterHolder,'Filters','filter','library-key'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
     const views = node('div',toolControls,undefined,'library-views view-switch'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
-    const viewButtons = ['normal','list','poster'].map(view => {
+    const viewButtons = ['cards','list','posters'].map(view => {
       const b = button(views,view[0].toUpperCase() + view.slice(1),'library' + view[0].toUpperCase() + view.slice(1),'library-key'); b.dataset.view = view;
       b.append(node('span',null,view[0].toUpperCase() + view.slice(1))); return b;
     });
@@ -61,7 +61,7 @@
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false;
     const homes = new Map(), images = new Map();
-    let view = 'normal'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['normal','list','poster'].includes(saved)) view = saved; } catch {}
+    let view = 'cards'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['cards','list','posters'].includes(saved)) view = saved; } catch {}
     const demoItem = { id:'demo',type:'demo',title:'uburoom synchronization test',duration:60,summary:'A short picture and sound sample for checking shared playback.' };
     function context(section, tab = 'library') { return { section,tab,title:sections.find(x => x.id === section)?.title || 'Test video',kind:'library',q:'',genre:'',year:'',sort:'title',order:'asc',seed:newSeed(),items:[],total:null,nextOffset:null,scroll:0,minHeight:0 }; }
     function homeContext() { return {...context(),title:'Libraries',kind:'home'}; }
@@ -104,7 +104,7 @@
       const updates = [];
       for (const {target} of entries) {
         if (target === host) {
-          // Match the Normal/Poster grid, including its two-column phone layout.
+          // Match the Cards/Posters grid, including its two-column phone layout.
           const width = host.getBoundingClientRect().width; if (!width) continue;
           const gap = width <= 440 ? 12 : 14, columns = width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap)));
           updates.push([host,'--library-poster-width',(width - gap * (columns - 1)) / columns + 'px']);
@@ -281,7 +281,7 @@
       }
       const picture = art(card,item,episode), open = button(picture,'View ' + identity(item),'', 'library-open');
       open.addEventListener('click',() => {
-        if (view === 'poster' && !episode && matchMedia('(hover: none)').matches && !card.classList.contains('revealed')) {
+        if (view === 'posters' && !episode && matchMedia('(hover: none)').matches && !card.classList.contains('revealed')) {
           results.querySelectorAll('.revealed').forEach(n => n.classList.remove('revealed')); card.classList.add('revealed'); return;
         }
         void openItem(item);
@@ -397,7 +397,7 @@
       landing.replaceChildren();
       for (const tab of ['library','collections']) for (const section of sections) {
         const title = tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
-        const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'libraryNormal','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
+        const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'libraryCards','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
         b.append(node('span',null,title,'library-home-title')); b.onclick = () => void chooseLibrary(section.id,tab);
       }
       if (testVideo) {

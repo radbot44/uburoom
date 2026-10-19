@@ -402,6 +402,10 @@ class Watch {
           room.queueEditing = false;
           return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted);
         }
+        if (action === 'queue.add' && room && !room.media && !queue.current(id) && !queue.pending(id).length) {
+          room.queueEditing = false;
+          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true});
+        }
         value = action === 'queue.add' ? await queue.add(id,actor.userId,item,{expectedRevision:revision}) : await queue.playNow(id,actor.userId,item);
       } else if (action === 'queue.playEntry' || action === 'queue.skipTo') {
         const skipPrevious = action === 'queue.skipTo' || !!args.skipPrevious;
@@ -417,6 +421,10 @@ class Watch {
         if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
         await check();
         value = await queue.addBulk(id,actor.userId,items.map(item => this.queueItem(item,serverId)),{expectedRevision:revision,unfinished:args.unfinished});
+        if (room && !room.media && !queue.current(id) && value.addedCount) {
+          room.queueEditing = false;
+          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true});
+        }
       } else if (action === 'queue.auto') {
         let scope = args.scope, corpus;
         if (args.mode !== 'off') {
@@ -499,7 +507,7 @@ class Watch {
     },this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
   }
-  async changeQueueMedia(room, command, actor, permitted) {
+  async changeQueueMedia(room, command, actor, permitted, { initialAdd = false } = {}) {
     if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
     if (!room.viewers.size && command.action !== 'media.load') return {status:'unavailable',message:'No viewer is connected.'};
     const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
@@ -551,9 +559,9 @@ class Watch {
         if (action === 'media.next') saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid});
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
-        else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid});
+        else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,initialAdd});
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
-        else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie'},prepared.roomServerId),position);
+        else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie'},prepared.roomServerId),position,{initialAdd});
         room.transitionCommit = saving;
         await saving;
         this.roomState.apply(room,this.roomState.store.get(id));
@@ -564,7 +572,7 @@ class Watch {
       if (prepared) {
         room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
         room.position = record ? queue.current(id).position : 0; room.changedAt = Date.now();
-        this.dropMedia(room); room.s.state.paused = true; room.manualPaused = false; room.initialGate = true;
+        this.dropMedia(room); room.s.state.paused = true; room.manualPaused = initialAdd && !this.roomState.store.get(id).autoplay; room.initialGate = true;
         this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;
         void this.plex.stop(old); adopted = true;
       } else {
@@ -581,7 +589,7 @@ class Watch {
         try { await queue.generate(id,actor.userId,corpus,{continuation:true}); this.roomState.apply(room,this.roomState.store.get(id)); }
         catch (error) { room.autoQueueError = error.message; }
       }
-      return {status:'applied',message:'Viewing room updated.'};
+      return {status:'applied',message:'Viewing room updated.',...(initialAdd ? {added:queue.current(id),queueRevision:this.roomState.store.get(id).queueRevision} : {})};
     } catch (error) {
       room.autoplayError = error.status || error instanceof PlaybackError ? error.message : 'The next video could not be loaded. Check Plex and server storage.';
       room.revision++;

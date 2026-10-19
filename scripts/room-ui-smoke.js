@@ -132,6 +132,10 @@ async function main() {
       await run('$("queue-auto-save").click()');
       await until('state?.queueSummary?.autoQueue?.mode==="random"','Random configuration saved');
       assert.equal(await run('state.queueSummary.autoQueue.scope.type'),'show');
+      await run('$("room-settings-dialog").close();$("queue-auto-toggle").click()');
+      await until('state.queueSummary.autoQueue.mode==="off" && !$("queue-auto-toggle").checked','Quick Auto-queue off');
+      await run('$("queue-auto-toggle").click()');
+      await until('state.queueSummary.autoQueue.mode==="random" && $("queue-auto-toggle").checked','Quick Auto-queue restores source');
       await browser.viewport(host,390,844);
       await run('selectSection("queue");$("queue-auto-open").click()');
       await until('$("room-settings-dialog").open','Phone auto-queue dialog');

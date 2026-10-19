@@ -796,3 +796,13 @@ Added reopen (clock return arrow), login (entering counterpart of logout), creat
 - `node scripts/room-redesign-smoke.js --browsers=chrome,firefox`: Chrome and Firefox passed room discovery, New room header reopen button, draft retention, presets, save feedback, mobile sections, queue settings, close/reopen and fullscreen.
 - `node scripts/room-ui-smoke.js --browsers=chrome,firefox`: Chrome and Firefox passed named room creation, button groups for visibility and presets, queue management, shuffle, random configuration, autoplay, countdown, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at position, deletion, and responsive desktop/phone/theater views.
 - Verified saved-room copy ("Paused at"), rotating refresh icon with auto-updates without loading text, transparent right icon buttons, settings back navigation to Reopen menu, People tab enlarged role badges with `creator`/`host`/`users` icons, unauthorized "Make host" suppression, removal of video-view visibility toggle, universal `website` globe icon for Public with semantic toggle in Room section, and integrated brand oomark in empty video/rooms lobby.
+
+
+### Queue timeline and Media presentation follow-up (2026-10-19)
+
+- `npm run test:full`: 352 passed, zero failures/skips. Added coverage for first-item selection with Auto-play enabled/disabled, add-only participant permissions, empty bulk additions and history removal with revision/permission/current-entry fences. History remains ineligible for reordering.
+- `node scripts/queue-ui-smoke.js`: Chrome 155 and Firefox 158 pass with disposable accounts/rooms. Checks cover first-add paused playback, portrait card geometry, one List viewport centered on Now playing, chronological history, rank/start estimates, action placement, recenter/move behavior, authenticated artwork caching, primary-accent Browse media feedback, clearing the glow before Menu toggles, and persisted layout choice. Inspected Cards/List, phone, theater and fullscreen renders.
+- `node scripts/room-ui-smoke.js`: Chrome and Firefox pass, including the new quick Auto-queue off/on flow restoring its chosen source, bulk additions, natural-end/countdown cancellation, role controls and saved room continuity.
+- `node scripts/plex-library-smoke.js`: Firefox passes Cards/Posters/List, their matching poster widths, navigation/scroll restoration, details and responsive layouts after the internal view/icon rename.
+
+These are isolated synthetic-fixture results. Real Plex media and Discord Activity remain separate verification gates; no production restart or deployment was performed.

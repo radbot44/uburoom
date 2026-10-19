@@ -51,7 +51,16 @@ async function main() {
       await until('typeof me!=="undefined" && me?.durableRooms && transport?.ready', 'Login');
       await run('$("create").click();$("room-name").value="Queue layout fixture";$("room-create").click()');
       await until('state?.durable', 'Create room');
-      await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})');
+      await run('document.querySelector(".queue-now-playing button").click()');
+      assert.equal(await run('$("library-panel").classList.contains("media-glow")'), true, 'Empty Queue Browse media highlights Media');
+      await until('!$("library-panel").classList.contains("media-glow")', 'Browse highlight clears');
+      await run('$("empty-browse").click()');
+      assert.equal(await run('!!$("empty-browse").querySelector("svg") && $("library-panel").classList.contains("media-glow")'), true, 'Player Browse media uses the icon and highlight');
+      await run('execute({action:"media.autoplay.set",args:{enabled:false}})');
+      await run('queueUI.add({mediaId:"demo",type:"movie",title:"First queued video",duration:60})');
+      await until('state?.mediaId==="demo" && state.queueSummary.pendingCount===0', 'First addition is Now Playing');
+      assert.equal(await run('state.state.paused'), true, 'First addition respects Auto-play off');
+      await run('execute({action:"media.autoplay.set",args:{enabled:true}})');
       await until('state?.mediaId==="demo"', 'Current media');
       await run('execute({action:"media.pause"})');
       for (let i = 1; i <= 6; i++) await run('queueUI.add({mediaId:"demo",title:"Queue video ' + i + '",duration:60})');
@@ -67,9 +76,9 @@ async function main() {
       assert.equal(await run('[...document.querySelectorAll(".queue-entry-actions .queue-action-play,.queue-entry-actions .queue-action-skip")].length'), 6, 'Both playback choices are directly visible');
       await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
       await until('Math.abs(state.state.position-17)<.01', 'Stable remaining duration');
-      await until('document.querySelector(".queue-entry .queue-rank").textContent==="1 · UP NEXT in 0:43"', 'First start estimate');
-      assert.equal(await run('[...document.querySelectorAll(".queue-entry .queue-rank")].map(el=>el.textContent).join("|")'), '1 · UP NEXT in 0:43|2 · UP NEXT in 1:43|3 · UP NEXT in 2:43');
-      assert.equal(await run('document.querySelector(".queue-history-status").getBoundingClientRect().height===document.querySelector(".queue-entry-top").getBoundingClientRect().height'), true, 'History and upcoming headers align');
+      await until('document.querySelector(".queue-entry .queue-card-caption").textContent==="Up in 0:43"', 'First start estimate');
+      assert.equal(await run('[...document.querySelectorAll(".queue-entry .queue-card-caption")].map(el=>el.textContent).join("|")'), 'Up in 0:43|Up in 1:43|Up in 2:43');
+      assert.equal(await run('document.querySelector(".queue-history-entry .queue-entry-top").getBoundingClientRect().height===document.querySelector(".queue-entry-top").getBoundingClientRect().height'), true, 'History and upcoming headers align');
       const wheelStart = await run('document.querySelector(".queue-layout").scrollLeft');
       assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true);
       assert.equal(await run('document.querySelector(".queue-layout").scrollLeft'), wheelStart, 'Vertical wheel input no longer scrolls cards horizontally');
@@ -88,6 +97,8 @@ async function main() {
       await until('document.querySelector(".queue-layout").scrollLeft<' + (original - 100), 'Keyboard navigation');
       await run('$("queue-center").click();$("queue-panel").scrollIntoView({block:"start"})');
       await until(centerError + '<2', 'Recenter for rendering');
+      assert.ok(Math.abs(await run('(()=>{const r=document.querySelector(".queue-now-playing").getBoundingClientRect();return r.width/r.height})()') - 2/3) < .01, 'Cards use portrait poster ratio');
+      assert.equal(await run('document.querySelector(".queue-entry .queue-move-actions").lastElementChild.classList.contains("queue-action-remove")'), true, 'Remove is the rightmost upcoming action');
       await shot('cards');
       await run('globalThis.queueMovingId=document.querySelectorAll(".queue-entry")[2].dataset.entryId;document.querySelectorAll(".queue-entry")[2].scrollIntoView({block:"nearest",inline:"center",behavior:"instant"})');
       const movingLeft = await run('[...document.querySelectorAll(".queue-entry")].find(row=>row.dataset.entryId===queueMovingId).getBoundingClientRect().left');
@@ -102,11 +113,15 @@ async function main() {
       await run('$("queue-view-list").click()');
       assert.equal(await run('$("queue-view-list").getAttribute("aria-pressed")'), 'true');
       assert.equal(await run('localStorage.getItem("uburoom-queue-view")'), 'list');
-      assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), await run('document.getElementById("queue-panel").clientWidth-40<=560?1:2'));
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).flexDirection'), 'column');
       assert.equal(await run('document.querySelector(".queue-entry").getBoundingClientRect().height===document.querySelector(".queue-history-entry").getBoundingClientRect().height'), true, 'List rows have matching heights');
       assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true, 'List retains vertical wheel behavior');
-      assert.equal(await run('document.querySelector(".queue-history-entry").dataset.entryId'), await run('api("/api/watch/rooms/"+state.id+"/history").then(page=>page.items[0].id)'));
+      assert.equal(await run('document.querySelector(".queue-history-entry").dataset.entryId'), await run('api("/api/watch/rooms/"+state.id+"/history").then(page=>page.items.at(-1).id)'));
+      assert.ok(await run('(()=>{const a=document.querySelector(".queue-layout").getBoundingClientRect(),b=document.querySelector(".queue-now-playing").getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)<2})()'), 'List opens centered on Now Playing');
+      assert.equal(await run('document.querySelector(".queue-layout").clientHeight'), 592, 'List viewport fits about five rows');
       await shot('list');
+      await run('globalThis.removedHistory=document.querySelector(".queue-history-entry").dataset.entryId;document.querySelector(".queue-history-entry .queue-action-remove").click()');
+      await until('state.queueSummary.historyCount===2 && ![...document.querySelectorAll(".queue-history-entry")].some(row=>row.dataset.entryId===removedHistory)', 'Individual history removal');
       await run('document.querySelector(".queue-current-toggle").focus();queueUI.render(state.queueSummary)');
       assert.equal(await run('document.activeElement.classList.contains("queue-current-toggle")'), true, 'Snapshot preserves focused current control');
       await run('globalThis.queueDuplicates=[];globalThis.queueObserver=new MutationObserver(()=>{const id=document.querySelector(".queue-now-playing").dataset.entryId;if([...document.querySelectorAll(".queue-entry,.queue-history-entry")].some(row=>row.dataset.entryId===id))queueDuplicates.push(id)});queueObserver.observe($("queue-content"),{childList:true,subtree:true});globalThis.queueSelection=document.querySelectorAll(".queue-entry")[1].dataset.entryId;document.querySelectorAll(".queue-entry")[1].querySelector(".queue-action-play").click()');
@@ -129,7 +144,7 @@ async function main() {
       await until('state.queueSummary.current.title==="Skip fixture" && !document.querySelector(".queue-entry")', 'Current skip advances');
       await run('execute({action:"media.pause"})');
       const restoredCount = await run('state.queueSummary.historyCount');
-      await run('globalThis.queueReturnRow=[...document.querySelectorAll(".queue-history-entry")].at(-1);globalThis.queueReturnTitle=queueReturnRow.querySelector(".queue-entry-title").textContent;queueReturnRow.querySelector(".queue-item-go-back").click()');
+      await run('globalThis.queueReturnRow=[...document.querySelectorAll(".queue-history-entry")][0];globalThis.queueReturnTitle=queueReturnRow.querySelector(".queue-entry-title").textContent;queueReturnRow.querySelector(".queue-item-go-back").click()');
       await until('state.queueSummary.current.title===queueReturnTitle && state.queueSummary.historyCount===0 && state.queueSummary.pendingCount===' + restoredCount, 'Go back restores the timeline into Upcoming');
       await run('execute({action:"media.pause"})');
       await run('queueUI.add({mediaId:"1",type:"movie",title:"Artwork fixture",duration:60})');
@@ -153,7 +168,7 @@ async function main() {
         await pause(150);
         assert.equal(await run('document.documentElement.scrollWidth<=innerWidth'), true, 'Phone has no page overflow');
         if (mode === 'cards') await until(centerError + '<2', 'Phone centered');
-        else assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), 1);
+        else assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).flexDirection'), 'column');
         await shot('phone-' + mode);
       }
       let panelWidth;
@@ -165,7 +180,7 @@ async function main() {
         if (panelWidth === undefined) panelWidth = width; else assert.ok(Math.abs(panelWidth - width) < 1, 'Mobile panels share the same width: ' + key + ' ' + width + ' vs Room ' + panelWidth);
         await shot('phone-tab-' + key);
       }
-      assert.equal(await run('$("options-collapse").textContent.trim()'), 'Room');
+      assert.equal(await run('$("options-collapse").textContent.trim()'), 'Queue layout fixture');
       assert.equal(await run('$("library-heading").textContent'), 'Media');
       assert.equal(await run('document.querySelector(".queue-heading").textContent'), 'Queue');
       assert.equal(await run('$("drawer-open").getAttribute("aria-label")'), 'Menu');
@@ -198,6 +213,11 @@ async function main() {
       await run('document.exitFullscreen()');
       await until('!immersive', 'Exit fullscreen');
       assert.equal(await run('$("queue-panel").parentElement.id==="room-column"'), true, 'Queue shell restored');
+      await run('toggleDrawer(true);toggleDrawer(false)');
+      assert.equal(await run('$("library-panel").classList.contains("media-glow")'), false, 'Menu toggles do not highlight Media');
+      const historyCount = await run('state.queueSummary.historyCount');
+      await run('document.querySelector(".queue-history-entry .queue-action-remove")?.click()');
+      if (historyCount) await until('state.queueSummary.historyCount===' + (historyCount - 1), 'Individual history removal');
       await run('$("queue-view-list").click()');
       const restored = await browser.page(config.publicUrl + '/watch?demo=host');
       await browser.until(restored, 'document.getElementById("queue-view-list")?.getAttribute("aria-pressed")==="true"', 'Saved list preference');

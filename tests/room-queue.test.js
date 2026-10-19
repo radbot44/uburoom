@@ -493,3 +493,20 @@ test('configured continuation follows chooseMedia authority without granting que
   const result = await f.queue.generate(room.id, f.viewer, corpus, { continuation: true });
   assert.equal(result.added[0].mediaId, '102');
 });
+
+test('remove deletes only the chosen history occurrence with permission and revision checks', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator, { name:'History removal' });
+  const first = (await f.queue.playNow(room.id, f.creator, sampleItem(1))).current;
+  const second = (await f.queue.playNow(room.id, f.creator, sampleItem(2))).current;
+  const pending = (await f.queue.add(room.id, f.creator, sampleItem(3))).added;
+  await assert.rejects(f.queue.remove(room.id, f.viewer, first.id, 3));
+  await assert.rejects(f.queue.remove(room.id, f.creator, first.id, 2));
+  await assert.rejects(f.queue.remove(room.id, f.creator, second.id, 3));
+  await assert.rejects(f.queue.move(room.id, f.creator, first.id, 0, 3));
+  await f.queue.remove(room.id, f.creator, first.id, 3);
+  assert.equal(f.queue.getEntry(first.id), null);
+  assert.equal(f.queue.current(room.id).id, second.id);
+  assert.equal(f.queue.pending(room.id)[0].id, pending.id);
+  assert.equal(f.queue.summary(room.id).queueRevision, 4);
+});
