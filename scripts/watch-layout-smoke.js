@@ -36,7 +36,7 @@ async function main() {
         await evaluate('document.querySelector(".library-home-card").click();true');
         await browser.until(page,'document.querySelector(".library-tile")','Library items');
         let normalWidth;
-        const measure = async()=>JSON.parse(await evaluate('JSON.stringify((()=>{const rect=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right};};return {stage:rect("stage"),library:rect("library-panel"),room:rect("room-bar"),options:rect("options-panel"),overflow:document.documentElement.scrollWidth>innerWidth};})())'));
+        const measure = async()=>JSON.parse(await evaluate('JSON.stringify((()=>{const rect=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right};};return {stage:rect("stage"),library:rect("library-panel"),room:rect("room-bar"),options:rect("options-panel"),column:rect("room-column"),overflow:document.documentElement.scrollWidth>innerWidth};})())'));
         for (const [label,width,height,wide] of [['1080p',1920,1080,false],['4k',3840,2160,false],['normal',1440,1000,false],['sidebar-small',1101,900,false],['stacked',1000,1000,false],['theater',1440,1000,true],['phone',390,844,false],['phone-theater',390,844,true]]) {
           await browser.viewport(page,width,height);
           await evaluate('setTheater('+wide+');window.scrollTo(0,0);true'); await pause(200);
@@ -88,20 +88,20 @@ async function main() {
               assert.ok(r.room.bottom<=section,'Room bar fits black viewing section');
               assert.equal(await evaluate('getComputedStyle(document.getElementById("viewing-section")).backgroundColor'), 'rgb(16, 18, 23)','Normal background behind room bar');
               if (width>1100) {
-                assert.ok(Math.abs(r.options.y-r.library.y)<2&&r.library.x>=r.options.right,'Theater options and library share a row');
-                assert.ok(r.options.width/width>.2&&r.options.width/width<.26,'Theater options use about a quarter of the page');
-                await evaluate('window.scrollTo(0,document.getElementById("options-panel").getBoundingClientRect().top+scrollY-18);true');
+                assert.ok(Math.abs(r.column.y-r.library.y)<2&&r.library.x>=r.column.right,'Theater options and library share a row');
+                assert.ok(r.column.width/width>.2&&r.column.width/width<.26,'Theater options use about a quarter of the page');
+                await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY-18);true');
                 await pause(220);
                 await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
-                const pinnedTop=(await measure()).options.y;
+                const pinnedTop=(await measure()).column.y;
                 assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).color'), 'rgb(255, 153, 84)','Active theater icon uses accent');
                 assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).backgroundColor'),'rgba(0, 0, 0, 0)','Active theater icon has no accent background');
                 await evaluate('window.scrollBy(0,400);true'); await pause(100);
-                assert.ok(Math.abs((await measure()).options.y-pinnedTop)<2,'Theater room options stay pinned during library page scrolling');
+                assert.ok(Math.abs((await measure()).column.y-pinnedTop)<2,'Theater room options stay pinned during library page scrolling');
                 await browser.screenshot(page,path.join(output,name+'-theater-options-pinned.png'));
-                assert.ok(Math.abs(await evaluate('document.querySelector(".library-tools").getBoundingClientRect().top'))<2,'Theater library navigation sticks at page top');
+                assert.ok(Math.abs(await evaluate('document.querySelector("#library-panel>.library-header").getBoundingClientRect().top'))<2,'Theater library navigation sticks at page top');
                 assert.equal(await evaluate('document.getElementById("library-top").parentElement.className'), 'library-top','Back to top in navigation row');
-                await evaluate('document.querySelector(".library-crumbs [aria-current]").textContent="A very long breadcrumb title ".repeat(30);true');
+                await evaluate('document.querySelector(".library-crumbs").hidden=false;document.querySelector(".library-crumbs [aria-current]").textContent="A very long breadcrumb title ".repeat(30);true');
                 assert.equal(await evaluate('(()=>{const c=document.querySelector(".library-crumbs [aria-current]"),b=document.getElementById("library-top");return getComputedStyle(c).textOverflow==="ellipsis"&&c.scrollWidth>c.clientWidth&&c.getBoundingClientRect().right<=b.getBoundingClientRect().left;})()'),true,'Breadcrumb ellipsis protects Back to top');
                 await browser.screenshot(page,path.join(output,name+'-theater-navigation.png'));
                 await evaluate('document.getElementById("library-top").click();true');
@@ -194,7 +194,7 @@ async function main() {
           const restored=await browser.page(config.publicUrl+'/watch?mode-probe=theater');
           await browser.until(restored,'typeof theater==="boolean"','Restored mode initialization');
           assert.equal(await browser.evaluate(restored,'theater&&document.body.classList.contains("theater")'),true,'Page restores saved theater mode');
-          assert.ok(fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('/watch-layout.js')<fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('<main>'),'Saved mode script blocks before page content');
+          assert.ok(fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('/watch-layout.js')<fs.readFileSync(path.resolve('web/watch.html'),'utf8').indexOf('<main'),'Saved mode script blocks before page content');
           await evaluate('setTheater(false);true');
           const normal=await browser.page(config.publicUrl+'/watch?mode-probe=normal');
           await browser.until(normal,'typeof theater==="boolean"','Normal mode initialization');

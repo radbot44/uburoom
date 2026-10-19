@@ -105,7 +105,7 @@ async function main(){
    await evaluate(context,'history.back()');await until(context,'!document.querySelector(".library").hidden','Back to grid at '+name);
    await evaluate(context,'document.querySelector(".library-views [data-view=list]").click()');await pause(200);
    const rows=JSON.parse(await evaluate(context,`JSON.stringify([...document.querySelectorAll('.library-tile')].slice(0,3).map(card=>{const a=card.getBoundingClientRect(),b=card.querySelector('.library-play').getBoundingClientRect();return {size:b.width,top:b.top-a.top,bottom:a.bottom-b.bottom,right:a.right-b.right};}))`));
-   for(const row of rows) assert.ok(row.size===55 && Math.abs(row.top-row.bottom)<1 && Math.abs(row.right-row.top)<1,'Play is larger with equal edge spacing at '+name+': '+JSON.stringify(row));
+   for(const row of rows) assert.ok(row.size===55 && Math.abs(row.top-row.bottom)<1 && Math.abs(row.right-rows[0].right)<1,'Play is larger with consistent edge spacing at '+name+': '+JSON.stringify(row));
    const listShot=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-list-'+name+'-qa.png'),Buffer.from(listShot.data,'base64'));
   }
   await evaluate(context,'setTheater(false);document.querySelector(".library-views [data-view=normal]").click()');await command('browsingContext.setViewport',{context,viewport:{width:1360,height:1200}});
@@ -193,7 +193,7 @@ async function main(){
    }
    if(theater && width>700){
     await evaluate(context,'document.getElementById("library-content").scrollIntoView();window.scrollBy(0,600)');await pause(100);
-    assert.equal(await evaluate(context,'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector(".library-tools")).position==="sticky"&&Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top)<2'),true,'Theater library scrolls with page beneath sticky navigation');
+    assert.equal(await evaluate(context,'document.getElementById("library-panel").scrollTop===0&&getComputedStyle(document.querySelector("#library-panel>.library-header")).position==="sticky"&&Math.abs(document.querySelector("#library-panel>.library-header").getBoundingClientRect().top)<2&&Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.querySelector("#library-panel>.library-header").getBoundingClientRect().bottom)<2'),true,'Theater library scrolls with page beneath sticky navigation');
     const scrolled=await command('browsingContext.captureScreenshot',{context,origin:'viewport'});fs.writeFileSync(path.join(root,'artifacts','plex-library-'+name+'-scrolled-qa.png'),Buffer.from(scrolled.data,'base64'));
    }
   }

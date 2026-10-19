@@ -33,7 +33,7 @@
 #stage{touch-action:manipulation}#subtitle-status{bottom:100px}
 body.mobile-player main{padding:0}body.mobile-player main>#account{margin-inline:12px}body.mobile-player .stage{border-radius:0}
 body.mobile-player #viewing-section>#room-bar{margin:12px 12px 0;width:calc(100% - 24px)}
-body.mobile-player :is(#queue-panel,#options-panel),body.mobile-player #app>#library-panel{margin-inline:12px}body.mobile-player main>:is(#status,#error,#diagnostic-actions,#acceleration-help){margin-inline:12px}
+body.mobile-player :is(#room-column,#queue-panel,#options-panel),body.mobile-player #app>#library-panel{margin-inline:12px}body.mobile-player main>:is(#status,#error,#diagnostic-actions,#acceleration-help){margin-inline:12px}
 body.mobile-player :is(#theater,#seek-back,#seek-forward){display:none!important}
 body.mobile-player .transport{padding:20px 6px 6px;gap:0}body.mobile-player :is(.transport-row,.playback-buttons,.player-tools){gap:2px}
 body.mobile-player .player-button{width:30px;height:30px}body.mobile-player .player-button svg{width:21px;height:21px}

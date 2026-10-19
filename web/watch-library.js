@@ -11,20 +11,21 @@
     function option(select, value, label) { const n = node('option',select,label); n.value = value; }
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
     const header = doc.getElementById('library-header') || host.closest('#library-panel')?.querySelector('.library-header');
+    const headerLeft = doc.getElementById('library-header-left') || header?.querySelector('.library-header-left');
     const headerRight = doc.getElementById('library-header-right') || header?.querySelector('.library-header-right');
     const scopeActions = node('div',headerRight || host,undefined,'library-scope-actions');
     scopeActions.hidden = true;
-    const libTop = doc.getElementById('library-top');
-    if (libTop && headerRight && libTop.parentElement !== headerRight) headerRight.append(libTop);
-    const tools = node('div',host,undefined,'library-tools');
-    const top = node('div',tools,undefined,'library-top');
-    const historyGroup = node('div',top,undefined,'icon-group library-navigation-history');
+    const topWrap = headerRight?.querySelector('.library-top');
+    if (topWrap) headerRight.insertBefore(scopeActions,topWrap);
+    const navParent = headerLeft || host;
+    const historyGroup = node('div',navParent,undefined,'icon-group library-navigation-history');
     historyGroup.setAttribute('role','group'); historyGroup.setAttribute('aria-label','Navigation');
     const previous = button(historyGroup,'Back','left','library-key'); previous.id = 'library-back';
     const next = button(historyGroup,'Forward','right','library-key'); next.id = 'library-forward';
     const home = button(historyGroup,'Libraries home','home','library-key'); home.id = 'library-home';
-    const choices = node('div',top,undefined,'library-choices pills'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
-    const crumbs = node('nav',top,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
+    const choices = node('div',navParent,undefined,'library-choices pills'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
+    const crumbs = node('nav',navParent,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
+    const tools = node('div',host,undefined,'library-tools');
     const row = node('div',tools,undefined,'library-toolbar');
     const searchField = node('label',row,undefined,'search-field');
     searchField.append(uburoomUI.icon(doc,'search'));
@@ -98,7 +99,7 @@
       prepareNavigation(); screen = homeContext(); trail = []; pushVisit(); renderResults(); positionLibrary();
     }
     function newSeed() { return crypto.randomUUID().replace(/-/g,''); }
-    function clearResults() { for (const card of results.children) layoutObserver.unobserve(card); results.replaceChildren(); }
+    function clearResults() { results.replaceChildren(); }
     const layoutObserver = new ResizeObserver(entries => {
       const updates = [];
       for (const {target} of entries) {
@@ -107,13 +108,6 @@
           const width = host.getBoundingClientRect().width; if (!width) continue;
           const gap = width <= 440 ? 12 : 14, columns = width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap)));
           updates.push([host,'--library-poster-width',(width - gap * (columns - 1)) / columns + 'px']);
-        } else if (target.parentElement === results && target.getClientRects().length) {
-          const css = getComputedStyle(target), padding = parseFloat(css.paddingTop), gap = parseFloat(css.columnGap);
-          const right = Math.max(padding,(target.getBoundingClientRect().height - 55) / 2);
-          // Preserve a readable text column when a long title makes a narrow row tall.
-          const available = target.clientWidth - parseFloat(css.paddingLeft) - target.querySelector('.library-art').getBoundingClientRect().width - gap * 2 - 55 - 120;
-          const value = Math.min(right,Math.max(padding,available));
-          if (Math.abs(parseFloat(css.paddingRight) - value) > .5) updates.push([target,'padding-right',value + 'px']);
         }
       }
       // Batch writes after measurements so loaded rows do not each force layout.
@@ -273,7 +267,7 @@
       const episode = item.type === 'episode', row = episode || view === 'list';
       const card = node('article',results,undefined,'library-tile' + (episode ? ' episode' : '')); card.dataset.item = item.id;
       if (row) {
-        card.classList.add('library-row'); layoutObserver.observe(card);
+        card.classList.add('library-row');
         card.addEventListener('click',event => {
           if (event.target.closest('button,a,input,select,textarea,summary')) return;
           const selection = doc.getSelection(); if (selection?.toString() && card.contains(selection.anchorNode)) return;
@@ -358,6 +352,7 @@
       });
       crumbs.hidden = path.length <= 2;
       const details = screen.kind === 'details', atHome = screen.kind === 'home', collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
+      choices.hidden = atHome;
       scopeActions.replaceChildren();
       const section = sections.find(item => item.id === screen.section);
       scopeActions.hidden = !autoQueue || !getPlayer()?.durable || screen.kind !== 'library' || screen.tab !== 'library' || section?.mediaType !== 'movie';

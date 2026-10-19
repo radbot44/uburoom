@@ -2,7 +2,7 @@
 #library-panel svg,#library-content svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;pointer-events:none}
 .library-tools{position:static;top:36px;background:var(--card);padding:14px 0 12px;z-index:5}
 #drawer .library-tools{position:sticky;top:0}
-.library-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.library-top{display:inline-flex;align-items:center}
 .icon-group{display:inline-flex;align-items:center;gap:2px;background:var(--elevated);border-radius:10px;padding:3px;height:36px;min-height:36px;box-sizing:border-box;flex:none}
 .icon-group .library-key{height:30px;width:30px;min-height:30px;min-width:30px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .icon-group .library-key:hover:not(:disabled){background:var(--hover)}
@@ -11,8 +11,9 @@
 .library-choices .library-choice{height:30px;min-height:30px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;cursor:pointer}
 .library-choices .library-choice:hover:not([aria-pressed=true]){background:var(--hover);color:var(--text)}
 .library-choices .library-choice[aria-pressed=true]{background:var(--primary);color:var(--on-primary);font-weight:600}
-.library-crumbs{display:flex;align-items:center;gap:6px;font-size:13px;margin:0 0 0 6px;min-width:0;height:36px;min-height:36px;color:var(--muted);flex:1 1 180px}
-.library-crumbs>[aria-current]{color:var(--text);font-weight:600;min-width:0;overflow-wrap:anywhere}
+.library-crumbs{display:flex;align-items:center;gap:6px;font-size:13px;margin:0 0 0 6px;min-width:0;height:36px;min-height:36px;color:var(--muted);flex:1 1 0;overflow:hidden}
+.library-crumbs>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.library-crumbs>[aria-current]{color:var(--text);font-weight:600;min-width:0;flex:1 1 0;overflow:hidden;text-overflow:ellipsis}
 .library-crumb{background:none;border:0;padding:2px 0;color:var(--muted);text-align:left;overflow-wrap:anywhere;font-size:13px;cursor:pointer}
 .library-crumb:hover{color:var(--text);text-decoration:underline;text-underline-offset:3px}
 .library-crumb-divider{color:var(--border)}
@@ -146,20 +147,31 @@
 }
 
 @container plex-library (max-width:640px){
-  .library-header-right .queue-control{width:36px;min-width:36px;padding:0}
-  .library-header-right .queue-control .queue-label{display:none}
-  .library-top{justify-content:space-between;gap:8px}
-  .library-navigation-history{order:0}
-  .library-choices{order:1;margin-left:auto}
-  .library-crumbs{order:2;flex-basis:100%;margin-left:0}
-  .library-tools{padding:10px 0 12px}
+  .library-tools{padding:8px 0 12px}
   .search-field{flex-basis:100%}
-  .tool-controls{gap:6px}
+  .tool-controls{gap:6px;width:100%}
   .sort-wrap{flex:1 1 0;min-width:0}
   .sort-wrap select{width:100%;font-size:12px;padding-left:9px}
   #library-filters-toggle{width:36px;min-width:36px;padding:0}
   #library-filters-toggle .filter-label{display:none}
   .library-views{margin-left:auto;flex:none}
+}
+
+@container plex-library (max-width:440px){
+  .library-header-right .queue-control .queue-label{display:none}
+  .library-header-right .queue-control{width:36px;min-width:36px;padding:0}
+}
+
+@media(max-width:700px){
+  #library-panel>.library-header{flex-wrap:wrap;height:auto;min-height:auto;gap:8px 12px;padding:0 0 8px}
+  .library-header-left{display:contents}
+  #library-heading{order:0}
+  .library-header-right{order:1;margin-left:auto}
+  .library-header-right .queue-control{width:36px;min-width:36px;padding:0}
+  .library-header-right .queue-control .queue-label{display:none}
+  .library-navigation-history{order:2}
+  .library-choices{order:3;margin-left:auto}
+  .library-crumbs{order:4;flex-basis:100%;margin-left:0}
 }
 
 @container plex-library (max-width:440px){
@@ -190,7 +202,7 @@
   .library-art:after,.library-copy,.library-play,.library-browse{transition:none!important}
 }
 
-body.theater:not(.immersive) .library-tools{position:sticky;top:0}
+@media(min-width:701px){body.theater:not(.immersive) .library-tools{position:sticky;top:48px}}
 body.theater:not(.immersive) .library-top{flex-wrap:nowrap}
 body.theater:not(.immersive) .library-navigation{flex-wrap:nowrap}
 body.theater:not(.immersive) .library-crumbs{flex-wrap:nowrap;overflow:hidden;flex-basis:0}
