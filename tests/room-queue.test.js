@@ -510,3 +510,19 @@ test('remove deletes only the chosen history occurrence with permission and revi
   assert.equal(f.queue.pending(room.id)[0].id, pending.id);
   assert.equal(f.queue.summary(room.id).queueRevision, 4);
 });
+
+test('explicit current removal clears its bookmark and survives restart with other history and queue intact', async t => {
+  const f = fixture(t,{disk:true});
+  const room = await f.store.create(f.creator);
+  const old = (await f.queue.playNow(room.id,f.creator,sampleItem(1))).current;
+  const current = (await f.queue.playNow(room.id,f.creator,sampleItem(2))).current;
+  const upcoming = (await f.queue.add(room.id,f.creator,sampleItem(3))).added;
+  await assert.rejects(f.queue.remove(room.id,f.creator,current.id,3),/unavailable/);
+  await f.queue.remove(room.id,f.creator,current.id,3,{allowCurrent:true});
+  await f.restart();
+  assert.equal(f.queue.current(room.id),null);
+  assert.equal(f.store.get(room.id).bookmark,null);
+  assert.equal(f.queue.getEntry(current.id),null);
+  assert.deepEqual(f.queue.pending(room.id).map(item=>item.id),[upcoming.id]);
+  assert.deepEqual(f.queue.history(room.id).items.map(item=>item.id),[old.id]);
+});

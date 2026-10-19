@@ -53,7 +53,9 @@
           const copy = node('div',row); node('strong',copy,room.name);
           node('p',copy,(room.active ? 'Open' : 'Closed') + ' · ' + (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),'hint');
           const actions = node('div',row,undefined,'room-actions');
-          button(actions,room.active ? 'Join' : 'Reopen',async () => {
+          const currentRoom = room.active && getState()?.id === room.id;
+          button(actions,currentRoom ? 'Cancel' : room.active ? 'Join' : 'Reopen',async () => {
+            if (currentRoom) { $('room-dialog').close('cancel'); return; }
             const original = [...actions.querySelectorAll('button')]; original.forEach(control => control.disabled = true);
             try {
               const opened = room.active ? room : await request('/api/watch/rooms/' + room.id + '/reopen',{});

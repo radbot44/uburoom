@@ -289,3 +289,46 @@ test('an add-only participant can populate empty playback but cannot replace it,
     assert.equal((await f.hub.dispatch(f.guest, {roomId:id,action:'queue.playNow',args:{item}})).status, 'forbidden');
   }
 });
+
+for (const advance of [false, true]) test('current removal ' + (advance ? 'advances without history' : 'stops without consuming upcoming entries'), async t => {
+  const f = await fixture(t);
+  await f.command('media.next');
+  const current = f.queue.current(f.id), history = f.queue.history(f.id).items.map(item => item.id);
+  const upcoming = f.queue.pending(f.id).map(item => item.id), version = f.room.mediaVersion;
+  const result = await f.command('queue.remove', {entryId:current.id,advance,expectedRevision:f.store.get(f.id).queueRevision});
+  assert.equal(result.status,'applied',result.message);
+  assert.equal(f.queue.getEntry(current.id),null);
+  assert.deepEqual(f.queue.history(f.id).items.map(item => item.id),history);
+  assert.notEqual(f.room.mediaVersion,version);
+  assert.equal(f.room.autoplayCountdown,undefined);
+  if (advance) {
+    assert.equal(f.queue.current(f.id).id,upcoming[0]);
+    assert.equal(f.room.media.id,f.queue.current(f.id).mediaId);
+    assert.equal(f.store.get(f.id).bookmark.mediaId,f.room.media.id);
+  } else {
+    assert.equal(f.queue.current(f.id),null);
+    assert.deepEqual(f.queue.pending(f.id).map(item => item.id),upcoming);
+    assert.equal(f.store.get(f.id).bookmark,null);
+    assert.equal(f.room.media,undefined);
+    assert.equal(f.room.initialGate,false);
+    assert.equal(f.room.s.state.paused,true);
+    assert.equal(f.room.s.state.duration,0);
+  }
+});
+
+test('discard-and-advance preparation failure and revoked video authority preserve the current occurrence', async t => {
+  const f = await fixture(t), current = f.queue.current(f.id);
+  const revision = f.store.get(f.id).queueRevision;
+  const prepare = f.plex.prepare;
+  f.plex.prepare = async () => { throw new Error('Fixture preparation failed'); };
+  assert.equal((await f.command('queue.remove',{entryId:current.id,advance:true,expectedRevision:revision})).status,'failed');
+  assert.equal(f.queue.current(f.id).id,current.id);
+  assert.equal(f.queue.pending(f.id).length,2);
+  assert.equal(f.queue.history(f.id).total,0);
+  f.plex.prepare = prepare;
+  const record = f.store.get(f.id);
+  f.watch.roomState.apply(f.room,await f.store.edit(f.id,f.creator.userId,record.revision,{action:'permissions',role:'viewer',permissions:{editQueue:true,chooseMedia:false}}));
+  f.watch.snapshot(f.room,f.guest,f.guest.watchViewerId,async () => true,'direct');
+  assert.notEqual((await f.command('queue.remove',{entryId:current.id,advance:false,expectedRevision:revision},f.guest)).status,'applied');
+  assert.equal(f.queue.current(f.id).id,current.id);
+});

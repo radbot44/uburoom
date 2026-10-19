@@ -816,4 +816,13 @@ These are isolated synthetic-fixture results. Real Plex media and Discord Activi
 - `node scripts/room-redesign-smoke.js`: Chrome and Firefox pass exact creation choices, removal of hints/Apply/picture controls, locked participant management switches, immediate saving for all three presets, Custom detection/recovery, full-width layout, keyboard focus after saving, draft retention, phone roles and fullscreen. Inspected creation, desktop preset/custom and phone permission renders.
 - `node scripts/room-ui-smoke.js`: Chrome and Firefox pass with Play/Pause and Queue creation choices, including role controls, queue flows, host/creator transfer, saved-room reopen, private-room access, Admin mode and deletion.
 
-Verification uses isolated synthetic fixtures. Real Plex/Discord Activity remains a separate gate. These permission changes were implemented after deploying the prior queue commit and have not been deployed.
+Verification uses isolated synthetic fixtures. Real Plex/Discord Activity remains a separate gate. These permission changes were subsequently committed and deployed before the queue-navigation follow-up.
+
+
+### Queue selection, neutral empty states and current removal (2026-10-19)
+
+- `npm run test:full`: 360 passed, zero failures/skips. New tests validate optional boolean advance intent, explicit current removal with bookmark clearing and restart, discard-and-advance without adding history, retained unrelated history/upcoming entries, failed preparation and missing choose-video authority. Current removal follows the existing revision/epoch-checked shared transition; the ordinary Next control retains its history behavior.
+- `node scripts/queue-ui-smoke.js`: Chrome 155 and Firefox 158 pass directional History/Upcoming navigation in Cards and List, jumps across the opposite section, one viewport-centered selected occurrence, current control placement, footer notice geometry, neutral outside-room/empty-room screens, saved List preference without List styling while empty, current discard/advance and stop, and Cancel for the current room in both active and saved Switch room lists. Existing replay/move/artwork/theme/phone/theater/fullscreen checks remain covered. Inspected rendered Cards, List, empty and phone surfaces.
+- Selection is local presentation state exposed as an occurrence ID and accessible current marker. It does not change playback or introduce a controller/remote command path. Explicit current removal requires both chooseMedia and editQueue, preserves unrelated occurrences, and only discards on a successfully committed transition. The forward action prepares the next item before committing the discard.
+
+Checks use isolated synthetic accounts/media; real Plex and Discord Activity verification remains separate. No schema change or credential/state migration is needed.

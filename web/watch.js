@@ -1108,7 +1108,7 @@ async function loadLibraryItem(item) {
 }
 let roomChoice;
 function renderRoomChoices(rooms, container = $('room-choices')) {
-  const key = JSON.stringify(rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.locked]));
+  const key = JSON.stringify([selected,rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.locked])]);
   if (container.dataset.roomList === key) return;
   container.dataset.roomList = key;
   const focusedRoom = container.contains(document.activeElement) ? document.activeElement.dataset.joinRoom : undefined;
@@ -1122,8 +1122,11 @@ function renderRoomChoices(rooms, container = $('room-choices')) {
     info.className = 'hint';
     info.textContent = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers'); copy.append(name,info);
     const actions = document.createElement('div'); actions.className = 'room-actions';
-    const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = 'Join'; button.prepend(uburoomUI.icon(document,'login')); button.disabled = !!room.locked;
+    const currentRoom = container.id === 'room-choices' && room.id === selected;
+    const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = currentRoom ? 'Cancel' : 'Join';
+    if (!currentRoom) button.prepend(uburoomUI.icon(document,'login')); button.disabled = !currentRoom && !!room.locked;
     button.addEventListener('click',async () => {
+      if (currentRoom) { $('room-dialog').close('cancel'); return; }
       if (creating) return;
       creating = true; button.disabled = true; $('lobby-error').textContent = '';
       try { await selectRoom(room.id); if (!state || selected !== room.id) throw new Error('Room unavailable. Choose another room.'); $('room-dialog').close('joined'); returnToVideo(); }

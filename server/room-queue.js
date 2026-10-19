@@ -391,17 +391,18 @@ class RoomQueue {
     return { queueRevision: room.queueRevision + 1 };
   }
 
-  async remove(roomId, userId, entryId, expectedRevision) {
+  async remove(roomId, userId, entryId, expectedRevision, { allowCurrent = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'editQueue');
     this.assertRevision(room, expectedRevision);
 
     const entry = this.getEntry(entryId);
-    if (!entry || entry.roomId !== roomId || !['pending', 'history'].includes(entry.state)) {
+    if (!entry || entry.roomId !== roomId || !['pending', 'history', ...(allowCurrent ? ['current'] : [])].includes(entry.state)) {
       throw error('Queue item unavailable', 404);
     }
 
+    if (entry.state === 'current') this.assertAllowed(room, userId, 'chooseMedia');
     const at = this.now();
     this.registry.transaction(() => {
       this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(entryId);
@@ -410,6 +411,7 @@ class RoomQueue {
       for (let i = 0; i < rows.length; i++) {
         updateRank.run(i, at, rows[i].id);
       }
+      if (entry.state === 'current') this.db.prepare('UPDATE watch_rooms SET bookmark = NULL, checkpointRevision = checkpointRevision + 1 WHERE id = ?').run(roomId);
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -576,10 +578,11 @@ class RoomQueue {
     return { completed: current, queueRevision: room.queueRevision + 1 };
   }
 
-  async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard } = {}) {
+  async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard, discardCurrent = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'chooseMedia');
+    if (discardCurrent) this.assertAllowed(room, userId, 'editQueue');
     this.assertRevision(room, expectedRevision);
 
     const nextPending = this.peekNext(roomId);
@@ -597,7 +600,8 @@ class RoomQueue {
     let generated = [];
 
     this.registry.transaction(() => {
-      if (current) {
+      if (current && discardCurrent) this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(current.id);
+      else if (current) {
         const clamped = validOutcome === 'completed' ? current.duration : Math.min(Math.max(0, currentPosition || 0), current.duration);
         this.db.prepare(`
           UPDATE watch_queue_entries

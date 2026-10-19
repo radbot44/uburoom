@@ -77,6 +77,10 @@
       case 'queue.playEntry': case 'queue.skipTo': case 'queue.history.goBack':
         if (typeof a.entryId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.entryId)) throw new Error('Choose a queue entry');
         args.entryId = a.entryId;
+        if (action === 'queue.remove' && a.advance !== undefined) {
+          if (typeof a.advance !== 'boolean') throw new Error('Choose whether to advance after removal');
+          args.advance = a.advance;
+        }
         if (action === 'queue.move') args.targetRank = numeric(a.targetRank, 0, 99);
         if (action === 'queue.history.replay') {
           if (typeof a.resume !== 'boolean') throw new Error('Choose resume or start over');

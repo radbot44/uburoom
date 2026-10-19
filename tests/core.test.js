@@ -336,3 +336,11 @@ test('legacy room management aliases are rejected', () => {
   assert.throws(() => Engine.validate({action:'session.controls',args:{control:'playback',allowed:'yes'}}));
   assert.throws(() => Engine.validate({action:'session.unknown'}));
 });
+
+test('current queue removal validates its optional advance intent', () => {
+  const entryId = randomUUID();
+  assert.equal(Engine.validate({action:'queue.remove',args:{entryId,advance:true}}).args.advance,true);
+  assert.equal(Engine.validate({action:'queue.remove',args:{entryId,advance:false}}).args.advance,false);
+  assert.equal(Object.hasOwn(Engine.validate({action:'queue.remove',args:{entryId}}).args,'advance'),false);
+  assert.throws(() => Engine.validate({action:'queue.remove',args:{entryId,advance:'true'}}),/advance/);
+});

@@ -394,7 +394,17 @@ class Watch {
     if (room) { room.queueEditing = true; this.cancelAutoplay(room); clearPlaybackEnd(room); }
     try {
       let value;
-      if (action === 'queue.add' || action === 'queue.playNow') {
+      if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
+        if (queue.current(id)?.id !== args.entryId) throw Object.assign(new Error('Current video changed; refresh before removing'),{status:409});
+        queue.assertAllowed(queue.room(id),actor.userId,'chooseMedia');
+        if (args.advance && !queue.peekNext(id)) throw Object.assign(new Error('No next video is available'),{status:409});
+        if (room) {
+          room.queueEditing = false;
+          return this.changeQueueMedia(room,command,actor,permitted);
+        }
+        value = args.advance ? await queue.next(id,actor.userId,{expectedRevision:revision,currentEntryId:args.entryId,discardCurrent:true}) :
+          await queue.remove(id,actor.userId,args.entryId,revision,{allowCurrent:true});
+      } else if (action === 'queue.add' || action === 'queue.playNow') {
         const raw = args.item, serverId = raw.serverId || await this.roomState.identify({id:raw.mediaId || raw.id});
         const item = this.queueItem(raw,serverId); await check();
         queue.assertRevision(queue.room(id),revision);
@@ -469,19 +479,7 @@ class Watch {
     const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id), next = this.roomState.queue.peekNext(record.id);
     if (!current || !next) {
       if (current) await this.roomState.queue.completeCurrent(record.id);
-      const oldMedia = room.media;
-      room.media = undefined;
-      room.mediaVersion = randomUUID();
-      room.readinessVersion = undefined;
-      room.position = 0;
-      room.changedAt = Date.now();
-      room.pauseAt = room.startAt = undefined;
-      room.s.state.paused = true;
-      room.s.state.position = 0;
-      room.s.state.duration = 0;
-      room.s.state.seekable = false;
-      this.dropMedia(room, 'end');
-      if (oldMedia) void this.plex.stop(oldMedia);
+      this.unloadQueueMedia(room);
       await this.roomState.save(room);
       this.roomState.apply(room, this.roomState.store.get(record.id));
       room.revision++;
@@ -507,9 +505,18 @@ class Watch {
     },this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
   }
+  unloadQueueMedia(room) {
+    const old = room.media;
+    room.media = undefined; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
+    room.position = 0; room.changedAt = Date.now(); room.pauseAt = room.startAt = undefined;
+    room.initialGate = false; room.manualPaused = true; room.readinessTimedOut = false; room.endedVersion = undefined;
+    room.s.state.paused = true; room.s.state.position = 0; room.s.state.duration = 0; room.s.state.seekable = false;
+    this.dropMedia(room, 'end');
+    if (old) void this.plex.stop(old);
+  }
   async changeQueueMedia(room, command, actor, permitted, { initialAdd = false } = {}) {
     if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
-    if (!room.viewers.size && command.action !== 'media.load') return {status:'unavailable',message:'No viewer is connected.'};
+    if (!room.viewers.size && command.action !== 'media.load' && !(command.action === 'queue.remove' && !command.args.advance)) return {status:'unavailable',message:'No viewer is connected.'};
     const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
     const version = room.mediaVersion, epoch = room.s.epoch, intent = room.playbackIntent || 0;
     const record = room.saved ? this.roomState.store.get(id) : null, current = record && queue.current(id), next = record && queue.peekNext(id);
@@ -519,6 +526,8 @@ class Watch {
         countdown.currentEntryId === current?.id && countdown.nextEntryId === next?.id && countdown.queueRevision === record.queueRevision &&
         this.hub.canRoom(room.s,actor,'autoplay'));
     if (!valid()) return {status:'unavailable',message:'Autoplay or media selection was cancelled.'};
+    const removing = action === 'queue.remove', advance = removing && args.advance;
+    if (removing && current?.id !== args.entryId) return {status:'unavailable',message:'Current video changed; refresh before removing.'};
     let target, prepared, adopted = false;
     const old = room.media, oldPosition = this.position(room), restore = action === 'queue.history.goBack', replay = action === 'queue.history.replay' || restore, playEntry = action === 'queue.playEntry';
     if (replay) {
@@ -527,16 +536,16 @@ class Watch {
     } else if (playEntry) {
       target = queue.getEntry(args.entryId);
       if (!target || target.roomId !== id || target.state !== 'pending') throw Object.assign(new Error('Queue entry unavailable'),{status:404});
-    } else if (action === 'media.next') {
+    } else if (action === 'media.next' || advance) {
       target = record ? next : old?.nextId && {mediaId:old.nextId};
       if (!target) return {status:'unsupported',message:'No next video is available.'};
     } else if (action === 'media.previous') {
       target = oldPosition < (record ? 5 : 3) && (record ? queue.lastHistory(id) : old?.previousId && {mediaId:old.previousId});
-    } else target = {mediaId:args.mediaId};
+    } else if (!removing) target = {mediaId:args.mediaId};
     room.mediaTransition = true;
     try {
       await room.saving;
-      const corpus = record && await this.autoCorpus(id,actor);
+      const corpus = record && !(removing && !advance) ? await this.autoCorpus(id,actor) : undefined;
       if (target) {
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
         prepared = target.mediaId === 'demo' ? this.demoMedia && {...this.demoMedia,id:'demo',resources:new Map()} :
@@ -556,8 +565,9 @@ class Watch {
         queue.assertRevision(queue.room(id),record.queueRevision);
         const position = this.position(room);
         let saving;
-        if (action === 'media.next') saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
-          outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid});
+        if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
+          outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid,discardCurrent:!!advance});
+        else if (removing) saving = queue.remove(id,actor.userId,args.entryId,record.queueRevision,{allowCurrent:true});
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
         else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,initialAdd});
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
@@ -569,7 +579,9 @@ class Watch {
       // The durable transaction is the transition's commit point. Close waits
       // for it; later controls apply to the newly adopted generation.
       room.pauseAt = room.startAt = undefined;
-      if (prepared) {
+      if (removing && !advance) {
+        this.cancelAutoplay(room); clearPlaybackEnd(room); this.unloadQueueMedia(room);
+      } else if (prepared) {
         room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
         room.position = record ? queue.current(id).position : 0; room.changedAt = Date.now();
         this.dropMedia(room); room.s.state.paused = true; room.manualPaused = initialAdd && !this.roomState.store.get(id).autoplay; room.initialGate = true;
@@ -585,7 +597,7 @@ class Watch {
       }
       room.autoplayError = undefined; room.revision++; room.lastActivity = Date.now();
       room.transitionCommit = undefined;
-      if (record && action !== 'media.next' && corpus) {
+      if (record && action !== 'media.next' && !removing && corpus) {
         try { await queue.generate(id,actor.userId,corpus,{continuation:true}); this.roomState.apply(room,this.roomState.store.get(id)); }
         catch (error) { room.autoQueueError = error.message; }
       }

@@ -49,6 +49,7 @@
     let lastFetchedRevision = -1;
     let lastFetchedRoomId = null;
     let moveFollow = null;
+    let selectedEntryId = null, selectionFrame;
 
     function node(tag, parent, text, className) {
       const el = doc.createElement(tag);
@@ -95,19 +96,18 @@
       const b = button(views, value === 'cards' ? 'Cards' : 'List', value === 'cards' ? 'libraryCards' : 'libraryList', () => {
         view = value; host.dataset.view = view;
         try { localStorage.setItem('uburoom-queue-view', view); } catch {}
-        centerPending = true; renderTab(); updateView();
+        centerPending = true; renderNowPlaying(); renderTab(); updateView();
       }, false, 'queue-view-button');
       node('span', b, value === 'cards' ? 'Cards' : 'List');
       b.id = 'queue-view-' + value; return b;
     });
     const body = node('div', host); body.id = 'queue-body';
     const toolbar = node('div', header, undefined, 'queue-toolbar');
-    const directions = node('div', header, undefined, 'queue-directions');
-    const historyTab = node('span', directions, '', 'queue-direction');
+    const historyTab = button(toolbar, 'History', undefined, () => browseDirection(-1), false, 'queue-directions queue-direction');
     historyTab.id = 'queue-tab-history';
-    const upcomingTab = node('span', directions, '', 'queue-direction');
+    const upcomingTab = button(toolbar, 'Upcoming', undefined, () => browseDirection(1), false, 'queue-directions queue-direction');
     upcomingTab.id = 'queue-tab-upcoming';
-    toolbar.append(views);
+    header.append(views);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
     centerButton.id = 'queue-center'; node('span', centerButton, 'Center Now Playing');
     const timeline = node('div', body, undefined, 'queue-timeline');
@@ -116,7 +116,6 @@
     previousCard.id = 'queue-scroll-previous';
     const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
     nextCard.id = 'queue-scroll-next';
-    const notice = node('p', body, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
     const layout = node('div', timeline, undefined, 'queue-layout');
     layout.tabIndex = 0; layout.setAttribute('role', 'region'); layout.setAttribute('aria-label', 'Playback queue timeline');
     const historyView = node('section', layout, undefined, 'queue-view queue-history-view');
@@ -124,7 +123,12 @@
     const nowPlayingBox = node('div', layout, undefined, 'queue-now-playing');
     const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
     upcomingView.id = 'queue-upcoming-view'; upcomingView.setAttribute('aria-label', 'Upcoming videos');
+    const emptyScreen = node('section', body, undefined, 'queue-empty-screen'); emptyScreen.id = 'queue-empty-screen';
+    emptyScreen.append(root.uburoomUI.icon(doc, 'queue'));
+    const emptyTitle = node('p', emptyScreen, '', 'queue-empty-title');
+    const emptyBrowse = button(emptyScreen, 'Browse media', 'media', () => browseMedia()); node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
+    const notice = node('p', footer, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
 
 
     const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls');
@@ -426,16 +430,59 @@
       updateNavigation();
     }
 
-    function scrollCards(direction) {
-      layout.scrollBy({ left: direction * (nowPlayingBox.offsetWidth + 14), behavior: motion() });
+    function entries() {
+      return [...layout.querySelectorAll('.queue-entry,.queue-history-entry,.queue-now-playing')].filter(row => row.dataset.entryId);
     }
-
+    function nearestEntry() {
+      const bounds = layout.getBoundingClientRect(), horizontal = view === 'cards';
+      const center = horizontal ? bounds.left + layout.clientWidth / 2 : bounds.top + layout.clientHeight / 2;
+      let closest, distance = Infinity;
+      for (const row of entries()) {
+        const rect = row.getBoundingClientRect();
+        const delta = Math.abs((horizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2) - center);
+        if (delta < distance) { closest = row; distance = delta; }
+      }
+      return closest;
+    }
+    function selectCenteredEntry() {
+      const row = timeline.hidden ? undefined : nearestEntry();
+      selectedEntryId = row?.dataset.entryId || null;
+      host.dataset.selectedEntryId = selectedEntryId || '';
+      for (const item of entries()) {
+        const selected = item === row;
+        item.classList.toggle('queue-selected', selected);
+        if (selected) item.setAttribute('aria-current','true'); else item.removeAttribute('aria-current');
+      }
+    }
+    function centerEntry(target, smooth = true) {
+      if (!target || timeline.hidden) return;
+      const rect = target.getBoundingClientRect(), bounds = layout.getBoundingClientRect();
+      layout.scrollTo(view === 'cards' ? { left:layout.scrollLeft + rect.left - bounds.left - (layout.clientWidth - rect.width) / 2, behavior:smooth ? motion() : 'instant' } :
+        { top:layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2, behavior:smooth ? motion() : 'instant' });
+      updateNavigation();
+    }
+    function directionTarget(direction, crossSection = false) {
+      const rows = entries(), selected = nearestEntry();
+      if (crossSection && direction < 0 && selected?.classList.contains('queue-entry')) return historyView.querySelector('.queue-history-entry:last-child');
+      if (crossSection && direction > 0 && selected?.classList.contains('queue-history-entry')) return upcomingView.querySelector('.queue-entry');
+      if (selected === nowPlayingBox || !selected) return direction < 0 ? historyView.querySelector('.queue-history-entry:last-child') : upcomingView.querySelector('.queue-entry');
+      return rows[rows.indexOf(selected) + direction];
+    }
+    function browseDirection(direction) { centerEntry(directionTarget(direction, true)); }
+    function scrollCards(direction) { centerEntry(directionTarget(direction)); }
     function updateNavigation() {
-      previousCard.disabled = layout.scrollLeft <= 2;
-      nextCard.disabled = layout.scrollLeft + layout.clientWidth >= layout.scrollWidth - 2;
+      if (!layout.clientWidth) return;
+      previousCard.disabled = !directionTarget(-1); nextCard.disabled = !directionTarget(1);
+      historyTab.disabled = !directionTarget(-1, true); upcomingTab.disabled = !directionTarget(1, true);
+      selectCenteredEntry();
+    }
+    function scheduleSelection() {
+      if (selectionFrame) return;
+      selectionFrame = requestAnimationFrame(() => { selectionFrame = undefined; updateNavigation(); });
     }
 
     function updateView() {
+      renderHeaderBadge(getState()?.queueSummary);
       viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
       navigation.hidden = view !== 'cards';
       layout.tabIndex = 0;
@@ -444,12 +491,12 @@
       requestAnimationFrame(() => centerCurrent());
     }
 
-    layout.addEventListener('scroll', updateNavigation, { passive: true });
+    layout.addEventListener('scroll', scheduleSelection, { passive: true });
     layout.addEventListener('keydown', event => {
-      if (event.target !== layout || view !== 'cards') return;
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-        event.preventDefault(); scrollCards(event.key === 'ArrowLeft' ? -1 : 1);
-      } else if (event.key === 'Home') { event.preventDefault(); centerCurrent(true); }
+      if (event.target !== layout) return;
+      if ((view === 'cards' ? ['ArrowLeft','ArrowRight'] : ['ArrowUp','ArrowDown']).includes(event.key)) {
+        event.preventDefault(); event.stopPropagation(); scrollCards(['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1);
+      } else if (event.key === 'Home') { event.preventDefault(); event.stopPropagation(); centerCurrent(true); }
     });
     new ResizeObserver(() => { centerCurrent(); }).observe(layout);
     updateView();
@@ -526,8 +573,8 @@
     function renderHeaderBadge(summary) {
       const qLen = summary?.pendingCount ?? currentQueue.total ?? 0;
       const hLen = summary?.historyCount ?? currentHistory.total ?? 0;
-      upcomingTab.textContent = 'Upcoming (' + qLen + ') →';
-      historyTab.textContent = '← History (' + hLen + ')';
+      upcomingTab.textContent = 'Upcoming (' + qLen + ')' + (view === 'cards' ? ' →' : ' ↓');
+      historyTab.textContent = (view === 'cards' ? '← ' : '↑ ') + 'History (' + hLen + ')';
       const badge = doc.getElementById('queue-count-badge');
       if (badge) { badge.textContent = String(qLen); badge.hidden = qLen === 0; }
     }
@@ -545,9 +592,15 @@
 
     function updateViewsVisibility() {
       const state = getState();
-      const empty = !state?.mediaId && !state?.queueSummary?.current;
-      const noEntries = !(state?.queueSummary?.pendingCount || currentQueue.items?.length || state?.queueSummary?.historyCount || currentHistory.items?.length);
-      views.hidden = empty && noEntries;
+      const noEntries = !state || !(state.mediaId || state.queueSummary?.current || state.queueSummary?.pendingCount || currentQueue.items.length || state.queueSummary?.historyCount || currentHistory.items.length);
+      views.hidden = toolbar.hidden = timeline.hidden = noEntries;
+      emptyScreen.hidden = !noEntries;
+      continuation.hidden = !state;
+      host.dataset.view = noEntries ? 'empty' : view;
+      host.classList.toggle('queue-is-empty', noEntries);
+      emptyTitle.textContent = state ? 'The queue is empty' : 'Join a room to use the queue';
+      emptyBrowse.disabled = !getMe?.() || !!state && !state.canBrowse;
+      if (noEntries) { selectedEntryId = null; host.dataset.selectedEntryId = ''; }
     }
 
     function renderNowPlaying() {
@@ -556,6 +609,8 @@
       host.classList.toggle('queue-no-current',empty); host.classList.toggle('queue-no-entries',!(state?.queueSummary?.pendingCount || state?.queueSummary?.historyCount));
       updateViewsVisibility();
       if (empty) {
+        delete nowPlayingBox.dataset.entryId;
+        nowPlayingBox.classList.remove('queue-selected'); nowPlayingBox.removeAttribute('aria-current');
         if (currentKey !== 'empty') { nowPlayingBox.replaceChildren(); node('p',nowPlayingBox,'No video selected'); const browse = button(nowPlayingBox,'Browse media','media',() => browseMedia(),!state ? !getMe?.() : !state?.canBrowse); node('span',browse,'Browse media'); currentKey = 'empty'; }
         return;
       }
@@ -563,7 +618,7 @@
       const item = current || { title: state?.title || 'Nothing currently playing', mediaId: state?.mediaId };
       const duration = current?.duration || state?.state?.duration || 0;
       const position = state?.state?.position ?? current?.position ?? 0;
-      const key = JSON.stringify([state?.id, item.id, item.mediaId, item.title, item.thumb, formatSubtitle(item), state?.capabilities?.playPause]);
+      const key = JSON.stringify([state?.id, item.id, item.mediaId, item.title, item.thumb, formatSubtitle(item), state?.capabilities?.playPause, state?.capabilities?.editQueue, state?.capabilities?.chooseMedia, view]);
       if (currentKey !== key) {
         const changedItem = currentId !== current?.id;
         currentId = current?.id; currentKey = key;
@@ -572,7 +627,10 @@
         nowPlayingBox.dataset.entryId = current?.id || '';
         const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
         node('span', top, 'Now playing', 'queue-section-label');
-        node('span', top, '', 'queue-badge queue-playback-state');
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(moves, 'Move earlier', view === 'cards' ? 'left' : 'up', undefined, true, 'queue-current-earlier');
+        action(moves, 'Discard current and play next', view === 'cards' ? 'right' : 'down', () => removeCurrent(true), true, 'queue-current-later');
+        action(moves, 'Remove current video', 'close', () => removeCurrent(false), !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia, 'queue-current-remove');
         art(nowPlayingBox, item);
         const body = node('div', nowPlayingBox, undefined, 'queue-now-playing-body');
         title(body, item, 'queue-now-playing-title');
@@ -580,6 +638,7 @@
         const progress = node('progress', body, undefined, 'queue-progress');
         progress.setAttribute('aria-label', 'Current video progress');
         const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
+        node('span', actions, '', 'queue-card-caption queue-playback-state');
         button(actions, 'Play', 'play', async () => {
           try { await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' }); }
           catch (error) { notice.textContent = error.message; }
@@ -591,6 +650,7 @@
       const progress = nowPlayingBox.querySelector('progress');
       progress.max = duration || 1; progress.value = Math.min(position, duration);
       const toggle = nowPlayingBox.querySelector('.queue-current-toggle');
+      nowPlayingBox.querySelector('.queue-current-later').disabled = !currentQueue.items.length || !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia;
       nowPlayingBox.querySelector('.queue-current-skip').disabled = !state?.hasNext || !state?.capabilities?.chooseMedia;
       const label = state?.state?.paused ? 'Play' : 'Pause';
       if (toggle.title !== label) {
@@ -735,6 +795,7 @@
         });
       } else if (centerPending) requestAnimationFrame(() => centerCurrent());
       else { layout.scrollLeft = scroll; updateNavigation(); }
+      scheduleSelection();
     }
 
     function fetchData(force = false) {
@@ -797,7 +858,7 @@
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const expectedRevision = queueRevision(state);
       const result = await request('/api/watch/rooms/' + state.id + '/queue', { action, ...args, expectedRevision },
-        ['bulk', 'auto', 'playEntry', 'skipTo'].includes(action) ? { timeoutMs: 35000 } : {});
+        ['bulk', 'auto', 'playEntry', 'skipTo', 'remove'].includes(action) ? { timeoutMs: 35000 } : {});
       await fetchData(true);
       return result;
     }
@@ -832,6 +893,13 @@
         expectedRevision: rev
       });
       await fetchData(true);
+    }
+
+    async function removeCurrent(advance) {
+      const state = getState(), entryId = state?.queueSummary?.current?.id;
+      if (!entryId) return;
+      await mutate('remove', {entryId,advance});
+      await changed();
     }
 
     async function clearQueue() {
@@ -903,7 +971,7 @@
         if (lastFetchedRoomId) { clearArtwork(); lastFetchedRoomId = null; lastFetchedRevision = -1; }
         currentQueue = { items: [], total: 0, queueRevision: 0 };
         currentHistory = { items: [], total: 0 };
-        renderNowPlaying();
+        renderTab(); renderNowPlaying(); renderHeaderBadge();
         return;
       }
 
@@ -932,7 +1000,9 @@
       add,
       bulk,
       openAuto,
-      fetchData
+      fetchData,
+      get selectedEntryId() { return selectedEntryId; },
+      selectEntry(entryId) { centerEntry(entries().find(row => row.dataset.entryId === entryId)); }
     };
   }
 
