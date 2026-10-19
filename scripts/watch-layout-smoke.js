@@ -56,13 +56,13 @@ async function main() {
                   assert.ok(Math.abs(r.column.y-r.library.y)<2,'Theater columns share a row');
                   const ratio=r.library.width/(r.library.width+r.column.width);
                   assert.ok(ratio>.68&&ratio<.72,'Theater Media uses about 70%');
-                  await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY);true'); await pause(120);
-                  const top=(await measure()).column.y;
-                  await evaluate('window.scrollBy(0,300);true'); await pause(120);
-                  assert.ok(Math.abs((await measure()).column.y-top)<2,'Theater right column stays sticky');
-                  await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
-                  await evaluate('window.scrollTo(0,0);true');
                 } else assert.ok(Math.abs(r.options.y-r.stage.y)<2,'Normal Room beside video');
+                await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY);true'); await pause(120);
+                const top=(await measure()).column.y;
+                await evaluate('window.scrollBy(0,300);true'); await pause(120);
+                assert.ok(Math.abs((await measure()).column.y-top)<2,label+' right column stays sticky');
+                await browser.screenshot(page,path.join(output,name+'-'+label+'-panels.png'));
+                await evaluate('window.scrollTo(0,0);true');
               }
               assert.equal(await evaluate('JSON.stringify([document.querySelector("#options-panel>.library-header"),document.querySelector(".queue-header"),document.getElementById("library-header")].map(h=>[h.offsetHeight,getComputedStyle(h).paddingTop]))'), '[[80,"20px"],[80,"20px"],[80,"20px"]]','Shared Queue-sized section headers');
               for (const [button,content] of [['options-collapse','options-content'],['queue-collapse','queue-body'],['media-collapse','library-content']]) {

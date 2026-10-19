@@ -72,7 +72,7 @@ body.theater:not(.immersive) #library-top{display:inline-flex;align-items:center
 /* The below-video Media catalog uses page scrolling in both desktop modes. */
 body:not(.immersive) #app>#library-panel .library-tools{position:sticky;top:var(--media-header-height,80px);z-index:5;background:var(--card)}
 @media(min-width:1101px){
-.theater:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-height:calc(100dvh - 44px);overflow-y:auto}
+body:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-height:calc(100dvh - 44px);overflow-y:auto}
 }
 
 #status:empty,#error:empty{display:none}#error{color:var(--error)}

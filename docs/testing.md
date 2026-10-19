@@ -1,5 +1,9 @@
 # Verification status
 
+## Normal view sticky right column (2026-10-19)
+
+Normal view now uses the same sticky Room/Queue column as theater: a 22px top offset, viewport-bounded height and internal overflow scrolling. Narrow stacked layouts and mobile tabs retain their existing behavior. `node scripts/watch-layout-smoke.js` passes in Chrome 155.0.8059.84 and Firefox 158.0, including right-column pinning during page scrolling in normal layouts at 1080p, 4K, 1440px and 1101px widths, theater stickiness, mobile tabs and fullscreen restoration. The normal scrolled render was inspected. Fixtures use isolated accounts and synthetic media.
+
 ## Watch section layout (2026-10-19)
 
 Normal mode places Media below the player, with Room above Queue in the right column. Theater places Media on the left at approximately 70% width, with a sticky, independently scrollable Room/Queue column on the right. Narrow desktop layouts stack the sections. Fullscreen Menu orders Room, Queue, Media. The room bar moves with Room, including when entering/exiting fullscreen. Only Room settings are inert outside a room, leaving creation/join controls and collapse buttons usable.
