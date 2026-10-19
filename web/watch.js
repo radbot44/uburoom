@@ -124,7 +124,7 @@ video.volume = .5;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
@@ -228,7 +228,7 @@ for (const [key, label, panel] of sections) {
   tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
   if (key === 'room') {
     const icon = document.createElement('span'); icon.className = 'oomark-icon'; icon.setAttribute('aria-hidden', 'true'); tab.append(icon);
-  } else tab.append(uburoomUI.icon(document, key === 'queue' ? 'queue' : 'drawer'));
+  } else tab.append(uburoomUI.icon(document, key === 'queue' ? 'queue' : 'media'));
   tab.append(document.createTextNode(label));
   tab.addEventListener('click', () => selectSection(key));
   sectionTabs.append(tab);

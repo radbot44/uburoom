@@ -52,6 +52,7 @@
     libraryNormal: ['M3 4h7v11H3zM14 4h7v11h-7zM3 19h7M14 19h7'],
     libraryList: ['M3 4h5v6H3zM12 5h9M12 9h6M3 14h5v6H3zM12 15h9M12 19h6'],
     libraryPoster: ['M3 4h7v16H3zM14 4h7v16h-7z'],
+    media: ['M3 14V4h15', 'M6 7h15v13H6z', 'M12 11l4 2.5-4 2.5Z'],
     film: ['M3 3h18v18H3zM8 3v18M16 3v18M3 9h5M3 15h5M16 9h5M16 15h5'],
     tv: ['M3 7h18v14H3zM8 3l4 4 4-4'],
     filter: ['M4 6h16M7 12h10M10 18h4'], sort: ['M8 3v18m-4-4 4 4 4-4M14 4h7M14 9h5M14 14h3'],

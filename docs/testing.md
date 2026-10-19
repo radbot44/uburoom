@@ -732,3 +732,8 @@ Refined poster proportions, queue-add alignment, shuffle margins, theater silhou
 
 Adjusted Play centering, Pause bar weight (2.3px), paired Plus/Minus spans, library-view spacing and detail, film perforation width, remote button spacing, and filled captions outer bounds. The gear remains unchanged. Inspected before/after sheets from the actual shared renderer in Chrome at 16, 20 and 24px. JavaScript syntax and diff whitespace checks passed. Firefox headless capture again produced no screenshot; Firefox visual verification and live layout/badge checks remain unfinished.
 
+
+### Media section icon (2026-10-19)
+
+Added the shared media SVG (overlapping video cards and play triangle), used by the Media heading and mobile Media tab. Fullscreen Menu retains drawer. Inspected the updated icon sheet in Chrome at 16/20/24px; syntax checks for both changed JavaScript files and diff whitespace checks passed. Live section layouts and Firefox rendering remain unverified.
+
