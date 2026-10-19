@@ -65,6 +65,11 @@ async function main() {
               assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),wide&&width>700?'sticky':'static','Theater navigation pins; other stacked toolbars scroll');
               await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
               assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Stacked library uses page scrolling');
+              if (width <= 700) {
+                await browser.screenshot(page,path.join(output,name+'-'+label+'-media-pinned.png'));
+                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs").getBoundingClientRect(),h=document.getElementById("library-header").getBoundingClientRect();return h.top>=t.bottom+6;})()'),true,'Media sticky header clears the mobile tabs');
+                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs"),r=t.getBoundingClientRect();return getComputedStyle(t,"::before").backgroundColor!=="rgba(0, 0, 0, 0)"&&getComputedStyle(t,"::before").bottom==="-8px";})()'),true,'Mobile tabs mask the corner and gap behind the sticky bar');
+              }
               for (const view of ['list','normal']) {
                 const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const top=Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom),tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};})())'));
                 await evaluate(`document.querySelector('.library-views [data-view="${view}"]').click();true`); await pause(120);
@@ -132,6 +137,7 @@ async function main() {
               await pause(100);
               await browser.screenshot(page,path.join(output,name+'-library-scrolled.png'));
               assert.equal(await evaluate('(()=>{const p=document.getElementById("library-panel").getBoundingClientRect(),h=document.querySelector("#library-panel>.library-header").getBoundingClientRect();return document.elementFromPoint(h.x+40,p.y+10).closest(".library-header")!==null;})()'),true,'Pinned header covers top padding above posters');
+              assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Both sticky header corners cover catalog content');
               await evaluate('document.getElementById("library-panel").scrollTop=0;true');
               assert.equal(await evaluate('!document.querySelector(".library-tabs")&&!document.getElementById("account-settings")&&document.getElementById("create").previousElementSibling.id==="refresh"'),true,'Toolbar and header arrangement');
               assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).backgroundColor===getComputedStyle(document.getElementById("library-panel")).backgroundColor'),true,'Unified library surface');
@@ -167,6 +173,21 @@ async function main() {
           await evaluate('document.exitFullscreen().then(()=>true)');
           await pause(250);
           await browser.until(page,'!immersive&&theater&&drawer.hidden','Restore theater');
+          await browser.viewport(page,390,844);
+          await browser.click(page,'fullscreen');
+          await browser.until(page,'immersive','Phone fullscreen');
+          await evaluate('toggleDrawer(true);selectSection("media");document.querySelector(".library-home-card").click();true');
+          await browser.until(page,'document.querySelectorAll(".library-tile").length>20','Phone Menu catalog');
+          await evaluate('drawer.scrollTop=1200;true'); await pause(150);
+          assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs").getBoundingClientRect(),h=document.getElementById("library-header").getBoundingClientRect(),m=document.querySelector(".library-tools").getBoundingClientRect();return h.top>=t.bottom+6&&m.top>=h.bottom-1;})()'),true,'Phone Menu sticky tabs/header/toolbar do not overlap');
+          assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Phone Menu header corners cover the catalog');
+          await browser.screenshot(page,path.join(output,name+'-phone-menu-media-pinned.png'));
+          await evaluate('document.getElementById("section-tabs").style.height="78px";true'); await pause(150);
+          assert.equal(await evaluate('document.getElementById("library-header").getBoundingClientRect().top>=document.getElementById("section-tabs").getBoundingClientRect().bottom+6'),true,'Sticky offset follows tab height changes');
+          await evaluate('document.getElementById("section-tabs").style.height="";drawer.scrollTop=0;true');
+          await evaluate('document.exitFullscreen().then(()=>true)');
+          await browser.until(page,'!immersive','Exit phone fullscreen');
+          await browser.viewport(page,1440,1000); await pause(150);
           await evaluate('setTheater(false);true');
           await browser.click(page,'fullscreen');
           await browser.until(page,'immersive','Normal to fullscreen');

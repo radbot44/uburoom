@@ -1,5 +1,11 @@
 # Verification status
 
+## Sticky Media coverage and mobile tab spacing (2026-10-19)
+
+Media's internal sticky header has a rectangular opaque surface, retaining the outer panel's rounded corners while covering catalog artwork at both header corners. Mobile tabs have opaque backing through their rounded edges and surrounding gap. The Media header pins below the measured tab height; fullscreen Menu toolbars pin below the measured Media header height. Resize observers keep the offsets current when wrapping or tab height changes.
+
+Verification: reproduced the exposed header corners with a failing browser hit test before the change. The expanded `node scripts/watch-layout-smoke.js` passes in Chrome 155.0.8059.84 and Firefox 158.0, checking both sticky header corners, mobile tab/header separation, fullscreen Menu header/toolbar separation and resized tab heights. Desktop, theater, mobile and Menu renders were inspected. `npm run test:full` passed all 347 tests with zero failures/skips. Checks use isolated accounts and synthetic media; actual Plex/Activity and physical-device checks remain open.
+
 ## Mobile section tabs, names and queue return controls (2026-10-19)
 
 Mobile layouts show Room, Queue and Media tabs with one panel visible at a time. Panels share the same width and spacing; removing nested Room margins and retaining the native page scrollbar avoids width changes between short and long tabs. Tab icons/keyboard navigation, focus, library state and active selection survive fullscreen Menu entry/exit. Desktop layouts retain their sections. Section headings are Queue, Room and Media; the player drawer button is Menu. Room uses a monochrome SVG derived from the canonical oomark, and Media reuses the drawer icon. Vertical wheel scrolling keeps its native page behavior; card scrollbars, arrows and horizontal gestures remain available.

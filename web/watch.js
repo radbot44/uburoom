@@ -296,10 +296,13 @@ function updateMobilePlayer() {
 }
 function updateViewingLayout() {
   document.documentElement.style.setProperty('--watch-room-bar-height',$('room-bar').offsetHeight+'px');
+  document.documentElement.style.setProperty('--section-tabs-height',sectionTabs.offsetHeight+'px');
+  document.documentElement.style.setProperty('--media-header-height',$('library-header').offsetHeight+'px');
   if (!immersive) document.documentElement.style.setProperty('--watch-header-height', ($('viewing-section').getBoundingClientRect().top + scrollY) + 'px');
 }
 const viewingLayoutObserver = new ResizeObserver(updateViewingLayout);
 viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section')); viewingLayoutObserver.observe($('room-bar'));
+viewingLayoutObserver.observe(sectionTabs); viewingLayoutObserver.observe($('library-header'));
 window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');

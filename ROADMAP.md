@@ -171,6 +171,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Sticky Media follow-up (2026-10-19):** Opaque header/tab backing closes exposed corners and gaps. Measured mobile tab/header heights keep sticky Media navigation and fullscreen Menu toolbars separated. Chrome/Firefox layout checks and all 347 tests pass; [verification](docs/testing.md#sticky-media-coverage-and-mobile-tab-spacing-2026-10-19).
+
 **Queue layout increment (2026-10-19):** Playback queue offers a centered, horizontally scrollable card timeline (history left, upcoming right), navigation/recenter controls and a remembered list layout with both sections visible. The queue spans the theater page and adapts to phones and fullscreen drawers using the existing appearance tokens, icons and permission-aware commands. Chrome/Firefox fixtures cover layout, navigation, artwork and retained queue behavior; actual Plex/Activity continuity remains open. See [verification](docs/testing.md#playback-queue-layout-2026-10-19).
 
 **Login/account increment (2026-10-18):** Sign-in checking overlays an inactive watch layout. Discord and Plex have official provider icons, username-only summaries and matching remove/confirm/Connect flows; Connect stays at the right of its provider row. Removal preserves the account UUID, protects the last sign-in and invalidates prior credentials/logins. Owner matching is collapsed. See [verification](docs/testing.md#login-and-account-experience-2026-10-18).
