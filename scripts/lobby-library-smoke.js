@@ -35,7 +35,7 @@ async function main() {
     await browser.viewport(host,1360,1100);
     await until('document.querySelectorAll(".library-home-card").length > 0','Lobby library');
     assert.equal(app.watch.rooms.size,0);
-    assert.equal(await run('!$("options-panel").hidden && $("options-panel").inert && getComputedStyle($("options-panel")).opacity === "0.4" && !$("watch-settings").hidden && !$("remote-settings").shadowRoot.querySelector(".sharing").hidden'),true);
+    assert.equal(await run('!$("options-panel").hidden && $("watch-settings").inert && !$("options-panel").inert && getComputedStyle($("watch-settings")).opacity === "0.4" && !$("watch-settings").hidden && !$("remote-settings").shadowRoot.querySelector(".sharing").hidden'),true);
     await shot('normal');
     await run('document.querySelector(".library-home-card[data-tab=library]").click()');
     await until('!!document.querySelector("#library [data-play]")','Lobby movie');

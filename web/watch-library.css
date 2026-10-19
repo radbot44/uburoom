@@ -163,7 +163,7 @@
 }
 
 @media(max-width:700px){
-  #library-panel>.library-header{flex-wrap:wrap;height:auto;min-height:auto;gap:8px 12px;padding:14px 0 8px}
+  #library-panel>.library-header{flex-wrap:wrap;gap:8px 12px}
   .library-header-left{display:contents}
   #library-heading{order:0}
   .library-header-right{order:1;margin-left:auto}
@@ -202,7 +202,7 @@
   .library-art:after,.library-copy,.library-play,.library-browse{transition:none!important}
 }
 
-@media(min-width:701px){body.theater:not(.immersive) .library-tools{position:sticky;top:64px}}
+@media(min-width:701px){body.theater:not(.immersive) .library-tools{position:sticky;top:var(--media-header-height,80px)}}
 body.theater:not(.immersive) .library-top{flex-wrap:nowrap}
 body.theater:not(.immersive) .library-navigation{flex-wrap:nowrap}
 body.theater:not(.immersive) .library-crumbs{flex-wrap:nowrap;overflow:hidden;flex-basis:0}

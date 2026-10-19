@@ -1,5 +1,13 @@
 # Verification status
 
+## Watch section layout (2026-10-19)
+
+Normal mode places Media below the player, with Room above Queue in the right column. Theater places Media on the left at approximately 70% width, with a sticky, independently scrollable Room/Queue column on the right. Narrow desktop layouts stack the sections. Fullscreen Menu orders Room, Queue, Media. The room bar moves with Room, including when entering/exiting fullscreen. Only Room settings are inert outside a room, leaving creation/join controls and collapse buttons usable.
+
+Desktop sections collapse independently; mobile tabs expose the selected panel even if it was collapsed on desktop, and restore desktop collapse state on resizing back. All section headers use Queue's 20px top inset and 44px action row (80px including bottom spacing); wrapped Media navigation can grow, and its measured height keeps the sticky toolbar immediately beneath it. Media uses page scrolling in both desktop modes and drawer scrolling in fullscreen.
+
+Verification: `node scripts/watch-layout-smoke.js` passes in Chrome 155.0.8059.84 and Firefox 158.0, covering section placement, theater proportions/stickiness, shared header spacing, desktop collapse/mobile transitions, fullscreen ordering/restoration, sticky header coverage, navigation resizing, view-change scroll anchors and decoded playback continuity. Normal, theater, phone and fullscreen renders were inspected. `node scripts/queue-ui-smoke.js` verifies queue interaction, list/card layouts, themes, mobile tabs and fullscreen restoration in both browsers. `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox` pass browsing, disabled settings, room creation/join and responsive flows. `npm run test:full` passes all 347 tests with zero failures/skips. Fixtures use isolated accounts and synthetic media; physical-device and live Plex/Discord Activity checks remain open.
+
 ## Mobile Media navbar and static favicon (2026-10-19)
 
 Mobile Room/Queue/Media tabs scroll with the page or fullscreen Menu. The entire Media navbar stays pinned at the top: its opaque heading/navigation row and the search/filter/view toolbar beneath it. The library renderer publishes the header height before restoring scroll anchors, and observes later resizing; switching poster/list views keeps the visible item in place when navigation wraps differently. Appearance changes and Sunrise Mode leave browser favicon links untouched, preventing repeated favicon fallback requests while retaining the logo color changes.

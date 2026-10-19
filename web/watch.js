@@ -217,6 +217,23 @@ async function renewIdentity() {
 function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = undefined; volumeDragging = false; }
 // Move the actual shells so their controls, state and listeners stay shared.
 const sections = [['room','Room','options-panel'],['queue','Queue','queue-panel'],['media','Media','library-panel']];
+// Collapse the shared panels without rebuilding their live controls.
+const sectionToggles = sections.map(([key,, id]) => {
+  const panel = $(id), heading = panel.querySelector('h2');
+  let button = heading.querySelector('.section-toggle');
+  if (!button) {
+    button = document.createElement('button'); button.type = 'button';
+    button.className = 'section-toggle'; button.id = key + '-collapse';
+    button.append(...heading.childNodes, uburoomUI.icon(document, 'chevron'));
+    heading.append(button);
+  }
+  button.setAttribute('aria-controls', key === 'room' ? 'options-content' : key === 'media' ? 'library-content' : 'queue-body');
+  button.addEventListener('click', () => {
+    if (document.body.classList.contains('mobile-player')) return;
+    panel.classList.toggle('section-collapsed'); updateSectionTabs();
+  });
+  return { panel, button };
+});
 let mobileSection = 'room', sectionChosen = false;
 const sectionTabs = document.createElement('nav');
 sectionTabs.id = 'section-tabs'; sectionTabs.hidden = true;
@@ -243,6 +260,10 @@ function updateSectionTabs() {
   if (!sectionChosen) mobileSection = state?.durable ? 'room' : 'media';
   if (mobileSection === 'queue' && !state?.durable) mobileSection = 'media';
   sectionTabs.hidden = !mobile;
+  for (const { panel, button } of sectionToggles) {
+    button.disabled = mobile;
+    button.setAttribute('aria-expanded', String(mobile || !panel.classList.contains('section-collapsed')));
+  }
   for (const [key,, id] of sections) {
     const panel = $(id), tab = $('section-tab-' + key), active = key === mobileSection;
     tab.disabled = key === 'queue' && !state?.durable;
@@ -261,7 +282,7 @@ sectionTabs.addEventListener('keydown', event => {
 });
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
 drawer.setAttribute('aria-label', 'Menu'); document.body.append(drawer);
-const shells = ['account','room-bar','section-tabs','queue-panel','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+const shells = ['account','section-tabs','options-panel','queue-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -295,11 +316,10 @@ function updateMobilePlayer() {
   updateSectionTabs();
 }
 function updateViewingLayout() {
-  document.documentElement.style.setProperty('--watch-room-bar-height',$('room-bar').offsetHeight+'px');
   if (!immersive) document.documentElement.style.setProperty('--watch-header-height', ($('viewing-section').getBoundingClientRect().top + scrollY) + 'px');
 }
 const viewingLayoutObserver = new ResizeObserver(updateViewingLayout);
-viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section')); viewingLayoutObserver.observe($('room-bar'));
+viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section'));
 window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');
@@ -317,10 +337,6 @@ function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('room-lobby').hidden = !immersive || !!selected || !me;
 }
-$('options-collapse').addEventListener('click', () => {
-  const button = $('options-collapse'), content = $('options-content');
-  content.hidden = !content.hidden; button.setAttribute('aria-expanded', String(!content.hidden));
-});
 function renderSyncPreference() {
   $('sync-correction').value=syncCorrectionMode;
   $('sync-correction-hint').textContent=(syncCorrectionMode==='jumps'
@@ -693,8 +709,8 @@ function renderVisibility() {
   roomUI.render();
   queueUI.render(state?.queueSummary);
   $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !!state && !state.canManage;
-  $('options-panel').inert = !state;
-  $('options-panel').setAttribute('aria-disabled', String(!state));
+  $('watch-settings').inert = !state;
+  $('watch-settings').setAttribute('aria-disabled', String(!state));
   $('admin-end-room').hidden = !state?.adminMode || state?.isHost; $('admin-end-room').disabled = pending;
   for (const id of ['visibility', 'drawer-visibility']) {
     const button = $(id), privateRoom = state?.visibility === 'private';

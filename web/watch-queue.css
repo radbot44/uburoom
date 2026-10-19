@@ -73,7 +73,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-footer-actions button{font-size:12px;min-height:36px}
 
 /* Chronological cards: oldest history at left, current in the middle, then upcoming. */
-[data-view=cards]>.queue-layout{display:flex;align-items:stretch;gap:14px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:var(--border) transparent;padding-bottom:12px}
+[data-view=cards]>#queue-body>.queue-layout{display:flex;align-items:stretch;gap:14px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:var(--border) transparent;padding-bottom:12px}
 [data-view=cards] .queue-view,[data-view=cards] .queue-list{display:contents}
 [data-view=cards] :is(.queue-entry,.queue-history-entry,.queue-now-playing){display:flex;flex-direction:column;flex:0 0 var(--queue-card-width);width:var(--queue-card-width);min-height:292px;gap:12px;margin:0}
 [data-view=cards] .queue-entry-info,[data-view=cards] .queue-now-playing-body{flex:1}
@@ -87,7 +87,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 @container queue (max-width:560px){[data-view=cards] .queue-history-entry .queue-card-caption{display:none}[data-view=cards] .queue-history-entry .queue-entry-actions{justify-content:flex-end}}
 
 /* List view retains both columns, with the current video spanning their width. */
-[data-view=list]>.queue-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 14px}
+[data-view=list]>#queue-body>.queue-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 14px}
 [data-view=list] .queue-now-playing{grid-column:1/-1;grid-row:1;display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px 14px;align-items:center}
 [data-view=list] .queue-now-playing-header{grid-column:1/-1}
 [data-view=list] .queue-now-playing>.queue-entry-actions{grid-column:3;grid-row:2}
@@ -103,6 +103,6 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 [data-view=list] .queue-entry-subtitle{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:2px 0}
 [data-view=list] .queue-history-older{margin-bottom:10px;font-size:12px}
 @container queue (min-width:850px){[data-view=list] :is(.queue-entry,.queue-history-entry){grid-template-columns:64px minmax(0,1fr) auto}[data-view=list] .queue-list .queue-entry-actions{grid-column:3;grid-row:2}[data-view=list] :is(.queue-entry,.queue-history-entry){grid-template-rows:36px 1fr;height:124px}}
-@container queue (max-width:560px){[data-view=list]>.queue-layout{grid-template-columns:minmax(0,1fr)}[data-view=list] .queue-now-playing{grid-template-columns:64px minmax(0,1fr) auto}[data-view=list] .queue-upcoming-view{grid-row:2}.queue-heading{font-size:15px}.queue-view-button{padding:7px 9px}.queue-header{gap:8px}.queue-header .queue-view-switch{margin-left:auto}.queue-footer{align-items:flex-start}.queue-footer-actions{margin-left:auto}}
+@container queue (max-width:560px){[data-view=list]>#queue-body>.queue-layout{grid-template-columns:minmax(0,1fr)}[data-view=list] .queue-now-playing{grid-template-columns:64px minmax(0,1fr) auto}[data-view=list] .queue-upcoming-view{grid-row:2}.queue-heading{font-size:15px}.queue-view-button{padding:7px 9px}.queue-header{gap:8px}.queue-header .queue-view-switch{margin-left:auto}.queue-footer{align-items:flex-start}.queue-footer-actions{margin-left:auto}}
 @media(pointer:coarse){.queue-navigation button,.queue-view-button,.queue-entry-actions button{min-height:44px;min-width:40px}.queue-move-actions button{min-height:40px;min-width:32px}}
 @media(prefers-reduced-motion:reduce){.queue-check input::after{transition:none}}

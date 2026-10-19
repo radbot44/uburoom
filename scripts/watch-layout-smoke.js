@@ -45,109 +45,65 @@ async function main() {
           const r = await measure();
           if (!before) {
             assert.equal(r.overflow,false,name+' '+label+' horizontal overflow');
-            assert.ok(r.room.y>=r.stage.bottom,'Room bar below video');
-            if (width > 700) assert.ok(r.options.y>=r.room.bottom,'Room controls below video');
-            else assert.equal(await evaluate('getComputedStyle(document.getElementById("options-panel")).display==="none" && document.getElementById("section-tab-media").getAttribute("aria-selected")==="true"'),true,'Mobile shows the selected tab');
-            if (!(wide&&width>700)&&width>1100) assert.ok(r.library.x>=r.stage.right,'Normal library beside video');
-            else assert.ok(r.library.y>=r.stage.bottom,'Stacked library');
-            const columns=await evaluate('getComputedStyle(document.querySelector(".library")).gridTemplateColumns.split(" ").length');
-            if (label==='1080p'||label==='4k'||label==='normal'||label==='sidebar-small'||label==='phone') {
-              const libraryWidth=await evaluate('document.getElementById("library-content").getBoundingClientRect().width');
-              const expected=libraryWidth<=440?2:Math.max(1,Math.floor((libraryWidth+14)/174));
-              assert.equal(columns,expected,'Poster count adapts to library width: '+label);
-              assert.ok(label==='phone'||columns<4,'Narrow sidebar avoids four cramped posters');
-            }
-            const sideBySide=!wide&&width>1100;
-            assert.equal(await evaluate('getComputedStyle(document.getElementById("library-top")).display!=="none"'),wide&&width>700,'Back to top appears only in theater');
-            assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).overflowY'),sideBySide?'auto':'visible','Only side-by-side library owns scrolling');
-            if (!sideBySide) {
-              assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).maxHeight'),'none','Stacked library height unrestricted');
-              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),wide||width<=700?'sticky':'static','Theater and mobile navigation pin; other stacked toolbars scroll');
-              await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
-              assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Stacked library uses page scrolling');
-              if (width <= 700) {
-                await browser.screenshot(page,path.join(output,name+'-'+label+'-media-pinned.png'));
-                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs"),h=document.getElementById("library-header").getBoundingClientRect(),m=document.querySelector(".library-tools").getBoundingClientRect();return getComputedStyle(t).position==="static"&&t.getBoundingClientRect().bottom<0&&Math.abs(h.top)<2&&Math.abs(m.top-h.bottom)<2;})()'),true,'Mobile tabs scroll away while the entire Media navbar pins without a gap');
-                assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Mobile sticky header corners cover the catalog');
-              }
-              for (const view of ['list','normal']) {
-                const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const top=Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom),tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};})())'));
-                await evaluate(`document.querySelector('.library-views [data-view="${view}"]').click();true`); await pause(120);
-                const rect=await evaluate(`JSON.stringify(document.querySelector('.library-tile[data-item="${anchor.id}"]').getBoundingClientRect().toJSON())`);
-                const tile=JSON.parse(rect), expected=Math.max(anchor.offset,-Math.max(0,tile.height-44));
-                const top=await evaluate('Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom)');
-                assert.ok(Math.abs(tile.top-top-expected)<2,label+': Page scroll preserves visible item after '+view);
-              }
-              await evaluate('window.scrollTo(0,0);true');
-            }
-            assert.equal(await evaluate('drawer.hidden&&document.getElementById("drawer-open").hidden'),true);
-            if (label==='normal') normalWidth=r.stage.width;
-            if (label==='theater') assert.ok(r.stage.width>normalWidth,'Theater enlarges video');
-            if (label==='1080p'||label==='4k') {
-              const content=r.library.right-r.stage.x;
-              assert.ok(Math.abs(content-(label==='1080p'?1702:2052))<2,'Requested expanded content width');
-              assert.ok(Math.abs(r.stage.width/r.library.width-2)<.02,'Columns expand proportionally');
-            }
-            if (wide&&width>700) {
-              assert.ok(Math.abs(r.stage.x*2+r.stage.width-await evaluate('document.documentElement.clientWidth'))<2,'Theater player is horizontally centered');
-              const section=await evaluate('document.getElementById("viewing-section").getBoundingClientRect().bottom');
-              assert.ok(section<=height+2,'Theater fits the remaining viewport');
-              assert.ok(r.stage.height<=r.stage.width,'Landscape theater player');
-              assert.ok(r.room.bottom<=section,'Room bar fits black viewing section');
-              assert.equal(await evaluate('getComputedStyle(document.getElementById("viewing-section")).backgroundColor'), 'rgb(16, 18, 23)','Normal background behind room bar');
+            assert.equal(await evaluate('document.getElementById("options-content").contains(document.getElementById("room-bar"))'),true,'Room bar lives inside Room');
+            if (width > 700) {
+              const q=JSON.parse(await evaluate('JSON.stringify(document.getElementById("queue-panel").getBoundingClientRect().toJSON())'));
+              assert.ok(q.y>=r.options.bottom,'Queue follows Room');
+              assert.ok(r.library.y>=r.stage.bottom,'Media below player');
               if (width>1100) {
-                assert.ok(Math.abs(r.column.y-r.library.y)<2&&r.library.x>=r.column.right,'Theater options and library share a row');
-                assert.ok(r.column.width/width>.2&&r.column.width/width<.26,'Theater options use about a quarter of the page');
-                await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY-18);true');
-                await pause(220);
-                await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
-                const pinnedTop=(await measure()).column.y;
-                assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).color'), 'rgb(255, 153, 84)','Active theater icon uses accent');
-                assert.equal(await evaluate('getComputedStyle(document.getElementById("theater")).backgroundColor'),'rgba(0, 0, 0, 0)','Active theater icon has no accent background');
-                await evaluate('window.scrollBy(0,400);true'); await pause(100);
-                assert.ok(Math.abs((await measure()).column.y-pinnedTop)<2,'Theater room options stay pinned during library page scrolling');
-                await browser.screenshot(page,path.join(output,name+'-theater-options-pinned.png'));
-                assert.ok(Math.abs(await evaluate('document.querySelector("#library-panel>.library-header").getBoundingClientRect().top'))<2,'Theater library navigation sticks at page top');
-                assert.equal(await evaluate('document.getElementById("library-top").parentElement.className'), 'library-top','Back to top in navigation row');
-                await evaluate('document.querySelector(".library-crumbs").hidden=false;document.querySelector(".library-crumbs [aria-current]").textContent="A very long breadcrumb title ".repeat(30);true');
-                assert.equal(await evaluate('(()=>{const c=document.querySelector(".library-crumbs [aria-current]"),b=document.getElementById("library-top");return getComputedStyle(c).textOverflow==="ellipsis"&&c.scrollWidth>c.clientWidth&&c.getBoundingClientRect().right<=b.getBoundingClientRect().left;})()'),true,'Breadcrumb ellipsis protects Back to top');
-                await browser.screenshot(page,path.join(output,name+'-theater-navigation.png'));
-                await evaluate('document.getElementById("library-top").click();true');
-                assert.equal(await evaluate('scrollY===0&&document.activeElement.id==="stage"'),true,'Library Back to top returns to player');
-                assert.equal(await evaluate('getComputedStyle(document.getElementById("library-top")).backgroundColor===getComputedStyle(document.getElementById("close-room")).backgroundColor'),true,'Back to top uses quiet button color');
-                await pause(220);
+                assert.ok(r.column.x>=r.library.right,'Room and Queue on the right');
+                if (wide) {
+                  assert.ok(Math.abs(r.column.y-r.library.y)<2,'Theater columns share a row');
+                  const ratio=r.library.width/(r.library.width+r.column.width);
+                  assert.ok(ratio>.68&&ratio<.72,'Theater Media uses about 70%');
+                  await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY);true'); await pause(120);
+                  const top=(await measure()).column.y;
+                  await evaluate('window.scrollBy(0,300);true'); await pause(120);
+                  assert.ok(Math.abs((await measure()).column.y-top)<2,'Theater right column stays sticky');
+                  await browser.screenshot(page,path.join(output,name+'-theater-panels.png'));
+                  await evaluate('window.scrollTo(0,0);true');
+                } else assert.ok(Math.abs(r.options.y-r.stage.y)<2,'Normal Room beside video');
               }
-              assert.ok(await evaluate('Number(getComputedStyle(document.getElementById("room-bar")).opacity)<.5'),'Room bar dims at page top');
-              await evaluate('window.scrollTo(0,20);true'); await pause(220);
-              assert.equal(await evaluate('getComputedStyle(document.getElementById("room-bar")).opacity'),'1','Scrolling reveals room bar');
-              await evaluate('window.scrollTo(0,0);true');
-              await evaluate('document.getElementById("refresh").focus();true'); await pause(220);
-              assert.equal(await evaluate('getComputedStyle(document.getElementById("room-bar")).opacity'),'1','Keyboard focus reveals room bar');
-              await evaluate('document.activeElement.blur();true');
-            }
-            if (width<=700) {
-              assert.equal(await evaluate('!theater&&getComputedStyle(document.getElementById("theater")).display==="none"'),true,'Mobile theater unavailable');
+              assert.equal(await evaluate('JSON.stringify([document.querySelector("#options-panel>.library-header"),document.querySelector(".queue-header"),document.getElementById("library-header")].map(h=>[h.offsetHeight,getComputedStyle(h).paddingTop]))'), '[[80,"20px"],[80,"20px"],[80,"20px"]]','Shared Queue-sized section headers');
+              for (const [button,content] of [['options-collapse','options-content'],['queue-collapse','queue-body'],['media-collapse','library-content']]) {
+                await evaluate(`document.getElementById('${button}').click();true`);
+                assert.equal(await evaluate(`document.getElementById('${button}').getAttribute('aria-expanded')==='false'&&getComputedStyle(document.getElementById('${content}')).display==='none'`),true,'Section collapses: '+button);
+                await evaluate(`document.getElementById('${button}').click();true`);
+                assert.equal(await evaluate(`getComputedStyle(document.getElementById('${content}')).display!=='none'`),true,'Section reopens: '+button);
+              }
+            } else {
+              assert.equal(await evaluate('getComputedStyle(document.getElementById("library-header")).paddingTop'),'20px','Mobile Media uses the shared top inset');
+              assert.equal(await evaluate('getComputedStyle(document.getElementById("options-panel")).display==="none"&&document.getElementById("media-collapse").disabled'),true,'Mobile uses exclusive tabs without collapse');
               assert.ok(Math.abs(r.stage.width-await evaluate('document.documentElement.clientWidth'))<2,'Edge-to-edge mobile player');
             }
-            if (label==='normal') {
-              const top=r.stage.y;
-              await evaluate('document.getElementById("library-panel").scrollTop=500;true');
-              assert.equal(await evaluate('document.getElementById("library-panel").scrollTop'),500,'Library scrolls independently');
-              assert.equal((await measure()).stage.y,top,'Library scroll leaves video in place');
-              await pause(100);
-              await browser.screenshot(page,path.join(output,name+'-library-scrolled.png'));
-              assert.equal(await evaluate('(()=>{const p=document.getElementById("library-panel").getBoundingClientRect(),h=document.querySelector("#library-panel>.library-header").getBoundingClientRect();return document.elementFromPoint(h.x+40,p.y+10).closest(".library-header")!==null;})()'),true,'Pinned header covers top padding above posters');
-              assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Both sticky header corners cover catalog content');
-              await evaluate('document.getElementById("library-panel").scrollTop=0;true');
-              assert.equal(await evaluate('!document.querySelector(".library-tabs")&&!document.getElementById("account-settings")&&document.getElementById("create").previousElementSibling.id==="refresh"'),true,'Toolbar and header arrangement');
-              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).backgroundColor===getComputedStyle(document.getElementById("library-panel")).backgroundColor'),true,'Unified library surface');
-              await browser.click(page,'identity');
-              await browser.until(page,'document.getElementById("account-dialog").open','Username opens account');
-              await evaluate('document.getElementById("account-dialog").close();document.activeElement.blur();true');
+            assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).overflowY'),'visible','Media uses page scrolling');
+            await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
+            assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Media uses page scrolling');
+            assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return Math.abs(h.top)<2&&Math.abs(t.top-h.bottom)<2;})()'),true,'Entire Media navbar sticks together');
+            assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Sticky header corners cover catalog');
+            for (const view of ['list','normal']) {
+              const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const top=Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom),tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};})())'));
+              await evaluate(`document.querySelector('.library-views [data-view="${view}"]').click();true`); await pause(120);
+              const tile=JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.library-tile[data-item="${anchor.id}"]').getBoundingClientRect().toJSON())`));
+              const top=await evaluate('Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom)');
+              assert.ok(Math.abs(tile.top-top-Math.max(anchor.offset,-Math.max(0,tile.height-44)))<2,'View change preserves visible item: '+label);
             }
+            await evaluate('window.scrollTo(0,0);true');
+            if (label==='normal') normalWidth=r.stage.width;
+            if (label==='theater') assert.ok(r.stage.width>normalWidth,'Theater enlarges video');
           }
         }
         if (!before) {
+          await browser.viewport(page,1440,1000);
+          await evaluate('document.getElementById("options-collapse").click();document.getElementById("queue-collapse").click();document.getElementById("media-collapse").click();true');
+          await browser.viewport(page,390,844); await pause(100);
+          for (const [key,content] of [['room','options-content'],['queue','queue-body'],['media','library-content']]) {
+            await evaluate(`selectSection('${key}');true`);
+            assert.equal(await evaluate(`getComputedStyle(document.getElementById('${content}')).display!=='none'`),true,'Mobile tab opens desktop-collapsed panel: '+key);
+          }
+          await browser.viewport(page,1440,1000); await pause(100);
+          assert.equal(await evaluate('sectionToggles.every(({button})=>button.getAttribute("aria-expanded")==="false")'),true,'Desktop collapse state survives mobile tabs');
+          await evaluate('document.getElementById("options-collapse").click();document.getElementById("queue-collapse").click();document.getElementById("media-collapse").click();true');
           await evaluate('document.getElementById("library-home").click();true');
           await browser.until(page,'document.querySelector("[data-play=demo]")','Synchronization video in library');
           await evaluate('document.querySelector("[data-play=demo]").scrollIntoView();true');
@@ -163,6 +119,7 @@ async function main() {
           await browser.until(page,'document.fullscreenElement?.id==="stage"&&immersive','Fullscreen');
           await browser.click(page,'drawer-open');
           assert.equal(await evaluate('!drawer.hidden&&drawer.parentElement===document.getElementById("stage")&&document.getElementById("library-panel").parentElement===drawer'),true,'Fullscreen drawer');
+          assert.equal(await evaluate('JSON.stringify([...drawer.children].filter(e=>["options-panel","queue-panel","library-panel"].includes(e.id)).map(e=>e.id))'),'["options-panel","queue-panel","library-panel"]','Fullscreen order is Room, Queue, Media');
           await browser.screenshot(page,path.join(output,name+'-fullscreen.png'));
           assert.equal(await evaluate('(()=>{const c=document.getElementById("drawer-close").getBoundingClientRect(),d=drawer.getBoundingClientRect();return !drawer.contains(document.getElementById("drawer-close"))&&c.right<d.left&&c.top<24;})()'),true,'Close button outside drawer top left');
           await browser.click(page,'title');

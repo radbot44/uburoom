@@ -100,7 +100,8 @@
       node('span', b, value === 'cards' ? 'Cards' : 'List');
       b.id = 'queue-view-' + value; return b;
     });
-    const toolbar = node('div', host, undefined, 'queue-toolbar');
+    const body = node('div', host); body.id = 'queue-body';
+    const toolbar = node('div', body, undefined, 'queue-toolbar');
     const directions = node('div', toolbar, undefined, 'queue-directions');
     const historyTab = button(directions, 'Browse history', undefined, () => browse('history'), false, 'queue-direction');
     historyTab.id = 'queue-tab-history';
@@ -112,15 +113,15 @@
     button(navigation, 'Center current video', 'center', () => centerCurrent(true)).id = 'queue-center';
     const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
     nextCard.id = 'queue-scroll-next';
-    const notice = node('p', host, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
-    const layout = node('div', host, undefined, 'queue-layout');
+    const notice = node('p', body, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
+    const layout = node('div', body, undefined, 'queue-layout');
     layout.tabIndex = 0; layout.setAttribute('role', 'region'); layout.setAttribute('aria-label', 'Playback queue timeline');
     const historyView = node('section', layout, undefined, 'queue-view queue-history-view');
     historyView.id = 'queue-history-view'; historyView.setAttribute('aria-label', 'Playback history');
     const nowPlayingBox = node('div', layout, undefined, 'queue-now-playing');
     const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
     upcomingView.id = 'queue-upcoming-view'; upcomingView.setAttribute('aria-label', 'Upcoming videos');
-    const footer = node('div', host, undefined, 'queue-footer');
+    const footer = node('div', body, undefined, 'queue-footer');
 
 
     const continuation = node('div', footer, undefined, 'queue-continuation');

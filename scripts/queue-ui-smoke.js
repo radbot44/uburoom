@@ -102,7 +102,7 @@ async function main() {
       await run('$("queue-view-list").click()');
       assert.equal(await run('$("queue-view-list").getAttribute("aria-pressed")'), 'true');
       assert.equal(await run('localStorage.getItem("uburoom-queue-view")'), 'list');
-      assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), 2);
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-layout")).gridTemplateColumns.split(" ").length'), await run('document.getElementById("queue-panel").clientWidth-40<=560?1:2'));
       assert.equal(await run('document.querySelector(".queue-entry").getBoundingClientRect().height===document.querySelector(".queue-history-entry").getBoundingClientRect().height'), true, 'List rows have matching heights');
       assert.equal(await run('document.querySelector(".queue-layout").dispatchEvent(new WheelEvent("wheel",{deltaY:120,bubbles:true,cancelable:true}))'), true, 'List retains vertical wheel behavior');
       assert.equal(await run('document.querySelector(".queue-history-entry").dataset.entryId'), await run('api("/api/watch/rooms/"+state.id+"/history").then(page=>page.items[0].id)'));
@@ -171,7 +171,7 @@ async function main() {
       assert.equal(await run('$("drawer-open").getAttribute("aria-label")'), 'Menu');
       assert.equal(await run('getComputedStyle($("room-symbol")).maskImage.includes("oomark-mono.svg")'), true);
       assert.equal(await run('fetch("/assets/branding/uburoom-oomark-mono.svg").then(response=>response.ok)'), true);
-      assert.equal(await run('$("media-symbol").querySelector("svg").isEqualNode($("drawer-symbol").querySelector("svg"))'), true);
+      assert.equal(await run('$("media-symbol").querySelector("svg").isEqualNode(uburoomUI.icon(document,"media"))'), true);
       await run('$("section-tab-room").focus();$("section-tabs").dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight",bubbles:true}))');
       assert.equal(await run('document.activeElement.id'), 'section-tab-queue');
       await run('window.scrollTo(0,0)');
@@ -186,7 +186,7 @@ async function main() {
       await browser.viewport(page, 1600, 1100);
       await run('$("theme-toggle").click();$("accent-toggle").click();setTheater(true);$("queue-view-cards").click();$("queue-panel").scrollIntoView({block:"start"})');
       await until(centerError + '<2', 'Theater centered');
-      assert.ok(await run('$("queue-panel").getBoundingClientRect().width>innerWidth*.9'), 'Theater queue spans the page');
+      assert.ok(await run('$("queue-panel").getBoundingClientRect().width>innerWidth*.25&&$("queue-panel").getBoundingClientRect().width<innerWidth*.32'), 'Theater queue uses the right column');
       await shot('theater-cards');
       await run('window.scrollTo(0,0)');
       await browser.click(page, 'fullscreen');
@@ -197,7 +197,7 @@ async function main() {
       await shot('drawer-cards');
       await run('document.exitFullscreen()');
       await until('!immersive', 'Exit fullscreen');
-      assert.equal(await run('$("queue-panel").parentElement.classList.contains("screen-column")'), true, 'Queue shell restored');
+      assert.equal(await run('$("queue-panel").parentElement.id==="room-column"'), true, 'Queue shell restored');
       await run('$("queue-view-list").click()');
       const restored = await browser.page(config.publicUrl + '/watch?demo=host');
       await browser.until(restored, 'document.getElementById("queue-view-list")?.getAttribute("aria-pressed")==="true"', 'Saved list preference');
