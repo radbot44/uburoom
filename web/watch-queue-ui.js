@@ -515,7 +515,7 @@
       host.classList.toggle('queue-no-current',empty); host.classList.toggle('queue-no-entries',!(state?.queueSummary?.pendingCount || state?.queueSummary?.historyCount));
       updateViewsVisibility();
       if (empty) {
-        if (currentKey !== 'empty') { nowPlayingBox.replaceChildren(); node('p',nowPlayingBox,'No video selected'); const browse = button(nowPlayingBox,'Browse media','media',() => browseMedia(),!state?.canBrowse); node('span',browse,'Browse media'); currentKey = 'empty'; }
+        if (currentKey !== 'empty') { nowPlayingBox.replaceChildren(); node('p',nowPlayingBox,'No video selected'); const browse = button(nowPlayingBox,'Browse media','media',() => browseMedia(),!state ? !getMe?.() : !state?.canBrowse); node('span',browse,'Browse media'); currentKey = 'empty'; }
         return;
       }
       const current = state?.queueSummary?.current;
@@ -844,13 +844,20 @@
       const state = getState();
       const panel = doc.getElementById('queue-panel');
       if (!panel) return;
-      const visible = !!state?.durable;
+      const visible = !state || !!state?.durable;
       panel.hidden = !visible;
       renderContinuation();
       if (!visible) {
         if (lastFetchedRoomId) { clearArtwork(); lastFetchedRoomId = null; lastFetchedRevision = -1; }
         if (bulkDialog.open) bulkDialog.close();
         autoNotice.textContent = '';
+        return;
+      }
+      if (!state) {
+        if (lastFetchedRoomId) { clearArtwork(); lastFetchedRoomId = null; lastFetchedRevision = -1; }
+        currentQueue = { items: [], total: 0, queueRevision: 0 };
+        currentHistory = { items: [], total: 0 };
+        renderNowPlaying();
         return;
       }
 

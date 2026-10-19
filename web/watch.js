@@ -260,7 +260,7 @@ function selectSection(key, focus = false) {
 function updateSectionTabs() {
   const mobile = document.body.classList.contains('mobile-player');
   if (!sectionChosen) mobileSection = state?.durable ? 'room' : 'media';
-  if (mobileSection === 'queue' && !state?.durable || mobileSection === 'room' && !state) mobileSection = 'media';
+  if (mobileSection === 'queue' && state && !state.durable) mobileSection = 'media';
   sectionTabs.hidden = !mobile;
   for (const { panel, button } of sectionToggles) {
     button.disabled = mobile;
@@ -268,7 +268,7 @@ function updateSectionTabs() {
   }
   for (const [key,, id] of sections) {
     const panel = $(id), tab = $('section-tab-' + key), active = key === mobileSection;
-    tab.disabled = key === 'queue' && !state?.durable || key === 'room' && !state;
+    tab.disabled = key === 'queue' && !!state && !state.durable;
     tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1;
     panel.classList.toggle('section-tab-inactive', mobile && !active);
     if (mobile) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', tab.id); }
@@ -336,7 +336,7 @@ function updateFullscreenLayout() {
   updateViewingLayout();
 }
 function placeRoomBar() {
-  $('room-bar').hidden = !state;
+  $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('room-lobby').hidden = !!selected || !me;
 }
 function renderSyncPreference() {
@@ -713,28 +713,28 @@ function renderVisibility() {
   $('current-room').hidden = !state;
   $('rooms').hidden = true;
   $('refresh').hidden = true;
-  $('room-bar').hidden = !state;
+  $('room-bar').hidden = !me && $('auth-overlay').hidden;
+  $('switch-room').textContent = state ? 'Switch room' : 'Choose room';
   $('create').hidden = !!state;
   $('remote-consent-text').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
   if (state) {
     $('current-room-name').textContent = state.roomName || 'Room';
     const role = state.roomRole || (state.isHost ? 'host' : 'participant');
     $('current-room-meta').textContent = role === 'creator' ? 'Creator' : role === 'host' ? 'Host' : 'Participant';
-    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'));
+    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'));
     $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').disabled = pending || !state.canManage;
     $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(String(state.viewers)));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
-  $('options-panel').hidden = !state; $('watch-settings').hidden = !state || !state.canManage;
+  $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !state || !state.canManage;
   $('watch-settings').inert = !state;
   $('watch-settings').setAttribute('aria-disabled', String(!state));
   $('admin-end-room').hidden = true;
-  for (const id of ['visibility', 'drawer-visibility']) {
-    const button = $(id), privateRoom = state?.visibility === 'private';
-    if (!button) continue;
-    button.hidden = !state || id === 'drawer-visibility' && state.durable; button.disabled = pending || !state?.canManage;
+  const button = $('visibility'), privateRoom = state?.visibility === 'private';
+  if (button) {
+    button.hidden = !state; button.disabled = pending || !state?.canManage;
     button.replaceChildren(uburoomUI.icon(document, privateRoom ? 'lock' : 'website'), document.createTextNode(privateRoom ? state?.durable ? 'Private · Hosts only' : 'Private · No one can join' : 'Public'));
     button.classList.toggle('private', privateRoom);
     button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : (privateRoom ? 'Private room' : 'Public room'));
@@ -754,7 +754,7 @@ async function changeVisibility() {
     await execute({action:'room.visibility',args:{visibility:'private'}});
   } else await execute({action:'room.visibility',args:{visibility:'public'}});
 }
-for (const id of ['visibility','drawer-visibility','room-visibility']) $(id).addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
+for (const id of ['visibility','room-visibility']) $(id).addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
 $('remote-consent-summary').addEventListener('click', () => {
   const expanded = $('remote-consent-summary').getAttribute('aria-expanded') === 'true';
   $('remote-consent-summary').setAttribute('aria-expanded', String(!expanded));

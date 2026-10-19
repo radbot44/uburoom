@@ -36,13 +36,11 @@ Four button classes cover all interactive controls. Never mix their semantic rol
 
 ### Icon button rules
 - Icon-only buttons must always have `aria-label` and `title`. No visible text label is needed when the icon is universally understood (⚙ settings, × close, ↻ refresh).
-- Do not mix icon-only and icon+text buttons in the same visual row without a clear grouping separator.
 - Use 24×24 SVG paths from the shared `remote-ui.js` icon set (`currentColor` stroke, 1.9px width, rounded caps/joins). No emoji or icon library substitutions.
 - Panel-header secondary icon buttons (settings, refresh, close, collapse) use `.icon-button`. Content-area action icon buttons (queue move, remove, play) use `'icon-button quiet'` to add the elevated hover state.
 
 ### Toggles
 - Binary room/permission toggles (Play/pause, Seek, Add to queue, Autoplay) use the custom CSS track/thumb toggle (`control-track` / `control-thumb` pattern in `remote-ui.js`), not native checkboxes. This applies in the Room panel, remote overlay, and queue settings.
-- State-indicating toggles with visible text (room visibility: Public / Private) use `.quiet`. The current state is communicated by both the icon (globe / lock) and text label; no filled background is needed.
 - `aria-pressed` or `aria-checked` must be set on every toggle to reflect the current state.
 
 ### Borders
@@ -80,7 +78,7 @@ Four button classes cover all interactive controls. Never mix their semantic rol
 
 Test affected normal/theater/phone surfaces using isolated fixtures. Actual player/Activity results stay separate. Private design transcripts and historical screenshots are not public documentation.
 
-- Active Room leads with name and a settings icon, then visibility, a clickable people count and role. Participant Play/pause, Seek and Add to queue switches are independently editable only by the creator or active administrator; ordinary hosts see read-only policy. More permissions opens the full editor. Remote control is a separate expandable temporary-consent area, followed by Switch room and Leave room. The desktop Room panel is hidden outside a room. Leave room always means leaving; Close room for everyone saves and ends live viewing. Delete room is separately confirmed in Manage.
+- Active Room leads with name and a settings icon, then visibility, a clickable people count and role. Participant Play/pause, Seek and Add to queue switches are independently editable only by the creator or active administrator; ordinary hosts see read-only policy. More permissions opens the full editor. Remote control is a separate expandable temporary-consent area, followed by Switch room and Leave room. Leave room always means leaving; Close room for everyone saves and ends live viewing. Delete room is separately confirmed in Manage.
 - Room settings use a compact room-name/refresh/close header and nearby save feedback, desktop side navigation and a phone section selector. General contains name/visibility; People is one roster with role badges and contextual host actions; Permissions shows a preset/Apply row, one short playback summary and grouped switches directly. Desktop retains Host/Participant columns; phones use Participants/Hosts tabs. Show host inheritance once with compact accessible indicators; Playback & queue shares controls with the Queue entry point; Manage contains transfer, saved-video clearing, Close and Delete. Preserve unfinished names across unrelated edits and refreshes. Use neutral lock styling for private visibility. Auto-queue has a source picker for accessible libraries, shows and collections, resolves actual source names, hides dependent fields while Off and hides Specials for movie sources. Save/Reset stays reachable while drafts scroll.
 - Queue puts Autoplay beside its settings icon at the top. Empty playback shows No video selected and Browse media rather than a synthetic Now playing card. Countdown seconds have fixed space separate from truncated titles. Applied-command feedback clears on leaving/switching rooms.
 - Host-managed grants participants play/pause and seeking, with hosts choosing videos and managing queue/room. Shared playback and queue adds video choice, queue editing and autoplay for participants. Neither preset grants deletion to hosts or participants; configured defaults and existing custom policies remain unchanged until an explicit preset application. Private means creator and hosts only; invited participants require a later access-model feature.

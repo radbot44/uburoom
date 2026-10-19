@@ -37,7 +37,7 @@ async function main() {
       assert.equal(await run('$("empty-title").textContent'),'No active rooms');
       await browser.click(host,'fullscreen'); await until('!!document.fullscreenElement','Lobby fullscreen');
       await run('document.exitFullscreen()'); await until('!document.fullscreenElement','Lobby fullscreen exit');
-      assert.equal(await run('$("drawer-visibility").hidden && !$("room-lobby").hidden'),true);
+      assert.equal(await run('!$("room-lobby").hidden'),true);
       await run('$("lobby-create").click()');
       await until('$("room-dialog").open && !$("room-create-form").hidden','Discovery first'); await shot('chooser');
       await run('$("room-chooser-new").click()');

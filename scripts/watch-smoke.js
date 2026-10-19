@@ -310,7 +310,7 @@ async function main() {
     await until(host, '!!state && !!selected', 'room created');
     assert.equal(await evaluate(host, 'document.getElementById("admin-mode").getAttribute("aria-checked")==="false" && !document.getElementById("admin-mode").hidden'),true,'owner Admin toggle defaults off');
     await evaluate(host,'document.getElementById("options-collapse").click()');
-    assert.equal(await evaluate(host,'document.getElementById("options-content").hidden && document.getElementById("drawer-visibility").getBoundingClientRect().width>0'),true,'collapsing options keeps Public button visible');
+    assert.equal(await evaluate(host,'document.getElementById("options-content").hidden'),true,'collapsing options collapses content');
     await evaluate(host,'document.getElementById("options-collapse").click()');
     await evaluate(host, 'setTheater(true);toggleDrawer(true)');
     assert.equal(await evaluate(host, 'drawer.hidden && document.getElementById("drawer-open").hidden && document.getElementById("library-panel").parentElement!==drawer'), true, 'Theater keeps library in the page');
@@ -340,7 +340,7 @@ async function main() {
     const confirmation = await command('browsingContext.captureScreenshot',{context:host,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-private-confirmation-qa.png'),Buffer.from(confirmation.data,'base64'));
     await click(host,'confirm-private');
-    await until(host, 'state.visibility==="private" && document.getElementById("visibility").classList.contains("private") && document.getElementById("drawer-visibility").textContent==="Private - No one can join"', 'both visibility controls show Private');
+    await until(host, 'state.visibility==="private" && document.getElementById("visibility").classList.contains("private") && document.getElementById("room-visibility").textContent==="Private · No one can join"', 'both visibility controls show Private');
     const privatePlayer = await command('browsingContext.captureScreenshot', {context:host,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-private-qa.png'),Buffer.from(privatePlayer.data,'base64'));
     await until(guest, '!state && document.getElementById("rooms").querySelectorAll("button").length===0', 'private room revokes guest view');
@@ -368,7 +368,7 @@ async function main() {
     await until(guest, 'video.readyState>=2', 'second host can start video');
     await evaluate(guest, 'document.getElementById("close-room").click()');
     await until(guest, '!selected && !state', 'second host ends their session');
-    await evaluate(host, 'document.getElementById("drawer-visibility").click()');
+    await evaluate(host, 'document.getElementById("room-visibility").click()');
     await until(guest, 'document.getElementById("rooms").querySelectorAll("button").length===1', 'host public room reappears');
     await evaluate(guest, 'document.getElementById("rooms").querySelector("button").click()');
     await evaluate(host, "execute({action:'room.sharing',args:{mode:'guild'}}).then(()=>execute({action:'room.enable'})).then(()=>true)");
