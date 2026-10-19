@@ -806,3 +806,14 @@ Added reopen (clock return arrow), login (entering counterpart of logout), creat
 - `node scripts/plex-library-smoke.js`: Firefox passes Cards/Posters/List, their matching poster widths, navigation/scroll restoration, details and responsive layouts after the internal view/icon rename.
 
 These are isolated synthetic-fixture results. Real Plex media and Discord Activity remain separate verification gates; no production restart or deployment was performed.
+
+
+### Room permission presets and participant management lock (2026-10-19)
+
+- Creation now offers Host control, Play/Pause and Queue. Settings uses the same full-width group with immediate saving, no Apply button or summary hints, and a read-only Custom indicator only for nonmatching rules. Adjust picture is absent from editable capabilities and both permission columns.
+- Participant Room management grants are forced off when reading old saved/configured policies, denied by authorization even in a malformed live policy, and rejected on direct permission edits. Older picture flags remain readable without a schema change and confer no participant authority; fixed creator/host picture controls retain remote-consent checks.
+- `npm run test:full`: 355 passed, zero failures/skips. Coverage includes exact preset grants, UI/server preset parity, permission edit rejection/rollback, retired configuration fields, fixed picture authority and reopening old stored policies with stable room identities/revisions.
+- `node scripts/room-redesign-smoke.js`: Chrome and Firefox pass exact creation choices, removal of hints/Apply/picture controls, locked participant management switches, immediate saving for all three presets, Custom detection/recovery, full-width layout, keyboard focus after saving, draft retention, phone roles and fullscreen. Inspected creation, desktop preset/custom and phone permission renders.
+- `node scripts/room-ui-smoke.js`: Chrome and Firefox pass with Play/Pause and Queue creation choices, including role controls, queue flows, host/creator transfer, saved-room reopen, private-room access, Admin mode and deletion.
+
+Verification uses isolated synthetic fixtures. Real Plex/Discord Activity remains a separate gate. These permission changes were implemented after deploying the prior queue commit and have not been deployed.

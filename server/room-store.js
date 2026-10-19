@@ -91,7 +91,7 @@ class RoomStore {
     selectedVisibility = visibility(selectedVisibility);
     if (typeof fullPermissions !== 'boolean') throw error('Choose full participant permissions on or off');
     const permissions = permissionPreset === undefined || permissionPreset === 'server-defaults' ? Policy.policy(this.defaults) : Policy.preset(permissionPreset);
-    if (fullPermissions) permissions.viewer = Object.fromEntries(Policy.CAPABILITIES.map(key => [key, true]));
+    if (fullPermissions) permissions.viewer = Policy.preset('queue').viewer;
     this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
       .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null);
     return this.commit(this.get(id));
@@ -140,7 +140,7 @@ class RoomStore {
         }
         case 'permissions': {
           if (!['host', 'viewer'].includes(change.role)) throw error('Choose host or viewer permissions');
-          room.permissions[change.role] = Policy.permissions(change.permissions, room.permissions[change.role]);
+          room.permissions[change.role] = Policy.permissions(change.permissions, room.permissions[change.role], { role:change.role });
           for (const key of Policy.CAPABILITIES) {
             if (change.role === 'host' && room.permissions.host[key] === false) {
               room.permissions.viewer[key] = false;

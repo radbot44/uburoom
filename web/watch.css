@@ -245,7 +245,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .room-role-badge.creator{color:var(--primary)}
 .room-role-badge.host{color:var(--text)}
 .room-role-badge.participant{color:var(--muted)}
-#room-permission-preset{width:100%;min-width:0;flex-basis:65%}#room-permission-summary{margin:10px 0}#room-permission-roles{display:none}
+#room-permission-preset-group{width:100%}#room-permission-preset-group [hidden]{display:none}#room-permission-roles{display:none}
 .permission-inherited{display:inline-block;margin:0 0 0 4px;font-size:16px;color:var(--muted)}.room-permission-table{width:100%;border-collapse:collapse;margin:0}.room-permission-table td{position:relative}.room-permission-table .permission-group{font-weight:700;padding-top:14px;color:var(--accent-text)}
 #room-quick-switches input,#room-permissions input{appearance:none;position:relative;width:36px;height:22px;margin:0;border:0;border-radius:999px;background:var(--border);cursor:pointer;flex:none;vertical-align:middle}
 #room-quick-switches input::after,#room-permissions input::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text)}

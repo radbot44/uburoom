@@ -1191,8 +1191,7 @@ async function chooseRoom(item, section = 'active') {
   if (dialog.open || creating) return {status:'cancelled'};
   roomChoice = item;
   $('room-dialog-error').textContent = ''; delete $('room-choices').dataset.roomList; $('room-choices').replaceChildren();
-  $('room-name').value = roomNameDraft; $('room-create-visibility').value = 'public'; $('room-create-preset').value = 'host-managed';
-  $('room-create-summary').textContent = uburoomRoomUI.summary('host-managed');
+  $('room-name').value = roomNameDraft; $('room-create-visibility').value = 'public'; $('room-create-preset').value = 'host-control';
   roomChooserSection(section);
   (document.fullscreenElement === $('stage') ? $('stage') : document.body).append(dialog);
   const closed = new Promise(resolve => dialog.addEventListener('close', () => {
@@ -1232,7 +1231,6 @@ $('room-create-back').addEventListener('click',() => { roomChooserSection('saved
 $('room-show-active').addEventListener('click',() => roomChooserSection('active'));
 $('room-show-saved').addEventListener('click',() => roomChooserSection('saved'));
 $('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved(0); void refreshRooms().catch(error => $('room-dialog-error').textContent = error.message); });
-$('room-create-preset').addEventListener('change',event => { $('room-create-summary').textContent = event.target.value === 'server-defaults' && me?.roomPermissionDefaults ? uburoomRoomUI.describe(me.roomPermissionDefaults, true) : uburoomRoomUI.summary(event.target.value); });
 function browseMedia() {
   const panel = $('library-panel');
   if (immersive) { toggleDrawer(true); selectSection('media'); }

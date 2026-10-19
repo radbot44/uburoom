@@ -273,7 +273,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P13 — Persistent rooms and playback queues
 
-Queue UI follow-up: portrait poster cards, a centered chronological List, separate Auto-play/Auto-queue controls, history removal, consistent Media view names and Browse media feedback are implemented locally. First additions select empty playback while honoring Auto-play. Browser and regression evidence is recorded in docs/testing.md.
+Queue UI follow-up: portrait poster cards, a centered chronological List, separate Auto-play/Auto-queue controls, history removal, consistent Media view names and Browse media feedback are implemented locally. First additions select empty playback while honoring Auto-play. Browser and regression evidence is recorded in docs/testing.md. Room permission presets now use Host control, Play/Pause and Queue, save immediately in Settings, and keep participant management locked off.
 
 **Status:** P13-1 through P13-5 are implemented and locally verified, including durable rooms/permissions, live integration/Admin mode, manual/bulk queues, following/random generation, shuffle and cancellable autoplay. The full automated suite passes 344 tests with zero failures/skips; Chrome and Firefox room smoke flows pass. P13-6 UI completion/review and P13-7 real Plex/Activity continuity, resource measurements and retained-state verification remain open. No deployment or retained-state transfer has occurred.
 

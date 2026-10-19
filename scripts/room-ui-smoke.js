@@ -55,7 +55,7 @@ async function main() {
       await until('me?.durableRooms && transport?.ready','Durable room login');
       await run('$("create").click()');
       await until('$("room-dialog").open','Create chooser'); await shot('chooser');
-      await run('$("room-create-preset").value="server-defaults";$("room-name").value="Friday room";$("room-create").click()');
+      await run('$("room-create-preset").value="play-pause";$("room-name").value="Friday room";$("room-create").click()');
       await until('state?.roomName==="Friday room"','Named room');
       const id = await run('selected');
       assert.equal((await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})')).status,'applied');
@@ -256,11 +256,11 @@ async function main() {
       await browser.evaluate(guest,'$("room-confirm-yes").click()');
       await browser.until(guest,'!$("room-settings-dialog").open','Room deleted');
       assert.equal(app.watch.roomState.store.list(app.registry.identity('discord',subjects.guest).userId).total,0);
-      await run('$("create").click();$("room-create-preset").value="shared-queue";$("room-name").value="Full permissions";$("room-create").click()');
+      await run('$("create").click();$("room-create-preset").value="queue";$("room-name").value="Full permissions";$("room-create").click()');
       await until('state?.roomName==="Full permissions"','Full-permission creation');
       assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.editQueue,true);
       assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.deleteRoom,false);
-      console.log(name + ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, shared-queue preset without deletion and rendered desktop/phone/theater passed');
+      console.log(name + ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed');
     } catch (error) {
       console.error([...app.watch.rooms.values()].map(room=>({name:room.s.name,creator:room.saved?.creatorId,hosts:room.saved?.hosts,revision:room.saved?.revision,viewers:room.viewers.size})));
       if (browser && host) {

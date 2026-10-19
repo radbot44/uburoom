@@ -13,7 +13,7 @@ test('room roles keep creator-only authority independent of full participant per
     assert.equal(Policy.allowed(room, 'viewer', capability), capability === 'playPause');
   }
   room.permissions.viewer = Object.fromEntries(Policy.CAPABILITIES.map(key => [key, true]));
-  assert.ok(Policy.CAPABILITIES.every(key => Policy.allowed(room, 'host', key)), 'hosts inherit all viewer grants');
+  assert.ok(Policy.CAPABILITIES.every(key => Policy.allowed(room, 'host', key) === (key !== 'deleteRoom')), 'participant flags cannot confer management authority on hosts');
   for (const capability of Policy.CREATOR_ONLY) {
     assert.equal(Policy.allowed(room, 'creator', capability), true);
     assert.equal(Policy.allowed(room, 'host', capability), false);
@@ -78,4 +78,37 @@ test('role administrators require fresh trusted guild membership and lose author
   present = true;
   registry.db.prepare('DELETE FROM identities WHERE userId=?').run(user.id);
   assert.equal(Policy.administrator(registry, config, user.id, access), false);
+});
+
+test('the three presets grant exact participant controls and keep host deletion off', () => {
+  const expected = { 'host-control':[], 'play-pause':['playPause'], queue:['playPause','seek','chooseMedia','addQueue','editQueue','autoplay'] };
+  for (const [name, granted] of Object.entries(expected)) {
+    const policy = Policy.preset(name);
+    assert.deepEqual(Object.keys(policy.viewer).filter(key => policy.viewer[key]), granted);
+    assert.ok(Policy.CAPABILITIES.every(key => policy.host[key] === (key !== 'deleteRoom')));
+    assert.equal(Object.hasOwn(policy.host,'picture'), false);
+    assert.equal(Object.hasOwn(policy.viewer,'picture'), false);
+  }
+  assert.throws(() => Policy.preset('custom'), /Unknown/);
+});
+
+test('participant management grants are denied even in old stored/default policies or forged live policies', () => {
+  const old = {host:{picture:true},viewer:{picture:true,roomSettings:true,closeRoom:true,deleteRoom:true}};
+  const normalized = Policy.policy(old);
+  assert.equal(Object.hasOwn(normalized.viewer,'picture'), false);
+  for (const key of Policy.VIEWER_BLOCKED) {
+    assert.equal(normalized.viewer[key], false);
+    assert.throws(() => Policy.permissions({[key]:true}, normalized.viewer, {role:'viewer'}), /unavailable to participants/);
+    assert.equal(Policy.allowed({creatorId:'creator',hosts:['host'],permissions:old}, 'viewer', key), false);
+  }
+  assert.throws(() => Policy.permissions({picture:true},normalized.host), /Invalid/);
+  const room = {creatorId:'creator',hosts:['host'],permissions:normalized};
+  assert.equal(Policy.allowed(room,'viewer','picture'),false);
+  assert.equal(Policy.allowed(room,'host','picture'),true);
+  assert.equal(Policy.allowed(room,'creator','picture'),true);
+  const configured = Policy.configuration({ROOM_VIEWER_PERMISSIONS:'all'}).roomPermissions;
+  assert.ok(Policy.VIEWER_BLOCKED.every(key => !configured.viewer[key]));
+  const retired = Policy.configuration({ROOM_HOST_PERMISSIONS:'playPause,picture'}).roomPermissions.host;
+  assert.equal(retired.playPause,true);
+  assert.equal(Object.hasOwn(retired,'picture'),false);
 });

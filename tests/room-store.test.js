@@ -76,18 +76,18 @@ test('creator-only host assignments and transfer survive old-creator departure w
   assert.throws(() => f.store.restore(room.id, f.creator), status(403));
 });
 
-test('full participant permissions grant ordinary room actions without reopening or creator-only powers', async t => {
+test('full participant playback and queue controls never grant room management', async t => {
   const f = fixture(t);
-  let room = await f.store.create(f.creator, { fullPermissions: true });
-  assert.ok(Policy.CAPABILITIES.every(key => Policy.allowed(room, f.viewer, key)));
+  const room = await f.store.create(f.creator, { fullPermissions:true });
+  assert.deepEqual(room.permissions.viewer, Policy.preset('queue').viewer);
   assert.equal(Policy.allowed(room, f.viewer, 'manageHosts'), false);
   assert.throws(() => f.store.restore(room.id, f.viewer), status(403));
-  room = await f.store.edit(room.id, f.viewer, room.revision, { action: 'rename', name: 'Shared room' });
-  await assert.rejects(f.store.edit(room.id, f.viewer, room.revision, { action: 'permissions', role: 'viewer', permissions: { seek: true } }), status(403));
-  room = await f.store.edit(room.id, f.creator, room.revision, { action: 'permissions', role: 'viewer', permissions: { roomSettings: false } });
-  await assert.rejects(f.store.edit(room.id, f.viewer, room.revision, { action: 'rename', name: 'No longer allowed' }), status(403));
-  room.permissions.viewer.roomSettings = true;
-  assert.equal(f.store.get(room.id).permissions.viewer.roomSettings, false, 'returned records cannot mutate the store');
+  await assert.rejects(f.store.edit(room.id, f.viewer, room.revision, {action:'rename',name:'Denied'}), status(403));
+  for (const key of Policy.VIEWER_BLOCKED) {
+    await assert.rejects(f.store.edit(room.id, f.creator, room.revision, {action:'permissions',role:'viewer',permissions:{[key]:true}}), /unavailable to participants/);
+    assert.equal(f.store.get(room.id).revision, room.revision);
+    assert.equal(f.store.get(room.id).permissions.viewer[key], false);
+  }
 });
 
 test('operator defaults snapshot at creation and settings edits are not invalidated by periodic bookmarks', async t => {
@@ -233,19 +233,39 @@ test('writer conflict fails room mutations and seals reads against uncommitted m
 test('explicit room presets preserve defaults, reject unknown names and protect destructive powers', async t => {
   const f = fixture(t, { defaults:{viewer:{playPause:false, deleteRoom:true}} });
   const configured = await f.store.create(f.creator, {permissionPreset:'server-defaults'});
-  assert.equal(configured.permissions.viewer.deleteRoom, true);
-  for (const name of ['host-managed','shared-queue']) {
+  assert.equal(configured.permissions.viewer.deleteRoom, false);
+  for (const name of ['host-control','play-pause','queue']) {
     let room = await f.store.create(f.creator, {permissionPreset:name});
-    assert.equal(room.permissions.viewer.playPause, true);
-    assert.equal(room.permissions.viewer.seek, true);
-    assert.equal(room.permissions.viewer.editQueue, name === 'shared-queue');
+    assert.equal(room.permissions.viewer.playPause, name !== 'host-control');
+    assert.equal(room.permissions.viewer.seek, name === 'queue');
+    assert.equal(room.permissions.viewer.editQueue, name === 'queue');
     for (const role of ['host','viewer']) assert.equal(room.permissions[role].deleteRoom, false);
-    await assert.rejects(f.store.edit(room.id,f.viewer,room.revision,{action:'permissions.preset',preset:'shared-queue'}),/permission/);
-    room = await f.store.edit(room.id,f.creator,room.revision,{action:'permissions.preset',preset:'shared-queue'});
+    await assert.rejects(f.store.edit(room.id,f.viewer,room.revision,{action:'permissions.preset',preset:'queue'}),/permission/);
+    room = await f.store.edit(room.id,f.creator,room.revision,{action:'permissions.preset',preset:'queue'});
     assert.equal(room.permissions.viewer.editQueue,true);
-    assert.equal(f.store.get(configured.id).permissions.viewer.deleteRoom,true);
+    assert.equal(f.store.get(configured.id).permissions.viewer.deleteRoom,false);
   }
   await assert.rejects(f.store.create(f.creator,{permissionPreset:'unknown'}),/Unknown/);
   const ui = {}; require('node:vm').runInNewContext(fs.readFileSync(path.join(__dirname,'../web/watch-rooms-ui.js'),'utf8'),ui);
-  for (const name of ['host-managed','shared-queue']) assert.equal(JSON.stringify(ui.uburoomRoomUI.presetPolicy(name)),JSON.stringify(Policy.preset(name)));
+  for (const name of ['host-control','play-pause','queue']) {
+    assert.equal(JSON.stringify(ui.uburoomRoomUI.presetPolicy(name)),JSON.stringify(Policy.preset(name)));
+    assert.equal(ui.uburoomRoomUI.presetName(Policy.preset(name)),name);
+  }
+  const custom = Policy.preset('host-control'); custom.viewer.seek = true;
+  assert.equal(ui.uburoomRoomUI.presetName(custom),'custom');
+});
+
+test('old stored picture flags are retired and participant management stays off across restart', async t => {
+  const f = fixture(t, {disk:true});
+  const room = await f.store.create(f.creator);
+  const old = {...room.permissions,host:{...room.permissions.host,picture:true},viewer:{...room.permissions.viewer,picture:true,roomSettings:true,closeRoom:true,deleteRoom:true}};
+  f.registry.db.prepare('UPDATE watch_rooms SET permissions=? WHERE id=?').run(JSON.stringify(old), room.id);
+  await f.registry.flush();
+  await f.restart();
+  const restored = f.store.get(room.id);
+  assert.equal(Object.hasOwn(restored.permissions.host,'picture'),false);
+  assert.equal(Object.hasOwn(restored.permissions.viewer,'picture'),false);
+  assert.ok(Policy.VIEWER_BLOCKED.every(key => !restored.permissions.viewer[key]));
+  assert.equal(restored.creatorId, room.creatorId);
+  assert.equal(restored.revision, room.revision);
 });

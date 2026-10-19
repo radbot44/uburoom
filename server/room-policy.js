@@ -4,37 +4,42 @@
 // These are room capabilities, independent of remote consent and Plex access.
 const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
-  'picture', 'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost'
 ]);
+const VIEWER_BLOCKED = Object.freeze(['roomSettings', 'closeRoom', 'deleteRoom']);
 const CREATOR_ONLY = Object.freeze(['manageHosts', 'transferCreator', 'managePermissions']);
 const DEFAULTS = Object.freeze({
   host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key !== 'deleteRoom']))),
   viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause'])))
 });
 
-// Explicit presets never alter existing or configured policies implicitly.
+// Presets define editable controls; participant room management is always locked off.
 function preset(name) {
-  if (!['host-managed', 'shared-queue'].includes(name)) throw new Error('Unknown room permission preset');
+  if (!['host-control', 'play-pause', 'queue'].includes(name)) throw new Error('Unknown room permission preset');
   return {
     host: { ...DEFAULTS.host },
     viewer: Object.fromEntries(CAPABILITIES.map(key => [key,
-      ['playPause', 'seek'].includes(key) || name === 'shared-queue' && ['chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)]))
+      name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)]))
   };
 }
 
-function permissions(value, base) {
+function permissions(value, base, { role, stored = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some(key => !CAPABILITIES.includes(key) || typeof value[key] !== 'boolean')) {
+      Object.keys(value).some(key => !(CAPABILITIES.includes(key) || stored && key === 'picture') || typeof value[key] !== 'boolean')) {
     throw new Error('Invalid room permissions');
   }
-  return Object.fromEntries(CAPABILITIES.map(key => [key, value[key] ?? base[key]]));
+  if (!stored && role === 'viewer' && VIEWER_BLOCKED.some(key => value[key] === true)) {
+    throw new Error('Room management permissions are unavailable to participants');
+  }
+  return Object.fromEntries(CAPABILITIES.map(key => [key, role === 'viewer' && VIEWER_BLOCKED.includes(key) ? false : value[key] ?? base[key]]));
 }
 
 function policy(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['host', 'viewer'].includes(key))) {
     throw new Error('Invalid room permission roles');
   }
-  return { host: permissions(value.host ?? {}, DEFAULTS.host), viewer: permissions(value.viewer ?? {}, DEFAULTS.viewer) };
+  // Old saved policies may contain the retired picture flag; it no longer grants authority.
+  return { host: permissions(value.host ?? {}, DEFAULTS.host, { stored:true }), viewer: permissions(value.viewer ?? {}, DEFAULTS.viewer, { role:'viewer', stored:true }) };
 }
 
 /** @param {{creatorId:string,hosts:string[]}} room @param {string} userId */
@@ -43,11 +48,14 @@ function role(room, userId) {
 }
 
 function allowed(room, userId, capability) {
-  if (![...CAPABILITIES, ...CREATOR_ONLY].includes(capability)) return false;
   const level = role(room, userId);
+  // Picture controls retain fixed host authority while their editable permission is retired.
+  if (capability === 'picture') return level === 'creator' || level === 'host';
+  if (![...CAPABILITIES, ...CREATOR_ONLY].includes(capability)) return false;
+  if (level === 'viewer' && VIEWER_BLOCKED.includes(capability)) return false;
   if (level === 'creator') return true;
   return CAPABILITIES.includes(capability) && (room.permissions[level][capability] === true ||
-    level === 'host' && room.permissions.viewer[capability] === true);
+    level === 'host' && !VIEWER_BLOCKED.includes(capability) && room.permissions.viewer[capability] === true);
 }
 
 function commandCapability(action) {
@@ -68,7 +76,7 @@ function permissionList(value, base) {
   if (names.length === 1 && ['all', 'none'].includes(names[0])) {
     return Object.fromEntries(CAPABILITIES.map(key => [key, names[0] === 'all']));
   }
-  if (names.some(name => !CAPABILITIES.includes(name))) throw new Error('Unknown capability in room permission defaults');
+  if (names.some(name => !CAPABILITIES.includes(name) && name !== 'picture')) throw new Error('Unknown capability in room permission defaults');
   return Object.fromEntries(CAPABILITIES.map(key => [key, names.includes(key)]));
 }
 
@@ -81,10 +89,10 @@ function identifiers(value, pattern, setting) {
 
 function configuration(env) {
   return {
-    roomPermissions: {
+    roomPermissions: policy({
       host: permissionList(env.ROOM_HOST_PERMISSIONS, DEFAULTS.host),
       viewer: permissionList(env.ROOM_VIEWER_PERMISSIONS, DEFAULTS.viewer)
-    },
+    }),
     roomAdministrators: {
       discord: identifiers(env.ROOM_ADMIN_DISCORD_IDS, /^\d{17,20}$/, 'ROOM_ADMIN_DISCORD_IDS'),
       plex: identifiers(env.ROOM_ADMIN_PLEX_IDS, /^\d{1,20}$/, 'ROOM_ADMIN_PLEX_IDS'),
@@ -108,4 +116,4 @@ function administrator(registry, config, userId, access) {
     access?.isMember(identity.subject) === true && configured.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
 }
 
-module.exports = { preset, CAPABILITIES, CREATOR_ONLY, DEFAULTS, permissions, policy, role, allowed, commandCapability, configuration, administrator };
+module.exports = { preset, CAPABILITIES, VIEWER_BLOCKED, CREATOR_ONLY, DEFAULTS, permissions, policy, role, allowed, commandCapability, configuration, administrator };

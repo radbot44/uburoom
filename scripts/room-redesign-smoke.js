@@ -42,6 +42,8 @@ async function main() {
       await until('$("room-dialog").open && !$("room-create-form").hidden','Discovery first'); await shot('chooser');
       await run('$("room-chooser-new").click()');
       await until('!$("room-create-form").hidden','Separate creation'); await shot('new');
+      assert.deepEqual(await run('[...$("room-create-preset-group").querySelectorAll("button")].map(button=>button.textContent)'), ['Host control','Play/Pause','Queue']);
+      assert.equal(await run('!!$("room-create-summary") || !!$("room-create-preset").querySelector("[value=custom]")'),false);
       await run('$("room-name").value="Friday room";$("room-create-back").click()');
       await until('!$("room-reopen").hidden','Direct creation to reopen');
       await run('$("room-chooser-new").click()');
@@ -49,6 +51,7 @@ async function main() {
       await run('$("room-create").click()');
       await until('state?.roomName==="Friday room"','Named room');
       const id = await run('selected');
+      assert.equal(await run('Object.values(state.participantPermissions).some(Boolean)'),false,'Host control starts with no participant grants');
       assert.equal(await run('state.capabilities.seek && state.roomRole==="creator"'),true);
       assert.match(await run('$("current-room-meta").textContent'),/Room Leader/);
       assert.equal(await run('document.querySelectorAll(".queue-now-playing progress").length'),0);
@@ -79,8 +82,25 @@ async function main() {
       await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true');
       await shot('permissions');
       assert.ok(await run('document.querySelector("#room-permissions input[role=switch]")!==null'));
-      await run('$("room-permission-preset").value="shared-queue";$("room-permission-apply").click()');
-      await until('$("room-settings-status").textContent==="Saved" && $("room-permission-preset").value==="shared-queue"','Apply preset');
+      assert.equal(await run('!!$("room-permission-apply") || !!$("room-permission-summary") || !!document.querySelector("[data-permission=picture]")'),false);
+      assert.equal(await run('$("room-permission-preset").value'), 'custom');
+      assert.equal(await run('$("room-permission-preset-group").querySelector("[data-value=custom]").hidden'),false);
+      assert.equal(await run('[...document.querySelectorAll("#room-permissions input[data-role=viewer]")].filter(input=>["roomSettings","closeRoom","deleteRoom"].includes(input.dataset.permission)).every(input=>input.disabled&&!input.checked)'),true);
+      assert.ok(await run('Math.abs($("room-permission-preset-group").getBoundingClientRect().width-document.querySelector("[data-room-section=permissions]").getBoundingClientRect().width)<2'));
+      for (const [preset,granted] of [['host-control',[]],['play-pause',['playPause']],['queue',['playPause','seek','chooseMedia','addQueue','editQueue','autoplay']]]) {
+        await run('$("room-preset-' + preset + '").focus();$("room-preset-' + preset + '").click()');
+        await until('$("room-settings-status").textContent==="Saved" && $("room-permission-preset").value==="' + preset + '"','Immediate preset save');
+        assert.deepEqual(await run('Object.keys(state.participantPermissions).filter(key=>state.participantPermissions[key])'),granted);
+        assert.equal(await run('document.activeElement.id'),'room-preset-' + preset,'Preset keyboard focus survives saving');
+        assert.equal(await run('$("room-permission-preset-group").querySelector("[data-value=custom]").hidden'),true);
+        assert.equal(await run('[...document.querySelectorAll("#room-permissions input[data-role=host]")].every(input=>input.checked===(input.dataset.permission!=="deleteRoom"))'),true);
+      }
+      await shot('permissions-presets');
+      await run('document.querySelector("#room-permissions input[data-role=viewer][data-permission=seek]").click()');
+      await until('$("room-permission-preset").value==="custom" && !$("room-permission-preset-group").querySelector("[data-value=custom]").hidden','Custom after an individual edit');
+      await shot('permissions-custom');
+      await run('document.querySelector("#room-permissions input[data-role=viewer][data-permission=seek]").click()');
+      await until('$("room-permission-preset").value==="queue" && $("room-permission-preset-group").querySelector("[data-value=custom]").hidden','Preset recognized again');
       assert.equal(await run('$("room-rename").value'),'Unfinished rename');
       await browser.viewport(host,390,844); await shot('phone-permissions');
       await run('$("room-permission-host").click()');
