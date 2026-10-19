@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-18.
+Updated: 2026-10-19.
 
 uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity. The YouTube TV remote is maintained in the independent uburoom-remote repository, with versioned integration and remaining live verification tracked in M1. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
 
@@ -171,6 +171,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Queue layout increment (2026-10-19):** Playback queue offers a centered, horizontally scrollable card timeline (history left, upcoming right), navigation/recenter controls and a remembered list layout with both sections visible. The queue spans the theater page and adapts to phones and fullscreen drawers using the existing appearance tokens, icons and permission-aware commands. Chrome/Firefox fixtures cover layout, navigation, artwork and retained queue behavior; actual Plex/Activity continuity remains open. See [verification](docs/testing.md#playback-queue-layout-2026-10-19).
+
 **Login/account increment (2026-10-18):** Sign-in checking overlays an inactive watch layout. Discord and Plex have official provider icons, username-only summaries and matching remove/confirm/Connect flows; Connect stays at the right of its provider row. Removal preserves the account UUID, protects the last sign-in and invalidates prior credentials/logins. Owner matching is collapsed. See [verification](docs/testing.md#login-and-account-experience-2026-10-18).
 
 **Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. Appearance changes recolor cached local SVG data URLs without network requests. Accents fade over 100 ms; rapid toggle clicks reveal the local Sunrise/dud easter eggs. Sunrise tolerates continued rapid clicking and exits on a separate click after a pause. See [appearance verification](docs/testing.md#appearance-themes-and-accents-2026-10-18).
@@ -272,6 +274,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 - **Implemented P13-3 queue backend & UI slice:** `server/room-queue.js`, `web/watch-queue-ui.js`, `web/watch-library.js`. Flat ordered queue with occurrence UUIDs, optimistic concurrency via `queueRevision`, Up Next list with ranks/reordering/removal/clear, History with outcome badges/resume/start-over/clear, library "Add to queue" buttons, Next/Previous queue coordination, and Safe-DOM UI rendering.
 - **Implemented P13-4:** Atomic paginated show/season expansion, room-unfinished/Specials filters, following/random generation with persistent cycles and pending-only shuffle.
 - **Implemented P13-5:** Verified decoded ending evidence, announced ten-second cancellable autoplay/off switch, fenced atomic advancement and successor generation. Failed preparation preserves the queue; shutdown waits for committed transitions.
+- **P13-6 queue presentation (2026-10-19):** Centered history/current/upcoming cards, list columns, saved view selection, navigation, authenticated lazy artwork, responsive theater/phone/drawer layouts and existing queue actions are locally verified in Chrome and Firefox. Remaining P13-6/P13-7 live-provider and Activity gates stay open.
 - Keep auto-queue generation separate from automatic playback. Continue P13-6/P13-7 real Plex multi-viewer and Activity continuity checks, including provider failures and writer/sync/resource measurements.
 - Verification covers Chrome/Firefox normal/theater/fullscreen/mobile surfaces; real Activity evidence tracked separately.
 - Define the storage baseline/retained-state procedure before schema changes; preserve UUIDs, native history and original credentials/key. Checkpoint outside the sync tick, await durable edit/close acknowledgements and final shutdown saves, page bounded queue responses, and review shared protocol compatibility with the independent remote.

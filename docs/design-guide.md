@@ -26,6 +26,8 @@ Use the canonical uburoom artwork. The initial theme script includes the SVG sou
 
 ## Components
 
+- Playback queue defaults to horizontal cards: chronological history on the left, the current video centered initially and after media changes, and upcoming entries on the right. Allow native scrolling, previous/next browsing arrows and explicit recentering; ordinary snapshots preserve browsing position and focused controls. Remember Cards/List locally. List puts current playback above history/upcoming columns, stacking upcoming before history on narrow panels. Keep the queue below the room bar and full width in theater, above Room options/Library. Reuse authenticated library artwork and existing icons; preserve replay, resume, queue editing, autoplay, generation settings and confirmed clearing through the shared command path.
+
 - Compact/normal remotes use one renderer. Enable is master, Playback/Picture are independent, Queue disabled, On join a remembered preference. Consent itself is never restored.
 - Transport retains central double-height Play/Pause, ±15 seconds, icon-only actual-boundary Start/End, mute/volume. Slider drafts stay stable; web commands are throttled and unsent values dropped on disconnect/target change.
 - Picture retains separate Zoom/Width/Height rows: minus above reset at left, editable value/label in the middle, larger plus at right, beside the pad. Resets are independent; Reset all is quiet gray. Keep hold/Ctrl, profiles and phone layouts.

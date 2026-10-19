@@ -1,5 +1,18 @@
 # Verification status
 
+## Playback queue layout (2026-10-19)
+
+The queue now defaults to a horizontal card timeline with history to the left, current playback initially centered, and upcoming videos to the right. Navigation arrows, keyboard arrows/Home, explicit recentering and a locally remembered Cards/List switch preserve existing queue and playback commands. List shows current playback above both history and upcoming sections, stacking on narrow panels. Theater gives the queue full width; fullscreen retains the same live controls inside the drawer. Artwork uses authenticated library requests, at most four concurrent loads, room-scoped caching/cancellation and existing shared-icon fallbacks.
+
+Verification with isolated accounts/media and disposable browsers:
+
+- `npm run test:full`: 343 tests passed, zero failures or skips.
+- `node scripts/room-ui-smoke.js --browsers=chrome,firefox`: both passed queue add/reorder/remove/next/history/clear, bulk/Specials, shuffle, generation settings, autoplay countdown/cancel/advance, roles and close/reopen flows.
+- `node scripts/watch-layout-smoke.js`: Chrome 155.0.8059.84 and Firefox 158.0 passed normal/theater/phone/fullscreen and simulated Activity shell checks.
+- `node scripts/queue-ui-smoke.js`: both browsers passed current centering after asynchronous history arrival and resizing, arrows/keyboard navigation, stable scroll/focus during snapshots, history ordering, saved view preference, authenticated fixture artwork decoding/cache reuse/missing-art fallback, light/pink appearance, phone stacking/no overflow, full-width theater and fullscreen drawer restoration. Before/after affected renders were inspected; screenshots remain in ignored local artifacts.
+
+Actual Plex artwork/provider continuity, physical touch-device behavior and real Discord Activity remain unverified for this presentation change. The existing P13 live continuity/resource/state-transfer gates remain open.
+
 ## Bulk queues, generation and cancellable autoplay P13-4 & P13-5 (2026-10-18)
 
 Implemented paginated show/season addition with all/room-unfinished and Specials options, current/pending deduplication, atomic capacity rejection, pending-only shuffle, following episodes and persistent random cycles from shows, movie libraries and collections. Generation appends future entries without replacing current playback. Random cycles repeat after exhaustion, excluding active occurrences; existing pending order retains priority.

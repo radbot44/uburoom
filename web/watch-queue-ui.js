@@ -12,9 +12,15 @@
     return m + ':' + String(s % 60).padStart(2, '0');
   }
 
-  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem }) {
+  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork }) {
     const doc = host.ownerDocument;
-    let activeTab = 'upcoming';
+    let view = 'cards';
+    try { if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list'; } catch {}
+    let centerPending = true;
+    let centerAfterFetch = true;
+    let currentKey = '';
+    let currentId;
+    let capabilityKey = '';
 
     function formatSubtitle(item) {
       if (!item) return '';
@@ -77,9 +83,45 @@
       return result;
     }
 
-    const nowPlayingBox = node('div', host, undefined, 'queue-now-playing');
+    host.dataset.view = view;
+    const header = node('header', host, undefined, 'queue-header');
+    const heading = node('h2', header, undefined, 'queue-heading');
+    heading.append(root.uburoomUI.icon(doc, 'queue'), doc.createTextNode('Playback queue'));
+    const views = node('div', header, undefined, 'queue-view-switch');
+    views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Queue layout');
+    const viewButtons = ['cards', 'list'].map(value => {
+      const b = button(views, value === 'cards' ? 'Cards' : 'List', value === 'cards' ? 'libraryNormal' : 'libraryList', () => {
+        view = value; host.dataset.view = view;
+        try { localStorage.setItem('uburoom-queue-view', view); } catch {}
+        centerPending = true; renderTab(); updateView();
+      }, false, 'queue-view-button');
+      node('span', b, value === 'cards' ? 'Cards' : 'List');
+      b.id = 'queue-view-' + value; return b;
+    });
+    const toolbar = node('div', host, undefined, 'queue-toolbar');
+    const directions = node('div', toolbar, undefined, 'queue-directions');
+    const historyTab = button(directions, 'Browse history', undefined, () => browse('history'), false, 'queue-direction');
+    historyTab.id = 'queue-tab-history';
+    const upcomingTab = button(directions, 'Browse upcoming videos', undefined, () => browse('upcoming'), false, 'queue-direction');
+    upcomingTab.id = 'queue-tab-upcoming';
+    const navigation = node('div', toolbar, undefined, 'queue-navigation');
+    const previousCard = button(navigation, 'Scroll toward history', 'left', () => scrollCards(-1));
+    previousCard.id = 'queue-scroll-previous';
+    button(navigation, 'Center current video', 'center', () => centerCurrent(true)).id = 'queue-center';
+    const nextCard = button(navigation, 'Scroll toward upcoming videos', 'right', () => scrollCards(1));
+    nextCard.id = 'queue-scroll-next';
+    const notice = node('p', host, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
+    const layout = node('div', host, undefined, 'queue-layout');
+    layout.tabIndex = 0; layout.setAttribute('role', 'region'); layout.setAttribute('aria-label', 'Playback queue timeline');
+    const historyView = node('section', layout, undefined, 'queue-view queue-history-view');
+    historyView.id = 'queue-history-view'; historyView.setAttribute('aria-label', 'Playback history');
+    const nowPlayingBox = node('div', layout, undefined, 'queue-now-playing');
+    const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
+    upcomingView.id = 'queue-upcoming-view'; upcomingView.setAttribute('aria-label', 'Upcoming videos');
+    const footer = node('div', host, undefined, 'queue-footer');
 
-    const continuation = node('div', host, undefined, 'queue-continuation');
+
+    const continuation = node('div', footer, undefined, 'queue-continuation');
     const autoplayLabel = node('label', continuation, undefined, 'queue-check');
     const autoplayToggle = node('input', autoplayLabel);
     autoplayToggle.type = 'checkbox';
@@ -230,333 +272,304 @@
       autoDialog.showModal();
     }
 
-    const tabsRow = node('div', host, undefined, 'queue-tabs');
-    tabsRow.setAttribute('role', 'tablist');
-    const upcomingTab = node('button', tabsRow, 'Upcoming', 'queue-tab active');
-    upcomingTab.id = 'queue-tab-upcoming';
-    upcomingTab.setAttribute('role', 'tab');
-    upcomingTab.setAttribute('aria-selected', 'true');
-    const historyTab = node('button', tabsRow, 'History', 'queue-tab');
-    historyTab.id = 'queue-tab-history';
-    historyTab.setAttribute('role', 'tab');
-    historyTab.setAttribute('aria-selected', 'false');
-
-    const notice = node('p', host, '', 'hint queue-notice');
-    notice.setAttribute('role', 'status');
-
-    const upcomingView = node('div', host, undefined, 'queue-view queue-upcoming-view');
-    upcomingView.id = 'queue-upcoming-view';
-    const historyView = node('div', host, undefined, 'queue-view queue-history-view');
-    historyView.id = 'queue-history-view';
-    historyView.hidden = true;
-
-    function switchTab(tab) {
-      activeTab = tab;
-      const isUpcoming = tab === 'upcoming';
-      upcomingTab.classList.toggle('active', isUpcoming);
-      upcomingTab.setAttribute('aria-selected', String(isUpcoming));
-      historyTab.classList.toggle('active', !isUpcoming);
-      historyTab.setAttribute('aria-selected', String(!isUpcoming));
-      upcomingView.hidden = !isUpcoming;
-      historyView.hidden = isUpcoming;
-      renderTab();
-      if (!isUpcoming) void fetchData(true);
+    function motion() {
+      return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
     }
 
-    upcomingTab.addEventListener('click', () => switchTab('upcoming'));
-    historyTab.addEventListener('click', () => switchTab('history'));
+    function centerCurrent(smooth = false) {
+      if (view !== 'cards' || !layout.clientWidth) return;
+      layout.style.paddingInline = '0px';
+      const inset = Math.max(0, (layout.clientWidth - nowPlayingBox.offsetWidth) / 2);
+      layout.style.paddingInline = inset + 'px';
+      const r = nowPlayingBox.getBoundingClientRect(), bounds = layout.getBoundingClientRect();
+      layout.scrollTo({ left: layout.scrollLeft + r.left - bounds.left - inset, behavior: smooth ? motion() : 'instant' });
+      centerPending = false;
+      updateNavigation();
+    }
+
+    function scrollCards(direction) {
+      layout.scrollBy({ left: direction * (nowPlayingBox.offsetWidth + 14), behavior: motion() });
+    }
+
+    function updateNavigation() {
+      previousCard.disabled = layout.scrollLeft <= 2;
+      nextCard.disabled = layout.scrollLeft + layout.clientWidth >= layout.scrollWidth - 2;
+    }
+
+    function updateView() {
+      viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
+      navigation.hidden = view !== 'cards';
+      layout.tabIndex = view === 'cards' ? 0 : -1;
+      if (view === 'list') layout.style.paddingInline = '';
+      else requestAnimationFrame(() => centerCurrent());
+    }
+
+    function browse(section) {
+      if (view === 'cards') {
+        const target = section === 'history' ? historyView.querySelector('.queue-history-entry:last-child') : upcomingView.querySelector('.queue-entry');
+        if (target) {
+          const r = target.getBoundingClientRect(), bounds = layout.getBoundingClientRect();
+          layout.scrollTo({ left: layout.scrollLeft + r.left - bounds.left - (layout.clientWidth - r.width) / 2, behavior: motion() });
+        }
+      } else (section === 'history' ? historyView : upcomingView).scrollIntoView({ behavior: motion(), block: 'nearest' });
+    }
+
+    layout.addEventListener('scroll', updateNavigation, { passive: true });
+    layout.addEventListener('keydown', event => {
+      if (event.target !== layout || view !== 'cards') return;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault(); scrollCards(event.key === 'ArrowLeft' ? -1 : 1);
+      } else if (event.key === 'Home') { event.preventDefault(); centerCurrent(true); }
+    });
+    new ResizeObserver(() => { if (view === 'cards') centerCurrent(); }).observe(layout);
+    updateView();
+
+    const images = new Map();
+    const imageRequests = new Map();
+    let artworkQueue = [];
+    let artworkActive = 0;
+    let artworkGeneration = 0;
+    let imageController = new AbortController();
+    const observedImages = new Set();
+    const imageObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) if (entry.isIntersecting) {
+        imageObserver.unobserve(entry.target); observedImages.delete(entry.target);
+        artworkQueue.push(entry.target);
+      }
+      pumpArtwork();
+    }, { root: layout, rootMargin: '200px' });
+
+    function pumpArtwork() {
+      const generation = artworkGeneration;
+      while (artworkActive < 4 && artworkQueue.length) {
+        const img = artworkQueue.shift();
+        if (!img.isConnected) continue;
+        artworkActive++;
+        void loadArtwork(img).finally(() => {
+          if (generation === artworkGeneration) { artworkActive--; pumpArtwork(); }
+        });
+      }
+    }
+
+    function clearArtwork() {
+      imageController.abort(); imageController = new AbortController();
+      artworkGeneration++; artworkActive = 0; artworkQueue = [];
+      imageObserver.disconnect(); observedImages.clear(); imageRequests.clear();
+      for (const url of images.values()) URL.revokeObjectURL(url);
+      images.clear();
+    }
+
+    async function loadArtwork(img) {
+      const key = img.dataset.item + ':' + img.dataset.type;
+      const signal = imageController.signal;
+      try {
+        if (!images.has(key)) {
+          if (!imageRequests.has(key)) {
+            const params = new URLSearchParams({ item: img.dataset.item, kind: 'landscape', type: img.dataset.type });
+            imageRequests.set(key, artwork('/api/watch/library/art?' + params, signal).then(blob => {
+              if (!signal.aborted) {
+                images.set(key, URL.createObjectURL(blob));
+                while (images.size > 220) { const first = images.keys().next().value; URL.revokeObjectURL(images.get(first)); images.delete(first); imageRequests.delete(first); }
+              }
+            }));
+          }
+          await imageRequests.get(key);
+        }
+        if (!signal.aborted && img.isConnected && images.has(key)) img.src = images.get(key);
+      } catch {
+        if (!signal.aborted) { imageRequests.delete(key); img.parentNode?.setAttribute('title', 'Artwork unavailable'); img.remove(); }
+      }
+    }
+
+    function art(parent, item) {
+      const box = node('div', parent, undefined, 'queue-art');
+      box.append(root.uburoomUI.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
+      if (!artwork || !/^\d{1,20}$/.test(item.mediaId || item.id || '')) return;
+      const img = node('img', box);
+      img.alt = ''; img.decoding = 'async';
+      img.dataset.item = item.mediaId || item.id; img.dataset.type = item.type || 'movie';
+      const cached = images.get(img.dataset.item + ':' + img.dataset.type);
+      if (cached) img.src = cached;
+      else { observedImages.add(img); imageObserver.observe(img); }
+    }
 
     function renderHeaderBadge(summary) {
-      const qLen = summary?.pendingCount ?? summary?.queueLength ?? currentQueue.total ?? currentQueue.items?.length ?? 0;
-      const hLen = summary?.historyCount ?? summary?.historyLength ?? currentHistory.total ?? currentHistory.items?.length ?? 0;
-      upcomingTab.textContent = 'Upcoming (' + qLen + ')';
-      historyTab.textContent = 'History (' + hLen + ')';
+      const qLen = summary?.pendingCount ?? currentQueue.total ?? 0;
+      const hLen = summary?.historyCount ?? currentHistory.total ?? 0;
+      upcomingTab.textContent = 'Upcoming (' + qLen + ') →';
+      historyTab.textContent = '← History (' + hLen + ')';
       const badge = doc.getElementById('queue-count-badge');
-      if (badge) {
-        badge.textContent = String(qLen);
-        badge.hidden = qLen === 0;
+      if (badge) { badge.textContent = String(qLen); badge.hidden = qLen === 0; }
+    }
+
+    function title(parent, item, className) {
+      const targetId = item.mediaId || item.id;
+      const target = node(openLibraryItem && targetId ? 'button' : 'strong', parent, item.title || 'Unknown title', 'queue-title-link ' + className);
+      if (target.tagName === 'BUTTON') {
+        target.type = 'button'; target.title = 'View in library: ' + item.title;
+        target.addEventListener('click', () => openLibraryItem({ id: targetId, type: item.type || 'movie', title: item.title }));
       }
+      const subtitle = formatSubtitle(item);
+      if (subtitle) node('p', parent, subtitle, 'hint queue-entry-subtitle');
     }
 
     function renderNowPlaying() {
-      nowPlayingBox.replaceChildren();
       const state = getState();
       const current = state?.queueSummary?.current;
-      const media = state?.mediaUrl ? state : null;
-      if (!current && !media) {
-        node('p', nowPlayingBox, 'Nothing currently playing.', 'hint');
-        return;
-      }
-      const title = current?.title || media?.title || 'Unknown title';
-      const subtitle = formatSubtitle(current) || [current?.grandparentTitle, current?.parentTitle].filter(Boolean).join(' · ') || media?.subtitle || '';
+      const item = current || { title: state?.title || 'Nothing currently playing', mediaId: state?.mediaId };
       const duration = current?.duration || state?.state?.duration || 0;
       const position = state?.state?.position ?? current?.position ?? 0;
-
-      const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
-      node('span', top, 'Now playing', 'queue-section-label');
-      if (state?.state?.paused) {
-        node('span', top, 'Paused', 'queue-badge');
+      const key = JSON.stringify([state?.id, item.id, item.mediaId, item.title, item.thumb, formatSubtitle(item), state?.capabilities?.playPause]);
+      if (currentKey !== key) {
+        const changedItem = currentId !== current?.id;
+        currentId = current?.id; currentKey = key;
+        if (changedItem) centerPending = centerAfterFetch = true;
+        nowPlayingBox.replaceChildren();
+        const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
+        node('span', top, 'Now playing', 'queue-section-label');
+        node('span', top, '', 'queue-badge queue-playback-state');
+        art(nowPlayingBox, item);
+        const body = node('div', nowPlayingBox, undefined, 'queue-now-playing-body');
+        title(body, item, 'queue-now-playing-title');
+        node('div', body, '', 'queue-now-playing-meta');
+        const progress = node('progress', body, undefined, 'queue-progress');
+        progress.setAttribute('aria-label', 'Current video progress');
+        const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
+        node('span', actions, 'Current video', 'queue-card-caption');
+        button(actions, 'Play', 'play', async () => {
+          try { await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' }); }
+          catch (error) { notice.textContent = error.message; }
+        }, !state?.mediaId || !state?.capabilities?.playPause, 'icon-button quiet queue-current-toggle');
       }
-
-      const body = node('div', nowPlayingBox, undefined, 'queue-now-playing-body');
-      const titleTargetId = current?.mediaId || current?.id || media?.id;
-      if (titleTargetId && openLibraryItem) {
-        const titleBtn = node('button', body, title, 'queue-title-link queue-now-playing-title');
-        titleBtn.type = 'button';
-        titleBtn.title = 'View in library: ' + title;
-        titleBtn.addEventListener('click', () => {
-          openLibraryItem({
-            id: titleTargetId,
-            type: current?.type || media?.type || 'movie',
-            title
-          });
-        });
-      } else {
-        node('strong', body, title, 'queue-now-playing-title');
+      nowPlayingBox.querySelector('.queue-playback-state').textContent = current || state?.mediaId ? state?.state?.paused ? 'Paused' : 'Playing' : '';
+      nowPlayingBox.querySelector('.queue-now-playing-meta').textContent = formatTime(position) + ' / ' + formatTime(duration);
+      const progress = nowPlayingBox.querySelector('progress');
+      progress.max = duration || 1; progress.value = Math.min(position, duration);
+      const toggle = nowPlayingBox.querySelector('.queue-current-toggle');
+      const label = state?.state?.paused ? 'Play' : 'Pause';
+      if (toggle.title !== label) {
+        toggle.title = label; toggle.setAttribute('aria-label', label);
+        toggle.replaceChildren(root.uburoomUI.icon(doc, state?.state?.paused ? 'play' : 'pause'));
       }
-      if (subtitle) node('p', body, subtitle, 'hint queue-now-playing-subtitle');
+      if (centerPending) requestAnimationFrame(() => centerCurrent());
+    }
 
-      const meta = node('div', body, undefined, 'queue-now-playing-meta');
-      node('span', meta, formatTime(position) + ' / ' + formatTime(duration), 'queue-meta');
+    function action(parent, label, icon, callback, disabled, className = '') {
+      return button(parent, label, icon, async () => {
+        if (busy) return;
+        busy = true;
+        try { await callback(); }
+        catch (error) { notice.textContent = error.message; }
+        finally { busy = false; }
+      }, disabled, 'icon-button quiet ' + className);
+    }
+
+    function moreActions(parent) {
+      const details = node('details', parent, undefined, 'queue-more');
+      const summary = node('summary', details);
+      summary.title = 'More queue actions'; summary.setAttribute('aria-label', 'More queue actions');
+      summary.append(root.uburoomUI.icon(doc, 'chevron'));
+      const menu = node('div', details, undefined, 'queue-more-actions');
+      return menu;
     }
 
     function renderUpcoming() {
       upcomingView.replaceChildren();
-      const state = getState();
-      const canEdit = !!state?.capabilities?.editQueue;
-      const canChoose = !!state?.capabilities?.chooseMedia;
-      const items = currentQueue.items || [];
-
-      if (items.length === 0) {
-        node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from the Plex library below to line up videos.', 'hint queue-empty');
-        return;
-      }
-
+      node('h3', upcomingView, 'Upcoming →', 'queue-column-heading');
+      const state = getState(), items = currentQueue.items || [];
+      const canEdit = !!state?.capabilities?.editQueue, canChoose = !!state?.capabilities?.chooseMedia;
+      if (!items.length) node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from the Plex library to line up videos.', 'hint queue-empty');
       const list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
       list.id = 'queue-upcoming-list';
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const row = node('div', list, undefined, 'queue-entry');
-        row.dataset.entryId = item.id;
-
-        node('span', row, '#' + (i + 1), 'queue-rank');
-
+      items.forEach((item, i) => {
+        const row = node('article', list, undefined, 'queue-entry'); row.dataset.entryId = item.id;
+        node('span', row, 'Up next · ' + (i + 1), 'queue-rank');
+        art(row, item);
         const info = node('div', row, undefined, 'queue-entry-info');
-        if (openLibraryItem) {
-          const titleBtn = node('button', info, item.title, 'queue-title-link queue-entry-title');
-          titleBtn.type = 'button';
-          titleBtn.title = 'View in library: ' + item.title;
-          titleBtn.addEventListener('click', () => {
-            openLibraryItem({
-              id: item.mediaId || item.id,
-              type: item.type || 'movie',
-              title: item.title
-            });
-          });
-        } else {
-          node('strong', info, item.title, 'queue-entry-title');
-        }
-        const sub = formatSubtitle(item);
-        if (sub) node('p', info, sub, 'hint queue-entry-subtitle');
+        title(info, item, 'queue-entry-title');
         node('span', info, formatTime(item.duration), 'queue-meta');
-
         const actions = node('div', row, undefined, 'queue-entry-actions');
-
-        button(actions, 'Play now', 'play', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await playEntry(item.id, false);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canChoose, 'icon-button quiet queue-action-play');
-
-        button(actions, 'Skip to', 'end', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await playEntry(item.id, true);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canChoose, 'icon-button quiet queue-action-skip');
-
-        button(actions, 'Move up', 'up', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await moveItem(item.id, item.rank - 1);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canEdit || i === 0, 'icon-button quiet queue-action-up');
-
-        button(actions, 'Move down', 'down', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await moveItem(item.id, item.rank + 1);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canEdit || i === items.length - 1, 'icon-button quiet queue-action-down');
-
-        button(actions, 'Remove from queue', 'close', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await removeItem(item.id);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canEdit, 'icon-button quiet queue-action-remove');
-      }
-
-      const footer = node('div', upcomingView, undefined, 'queue-footer');
-      const shuffle = button(footer, 'Shuffle queue', undefined, async () => {
-        if (busy || !canEdit) return;
-        busy = true; shuffle.disabled = true;
-        try { await mutate('shuffle'); }
-        catch (error) { notice.textContent = error.message; }
-        finally { busy = false; shuffle.disabled = !getState()?.capabilities?.editQueue; }
-      }, !canEdit || items.length < 2);
+        node('span', actions, 'Queue', 'queue-card-caption');
+        action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
+        const more = moreActions(actions);
+        action(more, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
+        action(more, 'Move up', 'up', () => moveItem(item.id, item.rank - 1), !canEdit || i === 0, 'queue-action-up');
+        action(more, 'Move down', 'down', () => moveItem(item.id, item.rank + 1), !canEdit || i === items.length - 1, 'queue-action-down');
+        action(more, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
+      });
+      const actions = node('div', footer, undefined, 'queue-footer-actions');
+      const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
       shuffle.id = 'queue-shuffle';
-      const clearQueueBtn = button(footer, 'Clear queue', undefined, async () => {
-        if (busy || !canEdit || items.length === 0) return;
-        if (await confirm('Clear all upcoming videos from the queue?')) {
+      const clear = button(actions, 'Clear queue', undefined, async () => {
+        if (busy || !getState()?.capabilities?.editQueue || !currentQueue.items.length) return;
+        const roomId = getState().id;
+        if (await confirm('Clear all upcoming videos from the queue?') && getState()?.id === roomId) {
           busy = true;
-          try {
-            await clearQueue();
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
+          try { await clearQueue(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
         }
-      }, !canEdit || items.length === 0, 'quiet');
-      clearQueueBtn.id = 'queue-clear-queue';
+      }, !canEdit || !items.length);
+      clear.id = 'queue-clear-queue';
     }
 
     function renderHistory() {
       historyView.replaceChildren();
-      const state = getState();
-      const canEdit = !!state?.capabilities?.editQueue;
+      const top = node('div', historyView, undefined, 'queue-history-heading');
+      node('h3', top, '← History', 'queue-column-heading');
+      const state = getState(), items = currentHistory.items || [];
       const canChoose = !!state?.capabilities?.chooseMedia;
-      const items = currentHistory.items || [];
-
-      if (items.length === 0) {
-        node('p', historyView, 'No playback history yet.', 'hint queue-empty');
-        return;
+      const clear = button(top, 'Clear history', undefined, async () => {
+        if (busy || !getState()?.capabilities?.editQueue || !currentHistory.items.length) return;
+        const roomId = getState().id;
+        if (await confirm('Clear all playback history for this room?') && getState()?.id === roomId) {
+          busy = true;
+          try { await clearHistory(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
+        }
+      }, !state?.capabilities?.editQueue || !items.length, 'queue-clear-history quiet');
+      clear.id = 'queue-clear-history';
+      footer.querySelector('.queue-footer-actions').prepend(clear);
+      if (!items.length) node('p', historyView, 'No playback history yet.', 'hint queue-empty');
+      if (items.length < currentHistory.total) {
+        const older = button(historyView, 'Load older history', undefined, async () => {
+          const roomId = getState()?.id, revision = lastFetchedRevision;
+          older.disabled = true;
+          try {
+            const page = await request('/api/watch/rooms/' + roomId + '/history?limit=100&offset=' + items.length);
+            if (getState()?.id !== roomId || lastFetchedRevision !== revision) return;
+            currentHistory = { items: [...items, ...page.items], total: page.total };
+            renderTab();
+          } catch (error) { notice.textContent = error.message; }
+          finally { older.disabled = false; }
+        }, false, 'quiet queue-history-older');
       }
-
       const list = node('div', historyView, undefined, 'queue-list queue-history-list');
       list.id = 'queue-history-list';
-      for (const item of items) {
-        const row = node('div', list, undefined, 'queue-history-entry');
-        row.dataset.entryId = item.id;
-
+      for (const item of (view === 'cards' ? [...items].reverse() : items)) {
+        const row = node('article', list, undefined, 'queue-history-entry'); row.dataset.entryId = item.id;
         const outcome = item.outcome || 'interrupted';
-        const badgeLabel = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
-        const statusIcon = node('span', row, undefined, 'queue-history-status outcome-' + outcome);
-        statusIcon.setAttribute('role', 'img');
-        statusIcon.setAttribute('aria-label', badgeLabel);
-        statusIcon.title = badgeLabel;
-        const iconName = outcome === 'completed' ? 'check' : outcome === 'skipped' ? 'end' : 'pause';
-        if (root.uburoomUI?.icon) statusIcon.append(root.uburoomUI.icon(doc, iconName));
-
+        const label = outcome === 'completed' ? 'Completed' : outcome === 'skipped' ? 'Skipped' : 'Stopped';
+        const status = node('span', row, undefined, 'queue-history-status outcome-' + outcome);
+        status.title = label;
+        status.append(root.uburoomUI.icon(doc, outcome === 'completed' ? 'check' : outcome === 'skipped' ? 'end' : 'pause'));
+        node('span', status, label, 'queue-outcome-label');
+        art(row, item);
         const info = node('div', row, undefined, 'queue-entry-info');
-        if (openLibraryItem) {
-          const titleBtn = node('button', info, item.title, 'queue-title-link queue-entry-title');
-          titleBtn.type = 'button';
-          titleBtn.title = 'View in library: ' + item.title;
-          titleBtn.addEventListener('click', () => {
-            openLibraryItem({
-              id: item.mediaId || item.id,
-              type: item.type || 'movie',
-              title: item.title
-            });
-          });
-        } else {
-          node('strong', info, item.title, 'queue-entry-title');
-        }
-        const sub = formatSubtitle(item);
-        if (sub) node('p', info, sub, 'hint queue-entry-subtitle');
-        const posText = outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' of ' + formatTime(item.duration);
-        node('span', info, posText, 'queue-meta');
-
+        title(info, item, 'queue-entry-title');
+        node('span', info, outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' / ' + formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
-
-        button(actions, 'Resume now', 'play', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await replayHistory(item.id, true);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canChoose || outcome === 'completed', 'icon-button quiet queue-item-resume');
-
-        button(actions, 'Start over now', 'start', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await replayHistory(item.id, false);
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !canChoose, 'icon-button quiet queue-item-restart');
-
-        button(actions, 'Add to queue', 'queue', async () => {
-          if (busy) return;
-          busy = true;
-          try {
-            await add({ ...item, position: 0 });
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }, !state?.capabilities?.addQueue, 'icon-button quiet queue-item-add');
+        node('span', actions, 'History', 'queue-card-caption');
+        if (outcome !== 'completed') action(actions, 'Resume now', 'play', () => replayHistory(item.id, true), !canChoose, 'queue-item-resume');
+        action(actions, 'Start over now', 'refresh', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
+        action(actions, 'Add to queue', 'plus', () => add({ ...item, position: 0 }), !state?.capabilities?.addQueue, 'queue-item-add');
       }
-
-      const footer = node('div', historyView, undefined, 'queue-footer');
-      const clearHistBtn = button(footer, 'Clear history', undefined, async () => {
-        if (busy || !canEdit || items.length === 0) return;
-        if (await confirm('Clear all playback history for this room?')) {
-          busy = true;
-          try {
-            await clearHistory();
-          } catch (err) {
-            notice.textContent = err.message;
-          } finally {
-            busy = false;
-          }
-        }
-      }, !canEdit || items.length === 0, 'quiet');
-      clearHistBtn.id = 'queue-clear-history';
     }
 
     function renderTab() {
-      if (activeTab === 'upcoming') {
-        renderUpcoming();
-      } else {
-        renderHistory();
-      }
+      const scroll = layout.scrollLeft;
+      footer.querySelector('.queue-footer-actions')?.remove();
+      renderUpcoming(); renderHistory();
+      for (const img of observedImages) if (!img.isConnected) { imageObserver.unobserve(img); observedImages.delete(img); }
+      if (centerPending) requestAnimationFrame(() => centerCurrent());
+      else { layout.scrollLeft = scroll; updateNavigation(); }
     }
 
     async function fetchData(force = false) {
@@ -573,16 +586,16 @@
       fetching = true;
       refetchNeeded = false;
       try {
-        const needsHistory = activeTab === 'history' || currentHistory.total === undefined;
         const [qRes, hRes] = await Promise.all([
           request('/api/watch/rooms/' + roomId + '/queue?limit=100'),
-          needsHistory ? request('/api/watch/rooms/' + roomId + '/history') : Promise.resolve(currentHistory)
+          request('/api/watch/rooms/' + roomId + '/history?limit=100')
         ]);
         if (getState()?.id !== roomId) return;
         currentQueue = qRes || { items: [], total: 0, queueRevision: rev };
         currentHistory = hRes || { items: [], total: 0 };
         lastFetchedRevision = currentQueue.queueRevision ?? rev;
         lastFetchedRoomId = roomId;
+        if (centerAfterFetch) { centerPending = true; centerAfterFetch = false; }
         renderHeaderBadge(state.queueSummary);
         renderTab();
       } catch (err) {
@@ -710,12 +723,22 @@
       panel.hidden = !visible;
       renderContinuation();
       if (!visible) {
+        if (lastFetchedRoomId) { clearArtwork(); lastFetchedRoomId = null; lastFetchedRevision = -1; }
         if (bulkDialog.open) bulkDialog.close();
         if (autoDialog.open) autoDialog.close();
         return;
       }
 
+      if (state.id !== lastFetchedRoomId) {
+        currentQueue = { items: [], total: 0, queueRevision: 0 };
+        currentHistory = { items: [], total: 0 };
+        currentKey = ''; currentId = undefined; centerPending = centerAfterFetch = true; clearArtwork();
+        lastFetchedRoomId = state.id; lastFetchedRevision = -1;
+        renderTab();
+      }
       renderNowPlaying();
+      const permissions = JSON.stringify(state.capabilities);
+      if (permissions !== capabilityKey) { capabilityKey = permissions; renderTab(); }
       if (queueSummary) {
         renderHeaderBadge(queueSummary);
         if (queueSummary.queueRevision > lastFetchedRevision || state.id !== lastFetchedRoomId) {

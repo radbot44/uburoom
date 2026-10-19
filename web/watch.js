@@ -131,10 +131,16 @@ const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, sho
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,
   join:async id=>{await selectRoom(id);if(!state)throw new Error('Room unavailable');returnToVideo();},
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:()=>chooseRoom(),fail });
+async function fetchArtwork(path, signal) {
+  const response = await fetch(path, { signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]), headers: token ? { Authorization: 'Bearer ' + token } : {} });
+  if (!response.ok) throw new Error('Artwork unavailable');
+  return response.blob();
+}
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
   request:api,getState:()=>state,getMe:()=>me,fail,execute,
   serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
   openLibraryItem: item => library?.openItem(item),
+  artwork: fetchArtwork,
   changed:async()=>{if(selected)await refreshState();}
 });
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
@@ -142,10 +148,7 @@ playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,capt
   afterSettings:()=>{trackContext=undefined;}});
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
-  artwork:async (path,signal) => {
-    const response = await fetch(path,{signal:AbortSignal.any([signal,AbortSignal.timeout(12000)]),headers:token ? {Authorization:'Bearer ' + token} : {}});
-    if (!response.ok) throw new Error('Artwork unavailable'); return response.blob();
-  },
+  artwork: fetchArtwork,
   load:item => selected ? loadLibraryItem(item) : chooseRoom(item),
   addToQueue: async item => {
     if (!selected || !state?.durable) return;
