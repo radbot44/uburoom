@@ -10,24 +10,35 @@
     }
     function option(select, value, label) { const n = node('option',select,label); n.value = value; }
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
+    const header = doc.getElementById('library-header') || host.closest('#library-panel')?.querySelector('.library-header');
+    const headerRight = doc.getElementById('library-header-right') || header?.querySelector('.library-header-right');
+    const scopeActions = node('div',headerRight || host,undefined,'library-scope-actions');
+    scopeActions.hidden = true;
+    const libTop = doc.getElementById('library-top');
+    if (libTop && headerRight && libTop.parentElement !== headerRight) headerRight.append(libTop);
     const tools = node('div',host,undefined,'library-tools');
     const top = node('div',tools,undefined,'library-top');
-    top.append(doc.getElementById('library-top'));
-    const navigation = node('div',top,undefined,'library-navigation');
-    top.prepend(navigation);
-    const previous = button(navigation,'Back','left'); previous.id = 'library-back';
-    const next = button(navigation,'Forward','right'); next.id = 'library-forward';
-    const home = button(navigation,'Libraries home','home'); home.id = 'library-home';
-    const choices = node('div',navigation,undefined,'library-choices'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
-    const crumbs = node('nav',navigation,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
+    const historyGroup = node('div',top,undefined,'icon-group library-navigation-history');
+    historyGroup.setAttribute('role','group'); historyGroup.setAttribute('aria-label','Navigation');
+    const previous = button(historyGroup,'Back','left','library-key'); previous.id = 'library-back';
+    const next = button(historyGroup,'Forward','right','library-key'); next.id = 'library-forward';
+    const home = button(historyGroup,'Libraries home','home','library-key'); home.id = 'library-home';
+    const choices = node('div',top,undefined,'library-choices pills'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
+    const crumbs = node('nav',top,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
     const row = node('div',tools,undefined,'library-toolbar');
-    const search = node('input',row); search.type = 'search'; search.id = 'search'; search.placeholder = 'Search this library'; search.setAttribute('aria-label','Search this library'); search.maxLength = 200;
-    const sort = select(row,'Sort library'); sort.id = 'library-sort';
-    const direction = button(row,'Ascending','sort'); direction.id = 'library-direction';
-    const filterButton = button(row,'Filters','filter'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
-    const views = node('div',row,undefined,'library-views'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
+    const searchField = node('label',row,undefined,'search-field');
+    searchField.append(uburoomUI.icon(doc,'search'));
+    const search = node('input',searchField); search.type = 'search'; search.id = 'search'; search.placeholder = 'Search this library'; search.setAttribute('aria-label','Search this library'); search.maxLength = 200;
+    const toolControls = node('div',row,undefined,'tool-controls');
+    const sortWrap = node('div',toolControls,undefined,'sort-wrap');
+    const sort = select(sortWrap,'Sort library'); sort.id = 'library-sort';
+    sortWrap.append(uburoomUI.icon(doc,'chevron'));
+    const direction = button(toolControls,'Ascending','sort','library-key library-direction'); direction.id = 'library-direction';
+    const filterHolder = node('div',toolControls,undefined,'filter-holder');
+    const filterButton = button(filterHolder,'Filters','filter','library-key'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
+    const views = node('div',toolControls,undefined,'library-views view-switch'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
     const viewButtons = ['normal','list','poster'].map(view => {
-      const b = button(views,view[0].toUpperCase() + view.slice(1),'library' + view[0].toUpperCase() + view.slice(1)); b.dataset.view = view;
+      const b = button(views,view[0].toUpperCase() + view.slice(1),'library' + view[0].toUpperCase() + view.slice(1),'library-key'); b.dataset.view = view;
       b.append(node('span',null,view[0].toUpperCase() + view.slice(1))); return b;
     });
     const filters = node('div',tools,undefined,'library-filters'); filters.id = 'library-filters'; filters.hidden = true;
@@ -35,8 +46,6 @@
     const yearLabel = node('label',filters,'Year'); const year = select(yearLabel,'Year');
     const filterStatus = node('span',filters,undefined,'hint');
     const chips = node('div',tools,undefined,'library-filter-chips');
-    const scopeActions = node('div', tools, undefined, 'library-detail-actions library-scope-actions');
-    scopeActions.hidden = true;
     const count = node('p',tools,'','library-count'); count.setAttribute('role','status'); count.setAttribute('aria-live','polite');
     const overview = node('div',host,undefined,'library-overview'); overview.hidden = true;
     const results = node('div',host,undefined,'library'); results.id = 'library';
@@ -195,9 +204,10 @@
     }
     function setBusy(value) {
       busy = value;
-      for (const b of host.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room;
-      for (const b of host.querySelectorAll('[data-queue]')) b.disabled = busy || !room || !canAddQueue();
-      for (const b of host.querySelectorAll('[data-auto-queue]')) b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
+      const root = host.closest('#library-panel') || host;
+      for (const b of root.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room;
+      for (const b of root.querySelectorAll('[data-queue]')) b.disabled = busy || !room || !canAddQueue();
+      for (const b of root.querySelectorAll('[data-auto-queue]')) b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
     }
     async function play(item) {
       if (busy || playing || !room) return;
@@ -248,9 +258,9 @@
       return b;
     }
     function autoButton(parent, scope, title) {
-      const b = button(parent, 'Random auto-queue from ' + title, undefined, 'quiet');
+      const b = button(parent, 'Random auto-queue from ' + title, 'shuffle', 'queue-control');
       b.dataset.autoQueue = scope.id;
-      b.textContent = 'Random auto-queue';
+      node('span', b, 'Random auto-queue', 'queue-label');
       b.onclick = () => { if (!b.disabled) autoQueue({ scope, title }); };
       return b;
     }
@@ -346,6 +356,7 @@
         if (index === path.length - 1) { const n = node('span',crumbs,entry.title); n.setAttribute('aria-current','page'); }
         else { const b = button(crumbs,entry.title,undefined,'library-crumb'); b.textContent = entry.title; b.onclick = entry.action; }
       });
+      crumbs.hidden = path.length <= 2;
       const details = screen.kind === 'details', atHome = screen.kind === 'home', collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
       scopeActions.replaceChildren();
       const section = sections.find(item => item.id === screen.section);
@@ -353,7 +364,10 @@
       if (!scopeActions.hidden) autoButton(scopeActions, { type: 'library', id: section.id }, section.title);
       row.hidden = details || atHome; chips.hidden = details || atHome;
       filterButton.hidden = !screen.section || collectionIndex || ['show','season'].includes(screen.kind);
-      if (filterButton.hidden || details || atHome) { filters.hidden = true; filterButton.setAttribute('aria-expanded','false'); }
+      filterButton.classList.toggle('filter-active',!filters.hidden || !!(screen.genre || screen.year));
+      const filterSpan = filterButton.querySelector('.filter-label');
+      if (filterSpan) filterSpan.textContent = (screen.genre || screen.year) ? 'Filters (' + ((screen.genre ? 1 : 0) + (screen.year ? 1 : 0)) + ')' : 'Filters';
+      if (filterButton.hidden || details || atHome) { filters.hidden = true; filterButton.setAttribute('aria-expanded','false'); filterButton.classList.remove('filter-active'); }
       if (search.value !== screen.q) search.value = screen.q || '';
       search.placeholder = screen.kind === 'season' || screen.onlySeason ? 'Search episodes' : collectionIndex ? 'Search collections' : 'Search this library';
       sort.replaceChildren();
@@ -481,17 +495,17 @@
     sort.onchange = () => { screen.sort = sort.value; screen.order = ['added','year'].includes(screen.sort) ? 'desc' : 'asc'; if (screen.sort === 'random') screen.seed = newSeed(); void query(); };
     direction.onclick = () => { if (screen.sort === 'random') screen.seed = newSeed(); else screen.order = screen.order === 'asc' ? 'desc' : 'asc'; void query(); };
     genre.onchange = () => { screen.genre = genre.value; void query(); }; year.onchange = () => { screen.year = year.value; void query(); };
-    filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
+    filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); filterButton.classList.toggle('filter-active',!filters.hidden || !!(screen.genre || screen.year)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
     viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
     async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
       room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
       testVideo = false; screen = homeContext(); beginHistory();
-      pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
+      pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); scopeActions.replaceChildren(); scopeActions.hidden = true; resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
       navigationControls.forEach(n => { n.disabled = true; }); direction.disabled = true;
       previous.disabled = next.disabled = true;
-      genre.replaceChildren(); year.replaceChildren(); search.value = ''; filterSection = undefined; filterStatus.textContent = ''; filters.hidden = true;
+      genre.replaceChildren(); year.replaceChildren(); search.value = ''; filterSection = undefined; filterStatus.textContent = ''; filters.hidden = true; filterButton.classList.remove('filter-active');
       if (!id) return;
       const version = generation;
       async function start() {
