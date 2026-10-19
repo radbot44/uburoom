@@ -716,3 +716,8 @@ Reproduced the position-zero stall with three isolated Chrome HLS viewers: each 
 Readiness now accepts a leading gap of at most 250 ms only at target zero and measures the required two-second buffer from the actual first buffered timestamp (capped by remaining duration). Generic buffer reporting and detection of interior holes stay unchanged. Zero-target alignment accepts that same bounded leading offset. This does not accept insufficient or disjoint buffer, missing ranges, or larger leading gaps.
 
 Verification: all 213 unit tests passed with zero skips. The augmented `node scripts/shared-transcode-smoke.js --browser=chrome` and `--browser=firefox` both passed with three actual synthetic HLS players: startup, absolute seek to zero, seek-start, restart via Previous, and intervening nonzero seeks all resumed playback. Existing independent captions, shared quality outputs, host departure, privacy and cleanup checks also passed. Browser versions were Chrome 155.0.8059.79 and Firefox 158.0. Failure output now includes each fixture viewer's readiness, buffer ranges and target. Actual Plex streams and physical-device timing remain unverified for this fix.
+
+### Icon geometry review (2026-10-19)
+
+Refined poster proportions, queue-add alignment, shuffle margins, theater silhouette, external-link arrow and users spacing in the shared SVG renderer. Inspected the complete icon sheet before and after at 24px in headless Chrome using the actual icon factory and production stroke settings; JavaScript syntax validation passed. Firefox headless screenshot attempts produced no image, so Firefox visual verification remains unfinished. This was an isolated icon-sheet review; live player, responsive layouts and 112px badges were not revalidated.
+
