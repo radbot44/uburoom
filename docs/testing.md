@@ -749,3 +749,12 @@ Adjusted Play centering, Pause bar weight (2.3px), paired Plus/Minus spans, libr
 
 Added the shared media SVG (overlapping video cards and play triangle), used by the Media heading and mobile Media tab. Fullscreen Menu retains drawer. Inspected the updated icon sheet in Chrome at 16/20/24px; syntax checks for both changed JavaScript files and diff whitespace checks passed. Live section layouts and Firefox rendering remain unverified.
 
+
+
+## Room flow redesign (2026-10-19)
+
+- `npm run test:full`: 348 passed, zero failures, zero skips. Added preset checks for configured-default preservation, unknown-name rejection, creator-only application, destructive permissions and matching UI/server maps.
+- `node scripts/room-redesign-smoke.js`: Chrome and Firefox passed distinct discovery/creation, current-room identity, permission presets/inheritance, rename-draft preservation across immediate edits, saving feedback, phone section navigation, shared autoplay settings, paused close/reopen and fullscreen settings. Rendered screenshots inspected for empty/active room, creation/discovery, General/Permissions/People/Playback/Manage, phone, theater and fullscreen.
+- `node scripts/room-ui-smoke.js`: Chrome and Firefox passed queue add/reorder/remove/history, bulk/Specials, shuffle, library generation sources, autoplay toggle, actual fixture natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen at 17 seconds and deletion. The older flow explicitly selects server defaults; separate redesign coverage uses the new Host-managed preset.
+- `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox`: passed library context/cancel, private/public creation, access hiding, joining without replacing shared media, and responsive layouts.
+- Isolated disposable accounts, fixture media and ephemeral HTTPS servers only. No production deployment, state/schema migration, provider registration or real Plex/Discord checks were performed. Actual Activity/device and real-provider gates remain open. Private invitations are intentionally deferred; the UI states creator/host-only access.

@@ -228,3 +228,24 @@ test('writer conflict fails room mutations and seals reads against uncommitted m
   assert.equal(read.prepare('SELECT name FROM watch_rooms WHERE id=?').get(room.id).name, 'External writer');
   read.close();
 });
+
+
+test('explicit room presets preserve defaults, reject unknown names and protect destructive powers', async t => {
+  const f = fixture(t, { defaults:{viewer:{playPause:false, deleteRoom:true}} });
+  const configured = await f.store.create(f.creator, {permissionPreset:'server-defaults'});
+  assert.equal(configured.permissions.viewer.deleteRoom, true);
+  for (const name of ['host-managed','shared-queue']) {
+    let room = await f.store.create(f.creator, {permissionPreset:name});
+    assert.equal(room.permissions.viewer.playPause, true);
+    assert.equal(room.permissions.viewer.seek, true);
+    assert.equal(room.permissions.viewer.editQueue, name === 'shared-queue');
+    for (const role of ['host','viewer']) assert.equal(room.permissions[role].deleteRoom, false);
+    await assert.rejects(f.store.edit(room.id,f.viewer,room.revision,{action:'permissions.preset',preset:'shared-queue'}),/permission/);
+    room = await f.store.edit(room.id,f.creator,room.revision,{action:'permissions.preset',preset:'shared-queue'});
+    assert.equal(room.permissions.viewer.editQueue,true);
+    assert.equal(f.store.get(configured.id).permissions.viewer.deleteRoom,true);
+  }
+  await assert.rejects(f.store.create(f.creator,{permissionPreset:'unknown'}),/Unknown/);
+  const ui = {}; require('node:vm').runInNewContext(fs.readFileSync(path.join(__dirname,'../web/watch-rooms-ui.js'),'utf8'),ui);
+  for (const name of ['host-managed','shared-queue']) assert.equal(JSON.stringify(ui.uburoomRoomUI.presetPolicy(name)),JSON.stringify(Policy.preset(name)));
+});

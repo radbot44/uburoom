@@ -84,13 +84,13 @@ class RoomStore {
     catch (failure) { this.failure = failure; this.healthy(); }
     return result;
   }
-  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false } = {}) {
+  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset } = {}) {
     this.healthy();
     const creatorId = this.account(userId), id = randomUUID(), at = this.now();
     name = text(name, 100, 'room name');
     selectedVisibility = visibility(selectedVisibility);
     if (typeof fullPermissions !== 'boolean') throw error('Choose full participant permissions on or off');
-    const permissions = Policy.policy(this.defaults);
+    const permissions = permissionPreset === undefined || permissionPreset === 'server-defaults' ? Policy.policy(this.defaults) : Policy.preset(permissionPreset);
     if (fullPermissions) permissions.viewer = Object.fromEntries(Policy.CAPABILITIES.map(key => [key, true]));
     this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
       .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null);
@@ -123,7 +123,7 @@ class RoomStore {
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
     const capabilities = {
       rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'manageHosts',
-      'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
+      'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
     };
     const capability = Object.hasOwn(capabilities, change.action) && capabilities[change.action];
     if (!capability) throw error('Unsupported room change');
@@ -134,6 +134,10 @@ class RoomStore {
       switch (change.action) {
         case 'rename': room.name = text(change.name, 100, 'room name'); break;
         case 'visibility': room.visibility = visibility(change.visibility); break;
+        case 'permissions.preset': {
+          room.permissions = Policy.preset(change.preset);
+          break;
+        }
         case 'permissions': {
           if (!['host', 'viewer'].includes(change.role)) throw error('Choose host or viewer permissions');
           room.permissions[change.role] = Policy.permissions(change.permissions, room.permissions[change.role]);

@@ -208,7 +208,7 @@ class Watch {
       if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access))) continue;
       const members = [...new Map([...room.viewers.values()].map(v => [v.userId, v.name])).values()];
       rooms.push({id:room.s.roomId, name:accessible ? room.s.name : undefined, hostName:room.s.hostName, visibility:room.s.visibility, viewers:members.length,
-        ...(accessible ? {members,canManage:this.hub.canManage(room.s, actor)} : {locked:true})});
+        ...(accessible ? {title:room.media?.title || '',members,canManage:this.hub.canManage(room.s, actor)} : {locked:true})});
     }
     return rooms;
   }

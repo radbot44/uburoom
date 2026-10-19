@@ -12,7 +12,7 @@
     return m + ':' + String(s % 60).padStart(2, '0');
   }
 
-  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork }) {
+  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork, openSettings }) {
     const doc = host.ownerDocument;
     let view = 'cards';
     try { if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list'; } catch {}
@@ -130,7 +130,7 @@
     autoplayToggle.type = 'checkbox';
     autoplayToggle.id = 'queue-autoplay';
     autoplayLabel.append(doc.createTextNode('Autoplay next video'));
-    const autoOpen = button(continuation, 'Auto-queue settings', undefined, () => openAuto(), false, 'quiet');
+    const autoOpen = button(continuation, 'Queue settings', undefined, () => openSettings(), false, 'quiet');
     autoOpen.id = 'queue-auto-open';
     const autoStatus = node('p', continuation, '', 'hint queue-auto-status');
     const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
@@ -170,7 +170,7 @@
       const state = getState();
       if (!autoplayPending) autoplayToggle.checked = state?.autoplay?.enabled !== false;
       autoplayToggle.disabled = autoplayPending || !state?.capabilities?.autoplay;
-      autoOpen.disabled = !state?.capabilities?.editQueue;
+      autoOpen.disabled = !state?.durable;
       const auto = state?.queueSummary?.autoQueue;
       autoStatus.textContent = auto?.mode === 'following' ? 'Auto-queue: following episodes' : auto?.mode === 'random' ?
         'Auto-queue: random from ' + (auto.scope?.type === 'library' ? 'movie library' : auto.scope?.type || 'selected source') : 'Auto-queue is off';
@@ -231,9 +231,18 @@
       bulkDialog.showModal();
     }
 
-    const autoDialog = node('dialog', doc.body, undefined, 'privacy-dialog queue-dialog');
+    const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
+    const settingsAutoplayLabel = node('label', autoDialog, undefined, 'queue-check');
+    const settingsAutoplay = node('input', settingsAutoplayLabel); settingsAutoplay.type = 'checkbox'; settingsAutoplay.id = 'room-autoplay';
+    settingsAutoplayLabel.append(doc.createTextNode('Autoplay next video'));
+    settingsAutoplay.addEventListener('change',async () => {
+      settingsAutoplay.disabled = true; autoNotice.textContent = 'Saving…';
+      try { await execute({action:'media.autoplay.set',args:{enabled:settingsAutoplay.checked}}); autoNotice.textContent = 'Saved'; }
+      catch (error) { autoNotice.textContent = error.message; }
+      finally { settingsAutoplay.checked = getState()?.autoplay?.enabled !== false; settingsAutoplay.disabled = !getState()?.capabilities?.autoplay; }
+    });
     autoDialog.id = 'queue-auto-dialog'; autoDialog.setAttribute('aria-labelledby', 'queue-auto-title');
-    node('h2', autoDialog, 'Auto-queue').id = 'queue-auto-title';
+    node('h4', autoDialog, 'Automatic queue generation').id = 'queue-auto-title';
     node('p', autoDialog, 'Choose future videos to add as the queue runs low. Autoplay controls whether the next video starts when this one ends.', 'hint');
     const autoModeLabel = node('label', autoDialog, 'Mode');
     const autoMode = node('select', autoModeLabel); autoMode.id = 'queue-auto-mode';
@@ -247,32 +256,34 @@
     autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     const autoNotice = node('p', autoDialog, '', 'hint'); autoNotice.setAttribute('role', 'status');
     const autoActions = node('div', autoDialog, undefined, 'room-actions');
-    const autoCancel = button(autoActions, 'Cancel', undefined, () => autoDialog.close());
+    const autoCancel = button(autoActions, 'Reset changes', undefined, () => openAuto());
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
-    autoDialog.addEventListener('cancel', event => { if (autoPending) event.preventDefault(); });
-    function openAuto(source) {
-      if (autoDialog.open) return;
+    doc.addEventListener('room-playback-settings',() => { if (!autoPending) void openAuto(); });
+    async function openAuto(source) {
       const state = getState(), roomId = state?.id;
-      if (!roomId || !state.capabilities?.editQueue) return;
+      if (!roomId) return;
+      if (source) await openSettings();
+      if (getState()?.id !== roomId) return;
       const config = state.queueSummary?.autoQueue;
       autoMode.value = source ? 'random' : config?.mode || 'off';
       autoSpecials.checked = !!config?.includeSpecials;
       const scope = source?.scope || config?.scope || { type: 'show' };
       autoSource.textContent = 'Source: ' + (source?.title || (scope.type === 'show' ? scope.id ? 'Selected show' : 'Current show' : scope.type === 'library' ? 'Selected movie library' : 'Selected collection'));
-      autoNotice.textContent = ''; autoSave.disabled = false;
+      autoNotice.textContent = ''; autoSave.disabled = autoMode.disabled = autoSpecials.disabled = !state.capabilities?.editQueue;
+      settingsAutoplay.checked = state.autoplay?.enabled !== false; settingsAutoplay.disabled = !state.capabilities?.autoplay;
       autoMode.querySelector('[value=following]').disabled = source && scope.type !== 'show';
-      (doc.fullscreenElement || doc.body).append(autoDialog);
+
       autoSave.onclick = async () => {
-        if (getState()?.id !== roomId || !getState()?.capabilities?.editQueue) { autoDialog.close(); return; }
+        if (getState()?.id !== roomId || !getState()?.capabilities?.editQueue) { return; }
         autoPending = true; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = true; autoNotice.textContent = 'Saving…';
         try {
           const selectedScope = autoMode.value === 'following' && scope.type !== 'show' ? { type: 'show' } : { type: scope.type, ...(scope.id ? { id: scope.id } : {}) };
           await mutate('auto', { mode: autoMode.value, scope: selectedScope, includeSpecials: autoSpecials.checked });
-          autoDialog.close(); await changed();
+          autoNotice.textContent = 'Saved'; await changed();
         } catch (error) { autoNotice.textContent = error.message; }
         finally { autoPending = false; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = false; }
       };
-      autoDialog.showModal();
+
     }
 
     function motion() {
@@ -750,7 +761,7 @@
       if (!visible) {
         if (lastFetchedRoomId) { clearArtwork(); lastFetchedRoomId = null; lastFetchedRevision = -1; }
         if (bulkDialog.open) bulkDialog.close();
-        if (autoDialog.open) autoDialog.close();
+        autoNotice.textContent = '';
         return;
       }
 

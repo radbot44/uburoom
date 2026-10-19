@@ -171,6 +171,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Room flow redesign (2026-10-19):** Rooms now separates discovery, saved-room reopening and creation. Current-room identity, consistent Leave/Close/Delete labels, task-based settings, permission presets and shared queue settings are implemented. Existing policies are preserved; new Host-managed rooms grant play/pause and seeking. Private remains creator/hosts only, with invitations deferred. Chrome/Firefox fixture flows and rendered desktop/phone/theater/fullscreen checks pass; see [verification](docs/testing.md#room-flow-redesign-2026-10-19). Real-provider and Activity gates remain.
+
 **Mobile navbar and appearance follow-up (2026-10-19):** Section tabs now scroll normally, while the full Media heading/navigation and search/filter/view toolbar pin together in mobile page and fullscreen Menu layouts. Synchronous header measurement preserves view-switch scroll anchors. Favicon links remain static through appearance changes and Sunrise Mode. Chrome/Firefox layout and appearance checks plus all 347 tests pass; [verification](docs/testing.md#mobile-media-navbar-and-static-favicon-2026-10-19).
 
 **Watch section layout (2026-10-19):** Normal mode places Media below the video and Room/Queue in a sticky right column. Theater uses Media/Room-and-Queue columns at approximately 70%/30%, with the right column sticky. Fullscreen orders Room, Queue, Media. The room bar is inside Room; desktop panels collapse independently while mobile keeps tabs. Headers share Queue-sized spacing. See [verification](docs/testing.md#watch-section-layout-2026-10-19).

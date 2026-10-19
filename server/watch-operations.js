@@ -1,6 +1,7 @@
 // @ts-check
 'use strict';
 const { UUID, hash } = require('./core');
+const RoomPolicy = require('./room-policy');
 const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
 
@@ -29,7 +30,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
       }
       if (write && url.pathname === '/api/watch/admin-mode') {
         if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}

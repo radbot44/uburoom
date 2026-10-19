@@ -29,7 +29,7 @@ h1{font-size:22px;letter-spacing:-.5px;margin:0}h2{font-size:17px;margin:0}.hint
 .auth-card{max-width:440px;margin:50px auto;padding:28px}.auth-card p{margin:12px 0 0}.login-options{display:grid;gap:12px;margin-top:24px}.provider-button{display:flex;align-items:center;justify-content:center;gap:12px;min-height:46px;border-radius:12px;padding:12px 16px;text-decoration:none;font-weight:600;color:var(--text)}.provider-button img{flex:none}.discord-button{background:#5865F2;color:#fff}.discord-button:hover{background:#4752c4}.auth-card #auth-retry{margin-top:20px}.room-bar{margin-bottom:16px;justify-content:flex-start;flex-wrap:wrap}.chips{display:flex;flex-wrap:wrap;gap:8px;flex:1}.chips button{background:var(--elevated);border-radius:12px;padding:10px 16px}.chips button[aria-pressed=true]{background:var(--primary)}#viewers{white-space:nowrap}
 .auth-pending{overflow:hidden}.auth-overlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:#0009}.auth-overlay .auth-card{width:min(440px,100%);max-height:calc(100dvh - 32px);overflow:auto;margin:0;box-shadow:0 12px 50px #0009}.auth-pending #library-panel{min-height:260px}
 #app{display:grid;grid-template-columns:minmax(0,2fr) minmax(320px,1fr);gap:24px;align-items:start}
-#watch-settings[aria-disabled=true]{opacity:.4}#room-dialog .room-create-actions{display:flex;gap:10px;margin-top:20px}#room-dialog #room-create{flex:1.5}#room-dialog #room-create-private{flex:1}#room-dialog h3{font-size:14px;margin-top:24px}#room-dialog .chips{max-height:220px;overflow-y:auto}
+#watch-settings[aria-disabled=true]{opacity:.4}#room-dialog h3{font-size:14px;margin-top:24px}#room-dialog .chips{max-height:220px;overflow-y:auto}
 .screen-column{display:contents}#viewing-section{grid-column:1;grid-row:1;min-width:0}#app>#library-panel{grid-column:1;grid-row:2;margin:0;min-width:0;position:relative}#room-column{grid-column:2;grid-row:1 / span 2}
 .stage{position:relative;aspect-ratio:16/9;background:black;border-radius:10px;overflow:hidden;display:grid;place-items:center;isolation:isolate;container-type:inline-size}.stage:fullscreen{border-radius:0;background:black;aspect-ratio:auto;width:100%;height:100%}
 #identity{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;color:inherit;padding:6px 0}#identity:hover:not(:disabled){color:var(--text);text-decoration:underline;text-underline-offset:3px}#identity:disabled{opacity:1;cursor:default}
@@ -178,3 +178,28 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .mobile-player :is(#options-panel,#queue-panel,#library-panel) .section-toggle>:last-child{display:none}
 .mobile-player:not(.immersive) :is(#options-panel,#queue-panel,#library-panel){padding-top:0}
 .mobile-player:not(.immersive) #app>#library-panel{grid-row:auto}
+
+/* Room tasks: discovery, current room and persistent management. */
+.outside-room .transport,.outside-room #open-remote,.outside-room #join-playback{display:none!important}
+#room-lobby{margin:18px auto 0}#lobby-room-bar{justify-content:center}#lobby-reopen{display:none}
+#empty-stage button{pointer-events:auto}#empty-stage .room-bar{flex-wrap:wrap}
+#current-room h3{margin:0 0 8px;font-size:22px;overflow-wrap:anywhere}#current-room-meta{margin:0 0 12px}
+#room-bar{align-items:center}#room-bar #close-room{order:10;width:100%;text-align:left;background:transparent;padding-left:0;color:var(--muted)}
+#room-dialog{width:min(620px,calc(100vw - 32px));box-sizing:border-box}#room-dialog header h2{margin-right:auto}
+#room-dialog label{display:block;margin:14px 0 6px}#room-dialog select{width:100%}
+#room-dialog input:not([type=checkbox]),#room-settings-dialog input:not([type=checkbox]){box-sizing:border-box;min-width:0;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);padding:12px;font:inherit}
+#room-dialog input:not([type=checkbox]){width:100%}#room-chooser-refresh{margin-left:auto;color:var(--muted)}
+#room-chooser-nav [aria-pressed=true],#room-settings-nav [aria-current=true]{background:var(--elevated);color:var(--accent-text)}
+#room-settings-dialog{width:min(900px,calc(100vw - 32px));height:min(720px,90dvh);max-height:90dvh;box-sizing:border-box;overflow:hidden;padding:24px;flex-direction:column}
+#room-settings-dialog[open]{display:flex}#room-settings-dialog>header{flex:none;gap:10px}#room-settings-title{font-size:21px;overflow-wrap:anywhere;min-width:0;margin:0 auto 0 0}
+#room-settings-status{min-height:20px;margin:10px 0;color:var(--muted);flex:none;overflow-wrap:anywhere}
+#room-settings-content{display:grid;grid-template-columns:175px minmax(0,1fr);gap:24px;min-height:0;flex:1}
+#room-settings-nav{display:flex;flex-direction:column;gap:6px;align-self:start}#room-settings-nav button{text-align:left;background:transparent;padding:12px;border-radius:10px}
+#room-settings-panels{overflow:auto;min-width:0;padding:0 8px 16px 0}#room-settings-panels h3{margin-top:0}#room-settings-panels .room-actions{flex-wrap:wrap}
+#room-settings-panels .room-actions input{flex:1;width:100px}#room-settings-panels select{max-width:100%;min-width:0}#room-settings-panels summary{cursor:pointer;padding:12px 0}
+#room-settings-dialog .room-mobile-section{display:none}.permission-inherited{display:block;font-size:11px;max-width:100px;margin:5px auto}.room-permission-table .permission-group{font-weight:700;padding-top:20px;color:var(--accent-text)}
+.queue-settings select{display:block;width:100%;margin:6px 0 16px}.queue-settings .queue-check{display:flex!important;align-items:center;gap:10px}.queue-settings input[type=checkbox]{width:20px;height:20px;accent-color:var(--primary)}
+@media(max-width:620px){#room-settings-dialog{padding:18px;width:calc(100vw - 20px);height:90dvh}#room-settings-dialog>header{align-items:flex-start}#room-settings-title{font-size:18px}#room-settings-refresh{font-size:12px;padding:8px}#room-settings-dismiss{padding:8px}#room-settings-content{display:block;overflow:hidden}#room-settings-panels{height:100%;box-sizing:border-box;padding-top:18px}#room-settings-nav{display:none}#room-settings-dialog .room-mobile-section{display:block;flex:none}label.room-mobile-section{font-size:12px;color:var(--muted);margin:0 0 5px}#room-settings-section{width:100%}#room-dialog{padding:22px}#room-chooser-nav{gap:6px}#room-chooser-nav button{padding:10px;font-size:12px}}
+
+#watch-settings>summary{cursor:pointer;color:var(--muted);padding:8px 0}#watch-settings[open]>summary{margin-bottom:10px}#options-content>#close-room{display:block;margin-top:14px;background:transparent;color:var(--muted);padding-left:0}
+@media(max-width:620px){#room-settings-dialog>header{display:grid;grid-template-columns:minmax(0,1fr) auto}#room-settings-title{grid-column:1;grid-row:1;align-self:center}#room-settings-dismiss{grid-column:2;grid-row:1}#room-settings-refresh{grid-column:1;grid-row:2;justify-self:start;margin-top:8px}}

@@ -35,19 +35,19 @@ async function main() {
     await browser.viewport(host,1360,1100);
     await until('document.querySelectorAll(".library-home-card").length > 0','Lobby library');
     assert.equal(app.watch.rooms.size,0);
-    assert.equal(await run('!$("options-panel").hidden && $("watch-settings").inert && !$("options-panel").inert && getComputedStyle($("watch-settings")).opacity === "0.4" && !$("watch-settings").hidden && !$("remote-settings").shadowRoot.querySelector(".sharing").hidden'),true);
+    assert.equal(await run('!$("options-panel").hidden && $("watch-settings").hidden && $("drawer-visibility").hidden && !$("room-lobby").hidden'),true);
     await shot('normal');
     await run('document.querySelector(".library-home-card[data-tab=library]").click()');
     await until('!!document.querySelector("#library [data-play]")','Lobby movie');
     await run('document.querySelector("#library [data-play]").click()');
     await until('$("room-dialog").open','Room chooser');
     assert.equal(app.watch.rooms.size,0);
-    assert.equal(await run('$("room-join").hidden'),true);
+    assert.equal(await run('$("room-create-form").hidden'),true);
     await shot('chooser');
     await run('$("room-dialog").close("cancel")');
     await until('!document.querySelector("#library [data-play]").disabled','Cancel restores play');
     assert.equal(app.watch.rooms.size,0);
-    await run('document.querySelector("#library [data-play]").click();$("room-create-private").click()');
+    await run('document.querySelector("#library [data-play]").click();$("room-chooser-new").click();$("room-create-visibility").value="private";$("room-create").click()');
     await until('!!state?.mediaId && !$("room-dialog").open','Private room plays selection');
     assert.equal(app.watch.rooms.size,1);
     const privateRoom = [...app.watch.rooms.values()][0];
@@ -82,7 +82,7 @@ async function main() {
     await run('window.scrollTo(0,0)');await shot('phone');
     await run('$("create").click()');await shot('phone-chooser');
     assert.equal(await run('$("room-dialog").getBoundingClientRect().width <= innerWidth'),true);
-    assert.equal(await run('(()=>{const a=$("room-create").getBoundingClientRect(),b=$("room-create-private").getBoundingClientRect();return a.width>b.width && Math.abs(a.top-b.top)<1;})()'),true,'Public button is wider beside Private');
+    assert.equal(await run('!$("room-create-form").hidden && $("room-create-visibility").options.length===2'),true,'Creation uses explicit visibility and a single submit');
     console.log(name + ': lobby browse, disabled settings, cancel, private/public creation, Play selection, private hiding, join and responsive layouts passed');
   } finally { await browser?.close(); await app.close(); }
 }

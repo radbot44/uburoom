@@ -133,7 +133,7 @@ class WatchRooms {
     const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member' });
     const candidates = [...new Set([record.creatorId, ...record.hosts, ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])];
     return { id, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
-      creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person),
+      creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
       role:Policy.role(record, actor.userId), permissions:record.permissions,
       capabilities:Object.fromEntries([...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].map(key =>
         [key, this.watch.hub.isAdmin(actor) || Policy.allowed(record, actor.userId, key)])) };

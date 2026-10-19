@@ -139,6 +139,8 @@ Storage rollout is a separate gate. Current pre-release policy rejects changed l
 
 ## Interface flow
 
+The 2026-10-19 room redesign supersedes the original creation presentation: Rooms has Active rooms and Your rooms, with a distinct New room form. Host-managed explicitly grants participant play/pause and seeking; Shared playback and queue adds video choice, queue editing and autoplay. Existing policies and configured defaults are retained unless a preset is explicitly selected. Neither preset grants deletion outside the creator. Settings has General, People, Permissions, Playback & queue and Manage sections. Queue settings opens the same Playback & queue controls. Private remains creator/hosts only; invited viewers are a later feature. All rooms remain saved normally.
+
 - Lobby: Create, Reopen and accessible active rooms to Join. Reopen cards show name, last activity, resume title/position and pending count, with a clear empty state and private listings.
 - Room: name, live controller, authorized Hosts/permission management, distinct Leave/Close and separately confirmed permission-checked Delete. Preserve visibility and existing design assets.
 - Library: Add to queue on movies/episodes and Add show/season on details, plus explicit Play now. A title selected before Reopen must not overwrite the saved current item; offer room resume or adding that title.

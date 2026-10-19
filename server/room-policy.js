@@ -12,6 +12,16 @@ const DEFAULTS = Object.freeze({
   viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause'])))
 });
 
+// Explicit presets never alter existing or configured policies implicitly.
+function preset(name) {
+  if (!['host-managed', 'shared-queue'].includes(name)) throw new Error('Unknown room permission preset');
+  return {
+    host: { ...DEFAULTS.host },
+    viewer: Object.fromEntries(CAPABILITIES.map(key => [key,
+      ['playPause', 'seek'].includes(key) || name === 'shared-queue' && ['chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)]))
+  };
+}
+
 function permissions(value, base) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).some(key => !CAPABILITIES.includes(key) || typeof value[key] !== 'boolean')) {
@@ -98,4 +108,4 @@ function administrator(registry, config, userId, access) {
     access?.isMember(identity.subject) === true && configured.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
 }
 
-module.exports = { CAPABILITIES, CREATOR_ONLY, DEFAULTS, permissions, policy, role, allowed, commandCapability, configuration, administrator };
+module.exports = { preset, CAPABILITIES, CREATOR_ONLY, DEFAULTS, permissions, policy, role, allowed, commandCapability, configuration, administrator };

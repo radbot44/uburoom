@@ -130,7 +130,7 @@ const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterva
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,
   join:async id=>{await selectRoom(id);if(!state)throw new Error('Room unavailable');returnToVideo();},
-  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:()=>chooseRoom(),fail });
+  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail });
 async function fetchArtwork(path, signal) {
   const response = await fetch(path, { signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]), headers: token ? { Authorization: 'Bearer ' + token } : {} });
   if (!response.ok) throw new Error('Artwork unavailable');
@@ -138,6 +138,7 @@ async function fetchArtwork(path, signal) {
 }
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
   request:api,getState:()=>state,getMe:()=>me,fail,execute,
+  openSettings:()=>roomUI.open(state.id,'playback'),
   serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
   openLibraryItem: item => library?.openItem(item),
   artwork: fetchArtwork,
@@ -335,7 +336,7 @@ function updateFullscreenLayout() {
 }
 function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
-  $('room-lobby').hidden = !immersive || !!selected || !me;
+  $('room-lobby').hidden = !!selected || !me;
 }
 function renderSyncPreference() {
   $('sync-correction').value=syncCorrectionMode;
@@ -706,15 +707,27 @@ function renderRemote() {
   settings.render(state?.state, state ? options : {...options,room:{canManage:true,enabled:false,reachable:false,controls:uburoom.CONTROLS}});
 }
 function renderVisibility() {
+  document.body.classList.toggle('outside-room', !state);
+  $('current-room').hidden = !state;
+  $('rooms').hidden = true;
+  $('refresh').hidden = !!state;
+  $('create').hidden = !!state;
+  $('remote-consent-summary').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
+  $('switch-room').textContent = state ? 'Switch room' : 'Choose room';
+  if (state) {
+    $('current-room-name').textContent = state.roomName || 'Room';
+    const role = state.roomRole || (state.isHost ? 'host' : 'participant');
+    $('current-room-meta').textContent = (state.visibility === 'private' ? 'Private · Creator and hosts only' : 'Public') + ' · ' + state.viewers + (state.viewers === 1 ? ' viewer' : ' viewers') + ' · ' + (role === 'creator' ? 'You’re the creator' : role === 'host' ? 'You’re a host' : 'You’re a participant');
+  }
   roomUI.render();
   queueUI.render(state?.queueSummary);
-  $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !!state && !state.canManage;
+  $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !state || !state.canManage;
   $('watch-settings').inert = !state;
   $('watch-settings').setAttribute('aria-disabled', String(!state));
   $('admin-end-room').hidden = !state?.adminMode || state?.isHost; $('admin-end-room').disabled = pending;
   for (const id of ['visibility', 'drawer-visibility']) {
     const button = $(id), privateRoom = state?.visibility === 'private';
-    button.hidden = !state && id !== 'drawer-visibility'; button.disabled = pending || !state?.canManage;
+    button.hidden = !state || id === 'drawer-visibility' && state.durable; button.disabled = pending || !state?.canManage;
     button.textContent = privateRoom ? state?.durable ? 'Private - Hosts only' : 'Private - No one can join' : 'Public'; button.classList.toggle('private', privateRoom);
     button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : 'Public room');
     button.title = state?.canManage ? (privateRoom ? 'Creator and hosts can watch. Make public.' : 'Server members can watch. Make private.') : 'Room settings permission required';
@@ -903,7 +916,7 @@ function applyState(next) {
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
   $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library.' : 'The host chooses the video.';
-  $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End room' : 'Leave room';
+  $('close-room').hidden = false; $('close-room').textContent = 'Leave room';
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
   const choices = next.qualities || uburoom.QUALITIES;
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
@@ -973,8 +986,8 @@ function applyRooms(rooms) {
     if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
   }
   $('status').textContent = !selected && rooms.length ? 'Choose an active room or create your own.' : '';
-  $('create').textContent = selected ? 'New room' : 'Create room';
-  $('create').className = selected ? 'quiet' : 'primary';
+  $('create').textContent = 'New room';
+  $('create').hidden = !!selected;
   if (!selected) { $('viewers').textContent = ''; $('close-room').hidden = true;
     $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.'; }
   placeRoomBar();
@@ -1078,41 +1091,59 @@ async function loadLibraryItem(item) {
 }
 let roomChoice;
 function renderRoomChoices(rooms) {
-  $('room-join').hidden = !rooms.length;
-  renderRooms($('room-choices'), rooms, async id => {
-    if (creating) return;
-    creating = true; $('room-create').disabled = $('room-create-private').disabled = true;
-    try {
-      await selectRoom(id);
-      if (!state || selected !== id) throw new Error('Room unavailable. Choose another room.');
-      $('room-dialog').close('joined'); returnToVideo();
-    } catch (error) { $('room-dialog-error').textContent = error.message; }
-    finally { creating = false; $('room-create').disabled = $('room-create-private').disabled = false; }
-  });
+  const container = $('room-choices'); container.replaceChildren();
+  if (!rooms.length) { const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = 'No active rooms. Create a new room or reopen one of yours.'; container.append(empty); }
+  for (const room of rooms) {
+    const row = document.createElement('div'); row.className = 'saved-room';
+    const copy = document.createElement('div'), name = document.createElement('strong'), info = document.createElement('p');
+    name.textContent = room.name || room.hostName; info.className = 'hint';
+    info.textContent = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers'); copy.append(name,info);
+    const button = document.createElement('button'); button.className = 'quiet'; button.textContent = 'Join'; button.disabled = !!room.locked;
+    button.addEventListener('click',async () => {
+      if (creating) return;
+      creating = true; button.disabled = true;
+      try { await selectRoom(room.id); if (!state || selected !== room.id) throw new Error('Room unavailable. Choose another room.'); $('room-dialog').close('joined'); returnToVideo(); }
+      catch (error) { $('room-dialog-error').textContent = error.message; }
+      finally { creating = false; button.disabled = !!room.locked; }
+    }); row.append(copy,button); container.append(row);
+  }
 }
-async function chooseRoom(item) {
+function roomChooserSection(section) {
+  $('room-create-form').hidden = section !== 'new';
+  $('room-join').hidden = section !== 'active';
+  $('room-reopen').hidden = section !== 'saved' || !me?.durableRooms;
+  $('room-chooser-nav').hidden = section === 'new';
+  $('room-chooser-new').hidden = section === 'new';
+  $('room-dialog-title').textContent = section === 'new' ? 'New room' : 'Rooms';
+  for (const [id,value] of [['room-show-active','active'],['room-show-saved','saved']]) $(id).setAttribute('aria-pressed',String(section === value));
+  $('room-show-saved').hidden = !me?.durableRooms;
+  $('room-dialog-hint').textContent = roomChoice ? 'Create a room to watch ' + roomChoice.title + '. Joining follows current playback; reopening restores the saved video.' : section === 'new' ? 'Choose a name and who can join.' : 'Choose an active room or restore one of your saved rooms.';
+}
+async function chooseRoom(item, section = 'active') {
   const dialog = $('room-dialog');
   if (dialog.open || creating) return {status:'cancelled'};
   roomChoice = item;
-  $('room-dialog-hint').textContent = item ? 'Create a room to play ' + item.title + ', or join an active room.' : 'Create a public or private room, or join an active room.';
-  $('room-dialog-error').textContent = ''; $('room-choices').replaceChildren(); $('room-join').hidden = true;
-  $('room-name').value = ''; $('room-full-permissions').checked = false;
+  $('room-dialog-error').textContent = ''; $('room-choices').replaceChildren();
+  $('room-name').value = ''; $('room-create-visibility').value = 'public'; $('room-create-preset').value = 'host-managed';
+  $('room-create-summary').textContent = uburoomRoomUI.summary('host-managed');
+  roomChooserSection(section);
   (document.fullscreenElement === $('stage') ? $('stage') : document.body).append(dialog);
   const closed = new Promise(resolve => dialog.addEventListener('close', () => {
     roomChoice = undefined; resolve({status:dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied'});
   }, {once:true}));
   dialog.returnValue = ''; dialog.showModal();
+  (section === 'new' ? $('room-name') : section === 'saved' ? $('room-show-saved') : $('room-show-active')).focus();
   void roomUI.loadSaved(0);
   void refreshRooms().catch(error => { if (dialog.open) $('room-dialog-error').textContent = error.message; });
   return closed;
 }
 $('room-dialog').addEventListener('cancel', event => { if (creating) event.preventDefault(); });
 $('room-dialog').querySelector('form').addEventListener('submit', event => { if (creating) event.preventDefault(); });
-async function createRoom(visibility = 'public') {
+async function createRoom() {
   if (creating) return; creating = true;
-  $('room-create').disabled = $('room-create-private').disabled = true;
+  $('room-create').disabled = true;
   try {
-    const room = await api('/api/watch/rooms', {visibility,name:$('room-name').value.trim() || 'Room',fullPermissions:$('room-full-permissions').checked}); await selectRoom(room.id);
+    const room = await api('/api/watch/rooms', {visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || 'Room',...(me?.durableRooms ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice;
     $('room-dialog').close('created'); renderLibrary();
@@ -1123,11 +1154,17 @@ async function createRoom(visibility = 'public') {
     }
   }
   catch (error) { if ($('room-dialog').open) $('room-dialog-error').textContent = error.message; else fail(error.message); }
-  finally { creating = false; $('room-create').disabled = $('room-create-private').disabled = false; }
+  finally { creating = false; $('room-create').disabled = false; }
 }
-for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom());
-$('room-create').addEventListener('click', () => void createRoom('public'));
-$('room-create-private').addEventListener('click', () => void createRoom('private'));
+for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
+for (const id of ['switch-room','empty-choose']) $(id).addEventListener('click', () => void chooseRoom());
+$('room-create').addEventListener('click', () => void createRoom());
+$('room-chooser-new').addEventListener('click',() => { roomChooserSection('new'); $('room-name').focus(); });
+$('room-create-back').addEventListener('click',() => roomChooserSection('active'));
+$('room-show-active').addEventListener('click',() => roomChooserSection('active'));
+$('room-show-saved').addEventListener('click',() => roomChooserSection('saved'));
+$('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved(0); void refreshRooms().catch(error => $('room-dialog-error').textContent = error.message); });
+$('room-create-preset').addEventListener('change',event => { $('room-create-summary').textContent = event.target.value === 'server-defaults' && me?.roomPermissionDefaults ? uburoomRoomUI.describe(me.roomPermissionDefaults) : uburoomRoomUI.summary(event.target.value); });
 $('close-room').addEventListener('click', async () => {
   if (!selected || pending) return;
   const id = selected; pending = true;
