@@ -727,3 +727,8 @@ Verification: all 213 unit tests passed with zero skips. The augmented `node scr
 
 Refined poster proportions, queue-add alignment, shuffle margins, theater silhouette, external-link arrow and users spacing in the shared SVG renderer. Inspected the complete icon sheet before and after at 24px in headless Chrome using the actual icon factory and production stroke settings; JavaScript syntax validation passed. Firefox headless screenshot attempts produced no image, so Firefox visual verification remains unfinished. This was an isolated icon-sheet review; live player, responsive layouts and 112px badges were not revalidated.
 
+
+### Icon optical sizing follow-up (2026-10-19)
+
+Adjusted Play centering, Pause bar weight (2.3px), paired Plus/Minus spans, library-view spacing and detail, film perforation width, remote button spacing, and filled captions outer bounds. The gear remains unchanged. Inspected before/after sheets from the actual shared renderer in Chrome at 16, 20 and 24px. JavaScript syntax and diff whitespace checks passed. Firefox headless capture again produced no screenshot; Firefox visual verification and live layout/badge checks remain unfinished.
+

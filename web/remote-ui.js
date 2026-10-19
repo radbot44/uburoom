@@ -49,17 +49,17 @@
     home: ['M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9'],
     sun: ['M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0','M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5'],
     moon: ['M20 14a8.5 8.5 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z'],
-    libraryNormal: ['M3 3h7v10H3zM14 3h7v10h-7zM3 17h7M14 17h7M3 21h5M14 21h5'],
-    libraryList: ['M3 4h4v6H3zM11 5h10M11 9h7M3 14h4v6H3zM11 15h10M11 19h7'],
-    libraryPoster: ['M3 5h7v14H3zM14 5h7v14h-7z'],
-    film: ['M3 3h18v18H3zM7 3v18M17 3v18M3 9h4M3 15h4M17 9h4M17 15h4'],
+    libraryNormal: ['M3 4h7v11H3zM14 4h7v11h-7zM3 19h7M14 19h7'],
+    libraryList: ['M3 4h5v6H3zM12 5h9M12 9h6M3 14h5v6H3zM12 15h9M12 19h6'],
+    libraryPoster: ['M3 4h7v16H3zM14 4h7v16h-7z'],
+    film: ['M3 3h18v18H3zM8 3v18M16 3v18M3 9h5M3 15h5M16 9h5M16 15h5'],
     tv: ['M3 7h18v14H3zM8 3l4 4 4-4'],
     filter: ['M4 6h16M7 12h10M10 18h4'], sort: ['M8 3v18m-4-4 4 4 4-4M14 4h7M14 9h5M14 14h3'],
     queue: ['M4 5h16M4 10h16M4 15h7M17 14v6M14 17h6'], shuffle: ['M4 6h3c5 0 5 12 10 12h3M17 15l3 3-3 3M4 18h3c2 0 3-2 4-4M14 9c1-2 2-3 3-3h3M17 3l3 3-3 3'],
     search: ['M15 15l6 6', 'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0'],
     admin: ['M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6l-9-4Z', 'm8 12 3 3 5-6'], chevron: ['m6 9 6 6 6-6'],
     check: ['m5 12 5 5 9-9'],
-    close: ['M18 6 6 18M6 6l12 12'], play: ['m8 4 12 8-12 8V4Z'], pause: ['M9 5v14M15 5v14'],
+    close: ['M18 6 6 18M6 6l12 12'], play: ['M7 4 19 12 7 20Z'], pause: ['M9 5v14M15 5v14'],
     start: ['M5 4v16', 'M20 4 8 12l12 8V4Z'], end: ['M19 4v16', 'M4 4l12 8-12 8V4Z'],
     mute: ['M11 5 6 9H3v6h3l5 4V5Z', 'M15 9a5 5 0 0 1 0 6M18 6a9 9 0 0 1 0 12'],
     muted: ['M11 5 6 9H3v6h3l5 4V5Z', 'M16 9l6 6m0-6-6 6'],
@@ -68,10 +68,10 @@
     fullscreen: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5'],
     fullscreenExit: ['M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3'],
     captions: ['M5 5h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z', 'M10 9H7v6h3M17 9h-3v6h3'],
-    captionsOn: ['M5 5h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3ZM6 8h5v2H8v4h3v2H6ZM13 8h5v2h-3v4h3v2h-5Z'],
+    captionsOn: ['M5 4.05h14a3.95 3.95 0 0 1 3.95 3.95v8a3.95 3.95 0 0 1-3.95 3.95H5A3.95 3.95 0 0 1 1.05 16V8A3.95 3.95 0 0 1 5 4.05ZM6 8h5v2H8v4h3v2H6ZM13 8h5v2h-3v4h3v2h-5Z'],
     theater: ['M3 6h18v12H3z'], drawer: ['M3 4h18v16H3zM14 4v16M6 8h5M6 12h5M6 16h5'],
     stretchX: ['M3 12h18m-5-5 5 5-5 5M8 7l-5 5 5 5'], stretchY: ['M12 3v18m-5-5 5 5 5-5M7 8l5-5 5 5'],
-    minus: ['M5 12h14'], plus: ['M5 12h14M12 5v14'], up: ['M12 20V4m-7 7 7-7 7 7'],
+    minus: ['M4 12h16'], plus: ['M4 12h16M12 4v16'], up: ['M12 20V4m-7 7 7-7 7 7'],
     down: ['M12 4v16m-7-7 7 7 7-7'], left: ['M20 12H4m7-7-7 7 7 7'], right: ['M4 12h16m-7-7 7 7-7 7'],
     center: ['M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0', 'M12 2v5m0 10v5M2 12h5m10 0h5'],
     bookmark: ['M6 3h12v18l-6-4-6 4V3Z'], open: ['M10 4H4v16h16v-6M14 3h7v7M21 3 11 13'],
@@ -81,7 +81,7 @@
       'M21 12a9 9 0 0 1-15.364 6.364L3 16M3 21v-5h5'],
     logout: ['M9 4H3v16h6M9 12h12m-5-5 5 5-5 5'],
     website: ['M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0', 'M4 12h16M12 4c-5 5-5 11 0 16M12 4c5 5 5 11 0 16'],
-    remote: ['M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z', 'M9 6h6M9 10h.01M15 10h.01M9 14h.01M15 14h.01M9 18h6'],
+    remote: ['M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z', 'M9 6h6M9 11h.01M15 11h.01M9 16h.01M15 16h.01'],
     settings: ['M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0', gearPath()]
   };
   function gearPath() {
@@ -106,6 +106,8 @@
   function icon(doc, name, seekSeconds = 15) {
     const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
     for (const d of paths[name] || []) { const p = doc.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', d); svg.append(p); }
+    // Slightly strengthen the two isolated pause bars without changing the family stroke.
+    if (name === 'pause') svg.firstChild.setAttribute('stroke-width', '2.3');
     if(name==='captionsOn'){svg.firstChild.setAttribute('fill','currentColor');svg.firstChild.setAttribute('fill-rule','evenodd');svg.firstChild.setAttribute('stroke','none');}
     if (name === 'back' || name === 'forward') {
       const text = doc.createElementNS(svg.namespaceURI, 'text'); text.textContent = String(seekSeconds); text.setAttribute('x', '12'); text.setAttribute('y', '15');
