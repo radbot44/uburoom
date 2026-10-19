@@ -60,7 +60,7 @@ async function main() {
       guest = await browser.page(config.publicUrl + '/watch?demo=guest');
       await browser.until(guest,'me?.durableRooms && transport?.ready && $("lobby-rooms").querySelector("button")','Direct active lobby');
       assert.match(await browser.evaluate(guest,'$("lobby-rooms").textContent'),/Friday room/);
-      assert.equal(await browser.evaluate(guest,'$("options-panel").hidden'),true);
+      assert.equal(await browser.evaluate(guest,'$("options-panel").hidden'),false);
       await browser.viewport(guest,390,844);
       assert.equal(await browser.evaluate(guest,'(()=>{const stage=$("stage").getBoundingClientRect(),reopen=$("lobby-reopen").getBoundingClientRect(),create=$("lobby-create").getBoundingClientRect();return reopen.top>=stage.top && reopen.bottom<=stage.bottom-32 && create.bottom<=stage.bottom-32;})()'),true);
       await browser.screenshot(guest,path.resolve('artifacts/room-refinement-'+name+'-phone-lobby.png'));

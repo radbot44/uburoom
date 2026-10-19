@@ -400,12 +400,21 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 
 Chromium Manifest V3 extension support is implemented and verified. `uburoom-remote` provides multi-target build and packaging (`npm run build:all`, `npm run package:all`, `scripts/package-all.ps1`), a Manifest V3 background service worker, and `chrome.storage.session` for active tab state. `uburoom` validates Chrome extension origin headers (`chrome-extension://[a-p]{32}`) and proof-bound Chromium OAuth redirect URLs (`https://<id>.chromiumapp.org/`), with full automated regression testing.
 
+### M2-P11 — Reworked player remote control
+
+**Goal:** Revisit and modernize the remote control experience across browser, mobile and TV surfaces.
+
+- Re-examine the remote control interaction model, touch gestures, volume/scrubbing interactions and consent presentation.
+- Re-integrate the remote control surface into the updated room architecture with clean entry points.
+- Verify end-to-end control latency and consent lifecycle against YouTube TV and web player targets.
+
 ## Future direction and decisions still open
 
 These are already identified directions or placeholders, outside the current delivery sequence. Define a small scope when the owner selects one.
 
 | Direction | Current boundary |
 | --- | --- |
+| Reworked player remote control | Future milestone phase (M2-P11). Revisit remote control interface, consent presentation and control surfaces after web room redesign. Entry points deprecated in M1-P7 while command engine integration remains wired in. |
 | Native-player integration | Future milestone. Establish the integration and control contract while preserving the shared engine, account scopes and consent lifecycle. |
 | Project-hosted rooms and managed room URLs | Future work in the specification. Self-hosting remains the current product; hosting and account/isolation responsibilities need a separate scope. |
 | Live TV/DVR | Separate feasibility work for live manifests, moving seek windows, tuning and authorization. On-demand video coverage does not imply live support. |

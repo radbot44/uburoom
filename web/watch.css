@@ -38,7 +38,7 @@ video::cue{font-size:clamp(14px,2.4vw,32px)}
 .subtitle-layer{position:absolute;inset:0;pointer-events:none;z-index:1;transform-origin:center}.subtitle-canvas{position:absolute;pointer-events:none}
 .player-chrome{position:absolute;left:0;right:0;z-index:2;opacity:0;pointer-events:none;transition:opacity .18s}
 .stage:focus-within .player-chrome,.stage.paused .player-chrome,.stage.blocked .player-chrome,.stage.remote-open .player-chrome{opacity:1;pointer-events:auto}
-.title-bar{top:0;padding:18px 20px 34px;background:linear-gradient(#000c,transparent);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.media-heading{min-width:0;pointer-events:none}.media-heading h1{font-size:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.media-heading p{font-size:13px;color:var(--muted);margin:4px 0 0}.media-heading p:empty{display:none}.player-actions{display:flex;gap:6px}
+.title-bar{top:0;padding:18px 20px 34px;background:linear-gradient(#000c,transparent);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.media-heading{min-width:0;pointer-events:none}.media-heading h1{font-size:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.media-heading p{font-size:13px;color:var(--muted);margin:4px 0 0}.media-heading p:empty{display:none}.player-actions{display:flex;gap:6px;margin-left:auto}
 .player-button{display:grid;place-items:center;width:36px;height:36px;border-radius:9px;background:transparent;color:var(--text);flex-shrink:0}.player-button:hover{background:color-mix(in srgb,var(--elevated) 85%,transparent)}
 .solid-button{display:flex;align-items:center;justify-content:center;gap:7px;background:var(--primary);color:var(--on-primary);border-radius:10px;padding:9px 12px;min-height:36px;white-space:nowrap;font-weight:600}.solid-button:hover{background:var(--primary-hover)}.solid-button.private{background:var(--elevated);color:var(--text)}.solid-button.private:hover{background:var(--hover)}.solid-button:disabled{opacity:1;cursor:default}.solid-button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block}.player-actions{flex-shrink:0}.media-heading{flex:1}#options-panel{margin-top:0}#watch-settings h3{font-size:14px;margin:18px 0 4px}
 .chips{flex:1 1 240px;min-width:0}.chips button{max-width:100%;overflow-wrap:anywhere}
@@ -181,7 +181,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 
 /* Room tasks: discovery, current room and persistent management. */
 .outside-room #open-remote,.outside-room #join-playback,.outside-room .timeline-row,.outside-room .playback-buttons,.outside-room .volume-control,.outside-room #captions-toggle,.outside-room #tracks-open{display:none!important}
-.outside-room .transport{opacity:1;pointer-events:auto}.outside-room .transport-row{justify-content:flex-end}.outside-room .player-tools{margin-left:auto}.outside-room .title-bar .media-heading{display:none}
+.outside-room .transport{opacity:1;pointer-events:auto}.outside-room .transport-row{justify-content:flex-end}.outside-room .player-tools{margin-left:auto}.outside-room .title-bar{display:none!important}
 .outside-room #empty-stage{width:min(580px,calc(100% - 32px));box-sizing:border-box;max-height:calc(100% - 70px);overflow:auto;padding:14px}
 .outside-room #empty-stage h1{display:block!important;margin:0 0 12px;font-size:18px}.outside-room #empty-hint:empty{display:none}
 #empty-stage button{pointer-events:auto}#empty-stage .room-bar{flex-wrap:wrap}

@@ -310,7 +310,7 @@ async function main() {
     await until(host, '!!state && !!selected', 'room created');
     assert.equal(await evaluate(host, 'document.getElementById("admin-mode").getAttribute("aria-checked")==="false" && !document.getElementById("admin-mode").hidden'),true,'owner Admin toggle defaults off');
     await evaluate(host,'document.getElementById("options-collapse").click()');
-    assert.equal(await evaluate(host,'document.getElementById("options-content").hidden'),true,'collapsing options collapses content');
+    assert.equal(await evaluate(host,'document.getElementById("options-panel").classList.contains("section-collapsed") && getComputedStyle(document.getElementById("options-content")).display === "none"'), true, 'collapsing options collapses content');
     await evaluate(host,'document.getElementById("options-collapse").click()');
     await evaluate(host, 'setTheater(true);toggleDrawer(true)');
     assert.equal(await evaluate(host, 'drawer.hidden && document.getElementById("drawer-open").hidden && document.getElementById("library-panel").parentElement!==drawer'), true, 'Theater keeps library in the page');
@@ -332,15 +332,15 @@ async function main() {
     assert.equal(await evaluate(guest, '!document.getElementById("create").hidden && !selected'), true, 'members choose a room or create their own');
     await evaluate(guest, 'document.getElementById("rooms").querySelector("button").click()');
     await until(guest, 'video.readyState>=2 && state && !state.canPlayback && !state.enabled', 'guest watches with remote off');
-    await evaluate(host, 'document.getElementById("visibility").click()');
+    await evaluate(host, 'document.getElementById("room-visibility").click()');
     assert.equal(await evaluate(host,'document.getElementById("privacy-dialog").open && state.visibility==="public"'),true,'Private requires confirmation');
     await evaluate(host,'document.getElementById("privacy-dialog").close("cancel")');
     assert.equal(await evaluate(host,'state.visibility==="public"'),true,'Cancel preserves Public');
-    await evaluate(host,'document.getElementById("visibility").click()');
+    await evaluate(host,'document.getElementById("room-visibility").click()');
     const confirmation = await command('browsingContext.captureScreenshot',{context:host,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-private-confirmation-qa.png'),Buffer.from(confirmation.data,'base64'));
     await click(host,'confirm-private');
-    await until(host, 'state.visibility==="private" && document.getElementById("visibility").classList.contains("private") && document.getElementById("room-visibility").textContent==="Private · No one can join"', 'both visibility controls show Private');
+    await until(host, 'state.visibility==="private" && document.getElementById("room-visibility").classList.contains("private") && document.getElementById("room-visibility").textContent.includes("Private")', 'room visibility control shows Private');
     const privatePlayer = await command('browsingContext.captureScreenshot', {context:host,origin:'viewport'});
     fs.writeFileSync(path.join(artifacts,'watch-private-qa.png'),Buffer.from(privatePlayer.data,'base64'));
     await until(guest, '!state && document.getElementById("rooms").querySelectorAll("button").length===0', 'private room revokes guest view');
@@ -348,7 +348,7 @@ async function main() {
     await command('browsingContext.setViewport',{context:lockedViewer,viewport:{width:1000,height:700}});
     await command('browsingContext.navigate',{context:lockedViewer,url:config.publicUrl+'/watch?demo=guest2&frame_id=fixture',wait:'complete'});
     await until(lockedViewer,'document.getElementById("rooms").querySelector("button")?.disabled','same-call Activity shows locked private room');
-    assert.equal(await evaluate(lockedViewer,'drawer.hidden && document.getElementById("room-bar").parentElement===drawer && !document.getElementById("room-lobby").hidden && !selected && document.getElementById("rooms").querySelector("button").title==="Private - No one can join"'),true,'locked hint is visible without opening the drawer and hides member names');
+    assert.equal(await evaluate(lockedViewer,'drawer.hidden && drawer.contains(document.getElementById("room-bar")) && !document.getElementById("room-lobby").hidden && !selected && document.getElementById("rooms").querySelector("button").title==="Private - No one can join"'),true,'locked hint is visible without opening the drawer and hides member names');
     await evaluate(lockedViewer,'document.getElementById("rooms").querySelector("button").click()');
     assert.equal(await evaluate(lockedViewer,'!selected'),true,'locked session button cannot join');
     const lockedShot=await command('browsingContext.captureScreenshot',{context:lockedViewer,origin:'viewport'});
@@ -435,9 +435,9 @@ async function main() {
     await pause(2600);
     await command('input.performActions', { context: host, actions: [{type:'pointer',id:'watch-pointer',parameters:{pointerType:'mouse'},actions:[{type:'pointerMove',x:0,y:0,origin:'viewport'}]}] });
     const desktop = await command('browsingContext.captureScreenshot', { context: host, origin: 'viewport' }); fs.writeFileSync(path.join(artifacts, 'watch-demo-desktop-qa.png'), Buffer.from(desktop.data, 'base64'));
-    await evaluate(host, 'document.getElementById("open-remote").click()');
+    await evaluate(host, 'toggleRemote(true)');
     assert.equal(await evaluate(host, 'document.getElementById("remote").hidden'), false);
-    assert.equal(await evaluate(host, '!document.getElementById("remote").shadowRoot.querySelector(".sharing").hidden && !document.getElementById("remote-settings").shadowRoot.querySelector(".sharing").hidden && getComputedStyle(document.getElementById("remote-settings").shadowRoot.querySelector(".media")).display==="none"'), true, 'permissions remain in the remote and also appear in main settings');
+    assert.equal(await evaluate(host, '!document.getElementById("remote").shadowRoot.querySelector(".sharing").hidden'), true, 'permissions remain in the remote');
     const popup = await command('browsingContext.captureScreenshot', { context: host, origin: 'viewport' }); fs.writeFileSync(path.join(artifacts, 'watch-player-popup-qa.png'), Buffer.from(popup.data, 'base64'));
     await evaluate(host, 'document.dispatchEvent(new KeyboardEvent("keydown",{code:"Escape",bubbles:true}))');
     assert.equal(await evaluate(host, 'document.getElementById("remote").hidden'), true);
@@ -461,7 +461,7 @@ async function main() {
     await command('input.performActions', { context: host, actions: [{type:'pointer',id:'watch-pointer',parameters:{pointerType:'mouse'},actions:[{type:'pointerMove',x:0,y:0,origin:'viewport'}]}] });
     await pause(2800);
     const mobile = await command('browsingContext.captureScreenshot', { context: host, origin: 'viewport' }); fs.writeFileSync(path.join(artifacts, 'watch-demo-mobile-qa.png'), Buffer.from(mobile.data, 'base64'));
-    await evaluate(host, 'document.getElementById("open-remote").click()');
+    await evaluate(host, 'toggleRemote(true)');
     assert.equal(await evaluate(host, 'document.getElementById("remote").parentElement===document.body && document.getElementById("remote").getBoundingClientRect().right<=390'), true, 'phone popup is outside the video clipping boundary');
     await evaluate(host, 'toggleRemote(false)');
     await evaluate(host, 'setTheater(true);toggleDrawer(true)');
