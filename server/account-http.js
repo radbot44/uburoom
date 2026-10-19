@@ -8,6 +8,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
   const sourceHash=req=>cookies(req).uburoom&&hash(cookies(req).uburoom);
   const busy=ids=>[...watch.rooms.values()].some(room=>ids.includes(room.s.hostId)||[...room.viewers.values()].some(v=>ids.includes(v.userId)));
   function invalidate(ids,ownerChanged=false){
+    for (const id of ids) if (hub.adminUsers.delete(id)) hub.adminEpoch++;
     if(ownerChanged||ids.includes(registry.identity('discord',config.ownerId)?.userId)){hub.adminMode=false;hub.adminEpoch++;}
     for(const [token,login] of logins)if(ids.includes(login.userId))logins.delete(token);
     for(const [id,pending]of hub.pending)if(ids.includes(pending.actor.userId))hub.finish(id,{status:'unavailable',message:'Account identities changed'});
@@ -71,7 +72,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       }
       const login=req.method==='GET'?await user(req):await protectedPost(req);
       if(!login){json(res,401,{error:'Sign in to manage your account'});return true;}
-      if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),admin:hub.isAdmin(webActor(login))});return true;}
+      if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),admin:hub.isOwner(webActor(login))&&hub.isAdmin(webActor(login))});return true;}
       if(req.method==='POST'&&route==='/api/account/plex/connect'){json(res,200,{url:await startPlex(req,res,login)});return true;}
       if(req.method==='POST'&&route==='/api/account/discord/connect'){await discordStart(req,res,login);return true;}
       const remove=/^\/api\/account\/(discord|plex)\/remove$/.exec(route);
@@ -98,14 +99,14 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         registry.merge(a.id,b.id,a.id);if(merge.credential)registry.credential(merge.subject,merge.credential);
         invalidate([a.id,b.id]);merges.delete(sourceHash(req));session(res,registry.canonical(a.id),a.name);json(res,200,{merged:true});return true;
       }
-      if(!hub.isAdmin(webActor(login))){json(res,403,{error:'Enable owner Admin mode to match accounts'});return true;}
+      if(!hub.isOwner(webActor(login))||!hub.isAdmin(webActor(login))){json(res,403,{error:'Enable owner Admin mode to match accounts'});return true;}
       if(req.method==='GET'&&route==='/api/account/admin'){json(res,200,{accounts:registry.list()});return true;}
       if(req.method==='POST'&&route==='/api/account/admin/preview'){
         const data=await body(req);
         if(typeof data.discordId!=='string'||typeof data.plexId!=='string'||!/^\d{17,20}$/.test(data.discordId)||!/^\d{1,20}$/.test(data.plexId))throw new Error('Use Discord and Plex account IDs, not names or email addresses');
         if(data.discordId===config.ownerId)throw new Error('Connect the owner account through verified self-service linking');
         const profile=await hub.access.identity(data.discordId);if(!profile)throw new Error('Discord identity unavailable; check the ID and bot connection');
-        if(!hub.isAdmin(webActor(login))||(await user(req))!==login){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
+        if(!hub.isOwner(webActor(login))||!hub.isAdmin(webActor(login))||(await user(req))!==login){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
         const preview=registry.preview(data.discordId,data.plexId),id=secret();
         const discordName=profile.name,plexName=registry.identity('plex',data.plexId)?.name||'Awaiting Plex sign-in';
         previews.set(id,{...preview,discordName,sourceHash:sourceHash(req),expires:Date.now()+300000});json(res,200,{id,discordId:data.discordId,discordName,plexId:data.plexId,plexName,accounts:preview.users});return true;

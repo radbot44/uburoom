@@ -23,6 +23,25 @@ function fixture(t) {
   return {watch,room,host,guest,h,g,dispatch,ready,advance,load,now:()=>now,mono:()=>mono};
 }
 
+test('a durable room holds an ended player until verified advancement, while an explicit restart can play', async () => {
+  let plays = 0, targetPosition = 60;
+  const ctx = {
+    state:{durable:true,mediaUrl:'fixture',mediaVersion:'one',state:{duration:60,paused:false,volume:50,muted:false}},
+    mediaSource:'fixture',selected:'room',expected:()=>targetPosition,
+    video:{ended:true,readyState:4,currentTime:60,paused:true,seeking:false,playbackRate:1,buffered:{length:0},
+      async play(){plays++;this.paused=false;},pause(){this.paused=true;}},
+    playbackClock:{read:()=>({valid:true})}
+  };
+  await install(ctx);
+  await ctx.synchronize(); await ctx.synchronize();
+  assert.equal(plays,0,'native play on an ended element would restart the old occurrence');
+  assert.equal(ctx.video.currentTime,60);
+  targetPosition = 0;
+  await ctx.synchronize();
+  assert.equal(ctx.video.currentTime,0,'a shared restart still aligns the player');
+  assert.equal(plays,1);
+});
+
 test('pause and resume share deadlines, project the pause target, and supersede pending controls', async t => {
   const f = fixture(t); await f.load(); await f.ready(f.h); await f.ready(f.g); f.advance(2000);
   await f.dispatch('media.pause');

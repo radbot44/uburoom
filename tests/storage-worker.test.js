@@ -87,13 +87,23 @@ test('unsupported pre-release schema fails startup without leaving a live storag
 
 test('unsupported schemas fail without changing existing data or installing missing tables', t => {
   const {migrate}=require('../server/storage');
-  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE future_state(id TEXT);','newer']]) {
+  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE future_state(id TEXT);','newer']]) {
     const db=new DatabaseSync(':memory:');db.exec(sql+'PRAGMA user_version='+version);
     const before=db.prepare('SELECT name,sql FROM sqlite_master').all();
     assert.throws(()=>migrate(db),new RegExp(message));
     assert.deepEqual(db.prepare('SELECT name,sql FROM sqlite_master').all(),before);
     assert.equal(db.prepare('PRAGMA user_version').get().user_version,version);db.close();
   }
+  const previous = new DatabaseSync(':memory:');
+  migrate(previous);
+  previous.exec('DROP TABLE watch_queue_entries; DROP TABLE watch_room_hosts; DROP TABLE watch_rooms; PRAGMA user_version=1;');
+  previous.prepare('INSERT INTO meta VALUES(?,?)').run('retained-private-state', 'original');
+  const before = previous.prepare('SELECT name,sql FROM sqlite_master').all();
+  assert.throws(() => migrate(previous), /Unsupported pre-release database/);
+  assert.deepEqual(previous.prepare('SELECT name,sql FROM sqlite_master').all(), before);
+  assert.equal(previous.prepare('SELECT value FROM meta WHERE key=?').get('retained-private-state').value, 'original');
+  assert.equal(previous.prepare('PRAGMA user_version').get().user_version, 1);
+  previous.close();
 });
 
 test('matched offline SQLite and original-key backup restores UUIDs, credentials, logins, devices and playback history',async t=>{

@@ -10,6 +10,7 @@
  * @property {number} [pauseAt]
  * @property {number} [serverNow]
  * @property {string} [format]
+ * @property {boolean} [durable]
  * @property {boolean} [waitingForReady]
  * @property {string} [readinessVersion]
  * @property {object} [readiness]
@@ -94,6 +95,11 @@ export function createSync(host) {
       renderTransport();return;
     }
     const target = expected(), difference = target - video.currentTime, timing=playbackClock.read(),clockValid=timing.valid;
+    // Keep the final decoded frame while the server verifies ending evidence.
+    // Calling play() on an ended element can restart this occurrence at zero.
+    if (state.durable && video.ended && video.currentTime >= state.state.duration - .5 && target >= state.state.duration - .5) {
+      resetDriftCorrection(); renderTransport(); return;
+    }
     const paused = state.state.paused || clockValid && Number.isFinite(state.pauseAt) && timing.serverTime >= state.pauseAt;
     if (clockValid && state.pauseAt > timing.serverTime) {
       const key = startKey();

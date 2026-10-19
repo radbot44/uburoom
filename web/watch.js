@@ -124,10 +124,18 @@ video.volume = .5;
 function glyph(id, symbol) { $(id).replaceChildren(uburoomUI.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['open-remote','remote'],['empty-symbol','play'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['queue-chevron','chevron'],['library-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) });
+const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,
+  join:async id=>{await selectRoom(id);if(!state)throw new Error('Room unavailable');returnToVideo();},
+  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:()=>chooseRoom(),fail });
+const queueUI = uburoomQueueUI.mount($('queue-content'), {
+  request:api,getState:()=>state,getMe:()=>me,fail,execute,
+  serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
+  changed:async()=>{if(selected)await refreshState();}
+});
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
   beforeSettings:()=>{trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
   afterSettings:()=>{trackContext=undefined;}});
@@ -138,6 +146,12 @@ const library = uburoomLibrary.mount($('library-content'), {
     if (!response.ok) throw new Error('Artwork unavailable'); return response.blob();
   },
   load:item => selected ? loadLibraryItem(item) : chooseRoom(item),
+  addToQueue: async item => {
+    if (!selected || !state?.durable) return;
+    await queueUI.add(item);
+  },
+  addBulkToQueue: item => queueUI.bulk(item),
+  autoQueue: source => queueUI.openAuto(source),
   close:returnToVideo, getPlayer:() => state
 });
 function fail(message) {
@@ -200,7 +214,7 @@ function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = 
 // Move the actual shells so their controls, state and listeners stay shared.
 const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
 drawer.setAttribute('aria-label', 'Rooms and library'); document.body.append(drawer);
-const shells = ['account','room-bar','options-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
+const shells = ['account','room-bar','options-panel','queue-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
   const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
@@ -254,7 +268,7 @@ function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('room-lobby').hidden = !immersive || !!selected || !me;
 }
-for (const name of ['options','library']) $(name + '-collapse').addEventListener('click', () => {
+for (const name of ['options','queue','library']) $(name + '-collapse').addEventListener('click', () => {
   const button = $(name + '-collapse'), content = $(name + '-content');
   content.hidden = !content.hidden; button.setAttribute('aria-expanded', String(!content.hidden));
 });
@@ -283,10 +297,11 @@ function renderAccount() {
   loadSyncPreference();
   $('open-remote').hidden = false;
   $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
-  $('admin-mode').hidden = !me.owner; $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
+  $('admin-mode').hidden = !(me.adminEligible ?? me.owner); $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
   $('open-browser').hidden = !activity;
   if(typeof updateAccountButton==='function')updateAccountButton();
+  roomUI.render();
 }
 function stopBrowserHandoff(cancel = false) {
   clearTimeout(browserHandoffTimer);
@@ -601,7 +616,8 @@ async function execute(command) {
   try {
     const timing=playbackClock.read();
     if(!timing.valid)throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
-    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },qualityChange?{timeoutMs:35000}:{});
+    const preparing = qualityChange || state?.durable && ['media.load','media.next','media.previous','queue.history.replay','queue.playNow'].includes(command.action);
+    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },preparing?{timeoutMs:35000}:{});
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
     diagnostics.record('command-ok',{action:command.action});
@@ -625,6 +641,8 @@ function renderRemote() {
   settings.render(state?.state, state ? options : {...options,room:{canManage:true,enabled:false,reachable:false,controls:uburoom.CONTROLS}});
 }
 function renderVisibility() {
+  roomUI.render();
+  queueUI.render(state?.queueSummary);
   $('options-panel').hidden = !me && $('auth-overlay').hidden; $('watch-settings').hidden = !!state && !state.canManage;
   $('options-panel').inert = !state;
   $('options-panel').setAttribute('aria-disabled', String(!state));
@@ -632,9 +650,9 @@ function renderVisibility() {
   for (const id of ['visibility', 'drawer-visibility']) {
     const button = $(id), privateRoom = state?.visibility === 'private';
     button.hidden = !state && id !== 'drawer-visibility'; button.disabled = pending || !state?.canManage;
-    button.textContent = privateRoom ? 'Private - No one can join' : 'Public'; button.classList.toggle('private', privateRoom);
+    button.textContent = privateRoom ? state?.durable ? 'Private - Hosts only' : 'Private - No one can join' : 'Public'; button.classList.toggle('private', privateRoom);
     button.setAttribute('aria-label', state?.canManage ? (privateRoom ? 'Private room: make public' : 'Public room: make private') : 'Public room');
-    button.title = state?.canManage ? (privateRoom ? 'Only you can watch. Make public.' : 'Server members can watch. Make private.') : 'Only the host can change visibility';
+    button.title = state?.canManage ? (privateRoom ? 'Creator and hosts can watch. Make public.' : 'Server members can watch. Make private.') : 'Room settings permission required';
   }
 }
 async function changeVisibility() {
@@ -654,8 +672,14 @@ function renderTransport() {
   const available = !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;
   $('timeline').disabled = !playback;
+  if (state?.durable) {
+    for (const id of ['seek-back','seek-forward']) $(id).disabled = !available || !state.capabilities.seek || pending;
+    $('timeline').disabled = !available || !state.capabilities.seek;
+    $('previous').disabled = !available || !state.capabilities.chooseMedia || pending;
+  }
   $('player-mute').disabled = !available || pending; $('player-volume').disabled = !available;
   $('next').disabled = !playback || !state?.hasNext || pending;
+  if (state?.durable) $('next').disabled = !available || !state.hasNext || !state.capabilities.chooseMedia || pending;
   $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
   const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
   $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
@@ -670,8 +694,9 @@ function renderTransport() {
   $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
     state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
   if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
-  if (state?.readiness?.timedOut) $('ready-status').textContent = state.canManage ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
-  $('readiness-choice').hidden = !state?.readiness?.timedOut || !state.canManage;
+  if (state?.readiness?.timedOut) $('ready-status').textContent = state.canBrowse ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
+  if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a creator or host joins.';
+  $('readiness-choice').hidden = !state?.readiness?.timedOut || !state.canBrowse;
   $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
   $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
   $('ready-start').disabled = pending || !state?.readiness?.canStart;
@@ -732,7 +757,7 @@ async function reportObservation() {
     probing ? 'buffering' : video.paused ? 'paused' : playerWaiting || video.readyState < 3 ? 'buffering' : 'playing';
   const sampleAt=performance.now(), observedAt=observationClock.sample(sampleAt);
   if(observedAt===undefined){diagnostics.record('observation-uncredited',{creditReason:'clock-unavailable'});return;}
-  const data = {viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,observationEpoch:state.observationEpoch,
+  const data = {viewerId,epoch:state.epoch,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,observationEpoch:state.observationEpoch,
     sequence:++observationSequence,sampleAt,observedAt,position:video.currentTime,
     rate:video.playbackRate,frames:uburoomPlayback.observationFrames(video,videoFrames),discontinuity:observationBreak,state:playerState};
   observationPending = true;
@@ -748,7 +773,7 @@ for (const event of ['playing','pause','waiting','seeking','seeked','ended','err
   if (event === 'playing' || event === 'seeked') playerWaiting = false;
   // Periodic samples include rate corrections; assigning playbackRate can
   // emit ratechange even when the rate is unchanged.
-  observationBreak++;
+  if (event !== 'ended' && !(event === 'pause' && video.ended)) observationBreak++;
   void reportObservation();
 });
 setInterval(() => { void reportObservation(); },1000);
@@ -810,7 +835,7 @@ function applyState(next) {
   video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
   $('title').textContent = next.title; $('details').textContent = next.subtitle;
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
-  $('viewers').title = 'Host: ' + next.hostName;
+  $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
   $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = next.canManage ? 'Select a video from the library.' : 'The host chooses the video.';
   $('close-room').hidden = false; $('close-room').textContent = next.viewers === 1 && next.canManage ? 'End room' : 'Leave room';
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
@@ -864,10 +889,10 @@ function renderRooms(host, rooms, join = id => selectRoom(id)) {
   for (const room of rooms) {
     const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
     if (room.visibility === 'private') button.append(uburoomUI.icon(document,'lock'));
-    const name = document.createElement('span'); name.textContent = room.hostName; button.append(name,uburoomUI.icon(document,'users'));
+    const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomUI.icon(document,'users'));
     const count = document.createElement('span'); count.textContent = String(room.viewers); button.append(count);
     button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
-    button.setAttribute('aria-label', room.hostName + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
+    button.setAttribute('aria-label', (room.name || room.hostName) + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
     button.setAttribute('aria-pressed', String(room.id === selected)); button.addEventListener('click', () => join(room.id).catch(error => fail(error.message))); host.append(button);
   }
 }
@@ -1005,11 +1030,13 @@ async function chooseRoom(item) {
   roomChoice = item;
   $('room-dialog-hint').textContent = item ? 'Create a room to play ' + item.title + ', or join an active room.' : 'Create a public or private room, or join an active room.';
   $('room-dialog-error').textContent = ''; $('room-choices').replaceChildren(); $('room-join').hidden = true;
+  $('room-name').value = ''; $('room-full-permissions').checked = false;
   (document.fullscreenElement === $('stage') ? $('stage') : document.body).append(dialog);
   const closed = new Promise(resolve => dialog.addEventListener('close', () => {
     roomChoice = undefined; resolve({status:dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied'});
   }, {once:true}));
   dialog.returnValue = ''; dialog.showModal();
+  void roomUI.loadSaved(0);
   void refreshRooms().catch(error => { if (dialog.open) $('room-dialog-error').textContent = error.message; });
   return closed;
 }
@@ -1019,7 +1046,7 @@ async function createRoom(visibility = 'public') {
   if (creating) return; creating = true;
   $('room-create').disabled = $('room-create-private').disabled = true;
   try {
-    const room = await api('/api/watch/rooms', {visibility}); await selectRoom(room.id);
+    const room = await api('/api/watch/rooms', {visibility,name:$('room-name').value.trim() || 'Room',fullPermissions:$('room-full-permissions').checked}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice;
     $('room-dialog').close('created'); renderLibrary();
@@ -1046,7 +1073,7 @@ $('close-room').addEventListener('click', async () => {
 $('admin-end-room').addEventListener('click', async () => {
   if (!state?.adminMode || pending) return;
   const id = selected; pending = true;
-  try {await api('/api/watch/rooms/' + id + '/close',{});selected=undefined;browseRoom=undefined;unavailable('','end');await refreshRooms();}
+  try {await api('/api/watch/rooms/' + id + '/close',{epoch:state.epoch});selected=undefined;browseRoom=undefined;unavailable('','end');await refreshRooms();}
   catch(error){fail(error.message);} finally {pending=false;renderLibrary();}
 });
 $('refresh').addEventListener('click', () => refreshRooms().catch(error => fail(error.message)));

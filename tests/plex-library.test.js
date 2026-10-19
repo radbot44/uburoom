@@ -74,6 +74,68 @@ test('collection genre filters use complete tags when Plex listing rows omit the
   const result = await plex.browse({section:'1',collection:'9',genre:'5',sort:'default'}); assert.equal(result.total,1); assert.equal(result.items[0].id,'1');
 });
 
+test('show and season queue expansion pages the complete corpus, sorts cross-season episodes and filters Specials', async t => {
+  const episodes = Array.from({ length: 245 }, (_, index) => movie(index + 1, {
+    type: 'episode', parentIndex: Math.floor(index / 80), index: index % 80 + 1,
+    parentTitle: 'Season ' + Math.floor(index / 80), grandparentTitle: 'Paged show'
+  })).reverse();
+  const requests = [];
+  const plex = fixture(async url => {
+    requests.push(url.pathname + ':' + url.searchParams.get('X-Plex-Container-Start'));
+    const rows = url.pathname.endsWith('/children') ? episodes.filter(item => item.parentIndex === 2) : episodes;
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    return json({ totalSize: rows.length, Metadata: rows.slice(start, start + size) });
+  }); t.after(() => plex.close());
+  const normal = await plex.queueItems({ type: 'show', id: '50' });
+  assert.equal(normal.length, 165);
+  assert.equal(normal[0].id, '81');
+  assert.equal(normal[normal.length - 1].id, '245');
+  assert.equal(normal[0].parentTitle, 'Season 1');
+  assert.deepEqual(requests.slice(0, 3), ['/library/metadata/50/allLeaves:0', '/library/metadata/50/allLeaves:120', '/library/metadata/50/allLeaves:240']);
+  const all = await plex.queueItems({ type: 'show', id: '50', includeSpecials: true });
+  assert.equal(all.length, 245); assert.equal(all[0].id, '1');
+  const season = await plex.queueItems({ type: 'season', id: '52' });
+  assert.equal(season.length, 80); assert.equal(season[0].id, '161');
+});
+
+test('random scopes accept a movie library or expand mixed collections without duplicating episodes', async t => {
+  const episode = movie(3, { type: 'episode', parentIndex: 1, index: 1 });
+  const plex = fixture(async url => {
+    if (url.pathname === '/library/sections') return json({ Directory: [{ key: '1', type: 'movie' }, { key: '2', type: 'show' }] });
+    if (url.pathname === '/library/sections/1/all') return json({ totalSize: 1, Metadata: [movie(1)] });
+    if (url.pathname === '/library/collections/9/children') return json({ totalSize: 3, Metadata: [movie(1), movie(50, { type: 'show' }), episode] });
+    if (url.pathname === '/library/metadata/50/allLeaves') return json({ totalSize: 2, Metadata: [episode, movie(4, { type: 'episode', parentIndex: 0, index: 1 })] });
+    throw new Error('Unexpected fixture request');
+  }); t.after(() => plex.close());
+  assert.deepEqual((await plex.queueItems({ type: 'library', id: '1' })).map(item => item.id), ['1']);
+  await assert.rejects(plex.queueItems({ type: 'library', id: '2' }), /movie library/);
+  assert.deepEqual((await plex.queueItems({ type: 'collection', id: '9' })).map(item => item.id), ['1', '3']);
+  assert.deepEqual((await plex.queueItems({ type: 'collection', id: '9', includeSpecials: true })).map(item => item.id), ['1', '4', '3']);
+});
+
+test('queue catalog expansion rejects incomplete, stuck and oversized upstream pagination', async t => {
+  const stuck = fixture(async () => json({ totalSize: 240, Metadata: Array.from({ length: 120 }, (_, i) => movie(i + 1)) }));
+  const incomplete = fixture(async url => json({ totalSize: 240, Metadata: Number(url.searchParams.get('X-Plex-Container-Start')) ? [] : Array.from({ length: 120 }, (_, i) => movie(i + 1)) }));
+  const large = fixture(async () => json({ totalSize: 20001, Metadata: [] }));
+  t.after(() => Promise.all([stuck.close(), incomplete.close(), large.close()]));
+  await assert.rejects(stuck.queueItems({ type: 'show', id: '50' }), /did not advance/);
+  await assert.rejects(incomplete.queueItems({ type: 'show', id: '50' }), /before all items/);
+  await assert.rejects(large.queueItems({ type: 'show', id: '50' }), /20000-item/);
+});
+
+test('collection expansion bounds upstream work even when every nested show is empty', async t => {
+  const shows = Array.from({ length: 201 }, (_, index) => movie(index + 1, { type: 'show' }));
+  let requests = 0;
+  const plex = fixture(async url => {
+    requests++;
+    if (url.pathname.startsWith('/library/metadata/')) return json({ totalSize: 0, Metadata: [] });
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    return json({ totalSize: shows.length, Metadata: shows.slice(start, start + size) });
+  }); t.after(() => plex.close());
+  await assert.rejects(plex.queueItems({ type: 'collection', id: '900' }), /200-request expansion limit/);
+  assert.equal(requests, 200);
+});
+
 test('every room-scoped library route rejects guests and rechecks ownership before returning awaited private data or artwork', async () => {
   let manage = true, waiting, finish, calls = 0;
   const room = {s:{roomId:'room'}}, rooms = new Map([['room',room]]);

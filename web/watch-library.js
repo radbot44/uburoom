@@ -1,7 +1,7 @@
 /* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 (function (global) {
   'use strict';
-  function mount(host, { request, artwork, load, close, getPlayer }) {
+  function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue }) {
     const doc = host.ownerDocument;
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
@@ -35,6 +35,8 @@
     const yearLabel = node('label',filters,'Year'); const year = select(yearLabel,'Year');
     const filterStatus = node('span',filters,undefined,'hint');
     const chips = node('div',tools,undefined,'library-filter-chips');
+    const scopeActions = node('div', tools, undefined, 'library-detail-actions library-scope-actions');
+    scopeActions.hidden = true;
     const count = node('p',tools,'','library-count'); count.setAttribute('role','status'); count.setAttribute('aria-live','polite');
     const overview = node('div',host,undefined,'library-overview'); overview.hidden = true;
     const results = node('div',host,undefined,'library'); results.id = 'library';
@@ -187,7 +189,16 @@
     }
     function signalError(message, action) { note.textContent = message; note.classList.add('library-error'); retry.hidden = false; errorAction = action; }
     function resetStatus() { note.textContent = ''; note.classList.remove('library-error'); retry.hidden = true; errorAction = undefined; }
-    function setBusy(value) { busy = value; for (const b of host.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room; }
+    function canAddQueue() {
+      const p = getPlayer?.();
+      return !!p?.durable && (p?.capabilities ? !!p.capabilities.addQueue : true);
+    }
+    function setBusy(value) {
+      busy = value;
+      for (const b of host.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room;
+      for (const b of host.querySelectorAll('[data-queue]')) b.disabled = busy || !room || !canAddQueue();
+      for (const b of host.querySelectorAll('[data-auto-queue]')) b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
+    }
     async function play(item) {
       if (busy || playing || !room) return;
       const version = generation; playing = item.id; setBusy(busy); resetStatus(); note.textContent = 'Loading ' + identity(item) + '…';
@@ -203,6 +214,45 @@
     function playButton(parent,item,large = false) {
       const b = button(parent,'Play ' + identity(item),'play',large ? 'library-play-now' : 'library-play'); b.dataset.play = item.id; b.dataset.action = 'play';
       if (large) b.append(node('span',null,'Play now')); b.addEventListener('click',() => void play(item)); return b;
+    }
+    function queueButton(parent, item, large = false) {
+      const b = button(parent, 'Add ' + identity(item) + ' to queue', 'queue', large ? 'library-queue-add library-play-now' : 'library-queue-add library-play');
+      b.dataset.queue = item.id; b.disabled = busy || !room || !canAddQueue();
+      if (large) b.append(node('span', null, 'Add to queue'));
+      b.addEventListener('click', async event => {
+        event.stopPropagation();
+        if (b.disabled || !addToQueue) return;
+        b.disabled = true;
+        try {
+          await addToQueue(item);
+          const span = b.querySelector('span');
+          if (span) span.textContent = 'Added!';
+          note.textContent = 'Added ' + identity(item) + ' to queue.';
+          setTimeout(() => {
+            if (span) span.textContent = 'Add to queue';
+            b.disabled = busy || !room || !canAddQueue();
+          }, 1500);
+        } catch (error) {
+          signalError(error.message, () => b.click());
+          b.disabled = busy || !room || !canAddQueue();
+        }
+      });
+      return b;
+    }
+    function bulkButton(parent, item) {
+      const label = 'Add ' + (item.type === 'season' ? 'season' : 'show') + ' to queue';
+      const b = button(parent, label, 'queue', 'library-queue-add library-play-now');
+      b.dataset.queue = item.id;
+      b.append(node('span', null, label));
+      b.onclick = () => { if (!b.disabled) void addBulkToQueue(item); };
+      return b;
+    }
+    function autoButton(parent, scope, title) {
+      const b = button(parent, 'Random auto-queue from ' + title, undefined, 'quiet');
+      b.dataset.autoQueue = scope.id;
+      b.textContent = 'Random auto-queue';
+      b.onclick = () => { if (!b.disabled) autoQueue({ scope, title }); };
+      return b;
     }
     function extras(parent,item,full = false) {
       if (!item.contentRating && !item.genres?.length) return;
@@ -231,7 +281,10 @@
       const title = button(copy,'View ' + identity(item),undefined,'library-title'); title.textContent = item.title; title.addEventListener('click',() => void openItem(item));
       node('p',copy,metadata(item),'library-meta');
       if (row) { extras(copy,item); if (episode && item.summary) node('p',copy,item.summary,'library-episode-summary'); }
-      if (playable(item)) playButton(row ? card : picture,item);
+      if (playable(item)) {
+        playButton(row ? card : picture,item);
+        if (addToQueue && getPlayer()?.durable) queueButton(row ? card : picture,item);
+      }
       else { const b = button(row ? card : picture,'Browse ' + item.title,'right','library-browse'); b.addEventListener('click',() => void openItem(item)); }
     }
     function summary(item) {
@@ -241,7 +294,16 @@
       const top = node('div',overview,undefined,'library-detail-top' + (episode ? ' episode-detail' : item.type === 'movie' ? ' movie-detail' : ''));
       const pictures = node('div',top,undefined,'library-detail-art'); art(pictures,item,episode);
       const copy = node('div',top,undefined,'library-detail-copy'); node('h3',copy,item.title); node('p',copy,metadata(item),'library-meta'); extras(copy,item,true);
-      if (playable(item)) { playButton(copy,item,true); const warning = node('p',copy,'','library-replace'); warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : ''; }
+      if (playable(item)) {
+        const actionRow = node('div', copy, undefined, 'library-detail-actions');
+        playButton(actionRow, item, true);
+        if (addToQueue && getPlayer()?.durable) queueButton(actionRow, item, true);
+        const warning = node('p',copy,'','library-replace'); warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : '';
+      } else if (getPlayer()?.durable) {
+        const actionRow = node('div', copy, undefined, 'library-detail-actions');
+        if (addBulkToQueue && ['show', 'season'].includes(item.type)) bulkButton(actionRow, item);
+        if (autoQueue && ['show', 'collection'].includes(item.type)) autoButton(actionRow, { type: item.type, id: item.id }, item.title);
+      }
       const body = node('div',copy,undefined,'library-detail-body');
       if (item.summary) node('p',body,item.summary,'library-summary');
       const rows = [];
@@ -276,6 +338,10 @@
         else { const b = button(crumbs,entry.title,undefined,'library-crumb'); b.textContent = entry.title; b.onclick = entry.action; }
       });
       const details = screen.kind === 'details', atHome = screen.kind === 'home', collectionIndex = screen.kind === 'library' && screen.tab === 'collections';
+      scopeActions.replaceChildren();
+      const section = sections.find(item => item.id === screen.section);
+      scopeActions.hidden = !autoQueue || !getPlayer()?.durable || screen.kind !== 'library' || screen.tab !== 'library' || section?.mediaType !== 'movie';
+      if (!scopeActions.hidden) autoButton(scopeActions, { type: 'library', id: section.id }, section.title);
       row.hidden = details || atHome; chips.hidden = details || atHome;
       filterButton.hidden = !screen.section || collectionIndex || ['show','season'].includes(screen.kind);
       if (filterButton.hidden || details || atHome) { filters.hidden = true; filterButton.setAttribute('aria-expanded','false'); }

@@ -18,6 +18,7 @@ const { PlexAuth } = require('./plex-auth');
 const { accountHttp } = require('./account-http');
 const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
+const RoomPolicy = require('./room-policy');
 
 function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {}) {
   let registry;
@@ -137,11 +138,21 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   if(config.demo&&plexAuth)plexAuth.demo=plexDemo;
   if(registry){
     let rawAccess;
+    hub.adminEligible = actor => RoomPolicy.administrator(registry,config,actor.userId,rawAccess);
+    hub.refreshAdmin = async actor => {
+      const roles = config.roomAdministrators?.discordRoles || [];
+      const discord = registry.identities(actor.userId).find(identity => identity.provider === 'discord' && identity.verified)?.subject;
+      if (roles.length && discord && !rawAccess?.isMember(discord)) {
+        try { await rawAccess?.refresh(discord); } catch { /* Missing live guild authority fails closed below. */ }
+      }
+      if (!hub.canAdmin(actor)) hub.clearAdmin(actor);
+    };
     const discordId=id=>registry.canonical(id)?registry.identities(id).find(i=>i.provider==='discord')?.subject:id;
     const access={
       isMember:id=>{const discord=discordId(id);return !!discord&&!!rawAccess?.isMember(discord);},
       refresh:async id=>{const discord=discordId(id);return !!discord&&!!await rawAccess?.refresh(discord);},
       voiceChannel:id=>{const discord=discordId(id);return discord&&rawAccess?.voiceChannel(discord);},
+      hasRole:(id,role)=>{const discord=discordId(id);return !!discord&&rawAccess?.hasRole?.(discord,role)===true;},
       identity:async id=>rawAccess?.identity?rawAccess.identity(id):await rawAccess?.refresh(id)?{id,name:registry.identity('discord',id)?.name||id}:undefined,
       validVoiceChannel:id=>!!rawAccess?.validVoiceChannel(id),options:()=>rawAccess?.options()||{available:false},
       canWatch:id=>access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
@@ -264,6 +275,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/watch-layout.js':['watch-layout.js','text/javascript'],
         '/watch-player.css':['watch-player.css','text/css'],
         '/watch-transport.js':['watch-transport.js','text/javascript'],
+        '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
+        '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
@@ -287,11 +300,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const login = await user(req);
         renewCookie(req, res, login, true);
         return json(res, 200, { oauthReady, loggedIn: !!login, csrf: login?.csrf, owner:!!login&&hub.isOwner(webActor(login)), name: login?.name, adminMode:!!login && hub.isAdmin(webActor(login)),
-          devices: login && hub.isAdmin(webActor(login)) ? store.devices.filter(d => d.ownerId === config.ownerId).map(d => ({ id: d.id, pairedAt: d.pairedAt })) : [] });
+          devices: login && hub.isOwner(webActor(login)) && hub.isAdmin(webActor(login)) ? store.devices.filter(d => d.ownerId === config.ownerId).map(d => ({ id: d.id, pairedAt: d.pairedAt })) : [] });
       }
       if (req.method === 'POST' && route === '/api/admin-mode') {
         const login = await protectedPost(req), data = await body(req);
-        if (!login || !hub.isOwner(webActor(login)) || typeof data.enabled !== 'boolean') return json(res,403,{error:'Only the owner can change Admin mode'});
+        if (login) await hub.refreshAdmin?.(webActor(login));
+        if (!login || !hub.canAdmin(webActor(login)) || typeof data.enabled !== 'boolean') return json(res,403,{error:'Only an authorized administrator can change Admin mode'});
         hub.setAdminMode(webActor(login),data.enabled); return json(res,200,{adminMode:hub.isAdmin(webActor(login))});
       }
       if (req.method === 'GET' && route === '/auth/discord') {
@@ -340,7 +354,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         // eligibility: revocation or an upstream outage must not trap a login.
         const token=cookies(req).uburoom,id=token&&hash(token),login=id&&logins.get(id);
         if (!login || req.headers.origin!==config.publicUrl || req.headers['x-csrf-token']!==login.csrf) return json(res,403,{error:'Not authorized'});
-        if (hub.adminMode && hub.isOwner(webActor(login))) {hub.adminMode=false;hub.adminEpoch++;for(const [pendingId,command]of hub.pending)if(hub.isOwner(command.actor))hub.finish(pendingId,{status:'unavailable',message:'Admin mode changed.'});}
+        hub.clearAdmin(webActor(login));
         logins.delete(id);cookieRenewedAt.delete(id);accounts.save();
         await watchRoutes.logout(id);
         res.setHeader('Set-Cookie', cookie('uburoom', '', 0)); return json(res, 200, { ok: true });

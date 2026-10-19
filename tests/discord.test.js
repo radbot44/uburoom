@@ -81,25 +81,31 @@ test('slash commands use the same parser with an explicit target and cannot smug
 });
 
 test('Discord membership is fetched per request and voice permissions fail closed on shard gaps', async () => {
-  const client = new EventEmitter(), voice = '111111111111111111'; let calls = 0, present = true;
+  const client = new EventEmitter(), voice = '111111111111111111'; let calls = 0, present = true, role = true;
   const g = { name: 'Test guild', available: true, shard: { status: Status.Ready },
     channels: { cache: new Map([[voice, { id: voice, name: 'Lounge', rawPosition: 0, isVoiceBased: () => true }]]) },
     voiceStates: { cache: new Map([['friend', { channelId: voice }]]) },
     members: { fetch: async options => {
       calls++; assert.deepEqual(options, { user: 'friend', force: true, cache: false });
-      if (!present) throw new Error('Unknown member'); return { user: { bot: false } };
+      if (!present) throw new Error('Unknown member'); return { user: { bot: false }, roles: { cache: new Map(role ? [['moderator', {}]] : []) } };
     } } };
   client.guilds = { cache: new Map([['guild', g]]) }; client.isReady = () => true;
   const access = discordAccess(client, 'guild');
   assert.equal(await access.refresh('friend'), true); assert.equal(access.isMember('friend'), true);
+  assert.equal(access.hasRole('friend', 'moderator'), true);
   assert.equal(access.voiceChannel('friend'), voice); assert.deepEqual(access.options(), { available: true, guildName: 'Test guild' });
   assert.equal(await access.refresh('friend'), true); assert.equal(calls, 2);
+  role = false; await access.refresh('friend');
+  assert.equal(access.hasRole('friend', 'moderator'), false, 'a refreshed role removal revokes administrator eligibility');
+  role = true; await access.refresh('friend');
   g.voiceStates.cache.delete('friend'); assert.equal(access.voiceChannel('friend'), undefined);
   g.shard.status = Status.Reconnecting; client.emit(Events.ShardReconnecting);
   assert.equal(access.isMember('friend'), false); assert.equal(access.validVoiceChannel(voice), false);
+  assert.equal(access.hasRole('friend', 'moderator'), false);
   assert.equal(access.options().available, false); assert.equal(await access.refresh('friend'), false);
   g.shard.status = Status.Ready; present = false;
   assert.equal(await access.refresh('friend'), false); assert.equal(access.isMember('friend'), false);
+  assert.equal(access.hasRole('friend', 'moderator'), false);
 });
 
 test('call automation listens only to owner joins/moves in the configured guild; shard recovery sends a baseline', () => {

@@ -16,6 +16,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 | **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js), [web/watch-sync.mjs](web/watch-sync.mjs) |
 | **Web remote UI, SVGs & styles** | [web/remote-ui.js](web/remote-ui.js), [web/watch.css](web/watch.css) |
 | **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
+| **Durable rooms and queues (P13-1–P13-5)** | [server/room-store.js](server/room-store.js), [server/room-queue.js](server/room-queue.js), [server/playback-end.js](server/playback-end.js), [implementation and integration boundary](docs/rooms-and-queues.md) |
 | **Plex integration** | [server/plex.js](server/plex.js), [server/plex-auth.js](server/plex-auth.js), [server/media-tracks.js](server/media-tracks.js) |
 | **Discord bot & Activity** | [server/discord.js](server/discord.js), [web/vendor/discord-sdk.js](web/vendor/discord-sdk.js) |
 
@@ -36,7 +37,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - **All config via `.env` file** (loaded by `--env-file-if-exists=.env`). Not `config.json`, not environment variables set externally. The `.env` file is gitignored.
 - Key variables: `HOST`, `PORT`, `PUBLIC_URL` (must be HTTPS), `TLS_CERT`/`TLS_KEY`, Discord credentials (`DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_COMMAND_CHANNEL_IDS`), Plex credentials (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MACHINE_IDENTIFIER`), `UBUROOM_CREDENTIAL_KEY_FILE`, `FFMPEG_PATH`/`FFPROBE_PATH`.
-- Device, browser-login and playback-history state live in `data/accounts.sqlite`. Legacy JSON files are not runtime inputs. Existing private pre-release state requires a matched backup and baseline verification, or a reviewed manual transfer/reset, before deployment. Runtime SQLite work uses an in-memory mirror and a bounded writer worker; await persistence before acknowledging durable changes. Rooms and consent remain ephemeral for M1.
+- Device, browser-login and playback-history state live in `data/accounts.sqlite`. Baseline version 4 includes room records/hosts, queue occurrences, auto-queue state and the autoplay setting; earlier private state is rejected unchanged and requires a reviewed matched backup/manual transfer before deployment. Legacy JSON files are not runtime inputs. Runtime SQLite uses an in-memory mirror/bounded writer; await persistence before acknowledging durable changes. Saved rooms integrate with live viewing, while playback authority remains process-local. Remote consent always remains ephemeral.
 - See [docs/self-hosting.md](docs/self-hosting.md) for the full configuration reference.
 
 ---
@@ -44,7 +45,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 ## Room Model & Command Engine
 
 - **Terminology rule:** Use **"room"** for watch parties, UI elements, lobby dialogs, and Discord commands. Reserve **"session"** strictly for low-level technical contexts (HTTP cookie sessions, WebSocket connections, Plex transcode sessions).
-- Watch rooms are **in-memory** (`Map` in `server/core.js` and `server/watch.js`). They are intentionally ephemeral for M1. Playback queues and restart-persistent rooms are planned for later scoped work; do not add them as incidental refactors or persist remote consent.
+- Live watch rooms remain **in-memory** (`Map` in `server/core.js` and `server/watch.js`). M1-P13 is explicitly authorized: P13-1 through P13-5 implement durable records, live lifecycle, manual/bulk queues, following/random generation, shuffle and verified cancellable autoplay. Read [the current review point and handoff](docs/rooms-and-queues.md) before continuing. Never persist remote consent or treat a stored record as current playback authority.
 - Rooms have an owner, viewers, media, playback state (position, paused, muted, volume, seekable), visibility (public/private), mode, controls, epochs, and optional scheduled starts.
 - **Every control surface** — web watch page, extension remote, Discord bot, Discord Activity — sends commands through the shared validated handler in `core.js` via the shared `Engine` (`shared/engine.js`). Never bypass it with direct state mutation or a parallel control path.
 - The **server owns the shared timeline**. Viewers own quality, audio, subtitles, and volume. Server acknowledgement is not proof of client playback.

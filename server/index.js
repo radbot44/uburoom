@@ -8,6 +8,7 @@ async function main() {
   const publicUrl = new URL(process.env.PUBLIC_URL || 'https://localhost:6767');
   if (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== '/') throw new Error('PUBLIC_URL must be an HTTPS origin');
   const config = {
+    ...require('./room-policy').configuration(process.env),
     publicUrl: publicUrl.origin,
     cert: fs.readFileSync(path.resolve(root, process.env.TLS_CERT || 'certs/server-cert.pem')),
     key: fs.readFileSync(path.resolve(root, process.env.TLS_KEY || 'certs/server-key.pem')),

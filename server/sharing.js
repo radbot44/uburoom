@@ -31,6 +31,7 @@ function discordAccess(client, guildId) {
         ]);
         if (generation !== epoch || !guild() || members.get(userId) !== request) return false;
         if (!member || member.user.bot) { members.delete(userId); return false; }
+        request.roles = new Set(member.roles?.cache?.keys() || []);
         request.at = Date.now();
         for (const [id, value] of members) if (value.at && Date.now() - value.at >= COMMAND_MS) members.delete(id);
         return true;
@@ -55,6 +56,7 @@ function discordAccess(client, guildId) {
       return request;
     },
     isMember(userId) { const at = members.get(userId)?.at; return !!guild() && !!at && Date.now() - at < COMMAND_MS; },
+    hasRole(userId, roleId) { const member = members.get(userId); return !!guild() && !!member?.at && Date.now() - member.at < COMMAND_MS && member.roles.has(roleId); },
     voiceChannel(userId) { return guild()?.voiceStates.cache.get(userId)?.channelId; },
     validVoiceChannel,
     options() {

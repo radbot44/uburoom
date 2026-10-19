@@ -52,6 +52,37 @@
       case 'media.seek.start': case 'media.seek.end':
       case 'status.get': case 'help.get': case 'room.disable': case 'room.enable': break;
       case 'media.previous': case 'media.next': break;
+      case 'media.autoplay.cancel': break;
+      case 'media.autoplay.set':
+        if (typeof a.enabled !== 'boolean') throw new Error('Choose autoplay on or off');
+        args.enabled = a.enabled; break;
+      case 'queue.add': case 'queue.playNow':
+        if (!a.item || typeof a.item !== 'object' || Array.isArray(a.item)) throw new Error('Choose a queue item');
+        args.item = a.item; break;
+      case 'queue.bulk':
+        if (!['show','season'].includes(a.type) || typeof a.mediaId !== 'string' || !/^\d{1,20}$/.test(a.mediaId) ||
+            typeof a.unfinished !== 'boolean' || typeof a.includeSpecials !== 'boolean') throw new Error('Choose show or season queue options');
+        args = { type:a.type, mediaId:a.mediaId, unfinished:a.unfinished, includeSpecials:a.includeSpecials }; break;
+      case 'queue.auto':
+        if (!['off','following','random'].includes(a.mode) || typeof a.includeSpecials !== 'boolean') throw new Error('Choose an auto-queue mode');
+        args = { mode:a.mode, includeSpecials:a.includeSpecials };
+        if (a.mode !== 'off') {
+          if (!a.scope || !['show','library','collection'].includes(a.scope.type) ||
+              a.mode === 'following' && a.scope.type !== 'show' ||
+              a.scope.id !== undefined && (typeof a.scope.id !== 'string' || !/^\d{1,20}$/.test(a.scope.id))) throw new Error('Choose an auto-queue source');
+          args.scope = { type:a.scope.type, ...(a.scope.id ? { id:a.scope.id } : {}) };
+        }
+        break;
+      case 'queue.move': case 'queue.remove': case 'queue.history.replay':
+        if (typeof a.entryId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.entryId)) throw new Error('Choose a queue entry');
+        args.entryId = a.entryId;
+        if (action === 'queue.move') args.targetRank = numeric(a.targetRank, 0, 99);
+        if (action === 'queue.history.replay') {
+          if (typeof a.resume !== 'boolean') throw new Error('Choose resume or start over');
+          args.resume = a.resume;
+        }
+        break;
+      case 'queue.clear': case 'queue.shuffle': case 'queue.history.clear': break;
       case 'media.ready.start': case 'media.ready.wait': case 'media.ready.cancel':
         if (typeof a.readinessId !== 'string' || !/^[a-f0-9-]{36}$/.test(a.readinessId)) throw new Error('Readiness choice expired.');
         args.readinessId = a.readinessId; break;
@@ -110,6 +141,10 @@
       case 'media.seek.relative': args.seconds = numeric(a.seconds, -600, 600); break;
       case 'media.seek.absolute': args.seconds = numeric(a.seconds, 0, 1e9); break;
       default: throw new Error('Unsupported command');
+    }
+    if (action.startsWith('queue.') && a.expectedRevision !== undefined) {
+      if (!Number.isSafeInteger(a.expectedRevision) || a.expectedRevision < 0) throw new Error('Invalid queue revision');
+      args.expectedRevision = a.expectedRevision;
     }
     return { action, args };
   }

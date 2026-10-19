@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-17.
+Updated: 2026-10-18.
 
 uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity. The YouTube TV remote is maintained in the independent uburoom-remote repository, with versioned integration and remaining live verification tracked in M1. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
 
@@ -17,7 +17,7 @@ The main gap is evidence and completeness across real Plex sessions, Discord sur
 | Boundary | Direction |
 | --- | --- |
 | Service and state | Keep one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. Develop on local disk; keep runtime state and credentials private. Keep device, login and playback-history persistence in SQLite, while removing private pre-release migration paths before the first public release. Protect the single event loop from synchronous disk/crypto spikes during playback synchronization. |
-| Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. Keep active rooms in memory for M1; durable room restoration and playback queues remain separately scoped future work. Preserve native playback history for future per-viewer Plex watch-state reporting. |
+| Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. M1-P13 durable records, live-room integration, queues, generation and cancellable autoplay use the existing SQLite writer; real Plex/Activity continuity checks remain. Current viewing rooms are still process-local. Preserve native playback history for future per-viewer Plex watch-state reporting. |
 | Commands and access | Every control surface uses the shared validated engine. Recheck current access around awaited operations, reject stale work, and keep remote consent off after disconnect/restart. |
 | Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. Make authenticated WebSockets the native room-control transport; retain HTTP where appropriate for auth/bootstrap, catalog, artwork, media and health. |
 | Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Chrome and Firefox are equal required web test targets, alongside real Discord Activity coverage. Keep a single primary `/watch` entry point after the remote split, and keep diagnostics/experimental tools outside normal viewer navigation. Maintain native ES modularity in the browser without bundlers or frameworks. |
@@ -58,6 +58,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P10 | Transition "session" terminology to "room" | Canonical room protocol verified locally across repositories; full live surface verification pending | M1-P7 UI/UX review and command engine consistency |
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
 | M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
+| M1-P13 | Persistent rooms and playback queues | In progress; P13-1 durable core, P13-2 live integration/Admin mode, P13-3 manual queues, P13-4 bulk/generation/shuffle and P13-5 verified cancellable autoplay implemented | M1-P11 SQLite/WebSocket foundation, M1-P7 lobby/library UI, shared timeline and recorded lifecycle/role decisions |
 
 ### M1-P1 — Sustained real playback and room continuity
 
@@ -108,6 +109,7 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 
 - Support content versions and a complete item timeline across split files, then carry seeks, captions, chapters, markers and progress consistently across part boundaries.
 - Add resume/start-over, chapters, intro/credits markers, previews, available extras and cancellable next-episode continuation. Shared skips/continuation stay authorized room actions.
+- Coordinate continuation with M1-P13's queue/current-entry transition; do not build a second episode-advance path. Room bookmarks/history and per-viewer Plex reporting have different authority and retention.
 - Work through the existing parity inventory for subtitle search/download, renderer-supported presentation controls, available audio timing and shared playback speed. Decide and verify each control's behavior before exposing it.
 - Retain native per-viewer playback observations **and durable history** as the foundation for planned Plex timeline, resume and watched-state updates across linked clients/servers. Define per-user reporting, cross-device reconciliation, consent/authorization and idempotency before enabling Plex writes. Reporting is currently disabled; experiments must use consenting accounts and account for resume/history effects. Do not remove playback history as part of pre-release storage cleanup.
 
@@ -235,7 +237,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Goal:** Consolidate server persistence, protect the single Node.js event loop from synchronization-blocking latency spikes, and isolate component failures.
 
-- **Storage unification and first-release pruning:** Keep devices, browser logins, linked accounts, credentials and native playback history in the single built-in SQLite database (`data/accounts.sqlite`), with atomic writes/backups. The runtime no longer imports JSON, tracks import markers or upgrades private pre-release layouts implicitly. Schema version 1 is an explicit, validated baseline; unsupported layouts fail without adding missing tables. Tests and operator transfer/restore instructions cover this boundary. There are no external users to support yet; make a reviewed backup/manual reset or transfer plan for the owner’s existing state. Preserve stable UUIDs and the original key for any retained encrypted data. Keep an intentional schema baseline/version and add forward migrations once public releases exist. Room state and remote consent remain ephemeral in M1; persistent rooms are separately planned for later.
+- **Storage unification and first-release pruning:** Keep devices, browser logins, linked accounts, credentials and native playback history in the single built-in SQLite database (`data/accounts.sqlite`), with atomic writes/backups. The runtime no longer imports JSON, tracks import markers or upgrades private pre-release layouts implicitly. The current explicit baseline is schema version 2, extended with room records/hosts in M1-P13; unsupported layouts fail without adding missing tables. Tests and operator transfer/restore instructions cover this boundary. There are no external users to support yet; make a reviewed backup/manual reset or transfer plan for the owner’s existing state. Preserve stable UUIDs and the original key for any retained encrypted data. Keep an intentional schema baseline/version and add forward migrations once public releases exist. Live rooms are currently ephemeral; M1-P13's durable core awaits Watch integration. Remote consent must remain ephemeral after that work too.
 - **Event-loop latency protection:** Keep the high-frequency playback/tick loop free from synchronous disk I/O and CPU-bound cryptography. Audit `DatabaseSync` calls and `AES-256-GCM` token encryption/decryption (`credentialVault`) to ensure they only execute during infrequent operations (auth/linking) or offload via asynchronous task batching, safeguarding the ≤50ms p95 sync target in M1-P5.
 - **WebSocket-native room operations:** Keep authenticated room negotiation, viewer preparation, state changes, commands, readiness and observations on WebSockets. The dispatcher in `server/watch-socket.js` calls transport-neutral operations directly. Obsolete authenticated HTTP **room-control** endpoints and compatibility routing are retired; the setup client and integration tooling use sockets. Retain HTTP for login/account bootstrap, library/catalog requests as needed, media/artwork/health and other genuinely request-response resources; do not duplicate business logic or weaken authentication, revocation, epochs or acknowledgements.
 - **Stream fault isolation:** Rejected periodic media access checks in direct Plex and local demo streaming paths now end only the affected stream. Regression checks cover rejected login renewal, timer cleanup and a subsequent authorized resource request.
@@ -256,6 +258,29 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 - **Subtle presence cues:** Display lightweight presence indicators in the roster, including local player mute status (to avoid asking if someone heard dialogue) and optional on-pause cursor/ping markers for pointing out on-screen details.
 
 **Success criteria:** Viewers and hosts can immediately observe room synchronization, delivery pipelines, and buffer health at a glance without verbal back-and-forth; server resource consumption is transparent to operators; social presence is deepened while preserving the cinema layout and independent playback boundaries.
+
+### M1-P13 — Persistent rooms and playback queues
+
+**Status:** P13-1 through P13-5 are implemented and locally verified, including durable rooms/permissions, live integration/Admin mode, manual/bulk queues, following/random generation, shuffle and cancellable autoplay. The full automated suite passes 344 tests with zero failures/skips; Chrome and Firefox room smoke flows pass. P13-6 UI completion/review and P13-7 real Plex/Activity continuity, resource measurements and retained-state verification remain open. No deployment or retained-state transfer has occurred.
+
+**Requested outcome:** Create a named room or reopen one you created/explicitly host; authorized server administrators can opt into top-bar Admin mode for creator rights in every room. Closing preserves current video/position, upcoming queue and room history. Support creator > host > viewer permissions, operator defaults/admin identities, full participant permissions in one action, creatorship transfer, movies/shows/seasons/episodes, following/random auto-queue and queue shuffle.
+
+**Design:** Keep live playback in memory and save room identity, explicit hosts, permissions, bookmarks and later queue occurrences in existing SQLite/writer. Reopen one live instance with fresh authority/epochs and paused playback; never restore consent, streams, viewers or commands. Separate durable roles from live control; pause without a host unless Continue without host is granted. Distinguish Leave, saved Close and permission-checked confirmed Delete. Closed rooms do not consume active playback slots.
+
+- **Implemented P13-1 core:** `server/room-policy.js` and `server/room-store.js` cover granular role/default policy, creator-only role/permission management, full ordinary participant rights, assigned-host/admin-only restore data, canonical account merges/revocation, rename/visibility/delete, creator transfer and separate bookmark/settings revisions.
+- **Implemented P13-2 live integration & Admin mode:** `server/watch-rooms.js`, `web/watch-rooms-ui.js`, live WebSocket integration, save/reopen, close/delete, Admin mode integration, and independent room settings management.
+- **Implemented P13-3 queue backend & UI slice:** `server/room-queue.js`, `web/watch-queue-ui.js`, `web/watch-library.js`. Flat ordered queue with occurrence UUIDs, optimistic concurrency via `queueRevision`, Up Next list with ranks/reordering/removal/clear, History with outcome badges/resume/start-over/clear, library "Add to queue" buttons, Next/Previous queue coordination, and Safe-DOM UI rendering.
+- **Implemented P13-4:** Atomic paginated show/season expansion, room-unfinished/Specials filters, following/random generation with persistent cycles and pending-only shuffle.
+- **Implemented P13-5:** Verified decoded ending evidence, announced ten-second cancellable autoplay/off switch, fenced atomic advancement and successor generation. Failed preparation preserves the queue; shutdown waits for committed transitions.
+- Keep auto-queue generation separate from automatic playback. Continue P13-6/P13-7 real Plex multi-viewer and Activity continuity checks, including provider failures and writer/sync/resource measurements.
+- Verification covers Chrome/Firefox normal/theater/fullscreen/mobile surfaces; real Activity evidence tracked separately.
+- Define the storage baseline/retained-state procedure before schema changes; preserve UUIDs, native history and original credentials/key. Checkpoint outside the sync tick, await durable edit/close acknowledgements and final shutdown saves, page bounded queue responses, and review shared protocol compatibility with the independent remote.
+
+**Implementation sequence:** P13-0 decisions recorded; P13-1 record/permission core implemented for review; P13-2 live lifecycle/Admin-mode/checkpoint integration; P13-3 manual queue/history/navigation and Queue UI slice; P13-4 bulk/generation/shuffle; P13-5 cancellable/off-switch autoplay; P13-6 remaining UI alongside usable backend slices; P13-7 continuity/regression/operator documentation. The detailed plan defines handoff boundaries and unfinished checks. No deployment or retained-state transfer has occurred.
+
+**Done:** An authorized cohost can reopen the same named room after close or server restart at its committed bookmark, edit/play the same queue and inspect past outcomes. Private listings, revocations/account merges, concurrent edits/reopens, duplicate endings, crash recovery and storage/preparation failure behave truthfully. Browser/Activity and real Plex evidence, remaining limits and schema/backup checks are recorded before support claims.
+
+Details: [implemented core, recorded owner decisions, remaining design and increment gates](docs/rooms-and-queues.md). Evidence and limitations: [P13-4/P13-5 verification](docs/testing.md#bulk-queues-generation-and-cancellable-autoplay-p13-4--p13-5-2026-10-18).
 
 ## M2 — Future planned capabilities
 
@@ -369,7 +394,6 @@ These are already identified directions or placeholders, outside the current del
 | Native-player integration | Future milestone. Establish the integration and control contract while preserving the shared engine, account scopes and consent lifecycle. |
 | Project-hosted rooms and managed room URLs | Future work in the specification. Self-hosting remains the current product; hosting and account/isolation responsibilities need a separate scope. |
 | Live TV/DVR | Separate feasibility work for live manifests, moving seek windows, tuning and authorization. On-demand video coverage does not imply live support. |
-| Playback queue and durable room state | Planned after M1, not a reason to remove native playback history. A disabled queue UI placeholder exists; define host/participant permissions, ordering, completion, recovery and Plex watch-state interactions before enabling it. Persistent rooms also need an explicit restart/resumption/consent model and storage design; do not persist remote consent across restarts. |
 
 ## How agents should use and maintain this roadmap
 
@@ -386,6 +410,7 @@ These are already identified directions or placeholders, outside the current del
 | [ROADMAP.md](ROADMAP.md) | Broad priorities, milestone and phase status, sequencing and open directions |
 | [SPEC.md](SPEC.md) | Product behavior and enduring boundaries |
 | [Playback reliability plan](docs/playback-reliability.md) | Detailed playback architecture, requirements, corpus and proposed performance targets |
+| [Persistent rooms and queues](docs/rooms-and-queues.md) | M1-P13 implemented core, recorded lifecycle/role/admin/queue decisions, remaining integration and ordered increments |
 | [Testing status](docs/testing.md) | Actual evidence, limitations, deferred failures and remaining verification |
 | [Development](docs/development.md) | Reproducible local/isolated commands and fixture prerequisites |
 | [Design guide](docs/design-guide.md) | Established interface and asset rules |

@@ -20,23 +20,25 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (write && (!data || typeof data !== 'object' || Array.isArray(data) || Buffer.byteLength(JSON.stringify(data)) > 4096)) return result(400, { error: 'Invalid command data' });
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
+      await hub.refreshAdmin?.(auth.actor);
+      const current = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
       if (url.pathname === '/api/rooms' && !write) return result(200, { rooms: await hub.list(auth.actor) });
       if (url.pathname === '/api/command' && write) {
         if (!throttle('command:' + auth.actor.userId, 120)) return result(429, { error: 'Too many commands; try again shortly' });
         if (Object.hasOwn(data, 'sessionId') || !UUID.test(data.roomId || '')) return result(400, { error: 'Select a room' });
-        return result(200, await hub.dispatch(auth.actor, { ...data.command, roomId: data.roomId }));
+        return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminMode:hub.isAdmin(auth.actor),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
       }
       if (write && url.pathname === '/api/watch/admin-mode') {
-        if (!hub.isOwner(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only the owner can change Admin mode'});}
+        if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}
         hub.setAdminMode(auth.actor, data.enabled); return result(200,{adminMode:hub.isAdmin(auth.actor)});
       }
       if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
         const room = watch.rooms.get(url.searchParams.get('room'));
         const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
-        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && hub.canManage(room.s, auth.actor) &&
+        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && (room.saved ? hub.canRoom(room.s,auth.actor,'chooseMedia') : hub.canManage(room.s, auth.actor)) &&
          await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
         if (!await eligible()) { return result(403, { error: 'Library access requires the current host or active Admin mode' }); }
         const plex=hub.plexFor?await hub.plexFor(auth.actor):watch.plex;
@@ -60,10 +62,72 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (url.pathname === '/api/watch/playback' && !write) {
         return result(200,watch.tracking.history(auth.actor.userId));
       }
-      if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe))?$/.exec(url.pathname);
+      if (url.pathname === '/api/watch/rooms/saved' && !write) {
+        if (!watch.roomState) return result(200,{rooms:[],total:0});
+        await watch.roomState.eligible(auth.actor,current);
+        return result(200,watch.roomState.list(auth.actor,{offset:Number(url.searchParams.get('offset') || 0)}));
+      }
+      if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
+      if (watch.roomState && match[2] === 'reopen' && write) return result(200,{id:await watch.roomState.reopen(match[1],auth.actor,current)});
+      if (watch.roomState && match[2] === 'settings') {
+        if (write) {
+          if (!throttle('room-settings:' + auth.actor.userId,60)) return result(429,{error:'Too many room changes'});
+          return result(200,await watch.roomState.edit(match[1],auth.actor,data.revision,data.change,current));
+        }
+        await watch.roomState.eligible(auth.actor,current);
+        await watch.roomState.metadata(match[1],auth.actor);
+        if (!await current()) return result(403,{error:'Room access changed'});
+        return result(200,watch.roomState.summary(match[1],auth.actor));
+      }
+      if (watch.roomState && match[2] === 'queue') {
+        await watch.roomState.eligible(auth.actor, current);
+        await watch.roomState.metadata(match[1], auth.actor);
+        if (!await current()) return result(403, { error: 'Room access changed' });
+        const room = watch.rooms.get(match[1]);
+        if (room && !await watch.canView(room, auth.actor)) return result(403, { error: 'Room unavailable or private' });
+        if (write) {
+          if (!throttle('room-queue:' + auth.actor.userId, 60)) return result(429, { error: 'Too many queue operations' });
+          if (!data || typeof data !== 'object') return result(400, { error: 'Invalid queue data' });
+          const actions = ['add','move','remove','clear','playNow','bulk','shuffle','auto'];
+          if (actions.includes(data.action)) {
+            const applied = await hub.dispatch({...auth.actor,watchCurrent:current}, { roomId:match[1], action:'queue.' + data.action,
+              args:{ ...data, unfinished:data.unfinished ?? false, includeSpecials:data.includeSpecials ?? false } });
+            return applied.status === 'applied' ? result(200,applied) : result(applied.httpStatus ||
+              ({forbidden:403,unavailable:409,unsupported:400}[applied.status] || 400),{error:applied.message});
+          }
+          return result(400, { error: 'Unsupported queue action' });
+        }
+        return result(200, watch.roomState.queue.list(match[1], {
+          offset: Number(url.searchParams.get('offset') || 0),
+          limit: Number(url.searchParams.get('limit') || 50)
+        }));
+      }
+      if (watch.roomState && match[2] === 'history') {
+        await watch.roomState.eligible(auth.actor, current);
+        await watch.roomState.metadata(match[1], auth.actor);
+        if (!await current()) return result(403, { error: 'Room access changed' });
+        const room = watch.rooms.get(match[1]);
+        if (room && !await watch.canView(room, auth.actor)) return result(403, { error: 'Room unavailable or private' });
+        if (write) {
+          if (!throttle('room-queue:' + auth.actor.userId, 60)) return result(429, { error: 'Too many queue operations' });
+          if (!data || typeof data !== 'object') return result(400, { error: 'Invalid history data' });
+          if (['clear','replay'].includes(data.action)) {
+            const applied = await hub.dispatch({...auth.actor,watchCurrent:current}, { roomId:match[1], action:'queue.history.' + data.action,
+              args:{...data,resume:!!data.resume} });
+            return applied.status === 'applied' ? result(200,applied) : result(applied.httpStatus ||
+              ({forbidden:403,unavailable:409,unsupported:400}[applied.status] || 400),{error:applied.message});
+          }
+          return result(400, { error: 'Unsupported history action' });
+        }
+        return result(200, watch.roomState.queue.history(match[1], {
+          offset: Number(url.searchParams.get('offset') || 0),
+          limit: Number(url.searchParams.get('limit') || 50)
+        }));
+      }
       const room = watch.rooms.get(match[1]);
+      if (room?.saved && write && match[2] === 'close') return result(200,await watch.roomState.closeRoom(match[1],auth.actor,data.epoch,current));
       if (!await watch.canView(room, auth.actor)) { return result(403, { error: 'Room unavailable or private' }); }
       if(context.controlSocket&&context.controlSocket.readyState!==1){return result(409,{error:'Room connection changed; retry manually'});}
       if (write && match[2] === 'command') {
@@ -73,11 +137,12 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         const viewer = room.viewers.get(data.viewerId);
         if (data.viewerId !== undefined && (!viewer || viewer.userId !== auth.actor.userId)) throw new Error('Invalid viewer');
-        const applied = await hub.dispatch({ ...auth.actor, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, roomId: room.s.roomId, expiresAt: data.expiresAt }); return result(200, applied);
+        const applied = await hub.dispatch({ ...auth.actor, watchCurrent:current, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, roomId: room.s.roomId, expiresAt: data.expiresAt }); return result(200, applied);
       }
       if (write && match[2] === 'close') {
-        if (!hub.canManage(room.s, auth.actor)) { return result(403, { error: 'Only the host or an active administrator can close the room' }); }
-        watch.remove(room.s.roomId); return result(200, { ok: true });
+        if (!(room.saved ? hub.canRoom(room.s,auth.actor,'closeRoom') : hub.canManage(room.s, auth.actor))) { return result(403, { error: 'Room close permission required' }); }
+        if (room.saved && data.epoch !== room.s.epoch) return result(409,{error:'Room changed; refresh before closing'});
+        await watch.remove(room.s.roomId); return result(200, { ok: true });
       }
       if (write && match[2] === 'leave') {
         await watch.leave(room, auth.actor, data.viewerId);
@@ -88,7 +153,11 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if (!viewer || viewer.userId !== auth.actor.userId || viewer.alive && !await viewer.alive() || !await watch.canView(room,auth.actor)) {
           return result(403,{error:'Playback viewer unavailable'});
         }
-        try { return result(200,watch.tracking.observe(room,viewer,data.viewerId,data)); }
+        try {
+          const observed = watch.tracking.observe(room,viewer,data.viewerId,data);
+          await watch.observeEnd(room,viewer,data,observed);
+          return result(200,observed);
+        }
         catch(error) { return result(error instanceof ObservationError?409:503,{error:'Playback observation unavailable',rejection:error instanceof ObservationError?error.rejection:'storage-failure'}); }
       }
       if (write && match[2] === 'ready') {
@@ -118,7 +187,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       }
       state.timing={serverReceivedAt,serverSentAt:Date.now(),serverProcessingMs:performance.now()-receivedMono,clockEpoch};
       return result(200, state);
-    } catch (error) { return result(400, { error: error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); }
+    } catch (error) { return result([400,403,404,409,429,503].includes(error.status) ? error.status : 400,
+      { error: error.status || error instanceof PlaybackError ? error.message : 'Request failed; check Plex/Discord configuration and try again' }); }
   }
   return { execute };
 }

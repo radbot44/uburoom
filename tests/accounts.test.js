@@ -151,7 +151,7 @@ test('provider removal protects the last sign-in, checks CSRF and current owners
   assert.equal(f.app.registry.canonical(original.id).revision,revision);
   const room=(await browser.post('/api/watch/rooms',{})).body.id;
   assert.equal((await browser.post('/api/account/plex/remove',{subject:'101'})).status,400,'active rooms must be left before changing identities');
-  await browser.post('/api/watch/rooms/'+room+'/close',{});
+  await browser.post('/api/watch/rooms/'+room+'/close',{epoch:f.app.watch.rooms.get(room).s.epoch});
   f.members.delete(f.provider.subjects.guest);
   assert.equal((await browser.post('/api/account/plex/remove',{subject:'101'})).status,400,'ineligible Discord identity cannot be the remaining sign-in');
   f.members.add(f.provider.subjects.guest);
@@ -197,7 +197,7 @@ test('verified reverse linking offers an explicit offline merge, refuses stale p
   const preview=(await plex.request('/api/account')).body.merge;assert.ok(preview);assert.equal(preview.accounts.length,2);
   const roomId=(await discord.post('/api/watch/rooms',{})).body.id;
   assert.equal((await plex.post('/api/account/merge',{id:preview.id})).status,400,'live room ownership cannot move during a merge');
-  await discord.post('/api/watch/rooms/'+roomId+'/close',{});
+  await discord.post('/api/watch/rooms/'+roomId+'/close',{epoch:f.app.watch.rooms.get(roomId).s.epoch});
   assert.equal((await plex.post('/api/account/merge',{id:preview.id})).status,200);
   assert.equal((await discord.request('/api/watch/me')).status,401);assert.equal((await plex.request('/api/account')).body.account.id,oldP);
   const again=f.browser();await again.discord('guest');assert.equal((await again.request('/api/account')).body.account.id,oldP);

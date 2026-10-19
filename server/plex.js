@@ -74,15 +74,58 @@ class Plex {
   }
   catalog(resource) { return this.cached(this.catalogCache, resource, 96, () => this.json(resource)); }
   id(value) { if (!/^\d{1,20}$/.test(String(value || ''))) throw new Error('Invalid Plex item'); return String(value); }
-  async allItems(resource, pageSize = 120) {
-    const rows = []; let start = 0;
+  async allItems(resource, pageSize = 120, maxItems = 20000, budget) {
+    const rows = [], seen = new Set(); let start = 0;
     for (;;) {
+      if (budget && --budget.requests < 0) throw new Error('Plex selection exceeds the supported 200-request expansion limit');
       const url = new URL(resource,this.base); url.searchParams.set('X-Plex-Container-Start',String(start)); url.searchParams.set('X-Plex-Container-Size',String(pageSize));
       const data = await this.json(url.href), page = data.Metadata || [];
+      const total = data.totalSize == null ? null : Number(data.totalSize);
+      if (!Array.isArray(page) || total !== null && (!Number.isSafeInteger(total) || total < 0)) throw new Error('Plex returned an invalid catalog page');
+      if (rows.length + page.length > maxItems || total > maxItems) throw new Error('Plex selection exceeds the supported 20000-item catalog limit');
+      if (budget && (budget.remaining -= page.length) < 0) throw new Error('Plex selection exceeds the supported 20000-item expansion limit');
+      let fresh = 0;
+      for (const item of page) {
+        const key = String(item.ratingKey) + ':' + String(item.type);
+        if (!seen.has(key)) { seen.add(key); fresh++; }
+      }
+      if (page.length && !fresh) throw new Error('Plex catalog pagination did not advance');
+      if (!page.length && total !== null && start < total) throw new Error('Plex catalog ended before all items were received');
       rows.push(...page); start += page.length;
-      if (!page.length || data.totalSize != null && start >= Number(data.totalSize) || data.totalSize == null && page.length < pageSize) break;
+      if (!page.length || total !== null && start >= total || total === null && page.length < pageSize) break;
     }
     return this.items(rows);
+  }
+  async queueItems({ type, id, includeSpecials = false } = {}, budget = { remaining: 20000, requests: 200 }) {
+    id = this.id(id);
+    if (typeof includeSpecials !== 'boolean' || !['show','season','library','collection'].includes(type)) throw new Error('Invalid queue scope');
+    let items;
+    if (type === 'library') {
+      const sections = (await this.json('/library/sections')).Directory || [];
+      if (!sections.some(section => String(section.key) === id && section.type === 'movie')) throw new Error('Choose a movie library');
+      items = (await this.allItems('/library/sections/' + id + '/all?type=1', 120, 20000, budget)).filter(item => item.type === 'movie');
+    } else if (type === 'collection') {
+      items = [];
+      const children = await this.allItems('/library/collections/' + id + '/children', 120, 20000, budget);
+      const expanded = new Set();
+      for (const child of children) {
+        if (['movie','episode'].includes(child.type)) items.push(child);
+        else if (['show','season'].includes(child.type) && !expanded.has(child.id)) {
+          expanded.add(child.id);
+          items.push(...await this.queueItems({ type: child.type, id: child.id, includeSpecials }, budget));
+        }
+        if (items.length > 20000) throw new Error('Plex selection exceeds the supported 20000-item catalog limit');
+      }
+    } else {
+      items = (await this.allItems('/library/metadata/' + id + (type === 'show' ? '/allLeaves' : '/children'), 120, 20000, budget))
+        .filter(item => item.type === 'episode')
+        .sort((a,b) => Number(a.seasonIndex || 0) - Number(b.seasonIndex || 0) || Number(a.index || 0) - Number(b.index || 0) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    }
+    const seen = new Set();
+    return items.filter(item => {
+      if (item.type === 'episode' && !includeSpecials && Number(item.seasonIndex) === 0 || seen.has(item.id)) return false;
+      seen.add(item.id); return true;
+    });
   }
   shuffle(items, seed) {
     return items.map(item => ({item,key:createHash('sha256').update(seed + ':' + item.id).digest('hex')}))
@@ -211,7 +254,7 @@ class Plex {
       edition:text(x.editionTitle), sortTitle:text(x.titleSort), contentRating:text(x.contentRating), addedAt:Number(x.addedAt || 0),
       genres:(x.Genre || []).map(g => text(g.tag)).filter(Boolean).slice(0,12), genreIds:(x.Genre || []).map(g => String(g.id || '')).filter(Boolean),
       count:Number(x.childCount || 0), episodeCount:Number(x.leafCount || 0), index:x.index, seasonIndex:x.parentIndex,
-      showTitle:text(x.grandparentTitle), parentId:x.parentRatingKey && String(x.parentRatingKey), showId:x.grandparentRatingKey && String(x.grandparentRatingKey),
+      showTitle:text(x.grandparentTitle), parentTitle:text(x.parentTitle), parentId:x.parentRatingKey && String(x.parentRatingKey), showId:x.grandparentRatingKey && String(x.grandparentRatingKey),
       hasPoster:!!poster, hasLandscape:!!landscape,
       ...(x.type === 'episode' ? {summary:String(x.summary || '').slice(0,500)} : {})
     }; });

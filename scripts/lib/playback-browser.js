@@ -75,11 +75,19 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
     socket.on('close',() => failPending(new Error(name + ' debugging connection closed')));
     socket.on('error',error => failPending(error));
     const version = firefox ? (await command('session.new',{capabilities:{alwaysMatch:{acceptInsecureCerts:true}}})).capabilities.browserVersion : (await command('Browser.getVersion')).product;
+    function unpack(remote) {
+      if (!remote || typeof remote !== 'object') return remote;
+      if (remote.type === 'null') return null;
+      if (remote.type === 'undefined') return undefined;
+      if (remote.type === 'array' && Array.isArray(remote.value)) return remote.value.map(unpack);
+      if (remote.type === 'object' && Array.isArray(remote.value)) return Object.fromEntries(remote.value.map(([k, v]) => [k, unpack(v)]));
+      return remote.value !== undefined ? remote.value : remote;
+    }
     const evaluate = async (page,expression) => {
       const result = firefox ? await command('script.evaluate',{expression,target:{context:page},awaitPromise:true}) :
         await command('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},page);
       if (result.type === 'exception' || result.exceptionDetails) throw new Error(result.exceptionDetails?.text || 'Browser expression failed');
-      return result.result?.value;
+      return firefox ? unpack(result.result) : result.result?.value;
     };
     const until = async (page,expression,label,timeout = 20000) => {
       const deadline = Date.now() + timeout;
