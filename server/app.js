@@ -5,7 +5,7 @@ const path = require('node:path');
 const { randomBytes, createHash } = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const { Hub, hash, UUID } = require('./core');
-const { DeviceLogin, FIREFOX_REDIRECT } = require('./login');
+const { DeviceLogin, FIREFOX_REDIRECT, isAllowedExtensionRedirect } = require('./login');
 const { deviceStore, loginStore } = require('./storage');
 const RemoteUI = require('../web/remote-ui');
 const Engine = require('../shared/engine');
@@ -116,7 +116,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     return login && req.headers.origin === config.publicUrl && req.headers['x-csrf-token'] === login.csrf ? login : undefined;
   }
   function extensionRequest(req) {
-    return !req.headers.origin || /^moz-extension:\/\/[0-9a-f-]+$/i.test(req.headers.origin);
+    return !req.headers.origin || /^moz-extension:\/\/[0-9a-f-]+$/i.test(req.headers.origin) || /^chrome-extension:\/\/[a-p]{32}$/i.test(req.headers.origin);
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
@@ -311,7 +311,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && route === '/auth/discord') {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const loginId = url.searchParams.get('extension');
-        if (loginId && (!deviceLogin.get(loginId) || url.searchParams.get('redirect_uri') !== FIREFOX_REDIRECT)) return json(res, 400, { error: 'Invalid or expired login; start from the extension again' });
+        const loginRequest = loginId ? deviceLogin.get(loginId) : undefined;
+        if (loginId && (!loginRequest || url.searchParams.get('redirect_uri') !== loginRequest.redirectUri)) return json(res, 400, { error: 'Invalid or expired login; start from the extension again' });
         return discordStart(req,res,undefined,loginId);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
@@ -333,7 +334,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         }
         if (identity.id !== config.ownerId && attempt.loginId) {
           const request = deviceLogin.get(attempt.loginId); deviceLogin.requests.delete(attempt.loginId);
-          res.writeHead(302, { Location: FIREFOX_REDIRECT + '#' + new URLSearchParams({ state: request.state, error: 'owner_only' }) }); return res.end();
+          const returnUrl = request?.redirectUri || FIREFOX_REDIRECT;
+          res.writeHead(302, { Location: returnUrl + '#' + new URLSearchParams({ state: request.state, error: 'owner_only' }) }); return res.end();
         }
         if (!await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
@@ -344,9 +346,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
             oauth: { refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000 }
           } : {}) });
         accounts.save();
-        // The completion code goes only to this add-on's fixed Firefox auth URL,
-        // never to a caller-selected destination or a polling endpoint.
-        const destination = attempt.loginId ? FIREFOX_REDIRECT + '#' + new URLSearchParams(deviceLogin.approve(attempt.loginId, identity.id)) : '/';
+        // The completion code goes only to an authorized extension return URL,
+        // never to an arbitrary caller-selected destination or a polling endpoint.
+        const loginRequest = attempt.loginId ? deviceLogin.get(attempt.loginId) : undefined;
+        const returnUrl = loginRequest?.redirectUri || FIREFOX_REDIRECT;
+        const destination = attempt.loginId ? returnUrl + '#' + new URLSearchParams(deviceLogin.approve(attempt.loginId, identity.id)) : '/';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {
@@ -364,9 +368,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const data = await body(req);
         if (route.endsWith('/start')) {
-          if (data.redirectUri !== FIREFOX_REDIRECT) return json(res, 400, { error: 'Unsupported Firefox login return URL' });
-          const id = deviceLogin.start(data.deviceId, data.challenge, data.state);
-          const query = new URLSearchParams({ extension: id, redirect_uri: FIREFOX_REDIRECT });
+          const redirectUri = typeof data.redirectUri === 'string' ? data.redirectUri : FIREFOX_REDIRECT;
+          if (!isAllowedExtensionRedirect(redirectUri)) return json(res, 400, { error: 'Unsupported extension login return URL' });
+          const id = deviceLogin.start(data.deviceId, data.challenge, data.state, redirectUri);
+          const query = new URLSearchParams({ extension: id, redirect_uri: redirectUri });
           return json(res, 200, { id, url: config.publicUrl + '/auth/discord?' + query });
         }
         const result = deviceLogin.finish(data.id, data.verifier, data.code);

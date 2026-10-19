@@ -310,7 +310,8 @@ async function main() {
     assert.equal((await app.hub.dispatch(friendActor, { action: 'media.mute' })).status, 'applied');
     assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.querySelector('#osd .badge-name').textContent"), '<b>Morgan</b>', 'sender text is preserved literally');
     assert.equal(await evaluate(player, "document.getElementById('uburoom-root').shadowRoot.querySelector('#osd b')===null"), true, 'names never inject HTML under player CSP');
-    assert.equal((await app.hub.dispatch(actor,{action:'room.controls',args:{control:'playback',allowed:false}})).status,'applied');
+    const webActor = { ...actor, surface: 'web' };
+    assert.equal((await app.hub.dispatch(webActor,{action:'room.controls',roomId:state.room.id,args:{control:'playback',allowed:false}})).status,'applied');
     await until(player,"document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot.querySelector('[data-control=playback]').getAttribute('aria-checked')==='false'",'owner playback permission reaches the player');
     assert.equal((await app.hub.dispatch(friendActor,{action:'media.mute'})).status,'forbidden');
     assert.equal((await app.hub.dispatch(actor,{action:'media.pause'})).status,'applied','host playback unaffected');
@@ -319,12 +320,12 @@ async function main() {
     const pictureReply=await app.hub.dispatch(friendActor,{action:'zoom.set',args:{value:1.5}});app.hub.ack=originalAck;
     if(pictureReply.status!=='applied')console.log('[Firefox] Picture trace:',JSON.stringify({reply:pictureReply,closures:fixtureClosures,acks:pictureAcks,popup:JSON.parse(await evaluate(popup,'browser.runtime.sendMessage({type:"popup-state"}).then(s=>JSON.stringify(s.room))'))}));
     assert.equal(pictureReply.status,'applied','picture remains independently shared');
-    assert.equal((await app.hub.dispatch(actor,{action:'room.controls',args:{control:'transform',allowed:false}})).status,'applied');
+    assert.equal((await app.hub.dispatch(webActor,{action:'room.controls',roomId:state.room.id,args:{control:'transform',allowed:false}})).status,'applied');
     await until(player,"document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot.querySelector('[data-control=transform]').getAttribute('aria-checked')==='false'",'owner picture permission reaches the player');
     assert.equal((await app.hub.dispatch(friendActor,{action:'reset.all'})).status,'forbidden');
     assert.equal(await evaluate(player,"document.title.includes('🟢')"),true,'master connection remains enabled with guest controls off');
     for(const category of ['playback','transform']) {
-      assert.equal((await app.hub.dispatch(actor,{action:'room.controls',args:{control:category,allowed:true}})).status,'applied');
+      assert.equal((await app.hub.dispatch(webActor,{action:'room.controls',roomId:state.room.id,args:{control:category,allowed:true}})).status,'applied');
       await until(player,`document.getElementById('uburoom-root').shadowRoot.getElementById('panel').shadowRoot.querySelector('[data-control=${category}]').getAttribute('aria-checked')==='true'`,'guest permission restored');
     }
     await evaluate(popup, `browser.runtime.sendMessage({type:'local-command',roomId:${JSON.stringify(state.room.id)},command:{action:'room.disable'}})`);
@@ -372,7 +373,7 @@ async function main() {
     assert.equal(state.room.autoJoin,true,'reload preserves On join, while remote consent resets');
     const renameResult = await evaluate(popup, `browser.runtime.sendMessage({type:'rename',roomId:${JSON.stringify(state.room.id)},alias:''}).then(r=>JSON.stringify(r))`);
     assert.deepEqual(JSON.parse(renameResult), {}, 'blank player name is accepted');
-    assert.ok((await app.hub.list(actor)).some(room=>room.id===state.room.id && room.alias==='alice'),'unnamed player uses the authenticated Discord username');
+    assert.ok((await app.hub.list(webActor)).some(room=>room.id===state.room.id && room.alias==='alice'),'unnamed player uses the authenticated Discord username');
     await command('browsingContext.navigate', { context: player, url: 'https://localhost:9443/', wait: 'complete' });
     await until(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>s.room?.reachable && s.room.alias==='')", 'optional blank name also survives reload');
     state = JSON.parse(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>JSON.stringify(s))"));

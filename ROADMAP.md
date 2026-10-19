@@ -198,7 +198,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Goal:** Move the Firefox remote extension into a separate repository while keeping it fully interoperable with uburoom and preserving its existing YouTube TV functionality.
 
-**Current increment:** The extension, assets, notices, configuration, packaging and standalone tests now live in uburoom-remote. uburoom owns its command modules under `shared/`, web renderer/branding under `web/`, and the fixed authenticated remote integration contract; its original extension directory and standalone remote homepage are removed. `/` enters `/watch` while preserving the query, and application packaging produces source ZIPs only. Matching fixtures, TLS command/revocation checks, Chrome/Firefox decoded playback and remote-drawer checks, and installed Firefox startup pass. Full Firefox testing still stops at the unchanged popup-height assertion; real YouTube TV, complete lifecycle and publication checks remain pending. See [contract](docs/remote-protocol.md) and [evidence](docs/testing.md#remote-extension-repository-separation). Chromium extension support remains deferred to M2-P10.
+**Current increment:** The extension, assets, notices, configuration, packaging and standalone tests now live in uburoom-remote. uburoom owns its command modules under `shared/`, web renderer/branding under `web/`, and the fixed authenticated remote integration contract; its original extension directory and standalone remote homepage are removed. `/` enters `/watch` while preserving the query, and application packaging produces source ZIPs only. Matching fixtures, TLS command/revocation checks, Chrome/Firefox decoded playback and remote-drawer checks, and installed Firefox startup pass. Full Firefox smoke testing (`scripts/firefox-smoke.js`) passes cleanly end-to-end with compact popup height (503px, well under the 600px browser limit) and verified management dispatch. Chromium Manifest V3 extension support (service worker execution, `storage.session` tab state, server-side OAuth redirect and origin validation) is implemented and verified across both repositories. See [contract](docs/remote-protocol.md) and [evidence](docs/testing.md#remote-extension-repository-separation).
 
 - Maintain the distinct Room/Playback and Viewport/Transform protocols, so YouTube TV presentation controls do not intertwine with room synchronization. Keep ownership and distribution of command validation, remote styles/icons and protocol fixtures explicit so both repositories build and test independently without incompatible copies drifting apart.
 - Define and document the extension/server integration contract, supported version combinations, configured HTTPS origins, authentication, connection lifecycle and failure behavior. M1 supports the **canonical `room.*` protocol only**, not old pre-release `session.*` aliases; coordinate both repositories before removal. Preserve shared command validation, per-user scopes, private-room visibility and stale-command rejection.
@@ -301,7 +301,7 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 | M2-P7 | Self-hosting installation validator (`--doctor` CLI check) | Planned | M1-P11 configuration and storage unification |
 | M2-P8 | Official containerization (Docker & Docker Compose) | Planned | M2-P7 configuration validation |
 | M2-P9 | Discord voice channel presence and room invite embeds | Planned | M1-P10 room terminology and Discord bot integration |
-| M2-P10 | Chromium remote extension support | Deferred; outside M1 extraction | M1-P8 independent remote repository and versioned protocol |
+| M2-P10 | Chromium remote extension support | Completed & verified | M1-P8 independent remote repository and versioned protocol |
 
 ### M2-P1 — High Dynamic Range (HDR) support
 
@@ -383,7 +383,7 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 - Define stable extension identity and proof-bound sign-in return URLs; retain per-tab metadata and safe behavior across worker suspension, reconnect and browser restart.
 - Verify installation, local/remote controls, authentication, revoked access and lifecycle behavior in both Chrome and Firefox. Test other claimed Chromium browsers explicitly.
 
-This phase is deferred. M1-P8 extracts and verifies the current Firefox extension without implementing Chromium support. Chrome and Firefox remain equal required targets for web-client changes now.
+Chromium Manifest V3 extension support is implemented and verified. `uburoom-remote` provides multi-target build and packaging (`npm run build:all`, `npm run package:all`, `scripts/package-all.ps1`), a Manifest V3 background service worker, and `chrome.storage.session` for active tab state. `uburoom` validates Chrome extension origin headers (`chrome-extension://[a-p]{32}`) and proof-bound Chromium OAuth redirect URLs (`https://<id>.chromiumapp.org/`), with full automated regression testing.
 
 ## Future direction and decisions still open
 

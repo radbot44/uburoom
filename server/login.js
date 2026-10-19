@@ -5,14 +5,18 @@ const { hash, UUID } = require('./core');
 const FIREFOX_EXTENSION_ID = 'uburoom@uburoom.com';
 // Firefox derives its private auth return URL from the fixed add-on ID.
 const FIREFOX_REDIRECT = `https://${createHash('sha1').update(FIREFOX_EXTENSION_ID).digest('hex')}.extensions.allizom.org/`;
+const CHROME_REDIRECT_PATTERN = /^https:\/\/[a-p]{32}\.chromiumapp\.org\/?$/i;
+function isAllowedExtensionRedirect(uri) {
+  return typeof uri === 'string' && (uri === FIREFOX_REDIRECT || CHROME_REDIRECT_PATTERN.test(uri));
+}
 const TOKEN = /^[a-f0-9]{64}$/;
 class DeviceLogin {
   constructor() { this.requests = new Map(); }
-  start(deviceId, challenge, state) {
+  start(deviceId, challenge, state, redirectUri = FIREFOX_REDIRECT) {
     this.sweep();
-    if (!UUID.test(deviceId) || !TOKEN.test(challenge) || !TOKEN.test(state) || this.requests.size >= 100) throw new Error('Invalid login request');
+    if (!UUID.test(deviceId) || !TOKEN.test(challenge) || !TOKEN.test(state) || !isAllowedExtensionRedirect(redirectUri) || this.requests.size >= 100) throw new Error('Invalid login request');
     const id = randomBytes(32).toString('hex');
-    this.requests.set(id, { deviceId, challenge, state, expires: Date.now() + 300000, attempts: 0 });
+    this.requests.set(id, { deviceId, challenge, state, redirectUri, expires: Date.now() + 300000, attempts: 0 });
     return id;
   }
   get(id) { this.sweep(); return this.requests.get(id); }
@@ -35,4 +39,4 @@ class DeviceLogin {
   }
   sweep() { for (const [id, request] of this.requests) if (request.expires <= Date.now()) this.requests.delete(id); }
 }
-module.exports = { DeviceLogin, FIREFOX_EXTENSION_ID, FIREFOX_REDIRECT };
+module.exports = { DeviceLogin, FIREFOX_EXTENSION_ID, FIREFOX_REDIRECT, isAllowedExtensionRedirect };
