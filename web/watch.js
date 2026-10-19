@@ -924,7 +924,7 @@ function applyState(next) {
   $('title').textContent = isIdle ? (next.roomName || 'Room') : next.title; $('details').textContent = isIdle ? '' : next.subtitle;
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
-  $('empty-title').textContent = 'Choose something to watch'; $('empty-hint').textContent = '';
+  $('empty-title').textContent = 'Choose something to watch…'; $('empty-hint').textContent = '...or he\'ll be watching you.';
   $('empty-browse').hidden = !isIdle || !next.canBrowse;
   $('close-room').hidden = false;
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
