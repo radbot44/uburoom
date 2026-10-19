@@ -1,5 +1,22 @@
 # Verification status
 
+## Room UI refinement (2026-10-19)
+
+Refined room discovery, permissions, and active room/empty player presentation building upon the room redesign:
+- **Simplified room discovery:** Unified onto one refresh button in the saved-room modal navigation; removed redundant subheadings and verbose entry counts; pagination controls appear only when saved rooms exceed the 50-item threshold. Retained room name, position, saved title, and Join/Reopen actions. Kept Reopen and New room accessible in the lobby with explicit empty and error states. Creation name draft (`roomNameDraft`) survives the creation → saved rooms → creation transition.
+- **Accurate, concise permission summaries:** Replaced verbose paragraphs on creation with preset-specific summaries: "Participants: playback controls." and "Participants: playback and queue controls." Updated `describe(policy, compact=true)` to inspect queue capabilities (`chooseMedia`, `addQueue`, `editQueue`, `autoplay`) so "Shared playback & queue" accurately communicates queue access. Capability distinctions, creator/admin-only editing, and host inheritance (`↳`) are preserved.
+- **Active room & empty player polish:** Non-editors see a compact read-only capability summary ("Participant controls: ...") instead of disabled toggle switches, and the button is labeled "View permissions". Successful save feedback is transient (2.5-second status clear) while error alerts persist. Idle player eliminates duplicated headlines with a single central message and an actionable "Browse media" button wired to library navigation. Cards/List view switches hide when queue and history are empty while preserving selected layout. Theater and Fullscreen controls remain accessible in idle/outside-room states.
+- **Copy and icons:** Manage replaces long paragraphs with concise action-local copy; confirmations carry consequence warnings. Leave room uses the canonical logout icon instead of an external-link icon. The delete room button is a clear destructive button without redundant Close X icons. Tooltips and accessible labels are aligned on icon-only controls.
+- **Source picker draft consistency:** `chooseSource` increments `autoTicket` and marks draft presence, preventing delayed asynchronous lookup responses from overwriting newer selections. The source-name cache keys implicit current shows by `show:current:<title_or_id>` to invalidate when the active show changes. Draft identity and unsaved options are protected against unrelated playback settings rerenders.
+- **Consolidated styles:** Streamlined redundant and superseded CSS rules in `web/watch.css`, eliminating duplicate `@media(max-width:620px)` blocks, superseded switch properties, and tightened vertical margins in the Room panel.
+
+Verification:
+- `npm run test:full`: 348 tests passed, 0 failed, 0 skipped.
+- `node scripts/room-redesign-smoke.js --browsers=chrome,firefox`: both passed discovery/reopen, preset descriptions, draft retention, transient save feedback, non-editor read-only permissions, phone layouts (390px), queue auto-source picker, and fullscreen controls.
+- `node scripts/room-ui-smoke.js --browsers=chrome,firefox`: both passed named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random generation, autoplay toggle, countdown/cancel/advance, roles/transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, and desktop/phone/theater rendering.
+- `node scripts/lobby-library-smoke.js`: passed lobby browsing, disabled settings outside room, private/public creation, Play selection, and responsive layouts.
+Fixtures use isolated accounts and synthetic media; physical-device and live Plex/Discord Activity checks remain open.
+
 ## Normal view sticky right column (2026-10-19)
 
 Normal view now uses the same sticky Room/Queue column as theater: a 22px top offset, viewport-bounded height and internal overflow scrolling. Narrow stacked layouts and mobile tabs retain their existing behavior. `node scripts/watch-layout-smoke.js` passes in Chrome 155.0.8059.84 and Firefox 158.0, including right-column pinning during page scrolling in normal layouts at 1080p, 4K, 1440px and 1101px widths, theater stickiness, mobile tabs and fullscreen restoration. The normal scrolled render was inspected. Fixtures use isolated accounts and synthetic media.
@@ -758,3 +775,12 @@ Added the shared media SVG (overlapping video cards and play triangle), used by 
 - `node scripts/room-ui-smoke.js`: Chrome and Firefox passed queue add/reorder/remove/history, bulk/Specials, shuffle, library generation sources, autoplay toggle, actual fixture natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen at 17 seconds and deletion. The older flow explicitly selects server defaults; separate redesign coverage uses the new Host-managed preset.
 - `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox`: passed library context/cancel, private/public creation, access hiding, joining without replacing shared media, and responsive layouts.
 - Isolated disposable accounts, fixture media and ephemeral HTTPS servers only. No production deployment, state/schema migration, provider registration or real Plex/Discord checks were performed. Actual Activity/device and real-provider gates remain open. Private invitations are intentionally deferred; the UI states creator/host-only access.
+
+
+## Room control refinement (2026-10-19)
+
+- `npm run test:full`: 348 passing tests, zero failures or skips. Snapshots add only the current participant policy and creator/admin policy-edit capability; mutations retain existing revision and authorization checks.
+- `node scripts/room-redesign-smoke.js`: Chrome/Firefox passed direct active lobby Join, Reopen/New and creation-to-reopen draft retention; lobby fullscreen entry/exit; independent Add to queue without video-choice/edit grants; read-only participant controls; compact settings, rename drafts and save feedback; mobile Participants/Hosts columns; source picking/naming and hidden irrelevant fields; shared autoplay, paused reopening, fullscreen settings and badge clearing. Phone lobby button bounds are asserted against the player.
+- `node scripts/room-ui-smoke.js`: Chrome/Firefox passed actual fixture natural-end countdown/cancel/advance, bounded phone countdown with separate seconds, host/creator transfer, read-only ordinary-host permission shortcuts, private cohosts, Admin mode, queues and generation sources, close/reopen and deletion.
+- `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox`: library cancellation/context, private/public creation and access filtering, joining without replacing playback, and responsive layouts passed.
+- Inspected rendered Chrome/Firefox desktop, phone, theater and fullscreen surfaces, including lobby actions, compact permission role tabs, roster, source/queue settings and countdown. All runs used isolated fixture accounts/media; no production deployment, schema change or real-provider operations. Real Activity/device and Plex/Discord gates remain separate.

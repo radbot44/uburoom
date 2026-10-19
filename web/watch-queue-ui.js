@@ -12,7 +12,7 @@
     return m + ':' + String(s % 60).padStart(2, '0');
   }
 
-  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork, openSettings }) {
+  function mount(host, { request, getState, getMe, fail, changed, execute, serverTime, openLibraryItem, artwork, openSettings, browseMedia }) {
     const doc = host.ownerDocument;
     let view = 'cards';
     try { if (localStorage.getItem('uburoom-queue-view') === 'list') view = 'list'; } catch {}
@@ -124,20 +124,21 @@
     const footer = node('div', body, undefined, 'queue-footer');
 
 
-    const continuation = node('div', footer, undefined, 'queue-continuation');
+    const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls');
     const autoplayLabel = node('label', continuation, undefined, 'queue-check');
     const autoplayToggle = node('input', autoplayLabel);
     autoplayToggle.type = 'checkbox';
     autoplayToggle.id = 'queue-autoplay';
-    autoplayLabel.append(doc.createTextNode('Autoplay next video'));
-    const autoOpen = button(continuation, 'Queue settings', undefined, () => openSettings(), false, 'quiet');
+    autoplayLabel.append(doc.createTextNode('Autoplay'));
+    const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'quiet');
     autoOpen.id = 'queue-auto-open';
-    const autoStatus = node('p', continuation, '', 'hint queue-auto-status');
+    const autoStatus = node('p', footer, '', 'hint queue-auto-status');
     const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
     countdown.id = 'queue-autoplay-countdown';
     countdown.hidden = true;
     const countdownText = node('span', countdown, undefined, 'queue-countdown-text');
     countdownText.setAttribute('role', 'status');
+    const countdownSeconds = node('span',countdown,undefined,'queue-countdown-seconds'); countdownSeconds.id = 'queue-countdown-seconds';
     const countdownActions = node('div', countdown, undefined, 'queue-countdown-actions');
     const playNowAutoplay = button(countdownActions, 'Play now', undefined, async () => {
       if (cancelPending) return;
@@ -179,7 +180,8 @@
       if (next) {
         const now = serverTime?.() ?? state.serverNow;
         const seconds = Math.max(0, Math.ceil((next.endsAt - now) / 1000));
-        countdownText.textContent = 'Up next: ' + next.title + ' in ' + seconds + (seconds === 1 ? ' second' : ' seconds');
+        if (countdownText.textContent !== 'Up next: ' + next.title) countdownText.textContent = 'Up next: ' + next.title; countdownText.title = next.title;
+        countdownSeconds.textContent = seconds + 's'; countdownSeconds.setAttribute('aria-label',seconds + (seconds === 1 ? ' second' : ' seconds'));
       }
       playNowAutoplay.disabled = cancelAutoplay.disabled = cancelPending || !state?.capabilities?.autoplay;
       if (state?.autoplay?.error) notice.textContent = state.autoplay.error;
@@ -236,52 +238,125 @@
     const settingsAutoplay = node('input', settingsAutoplayLabel); settingsAutoplay.type = 'checkbox'; settingsAutoplay.id = 'room-autoplay';
     settingsAutoplayLabel.append(doc.createTextNode('Autoplay next video'));
     settingsAutoplay.addEventListener('change',async () => {
-      settingsAutoplay.disabled = true; autoNotice.textContent = 'Saving…';
-      try { await execute({action:'media.autoplay.set',args:{enabled:settingsAutoplay.checked}}); autoNotice.textContent = 'Saved'; }
-      catch (error) { autoNotice.textContent = error.message; }
+      settingsAutoplay.disabled = true; setAutoNotice('Saving…');
+      try { await execute({action:'media.autoplay.set',args:{enabled:settingsAutoplay.checked}}); setAutoNotice('Saved', true); }
+      catch (error) { setAutoNotice(error.message); }
       finally { settingsAutoplay.checked = getState()?.autoplay?.enabled !== false; settingsAutoplay.disabled = !getState()?.capabilities?.autoplay; }
     });
     autoDialog.id = 'queue-auto-dialog'; autoDialog.setAttribute('aria-labelledby', 'queue-auto-title');
-    node('h4', autoDialog, 'Automatic queue generation').id = 'queue-auto-title';
-    node('p', autoDialog, 'Choose future videos to add as the queue runs low. Autoplay controls whether the next video starts when this one ends.', 'hint');
+    node('h4', autoDialog, 'Auto-queue').id = 'queue-auto-title';
     const autoModeLabel = node('label', autoDialog, 'Mode');
     const autoMode = node('select', autoModeLabel); autoMode.id = 'queue-auto-mode';
-    for (const [value, label] of [['off', 'Off'], ['following', 'Following episodes'], ['random', 'Random without repeats']]) {
+    for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
       const option = node('option', autoMode, label); option.value = value;
     }
     const autoSource = node('p', autoDialog, '', 'hint'); autoSource.id = 'queue-auto-source';
-    node('p', autoDialog, 'Choose a show, movie library or collection in the library to use another source. Following episodes uses the selected show, or the current show when no source is selected.', 'hint');
+    const sourceChange = button(autoDialog,'Change source',undefined,() => { sourcePicker.hidden = false; void browseSources(); }); sourceChange.id = 'queue-source-change';
+    const sourcePicker = node('section',autoDialog,undefined,'queue-source-picker'); sourcePicker.id = 'queue-source-picker'; sourcePicker.hidden = true;
+    const sourceTitle = node('strong',sourcePicker,'Choose source');
+    const sourceNotice = node('p',sourcePicker,'','hint'); sourceNotice.setAttribute('role','status');
+    const sourceRows = node('div',sourcePicker);
+    const sourceNav = node('div',sourcePicker,undefined,'room-actions');
+    button(sourceNav,'Libraries',undefined,() => void browseSources());
+    button(sourceNav,'Close picker','close',() => { sourcePicker.hidden = true; });
+    let draftScope = {type:'show'}, sourceTicket = 0, autoRoom, autoTicket = 0, hasAutoDraft = false, autoNoticeTimer;
+    const sourceNames = new Map();
+    function setAutoNotice(text, transient = false) {
+      clearTimeout(autoNoticeTimer);
+      autoNotice.textContent = text;
+      if (transient) autoNoticeTimer = setTimeout(() => { if (autoNotice.textContent === text) autoNotice.textContent = ''; }, 2500);
+    }
+    function sourceKey(scope, state = getState()) {
+      return scope.type + ':' + (scope.id || ('current:' + (state?.queueSummary?.current?.grandparentTitle || state?.mediaId || 'none')));
+    }
+    function chooseSource(scope,title) {
+      ++autoTicket; hasAutoDraft = true;
+      draftScope = scope; sourceNames.set(sourceKey(scope),title); autoSource.textContent = title;
+      if (scope.type !== 'show' && autoMode.value === 'following') autoMode.value = 'random';
+      sourcePicker.hidden = true; sourceChange.focus(); updateAutoFields();
+    }
+    async function browseSources(query = {}, title = 'Libraries') {
+      const ticket = ++sourceTicket, roomId = getState()?.id;
+      sourceTitle.textContent = title; sourceRows.replaceChildren(); sourceNotice.textContent = 'Loading…';
+      try {
+        const data = await request('/api/watch/library?' + new URLSearchParams(query));
+        if (ticket !== sourceTicket || roomId !== getState()?.id || sourcePicker.hidden) return;
+        sourceNotice.textContent = data.items.length ? '' : 'No sources available.';
+        for (const item of data.items) {
+          const row = node('div',sourceRows,undefined,'source-row'); node('span',row,item.title);
+          if (item.type === 'library') {
+            if (item.mediaType === 'movie') button(row,'Use library',undefined,() => chooseSource({type:'library',id:item.id},item.title));
+            else button(row,'Shows',undefined,() => void browseSources({section:item.id},item.title));
+            button(row,'Collections',undefined,() => void browseSources({section:item.id,tab:'collections'},item.title + ' collections'));
+          } else if (['show','collection'].includes(item.type)) button(row,'Use source',undefined,() => chooseSource({type:item.type,id:item.id},item.title));
+        }
+        if (data.nextOffset !== null && data.nextOffset !== undefined) button(sourceRows,'Next page',undefined,() => void browseSources({...query,offset:data.nextOffset},title));
+        if (Number(query.offset) > 0) button(sourceRows,'Previous page',undefined,() => void browseSources({...query,offset:Math.max(0,Number(query.offset)-48)},title));
+      } catch (error) { if (ticket === sourceTicket) sourceNotice.textContent = error.message; }
+    }
+    async function sourceName(scope,state,ticket) {
+      const key = sourceKey(scope, state);
+      if (sourceNames.has(key)) {
+        if (ticket === autoTicket && draftScope === scope) autoSource.textContent = sourceNames.get(key);
+        return;
+      }
+      autoSource.textContent = 'Loading source…';
+      try {
+        let title;
+        if (!scope.id) title = state.queueSummary?.current?.grandparentTitle;
+        else if (scope.type === 'library') title = (await request('/api/watch/library')).items.find(item => item.id === scope.id)?.title;
+        else title = (await request('/api/watch/library/item?' + new URLSearchParams({item:scope.id,type:scope.type}))).item.title;
+        if (ticket !== autoTicket || getState()?.id !== state.id || draftScope !== scope) return;
+        autoSource.textContent = title || 'Choose a source'; if (title) sourceNames.set(key,title);
+      } catch (error) { if (ticket === autoTicket && draftScope === scope) autoSource.textContent = 'Source unavailable: ' + error.message; }
+    }
+    function updateAutoFields() {
+      const off = autoMode.value === 'off'; autoSource.hidden = sourceChange.hidden = off;
+      autoSpecialLabel.hidden = off || draftScope.type !== 'show';
+      autoMode.querySelector('[value=following]').disabled = draftScope.type !== 'show';
+      if (off) sourcePicker.hidden = true;
+    }
+    autoMode.addEventListener('change',() => { hasAutoDraft = true; updateAutoFields(); });
     const autoSpecialLabel = node('label', autoDialog, undefined, 'queue-check');
     const autoSpecials = node('input', autoSpecialLabel); autoSpecials.type = 'checkbox'; autoSpecials.id = 'queue-auto-specials';
     autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
+    autoSpecials.addEventListener('change',() => { hasAutoDraft = true; });
     const autoNotice = node('p', autoDialog, '', 'hint'); autoNotice.setAttribute('role', 'status');
-    const autoActions = node('div', autoDialog, undefined, 'room-actions');
-    const autoCancel = button(autoActions, 'Reset changes', undefined, () => openAuto());
+    const autoActions = node('div', autoDialog, undefined, 'room-actions queue-settings-footer');
+    const autoCancel = button(autoActions, 'Reset changes', undefined, () => { hasAutoDraft = false; void openAuto(); });
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
-    doc.addEventListener('room-playback-settings',() => { if (!autoPending) void openAuto(); });
+    doc.addEventListener('room-playback-settings',() => { if (!autoPending && !hasAutoDraft) void openAuto(); });
     async function openAuto(source) {
       const state = getState(), roomId = state?.id;
       if (!roomId) return;
       if (source) await openSettings();
       if (getState()?.id !== roomId) return;
       const config = state.queueSummary?.autoQueue;
-      autoMode.value = source ? 'random' : config?.mode || 'off';
-      autoSpecials.checked = !!config?.includeSpecials;
-      const scope = source?.scope || config?.scope || { type: 'show' };
-      autoSource.textContent = 'Source: ' + (source?.title || (scope.type === 'show' ? scope.id ? 'Selected show' : 'Current show' : scope.type === 'library' ? 'Selected movie library' : 'Selected collection'));
-      autoNotice.textContent = ''; autoSave.disabled = autoMode.disabled = autoSpecials.disabled = !state.capabilities?.editQueue;
+      if (autoRoom !== roomId) { hasAutoDraft = false; sourceNames.clear(); }
+      autoRoom = roomId;
+      if (!hasAutoDraft || source) {
+        autoMode.value = source ? 'random' : config?.mode || 'off';
+        autoSpecials.checked = !!config?.includeSpecials;
+        draftScope = source?.scope || config?.scope || { type: 'show' };
+        if (source) hasAutoDraft = true;
+      }
+      const ticket = ++autoTicket;
+      if (source?.title) sourceNames.set(sourceKey(draftScope, state),source.title);
+      void sourceName(draftScope,state,ticket); sourcePicker.hidden = true;
+      setAutoNotice(''); autoSave.disabled = autoMode.disabled = autoSpecials.disabled = !state.capabilities?.editQueue;
       settingsAutoplay.checked = state.autoplay?.enabled !== false; settingsAutoplay.disabled = !state.capabilities?.autoplay;
-      autoMode.querySelector('[value=following]').disabled = source && scope.type !== 'show';
+      sourceChange.disabled = !state.capabilities?.editQueue; updateAutoFields();
 
       autoSave.onclick = async () => {
         if (getState()?.id !== roomId || !getState()?.capabilities?.editQueue) { return; }
-        autoPending = true; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = true; autoNotice.textContent = 'Saving…';
+        autoPending = true; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = true; setAutoNotice('Saving…');
         try {
-          const selectedScope = autoMode.value === 'following' && scope.type !== 'show' ? { type: 'show' } : { type: scope.type, ...(scope.id ? { id: scope.id } : {}) };
-          await mutate('auto', { mode: autoMode.value, scope: selectedScope, includeSpecials: autoSpecials.checked });
-          autoNotice.textContent = 'Saved'; await changed();
-        } catch (error) { autoNotice.textContent = error.message; }
-        finally { autoPending = false; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = false; }
+          const selectedScope = { ...draftScope };
+          await mutate('auto', { mode: autoMode.value, scope: selectedScope, includeSpecials: draftScope.type === 'show' && autoSpecials.checked });
+          hasAutoDraft = false;
+          setAutoNotice('Saved', true); await changed();
+        } catch (error) { setAutoNotice(error.message); }
+        finally { autoPending = false; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = !getState()?.capabilities?.editQueue; }
       };
 
     }
@@ -427,8 +502,22 @@
       if (subtitle) node('p', parent, subtitle, 'hint queue-entry-subtitle');
     }
 
+    function updateViewsVisibility() {
+      const state = getState();
+      const empty = !state?.mediaId && !state?.queueSummary?.current;
+      const noEntries = !(state?.queueSummary?.pendingCount || currentQueue.items?.length || state?.queueSummary?.historyCount || currentHistory.items?.length);
+      views.hidden = empty && noEntries;
+    }
+
     function renderNowPlaying() {
       const state = getState();
+      const empty = !state?.mediaId && !state?.queueSummary?.current;
+      host.classList.toggle('queue-no-current',empty); host.classList.toggle('queue-no-entries',!(state?.queueSummary?.pendingCount || state?.queueSummary?.historyCount));
+      updateViewsVisibility();
+      if (empty) {
+        if (currentKey !== 'empty') { nowPlayingBox.replaceChildren(); node('p',nowPlayingBox,'No video selected'); const browse = button(nowPlayingBox,'Browse media','media',() => browseMedia(),!state?.canBrowse); node('span',browse,'Browse media'); currentKey = 'empty'; }
+        return;
+      }
       const current = state?.queueSummary?.current;
       const item = current || { title: state?.title || 'Nothing currently playing', mediaId: state?.mediaId };
       const duration = current?.duration || state?.state?.duration || 0;
@@ -586,7 +675,7 @@
     function renderTab() {
       const scroll = layout.scrollLeft;
       footer.querySelector('.queue-footer-actions')?.remove();
-      renderUpcoming(); renderHistory();
+      renderUpcoming(); renderHistory(); updateViewsVisibility();
       for (const img of observedImages) if (!img.isConnected) { imageObserver.unobserve(img); observedImages.delete(img); }
       layout.scrollLeft = scroll;
       if (moveFollow && view === 'cards') {

@@ -35,7 +35,7 @@ async function main() {
     await browser.viewport(host,1360,1100);
     await until('document.querySelectorAll(".library-home-card").length > 0','Lobby library');
     assert.equal(app.watch.rooms.size,0);
-    assert.equal(await run('!$("options-panel").hidden && $("watch-settings").hidden && $("drawer-visibility").hidden && !$("room-lobby").hidden'),true);
+    assert.equal(await run('$("options-panel").hidden && $("watch-settings").hidden && $("drawer-visibility").hidden && !$("room-lobby").hidden'),true);
     await shot('normal');
     await run('document.querySelector(".library-home-card[data-tab=library]").click()');
     await until('!!document.querySelector("#library [data-play]")','Lobby movie');

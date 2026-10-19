@@ -163,6 +163,7 @@ async function main() {
       assert.equal(await run('state.queueSummary.current.id'),endingEntry);
       await run('window.scrollTo(0,0)'); await shot('countdown');
       await browser.viewport(host,390,844); await run('window.scrollTo(0,0)'); await shot('phone-countdown');
+      assert.match(await run('$("queue-countdown-seconds").textContent'),/^\d+s$/);
       assert.equal(await run('(()=>{const a=$("queue-autoplay-countdown").getBoundingClientRect(),b=$("stage").getBoundingClientRect();return a.left>=b.left && a.right<=b.right && a.top>=b.top && a.bottom<=b.bottom;})()'),true);
       await browser.viewport(host,1360,1000);
       await run('$("queue-autoplay-cancel").click()');
@@ -195,10 +196,11 @@ async function main() {
       await shot('settings');
       await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true;document.querySelector("#room-permissions input[data-role=viewer][data-permission=seek]").click()');
       await browser.until(guest,'!$("timeline").disabled','Viewer seek grant');
-      await until('!$("room-host-add").disabled','Settings save completes');
-      await run('$("room-settings-section").value="people";$("room-settings-section").dispatchEvent(new Event("change"));$("room-host-add").click()');
+      await until('$("room-settings-status").textContent==="Saved"','Settings save completes');
+      await run('$("room-settings-section").value="people";$("room-settings-section").dispatchEvent(new Event("change"));document.querySelector("#room-current-people button").click()');
       await browser.until(guest,'state?.roomRole==="host"','Assigned host');
-      await until('$("room-hosts").textContent.includes("Demo guest") && !$("room-transfer").disabled','Host controls');
+      assert.equal(await browser.evaluate(guest,'!state.capabilities.managePermissions && [...document.querySelectorAll("[data-quick-permission]")].every(input=>input.disabled)'),true);
+      await until('$("room-current-people").textContent.includes("Demo guest") && !$("room-transfer").disabled','Host controls');
       await run('$("room-settings-visibility").value="private";$("room-settings-visibility").dispatchEvent(new Event("change"))');
       await until('state?.visibility==="private" && !$("room-transfer").disabled','Private cohost room');
       assert.equal(await browser.evaluate(guest,'state?.roomRole'), 'host');
@@ -208,7 +210,7 @@ async function main() {
       await run('$("room-transfer").click()');
       await until('$("room-confirm-dialog").open','Transfer confirmation');
       await run('$("room-confirm-yes").click()');
-      await until('state?.roomRole==="host" && $("room-role").textContent.startsWith("Your role: host")','Creator transferred');
+      await until('state?.roomRole==="host" && $("room-current-people").textContent.includes("Host")','Creator transferred');
       await browser.until(guest,'state?.roomRole==="creator"','New creator');
       const admin = await browser.page(config.publicUrl + '/watch?demo=guest2');
       await browser.until(admin,'me?.adminEligible && transport?.ready','Configured administrator');

@@ -171,6 +171,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Room control refinement (2026-10-19):** The video lobby now exposes Join/Reopen/New directly while display modes remain available without playback. Compact permissions, creator/admin-only participant shortcuts, a single People roster, Queue-header autoplay, an auto-queue source picker and smaller mobile settings are implemented. Empty queue and countdown/badge states are cleaned up. See [verification](docs/testing.md#room-control-refinement-2026-10-19).
+
 **Room flow redesign (2026-10-19):** Rooms now separates discovery, saved-room reopening and creation. Current-room identity, consistent Leave/Close/Delete labels, task-based settings, permission presets and shared queue settings are implemented. Existing policies are preserved; new Host-managed rooms grant play/pause and seeking. Private remains creator/hosts only, with invitations deferred. Chrome/Firefox fixture flows and rendered desktop/phone/theater/fullscreen checks pass; see [verification](docs/testing.md#room-flow-redesign-2026-10-19). Real-provider and Activity gates remain.
 
 **Mobile navbar and appearance follow-up (2026-10-19):** Section tabs now scroll normally, while the full Media heading/navigation and search/filter/view toolbar pin together in mobile page and fullscreen Menu layouts. Synchronous header measurement preserves view-switch scroll anchors. Favicon links remain static through appearance changes and Sunrise Mode. Chrome/Firefox layout and appearance checks plus all 347 tests pass; [verification](docs/testing.md#mobile-media-navbar-and-static-favicon-2026-10-19).
