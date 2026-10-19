@@ -1,5 +1,11 @@
 # Verification status
 
+## Mobile Media navbar and static favicon (2026-10-19)
+
+Mobile Room/Queue/Media tabs scroll with the page or fullscreen Menu. The entire Media navbar stays pinned at the top: its opaque heading/navigation row and the search/filter/view toolbar beneath it. The library renderer publishes the header height before restoring scroll anchors, and observes later resizing; switching poster/list views keeps the visible item in place when navigation wraps differently. Appearance changes and Sunrise Mode leave browser favicon links untouched, preventing repeated favicon fallback requests while retaining the logo color changes.
+
+Verification: `node scripts/watch-layout-smoke.js` passes in Chrome 155.0.8059.84 and Firefox 158.0, covering normal/theater/mobile/fullscreen layouts, tabs scrolling away, both Media navbar rows pinning together, header corner coverage, view-switch scroll anchors and resized headers. Mobile page and fullscreen Menu renders were inspected. `node scripts/theme-smoke.js --browser=chrome` and `--browser=firefox` pass all appearance combinations, Sunrise, rapid toggling, cross-tab updates and saved preferences, with zero branding requests during rapid changes and zero favicon URL mutations throughout. The appearance fixture samples animation frames rather than a fixed delay and counts particles separately from their aura. `npm run test:full` passes all 347 tests with zero failures/skips. Fixtures use isolated accounts and synthetic media; physical-device and live Plex/Activity checks remain open.
+
 ## Sticky Media coverage and mobile tab spacing (2026-10-19)
 
 Media's internal sticky header has a rectangular opaque surface, retaining the outer panel's rounded corners while covering catalog artwork at both header corners. Mobile tabs have opaque backing through their rounded edges and surrounding gap. The Media header pins below the measured tab height; fullscreen Menu toolbars pin below the measured Media header height. Resize observers keep the offsets current when wrapping or tab height changes.

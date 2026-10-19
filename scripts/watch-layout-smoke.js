@@ -62,13 +62,13 @@ async function main() {
             assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).overflowY'),sideBySide?'auto':'visible','Only side-by-side library owns scrolling');
             if (!sideBySide) {
               assert.equal(await evaluate('getComputedStyle(document.getElementById("library-panel")).maxHeight'),'none','Stacked library height unrestricted');
-              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),wide&&width>700?'sticky':'static','Theater navigation pins; other stacked toolbars scroll');
+              assert.equal(await evaluate('getComputedStyle(document.querySelector(".library-tools")).position'),wide||width<=700?'sticky':'static','Theater and mobile navigation pin; other stacked toolbars scroll');
               await evaluate('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"});true');
               assert.ok(await evaluate('scrollY>0&&document.getElementById("library-panel").scrollTop===0'),'Stacked library uses page scrolling');
               if (width <= 700) {
                 await browser.screenshot(page,path.join(output,name+'-'+label+'-media-pinned.png'));
-                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs").getBoundingClientRect(),h=document.getElementById("library-header").getBoundingClientRect();return h.top>=t.bottom+6;})()'),true,'Media sticky header clears the mobile tabs');
-                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs"),r=t.getBoundingClientRect();return getComputedStyle(t,"::before").backgroundColor!=="rgba(0, 0, 0, 0)"&&getComputedStyle(t,"::before").bottom==="-8px";})()'),true,'Mobile tabs mask the corner and gap behind the sticky bar');
+                assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs"),h=document.getElementById("library-header").getBoundingClientRect(),m=document.querySelector(".library-tools").getBoundingClientRect();return getComputedStyle(t).position==="static"&&t.getBoundingClientRect().bottom<0&&Math.abs(h.top)<2&&Math.abs(m.top-h.bottom)<2;})()'),true,'Mobile tabs scroll away while the entire Media navbar pins without a gap');
+                assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Mobile sticky header corners cover the catalog');
               }
               for (const view of ['list','normal']) {
                 const anchor=JSON.parse(await evaluate('JSON.stringify((()=>{const top=Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom),tile=[...document.querySelectorAll(".library-tile")].find(t=>t.getBoundingClientRect().bottom>top);return {id:tile.dataset.item,offset:tile.getBoundingClientRect().top-top};})())'));
@@ -76,7 +76,7 @@ async function main() {
                 const rect=await evaluate(`JSON.stringify(document.querySelector('.library-tile[data-item="${anchor.id}"]').getBoundingClientRect().toJSON())`);
                 const tile=JSON.parse(rect), expected=Math.max(anchor.offset,-Math.max(0,tile.height-44));
                 const top=await evaluate('Math.max(0,document.querySelector(".library-tools").getBoundingClientRect().bottom)');
-                assert.ok(Math.abs(tile.top-top-expected)<2,'Page scroll preserves visible item after '+view);
+                assert.ok(Math.abs(tile.top-top-expected)<2,label+': Page scroll preserves visible item after '+view);
               }
               await evaluate('window.scrollTo(0,0);true');
             }
@@ -179,12 +179,12 @@ async function main() {
           await evaluate('toggleDrawer(true);selectSection("media");document.querySelector(".library-home-card").click();true');
           await browser.until(page,'document.querySelectorAll(".library-tile").length>20','Phone Menu catalog');
           await evaluate('drawer.scrollTop=1200;true'); await pause(150);
-          assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs").getBoundingClientRect(),h=document.getElementById("library-header").getBoundingClientRect(),m=document.querySelector(".library-tools").getBoundingClientRect();return h.top>=t.bottom+6&&m.top>=h.bottom-1;})()'),true,'Phone Menu sticky tabs/header/toolbar do not overlap');
+          assert.equal(await evaluate('(()=>{const t=document.getElementById("section-tabs"),h=document.getElementById("library-header").getBoundingClientRect(),m=document.querySelector(".library-tools").getBoundingClientRect(),d=drawer.getBoundingClientRect();return getComputedStyle(t).position==="static"&&t.getBoundingClientRect().bottom<d.top&&Math.abs(h.top-d.top)<2&&Math.abs(m.top-h.bottom)<2;})()'),true,'Phone Menu tabs scroll away while the entire Media navbar pins');
           assert.equal(await evaluate('(()=>{const h=document.getElementById("library-header"),r=h.getBoundingClientRect();return [r.left+1,r.right-1].every(x=>document.elementFromPoint(x,r.top+1)?.closest(".library-header")===h);})()'),true,'Phone Menu header corners cover the catalog');
           await browser.screenshot(page,path.join(output,name+'-phone-menu-media-pinned.png'));
-          await evaluate('document.getElementById("section-tabs").style.height="78px";true'); await pause(150);
-          assert.equal(await evaluate('document.getElementById("library-header").getBoundingClientRect().top>=document.getElementById("section-tabs").getBoundingClientRect().bottom+6'),true,'Sticky offset follows tab height changes');
-          await evaluate('document.getElementById("section-tabs").style.height="";drawer.scrollTop=0;true');
+          await evaluate('document.getElementById("library-header").style.minHeight="180px";true'); await pause(150);
+          assert.equal(await evaluate('Math.abs(document.querySelector(".library-tools").getBoundingClientRect().top-document.getElementById("library-header").getBoundingClientRect().bottom)<2'),true,'Sticky toolbar follows Media header height changes');
+          await evaluate('document.getElementById("library-header").style.minHeight="";drawer.scrollTop=0;true');
           await evaluate('document.exitFullscreen().then(()=>true)');
           await browser.until(page,'!immersive','Exit phone fullscreen');
           await browser.viewport(page,1440,1000); await pause(150);

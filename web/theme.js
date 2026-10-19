@@ -3,8 +3,8 @@
 (() => {
   const root=document.documentElement, key='uburoom.appearance';
   function saved() { try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; } }
-  // Canonical SVG sources arrive with this script once. Recolor locally, including
-  // the favicon and shadow-DOM remote, without fetching another image on changes.
+  // Canonical SVG sources arrive with this script once. Recolor page and remote
+  // logos locally; keep the browser favicon static during appearance changes.
   const branding=window.uburoomBrandAssets, images=new Map();
   let sunrise=false, sunriseTimer, lastSunriseClick=0, themeLockUntil=0;
   const clicks={'theme-toggle':[], 'accent-toggle':[]};
@@ -124,7 +124,6 @@
       if(id==='theme-toggle' && performance.now()<themeLockUntil)button.title=button.ariaLabel='Theme locked to Dark.';
     }
     for(const img of document.querySelectorAll('img.brand:not([data-brand-outgoing])'))updateBrand(img,'/assets/branding/uburoom-wordmark-brand.svg');
-    for(const link of document.querySelectorAll('link[rel=icon][type="image/svg+xml"]'))link.href=brandUrl('/favicon.svg');
     document.querySelector('meta[name=theme-color]')?.setAttribute('content',light?'#F8F6F2':'#101217');
   }
   function apply(value,persist=false) {

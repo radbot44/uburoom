@@ -27,12 +27,14 @@ async function main() {
     assert.equal(await run('document.documentElement.dataset.theme+"/"+document.documentElement.dataset.accent'),'dark/orange');
     await run('createRoom().then(()=>true)');await run('execute({action:"media.load",args:{mediaId:"101",quality:"direct"}}).then(()=>true)');
     await until('videoFrames>2','Decoded media');await run('execute({action:"media.pause"}).then(()=>true)');
+    await run('(()=>{window.faviconChanges=0;const observer=new MutationObserver(records=>{window.faviconChanges+=records.length;});for(const link of document.querySelectorAll("link[rel=icon]"))observer.observe(link,{attributes:true,attributeFilter:["href"]});return true;})()');
+    const favicons=await run('JSON.stringify([...document.querySelectorAll("link[rel=icon]")].map(link=>link.getAttribute("href")))');
     brandingRequests.length=0;
     await run('(()=>{for(let i=0;i<20;i++)document.getElementById("accent-toggle").click();return true;})()');
     assert.equal(await run('document.documentElement.dataset.sunrise'),'true');
-    assert.equal(await run('document.querySelector(".sunrise-burst").children.length'),80);
+    assert.equal(await run('document.querySelectorAll(".sunrise-burst>span").length'),80);
     await until('document.documentElement.dataset.accent==="pink"','Sunrise starts its pink leg');
-    const intermediate=await run('new Promise(resolve=>setTimeout(()=>resolve(getComputedStyle(document.documentElement).getPropertyValue("--primary")),20))');
+    const intermediate=await run('new Promise(resolve=>{const deadline=performance.now()+1500;function sample(){const value=getComputedStyle(document.documentElement).getPropertyValue("--primary").trim();if(!["rgb(255, 153, 84)","rgb(255, 113, 151)"].includes(value)||performance.now()>deadline)resolve(value);else requestAnimationFrame(sample);}sample();})');
     assert.notEqual(intermediate.trim(),'rgb(255, 153, 84)');assert.notEqual(intermediate.trim(),'rgb(255, 113, 151)','Accent interpolates during the fade');
     await browser.screenshot(page,path.join(output,'sunrise-active.png'));
     await run('new Promise(resolve=>setTimeout(()=>resolve(true),250))');
@@ -40,13 +42,15 @@ async function main() {
     assert.equal(await run('document.documentElement.dataset.sunrise'),undefined);
     assert.equal(await run('document.documentElement.dataset.accent'),'orange');
     await run('(()=>{for(let i=0;i<20;i++)document.getElementById("theme-toggle").click();return true;})()');
-    assert.equal(await run('document.querySelector(".sunrise-burst").children.length'),10);
+    assert.equal(await run('document.querySelectorAll(".sunrise-burst>span").length'),28);
     assert.equal(await run('document.documentElement.dataset.theme'),'dark');
     await browser.screenshot(page,path.join(output,'theme-dud.png'));
     await run('(async()=>{for(let i=0;i<1000;i++)document.getElementById(i%2?"theme-toggle":"accent-toggle").click();await Promise.all([...document.querySelectorAll("img.brand")].map(img=>img.decode()));return true;})()');
     await run('localStorage.setItem("uburoom.appearance",JSON.stringify({theme:"dark",accent:"orange"}));window.dispatchEvent(new StorageEvent("storage",{key:"uburoom.appearance"}));true');
     await run('Promise.all([...document.querySelectorAll(".appearance-toggle")].flatMap(button=>button.getAnimations()).map(animation=>animation.finished)).then(()=>true)');
     assert.equal(brandingRequests.length,0,'Rapid appearance changes make no branding requests');
+    assert.equal(await run('window.faviconChanges'),0,'Sunrise and rapid toggling never reassign favicon URLs');
+    assert.equal(await run('JSON.stringify([...document.querySelectorAll("link[rel=icon]")].map(link=>link.getAttribute("href")))'),favicons,'Favicon links stay static');
     assert.equal(await run('fetch("/watch").then(r=>r.status)'),200,'Refresh remains available after rapid toggling');
     for(const [theme,accent] of [['dark','orange'],['dark','pink'],['light','pink'],['light','orange']]) {
       await browser.viewport(page,1360,1000);
@@ -70,9 +74,7 @@ async function main() {
       const svg=await run('decodeURIComponent(document.querySelector("img.brand").src.split(",")[1])');
       assert.ok(svg.includes('fill="'+(theme==='dark'?'#F8F7F4':'#242329')+'"'));
       assert.ok(svg.includes('id="letter-u-first" fill="'+(accent==='orange'?'#FF9954':'#FF7197')+'"'));
-      const mark=await run('decodeURIComponent([...document.querySelectorAll("link")].find(link=>link.type==="image/svg+xml").href.split(",")[1])');
-      assert.ok(mark.includes('stroke="'+(theme==='dark'?'#F8F7F4':'#242329')+'"'));
-      assert.ok(mark.includes('stroke="'+(accent==='orange'?'#FF7197':'#FF9954')+'"'));
+      assert.equal(await run('[...document.querySelectorAll("link[rel=icon]")].find(link=>link.type==="image/svg+xml").getAttribute("href")'),'/favicon.svg','Every appearance keeps the canonical static favicon');
       await run('toggleRemote(true);true');
       const remoteColor=await run('getComputedStyle(document.getElementById("remote").shadowRoot.querySelector(".remote")).backgroundColor');
       assert.equal(remoteColor,theme==='dark'?'rgb(27, 30, 38)':'rgb(255, 254, 252)');
@@ -104,7 +106,8 @@ async function main() {
       const extra=await browser.page(config.publicUrl+route);
       assert.equal(await browser.evaluate(extra,'document.documentElement.dataset.theme+"/"+document.documentElement.dataset.accent'),'light/pink',route+' uses saved appearance');
     }
-    console.log(name+': all appearance combinations, remote, branding, player menus, phone/dialogs, persistence, cross-tab and sign-in pages passed');
+    assert.equal(await run('window.faviconChanges'),0,'All appearance combinations and cross-tab changes leave favicon links untouched');
+    console.log(name+': all appearance combinations, remote, branding, static favicons, player menus, phone/dialogs, persistence, cross-tab and sign-in pages passed');
   } finally {await browser?.close();await app.close();}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

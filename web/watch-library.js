@@ -109,11 +109,16 @@
           const gap = width <= 440 ? 12 : 14, columns = width <= 440 ? 2 : Math.max(1,Math.floor((width + gap) / (160 + gap)));
           updates.push([host,'--library-poster-width',(width - gap * (columns - 1)) / columns + 'px']);
         }
+        if (target === header) updates.push([header.parentElement,'--media-header-height',header.offsetHeight + 'px']);
       }
       // Batch writes after measurements so loaded rows do not each force layout.
       for (const [target,property,value] of updates) if (target.style.getPropertyValue(property) !== value) target.style.setProperty(property,value);
     });
     layoutObserver.observe(host);
+    if (header) layoutObserver.observe(header);
+    function measureHeader() {
+      if (header) header.parentElement.style.setProperty('--media-header-height',header.offsetHeight + 'px');
+    }
     function scrollElement() {
       const drawer = host.closest('#drawer'); if (drawer) return drawer;
       const panel = host.closest('#library-panel');
@@ -384,6 +389,9 @@
         screen.items.length < screen.total ? screen.items.length + ' of ' + screen.total + ' items' : screen.total + (screen.total === 1 ? ' item' : ' items');
       results.classList.toggle('episodes',screen.kind === 'season' || !!screen.onlySeason); results.hidden = details || atHome;
       landing.hidden = !atHome; footer.hidden = atHome;
+      // Navigation can wrap differently after rendering. Publish its height before
+      // restoring the visible item so the sticky toolbar uses the final offset.
+      measureHeader();
     }
     function renderLanding() {
       landing.replaceChildren();
