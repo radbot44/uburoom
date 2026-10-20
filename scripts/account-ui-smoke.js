@@ -44,7 +44,7 @@ async function main() {
     let browser;
     try {
       browser = await playbackBrowser(name);
-      let release = block('/api/watch/me');
+      let release = ()=>{};
       const page = await browser.page(config.publicUrl + '/watch');
       const evaluate = expression => browser.evaluate(page, expression);
       const until = (expression, label) => browser.until(page, expression, label);
@@ -52,7 +52,7 @@ async function main() {
       await browser.viewport(page, 1200, 850);
       await pause(300);
       await shot('checking');
-      if (!before) assert.equal(await evaluate('document.getElementById("welcome").hidden && !document.getElementById("auth-overlay").hidden && !document.querySelector("main").inert && document.getElementById("empty-stage").contains(document.getElementById("auth-overlay")) && document.getElementById("empty-title").textContent==="Join or create a room" && getComputedStyle(document.getElementById("video")).visibility==="hidden"'), true, 'Pending sign-in lives inside the initial lobby');
+      if (!before) assert.equal(await evaluate('!!document.getElementById("watch-bootstrap") && !document.getElementById("welcome").hidden && !document.querySelector("main").inert && document.getElementById("empty-stage").contains(document.getElementById("auth-overlay")) && document.getElementById("empty-title").textContent==="Join or create a room" && getComputedStyle(document.getElementById("video")).visibility==="hidden"'), true, 'Page response supplies sign-in state directly inside the video-sized lobby');
       release();
       await until('!document.getElementById("welcome").hidden', 'Signed-out welcome');
       await shot('login');

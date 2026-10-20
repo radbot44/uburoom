@@ -1,5 +1,21 @@
 # Verification status
 
+## Shared lobby layout and room entry latency (2026-10-19)
+
+Home and empty-room lobbies now share the existing black player frame, centered empty-room presentation and the actual video dimensions, including normal/theater/phone layouts. Their text and available actions differ by room/sign-in state. Inline sign-in stays within that frame; compact phone copy avoids enlarging the player. Rendered desktop home/empty-room and phone surfaces were inspected.
+
+Normal browser page responses now include authorized identity/configuration and active-room data in escaped, inert JSON, with initial active-room rows rendered in the HTML. Personalized responses retain `Cache-Control: no-store`; unauthenticated pages contain no room data. The client consumes the bootstrap without fetching configuration/identity again or requesting the initial room list over the socket. Demo login and Discord Activity still establish their appropriate identity before room discovery.
+
+Reopen can accept viewer preferences and return the authorized, joined snapshot in the same operation, using the existing room read/preparation/authorization path and subscribing that socket to subsequent updates. Existing id-only callers remain compatible. The chooser immediately announces Opening room, retains its pending row through socket updates, and closes with the committed room view. Joining/switching retains the previous view until the next snapshot is ready; it no longer clears to the home lobby, waits for a separate state request after reopen, or waits for an explicit room-list refresh before closing. Opening the chooser uses the current pushed active-room list. Saved-room reloads no longer run on every one-second room-list push. Server clock mapping survives same-server room switches, while new observation epochs are anchored to the current mapped time.
+
+Verification:
+
+- `npm run test:full`: **366 passed, 0 failed, 0 skipped**. Added coverage for one-operation authorized reopen, rejected invalid/foreign viewers, personalized bootstrap/no-store, signed-out data isolation and HTML/JSON script-delimiter escaping.
+- `node scripts/room-entry-smoke.js`: Chrome and Firefox passed cookie bootstrap without configuration/identity refetch, matching home/empty-room video geometry, phone 16:9 geometry, immediate feedback throughout a deliberately held 1.2-second reopen, and exactly one reopen with no follow-up state/list request. Empty and saved-demo-video entry completed in **16–111 ms** after releasing the fixture gate (includes browser assertion/poll overhead). Synthetic local timing excludes real Plex/network/transcode latency.
+- `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox` passed browsing, join/create/cancel, inline phone sign-in and retained library state across disconnects. Both browsers' full room UI smoke, account and focused desktop/phone reconnect checks passed. Reopen uses the existing 35-second preparation budget for the combined source/stream work. Live Plex and actual network/provider timings remain unverified; no production changes were made for this increment.
+
+Other performance findings: reopening uses the room primary-key lookup, while saved-room discovery scans/sorts all records before membership filtering/pagination. That is a potential larger-library cost, not a measured explanation for this reopen delay. Socket publication still sends full identity/active-room messages every second, and real saved-video restoration performs source validation followed by per-viewer preparation. Those paths remain unchanged rather than bypassing current authorization or playback negotiation.
+
 ## Lobby startup and connection continuity (2026-10-19)
 
 The initial HTML now renders the outside-room lobby with a stable **Join or create a room** heading. Sign-in loading, provider choices and retry errors live inside that lobby, without a modal or inert page. The normal/phone lobby uses the page palette instead of an empty black player. Authentication still validates the saved cookie; provider choices appear only after a genuine unauthenticated response. Socket bootstrap no longer fetches the initial room list twice.

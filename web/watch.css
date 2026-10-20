@@ -299,15 +299,12 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #room-create-settings{display:grid;place-items:center;width:44px;height:44px}#room-create-settings svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #room-settings-footer{flex:none;padding-top:14px;display:flex;justify-content:flex-start}#room-settings-footer:has(button[hidden]){display:none}
 
-/* The lobby is the initial page surface; an active room replaces it. */
-body.outside-room:not(.immersive) #stage{aspect-ratio:auto;height:auto;min-height:320px;background:var(--card);border-radius:24px;overflow:visible;container-type:normal}
-body.outside-room:not(.immersive) #empty-stage{position:relative;inset:auto;width:100%;max-height:none;padding:36px 24px;color:var(--text)}
-body.outside-room:not(.immersive) #empty-stage h1{font-size:20px;color:var(--text)}
-body.outside-room:not(.immersive) #empty-hint{color:var(--muted)}
-body.outside-room #video{visibility:hidden}
-body.outside-room:not(.immersive) #empty-symbol{display:block;margin-bottom:20px;color:var(--text)}
-body.outside-room:not(.immersive) #stage>.transport{display:none}
-body.outside-room:not(.immersive) #lobby-rooms{max-height:270px}
-body.outside-room:not(.immersive) #lobby-rooms .saved-room{border-color:var(--border)}
-body.outside-room:not(.immersive) #lobby-rooms .hint{color:var(--muted)}
-@media(max-width:700px){body.outside-room:not(.immersive) #stage{border-radius:0;min-height:300px}body.outside-room:not(.immersive) #empty-stage{padding:28px 16px}}
+/* Both lobbies share the player frame and centered empty-room presentation. */
+body.idle-player #empty-stage{width:min(580px,calc(100% - 32px));box-sizing:border-box;max-height:calc(100% - 110px);overflow:auto;padding:14px}
+body.idle-player #empty-stage h1{display:block!important;margin:0 0 8px;font-size:20px}
+body.idle-player #empty-symbol{display:block;margin-bottom:16px}
+body.idle-player #video{visibility:hidden}
+.lobby-rooms a.quiet{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;color:var(--text);text-decoration:none}
+#welcome h2{display:none}
+@media(max-width:700px){.lobby-auth .auth-card{margin-top:8px}.lobby-auth .auth-card p{margin-top:0}.lobby-auth .login-options{margin-top:12px}}
+@media(max-width:700px){body.idle-player:not(.immersive) #empty-stage{position:relative;inset:auto;width:calc(100% - 24px);max-height:calc(100% - 64px);padding:8px}body.idle-player #empty-stage h1{font-size:16px}body.idle-player #empty-symbol{display:none}body.idle-player #empty-hint{font-size:12px;margin:4px 0 10px}body.idle-player #room-lobby{margin:10px auto 0}}

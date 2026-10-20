@@ -83,7 +83,7 @@ test('late room polls and failures cannot overwrite a newer authorized state',as
 test('command deadlines use fresh mapped time and never queue controls without a clock',async()=>{
   const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),sent=[];
   let valid=true;
-  const ctx={reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,qualityPending:false,
+  const ctx={switchingRoom:false,reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,qualityPending:false,
     playbackClock:{read:()=>({valid,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
     api:async(path,data)=>{sent.push({path,data});return {status:'applied'};},refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
   vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
@@ -95,7 +95,7 @@ test('command deadlines use fresh mapped time and never queue controls without a
 test('ordinary unlocked resume does not play a probe before its shared deadline',async()=>{
   const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
   let probes=0;
-  const ctx={reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',readyVersion:'media',autoplayBlocked:false,
+  const ctx={switchingRoom:false,reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',readyVersion:'media',autoplayBlocked:false,
     state:{epoch:'current',mediaVersion:'media',state:{paused:true,duration:120}},pending:false,qualityPending:false,expected:()=>10,
     unlockLocal:async()=>{probes++;},playbackClock:{read:()=>({valid:true,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
     api:async()=>({status:'applied'}),refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};

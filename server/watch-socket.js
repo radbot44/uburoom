@@ -102,10 +102,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
           client.inflight.add(message.id);
           try {
             const result = await request(client, message.path, message.data);
+            if(result.status===200&&result.subscription)client.subscription=result.subscription;
             if (/^\/api\/watch\/rooms\/[a-f0-9-]{36}\?/.test(message.path) && result.status === 200) client.subscription = message.path;
             if (/\/(leave|close)$/.test(message.path) && client.subscription?.split('?')[0] === message.path.replace(/\/(leave|close)$/, '')) client.subscription = undefined;
             await flush();
-            send(client, { type: 'response', id: message.id, ...result });
+            send(client, { type: 'response', id: message.id, status:result.status, value:result.value });
             if (message.data !== undefined&&!message.path.endsWith('/observe')) changed();
           } finally { client.inflight.delete(message.id); }
         })().catch(() => ws.close(4002, 'Request failed'));

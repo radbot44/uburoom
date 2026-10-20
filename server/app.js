@@ -12,6 +12,7 @@ const Engine = require('../shared/engine');
 const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
+const { watchPage } = require('./watch-page');
 const { watchSockets } = require('./watch-socket');
 const { Accounts, credentialVault } = require('./accounts');
 const { PlexAuth } = require('./plex-auth');
@@ -296,6 +297,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (req.method === 'GET' && assets[route]) {
         const [file, type] = assets[route];
+        if(file==='watch.html'){
+          const initial=await watchRoutes.bootstrap(req);
+          const html=watchPage(fs.readFileSync(path.join(publicDir,file),'utf8'),initial);
+          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
+        }
         res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(fs.readFileSync(path.join(publicDir, file)));
       }
       if (req.method === 'GET' && route === '/api/me') {

@@ -15,6 +15,7 @@ const { watchOperations } = require('./watch-operations');
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
   const identities = new Map(), grants = new Map();
   const clockEpoch=randomUUID();
+  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
@@ -214,7 +215,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
-        json(res, 200, { watchVersion: 18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl: config.publicUrl + '/watch', clientId: config.clientId, demo: !!config.demo, plexConfigured: watch.plex.configured, testVideo: !!watch.demoMedia }); return true;
+        json(res, 200, publicConfig()); return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/demo-login') {
         if (!config.demo || !allowedOrigin(req) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { json(res, 403, { error: 'Demo login is disabled' }); return true; }
@@ -282,6 +283,16 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function logout(loginHash){
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash)await watch.leave(room,viewer.actor,id,'logout');
   }
-  return { route, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
+  async function bootstrap(req) {
+    const initial = {config:publicConfig()};
+    const query = new URL(req.url,config.publicUrl).searchParams;
+    if(query.has('frame_id')||config.demo&&['host','guest','guest2'].includes(query.get('demo')))return initial;
+    try {
+      initial.me=await operations.execute({headers:req.headers},'/api/watch/me');
+      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers},'/api/watch/rooms');
+    } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
+    return initial;
+  }
+  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
 }
 module.exports = { watchHttp };

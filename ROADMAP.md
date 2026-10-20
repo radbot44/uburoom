@@ -171,6 +171,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
+**Shared lobbies and room entry speed (2026-10-19):** Home and empty-room lobbies now use the same video-sized frame and presentation. Initial browser identity/active rooms are served with the page; reopen returns its joined state in one response and commits the room/dialog transition together. Redundant chooser/entry reads and one-second saved-list reloads are removed. Local Chrome/Firefox entry checks and all 366 tests pass; real Plex preparation/network timing remains open. See [verification](docs/testing.md#shared-lobby-layout-and-room-entry-latency-2026-10-19).
+
 **Lobby and reconnect continuity (2026-10-19):** Startup now renders the lobby directly with a stable Join or create a room heading and inline sign-in/loading/retry. Native WebSocket pongs preserve presence when page timers are throttled; reconnect keeps library navigation and queue selection while replacing the player stream and clearing remote consent. Chrome/Firefox fixture checks and all 363 tests pass; actual network/provider continuity remains open. See [verification](docs/testing.md#lobby-startup-and-connection-continuity-2026-10-19).
 
 **Room control refinement (2026-10-19):** The video lobby now exposes Join/Reopen/New directly while display modes remain available without playback. Compact permissions, creator/admin-only participant shortcuts, a single People roster, Queue-header autoplay, an auto-queue source picker and smaller mobile settings are implemented. Empty queue and countdown/badge states are cleaned up. See [verification](docs/testing.md#room-control-refinement-2026-10-19).

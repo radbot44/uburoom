@@ -23,6 +23,15 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!auth) return result(401, { error: 'Log in with Discord' });
       await hub.refreshAdmin?.(auth.actor);
       const current = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
+      const opened = async id => {
+        if(data.viewerId===undefined)return result(200,{id});
+        if(!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
+        const query=new URLSearchParams({viewer:data.viewerId,quality:data.quality||'720p4'});
+        if(data.subtitles==='browser')query.set('subtitles','browser');
+        const subscription='/api/watch/rooms/'+id+'?'+query;
+        const joined=await execute(context,subscription);
+        return joined.status===200?{status:200,value:{id,state:joined.value},subscription}:joined;
+      };
       if (url.pathname === '/api/rooms' && !write) return result(200, { rooms: await hub.list(auth.actor) });
       if (url.pathname === '/api/command' && write) {
         if (!throttle('command:' + auth.actor.userId, 120)) return result(429, { error: 'Too many commands; try again shortly' });
@@ -71,7 +80,10 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
-      if (watch.roomState && match[2] === 'reopen' && write) return result(200,{id:await watch.roomState.reopen(match[1],auth.actor,current)});
+      if (watch.roomState && match[2] === 'reopen' && write) {
+        if(data.viewerId!==undefined&&!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
+        return opened(await watch.roomState.reopen(match[1],auth.actor,current));
+      }
       if (watch.roomState && match[2] === 'settings') {
         if (write) {
           if (!throttle('room-settings:' + auth.actor.userId,60)) return result(429,{error:'Too many room changes'});

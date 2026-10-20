@@ -14,7 +14,7 @@
       return ['host','viewer'].every(role => Object.keys(labels).every(key => permissions[role][key] === policy[role][key]));
     }) || 'custom';
   }
-  function mount({ request, getState, getMe, join, changed, showChooser, fail, createDraft, draftChanged, execute }) {
+  function mount({ request, getState, getMe, join, entry=()=>({}), changed, showChooser, fail, createDraft, draftChanged, execute }) {
     const $ = id => document.getElementById(id), dialog = $('room-settings-dialog');
     let details, section = 'general', renameDraft = '', draftRoom, generation = 0, busy = false, offset = 0, total = 0, savedGeneration = 0;
     function node(tag, parent, text, className) {
@@ -46,7 +46,7 @@
       $('room-chooser-refresh').classList.add('spinning');
       try {
         const result = await request('/api/watch/rooms/saved?offset=' + offset);
-        if (ticket !== savedGeneration || !$('room-dialog').open) return;
+        if (ticket !== savedGeneration || !$('room-dialog').open || busy) return;
         total = result.total; $('saved-rooms').replaceChildren();
         for (const room of result.rooms) {
           const row = node('div',$('saved-rooms'),undefined,'saved-room');
@@ -56,12 +56,15 @@
           const currentRoom = room.active && getState()?.id === room.id;
           button(actions,currentRoom ? 'Cancel' : room.active ? 'Join' : 'Reopen',async () => {
             if (currentRoom) { $('room-dialog').close('cancel'); return; }
+            if(busy)return;busy=true;savedGeneration++;
             const original = [...actions.querySelectorAll('button')]; original.forEach(control => control.disabled = true);
+            $('room-saved-status').textContent=room.active?'Joining room…':'Opening room…';
+            $('room-dialog').setAttribute('aria-busy','true');
             try {
-              const opened = room.active ? room : await request('/api/watch/rooms/' + room.id + '/reopen',{});
-              await join(opened.id); $('room-dialog').close('reopened');
+              const opened = room.active ? room : await request('/api/watch/rooms/' + room.id + '/reopen',entry(),{timeoutMs:35000});
+              await join(opened.id,opened.state); $('room-dialog').close('reopened');
             } catch (error) { $('room-dialog-error').textContent = error.message; }
-            finally { original.forEach(control => control.disabled = false); }
+            finally { busy=false;$('room-chooser-refresh').classList.remove('spinning');$('room-dialog').removeAttribute('aria-busy');$('room-saved-status').textContent='';original.forEach(control => control.disabled = false); }
           });
           button(actions,'Settings',() => { openedFromSaved = true; $('room-dialog').close('settings'); void open(room.id); });
         }
@@ -346,9 +349,10 @@
     $('room-settings-primary').addEventListener('click',async () => {
       if (!details || busy) return;
       const target = details; busy = true; renderSettings();
+      if(!target.draft)setSettingsStatus('Opening room…');
       try {
         if (target.draft) { await createDraft(draftOptions()); draftRecord = undefined; }
-        else { const opened = await request('/api/watch/rooms/' + target.id + '/reopen',{}); await join(opened.id); }
+        else { const opened = await request('/api/watch/rooms/' + target.id + '/reopen',entry(),{timeoutMs:35000}); await join(opened.id,opened.state); }
         openedFromSaved = false; dialog.close('opened');
       } catch (error) { setSettingsStatus(error.message); }
       finally { busy = false; if (dialog.open) { const notice = $('room-settings-status').textContent; renderSettings(); $('room-settings-status').textContent = notice; } }

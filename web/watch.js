@@ -4,6 +4,9 @@ const viewerId = crypto.randomUUID(), params = new URLSearchParams(location.sear
 let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
 let stateTransportSequence=0;
 let reconnecting=false;
+let switchingRoom=false, knownRooms=[];
+const pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
+if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
 let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
@@ -130,7 +133,7 @@ const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
-  join:async id=>{await selectRoom(id);if(!state)throw new Error('Room unavailable');returnToVideo();},
+  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>({viewerId,quality:preferredQuality,...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})}),
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
   createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = preset === 'custom' ? '' : preset; } });
 async function fetchArtwork(path, signal) {
@@ -694,6 +697,7 @@ async function unlockLocal() {
 }
 async function execute(command) {
   if(reconnecting||!transport?.ready)throw new Error('Reconnecting. Wait for the room connection.');
+  if(switchingRoom)throw new Error('Wait for the room to open.');
   if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
   const qualityChange=command.action==='media.quality.set';
   if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
@@ -731,6 +735,7 @@ function renderRemote() {
   settings.render(state?.state, state ? options : {...options,room:{canManage:true,enabled:false,reachable:false,controls:uburoom.CONTROLS}});
 }
 function renderVisibility() {
+  $('empty-hint').hidden=!me;
   document.body.classList.toggle('outside-room', !state); document.body.classList.toggle('idle-player',!state?.mediaId);
   $('current-room').hidden = !state;
   $('rooms').hidden = true;
@@ -989,17 +994,27 @@ async function refreshState() {
     else unavailable(error.message,'room-poll');
   } }
 }
-async function selectRoom(id) {
+async function selectRoom(id,initial) {
   if (id === selected) return;
-  qualityPending=false;
-  stateTransportSequence=0;
-  stateRequestSequence++;
-  playbackClock.reset();
-  if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-  if (selected) void api('/api/watch/rooms/' + selected + '/leave', { viewerId }).catch(() => {});
-  clearPlayer('room-select'); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
-  await refreshState(); await refreshRooms();
-  if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
+  if(switchingRoom)throw new Error('Wait for the room to open.');
+  switchingRoom=true;
+  const previous=selected;
+  try {
+    const exchange=playbackClock.begin();
+    const next=initial||await api('/api/watch/rooms/'+id+'?'+new URLSearchParams({viewer:viewerId,quality:preferredQuality,...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})}));
+    if(next.id!==id)throw new Error('Room changed while opening. Try again.');
+    qualityPending=false;
+    stateTransportSequence=0;
+    stateRequestSequence++;
+    if(!initial)playbackClock.add(exchange,next.timing);
+    const now=performance.now(),revision=observationClock.update(next.observationEpoch,playbackClock.read().serverTime??next.serverNow,now,now);
+    if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}
+    if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
+    clearPlayer('room-select'); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
+    applyState(next);placeRoomBar();fail(playbackError);void reportReadiness();
+    if(previous)void api('/api/watch/rooms/'+previous+'/leave',{viewerId}).catch(()=>{});
+    if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
+  } finally {switchingRoom=false;}
 }
 function renderRooms(host, rooms, join = id => selectRoom(id)) {
   host.replaceChildren();
@@ -1021,13 +1036,13 @@ async function refreshRooms() {
   catch (error) { if (!state) $('lobby-error').textContent = error.message; throw error; }
 }
 function applyRooms(rooms) {
+  knownRooms=rooms;
   $('lobby-error').textContent='';
   renderRooms($('rooms'), rooms); renderRoomChoices(rooms,$('lobby-rooms'));
   if ($('room-dialog').open && !creating) {
     renderRoomChoices(rooms);
-    if (!$('room-reopen').hidden) void roomUI.loadSaved();
   }
-  if (!reconnecting && !rooms.some(room => room.id === selected && !room.locked)) {
+  if (!reconnecting && !switchingRoom && !rooms.some(room => room.id === selected && !room.locked)) {
     if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
   }
   $('status').textContent = !selected && rooms.length ? 'Choose an active room or create your own.' : '';
@@ -1040,7 +1055,7 @@ function applyRooms(rooms) {
 }
 function renderBrowsing() {
   browseRoom = !transport?.ready && !reconnecting ? undefined : !selected && me ? 'lobby' : state?.canBrowse ? state.id : undefined;
-  $('library-panel').hidden = !browseRoom && $('auth-overlay').hidden;
+  $('library-panel').hidden = !browseRoom && $('auth-overlay').hidden && (!me || !!state);
   void library.setRoom(browseRoom); library.setBusy(pending||reconnecting);
 }
 function renderLibrary() {
@@ -1242,7 +1257,7 @@ async function chooseRoom(item, section = 'active') {
   dialog.returnValue = ''; dialog.showModal();
   (section === 'new' ? $('room-name') : section === 'saved' ? $('room-show-saved') : $('room-show-active')).focus();
   void roomUI.loadSaved(0);
-  void refreshRooms().catch(error => { if (dialog.open) $('room-dialog-error').textContent = error.message; });
+  renderRoomChoices(knownRooms);
   return closed;
 }
 $('room-dialog').addEventListener('cancel', event => { if (creating) event.preventDefault(); });
@@ -1310,7 +1325,7 @@ setInterval(() => {
 }, 250);
 async function start() {
   await syncReady;
-  config = await api('/api/watch/config');
+  config = pageBootstrap?.config||await api('/api/watch/config');
   if (config.watchVersion !== 18) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
@@ -1322,18 +1337,23 @@ async function start() {
     acceptIdentity(await activityIdentity());
     await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', updateActivityLayout);
   }
-  try { me = await api('/api/watch/me'); } catch (error) {
+  try {
+    if(pageBootstrap?.me){if(pageBootstrap.me.status!==200)throw Object.assign(new Error(pageBootstrap.me.value.error),{status:pageBootstrap.me.status});me=pageBootstrap.me.value;}
+    else me = await api('/api/watch/me');
+  } catch (error) {
     if (activity || error.status !== 401) throw error;
     $('auth-loading').hidden = true; $('welcome').hidden = false;
     document.body.classList.remove('auth-pending');renderVisibility();return;
   }
   renderAccount(); $('welcome').hidden = true;
+  let initialRooms=pageBootstrap?.rooms?.status===200?pageBootstrap.rooms.value.rooms:undefined;
+  if(initialRooms){applyRooms(initialRooms);$('auth-overlay').hidden=true;document.body.classList.remove('auth-pending');placeRoomBar();}
   $('diagnostic-actions').hidden=!controlProbe&&!soakMode;
   let bootstrap;
   transport=new uburoomWatchTransport({
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
     onReady:()=>bootstrap=(async()=>{
-      await refreshState();await refreshRooms();
+      await refreshState();if(initialRooms)initialRooms=undefined;else await refreshRooms();
       if(!selected){if(reconnecting)diagnostics.record('control-reconnected');reconnecting=false;fail('');}
       $('auth-loading').hidden=$('auth-overlay').hidden=true;
       document.body.classList.remove('auth-pending');
