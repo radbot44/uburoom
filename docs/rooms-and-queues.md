@@ -154,6 +154,8 @@ The 2026-10-19 room redesign uses Active rooms and Your rooms with a distinct Ne
 
 The owner authorized implementation after the initial review, including expanded permissions and the Admin-mode clarification. P13-1 is the first review point. Finish each increment's outcome/checks before its dependents; these are assignment boundaries, not instructions to spawn agents or implement everything at once.
 
+Apply the [A/B/C/D verification standard](testing.md#verification-standard-for-new-work) to new P13 results: B for isolated persistence/queue/race fixtures, C for real Plex/Activity and operator state-continuity checks, and D only for claimed room/queue UX acceptance. Operator approval for retained data or deployed systems is separate from these methods.
+
 | Increment | Outcome / main files | Depends on | Completion evidence |
 | --- | --- | --- | --- |
 | P13-0 | Record lifecycle/role/queue decisions and expanded administrator authority | Complete, 2026-10-18 | Owner authorized implementation; recorded decisions below |

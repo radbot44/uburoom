@@ -1,5 +1,51 @@
 # Verification status
 
+## Verification standard for new work
+
+Beginning 2026-10-20, each new or materially updated verification claim must state its **required** and **completed** methods. The four vendor-neutral labels identify *how evidence was obtained*, not which agent or person executed it, and are not a ranking of test quality.
+
+| Level | Name | What the evidence establishes | What it does **not** establish |
+| --- | --- | --- | --- |
+| **A** | **Review** | Code/specification/coverage analysis and inspection of existing proof | New runtime success or external-service behavior |
+| **B** | **Automated** | Executed, reproducible tests with isolated state, fixtures, simulated providers or automated browsers | Real PMS/Discord proxy, physical hardware or subjective acceptability by inference |
+| **C** | **Integration** | Executed tests in the exact real-provider/device/hardware/network environment declared | Other untested installations, browsers, consented accounts or conditions |
+| **D** | **Human** | Human-observed picture/sound, accessibility, UX or acceptance for the declared environment | Numeric timing, frame delivery, authorization, or performance without B/C measurements |
+
+A single test can use more than one method (for example B+C), and a milestone can require different methods for different claims. **A review never substitutes for a test run; B never substitutes for C; D never substitutes for technical evidence.** A real Plex test can be agent-executed with approved access; a physical device or real service does not intrinsically require the owner to operate it. Do not relabel a simulated Discord layout as a C Discord Activity result. The existing `[P]/[S]/[C]` source-confidence notation in the Plex reporting investigation is unrelated to these verification methods.
+
+**Authorization is separate:** owner consent for history-changing experiments, real integrations, private data use, restarts, state transfer, deployment, and publication must be obtained under the existing project rules. Classifying a check C or D does not grant that permission. Use isolated fixture state by default; never reveal Plex tokens, user identifiers, private media, host paths or personal screenshots in public evidence.
+
+### Required result record
+
+For new or revisited checks, record the following together (or link to a sanitized, reproducible artifact):
+
+- **Gate / scope:** phase and specific behavior; required levels versus completed levels (e.g. `B pass; C not run; D pending`); the claimed browsers/transport/media/identities, not just a broad feature name.
+- **Provenance:** date, commit or build revision, OS/browser/version/device, PMS/Discord/extension version if relevant, acceleration/network profile, and fixture vs real-service identity (without secrets).
+- **Execution:** commands or repeatable procedure, setup/authorization boundary, expected outcome and observed output, decoded-frame/audio/subtitle evidence or real account read-backs where applicable, pass/fail/skip counts, and sanitized logs/links.
+- **Result:** per-required-level `pass`, `fail`, `blocked` or `not run`; state partial scenario coverage explicitly instead of marking an entire gate passed. Record unexpected skips as incomplete, limitations, regressions, remaining checks, and any separate owner approvals still required.
+
+A green test suite alone is not a release claim: use `npm run test:full` with development TLS certificates and zero unexpected skips; confirm Chrome **and** Firefox where required. A server acknowledgment or Plex timeline HTTP 200 is not proof of actual playback, picture/audio/captions or personal Plex history. Keep procedure details in [development.md](development.md), technical plans in their owning docs and summary/sequence in [ROADMAP.md](../ROADMAP.md).
+
+### Outstanding M1 verification register
+
+These entries route **unfinished gates**; they do not retroactively recertify the dated findings below. For each row, record new results in the relevant dated section using the required result fields, and keep a level open until evidence covers its stated scope. Other detailed gates remain in the linked plans.
+
+| Gate | Required methods | Open evidence / limitation |
+| --- | --- | --- |
+| M1 release baseline | A, B, C; D for final UX acceptance | Reproducible clean install, full history/ZIP/provenance review, real independent host/provider/extension, authorized retained-state restore and release acceptance; no deployment/publication implied |
+| M1-P1 — playback endurance | B, C; D for audible/visible fidelity | Real long-run Firefox/Activity/network/hardware/resource coverage and original unload cause remain open despite recorded Chrome soaks |
+| M1-P2/P3/P9 — delivery and tracks | B, C, D where perceptual | Actual Plex and device codec/track/fidelity matrix, complicated authored subtitles, lifetime/restore and third-party obligations beyond simulated samples |
+| M1-P4 — Plex reporting | A, B, C | Full reporting product not implemented; shared HLS producer lifecycle, external AV1 attribution and consenting viewer/history matrix remain open |
+| M1-P5/P6 — sync and pacing | B, C, D | Comparative drift/cadence/physical-WAN measurements remain open; the explicit five-minute human viewing check below is pending |
+| M1-P7 — UI/UX | A, B, C, D | Wider journey review, real mobile/Activity interaction, accessibility/usability acceptance remain open beyond fixture layout checks |
+| M1-P8/P10 — remote and terminology | A, B, C | Real remote/YouTube TV lifecycle, consent, sleep/wake, configured origins and live bot/Activity interoperability remain open where documented |
+| M1-P11 — architecture/storage | A, B, C | Actual proxy WebSockets, operator-reviewed backup/restore and hardware/resource ceilings remain open beyond isolated fixtures |
+| M1-P12 — telemetry | A, B, C; D for readability | Feature planned; choose test matrix when implementation is authorized; no completed product checks inferred |
+| M1-P13 — rooms/queues | B, C; D for UX acceptance | Real Plex multi-viewer, Activity, writer/sync/resource bounds and operator retained-state checks remain open; fixture passes do not close them |
+| M1-P14 — configuration/access | A, B, C; D for operator UX | Not implemented; first close owner-token fallback, then confirm real admission/revocation, reporting and secure operator-recovery paths |
+
+**Historical evidence:** The dated entries below remain as recorded, including failures, skips, known gaps and the owner's observations. Do not alter them merely to make them fit A–D. A retrospective label is allowed only with sufficiently specific pre-existing proof; otherwise record the required method as not demonstrated.
+
 ## HLS buffering expansion and Plex transcoder lifecycle evaluation (2026-10-19)
 
 Empirically evaluated HLS forward and back-buffer configuration, browser MSE SourceBuffer quotas, back-buffer eviction, and Plex transcode session lifetimes across network interruptions.

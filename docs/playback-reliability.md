@@ -179,6 +179,8 @@ Proposed initial targets for a declared capable server, device and controlled ne
 
 Each increment must preserve the single Node service, per-user Plex scopes, validated command engine and off-by-default remote consent. Production changes and live history experiments remain subject to the project's existing approval requirements.
 
+Verification for the declared content/browser/device combinations must use the A/B/C/D methods in [testing.md](testing.md#verification-standard-for-new-work). Automated pixels/PCM and synthetic providers are B; real Plex/Discord/device and sustained hardware measurements are C; audible/visible fidelity and usability require targeted D acceptance. Record each required method independently; execution permission remains separate.
+
 ## Plezy lessons and primary references
 
 Plezy provides useful examples of source selection, stable track intent, complete item timelines, first-frame gates, superseded-operation guards, track confirmation and bounded synchronization. Relevant upstream source areas are `lib/services/plex_client.dart`, `lib/services/playback_subtitle_resolver.dart`, `lib/services/playback_open_outcome.dart`, `lib/media/media_part_timeline.dart`, `lib/widgets/video_controls/` and `lib/watch_together/services/`.

@@ -87,3 +87,5 @@ Operators decide whether hosts may issue passes and sponsor media, with source/l
 5. Add preferred names, alias search and offline invitations; then implement limited guest passes with the verified media/reporting model.
 
 Each implementation increment records targeted regressions and actual provider/browser evidence in [testing.md](testing.md). Do not mark planned behavior implemented, a fixture as live-provider proof, or the whole direction authorized for immediate implementation solely because it appears in this roadmap.
+
+For new M1-P14/M1-P4 checks, classify A policy/source review, B isolated adversarial/auth/history tests, C authorized real Plex/Discord/Activity checks, and D targeted administrator UX acceptance under the [testing standard](testing.md#verification-standard-for-new-work). Keep operator policy decisions and permission for live account/history experiments separate from level D.

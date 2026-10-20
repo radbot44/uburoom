@@ -140,6 +140,19 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ## Testing
 
+### Verification levels (required for new evidence)
+
+Use vendor-neutral **A — Review**, **B — Automated**, **C — Integration**, and **D — Human**. These describe the *evidence method*, not who runs it or a sequence that can be skipped:
+
+- **A — Review:** Inspect code, plans, tests, prior logs or static properties. Supports design and coverage findings; alone, it does not prove runtime behavior.
+- **B — Automated:** Execute reproducible tests against isolated fixtures, disposable state, simulated providers, automated browsers or local fault injection. Record actual results; synthetic tests do not prove external-provider or hardware behavior.
+- **C — Integration:** Execute against a real provider, installed client, physical device, hardware encoder or network environment. An appropriately equipped agent may run these checks, but only with the required explicit owner authorization and isolated/consenting accounts and media.
+- **D — Human:** Obtain human observation of perceptual/UX quality or acceptance decisions when required. A human viewing check does not prove numeric sync targets or replace missing B/C evidence.
+
+A phase can require multiple levels; record each as **pass / fail / blocked / not run**, with partial coverage described rather than called a pass. A is never a substitute for executed B or C. Consent to run a C test, changes to production, and permission to publish are **separate approvals**, not D test results. Do not downgrade already specified Chrome/Firefox, actual Plex/Discord, physical-device, licensing or release gates to fixtures or review.
+
+For every new or materially updated result in [docs/testing.md](docs/testing.md), record the milestone/check, required versus completed levels, revision and date, exact test scope and environment, commands/procedure, observable expected and actual outcome, pass/fail/skip counts where applicable, sanitized evidence, limitations and remaining levels. Do not claim a pass from a command acknowledgment, log assertion alone or an agent's summary without underlying evidence. Leave older historical entries unchanged; classify them retrospectively only when their recorded proof supports that classification.
+
 - Run `npm test` (dot reporter: one dot per passing test, failures fully reported, non-zero exit on failure). Use `npm run test:full` for the complete TAP report with pass/skip counts. All tests must pass without unexpected skips; the dot output does not show skip counts, so verify skips with `npm run test:full`.
 - Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both; there is no Firefox-first policy. Until M2-P10, extension installation/lifecycle checks apply to the supported Firefox build.
 - **No unexpected skips.** Generate development certificates before the suite. Without them, 18 TLS checks skip and three further TLS checks fail; that incomplete run is not a passing baseline. If a test is otherwise skipped, document why in [docs/testing.md](docs/testing.md).

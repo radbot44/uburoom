@@ -42,6 +42,8 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 
 **Done for a release:** Claims match recorded evidence, required install/upgrade and provenance gates are satisfied, and audited ZIPs can be reviewed for publication. Completing a phase alone does not authorize a release.
 
+**Verification gate:** Apply the A/B/C/D methods below and record the evidence in [docs/testing.md](docs/testing.md). B fixture coverage cannot close a C real-environment gate; D covers targeted human acceptance, not authorization to deploy or publish. An open required level keeps the corresponding claim open.
+
 Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [attribution](docs/third-party.md), [verification gates](docs/testing.md#local-migration-checks).
 
 ### Phase map
@@ -64,6 +66,29 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 | M1-P13 | Persistent rooms and playback queues | In progress; P13-1 durable core, P13-2 live integration/Admin mode, P13-3 manual queues, P13-4 bulk/generation/shuffle and P13-5 verified cancellable autoplay implemented | M1-P11 SQLite/WebSocket foundation, M1-P7 lobby/library UI, shared timeline and recorded lifecycle/role decisions |
 | M1-P14 | Configuration, administration and account authorization | Approved for future work; next planning priority, implementation not started | Existing accounts/SQLite, M1-P11 transport/auth foundation and M1-P13 durable roles; coordinates with M1-P4 reporting and M2-P3 guests |
+
+### Verification routing for M1
+
+**A — Review** checks code and existing evidence; **B — Automated** runs isolated tests; **C — Integration** uses actual providers, hardware, apps or networks; **D — Human** is targeted perceptual/UX acceptance. These are methods, not agent types or pass grades. Multiple methods may be required for one claim. C requires separate permission for real-account/history/production-impacting operations; D does not replace technical measurements. The requirements below are **open verification routes**, not claims that any level has passed. Detailed per-check status and proof belong in [docs/testing.md](docs/testing.md#verification-standard-for-new-work).
+
+| Phase | Required verification routes for claimed behavior |
+| --- | --- |
+| M1-P1 — Playback continuity | B: recovery/soak diagnostics; C: real multi-hour Plex, hardware and lifecycle/resource evidence; D: perceptual track/picture checks for claimed combinations |
+| M1-P2 — Automatic delivery | A: negotiation/selection audit; B: compatibility/failure matrix; C: actual Plex decisions, codecs, platforms and resources |
+| M1-P3 — Audio/subtitle fidelity | B: decoded audio/pixels and track races; C: real media/browser/device/Discord combinations; D: audible language, sound and subtitle-fidelity acceptance |
+| M1-P4 — Plex viewing/reporting | A: identity/attribution design; B: replay, stale request and history checks; C: consenting Plex dashboard/resume/history and shared-output evidence |
+| M1-P5 — Synchronization | B: skew/clock and buffering isolation; C: physical/WAN/client presentation timing; D: the joint viewing check with P6 |
+| M1-P6 — Frame pacing | B: correction/cadence comparisons; C: physical display/refresh/transport measurements; D: smooth-motion acceptance with P5 |
+| M1-P7 — UI/UX | A: flow/accessibility review; B: browser/layout/keyboard automation; C: installed mobile/Activity interaction; D: task clarity/usability acceptance |
+| M1-P8 — Remote integration | B: extension/protocol/build/consent regression; C: installed YouTube TV, Firefox/Chromium and physical lifecycle checks |
+| M1-P9 — Styled/bitmap subtitles | B: parser/renderer/pixel/font/cleanup coverage; C: live Plex/Activity/device/resource evidence; D: readability and authored-fidelity acceptance |
+| M1-P10 — Room terminology | A: source/contract audit; B: legacy-route/command checks; C: real bot/Activity/extension compatibility |
+| M1-P11 — Architecture hardening | A: failure/upgrade boundary review; B: fault, worker, latency and restore fixtures; C: operator backup/restore and live resource/proxy checks |
+| M1-P12 — Viewer telemetry | A/B design and regression when implemented; C for actual observer/platform claims; D for clarity of new status UI |
+| M1-P13 — Durable rooms/queues | B: queue, concurrent edit, crash/reopen and autoplay fixtures; C: live Plex multi-viewer/Activity and retained-state evidence; D: queue/room UX acceptance when claimed |
+| M1-P14 — Admin/access | A: policy matrix and privilege review; B: revocation, unlink/merge, recovery and handoff regressions; C: real identity/provider denial and handoff checks; D: operator usability/recovery acceptance |
+
+For all phases, operator approval for real-system tests, policy decisions, credential changes, state transfer, deployment and release is an **authorization gate**, separate from A–D verification. Phases not yet implemented are not marked test-complete.
 
 ### M1-P1 — Sustained real playback and room continuity
 
@@ -334,6 +359,8 @@ Details and ordered increments: [accounts, administration and Plex reporting](do
 
 ## M2 — Future planned capabilities
 
+The same [verification levels](#verification-routing-for-m1) apply when an M2 phase is selected. Define its required A/B/C/D methods and evidence before making support claims; planning alone does not authorize integration tests or deployment.
+
 **Outcome:** Broaden media sources, accessibility, and frictionless room entry beyond the initial self-hosted release baseline.
 
 These phases expand uburoom's feature set after the M1 release gates are satisfied. The priority and ordering will be adjusted as the owner's focus evolves.
@@ -466,6 +493,7 @@ These are already identified directions or placeholders, outside the current del
 3. Distinguish implementation from verification. Reuse existing results where applicable, reproduce a specific gap, and add meaningful checks. Record failures, unsupported cases and unfinished validation in `docs/testing.md`; commands belong in `docs/development.md`.
 4. After a material increment, update only the affected milestone/phase status or next slice and its detail documents. Keep this file short enough to scan; put completed evidence in testing status and code history.
 5. Keep private decisions, deployment instructions and identifying evidence out of public planning files. Explicit suggestion audits use their separate personal review workflow; ordinary assigned tasks and casual advice do not populate suggestion queues. Declined ideas do not become planned work through consolidation.
+6. Assign required A/B/C/D verification methods to each new or materially changed gate, and link its actual pass/fail/blocked/not-run evidence in `docs/testing.md`. Do not treat a lower-evidence method as closing a real-provider or human-acceptance gate.
 
 ## Document map
 
