@@ -5,7 +5,7 @@ class uburoomAV1 {
   constructor(video, url, target, failed) {
     this.video = video; this.url = url; this.target = target; this.failed = failed;
     this.abort = new AbortController(); this.appended = new Set();
-    this.chunkBytes = new Map(); this.seekVersion = 0;
+    this.chunkBytes = new Map(); this.seekVersion = 0; this.endSignalled = false;
     this.onSeek = () => {
       this.seekVersion++; this.request?.abort();
       if (!this.pumping) { clearTimeout(this.timer); this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)),0); }
@@ -160,6 +160,16 @@ class uburoomAV1 {
       if (superseded()) break;
       // Keep Opus's codec preroll above zero; the source mapping differs by 10 ms.
       if (!await this.append(index,videoBytes,audioBytes,first)) break;
+    }
+    // The browser cannot fire a natural 'ended' event for MSE until EOF is
+    // declared. Do not declare it merely because the last chunk was prefetched:
+    // the actual playback position must have reached the last chunk.
+    const finalIndex = Math.floor(Math.max(0,this.duration - .05) / this.seconds);
+    if (first !== finalIndex) this.endSignalled = false;
+    if (first === finalIndex && !superseded() && this.appended.has(finalIndex) && !this.endSignalled &&
+        this.source?.readyState === 'open' && !this.buffer.updating && !this.audio.updating) {
+      this.source.endOfStream();
+      this.endSignalled = true;
     }
   }
   fail(error) {

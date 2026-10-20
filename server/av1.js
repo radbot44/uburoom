@@ -225,7 +225,10 @@ class AV1 {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
       entry = { users:0, at:Date.now(), controller };
       entry.promise = this.slot(controller.signal, async () => {
-        this.probePromise ||= probeEncoder(this.ffmpeg, this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal, this.run);
+        this.probePromise ||= probeEncoder(this.ffmpeg, this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal, this.run).catch(error => {
+          this.probePromise = undefined; // A temporary probe failure must not disable AV1 until restart.
+          throw error;
+        });
         await this.probePromise;
         return this.input(source, controller.signal, async url => {
           if (!group.info) group.info = JSON.parse((await this.run(this.ffprobe, ['-v','error','-show_entries',

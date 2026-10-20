@@ -178,3 +178,21 @@ test('a fresh AV1 request can replace a cancelled chunk before its encoder settl
     assert.equal(lease.group.bytes,250,'cancelled output is not added to the cache budget');
   } finally {settleFirst?.();manager.release(lease);await manager.close();}
 });
+test('AV1 retries the hardware probe after an initial transient failure',async () => {
+  let probes=0;
+  const manager=new AV1({}, {ffmpegPath:'fixture'},async (_binary,args) => {
+    if (args.includes('testsrc2=size=320x180:rate=30')) {
+      if (++probes === 1) throw new PlaybackError('Temporary probe failure');
+      return Buffer.alloc(200);
+    }
+    if (args.includes('-show_entries')) return Buffer.from(JSON.stringify({streams:[{index:0,codec_type:'video',width:640,height:360}]}));
+    return args.includes('pipe:3') ? {video:Buffer.alloc(200),audio:Buffer.alloc(50)} : Buffer.alloc(200);
+  });
+  const lease=manager.acquire({id:'1',duration:60,start:'http://fixture'},'direct');
+  try {
+    await assert.rejects(manager.chunk(lease,0,new AbortController().signal),/Temporary probe failure/);
+    lease.group.chunks.get(0).failedAt -= 5001; // Simulate the existing chunk-error cooldown.
+    const chunk=await manager.chunk(lease,0,new AbortController().signal);
+    assert.ok(chunk.video.length); assert.equal(probes,2);
+  } finally {manager.release(lease);await manager.close();}
+});

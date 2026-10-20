@@ -108,3 +108,32 @@ test('AV1 retries an exhausted speculative network failure when playback actuall
   await player.pump();
   assert.ok(player.appended.has(5)); assert.equal(player.prefetchFailure,undefined);
 });
+test('AV1 signals natural EOF only when the final chunk is needed, and only once',async () => {
+  const player = playerAt(20.602);
+  player.source = {readyState:'open',ends:0,endOfStream(){this.ends++;this.readyState='ended';}};
+  await player.pump();
+  assert.ok(player.appended.has(3),'prefetch may fetch the last chunk early');
+  assert.equal(player.source.ends,0,'prefetch must not end the stream early');
+  player.position = 18;
+  await player.pump();
+  assert.equal(player.source.ends,1);
+  await player.pump();
+  assert.equal(player.source.ends,1,'polling does not signal EOF repeatedly');
+  // A rewind reopens MediaSource during removal in actual browsers.
+  player.position = 0;
+  player.appended.delete(0); player.chunkBytes.delete(0); // Force a missing earlier chunk.
+  player.operation = async (_buffer,action) => { action(); player.source.readyState='open'; };
+  await player.pump();
+  player.position = 18;
+  await player.pump();
+  assert.equal(player.source.ends,2,'the same movie can end again after rewind');
+});
+
+test('AV1 does not signal EOF when the required final chunk fails',async () => {
+  const player = playerAt(18), failure = Object.assign(new Error('Temporary error'),{retryable:true});
+  player.source = {readyState:'open',ends:0,endOfStream(){this.ends++;}};
+  player.position = 18;
+  player.fetch = async () => {throw failure;};
+  await player.pump();
+  assert.equal(player.source.ends,0);
+});
