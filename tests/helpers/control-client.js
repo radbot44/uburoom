@@ -29,13 +29,14 @@ function controlClient(t, config, cert) {
         ws.on('message', raw => {
           const message = JSON.parse(raw);
           if (message.type === 'auth-ok') { clearTimeout(timer); client.heartbeat = setInterval(() => { if(ws.readyState === 1) ws.send(JSON.stringify({type:'clock',id:0})); },1000); resolve(true); }
+          if (message.type === 'unavailable') client.denial = message;
           if (message.type === 'response') client.pending.get(message.id)?.(message);
         });
         ws.on('error', () => {});
         ws.on('close', () => { clearInterval(client.heartbeat); clearTimeout(timer); resolve(false); for (const done of client.pending.values()) done({status:401,value:{error:'Connection closed'}}); });
       });
     }
-    if (!await client.auth) return { status:401, body:{error:'Authentication failed'}, headers:{} };
+    if (!await client.auth) return { status:client.denial?.status || 401, body:client.denial?.value || {error:'Authentication failed'}, headers:{} };
     return new Promise((resolve,reject) => {
       const id = ++client.sequence;
       const timer = setTimeout(() => { client.pending.delete(id); reject(new Error('Control fixture timed out: ' + path)); }, 15000);

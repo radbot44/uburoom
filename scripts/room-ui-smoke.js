@@ -15,7 +15,7 @@ async function main() {
     const config = {cert:fs.readFileSync('certs/server-cert.pem'),key:fs.readFileSync('certs/server-key.pem'),publicUrl:'https://localhost',
       ownerId:subjects.host,guildId:'fixture',channels:['fixture'],demo:true,unifiedAccounts:true,demoSubjects:subjects,
       plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',
-      roomAdministrators:{discord:[subjects.guest2],plex:[],discordRoles:[]}};
+      roomAdministrators:{discord:[subjects.guest2],plex:[],discordRoles:[]},roomLimits:{maxQueue:120}};
     const show = {ratingKey:'100',type:'show',title:'Queue fixture show',childCount:2,leafCount:3};
     const seasons = [0,1].map(index=>({ratingKey:String(110+index),type:'season',title:index?'Season 1':'Specials',index,parentRatingKey:'100',leafCount:index?2:1}));
     const episodes = [0,1,2].map(index=>({ratingKey:String(120+index),type:'episode',title:index?'Episode '+index:'Special episode',index:index||1,parentIndex:index?1:0,
@@ -58,6 +58,23 @@ async function main() {
       await run('$("room-create-preset").value="play-pause";$("room-name").value="Friday room";$("room-create").click()');
       await until('state?.roomName==="Friday room"','Named room');
       const id = await run('selected');
+      await run('roomUI.open(selected,"general")');
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Lifecycle settings');
+      assert.match(await run('$("room-lifetime-details").textContent'),/Created.*Last active/);
+      assert.equal(await run('$("room-keep-empty").checked'),false);
+      await run('$("room-keep-empty").click()');
+      await until('$("room-settings-status").textContent==="Saved"','Keep room saved');
+      await run('$("room-keep-empty").click()');
+      await until('$("room-confirm-dialog").open','Disposable room warning');
+      await run('$("room-confirm-dialog").querySelector("button[value=cancel]").click()');
+      await until('$("room-keep-empty").checked','Keep room warning cancelled');
+      await run('$("room-member-limit").value="12";$("room-member-limit-save").click()');
+      await until('$("room-capacity-details").textContent.includes("/ 12 people")','Room capacity saved');
+      await shot('lifecycle-desktop');
+      await browser.viewport(host,390,844); await shot('lifecycle-phone');
+      await browser.viewport(host,1360,1000);
+      await run('$("room-settings-dismiss").click()');
+
       assert.equal((await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})')).status,'applied');
       await until('state?.mediaId==="demo"','Media load');
       await run('execute({action:"media.pause"})');
@@ -260,6 +277,12 @@ async function main() {
       await until('state?.roomName==="Full permissions"','Full-permission creation');
       assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.editQueue,true);
       assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.deleteRoom,false);
+      const largeRoom = app.watch.rooms.get(await run('selected'));
+      await app.watch.roomState.queue.addBulk(largeRoom.s.roomId,largeRoom.saved.creatorId,Array.from({length:110},(_,i)=>({serverId:'fixture-machine',mediaId:String(1000+i),type:'episode',title:'Paged episode '+i,duration:60})));
+      await run('queueUI.fetchData(true)');
+      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===100','First upcoming page');
+      await run('[...document.querySelectorAll("#queue-panel button")].find(button=>button.textContent==="Load more upcoming").click()');
+      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===110','Additional upcoming page');
       console.log(name + ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed');
     } catch (error) {
       console.error([...app.watch.rooms.values()].map(room=>({name:room.s.name,creator:room.saved?.creatorId,hosts:room.saved?.hosts,revision:room.saved?.revision,viewers:room.viewers.size})));

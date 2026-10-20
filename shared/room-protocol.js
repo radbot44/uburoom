@@ -90,7 +90,7 @@
           if (typeof a.advance !== 'boolean') throw new Error('Choose whether to advance after removal');
           args.advance = a.advance;
         }
-        if (action === 'queue.move') args.targetRank = numeric(a.targetRank, 0, 99);
+        if (action === 'queue.move') args.targetRank = numeric(a.targetRank, 0, 999999);
         if (action === 'queue.history.replay') {
           if (typeof a.resume !== 'boolean') throw new Error('Choose resume or start over');
           args.resume = a.resume;

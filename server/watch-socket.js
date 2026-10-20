@@ -12,6 +12,7 @@ const { WebSocketServer } = require('ws');
 // WebSocket framing calls shared operations directly; commands are never replayed.
 function watchSockets({ server, config, routes, watch, hub, throttle, flush = async () => {} }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
+  server.once('listening', () => watch.roomState?.startRecovery());
   const clockEpoch = routes.clockEpoch;
   const allowed = origin => origin === config.publicUrl || /^\d{17,20}$/.test(config.clientId || '') && origin === `https://${config.clientId}.discordsays.com`;
   const clients = new Set();
@@ -61,6 +62,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         // Native pongs keep presence alive even when the browser throttles its
         // JavaScript timers. Authorization is still checked by publish/requests.
         client.lastSeen = Date.now();
+        if(client.authenticated)watch.roomState?.people.reserve(client.userId,client.lastSeen + 60000);
         if(client.authenticated)for(const room of watch.rooms.values())for(const viewer of room.viewers.values())if(viewer.watchSocket===ws)viewer.at=client.lastSeen;
         if (client.pingAt === undefined) return;
         const now = performance.now(), ms = now - client.pingAt; client.pingAt = undefined;
@@ -85,6 +87,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             headers['x-csrf-token'] = message.csrf;
             const auth=await routes.authorized({ headers }, true);
             if (!auth || client.userId && client.userId !== auth.actor.userId || ws.readyState !== 1) return ws.close(4003, 'Authentication failed');
+            try { watch.roomState?.people.enter(auth.actor.userId); } catch { send(client,{type:'unavailable',status:429,value:{error:'Server full; try again when someone leaves'}}); return ws.close(4029,'Server full'); }
             client.headers=headers;
             client.userId=auth.actor.userId;client.authenticating=false;
             client.authenticated = true; clearTimeout(timer); send(client, { type: 'auth-ok' }); return;

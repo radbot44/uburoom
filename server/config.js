@@ -8,13 +8,14 @@ const { findOnPath } = require('./media-tools');
 const ROOT = path.resolve(__dirname, '..');
 
 const KEYS = [
+  ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'plex.url', 'plex.token', 'plex.machine_identifier', 'plex.fallback_enabled', 'plex.fallback_token',
   'discord.bot_token', 'discord.client_id', 'discord.client_secret', 'discord.owner_id',
   'discord.guild_id', 'discord.command_channel_ids',
   'server.host', 'server.port', 'server.public_url', 'server.tls_cert', 'server.tls_key', 'server.public_web_app',
   'storage.credential_key_file', 'storage.data_directory', 'tools.ffmpeg', 'tools.ffprobe',
   'rooms.host_permissions', 'rooms.viewer_permissions', 'rooms.admin_discord_ids', 'rooms.admin_plex_ids',
-  'rooms.admin_discord_role_ids', 'rooms.single_room', 'rooms.single_room_name', 'rooms.single_room_leader_plex_id',
+  'rooms.admin_discord_role_ids', 'rooms.single_room', 'rooms.single_room_leader_plex_id',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.plex', 'transcoding.uburoom', 'transcoding.encoder',
   'transcoding.formats', 'transcoding.max_jobs', 'transcoding.cpu_fallback',
@@ -124,7 +125,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   };
   config.plexFallback = { enabled:boolean('plex.fallback_enabled',true), token:get('plex.fallback_token') };
   config.singleRoom = boolean('rooms.single_room',false);
-  config.singleRoomName = get('rooms.single_room_name','Room');
+  config.roomLimits = require('./room-limits').configuration(value.rooms);
   config.singleRoomLeaderPlexId = get('rooms.single_room_leader_plex_id');
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId)) throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');
   const maxJobs = value.transcoding?.max_jobs ?? 5;
@@ -155,7 +156,6 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
       if (!config.plexToken) throw new Error('Single-room mode requires plex.token or rooms.single_room_leader_plex_id for Plex leadership');
     } else if (!config.ownerId) throw new Error('Single-room mode requires discord.owner_id or rooms.single_room_leader_plex_id for fixed room leadership');
   }
-  if (!config.singleRoomName.trim() || config.singleRoomName.length > 100 || /[\u0000-\u001f\u007f-\u009f]/.test(config.singleRoomName)) throw new Error('rooms.single_room_name must contain 1 to 100 characters without control characters');
   if (!config.host.trim()) throw new Error('server.host must not be empty');
   for (const key of ['clientId', 'ownerId', 'guildId']) {
     if (config[key] && !/^\d{17,20}$/.test(config[key])) throw new Error('discord IDs must be quoted numeric Developer Mode IDs');

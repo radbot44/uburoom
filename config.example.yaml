@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2b
+# Config schema v2c
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -75,6 +75,16 @@ tools:
 
 # Rooms and permissions
 rooms:
+  max_saved: 50
+  max_open: 5
+  min_retained: 10 # Inactivity deletion stops here; empty disposable rooms can still be deleted.
+  inactive_days: 180 # 0 disables inactivity deletion.
+  max_members: 20 # Leaders may choose a lower per-room limit.
+  max_people: 100 # Connected people, including the lobby; counted once per account.
+  recovery_seconds: 60
+  max_queue: 50 # Upcoming items; Now playing is separate.
+  max_history: 150 # Oldest history is removed first; 0 keeps no history.
+
   # Set initial room permissions.
   # Leave blank for defaults: hosts all except deletion; viewers only playPause.
   # [] or 'none' grants none; 'all' grants all eligible rights.
@@ -93,7 +103,6 @@ rooms:
   # Enable single room to remove the ability to create and join rooms.
   # This means your uburoom will only have one shared queue.
   single_room: false # No create/delete/transfer.
-  single_room_name: 'Room'
   # Optional Plex account ID for the fixed room leader.
   # Blank: Discord owner if Discord sign-in is on; otherwise the Plex token account.
   # With both sign-in methods off, the Discord owner stays the leader.

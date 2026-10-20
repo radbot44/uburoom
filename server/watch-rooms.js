@@ -10,13 +10,28 @@ const failure = (message, status = 409) => Object.assign(new Error(message), { s
 class WatchRooms {
   constructor(watch, registry) {
     this.watch = watch; this.registry = registry; this.pending = new Set(); this.opening = new Map(); this.closing = new Map(); this.creating = 0;
+    this.limits = require('./room-limits').limits(watch.hub.config);
+    this.people = new (require('./room-presence').RoomPresence)(this.limits.maxPeople);
+    this.recoveries = new Map();
     this.store = new RoomStore(registry, {
+      limits:this.limits,
       defaults: watch.hub.config.roomPermissions,
       isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord')?.subject })
     });
     this.queue = new RoomQueue(registry, this.store);
+    registry.transaction(() => {
+      for (const {roomId} of this.store.db.prepare("SELECT roomId FROM watch_queue_entries WHERE state='history' GROUP BY roomId HAVING COUNT(*)>?").all(this.limits.maxHistory)) {
+        this.queue.pruneHistory(roomId);
+        this.store.db.prepare('UPDATE watch_rooms SET queueRevision=queueRevision+1 WHERE id=?').run(roomId);
+      }
+    });
+    for (const {id} of this.store.db.prepare('SELECT id FROM watch_rooms WHERE liveState IS NOT NULL').all()) {
+      const record = this.store.get(id);
+      this.recoveries.set(id, { ...record.liveState, until:Infinity });
+    }
     this.timer = setInterval(() => {
-      for (const room of watch.rooms.values()) if (!room.saving && !room.mediaTransition && room.media && !room.reconnecting) void this.save(room);
+      for (const room of watch.rooms.values()) if (!room.saving && !room.mediaTransition && !room.reconnecting) void this.save(room).catch(() => {});
+      void this.track(this.maintain()).catch(() => {});
     }, 5000);
     this.timer.unref();
   }
@@ -24,6 +39,108 @@ class WatchRooms {
     this.pending.add(promise);
     promise.then(() => this.pending.delete(promise), () => this.pending.delete(promise));
     return promise;
+  }
+  startRecovery(now = Date.now()) {
+    this.readyAt = now;
+    for (const recovery of this.recoveries.values()) {
+      recovery.until = now + this.limits.recoverySeconds * 1000;
+      for (const id of recovery.viewers) this.people.reserve(this.store.account(id),recovery.until);
+    }
+  }
+  reason(record) {
+    if (this.watch.hub.config.singleRoom || record.keepEmpty) return 'Kept when empty';
+    if (record.bookmark && record.bookmark.position < record.bookmark.duration * .9) return 'Video in progress';
+    if (this.queue.pending(record.id).length) return 'Queue pending';
+    if (record.autoQueue.mode !== 'off') return 'Auto-queue enabled';
+    return null;
+  }
+  checkCapacity(room, userId) {
+    const now = Date.now(), members = new Set([...room.viewers.values()].map(v => this.store.account(v.userId)));
+    for (const saved of room.disconnectedViewers.values()) if (saved.expires > now) members.add(this.store.account(saved.userId));
+    if (room.recovery?.until > now) for (const id of room.recovery.viewers) members.add(this.store.account(id));
+    const record = this.store.get(room.s.roomId), maximum = Math.min(record.maxMembers || this.limits.maxMembers,this.limits.maxMembers);
+    if (!members.has(userId) && members.size >= maximum) throw failure('Room full; try again when someone leaves',429);
+  }
+  async recover(id, actor, current) {
+    const recovery = this.recoveries.get(id);
+    if (!recovery || recovery.until <= Date.now()) return;
+    const record = this.store.get(id);
+    if (record.visibility === 'private' && Policy.role(record,actor.userId) === 'viewer' && !this.watch.hub.isAdmin(actor)) return;
+    await this.eligible(actor,current);
+    if (!this.opening.has(id)) {
+      const opening = (async () => {
+        let media;
+        try {
+          const saved = record.bookmark;
+          if (saved) {
+            if (await this.identify(saved) !== saved.serverId) throw failure('The saved Plex server changed',409);
+            const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
+            media = saved.mediaId === 'demo' ? this.watch.demoMedia && {...this.watch.demoMedia,id:'demo',resources:new Map()} : await plex.prepare(saved.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
+            if (!media || Math.abs(media.duration - saved.duration) > .5 || media.source?.type && media.source.type !== saved.type) throw failure('The saved video changed or is unavailable',409);
+            media.roomServerId = saved.serverId;
+          }
+          await this.eligible(actor,current);
+          if (this.recoveries.get(id) !== recovery || recovery.until <= Date.now()) return;
+          const latest = this.store.get(id);
+          if (latest.checkpointRevision !== record.checkpointRevision || latest.revision !== record.revision) throw failure('Room changed during recovery',409);
+          this.watch.create(actor,latest.visibility,latest);
+          const room = this.watch.rooms.get(id);
+          room.media = media || null; media = undefined; room.position = saved?.position || 0;
+          room.s.state.seekable = !!room.media; room.manualPaused = !recovery.wasPlaying; room.recovery = recovery;
+          room.s.hostId = record.creatorId; room.s.hostName = this.registry.canonical(record.creatorId)?.name || 'Room leader';
+          room.initialGate = !!room.media; if (room.media) this.watch.beginReadiness(room);
+        } finally { if (media) await this.watch.plex.stop(media); }
+      })();
+      this.opening.set(id,opening);
+      opening.finally(() => this.opening.delete(id)).catch(() => {});
+    }
+    await this.opening.get(id);
+  }
+  recoveryState(room) {
+    if (!room.recovery) return;
+    const present = new Set([...room.viewers.values()].map(v=>this.store.account(v.userId)));
+    return { until:room.recovery.until, missing:new Set(room.recovery.viewers.map(id=>this.store.account(id)).filter(id=>!present.has(id))).size };
+  }
+  async maybeRecover(room) {
+    const recovery = room.recovery;
+    if (!recovery || room.recovering || recovery.until <= Date.now() || !recovery.wasPlaying || !room.media) return;
+    if (this.recoveryState(room).missing || [...room.viewers.values()].some(v=>!v.ready || v.version !== room.mediaVersion)) return;
+    const controller = [...room.viewers.values()].find(v => (isHost(room.s,v.actor) || this.watch.hub.canRoom(room.s,v.actor,'continueWithoutHost')) && this.watch.hub.canRoom(room.s,v.actor,'playPause'));
+    if (!controller) return;
+    room.recovering = true;
+    try {
+      if (controller.alive && !await controller.alive() || !await this.watch.canView(room,controller.actor) || room.recovery !== recovery || recovery.until <= Date.now()) return;
+      if (this.recoveryState(room).missing || [...room.viewers.values()].some(v=>!v.ready || v.version !== room.mediaVersion)) return;
+      await this.watch.hub.dispatch({...controller.actor,watchViewerId:[...room.viewers.entries()].find(([,v])=>v===controller)[0]}, {roomId:room.s.roomId,action:'media.play'});
+    } finally { room.recovering = false; }
+  }
+  finishRecovery(room) {
+    room.recovery = undefined; this.recoveries.delete(room.s.roomId);
+  }
+  async maintain(now = Date.now()) {
+    if (this.stopped || this.maintaining || !this.readyAt) return;
+    this.maintaining = true;
+    try {
+      for (const [id,recovery] of this.recoveries) if (recovery.until <= now) {
+        this.recoveries.delete(id);
+        const room = this.watch.rooms.get(id);
+        if (room) { room.recovery = undefined; this.freeze(room); if (!room.viewers.size) await this.watch.remove(id); else await this.save(room); }
+        else { this.store.db.prepare('UPDATE watch_rooms SET liveState=NULL WHERE id=?').run(id); await this.registry.flush(); await this.deleteEmpty(id); }
+      }
+      if (!this.limits.inactiveDays) return;
+      const cutoff = now - this.limits.inactiveDays * 86400000;
+      let count = this.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n;
+      for (const {id} of this.store.db.prepare('SELECT id FROM watch_rooms WHERE lastAccessedAt<=? ORDER BY lastAccessedAt,id').all(cutoff)) {
+        if (count <= this.limits.minRetained) break;
+        if (this.watch.rooms.has(id) || this.opening.has(id) || this.closing.has(id) || this.recoveries.has(id) || this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId')) continue;
+        await this.store.destroy(id); count--;
+      }
+    } finally { this.maintaining = false; }
+  }
+  async deleteEmpty(id) {
+    if (this.stopped || this.watch.rooms.has(id) || this.recoveries.has(id) || this.opening.has(id)) return;
+    const record = this.store.get(id);
+    if (!this.reason(record)) await this.store.destroy(id);
   }
   async eligible(actor, current = async () => true) {
     const hub = this.watch.hub;
@@ -54,7 +171,7 @@ class WatchRooms {
       name:record.name, visibility:record.visibility, ownerId:record.creatorId });
   }
   reserve(replacing = false) {
-    if (this.watch.rooms.size + this.opening.size + this.creating - (replacing ? 1 : 0) >= 4) throw failure('Close an active room first', 429);
+    if (new Set([...this.watch.rooms.keys(), ...this.recoveries.keys(), ...this.opening.keys()]).size + this.creating - (replacing ? 1 : 0) >= this.limits.maxOpen) throw failure('Open room limit reached; close an active room first', 429);
   }
   async create(actor, options, current) {
     if(this.watch.hub.config.singleRoom)throw failure('Room creation is disabled in single-room mode',403);
@@ -94,6 +211,7 @@ class WatchRooms {
     if(this.watch.hub.config.singleRoom){const selected=await this.ensureSingle(actor,current);if(id!==selected)throw failure('Only the configured shared room is available',403);return selected;}
     await this.eligible(actor, current);
     await this.closing.get(id);
+    if (this.recoveries.has(id)) await this.recover(id,actor,current);
     this.store.restore(id, actor.userId);
     const existing = this.watch.rooms.get(id);
     if (existing && !existing.reconnecting) return id;
@@ -139,14 +257,17 @@ class WatchRooms {
     if(this.watch.hub.config.singleRoom)return {rooms:[],total:0};
     const result = this.store.list(actor.userId, page);
     return { ...result, rooms:result.rooms.map(record => ({ id:record.id, name:record.name, visibility:record.visibility,
-      active:!!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).reconnecting,
-      title:record.bookmark?.title, position:record.bookmark?.position || 0, updatedAt:record.updatedAt })) };
+      active:this.recoveries.has(record.id) || !!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).reconnecting,
+      title:record.bookmark?.title, position:record.bookmark?.position || 0, updatedAt:record.updatedAt,
+      createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,retentionReason:this.reason(record),
+      recovering:this.recoveries.has(record.id),members:new Set([...(this.watch.rooms.get(record.id)?.viewers.values() || [])].map(v=>v.userId)).size,maxMembers:Math.min(record.maxMembers || this.limits.maxMembers,this.limits.maxMembers) })) };
   }
   summary(id, actor) {
     const record = this.store.get(id), room = this.watch.rooms.get(id);
     const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member' });
     const candidates = [...new Set([record.creatorId, ...record.hosts, ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])];
-    return { id, singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
+    return { id, createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,keepEmpty:record.keepEmpty,
+      maxMembers:record.maxMembers,serverMaxMembers:this.limits.maxMembers,retentionReason:this.reason(record),singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
       creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
       role:Policy.role(record, actor.userId), permissions:record.permissions, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
       capabilities:Object.fromEntries([...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].map(key =>
@@ -156,11 +277,14 @@ class WatchRooms {
     await this.eligible(actor, current);
     if(this.watch.hub.config.singleRoom){
       if(id!==this.registry.meta('singleRoomId'))throw failure('Only the configured shared room is available',403);
+      if(change?.action==='rename')throw failure('The shared room is always named Room',403);
+      if(change?.action==='keepEmpty')throw failure('The shared room is always kept',403);
       if(change?.action==='creator.transfer')throw failure('Single-room leadership is fixed by discord.owner_id',403);
       if(change?.action==='delete')throw failure('Use Reset room in single-room mode',403);
       if(change?.action==='reset')return this.resetSingle(id,actor,revision,current);
     }
     const room = this.watch.rooms.get(id);
+    if (change?.action === 'auto.reset' && (room?.mediaTransition || room?.queueEditing)) throw failure('Wait for the current queue operation',409);
     if (change?.action === 'bookmark.clear' && room) throw failure('Close the room before clearing its saved video');
     await this.metadata(id,actor);
     if (!await current()) throw failure('Room connection changed', 403);
@@ -172,7 +296,7 @@ class WatchRooms {
     if (room && this.watch.rooms.get(id) === room) {
       this.apply(room, record); room.revision++;
       if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
-      else if (change.action !== 'rename') {
+      else if (!['rename','keepEmpty','maxMembers','auto.reset'].includes(change.action)) {
         this.watch.revokeConsent(room); this.watch.refresh(room); await this.elect(room);
       }
     }
@@ -209,7 +333,7 @@ class WatchRooms {
         let id=this.registry.meta('singleRoomId');
         let record;
         if(id){try{record=this.store.get(id);}catch(error){if(error.status!==404)throw error;}}
-        if(!record){record=await this.store.create(owner.id,{name:config.singleRoomName||'Room',visibility:'public'});id=record.id;this.registry.meta('singleRoomId',id);}
+        if(!record){record=await this.store.create(owner.id,{name:'Room',visibility:'public'});id=record.id;this.registry.meta('singleRoomId',id);}
         const hosts=[...new Set([
           ...(config.roomAdministrators?.discord||[]).map(subject=>this.registry.resolve('discord',subject,'Assigned account',false).id),
           ...(config.roomAdministrators?.plex||[]).map(subject=>this.registry.resolve('plex',subject,'Assigned account',false).id)
@@ -222,12 +346,14 @@ class WatchRooms {
           for(const host of removed)this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id,host);
           this.registry.meta('singleRoomDefaultHosts',JSON.stringify(hosts));
         });
+        this.store.db.prepare("UPDATE watch_rooms SET name='Room',keepEmpty=1 WHERE id=?").run(id);
         await this.registry.flush();record=this.store.get(id);
+        if(this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id,actor,current);
         for(const other of [...this.watch.rooms.keys()])if(other!==id)await this.watch.remove(other);
         if(this.watch.rooms.get(id)?.reconnecting){await this.watch.remove(id);record=this.store.get(id);}
         if(!this.watch.rooms.has(id)){
           this.watch.create(actor,record.visibility,record);
-          const room=this.watch.rooms.get(id);room.s.hostId=owner.id;room.s.hostName=owner.name;
+          const room=this.watch.rooms.get(id);room.s.hostId=owner.id;room.s.hostName=owner.name;room.recovery=this.recoveries.get(id);
           if(record.bookmark){
             const saved=record.bookmark;
             try{
@@ -253,11 +379,12 @@ class WatchRooms {
     try{
     if(room){this.freeze(room);this.watch.revokeConsent(room);await room.saving;}
     this.registry.transaction(()=>{
+      this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
       for(const provider of ['discord','plex'])for(const subject of this.watch.hub.config.roomAdministrators?.[provider]||[]){const host=this.registry.identity(provider,subject)?.userId;if(host&&host!==record.creatorId)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);}
       this.store.db.prepare("UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,permissions=?,name=?,visibility='public' WHERE id=?")
-        .run(JSON.stringify(this.store.defaults),this.watch.hub.config.singleRoomName||'Room',id);
+        .run(JSON.stringify(this.store.defaults),'Room',id);
     });
     await this.registry.flush();
     if(room){this.watch.dropMedia(room,'room-reset');room.media=null;room.position=0;room.mediaVersion=require('node:crypto').randomUUID();room.initialGate=false;room.s.state.seekable=false;room.s.state.picture={...require('../shared/engine').DEFAULT};room.profiles={};}
@@ -293,14 +420,18 @@ class WatchRooms {
       room.waitingForHost = room.viewers.size > 0;
     } finally { room.electing = false; void this.save(room); }
   }
-  save(room) {
+  save(room, { closing = false } = {}) {
     if (!room.saved) return Promise.resolve();
-    if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room)));
+    if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room,{closing})));
     const media = room.media;
     const bookmark = media ? { serverId:media.roomServerId, mediaId:media.id, type:media.source?.type || 'movie',
       title:media.title, duration:media.duration, position:this.watch.position(room) } : null;
+    const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>Date.now())].map(v => this.store.account(v.userId)))];
+    const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
     const saving = (room.saving || Promise.resolve()).then(async () => {
       const record = this.store.get(room.s.roomId);
+      this.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(live ? JSON.stringify({viewers:live.viewers,wasPlaying:live.wasPlaying}) : null,record.id);
+      if (room.viewers.size) this.store.touch(record.id);
       this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
       if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
     }).catch(error => { room.saveError = 'Room progress could not be saved. Check server storage.'; this.freeze(room); throw error; });

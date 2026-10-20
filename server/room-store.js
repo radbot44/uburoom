@@ -7,7 +7,7 @@ const { validateAuto } = require('./room-queue');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
-/** @typedef {{id:string,creatorId:string,hosts:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+/** @typedef {{id:string,creatorId:string,hosts:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
 
 function error(message, status = 400) { return Object.assign(new Error(message), { status }); }
 function text(value, limit, label) {
@@ -43,13 +43,13 @@ function bookmark(value) {
 class RoomStore {
   /**
    * @param {import('./accounts').Accounts} registry
-   * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean}} [options]
+   * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean,limits?:typeof import('./room-limits').DEFAULTS}} [options]
    */
-  constructor(registry, { defaults, now = Date.now, isAdmin = () => false } = {}) {
+  constructor(registry, { defaults, now = Date.now, isAdmin = () => false, limits = require('./room-limits').DEFAULTS } = {}) {
     this.registry = registry;
     this.db = registry.db;
     this.defaults = Policy.policy(defaults);
-    this.now = now;
+    this.now = now; this.limits = limits;
     // Server-owned opt-in Admin mode, never a flag accepted from a room edit.
     this.isAdmin = isAdmin;
   }
@@ -74,7 +74,8 @@ class RoomStore {
     return {
       id: row.id, creatorId, hosts, name: row.name, visibility: row.visibility,
       revision: row.revision, checkpointRevision: row.checkpointRevision, queueRevision: row.queueRevision ?? 0,
-      createdAt: row.createdAt, updatedAt: row.updatedAt,
+      createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt:row.lastAccessedAt,
+      keepEmpty:!!row.keepEmpty, maxMembers:row.maxMembers, liveState:row.liveState ? JSON.parse(row.liveState) : null,
       permissions: Policy.policy(JSON.parse(row.permissions)), bookmark: row.bookmark === null ? null : bookmark(JSON.parse(row.bookmark)),
       autoQueue: row.autoQueue === null ? { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [] } : JSON.parse(row.autoQueue),
       autoplay: row.autoplay === 1
@@ -85,8 +86,11 @@ class RoomStore {
     catch (failure) { this.failure = failure; this.healthy(); }
     return result;
   }
-  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'} } = {}) {
+  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'}, keepEmpty = false, maxMembers = null } = {}) {
     this.healthy();
+    if (this.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n >= this.limits.maxSaved) throw error('Saved room limit reached', 429);
+    if (typeof keepEmpty !== 'boolean') throw error('Choose whether to keep the room when empty');
+    this.validateMembers(maxMembers);
     const creatorId = this.account(userId), id = randomUUID(), at = this.now();
     name = text(name, 100, 'room name');
     selectedVisibility = visibility(selectedVisibility);
@@ -99,8 +103,8 @@ class RoomStore {
     }
     if (typeof autoplay !== 'boolean') throw error('Choose auto-play on or off');
     const automatic = validateAuto(autoQueue);
-    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic));
+    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers);
     return this.commit(this.get(id));
   }
   list(userId, { offset = 0, limit = 50 } = {}) {
@@ -110,7 +114,7 @@ class RoomStore {
     const rooms = [];
     // ken: scan saved memberships; use an indexed canonical-account lookup if
     // measured room listing exceeds 50 ms. Closed rooms consume no player slots.
-    for (const row of this.db.prepare('SELECT id FROM watch_rooms ORDER BY updatedAt DESC,id').all()) {
+    for (const row of this.db.prepare('SELECT id FROM watch_rooms ORDER BY lastAccessedAt DESC,id').all()) {
       const room = this.get(row.id);
       if (this.isAdmin(userId) === true || Policy.role(room, userId) !== 'viewer') rooms.push(room);
     }
@@ -129,7 +133,7 @@ class RoomStore {
     userId = this.account(userId);
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
     const capabilities = {
-      rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'manageHosts',
+      'keepEmpty':'roomSettings', 'maxMembers':'roomSettings', 'auto.reset':'editQueue', rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'manageHosts',
       'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
     };
     const capability = Object.hasOwn(capabilities, change.action) && capabilities[change.action];
@@ -139,6 +143,17 @@ class RoomStore {
     const at = this.now();
     this.registry.transaction(() => {
       switch (change.action) {
+        case 'keepEmpty':
+          if (typeof change.enabled !== 'boolean') throw error('Choose whether to keep the room when empty');
+          this.db.prepare('UPDATE watch_rooms SET keepEmpty=? WHERE id=?').run(change.enabled ? 1 : 0,id); break;
+        case 'maxMembers':
+          this.validateMembers(change.value);
+          this.db.prepare('UPDATE watch_rooms SET maxMembers=? WHERE id=?').run(change.value,id); break;
+        case 'auto.reset': {
+          const auto = { ...room.autoQueue, used:[], cycle:0, cursor:null };
+          this.db.prepare('UPDATE watch_rooms SET autoQueue=?,queueRevision=queueRevision+1 WHERE id=?').run(JSON.stringify(auto),id);
+          this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id); break;
+        }
         case 'rename': room.name = text(change.name, 100, 'room name'); break;
         case 'visibility': room.visibility = visibility(change.visibility); break;
         case 'autoplay':
@@ -189,15 +204,32 @@ class RoomStore {
           this.db.prepare('UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1 WHERE id=?').run(id);
           break;
         case 'delete':
+          this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_rooms WHERE id=?').run(id);
           return;
       }
-      this.db.prepare('UPDATE watch_rooms SET creatorId=?,name=?,visibility=?,permissions=?,revision=revision+1,updatedAt=? WHERE id=?')
-        .run(room.creatorId, room.name, room.visibility, JSON.stringify(room.permissions), at, id);
+      this.db.prepare('UPDATE watch_rooms SET creatorId=?,name=?,visibility=?,permissions=?,revision=revision+1,updatedAt=?,lastAccessedAt=? WHERE id=?')
+        .run(room.creatorId, room.name, room.visibility, JSON.stringify(room.permissions), at, at, id);
     });
     return this.commit(change.action === 'delete' ? { deleted: true } : this.get(id));
+  }
+  validateMembers(value) {
+    if (value !== null && (!Number.isSafeInteger(value) || value < 1 || value > this.limits.maxMembers)) throw error('Room capacity must be from 1 to ' + this.limits.maxMembers);
+  }
+  touch(id, at = this.now()) {
+    this.healthy();
+    this.db.prepare('UPDATE watch_rooms SET lastAccessedAt=MAX(lastAccessedAt,?) WHERE id=?').run(at,id);
+  }
+  async destroy(id) {
+    this.healthy();
+    this.registry.transaction(() => {
+      for (const table of ['watch_room_progress','watch_queue_entries','watch_room_hosts','watch_rooms']) {
+        this.db.prepare('DELETE FROM ' + table + ' WHERE ' + (table === 'watch_rooms' ? 'id' : 'roomId') + '=?').run(id);
+      }
+    });
+    return this.commit({deleted:true});
   }
   // Server-owned checkpoint API: transport bodies must never be forwarded here.
   // Its own revision avoids invalidating a settings form every five seconds.

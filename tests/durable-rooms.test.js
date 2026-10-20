@@ -7,12 +7,12 @@ const { controlClient } = require('./helpers/control-client');
 const certFile = path.join(__dirname,'../certs/server-cert.pem');
 const tls = {skip:!fs.existsSync(certFile)};
 
-async function fixture(t, disk = false) {
+async function fixture(t, disk = false, settings = {}) {
   const cert = fs.readFileSync(certFile), directory = disk ? fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-room-live-')) : undefined;
   const subjects = {host:'100000000000000001',guest:'100000000000000002',guest2:'100000000000000003'}, role = '100000000000000099';
   const config = {cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',
     ownerId:subjects.host,guildId:'fixture',channels:['fixture'],demo:true,unifiedAccounts:true,demoSubjects:subjects,
-    roomAdministrators:{discord:[],plex:[],discordRoles:[role]},
+    roomAdministrators:{discord:[],plex:[],discordRoles:[role]}, ...settings,
     ...(disk ? {accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:path.join(directory,'original.key')} : {})};
   const roleUsers = new Set([subjects.guest2]); let app;
   async function start() {
@@ -48,7 +48,7 @@ async function command(client, id, viewer, action, args) {
 
 test('reopen returns an authorized joined snapshot in one operation and validates viewer input before opening',tls,async t=>{
   const f=await fixture(t),creator=await f.login('host'),guest=await f.login('guest');
-  const id=(await creator.call('/api/watch/rooms',{name:'Atomic reopen'})).body.id;
+  const id=(await creator.call('/api/watch/rooms',{name:'Atomic reopen',keepEmpty:true})).body.id;
   const first=(await creator.call('/api/watch/rooms/'+id+'?viewer='+randomUUID())).body;
   await creator.call('/api/watch/rooms/'+id+'/close',{epoch:first.epoch});
   assert.equal((await creator.call('/api/watch/rooms/'+id+'/reopen',{viewerId:'invalid'})).status,400);
@@ -397,4 +397,143 @@ test('closed room shuffle and random auto-queue use the saved Engine branch whil
   assert.equal(saved.autoQueue.mode,'random'); assert.deepEqual(saved.autoQueue.scope,{type:'collection',id:'901',serverId:'fixture-plex'});
   assert.ok(saved.autoQueue.used.includes(listed.items[0].mediaId));
   assert.equal(saved.bookmark.mediaId,'demo'); assert.equal(f.app.watch.rooms.has(id),false);
+});
+
+
+test('empty disposal honors the keep toggle, queue and 90 percent retention boundary',tls,async t=>{
+  const f=await fixture(t),creator=await f.login('host');
+  const make=async options=>(await creator.call('/api/watch/rooms',options)).body.id;
+  const empty=await make({name:'Disposable'});
+  await f.app.watch.remove(empty);
+  assert.throws(()=>f.app.watch.roomState.store.get(empty),/unavailable/);
+  const kept=await make({name:'Kept',keepEmpty:true});
+  await f.app.watch.remove(kept);
+  assert.equal(f.app.watch.roomState.store.get(kept).keepEmpty,true);
+  for(const fraction of [.89,.9]) {
+    const id=await make({name:'Progress'}),viewer=randomUUID();
+    await command(creator,id,viewer,'media.load',{mediaId:'demo',quality:'direct'});
+    await command(creator,id,viewer,'media.pause');
+    const room=f.app.watch.rooms.get(id);
+    await command(creator,id,viewer,'media.seek.absolute',{seconds:room.media.duration*fraction});
+    await f.app.watch.remove(id);
+    if(fraction<.9)assert.ok(f.app.watch.roomState.store.get(id).bookmark);
+    else assert.throws(()=>f.app.watch.roomState.store.get(id),/unavailable/);
+  }
+});
+
+test('inactivity cleanup respects its floor, occupied rooms and last access rather than checkpoints',tls,async t=>{
+  const f=await fixture(t,false,{roomLimits:{minRetained:1,inactiveDays:1}}),creator=await f.login('host');
+  const state=f.app.watch.roomState,ids=[];
+  for(let i=0;i<3;i++) {
+    const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id;ids.push(id);
+    await f.app.watch.remove(id);
+    state.store.db.prepare('UPDATE watch_rooms SET lastAccessedAt=? WHERE id=?').run(1000+i,id);
+  }
+  await state.maintain(Date.now());
+  assert.equal(state.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n,1);
+  assert.equal(state.store.get(ids[2]).id,ids[2]);
+  const room=state.store.get(ids[2]);
+  await state.store.checkpoint(room.id,room.checkpointRevision,null);
+  assert.equal(state.store.get(room.id).lastAccessedAt,1002,'background writes are not access');
+});
+
+test('room and server capacity count accounts once and reserve disconnected people',tls,async t=>{
+  const f=await fixture(t,false,{roomLimits:{maxMembers:1,maxPeople:2}}),creator=await f.login('host'),guest=await f.login('guest'),third=await f.login('guest2');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id;
+  const a=randomUUID(),b=randomUUID();
+  assert.equal((await creator.call('/api/watch/rooms/'+id+'?viewer='+a)).status,200);
+  assert.equal((await creator.call('/api/watch/rooms/'+id+'?viewer='+b)).status,200);
+  assert.equal((await guest.call('/api/watch/rooms/'+id+'?viewer='+randomUUID())).status,429);
+  assert.equal((await third.call('/api/watch/me')).status,429);
+  const room=f.app.watch.rooms.get(id);
+  for(const v of room.viewers.values())v.at=Date.now()-11000;
+  f.app.watch.refresh(room);
+  assert.equal((await guest.call('/api/watch/rooms/'+id+'?viewer='+randomUUID())).status,429);
+  assert.equal((await creator.call('/api/watch/rooms/'+id+'?viewer='+a)).status,200);
+});
+
+test('reboot recovery admits ordinary returning viewers, waits for everyone and expires paused',tls,async t=>{
+  const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID(),b=randomUUID();
+  await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
+  await guest.call('/api/watch/rooms/'+id+'?viewer='+b);
+  await f.app.watch.roomState.save(f.app.watch.rooms.get(id));
+  // Model a committed playing intent; actual clients must freshly prepare and report readiness.
+  const record=f.app.watch.roomState.store.get(id);
+  record.liveState.wasPlaying=true;
+  f.app.watch.roomState.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(JSON.stringify(record.liveState),id);
+  await f.app.registry.flush();
+  await f.restart();
+  const returning=await f.login('guest');
+  const joined=await returning.call('/api/watch/rooms/'+id+'?viewer='+b);
+  assert.equal(joined.status,200,JSON.stringify(joined.body));
+  assert.equal(joined.body.recovery.missing,1);assert.equal(joined.body.state.paused,true);assert.equal(joined.body.enabled,false);
+  const recovery=f.app.watch.roomState.recoveries.get(id);
+  await f.app.watch.roomState.maintain(recovery.until+1);
+  const room=f.app.watch.rooms.get(id);
+  assert.equal(room.recovery,undefined);assert.equal(room.s.state.paused,true);assert.equal(room.manualPaused,true);
+});
+
+test('reboot playback resumes only with all expected people ready, or explicit permitted Play',tls,async t=>{
+  const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID(),b=randomUUID();
+  await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
+  await guest.call('/api/watch/rooms/'+id+'?viewer='+b);
+  await command(creator,id,a,'media.play');
+  await f.restart();
+  const host=await f.login('host'),viewer=await f.login('guest');
+  await host.call('/api/watch/rooms/'+id+'?viewer='+a);
+  const room=f.app.watch.rooms.get(id),recovery=room.recovery;
+  assert.equal(recovery.wasPlaying,true);
+  for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
+  assert.ok(room.recovery,'missing viewer prevents resume');
+  await viewer.call('/api/watch/rooms/'+id+'?viewer='+b);
+  for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
+  assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,false);assert.equal(room.s.enabled,false);
+});
+
+
+test('permitted Play bypasses missing restart participants and closed rooms remain closed',tls,async t=>{
+  const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID();
+  await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
+  await guest.call('/api/watch/rooms/'+id+'?viewer='+randomUUID());
+  const closed=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id;
+  await f.app.watch.remove(closed);
+  await f.restart();
+  assert.equal(f.app.watch.roomState.recoveries.has(closed),false);
+  const returning=await f.login('host');
+  await returning.call('/api/watch/rooms/'+id+'?viewer='+a);
+  assert.equal(f.app.watch.roomState.recoveryState(f.app.watch.rooms.get(id)).missing,1);
+  assert.equal((await command(returning,id,a,'media.play')).body.status,'applied');
+  assert.equal(f.app.watch.rooms.get(id).recovery,undefined);
+  assert.equal(f.app.watch.roomState.recoveries.has(id),false);
+});
+
+test('saved and open limits remain separate under concurrent room creation',tls,async t=>{
+  const f=await fixture(t,false,{roomLimits:{maxSaved:3,maxOpen:2,minRetained:0}}),creator=await f.login('host');
+  const attempts=await Promise.all(Array.from({length:3},()=>creator.call('/api/watch/rooms',{keepEmpty:true})));
+  assert.equal(attempts.filter(reply=>reply.status===201).length,2);
+  assert.equal(attempts.filter(reply=>reply.status===429).length,1);
+  await f.app.watch.remove(attempts.find(reply=>reply.status===201).body.id);
+  assert.equal((await creator.call('/api/watch/rooms',{keepEmpty:true})).status,201);
+  for(const id of [...f.app.watch.rooms.keys()])await f.app.watch.remove(id);
+  assert.equal((await creator.call('/api/watch/rooms',{keepEmpty:true})).status,429,'closed records still consume saved slots');
+});
+
+
+test('explicit Pause cancels reboot resume intent even when everyone subsequently returns ready',tls,async t=>{
+  const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID(),b=randomUUID();
+  await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
+  await guest.call('/api/watch/rooms/'+id+'?viewer='+b);await command(creator,id,a,'media.play');
+  await f.restart();
+  const host=await f.login('host'),viewer=await f.login('guest');
+  await host.call('/api/watch/rooms/'+id+'?viewer='+a);
+  assert.ok(f.app.watch.rooms.get(id).recovery);
+  await command(host,id,a,'media.pause');
+  await viewer.call('/api/watch/rooms/'+id+'?viewer='+b);
+  const room=f.app.watch.rooms.get(id);
+  for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
+  assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,true);assert.equal(room.s.state.paused,true);
 });

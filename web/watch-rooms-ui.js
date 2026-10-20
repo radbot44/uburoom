@@ -51,7 +51,9 @@
         for (const room of result.rooms) {
           const row = node('div',$('saved-rooms'),undefined,'saved-room');
           const copy = node('div',row); node('strong',copy,room.name);
-          node('p',copy,(room.active ? 'Open' : 'Closed') + ' · ' + (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),'hint');
+          node('p',copy,(room.recovering ? 'Recovering' : room.active ? 'Open' : 'Closed') + ' · ' + (room.title ? room.title + ' · Paused at ' + format(room.position) : 'No video selected'),'hint');
+          if (room.retentionReason) node('small',copy,room.retentionReason,'hint');
+          node('p',copy,'Last active ' + new Date(room.lastAccessedAt).toLocaleString() + ' · ' + room.members + ' / ' + room.maxMembers + ' people','hint');
           const actions = node('div',row,undefined,'room-actions');
           const currentRoom = room.active && getState()?.id === room.id;
           button(actions,currentRoom ? 'Cancel' : room.active ? 'Join' : 'Reopen',async () => {
@@ -92,7 +94,7 @@
     }
     function draftOptions() {
       if (!draftRecord) return {};
-      return {name:draftRecord.name,visibility:draftRecord.visibility,permissions:structuredClone(draftRecord.permissions),autoplay:draftRecord.autoplay.enabled,autoQueue:structuredClone(draftRecord.queueSummary.autoQueue)};
+      return {keepEmpty:!!draftRecord.keepEmpty,maxMembers:draftRecord.maxMembers ?? null,name:draftRecord.name,visibility:draftRecord.visibility,permissions:structuredClone(draftRecord.permissions),autoplay:draftRecord.autoplay.enabled,autoQueue:structuredClone(draftRecord.queueSummary.autoQueue)};
     }
     function openDraft(options) {
       const person = {id:getMe().account.id,name:getMe().name};
@@ -115,7 +117,8 @@
         draftRecord = target; draftChanged?.(draftOptions()); renderSettings(); return target;
       }
       let result;
-      if (change.autoplay !== undefined) {
+      if (change.resetProgress) result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'auto.reset'}});
+      else if (change.autoplay !== undefined) {
         if (getState()?.id === id && target.active) {
           await execute({action:'media.autoplay.set',args:{enabled:change.autoplay}});
           result = await request('/api/watch/rooms/' + id + '/settings');
@@ -133,6 +136,14 @@
       $('room-settings-content').hidden = false; $('room-settings-status').textContent = '';
       $('room-role').textContent = getMe()?.adminMode ? 'Admin mode' : '';
       $('room-settings-title').textContent = value.name; $('room-settings-title').title = value.name;
+      $('room-name-fields').hidden = !!value.singleRoom;
+      $('room-keep-empty').checked = !!value.keepEmpty || !!value.singleRoom;
+      $('room-keep-empty').disabled = busy || !!value.singleRoom || !value.capabilities.roomSettings;
+      $('room-member-limit').max = value.serverMaxMembers || getMe()?.roomLimits?.maxMembers || 20;
+      if (document.activeElement !== $('room-member-limit')) $('room-member-limit').value = value.maxMembers || $('room-member-limit').max;
+      $('room-member-limit').disabled = $('room-member-limit-save').disabled = busy || !value.capabilities.roomSettings;
+      $('room-lifetime-details').textContent = value.createdAt ? 'Created ' + new Date(value.createdAt).toLocaleString() + ' · Last active ' + new Date(value.lastAccessedAt).toLocaleString() : '';
+      $('room-capacity-details').textContent = new Set(value.viewers.map(person=>person.id)).size + ' / ' + (value.maxMembers || $('room-member-limit').max) + ' people · Server maximum ' + $('room-member-limit').max;
       if ($('room-rename').value !== renameDraft) $('room-rename').value = renameDraft;
       $('room-settings-visibility').value = value.visibility;
       for (const id of ['room-rename','room-rename-save','room-settings-visibility']) $(id).disabled = busy || !value.capabilities.roomSettings;
@@ -235,6 +246,8 @@
       if (!details || busy) return;
       if (details.draft) {
         if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name'); return; } details.name = change.name.trim(); }
+        else if (change.action === 'keepEmpty') details.keepEmpty = change.enabled;
+        else if (change.action === 'maxMembers') details.maxMembers = change.value;
         else if (change.action === 'visibility') details.visibility = change.visibility;
         else if (change.action === 'permissions.preset') details.permissions = presetPolicy(change.preset);
         else if (change.action === 'permissions') {
@@ -277,6 +290,12 @@
       const control = button($('room-settings-nav'),label,() => selectSection(key)); control.dataset.section = key;
     }
     $('room-settings-section').addEventListener('change',event => selectSection(event.target.value));
+    $('room-keep-empty').addEventListener('change',async () => {
+      const enabled = $('room-keep-empty').checked;
+      if (!enabled && !await confirm('When everyone leaves and there is no unfinished video, upcoming queue or auto-queue source, this room and its hosts, permissions and history will be deleted. Allow this?')) { $('room-keep-empty').checked = true; return; }
+      void edit({action:'keepEmpty',enabled});
+    });
+    $('room-member-limit-save').addEventListener('click',() => void edit({action:'maxMembers',value:Number($('room-member-limit').value)}));
     $('room-rename').addEventListener('input',event => { renameDraft = event.target.value; });
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
     $('room-more-permissions').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'permissions'); });

@@ -317,7 +317,7 @@ test('an empty timed-out room admits only its eligible host tab and revokes old 
 });
 
 test('retained host rooms count toward the limit and expire on grace, media change, leave or close', async () => {
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands'],roomLimits:{maxOpen:4}},[]);
   hub.access={refresh:async()=>true,isMember:()=>true};
   const watch=new Watch(hub,{stop:async()=>{}}),host={userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'commands'};
   const timedOut=()=>{

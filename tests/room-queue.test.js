@@ -391,10 +391,10 @@ test('bulk append deduplicates active occurrences, filters only completed room h
 
 test('bulk overflow and insertion failures leave all entries and revisions unchanged', async t => {
   const f = fixture(t), room = await f.store.create(f.creator);
-  await f.queue.addBulk(room.id, f.creator, Array.from({ length: 99 }, (_, index) => sampleItem(index + 1)));
+  await f.queue.addBulk(room.id, f.creator, Array.from({ length: MAX_PENDING - 1 }, (_, index) => sampleItem(index + 1)));
   const revision = f.store.get(room.id).queueRevision;
   await assert.rejects(f.queue.addBulk(room.id, f.creator, [sampleItem(500), sampleItem(501)]), /Adding 2 items would exceed/);
-  assert.equal(f.queue.list(room.id).total, 99);
+  assert.equal(f.queue.list(room.id).total, MAX_PENDING - 1);
   assert.equal(f.store.get(room.id).queueRevision, revision);
   await f.queue.clear(room.id, f.creator, revision);
   const before = f.store.get(room.id).queueRevision;
@@ -525,4 +525,63 @@ test('explicit current removal clears its bookmark and survives restart with oth
   assert.equal(f.queue.getEntry(current.id),null);
   assert.deepEqual(f.queue.pending(room.id).map(item=>item.id),[upcoming.id]);
   assert.deepEqual(f.queue.history(room.id).items.map(item=>item.id),[old.id]);
+});
+
+
+test('history trimming preserves completed-item exclusions and random cycle memory',async t=>{
+  const f=fixture(t),room=await f.store.create(f.creator),corpus=Array.from({length:5},(_,i)=>sampleItem(i+1));
+  f.queue.maxHistory=1;
+  await f.queue.playNow(room.id,f.creator,corpus[0]);
+  await f.queue.addBulk(room.id,f.creator,corpus.slice(1,4));
+  await f.queue.next(room.id,f.creator,{outcome:'completed'});
+  await f.queue.next(room.id,f.creator,{outcome:'completed'});
+  await f.queue.next(room.id,f.creator,{outcome:'completed'});
+  assert.equal(f.queue.history(room.id).total,1);
+  const added=await f.queue.addBulk(room.id,f.creator,corpus,{unfinished:true});
+  assert.equal(added.added.some(item=>item.mediaId===corpus[0].mediaId),false);
+  assert.equal(added.added.some(item=>item.mediaId===corpus[1].mediaId),false);
+});
+
+test('auto-queue reset requires permission and preserves queue/history while forgetting progress',async t=>{
+  const f=fixture(t),room=await f.store.create(f.creator);
+  await f.queue.configureAuto(room.id,f.creator,{mode:'random',scope:{type:'show',id:'100',serverId:'plex-server-1'},includeSpecials:false});
+  await f.queue.playNow(room.id,f.creator,sampleItem(2));
+  await f.queue.completeCurrent(room.id);
+  await f.queue.add(room.id,f.creator,sampleItem(1));
+  await assert.rejects(f.store.edit(room.id,f.viewer,f.store.get(room.id).revision,{action:'auto.reset'}),/permission/);
+  await f.store.edit(room.id,f.creator,f.store.get(room.id).revision,{action:'auto.reset'});
+  assert.equal(f.queue.pending(room.id).length,1);
+  assert.deepEqual(f.store.get(room.id).autoQueue.used,[]);
+  assert.equal(f.queue.history(room.id).total,1);
+  f.queue.pruneHistory(room.id);
+  assert.equal(f.registry.db.prepare('SELECT COUNT(*) AS n FROM watch_room_progress').get().n,0);
+  assert.equal((await f.queue.addBulk(room.id,f.creator,[sampleItem(2)],{unfinished:true})).added.length,1);
+});
+
+
+test('configured queues above 100 support bounded pages and moves beyond the old fixed rank limit',async t=>{
+  const f=fixture(t),room=await f.store.create(f.creator);f.queue.maxPending=120;
+  const entries=(await f.queue.addBulk(room.id,f.creator,Array.from({length:110},(_,i)=>sampleItem(i+1)))).added;
+  const Protocol=require('../shared/room-protocol');
+  const command=Protocol.validate({action:'queue.move',args:{entryId:entries[0].id,targetRank:109}});
+  await f.queue.move(room.id,f.creator,command.args.entryId,command.args.targetRank);
+  assert.equal(f.queue.list(room.id,{limit:100}).items.length,100);
+  assert.equal(f.queue.list(room.id,{offset:100,limit:100}).items.length,10);
+  assert.equal(f.queue.list(room.id,{offset:109,limit:1}).items[0].id,entries[0].id);
+});
+
+
+test('random auto-queue remembers its full cycle after visible history is pruned and cleared',async t=>{
+  const f=fixture(t),room=await f.store.create(f.creator),corpus=Array.from({length:6},(_,i)=>sampleItem(i+1));
+  f.queue.maxHistory=1;f.queue.randomIndex=()=>0;
+  await f.queue.playNow(room.id,f.creator,corpus[0]);
+  await f.queue.configureAuto(room.id,f.creator,{mode:'random',scope:{type:'show',id:'100',serverId:'plex-server-1'},includeSpecials:false});
+  await f.queue.generate(room.id,f.creator,corpus);
+  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
+  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
+  assert.equal(f.queue.history(room.id).total,1);
+  await f.queue.historyClear(room.id,f.creator);
+  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
+  assert.equal(f.queue.peekNext(room.id).mediaId,corpus[4].mediaId);
+  assert.equal(f.store.get(room.id).autoQueue.cycle,0);
 });

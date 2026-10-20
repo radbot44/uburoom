@@ -21,6 +21,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (write && (!data || typeof data !== 'object' || Array.isArray(data) || Buffer.byteLength(JSON.stringify(data)) > 4096)) return result(400, { error: 'Invalid command data' });
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
+      watch.roomState?.people.enter(auth.actor.userId);
       await hub.refreshAdmin?.(auth.actor);
       const current = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
       const opened = async id => {
@@ -39,7 +40,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomLimits:watch.roomState?.limits,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
       }
       if (write && url.pathname === '/api/watch/admin-mode') {
         if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}
@@ -146,6 +147,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
           limit: Number(url.searchParams.get('limit') || 50)
         }));
       }
+      if (!watch.rooms.has(match[1]) && !write && !match[2]) await watch.roomState?.recover(match[1],auth.actor,current);
       const room = watch.rooms.get(match[1]);
       if (room?.saved && write && match[2] === 'close') return result(200,await watch.roomState.closeRoom(match[1],auth.actor,data.epoch,current));
       if (!await watch.canView(room, auth.actor)) { return result(403, { error: 'Room unavailable or private' }); }

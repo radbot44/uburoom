@@ -170,6 +170,8 @@ test('single room fixes creator, assigns configured hosts and requires explicit 
   const rooms=await browser.request('/api/watch/rooms');assert.equal(rooms.status,200);assert.equal(rooms.body.rooms.length,1);
   const id=rooms.body.rooms[0].id,owner=f.app.registry.identity('discord',f.config.ownerId).userId;
   let details=(await browser.request('/api/watch/rooms/'+id+'/settings')).body;
+  assert.equal(details.name,'Room');
+  assert.equal((await browser.post('/api/watch/rooms/'+id+'/settings',{revision:details.revision,change:{action:'rename',name:'Different'}})).status,403);
   assert.equal(details.creator.id,owner);assert.equal(details.role,'host');assert.equal(details.capabilities.managePermissions,false);
   assert.equal((await browser.post('/api/watch/rooms',{})).status,403);
   assert.equal((await browser.post('/api/watch/rooms/'+id+'/settings',{revision:details.revision,change:{action:'permissions',role:'viewer',permissions:{seek:true}}})).status,403);

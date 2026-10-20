@@ -5,8 +5,8 @@ const { randomUUID, randomInt } = require('node:crypto');
 const Policy = require('./room-policy');
 
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const MAX_PENDING = 100;
-const MAX_HISTORY = 500;
+const MAX_PENDING = 50;
+const MAX_HISTORY = 150;
 
 function error(message, status = 400) {
   return Object.assign(new Error(message), { status });
@@ -100,6 +100,7 @@ class RoomQueue {
     this.db = registry.db;
     this.store = store;
     this.randomIndex = randomIndex;
+    this.maxPending = store.limits.maxQueue; this.maxHistory = store.limits.maxHistory;
     let lastNow = 0;
     this.now = typeof now === 'function' ? now : () => {
       const n = Date.now();
@@ -134,7 +135,7 @@ class RoomQueue {
   }
 
   bumpQueueRevision(roomId, at = this.now()) {
-    this.db.prepare('UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ? WHERE id = ?').run(at, roomId);
+    this.db.prepare('UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(at, at, roomId);
   }
 
   getEntry(entryId) {
@@ -173,8 +174,8 @@ class RoomQueue {
     const item = validateItem(rawItem);
 
     const pendingCount = this.db.prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'").get(roomId).count;
-    if (pendingCount >= MAX_PENDING) {
-      throw error('Queue limit reached (maximum 100 upcoming items)', 400);
+    if (pendingCount >= this.maxPending) {
+      throw error('Queue limit reached (maximum ' + this.maxPending + ' upcoming items)', 400);
     }
 
     const id = randomUUID(), at = this.now();
@@ -218,14 +219,14 @@ class RoomQueue {
     const key = item => item.serverId + ':' + item.mediaId;
     const excluded = new Set([...pending, ...(current ? [current] : [])].map(key));
     if (unfinished) {
-      for (const row of this.db.prepare("SELECT serverId,mediaId FROM watch_queue_entries WHERE roomId = ? AND state = 'history' AND outcome = 'completed'").all(roomId)) excluded.add(key(row));
+      for (const row of this.db.prepare('SELECT serverId,mediaId FROM watch_room_progress WHERE roomId=?').all(roomId)) excluded.add(key(row));
     }
     const items = [];
     for (const raw of rawItems) {
       const item = validateItem(raw);
       if (!excluded.has(key(item))) { excluded.add(key(item)); items.push(item); }
     }
-    if (pending.length + items.length > MAX_PENDING) throw error('Adding ' + items.length + ' items would exceed the queue limit (maximum 100 upcoming items)');
+    if (pending.length + items.length > this.maxPending) throw error('Adding ' + items.length + ' items would exceed the queue limit (maximum ' + this.maxPending + ' upcoming items)');
     if (!items.length) return { added: [], addedCount: 0, queueRevision: room.queueRevision };
     const at = this.now(); let ids;
     this.registry.transaction(() => {
@@ -270,7 +271,7 @@ class RoomQueue {
     const autoQueue = same ? room.autoQueue : { mode: config.mode, scope, includeSpecials: !!config.includeSpecials, cycle: 0, used };
     const at = this.now();
     this.registry.transaction(() => {
-      this.db.prepare('UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ? WHERE id = ?').run(JSON.stringify(autoQueue), at, roomId);
+      this.db.prepare('UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(JSON.stringify(autoQueue), at, at, roomId);
     });
     await this.store.commit();
     return { autoQueue, queueRevision: room.queueRevision + 1 };
@@ -281,8 +282,9 @@ class RoomQueue {
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'autoplay');
     if (typeof enabled !== 'boolean') throw error('Choose autoplay on or off');
+    const at = this.now();
     this.registry.transaction(() => {
-      this.db.prepare('UPDATE watch_rooms SET autoplay = ?, revision = revision + 1, updatedAt = ? WHERE id = ?').run(enabled ? 1 : 0, this.now(), roomId);
+      this.db.prepare('UPDATE watch_rooms SET autoplay = ?, revision = revision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(enabled ? 1 : 0, at, at, roomId);
     });
     await this.store.commit();
     return { autoplay: enabled, revision: room.revision + 1 };
@@ -298,7 +300,7 @@ class RoomQueue {
     const active = new Set([...pending, ...(current ? [current] : [])].filter(item => item.serverId === autoQueue.scope.serverId).map(item => item.mediaId));
     const selected = [];
     if (autoQueue.mode === 'following') {
-      let anchor = -1;
+      let anchor = items.findIndex(item => item.mediaId === autoQueue.cursor);
       for (const item of [...(current ? [current] : []), ...pending]) {
         const index = items.findIndex(candidate => candidate.serverId === item.serverId && candidate.mediaId === item.mediaId);
         if (index >= 0) anchor = index;
@@ -326,6 +328,7 @@ class RoomQueue {
       }
       autoQueue.used = [...used];
     }
+    if (autoQueue.mode === 'following' && selected.length) autoQueue.cursor = selected[selected.length - 1].mediaId;
     const ids = this.insertPending(roomId, selected, pending.length, at);
     const changed = ids.length > 0 || JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
     if (changed) this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
@@ -348,7 +351,7 @@ class RoomQueue {
     if (typeof continuation !== 'boolean') throw error('Invalid auto-queue continuation');
     this.assertAllowed(room, userId, continuation ? 'chooseMedia' : 'editQueue');
     this.assertRevision(room, expectedRevision);
-    if (!Number.isSafeInteger(targetPending) || targetPending < 1 || targetPending > MAX_PENDING) throw error('Invalid auto-queue target');
+    if (!Number.isSafeInteger(targetPending) || targetPending < 1 || targetPending > this.maxPending) throw error('Invalid auto-queue target');
     const corpus = this.validateCorpus(rawItems), at = this.now(); let result;
     this.registry.transaction(() => {
       result = this.generatePending(roomId, corpus, targetPending, at);
@@ -570,6 +573,7 @@ class RoomQueue {
         SET state = 'history', rank = NULL, position = duration, outcome = 'completed', endedAt = ?, updatedAt = ?
         WHERE id = ?
       `).run(at, at, current.id);
+      this.db.prepare('INSERT OR IGNORE INTO watch_room_progress VALUES(?,?,?)').run(roomId,current.serverId,current.mediaId);
 
       this.db.prepare(`
         UPDATE watch_rooms
@@ -613,6 +617,7 @@ class RoomQueue {
           SET state = 'history', rank = NULL, position = ?, outcome = ?, endedAt = ?, updatedAt = ?
           WHERE id = ?
         `).run(clamped, validOutcome, at, at, current.id);
+        if (validOutcome === 'completed') this.db.prepare('INSERT OR IGNORE INTO watch_room_progress VALUES(?,?,?)').run(roomId,current.serverId,current.mediaId);
       }
 
       this.db.prepare(`
@@ -729,7 +734,7 @@ class RoomQueue {
     const current = this.current(roomId);
     const history = restore ? this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC").all(roomId).map(rowToEntry) : [];
     const restored = restore ? [...history.slice(0, history.findIndex(item => item.id === historyEntryId)).reverse(), ...(current ? [current] : [])] : [];
-    if (restore && this.pending(roomId).length + restored.length > MAX_PENDING) throw error('Going back would exceed the queue limit (maximum 100 upcoming items)');
+    if (restore && this.pending(roomId).length + restored.length > this.maxPending) throw error('Going back would exceed the queue limit (maximum ' + this.maxPending + ' upcoming items)');
     const targetPosition = (restore ? historyEntry.outcome !== 'completed' : resume) ? Math.min(Math.max(0, historyEntry.position), historyEntry.duration) : 0;
     const id = randomUUID(), at = this.now();
     let restoredIds = [];
@@ -874,7 +879,7 @@ class RoomQueue {
       WHERE roomId = ? AND state = 'history' AND id NOT IN (
         SELECT id FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT ?
       )
-    `).run(roomId, roomId, MAX_HISTORY);
+    `).run(roomId, roomId, this.maxHistory);
   }
 }
 

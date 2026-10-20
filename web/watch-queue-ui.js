@@ -222,7 +222,7 @@
     const bulkSpecialLabel = node('label', bulkDialog, undefined, 'queue-check');
     const bulkSpecials = node('input', bulkSpecialLabel); bulkSpecials.type = 'checkbox'; bulkSpecials.id = 'queue-bulk-specials';
     bulkSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
-    node('p', bulkDialog, 'Current and upcoming episodes are excluded. The queue holds up to 100 upcoming videos; an addition that exceeds the limit is rejected in full.', 'hint');
+    node('p', bulkDialog, 'Current and upcoming episodes are excluded. The server limits upcoming videos; an addition that exceeds its limit is rejected in full.', 'hint');
     const bulkStatus = node('p', bulkDialog, '', 'hint'); bulkStatus.setAttribute('role', 'status');
     const bulkActions = node('div', bulkDialog, undefined, 'room-actions');
     const bulkCancel = button(bulkActions, 'Cancel', undefined, () => bulkDialog.close('cancel'));
@@ -370,7 +370,14 @@
     const autoActions = node('div', autoDialog, undefined, 'room-actions queue-settings-footer');
     const autoCancel = button(autoActions, 'Reset changes', undefined, () => { hasAutoDraft = false; void openAuto(); });
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
-    doc.addEventListener('room-playback-settings',() => { if (!autoPending && (!hasAutoDraft || autoRoom !== getSettingsState()?.id)) void openAuto(); });
+    const autoReset = button(autoActions,'Reset auto-queue progress',undefined,async () => {
+      if (!await confirm('Reset auto-queue progress? Episode progress and repeat prevention will restart. Upcoming items and visible history stay unchanged.')) return;
+      autoReset.disabled = true;
+      try { await saveSettings({resetProgress:true}); setAutoNotice('Auto-queue progress reset',true); await changed(); }
+      catch (error) { setAutoNotice(error.message); }
+      finally { autoReset.disabled = !getSettingsState()?.capabilities?.editQueue; }
+    }); autoReset.id = 'queue-auto-progress-reset';
+    doc.addEventListener('room-playback-settings' ,() => { if (!autoPending && (!hasAutoDraft || autoRoom !== getSettingsState()?.id)) void openAuto(); });
     async function openAuto(source) {
       const state = getSettingsState(), roomId = state?.id;
       if (!roomId) return;
@@ -388,6 +395,7 @@
       const ticket = ++autoTicket;
       if (source?.title) sourceNames.set(sourceKey(draftScope, state),source.title);
       void sourceName(draftScope,state,ticket); sourcePicker.hidden = true;
+      autoReset.hidden = !!state.draft; autoReset.disabled = !state.capabilities?.editQueue;
       setAutoNotice(''); autoSave.disabled = autoMode.disabled = autoSpecials.disabled = !state.capabilities?.editQueue;
       settingsAutoplay.checked = state.autoplay?.enabled !== false; settingsAutoplay.disabled = !state.capabilities?.autoplay;
       sourceChange.disabled = !state.capabilities?.editQueue; updateAutoFields();
@@ -701,7 +709,7 @@
         node('span', top, '', 'queue-rank');
         const moves = node('div', top, undefined, 'queue-move-actions');
         action(moves, 'Move earlier', view === 'cards' ? 'left' : 'up', () => moveItem(item.id, item.rank - 1), !canEdit || i === 0, 'queue-action-up');
-        action(moves, 'Move later', view === 'cards' ? 'right' : 'down', () => moveItem(item.id, item.rank + 1), !canEdit || i === items.length - 1, 'queue-action-down');
+        action(moves, 'Move later', view === 'cards' ? 'right' : 'down', () => moveItem(item.id, item.rank + 1), !canEdit || item.rank === currentQueue.total - 1, 'queue-action-down');
         action(moves, 'Remove from queue', 'close', () => removeItem(item.id), !canEdit, 'queue-action-remove');
         art(row, item);
         const info = node('div', row, undefined, 'queue-entry-info');
@@ -714,6 +722,14 @@
       });
       updateUpcomingTimes();
       const actions = node('div', footer, undefined, 'queue-footer-actions');
+      if (items.length < currentQueue.total) button(actions,'Load more upcoming',undefined,async () => {
+        const roomId = getState()?.id, revision = lastFetchedRevision;
+        try {
+          const page = await request('/api/watch/rooms/' + roomId + '/queue?limit=100&offset=' + items.length);
+          if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
+          currentQueue = {...currentQueue,items:[...items,...page.items],total:page.total}; renderTab();
+        } catch (error) { notice.textContent = error.message; }
+      });
       const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
       shuffle.id = 'queue-shuffle';
       const clear = button(actions, 'Clear queue', undefined, async () => {

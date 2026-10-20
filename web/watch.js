@@ -824,7 +824,7 @@ function renderVisibility() {
     $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').classList.toggle('private', state.visibility === 'private');
     $('room-visibility').disabled = pending || !state.canManage;
-    $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(String(state.viewers)));
+    $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(state.viewers + ' / ' + (state.maxMembers || 20)));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
@@ -884,7 +884,11 @@ function renderTransport() {
   if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
   if (state?.readiness?.timedOut) $('ready-status').textContent = state.canBrowse ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
   if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a room leader or host joins.';
-  $('readiness-choice').hidden = !state?.readiness?.timedOut || !state.canBrowse;
+  $('room-recovery').hidden = !state?.recovery;
+  if (state?.recovery) $('room-recovery-message').textContent = 'Waiting for ' + state.recovery.missing + ' people / ' + Math.max(0,Math.ceil((state.recovery.until - (Date.now() + offset))/1000)) + ' seconds remaining. Playback is paused.';
+  $('room-recovery-start').hidden = !state?.canPlayback;
+  $('room-recovery-start').disabled = pending || !state?.mediaUrl;
+  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !state.canBrowse;
   $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
   $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
   $('ready-start').disabled = pending || !state?.readiness?.canStart;
@@ -1108,7 +1112,7 @@ function renderRooms(host, rooms, join = id => selectRoom(id)) {
     const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
     button.append(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
     const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomUI.icon(document,'users'));
-    const count = document.createElement('span'); count.textContent = String(room.viewers); button.append(count);
+    const count = document.createElement('span'); count.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers); button.append(count);
     button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
     button.setAttribute('aria-label', (room.name || room.hostName) + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
     button.setAttribute('aria-pressed', String(room.id === selected)); button.addEventListener('click', () => join(room.id).catch(error => fail(error.message))); host.append(button);
@@ -1239,7 +1243,7 @@ async function loadLibraryItem(item) {
 }
 let roomChoice;
 function renderRoomChoices(rooms, container = $('room-choices')) {
-  const key = JSON.stringify([selected,rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.locked])]);
+  const key = JSON.stringify([selected,rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.maxMembers,room.recovering,room.locked])]);
   if (container.dataset.roomList === key) return;
   container.dataset.roomList = key;
   const focusedRoom = container.contains(document.activeElement) ? document.activeElement.dataset.joinRoom : undefined;
@@ -1251,7 +1255,7 @@ function renderRoomChoices(rooms, container = $('room-choices')) {
     name.textContent = room.name || room.hostName;
     name.prepend(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
     info.className = 'hint';
-    info.textContent = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers'); copy.append(name,info);
+    info.textContent = (room.recovering ? 'Recovering · ' : '') + (room.title || 'No video selected') + ' · ' + room.viewers + ' / ' + (room.maxMembers || 20) + ' people'; copy.append(name,info);
     const actions = document.createElement('div'); actions.className = 'room-actions';
     const currentRoom = container.id === 'room-choices' && room.id === selected;
     const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = currentRoom ? 'Cancel' : 'Join';
@@ -1470,7 +1474,7 @@ async function start() {
       document.body.classList.remove('auth-pending');
       renderBrowsing();renderVisibility();placeRoomBar();
     })(),
-    onClose:details=>connectionLost(details),
+    onClose:details=>{ connectionLost(details); if (details.code === 4029) fail('Server full; try again when someone leaves'); if (token && details.code === 4003) { identityRenewAt = 0; identityRetryAt = 0; void renewIdentity().catch(()=>{}); } },
     beginClock:()=>({exchange:playbackClock.begin(),sent:performance.now(),before:Date.now()}),
     onClock:(message,sample)=>{
       playbackClock.add(sample.exchange,message.timing);
@@ -1512,6 +1516,7 @@ $('entry-form').addEventListener('submit',async event=>{
 });
 $('entry-recheck').addEventListener('click',()=>{pageBootstrap=undefined;void start().catch(error=>fail(error.message));});
 $('entry-plex-activity').addEventListener('click',()=>void openInBrowser());
+$('room-recovery-start').addEventListener('click',() => void execute({action:'media.play'}).catch(error=>fail(error.message)));
 $('auth-retry').addEventListener('click', () => location.reload());
 renderVisibility();renderRemote();renderTransport();
 start().catch(error => {
