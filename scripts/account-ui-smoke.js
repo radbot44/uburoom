@@ -52,7 +52,7 @@ async function main() {
       await browser.viewport(page, 1200, 850);
       await pause(300);
       await shot('checking');
-      if (!before) assert.equal(await evaluate('document.getElementById("welcome").hidden && !document.getElementById("auth-overlay").hidden && document.querySelector("main").inert && document.getElementById("stage").getBoundingClientRect().width>0'), true, 'Sign-in overlay covers the inactive watch layout');
+      if (!before) assert.equal(await evaluate('document.getElementById("welcome").hidden && !document.getElementById("auth-overlay").hidden && !document.querySelector("main").inert && document.getElementById("empty-stage").contains(document.getElementById("auth-overlay")) && document.getElementById("empty-title").textContent==="Join or create a room" && getComputedStyle(document.getElementById("video")).visibility==="hidden"'), true, 'Pending sign-in lives inside the initial lobby');
       release();
       await until('!document.getElementById("welcome").hidden', 'Signed-out welcome');
       await shot('login');
@@ -179,10 +179,20 @@ async function main() {
       await browser.click(page,'demo-host');
       await until('typeof me!=="undefined" && me?.account?.identities.length===2 && document.getElementById("account-dialog").open && !document.getElementById("account-content").hidden','Discord reconnect');
       assert.equal(await evaluate('me.account.id'),secondId,'Discord reconnect preserves UUID');
+      // Provider round trips reload all assets; keep logout independent of the
+      // fixture's accumulated HTTP rate-limit bucket without relaxing it.
+      await evaluate('transport.close();true');
+      await browser.evaluate(activityPage,'transport.close();true');
+      await app.close();app=await startFixture();
+      await evaluate('location.assign('+JSON.stringify(config.publicUrl+'/watch?demo=host')+');true');
+      await until('typeof me!=="undefined" && !!me && transport?.ready','Logout fixture login');
+      await browser.click(page,'identity');
       await until('!document.getElementById("account-content").hidden','Logout account');
+      await evaluate('document.getElementById("account-logout").scrollIntoView({block:"center"});true');
       await browser.click(page,'account-logout');
-      await until('!!document.getElementById("welcome") && !document.getElementById("welcome").hidden','Logout returns to sign-in');
-      assert.equal(await evaluate('document.querySelector("main").inert && !document.getElementById("auth-overlay").hidden && document.getElementById("auth-loading").hidden'),true);
+      try { await until('!!document.getElementById("welcome") && !document.getElementById("welcome").hidden','Logout returns to sign-in'); }
+      catch(error){console.error(await evaluate('({url:location.href,error:document.getElementById("account-error")?.textContent,auth:document.getElementById("auth-status")?.textContent,logout:document.getElementById("account-logout")?.disabled})'));throw error;}
+      assert.equal(await evaluate('!document.querySelector("main").inert && !document.getElementById("auth-overlay").hidden && document.getElementById("auth-loading").hidden'),true);
       console.log(name,browser.version,'PASS: neutral login, errors/retry, confirmed removal and connect again, stable UUID, username-only display, account loading/close, responsive themes, owner tools, Activity and logout');
     } finally {
       releaseHold();

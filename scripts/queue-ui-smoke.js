@@ -80,6 +80,29 @@ async function main() {
         await until('queueUI.selectedEntryId===state.queueSummary.current.id','Return to current without history in '+mode);
       }
       if (process.argv.includes('--navigation-only')) { console.log(name+': Cards/List arrows return to current when history is empty'); continue; }
+      await run('$("queue-scroll-next").click()');
+      await until('queueUI.selectedEntryId!==state.queueSummary.current.id','Browse away from current');
+      const reconnectSelection=await run('queueUI.selectedEntryId');
+      await run('globalThis.keptQueue=document.querySelector(".queue-entry");transport.interrupt(1500)');
+      await until('reconnecting','Room disconnect detected');
+      assert.equal(await run('!!state && !state.enabled && document.querySelector(".queue-entry")===globalThis.keptQueue'),true,'Disconnect keeps queue and revokes consent');
+      await until('transport.ready && !reconnecting && !!state?.mediaUrl','Room rejoined');
+      await until('queueUI.selectedEntryId==='+JSON.stringify(reconnectSelection),'Queue selection restored');
+      assert.equal(await run('document.querySelector(".queue-entry")===globalThis.keptQueue'),true,'Rejoin preserves queue DOM');
+      if(process.argv.includes('--reconnect-only')){
+        await browser.viewport(page,390,844);
+        await run('$("section-tab-queue").click()');
+        await run('queueUI.selectEntry('+JSON.stringify(reconnectSelection)+')');
+        await until('queueUI.selectedEntryId==='+JSON.stringify(reconnectSelection),'Phone queue selection');
+        await pause(500);
+        assert.equal(await run('queueUI.selectedEntryId'),reconnectSelection,'Phone selection settled before hiding');
+        await run('$("section-tab-media").click();transport.interrupt(1500)');
+        await until('reconnecting','Phone disconnect');await until('transport.ready && !reconnecting','Phone reconnect');
+        assert.equal(await run('$("section-tab-media").getAttribute("aria-selected")'),'true','Reconnect retains the open Media tab');
+        await run('$("section-tab-queue").click()');
+        await until('queueUI.selectedEntryId==='+JSON.stringify(reconnectSelection),'Hidden phone queue restores selection');
+        console.log(name+': desktop/phone reconnect retains queue selection and DOM, Media tab and consent off');continue;
+      }
       await run('$("queue-view-cards").click()');
       for (let i = 0; i < 3; i++) {
         await run('execute({action:"media.next"})');

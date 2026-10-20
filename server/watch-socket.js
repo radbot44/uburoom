@@ -58,6 +58,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
       clients.add(client);
       ws.watchRtts = [];
       ws.on('pong', () => {
+        // Native pongs keep presence alive even when the browser throttles its
+        // JavaScript timers. Authorization is still checked by publish/requests.
+        client.lastSeen = Date.now();
+        if(client.authenticated)for(const room of watch.rooms.values())for(const viewer of room.viewers.values())if(viewer.watchSocket===ws)viewer.at=client.lastSeen;
         if (client.pingAt === undefined) return;
         const now = performance.now(), ms = now - client.pingAt; client.pingAt = undefined;
         if (ms >= 0 && ms <= 10000) ws.watchRtts = [...ws.watchRtts, {at:now, ms}].filter(sample => now - sample.at <= 30000).slice(-16);

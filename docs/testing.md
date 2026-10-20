@@ -1,5 +1,21 @@
 # Verification status
 
+## Lobby startup and connection continuity (2026-10-19)
+
+The initial HTML now renders the outside-room lobby with a stable **Join or create a room** heading. Sign-in loading, provider choices and retry errors live inside that lobby, without a modal or inert page. The normal/phone lobby uses the page palette instead of an empty black player. Authentication still validates the saved cookie; provider choices appear only after a genuine unauthenticated response. Socket bootstrap no longer fetches the initial room list twice.
+
+Native WebSocket pongs now refresh connection and viewer presence, preserving the existing ten-second server liveness deadline while avoiding false expiry when page JavaScript is throttled. Client clock samples have one outstanding exchange and a thirty-second deadline; delayed wake-up timers allow a fresh exchange. Server authorization checks and disconnect consent revocation remain enforced. This reproduces and fixes an avoidable disconnect path; it does not establish the cause of every previously reported live interruption.
+
+Control disconnects retain room context, library navigation/DOM and queue position/selection while clearing the old player, playback observations, unsent volume drafts and temporary remote consent. Rejoin obtains a fresh authorized stream. Commands are not replayed, and terminal room/access failures still clear unavailable state. Sanitized diagnostic events record disconnect close codes and recovery without server close-reason text.
+
+Verification:
+
+- `npm run test:full`: **363 passed, 0 failed, 0 skipped**. New coverage includes native-pong liveness without page clocks, continued authorization checks, delayed background callbacks and bounded silent-connection recovery. Timing fixtures cover refusal to queue disconnected controls.
+- `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox`: both passed lobby browsing, forced disconnect/reconnect retaining the same selected movie DOM, creation/join/leave, private-room filtering, inline sign-in and desktop/theater/phone layouts.
+- `node scripts/queue-ui-smoke.js`: Chrome and Firefox passed the full queue/layout flows, including reconnect while browsing away from the current occurrence. `--reconnect-only` also exercises desktop and phone recovery, including an open Media tab with the queue hidden; queue selection/DOM and the selected tab survive, and consent stays off. Hidden queues defer scroll restoration until visible.
+- `node scripts/account-ui-smoke.js`: Chrome and Firefox passed held sign-in loading inside the lobby, provider linking/removal, inline errors/retry, account dialogs, themes, Activity account restrictions and logout to inline sign-in. Provider round trips and logout use independent fixture request budgets without relaxing production throttles.
+- Rendered initial loading, desktop lobby, phone lobby and phone sign-in surfaces inspected. Fixtures use isolated accounts/providers and synthetic media. Actual proxy/network interruptions, background suspension on physical devices and live Plex/Discord Activity continuity remain to be verified; no production update was performed.
+
 ## Room UI refinement (2026-10-19)
 
 Refined room discovery, permissions, and active room/empty player presentation building upon the room redesign:

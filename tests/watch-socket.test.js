@@ -26,11 +26,25 @@ async function fixture(t) {
     const authenticated=once(ws,'message');ws.send(JSON.stringify({type:'auth',token:identity.token,csrf:identity.csrf}));
     assert.equal(JSON.parse((await authenticated)[0]).type,'auth-ok');
     const ping=setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'clock',id:0}));},1000);t.after(()=>clearInterval(ping));
-    return {ws,events,call:(route,data)=>new Promise(resolve=>{const id=++sequence;waiting.set(id,resolve);ws.send(JSON.stringify({type:'request',id,path:route,...(data===undefined?{}:{data})}));})};
+    return {ws,events,stopClock:()=>clearInterval(ping),call:(route,data)=>new Promise(resolve=>{const id=++sequence;waiting.set(id,resolve);ws.send(JSON.stringify({type:'request',id,path:route,...(data===undefined?{}:{data})}));})};
   }
   return {app,config,cert,login,connect,revoke:()=>{allowed=false;}};
 }
 const tls={skip:!fs.existsSync(certFile)};
+
+test('native WebSocket pongs retain room presence without JavaScript clock messages',tls,async t=>{
+  const f=await fixture(t),host=await f.connect(await f.login('host'));
+  t.after(()=>host.ws.close());host.stopClock();
+  const roomId=(await host.call('/api/watch/rooms',{})).value.id,viewer=randomUUID();
+  await host.call('/api/watch/rooms/'+roomId+'?viewer='+viewer);
+  await new Promise(resolve=>setTimeout(resolve,11500));
+  assert.equal(host.ws.readyState,1,'a throttled tab remains connected beyond the old idle deadline');
+  const presence=f.app.watch.rooms.get(roomId)?.viewers.get(viewer);
+  assert.ok(presence,'same viewer survives');
+  assert.ok(Date.now()-presence.at<2000,'native pongs refresh viewer presence');
+  f.revoke();const closed=once(host.ws,'close');
+  assert.equal((await closed)[0],4003,'server publication still rechecks authorization without client clocks');
+});
 
 test('lobby browsing needs no room; private creation never exposes the room to another member',tls,async t=>{
   const f=await fixture(t),host=await f.connect(await f.login('host')),guest=await f.connect(await f.login('guest'));

@@ -27,7 +27,7 @@ h1{font-size:22px;letter-spacing:-.5px;margin:0}h2{font-size:17px;margin:0}.hint
 .icon-button svg,.player-button svg,.center-play svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block;pointer-events:none}
 .primary{background:var(--primary);color:var(--on-primary);text-decoration:none;text-align:center;border-radius:12px;padding:12px 17px;font-weight:600}.primary:hover{background:var(--primary-hover)}.quiet{background:var(--elevated);border-radius:12px;padding:10px 14px}.card{background:var(--card);border-radius:22px;padding:20px}.card p{color:var(--muted)}
 .auth-card{max-width:440px;margin:50px auto;padding:28px}.auth-card p{margin:12px 0 0}.login-options{display:grid;gap:12px;margin-top:24px}.provider-button{display:flex;align-items:center;justify-content:center;gap:12px;min-height:46px;border-radius:12px;padding:12px 16px;text-decoration:none;font-weight:600;color:var(--text)}.provider-button img{flex:none}.discord-button{background:#5865F2;color:#fff}.discord-button:hover{background:#4752c4}.auth-card #auth-retry{margin-top:20px}.room-bar{margin-bottom:16px;justify-content:flex-start;flex-wrap:wrap}.chips{display:flex;flex-wrap:wrap;gap:8px;flex:1}.chips button{background:var(--elevated);border-radius:12px;padding:10px 16px}.chips button[aria-pressed=true]{background:var(--primary)}#viewers{white-space:nowrap}
-.auth-pending{overflow:hidden}.auth-overlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:#0009}.auth-overlay .auth-card{width:min(440px,100%);max-height:calc(100dvh - 32px);overflow:auto;margin:0;box-shadow:0 12px 50px #0009}.auth-pending #library-panel{min-height:260px}
+.lobby-auth .auth-card{margin:18px auto 0;padding:0;background:none;border:0;box-shadow:none}.lobby-auth h2{font-size:16px}.lobby-auth p{font-size:14px;color:var(--muted)}.auth-pending #library-panel{min-height:260px}
 #app{display:grid;grid-template-columns:minmax(0,2fr) minmax(320px,1fr);gap:24px;align-items:start}
 #watch-settings[aria-disabled=true]{opacity:.4}#room-dialog h3{font-size:14px;margin-top:24px}#room-dialog .chips{max-height:220px;overflow-y:auto}
 .screen-column{display:flex;flex-direction:column;gap:24px;min-width:0}#viewing-section{min-width:0}#library-panel{margin:0;min-width:0;position:relative}#room-column{min-width:0}
@@ -298,3 +298,16 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .room-create-actions{display:flex;align-items:center;gap:8px}.room-create-actions[hidden]{display:none}#room-dialog-footer>button{margin-left:auto}
 #room-create-settings{display:grid;place-items:center;width:44px;height:44px}#room-create-settings svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #room-settings-footer{flex:none;padding-top:14px;display:flex;justify-content:flex-start}#room-settings-footer:has(button[hidden]){display:none}
+
+/* The lobby is the initial page surface; an active room replaces it. */
+body.outside-room:not(.immersive) #stage{aspect-ratio:auto;height:auto;min-height:320px;background:var(--card);border-radius:24px;overflow:visible;container-type:normal}
+body.outside-room:not(.immersive) #empty-stage{position:relative;inset:auto;width:100%;max-height:none;padding:36px 24px;color:var(--text)}
+body.outside-room:not(.immersive) #empty-stage h1{font-size:20px;color:var(--text)}
+body.outside-room:not(.immersive) #empty-hint{color:var(--muted)}
+body.outside-room #video{visibility:hidden}
+body.outside-room:not(.immersive) #empty-symbol{display:block;margin-bottom:20px;color:var(--text)}
+body.outside-room:not(.immersive) #stage>.transport{display:none}
+body.outside-room:not(.immersive) #lobby-rooms{max-height:270px}
+body.outside-room:not(.immersive) #lobby-rooms .saved-room{border-color:var(--border)}
+body.outside-room:not(.immersive) #lobby-rooms .hint{color:var(--muted)}
+@media(max-width:700px){body.outside-room:not(.immersive) #stage{border-radius:0;min-height:300px}body.outside-room:not(.immersive) #empty-stage{padding:28px 16px}}

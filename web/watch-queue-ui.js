@@ -1002,7 +1002,7 @@
     let rememberedPosition;
     return {
       rememberPosition() { if (layout.clientWidth) rememberedPosition = {room:getState()?.id,view,left:layout.scrollLeft,top:layout.scrollTop}; },
-      restorePosition() { const saved = rememberedPosition; if (saved?.room === getState()?.id && saved.view === view) requestAnimationFrame(() => { layout.scrollTo({left:saved.left,top:saved.top,behavior:'instant'}); updateNavigation(); }); },
+      restorePosition() { const saved = rememberedPosition; if (layout.clientWidth && saved?.room === getState()?.id && saved.view === view) requestAnimationFrame(() => { if(!layout.clientWidth)return;layout.scrollTo({left:saved.left,top:saved.top,behavior:'instant'}); updateNavigation(); }); },
       render,
       add,
       bulk,

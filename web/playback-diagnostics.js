@@ -16,7 +16,7 @@
     clockReason:['startup','disconnect','discontinuity','server-change','invalid','delay','jitter','outlier','accepted']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
-    'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered',
+    'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered','control-disconnected','control-reconnected',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
     'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','start-prepare','start-timer','hls-anchor']);
@@ -25,7 +25,7 @@
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
     'clockUncertaintyMs','networkRttMs','networkMinRttMs','networkJitterMs','requestRttMs','serverProcessingMs','timelineRevision','sharedTarget','positionErrorMs',
     'frameMediaTime','frameDisplayMonoMs','framePresentationMonoMs','frameCallbackLatenessMs','frameProcessingMs','presentedFrames',
-    'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs']);
+    'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode']);
   const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling']);
   function requestKind(path) {
     const route = String(path).split('?')[0];

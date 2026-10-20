@@ -21,6 +21,7 @@
         socket.onerror=()=>{};
         socket.onmessage=event=>{
           if(socket!==this.socket)return;
+          this.lastReceivedAt=Date.now();
           try {
             const message=JSON.parse(event.data);
             if(message.type==='auth-ok') {
@@ -40,14 +41,14 @@
             this.onMessage(message);
           } catch { socket.close(4002,'Invalid server message'); }
         };
-        socket.onclose=()=>{
+        socket.onclose=event=>{
           if(socket!==this.socket)return;
           this.ready=false;this.connecting=undefined;
           clearTimeout(this.authTimer);clearInterval(this.heartbeat);
           const error=new TypeError('Room connection lost; reconnecting');
           this.authReject?.(error);this.authResolve=this.authReject=undefined;
           for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.cleanup?.();pending.reject(error);}
-          this.pending.clear();this.onClose();
+          this.pending.clear();this.onClose({code:event?.code,reason:event?.reason,clean:event?.wasClean});
           if(!this.stopped){const delay=Math.max(this.resumeAt-Date.now()||0,Math.min(15000,500*2**Math.min(this.attempt++,5)));this.retry=setTimeout(()=>{void this.connect().catch(()=>{});},delay);}
         };
       });
@@ -58,9 +59,18 @@
     }
     clock() {
       if(!this.ready||this.socket?.readyState!==1||this.pending.size>=8)return;
+      // One outstanding sample is enough. Background tabs can defer JavaScript
+      // for much longer than five seconds while native WebSocket pongs continue.
+      if([...this.pending.values()].some(entry=>entry.clock))return;
       const id=++this.sequence,exchange=this.beginClock();
-      const timer=setTimeout(()=>this.socket.close(),5000);
-      this.pending.set(id,{resolve:()=>{},reject:()=>{},timer,exchange});
+      const socket=this.socket,deadline=Date.now()+30000;
+      const timer=setTimeout(()=>{
+        this.pending.delete(id);
+        // A late timer also means receive callbacks may still be queued. Give
+        // a waking tab a fresh exchange rather than closing a healthy socket.
+        if(socket===this.socket&&Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=30000)socket.close(4000,'Server heartbeat timed out');
+      },30000);
+      this.pending.set(id,{resolve:()=>{},reject:()=>{},timer,exchange,clock:true});
       this.socket.send(JSON.stringify({type:'clock',id}));
     }
     /** @param {string} path @param {Object|undefined} data @param {WatchRequestOptions} options */

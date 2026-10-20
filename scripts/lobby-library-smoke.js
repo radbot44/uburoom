@@ -35,10 +35,16 @@ async function main() {
     await browser.viewport(host,1360,1100);
     await until('document.querySelectorAll(".library-home-card").length > 0','Lobby library');
     assert.equal(app.watch.rooms.size,0);
-    assert.equal(await run('!$("options-panel").hidden && $("watch-settings").hidden && !$("room-lobby").hidden'),true);
+    assert.equal(await run('!$("options-panel").hidden && !$("room-lobby").hidden'),true);
     await shot('normal');
     await run('document.querySelector(".library-home-card[data-tab=library]").click()');
     await until('!!document.querySelector("#library [data-play]")','Lobby movie');
+    await run('globalThis.keptMovie=document.querySelector("#library [data-play]");transport.interrupt(1000)');
+    await until('reconnecting','Lobby disconnect detected');
+    assert.equal(await run('document.querySelector("#library [data-play]")===globalThis.keptMovie'),true,'Disconnect keeps library navigation and DOM');
+    await until('transport.ready && !reconnecting','Lobby reconnect');
+    assert.equal(await run('document.querySelector("#library [data-play]")===globalThis.keptMovie'),true,'Reconnect keeps catalog position');
+    assert.equal(await run('$("empty-title").textContent'),'Join or create a room');
     await run('document.querySelector("#library [data-play]").click()');
     await until('$("room-dialog").open','Room chooser');
     assert.equal(app.watch.rooms.size,0);
@@ -83,6 +89,12 @@ async function main() {
     await run('$("create").click()');await shot('phone-chooser');
     assert.equal(await run('$("room-dialog").getBoundingClientRect().width <= innerWidth'),true);
     assert.equal(await run('!$("room-create-form").hidden && $("room-create-visibility").options.length===2'),true,'Creation uses explicit visibility and a single submit');
+    const signedOut=await browser.page(config.publicUrl+'/watch');
+    await browser.until(signedOut,'!document.getElementById("welcome").hidden','Inline sign-in');
+    assert.equal(await browser.evaluate(signedOut,'document.getElementById("empty-stage").contains(document.getElementById("welcome")) && !document.querySelector("main").inert && !document.querySelector("[aria-modal=true]:not(dialog)")'),true,'Sign-in is part of the lobby');
+    await browser.viewport(signedOut,390,844);
+    assert.equal(await browser.evaluate(signedOut,'document.getElementById("welcome").getBoundingClientRect().bottom <= document.getElementById("stage").getBoundingClientRect().bottom'),true,'Phone sign-in fits the lobby');
+    await browser.screenshot(signedOut,path.join(root,'artifacts','lobby-'+name+'-signin.png'));
     console.log(name + ': lobby browse, disabled settings, cancel, private/public creation, Play selection, private hiding, join and responsive layouts passed');
   } finally { await browser?.close(); await app.close(); }
 }
