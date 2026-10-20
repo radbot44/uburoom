@@ -20,8 +20,11 @@ const { accountHttp } = require('./account-http');
 const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
+const { AccessPolicy } = require('./access-policy');
 
 function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {}) {
+  // Browser-only installations do not need a Discord text-channel whitelist.
+  if(config.accessPolicy && !config.channels.length)config.channels=['__web__'];
   let registry;
   try {
   oauthFetch=resilientFetch(oauthFetch,{timeoutMs:10000});
@@ -31,7 +34,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   const vault=config.accountFile||config.unifiedAccounts?credentialVault(config.credentialKeyFile):undefined;
   registry=vault?new Accounts(config.accountFile,vault):undefined;
   const store = deviceStore(registry);
-  const accounts = loginStore(JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId]),vault,registry);
+  // Persist policy identity without leaving an offline verifier of the shared
+  // password in SQLite. Password grants are process-local and reset on restart.
+  const accounts = loginStore(JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId,...(config.accessPolicy?[hash(JSON.stringify({...config.accessPolicy,password:!!config.accessPolicy.password}))]:[])]),vault,registry);
   // Browsers require a finite cookie lifetime; renew it on each account visit.
   // Server logins have no fixed lifetime; Discord renewal/revocation governs them.
   const loginSeconds = 365 * 24 * 60 * 60, renewals = new Map(), cookieRenewedAt = new Map();
@@ -85,7 +90,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     const id = token && /^[a-f0-9]{64}$/.test(token) && hash(token);
     const login = id && logins.get(id);
     if (!login || !validIdentity(login) || login.expires !== null && login.expires <= Date.now()) return;
-    if (!(hub.access?.canWatch?hub.access.canWatch(login.userId):hub.access?.isMember(login.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(login.userId)) return;
+    // Pending identities must remain usable for account linking when admission
+    // requires Plex. Playback admission is enforced separately by watch routes.
+    if (!config.accessPolicy && !(hub.access?.canWatch?hub.access.canWatch(login.userId):hub.access?.isMember(login.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(login.userId)) return;
     if (login.oauth && login.oauth.expires <= Date.now()) {
       if (!renewals.has(id)) {
         const renewal = (async () => {
@@ -136,9 +143,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   const demoFile = path.join(__dirname, '../assets/demo/sync-test.mp4');
   const plex = new Plex(config,plexFetch);
   const plexAuth=registry?new PlexAuth(config,registry,plex,plexFetch):undefined;
+  let entryPolicy;
   if(config.demo&&plexAuth)plexAuth.demo=plexDemo;
   if(registry){
     let rawAccess;
+    entryPolicy = new AccessPolicy(config,registry,plexAuth,()=>rawAccess);
     hub.adminEligible = actor => RoomPolicy.administrator(registry,config,actor.userId,rawAccess);
     hub.refreshAdmin = async actor => {
       const roles = config.roomAdministrators?.discordRoles || [];
@@ -156,22 +165,34 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       hasRole:(id,role)=>{const discord=discordId(id);return !!discord&&rawAccess?.hasRole?.(discord,role)===true;},
       identity:async id=>rawAccess?.identity?rawAccess.identity(id):await rawAccess?.refresh(id)?{id,name:registry.identity('discord',id)?.name||id}:undefined,
       validVoiceChannel:id=>!!rawAccess?.validVoiceChannel(id),options:()=>rawAccess?.options()||{available:false},
-      canWatch:id=>access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
-      refreshWatch:async id=>{if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
+      canWatch:id=>config.accessPolicy ? entryPolicy.fresh(id) : access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
+      refreshWatch:async id=>{if(config.accessPolicy)return entryPolicy.admit(id);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
     };
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
     hub.accountActor=actor=>registry.canonical(actor.userId)?actor:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex');
-      if(!identity||!registry.hasCredential(identity.subject))return plex;
-      const scoped=await plexAuth.forUser(actor.userId);if(!scoped)throw new Error('Connect your Plex account again');return scoped;
+      const fallback=()=>{
+        if(config.plexFallback?.enabled===false)throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
+        return config.plexFallback?.token ? plex.scope(config.plexFallback.token,'configured-fallback') : plex;
+      };
+      if(!identity)return fallback();
+      if(!registry.hasCredential(identity.subject))throw new Error('Connect your Plex account again');
+      try {const scoped=await plexAuth.forUser(actor.userId);if(!scoped)throw new Error('Connect your Plex account again');return scoped;}
+      catch(error){
+        // Only a confirmed lack of server membership may use explicit open-entry
+        // sponsorship. Expiry, network errors and item restrictions never do.
+        if(config.accessPolicy && !config.accessPolicy.requirePlex && error.noServerAccess)return fallback();
+        throw error;
+      }
     };
   }
   const watch = new Watch(hub, plex, fs.existsSync(demoFile) ? { kind: 'demo', title: 'uburoom synchronization test', duration: 60, format: 'file', quality: 'direct', file: demoFile } : undefined, registry);
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
-  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry });
-  async function discordStart(req,res,linkLogin,extension) {
-    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
+  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins });
+  async function discordStart(req,res,linkLogin,extension,ownerOnly=false) {
+    if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly&&!extension)throw new Error('Discord authorization is disabled');
+    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,ownerOnly,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
     const query=new URLSearchParams({client_id:config.clientId,redirect_uri:config.publicUrl+'/auth/callback',response_type:'code',scope:'identify',state});
     res.setHeader('Set-Cookie',cookie('uburoom_oauth',state,300));
     const destination=config.demo&&plexAuth?.demo?config.publicUrl+'/demo-discord?state='+state:authorizeUrl+'?'+query;
@@ -207,7 +228,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
-      const player = route === '/watch' || route === '/activity' || config.diagnostics === true && route === '/__diagnostics/codec';
+      const player = route === '/watch' || route === '/activity' || route === '/__diagnostics/codec';
       if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
@@ -215,11 +236,16 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if(name.endsWith('.js'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:");
         res.writeHead(200,{'Content-Type':type});return res.end(fs.readFileSync(path.join(__dirname,'../web/vendor/subtitles',name)));
       }
-      // Only explicit diagnostics may serve these non-private fixtures. No Plex/session grant.
+      // Synthetic samples only. Production requires current admission and active
+      // Admin mode, including when requested with an Activity bearer identity.
       const testSamples = { 'sample.mp4':'sync-test.mp4', 'h264-baseline.mp4':'h264-baseline.mp4',
         'h264-main.mp4':'h264-main.mp4', 'vp8.webm':'vp8.webm', 'vp9.webm':'vp9.webm', 'av1.webm':'av1.webm', 'hevc.mp4':'hevc.mp4' };
       const sampleName = route.startsWith('/__diagnostics/media/') ? route.slice('/__diagnostics/media/'.length) : '';
-      if (config.diagnostics === true && ['GET', 'HEAD'].includes(req.method) && Object.hasOwn(testSamples, sampleName)) {
+      if (['GET', 'HEAD'].includes(req.method) && Object.hasOwn(testSamples, sampleName)) {
+        if (config.diagnostics !== true) {
+          const auth = await watchRoutes.authorized(req);
+          if (!auth || !hub.isAdmin(auth.actor)) return json(res,403,{error:'Turn on Admin mode to use the codec tester.'});
+        }
         const sampleFile = path.join(__dirname, '../assets/demo', testSamples[sampleName]);
         if (!fs.existsSync(sampleFile)) return json(res, 404, { error:'Test sample is missing' });
         const size = fs.statSync(sampleFile).size, range = req.headers.range;
@@ -287,7 +313,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../shared', route.slice(1))));
       }
       const diagnosticAssets = { '/__diagnostics/codec': ['codec.html', 'text/html'], '/__diagnostics/codec.js': ['codec.js', 'text/javascript'], '/__diagnostics/codec.css': ['codec.css', 'text/css'] };
-      if (req.method === 'GET' && config.diagnostics === true && diagnosticAssets[route]) {
+      if (req.method === 'GET' && diagnosticAssets[route]) {
         const [file, type] = diagnosticAssets[route];
         res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' });
         return res.end(fs.readFileSync(path.join(__dirname, '../diagnostics', file)));
@@ -316,12 +342,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!login || !hub.canAdmin(webActor(login)) || typeof data.enabled !== 'boolean') return json(res,403,{error:'Only an authorized administrator can change Admin mode'});
         hub.setAdminMode(webActor(login),data.enabled); return json(res,200,{adminMode:hub.isAdmin(webActor(login))});
       }
-      if (req.method === 'GET' && route === '/auth/discord') {
+      if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const loginId = url.searchParams.get('extension');
         const loginRequest = loginId ? deviceLogin.get(loginId) : undefined;
         if (loginId && (!loginRequest || url.searchParams.get('redirect_uri') !== loginRequest.redirectUri)) return json(res, 400, { error: 'Invalid or expired login; start from the extension again' });
-        return discordStart(req,res,undefined,loginId);
+        return discordStart(req,res,undefined,loginId,route==='/auth/owner');
       }
       if (req.method === 'GET' && route === '/auth/callback') {
         const state = url.searchParams.get('state'), code = url.searchParams.get('code');
@@ -335,6 +361,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code', code,
             redirect_uri: config.publicUrl + '/auth/callback' }) });
         const identity = await discordFetch('https://discord.com/api/users/@me', { headers: { Authorization: 'Bearer ' + token.access_token } });
+        if(attempt.ownerOnly&&identity.id!==config.ownerId)return json(res,403,{error:'This sign-in is reserved for the configured installation owner'});
         if(linking){
           if((await user(req))!==linking)return json(res,403,{error:'Account sign-in expired during linking'});
           accountRoutes.verifiedLink(req,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
@@ -345,7 +372,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           const returnUrl = request?.redirectUri || FIREFOX_REDIRECT;
           res.writeHead(302, { Location: returnUrl + '#' + new URLSearchParams({ state: request.state, error: 'owner_only' }) }); return res.end();
         }
-        if (!await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
+        if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
         const name = String(identity.username || identity.global_name || 'Discord user').slice(0, 100);
         if (identity.id === config.ownerId) hub.setOwnerName(name);

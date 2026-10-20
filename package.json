@@ -7,12 +7,13 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server/index.js",
-    "dev": "node --env-file-if-exists=.env server/index.js",
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
     "test": "node --test --test-reporter=dot tests/*.test.js",
     "test:full": "node --test tests/*.test.js",
     "test:playback": "node scripts/playback-baseline.js",
-    "demo": "node --env-file-if-exists=.env scripts/watch-demo.js",
+    "demo": "node scripts/watch-demo.js",
+    "config:migrate": "node scripts/migrate-config.js",
     "build:player": "node scripts/build-player-vendor.js && node scripts/build-subtitle-vendor.js"
   },
   "dependencies": {
@@ -21,7 +22,8 @@
     "hls.js": "^1.7.3",
     "jassub": "2.5.21",
     "libbitsub": "1.13.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

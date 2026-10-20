@@ -1,5 +1,11 @@
 'use strict';
 const $ = id => document.getElementById(id), video = $('test-video');
+const embedded = parent !== window && typeof parent.uburoomCodecSample === 'function';
+const sampleFetch = embedded ? (path, options) => parent.uburoomCodecSample(path, options) : fetch;
+if (embedded) {
+  $('back').textContent = 'Close tester';
+  $('back').addEventListener('click',event => {event.preventDefault(); parent.uburoomCloseCodecTester();});
+}
 const samples = [
   { file:'sync-test.mp4', url:'/__diagnostics/media/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:386887 },
   { file:'h264-baseline.mp4', video:'H.264 Constrained Baseline', codec:'avc1.42C01F', videoBitrate:404342 },
@@ -14,6 +20,7 @@ const samples = [
   url:'/__diagnostics/media/' + sample.file, ...sample }));
 let fixture = samples[0], started = performance.now(), loadId = 0, accelerationReported = $('acceleration').value;
 const events = [], savedResults = new Map();
+let objectUrl;
 for (const [index, sample] of samples.entries()) {
   const option = document.createElement('option'); option.value = index; option.textContent = sample.video; $('codec').append(option);
 }
@@ -27,7 +34,7 @@ function report() {
   return {
     capturedAt:new Date().toISOString(),
     environment:{ userAgent:navigator.userAgent, secureContext:isSecureContext,
-      hardwareAccelerationReported:accelerationReported, mediaSource:typeof MediaSource !== 'undefined', webCodecs:typeof VideoDecoder !== 'undefined' },
+      hardwareAccelerationReported:accelerationReported, embedded, discordActivity:embedded && new URL(parent.location.href).searchParams.has('frame_id'), mediaSource:typeof MediaSource !== 'undefined', webCodecs:typeof VideoDecoder !== 'undefined' },
     fixture, fixtureHttp,
     playback:{ currentTime:finite(video.currentTime), duration:finite(video.duration), width:video.videoWidth, height:video.videoHeight,
       paused:video.paused, ended:video.ended, seeking:video.seeking, muted:video.muted, volume:video.volume,
@@ -69,16 +76,23 @@ function saveResult() {
 function loadSample() {
   loadId++; const thisLoad = loadId;
   copied = false; video.pause(); video.removeAttribute('src'); video.load();
+  if (objectUrl) {URL.revokeObjectURL(objectUrl); objectUrl = undefined;}
   if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
   events.length = 0; started = performance.now(); presentedCallbacks = 0; lastMediaError = playAttempt = null;
   fixture = samples[Number($('codec').value)]; fixtureHttp = 'Checking…'; $('observed').value = 'not checked';
   $('sample-description').textContent = `${fixture.file} · ${fixture.video} · 640 × 360 · ${fixture.audio} audio · native video player`;
-  video.src = fixture.url; watchFrames(); $('play-status').textContent = 'Press Play to test ' + fixture.video + '.';
+  if (!embedded) video.src = fixture.url;
+  $('play').disabled = embedded; watchFrames(); $('play-status').textContent = 'Press Play to test ' + fixture.video + '.';
   $('copy-status').textContent = ''; refresh();
-  fetch(fixture.url, {method:'HEAD', signal:AbortSignal.timeout(8000)}).then(response => {
+  sampleFetch(fixture.url, {method:embedded?'GET':'HEAD', signal:AbortSignal.timeout(8000)}).then(async response => {
     if (thisLoad !== loadId) return;
     fixtureHttp = { status:response.status, contentType:response.headers.get('content-type'), contentLength:response.headers.get('content-length'), acceptRanges:response.headers.get('accept-ranges') }; refresh();
-  }).catch(error => { if (thisLoad === loadId) { fixtureHttp = error.name + ': ' + error.message; refresh(); } });
+    if (!response.ok) throw new Error('Test sample unavailable (HTTP ' + response.status + '). Check Admin mode.');
+    if (embedded) {
+      const blob = await response.blob(); if (thisLoad !== loadId) return;
+      objectUrl = URL.createObjectURL(blob); video.src = objectUrl; $('play').disabled = false;
+    }
+  }).catch(error => { if (thisLoad === loadId) { fixtureHttp = error.name + ': ' + error.message; $('play-status').textContent = fixtureHttp; refresh(); } });
 }
 $('reset').addEventListener('click', loadSample);
 $('codec').addEventListener('change', () => { saveResult(); loadSample(); });

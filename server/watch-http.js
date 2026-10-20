@@ -12,10 +12,10 @@ const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
 
-function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry }) {
+function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins }) {
   const identities = new Map(), grants = new Map();
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia });
+  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
@@ -26,10 +26,22 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     login.expires = Date.now() + lifetime; login.viewerId = randomUUID();
     identities.set(token, login); return { token, expiresAt: login.expires };
   }
-  async function login(req) {
+  async function rawLogin(req) {
     const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
     const identity = req.headers.authorization ? token && identities.get(token) : await user(req);
     if (!identity || !validIdentity(identity) || identity.expires != null && identity.expires <= Date.now()) return;
+    return identity;
+  }
+  async function login(req) {
+    const identity = await rawLogin(req);
+    if (!identity) return;
+    if(config.accessPolicy) {
+      if(!config.accessPolicy.publicWeb && !identity.activity)return;
+      if(!entryPolicy.password(req,identity))return;
+      entryPolicy.entered(identity.userId);
+      if(!await entryPolicy.admit(identity.userId))return;
+      return identity;
+    }
     if (!(hub.access?.canWatch?hub.access.canWatch(identity.userId):hub.access?.isMember(identity.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(identity.userId)) return;
     return identity;
   }
@@ -180,6 +192,31 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch });
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
+    if(config.accessPolicy && url.pathname==='/api/watch/entry' && req.method==='POST') {
+      if(!allowedOrigin(req)||!throttle('entry:'+req.socket.remoteAddress,10)){json(res,429,{error:'Entry is unavailable; wait a minute and try again'});return true;}
+      const identity=await rawLogin(req), data=await body(req);
+      if(!config.accessPolicy.publicWeb&&!identity?.activity){json(res,403,{error:'Open uburoom through Discord Activity'});return true;}
+      if(entryPolicy.passwordRequired){
+        const grant=entryPolicy.enter(data.password,identity);
+        if(!grant){json(res,403,{error:'Incorrect server password'});return true;}
+        res.setHeader('Set-Cookie',cookie('uburoom_entry',grant,43200));
+      }
+      if(entryPolicy.anonymous && !identity){
+        const id=randomBytes(32).toString('hex'), accountId=registry.create('Guest'), account=registry.canonical(accountId);
+        logins.set(hash(id),{userId:account.id,accountRevision:account.revision,name:'Guest',csrf:randomBytes(32).toString('hex'),expires:Date.now()+86400000});accounts.save();
+        const existing=res.getHeader('Set-Cookie');
+        res.setHeader('Set-Cookie',[...(existing?[existing]:[]),cookie('uburoom',id,86400)]);
+      }
+      json(res,200,{ok:true});return true;
+    }
+    if(config.accessPolicy && url.pathname==='/api/watch/admission' && req.method==='GET') {
+      const identity=await rawLogin(req);
+      json(res,200,{identity:!!identity,passwordNeeded:!entryPolicy.password(req,identity),
+        activityOnly:!config.accessPolicy.publicWeb&&!identity?.activity,
+        plexRequired:config.accessPolicy.requirePlex,
+        admitted:!!identity&&!!await login(req),csrf:identity?.csrf,
+        pendingIdentity:identity?{name:identity.name,csrf:identity.csrf,account:registry?.summary(identity.userId)}:undefined});return true;
+    }
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
       const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
@@ -195,7 +232,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         const data = await body(req);
         const attempt = url.pathname.endsWith('/claim') ? handoff.claim(data.code, data.proof, nonce) : handoff.browser(data.id, data.proof, nonce);
         if (!attempt || attempt.redeeming || !['claimed','approved'].includes(attempt.state)) { json(res, 410, {error:'Browser sign-in expired or was already used; open a fresh link from the Activity'}); return true; }
-        const alive = async () => (await login({headers:{authorization:attempt.authorization}})) === attempt.source;
+        const alive = async () => (attempt.linkOnly ? await rawLogin({headers:{authorization:attempt.authorization}}) : await login({headers:{authorization:attempt.authorization}})) === attempt.source;
         if (!await alive() || handoff.get(attempt.id) !== attempt) { handoff.remove(attempt); json(res,403,{error:'Activity sign-in is no longer available'}); return true; }
         const existing = await user(req);
         if (url.pathname.endsWith('/claim')) {
@@ -211,7 +248,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           if (!await alive() || !handoff.consume(attempt)) { json(res,410,{error:'Activity sign-in expired or was cancelled'}); return true; }
           if (existing?.userId !== attempt.source.userId) browserLogin(res,attempt.source);
           else res.setHeader('Set-Cookie','uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-          json(res,200,{destination:'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
+          json(res,200,{destination:attempt.connectPlex?'/auth/plex':attempt.linkOnly?'/watch?account=1':'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
@@ -235,8 +272,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         const identity = await profile.json();
         // Never trust guild/channel/user IDs supplied by the iframe. Membership
         // and its current voice channel come from the connected bot's guild.
-        if (!await hub.access?.refresh(identity.id) || !hub.access.validVoiceChannel(hub.access.voiceChannel(identity.id))) { json(res, 403, { error: 'Join a voice channel in the configured Discord server first' }); return true; }
+        if (config.accessPolicy?.discord===false || !await hub.access?.refresh(identity.id) || !hub.access.validVoiceChannel(hub.access.voiceChannel(identity.id))) { json(res, 403, { error: 'Join a voice channel in the configured Discord server first' }); return true; }
         const login = discordIdentity({ userId: identity.id, name: EngineName(identity.global_name || identity.username), activity:true });
+        const previous=await rawLogin(req);
+        if(previous?.activity&&previous.userId===login.userId&&previous.entryAuthorized)login.entryAuthorized=true;
         json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
       if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
@@ -249,7 +288,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         return true;
       }
       if (!['/api/watch/handoff', '/api/watch/handoff/status', '/api/watch/handoff/action'].includes(url.pathname)) { json(res, 404, { error: 'Room controls require an authenticated WebSocket' }); return true; }
-      const auth = await authorized(req, req.method !== 'GET');
+      let auth = await authorized(req, req.method !== 'GET');
+      if(!auth&&config.accessPolicy&&allowedOrigin(req)&&req.headers.authorization){
+        const identity=await rawLogin(req);
+        if(identity?.activity&&entryPolicy.password(req,identity))auth={identity,actor:webActor(identity),pending:true};
+      }
       if (!auth) { json(res, 401, { error: 'Log in with Discord' }); return true; }
       if (url.pathname === '/api/watch/handoff' && req.method === 'POST') {
         if (!auth.identity.activity || !req.headers.authorization || !throttle('handoff-issue:' + auth.actor.userId, 6)) {json(res,403,{error:'Open in Browser requires an authenticated Activity'});return true;}
@@ -257,6 +300,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         if (data.roomId !== undefined && (!UUID.test(data.roomId) || !await watch.canView(room,auth.actor))) {json(res,403,{error:'Room unavailable or private'});return true;}
         const issued = handoff.issue(auth.identity,data.roomId);
         handoff.get(issued.id).authorization = req.headers.authorization;
+        handoff.get(issued.id).linkOnly=auth.pending||config.accessPolicy?.publicWeb===false;
+        handoff.get(issued.id).connectPlex=auth.pending&&config.accessPolicy?.requirePlex;
         json(res,200,{id:issued.id,expires:issued.expires,url:config.publicUrl+'/auth/handoff#'+issued.code});return true;
       }
       if (url.pathname === '/api/watch/handoff/status' && req.method === 'POST') {
@@ -276,6 +321,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   const EngineName = value => require('../shared/engine').senderName(value);
   function sweep() {
+    entryPolicy?.sweep();
     handoff.sweep();
     for (const [token, value] of identities) if (value.expires <= Date.now()) identities.delete(token);
     for (const [token, value] of grants) if (value.expires <= Date.now()) grants.delete(token);

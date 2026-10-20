@@ -21,6 +21,8 @@ Open `https://localhost:6768/watch?demo=host`. Inspect/accept the localhost cert
 
 See [self-hosting](docs/self-hosting.md) for your own server and [development](docs/development.md) for isolated checks.
 
+Server settings live in private `config.yaml`; copy the annotated `config.example.yaml` or run `npm run config:migrate` for an existing `.env`. **Never share your config file:** it contains secrets and API tokens. Use `node server/index.js --config /private/config.yaml` for external/container configuration. Keep persistent data and the original encryption key when replacing an installation.
+
 ## Features and limits
 
 - Shared playback, readiness/late-join synchronization, host succession, public/private rooms and independent remote permissions.

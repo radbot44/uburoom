@@ -12,7 +12,7 @@ The shared player, room timeline, linked accounts, per-user Plex access, command
 
 The main gap is evidence and completeness across real Plex sessions, Discord surfaces, content combinations and devices. A first two-hour real Plex HLS browser baseline is recorded, with one observed automatic unload/recovery and unresolved process memory growth. Passing a fixture or receiving a command acknowledgement does not establish live playback support. See [current verification and known gaps](docs/testing.md); keep detailed results there rather than copying them into this roadmap.
 
-**Next planning priority:** Review configuration in depth and define a proper in-app administration panel with explicit account admission and media authorization (M1-P14). Plex activity and watch-state reporting is a high-priority M1-P4 track alongside that foundation. Preserve Discord sign-in and the Activity's authorized **Open in web app** handoff. These directions are approved for future work; product implementation has not started. The [Plex reporting investigation](docs/plex-reporting-investigation.md) now includes a working activity-only candidate on the tested PMS/Chrome Original, HLS and AV1 paths. HLS also passed natural ending; the earlier AV1 live probe required explicit stop at the final-buffer gap. Commit `3a1100e` (2026-10-20) implements AV1 MediaSource end-of-stream signaling and transient encoder-probe recovery with focused automated tests; real Plex/browser natural-ending verification remains pending. The delivery-association follow-up verified truthful isolated HLS transcode classification with distinct viewer/playback/job IDs. Shared-producer stop behavior and external AV1 telemetry remain unresolved; investigate those boundaries before broad reporting claims. The AV1 end-of-stream fix is implemented but not yet live-verified; other server versions and sponsorship remain unverified. The wider configuration inventory, admission/media policy matrix and admin persistence/recovery contract remain to be completed under [accounts, administration and Plex reporting](docs/accounts-and-access.md).
+**Next planning priority:** Review configuration in depth and define a proper in-app administration panel with explicit account admission and media authorization (M1-P14). Plex activity and watch-state reporting is a high-priority M1-P4 track alongside that foundation. Preserve Discord sign-in and the Activity's authorized **Open in web app** handoff. Configuration and access policies are implemented; the broader admin panel and remaining reporting features are future work. The [Plex reporting investigation](docs/plex-reporting-investigation.md) now includes a working activity-only candidate on the tested PMS/Chrome Original, HLS and AV1 paths. HLS also passed natural ending; the earlier AV1 live probe required explicit stop at the final-buffer gap. Commit `3a1100e` (2026-10-20) implements AV1 MediaSource end-of-stream signaling and transient encoder-probe recovery with focused automated tests; real Plex/browser natural-ending verification remains pending. The delivery-association follow-up verified truthful isolated HLS transcode classification with distinct viewer/playback/job IDs. Shared-producer stop behavior and external AV1 telemetry remain unresolved; investigate those boundaries before broad reporting claims. The AV1 end-of-stream fix is implemented but not yet live-verified; other server versions and sponsorship remain unverified. The wider configuration inventory, admission/media policy matrix and admin persistence/recovery contract remain to be completed under [accounts, administration and Plex reporting](docs/accounts-and-access.md).
 
 ## Architecture to preserve
 
@@ -65,7 +65,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
 | M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 | M1-P13 | Persistent rooms and playback queues | In progress; P13-1 durable core, P13-2 live integration/Admin mode, P13-3 manual queues, P13-4 bulk/generation/shuffle and P13-5 verified cancellable autoplay implemented | M1-P11 SQLite/WebSocket foundation, M1-P7 lobby/library UI, shared timeline and recorded lifecycle/role decisions |
-| M1-P14 | Configuration, administration and account authorization | Approved for future work; next planning priority, implementation not started | Existing accounts/SQLite, M1-P11 transport/auth foundation and M1-P13 durable roles; coordinates with M1-P4 reporting and M2-P3 guests |
+| M1-P14 | Configuration, administration and account authorization | YAML, entry/fallback/Activity/single-room and conversion policies implemented; admin UI, broader identity security and live verification pending | Existing accounts/SQLite, M1-P11 transport/auth foundation and M1-P13 durable roles; coordinates with M1-P4 reporting and M2-P3 guests |
 
 ### Verification routing for M1
 
@@ -340,7 +340,7 @@ Details: [implemented core, recorded owner decisions, remaining design and incre
 
 ### M1-P14 — Configuration, administration and account authorization
 
-**Status:** Approved for future work; implementation not started. Review configuration comprehensively and design a proper in-app administration panel before adding isolated provider switches or guest exceptions. Keep the existing `.env` configuration authority until the storage/editing contract is explicitly settled; do not silently add a competing configuration store.
+**Status:** Configuration and policy implementation includes private YAML, validated provider/password/Plex-server admission, explicit fallback sharing/dedicated token, Activity-only viewing with account-linking handoff, single-room fixed ownership/reset, media-tool PATH discovery, Plex-policy-aware conversion switches, explicit local encoder/output selection and job limits. YAML remains the sole configuration authority. Browser/fixture coverage and remaining live checks are recorded in testing.md. The in-app administration panel, broader account-security work and guest passes remain planned; review the storage/editing contract before adding mutable settings.
 
 **Outcome:** Operators can understand and deliberately control who signs in, enters rooms, receives media and administers the installation, with consistent behavior in the web app, Discord Activity and bot. Users retain one stable account and a secure, understandable way to manage connected identities.
 
@@ -438,7 +438,7 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 **Goal:** Provide single-command validation for self-hosters to verify their environment, permissions, and network integrations before startup.
 
 - Add a CLI diagnostic flag (`node server/index.js --doctor` or `npm run check`).
-- Automatically verify `.env` variable syntax, credential key file location and restrictive permissions, Plex server connectivity and token validity, Discord bot gateway connection and application guild settings, TLS certificate/key pair validity, and local FFmpeg/FFprobe availability.
+- Automatically verify `config.yaml` settings, credential key file location and restrictive permissions, Plex server connectivity and token validity, Discord bot gateway connection and application guild settings, TLS certificate/key pair validity, and local FFmpeg/FFprobe availability.
 - Provide actionable, human-readable troubleshooting steps when a verification check fails.
 
 ### M2-P8 — Official containerization (Docker & Docker Compose)
@@ -474,6 +474,8 @@ Chromium Manifest V3 extension support is implemented and verified. `uburoom-rem
 - Re-examine the remote control interaction model, touch gestures, volume/scrubbing interactions and consent presentation.
 - Re-integrate the remote control surface into the updated room architecture with clean entry points.
 - Verify end-to-end control latency and consent lifecycle against YouTube TV and web player targets.
+
+Admin-mode access to the synthetic codec tester is available in Other, including an embedded Activity path; the owner will rerun the acceleration-off compatibility matrix. See [verification evidence](docs/testing.md#2026-10-20---admin-codec-tester-access-m1-p2p3).
 
 ## Future direction and decisions still open
 

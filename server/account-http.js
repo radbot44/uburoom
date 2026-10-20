@@ -45,7 +45,8 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         const id=cookies(req).uburoom_auth_error,record=errors.get(id);errors.delete(id);json(res,200,{error:record&&record.expires>Date.now()?record.message:'Sign-in expired. Start again from uburoom.'});return true;
       }
       if(req.method==='GET'&&route==='/auth/plex'){
-        const destination=await startPlex(req,res);res.writeHead(302,{Location:destination});res.end();return true;
+        if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');
+        const destination=await startPlex(req,res,await user(req));res.writeHead(302,{Location:destination});res.end();return true;
       }
       if(req.method==='GET'&&route==='/auth/plex/demo'){
         const state=url.searchParams.get('state'),attempt=attempts.get(state);
@@ -73,7 +74,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       const login=req.method==='GET'?await user(req):await protectedPost(req);
       if(!login){json(res,401,{error:'Sign in to manage your account'});return true;}
       if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),admin:hub.isOwner(webActor(login))&&hub.isAdmin(webActor(login))});return true;}
-      if(req.method==='POST'&&route==='/api/account/plex/connect'){json(res,200,{url:await startPlex(req,res,login)});return true;}
+      if(req.method==='POST'&&route==='/api/account/plex/connect'){if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');json(res,200,{url:await startPlex(req,res,login)});return true;}
       if(req.method==='POST'&&route==='/api/account/discord/connect'){await discordStart(req,res,login);return true;}
       const remove=/^\/api\/account\/(discord|plex)\/remove$/.exec(route);
       if(req.method==='POST'&&remove){

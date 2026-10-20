@@ -14,8 +14,9 @@ async function main() {
   const config = { cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')), key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
     publicUrl: 'https://localhost:6768', ownerId: 'demo-host', guildId: 'demo-guild', channels: ['demo-commands'], demo: true, diagnostics: true };
   if (process.argv.includes('--plex')) {
-    config.plexUrl = process.argv.find(x => x.startsWith('--plex-url='))?.slice(11) || process.env.PLEX_URL;
-    config.plexToken = process.env.PLEX_TOKEN;
+    const provider = require('../server/config').loadConfig();
+    config.plexUrl = process.argv.find(x => x.startsWith('--plex-url='))?.slice(11) || provider.plexUrl;
+    config.plexToken = provider.plexToken;
   }
   const accountProvider=process.argv.includes('--accounts')?require('./account-fixture').accountFixture():undefined;
   if(accountProvider)Object.assign(config,{unifiedAccounts:true,ownerId:accountProvider.subjects.host,demoSubjects:accountProvider.subjects,clientId:'100000000000000010',clientSecret:'fixture-secret',plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'});

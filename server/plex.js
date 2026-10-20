@@ -8,6 +8,7 @@ const Sources = require('./plex-source');
 const {HLSPool}=require('./hls-pool');
 const SubtitleResources=require('./subtitle-resources');
 const { resilientFetch } = require('./resilience');
+const { ConversionPolicy } = require('./transcoding-policy');
 
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
@@ -18,6 +19,8 @@ class Plex {
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
     this.hlsPool=new HLSPool(media=>(media.plexContext||this).stop(media));
+    this.conversionPolicy=new ConversionPolicy(config.transcoding,this);
+    this.av1.conversionPolicy=this.conversionPolicy;
     if (config.plexUrl) {
       this.base = new URL(config.plexUrl);
       if (!['http:', 'https:'].includes(this.base.protocol) || this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/') throw new Error('PLEX_URL must be an HTTP(S) origin');
@@ -27,7 +30,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
@@ -44,7 +47,7 @@ class Plex {
     this.allowedItems.set(key,Date.now()+3000);if(this.allowedItems.size>200)this.allowedItems.delete(this.allowedItems.keys().next().value);return true;
   }
   url(resource) {
-    if (!this.configured) throw new Error('Configure PLEX_URL and PLEX_TOKEN in the server .env');
+    if (!this.configured) throw new Error('Configure plex.url and plex.token in private config.yaml; never share this file');
     const url = new URL(resource, this.base);
     if (url.origin !== this.base.origin || url.username || url.password) throw new Error('Invalid Plex resource');
     url.searchParams.delete('X-Plex-Token'); return url;
@@ -306,10 +309,12 @@ class Plex {
       media.compatible=compatible;
       media.hlsContext=shared.media.plexContext;
       if(shared.lease)media.hlsLease=shared.lease;
+      else media.releaseConversion=shared.media.releaseConversion;
       return media;
     }
     if (choices.sourceOnly) { media.format='file'; media.start=media.sourceStart; }
     else if (fallback === 'av1') {
+      try{await this.conversionPolicy.video('uburoom');}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
       if (burn) throw new PlaybackError('These subtitles require Plex video transcoding. This AV1 fallback cannot preserve them; try a browser that can play the Plex stream.');
       const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey };
       media.format = 'av1'; media.videoCodec = 'av1'; media.audioCodec = 'opus'; media.compatible = true;
@@ -318,6 +323,12 @@ class Plex {
     else if (quality === 'direct' && !compatible && !burn && media.tracks.audio.length<=1) { media.format = 'file'; media.start = media.sourceStart; }
     else {
       const prepare = async () => {
+      let copyOnly=false;
+      try{
+        try{await this.conversionPolicy.video('plex');}catch(error){if(error.videoDisabled)copyOnly=true;else throw error;}
+        media.releaseConversion=this.conversionPolicy.acquire();
+      }
+      catch(error){throw new PlaybackError(error.message);}
       if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
       const restoreAudio = await this.selectAudioForTranscode(media,choices);
       let restoreSubtitle;
@@ -325,7 +336,7 @@ class Plex {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
-        protocol: 'hls', directPlay: '0', directStream: '0', fastSeek: '1', hasMDE: '1',
+        protocol: 'hls', directPlay: '0', directStream: copyOnly?'1':'0', fastSeek: '1', hasMDE: '1',
         offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
         'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
         maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(QUALITIES.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
@@ -338,6 +349,10 @@ class Plex {
         const q = QUALITIES.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
       }
       const decision = await this.json('/video/:/transcode/universal/decision?' + params);
+      if(copyOnly && (burn || !decision.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream?.some(stream=>Number(stream.streamType)===1 && stream.decision==='copy') ||
+        decision.Metadata.some(item=>item.Media?.some(output=>output.Part?.some(part=>part.Stream?.some(stream=>Number(stream.streamType)===1&&stream.decision!=='copy')))))) {
+        throw new PlaybackError('This media needs video transcoding, which Plex has disabled. Try Original playback or another compatible player.');
+      }
       const preset=quality!=='direct' ? QUALITIES.find(q=>q.id===qualityId(quality)) : undefined;
       const ceiling={bitrate:Number(params.get('maxVideoBitrate')),width:preset?.width,height:preset?.height};
       const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling});
@@ -434,6 +449,7 @@ class Plex {
     if(media?.hlsLease){await media.hlsLease.release();return;}
     if (media?.av1Lease) this.av1.release(media.av1Lease);
     if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
+    media?.releaseConversion?.();if(media)media.releaseConversion=undefined;
   }
   async ping(media) {
     if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});

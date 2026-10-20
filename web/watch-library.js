@@ -1,7 +1,7 @@
 /* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 (function (global) {
   'use strict';
-  function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue }) {
+  function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, isAdmin = () => false, openCodecTester }) {
     const doc = host.ownerDocument;
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
@@ -400,9 +400,15 @@
         const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'libraryCards','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
         b.append(node('span',null,title,'library-home-title')); b.onclick = () => void chooseLibrary(section.id,tab);
       }
-      if (testVideo) {
+      if (testVideo || isAdmin()) {
         const other = node('article',landing,undefined,'library-home-card library-other'); node('h3',other,'Other');
+        if (testVideo) {
         const b = button(other,'Play synchronization video','play'); b.dataset.action = 'play'; b.dataset.play = 'demo'; b.append(node('span',null,'Synchronization video')); b.onclick = () => void play(demoItem);
+        }
+        if (isAdmin() && openCodecTester) {
+          const b = button(other,'Open codec tester','settings'); b.id = 'library-codec-test';
+          b.append(node('span',null,'Codec tester')); b.onclick = openCodecTester;
+        }
       }
     }
     function renderResults() {
@@ -520,7 +526,7 @@
       }
       await start();
     }
-    return {setRoom,setBusy,openItem};
+    return {setRoom,setBusy,openItem,refreshAdmin:()=>{if(screen?.kind==='home')renderLanding();}};
   }
   global.uburoomLibrary = {mount};
 })(globalThis);

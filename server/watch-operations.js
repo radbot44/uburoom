@@ -39,7 +39,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
       }
       if (write && url.pathname === '/api/watch/admin-mode') {
         if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}
@@ -77,9 +77,16 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.eligible(auth.actor,current);
         return result(200,watch.roomState.list(auth.actor,{offset:Number(url.searchParams.get('offset') || 0)}));
       }
-      if (url.pathname === '/api/watch/rooms') return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
+      if (url.pathname === '/api/watch/rooms') {
+        if(config.singleRoom){
+          if(write)return result(403,{error:'Room creation is disabled in single-room mode'});
+          await watch.roomState.ensureSingle(auth.actor,current);
+        }
+        return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
+      }
       const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
+      if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
         if(data.viewerId!==undefined&&!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
         return opened(await watch.roomState.reopen(match[1],auth.actor,current));

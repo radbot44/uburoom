@@ -172,6 +172,7 @@ class Hub {
       catch { return { status: 'forbidden', message: 'No controllable room.' }; }
     }
     if (input.roomId && !UUID.test(input.roomId)) return { status: 'forbidden', message: 'No controllable room.' };
+    if(this.config.singleRoom&&input.roomId&&!this.rooms.has(input.roomId))return {status:'forbidden',message:'Only the configured shared room is available.'};
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {

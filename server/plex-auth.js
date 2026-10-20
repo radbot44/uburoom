@@ -31,7 +31,9 @@ class PlexAuth {
     const profile=await this.request('/user',{token:credential.token,clientId:credential.clientId});
     if(!/^\d{1,20}$/.test(String(profile.id)))throw new Error('Plex account identity unavailable');
     const name=String(profile.username||profile.friendlyName||'Plex user').slice(0,100);
-    await this.validate(credential);return {subject:String(profile.id),name,credential};
+    try {await this.validate(credential);}
+    catch(error){if(!(this.config.accessPolicy && !this.config.accessPolicy.requirePlex && this.config.plexFallback?.enabled && error.noServerAccess))throw error;}
+    return {subject:String(profile.id),name,credential};
   }
   async machine(){
     const pinned=this.config.plexMachineIdentifier||this.accounts.meta('plexMachineIdentifier');
@@ -52,7 +54,7 @@ class PlexAuth {
     if(expectedSubject){const profile=await this.request('/user',{token:credential.token,clientId:credential.clientId});if(String(profile.id)!==expectedSubject)throw new PlexAccessError('Plex credential identity mismatch',true);}
     const machine=await this.machine(),resources=await this.request('/resources?includeHttps=1&includeRelay=1',{token:credential.token,clientId:credential.clientId});
     const resource=Array.isArray(resources)&&resources.find(r=>r.clientIdentifier===machine&&String(r.provides).split(',').includes('server'));
-    if(!resource||typeof resource.accessToken!=='string'||!resource.accessToken)throw new PlexAccessError('This Plex account does not have access to this server',true);
+    if(!resource||typeof resource.accessToken!=='string'||!resource.accessToken)throw Object.assign(new PlexAccessError('This Plex account does not have access to this server',true),{noServerAccess:true});
     credential.serverToken=resource.accessToken;
     const scoped=this.plex.scope(resource.accessToken,credential.clientId);
     let sections;try{sections=await scoped.json('/library/sections');}catch(error){const denied=[401,403,498].includes(error.status);throw new PlexAccessError(error.status?`Plex server library access check failed (HTTP ${error.status}); ${denied?'the server rejected this account token. Sign in or reconnect Plex again; check that this account has server access':'try again or check the Plex server'}`:'Plex server library access check could not reach the configured server; check PLEX_URL and connectivity',denied);}

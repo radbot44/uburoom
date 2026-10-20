@@ -110,4 +110,4 @@ class Accounts {
   flush(){return this.persistence.flush();}
   close(){this.credentialCache.clear();return this.persistence.close();}
 }
-module.exports={Accounts,credentialVault};
+module.exports={Accounts,credentialVault,privateFile};

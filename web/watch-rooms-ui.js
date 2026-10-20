@@ -170,6 +170,10 @@
       }
       $('room-transfer-target').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
       $('room-transfer').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
+      $('room-transfer').closest('.room-actions').hidden=!!value.singleRoom;
+      const transferLabel=dialog.querySelector('label[for="room-transfer-target"]');
+      transferLabel.hidden=!!value.singleRoom;
+      transferLabel.previousElementSibling.hidden=!!value.singleRoom;
       $('room-permission-preset').disabled = busy || !value.capabilities.managePermissions;
       const preset = presetName(value.permissions);
       $('room-permission-preset').value = preset;
@@ -178,7 +182,7 @@
         button.disabled = busy || !value.capabilities.managePermissions;
       }
       $('room-permission-preset').querySelector('[value=custom]').hidden = false;
-      $('room-transfer-empty').hidden = !!value.hosts.length;
+      $('room-transfer-empty').hidden = !!value.singleRoom||!!value.hosts.length;
       $('room-transfer-target').hidden = true;
       if (transferGroup) transferGroup.hidden = $('room-transfer').hidden = !value.hosts.length;
       $('room-playback-controls').hidden = false;
@@ -213,8 +217,11 @@
         }
       }
       $('room-settings-close-live').hidden = !value.hasLiveRoom;
+      if(value.singleRoom)$('room-settings-close-live').hidden=true;
+      $('room-settings-close-live').previousElementSibling.textContent=value.singleRoom?'Reset clears playback, the queue and room history, and restores configured room defaults. The shared room and its fixed leader remain.':'Ends live viewing and saves playback progress.';
       $('room-settings-close-live').disabled = busy || !value.capabilities.closeRoom;
       $('room-settings-delete').disabled = busy || !value.capabilities.deleteRoom;
+      $('room-settings-delete').textContent=value.singleRoom?'Reset room':'Delete room';
       $('room-clear-video').hidden = value.hasLiveRoom || !value.hasBookmark;
       $('room-clear-video').disabled = busy || !value.capabilities.chooseMedia;
     }
@@ -357,7 +364,10 @@
       } catch (error) { setSettingsStatus(error.message); }
       finally { busy = false; if (dialog.open) { const notice = $('room-settings-status').textContent; renderSettings(); $('room-settings-status').textContent = notice; } }
     });
-    $('room-settings-delete').addEventListener('click',async () => { if (await confirm('Permanently delete this room? This cannot be undone.')) await edit({action:'delete'}); });
+    $('room-settings-delete').addEventListener('click',async () => {
+      const single=!!details?.singleRoom;
+      if(await confirm(single?'Reset this room? Playback, queue and room history will be cleared and permissions reset to server defaults. Accounts and fixed leadership are preserved.':'Permanently delete this room? This cannot be undone.'))await edit({action:single?'reset':'delete'});
+    });
     $('room-clear-video').addEventListener('click',async () => { if (await confirm('Clear this saved video and its position? The room and hosts will be kept.')) await edit({action:'bookmark.clear'}); });
     $('room-settings-close-live').addEventListener('click',async () => {
       if (!details || busy || !await confirm('Close this room for everyone and save progress? Viewers will be returned to the lobby.')) return;

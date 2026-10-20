@@ -15,15 +15,17 @@ async function diagnosticRun(binary, args, signal, timeout = 15000, maxOutput = 
   catch (error) { throw new Error(details || error.message); }
 }
 async function main() {
-  const ffmpeg = process.argv.find(a => a.startsWith('--ffmpeg='))?.slice(9) || process.env.FFMPEG_PATH;
-  if (!ffmpeg) throw new Error('Supply the existing the server FFmpeg path with --ffmpeg=...');
+  const ffmpeg = process.argv.find(a => a.startsWith('--ffmpeg='))?.slice(9) || require('../server/media-tools').findOnPath('ffmpeg');
+  if (!ffmpeg) throw new Error('Install FFmpeg on the server PATH or supply its path with --ffmpeg=...');
+  const encoder=process.argv.find(arg=>arg.startsWith('--encoder='))?.slice(10)||'hardware';
+  if(!['hardware','software'].includes(encoder))throw new Error('Choose --encoder=hardware or --encoder=software');
   const version = await diagnosticRun(ffmpeg, ['-version']);
   console.log(version.toString().split(/\r?\n/)[0]);
-  console.log('Testing the exact uburoom av1_qsv settings with synthetic video/audio.');
-  const bytes = await probeEncoder(ffmpeg, undefined, diagnosticRun);
-  const out = path.resolve(__dirname, '../artifacts/av1-qsv-probe.webm');
+  console.log('Testing uburoom '+(encoder==='hardware'?'av1_qsv':'libsvtav1')+' settings with synthetic video/audio.');
+  const bytes = await probeEncoder(ffmpeg, undefined, diagnosticRun,encoder);
+  const out = path.resolve(__dirname, '../artifacts/av1-'+(encoder==='hardware'?'qsv':'software')+'-probe.webm');
   fs.mkdirSync(path.dirname(out), {recursive:true}); fs.writeFileSync(out, bytes);
-  console.log('PASS: Intel av1_qsv + Opus encoded synthetic WebM on this machine.');
+  console.log('PASS: '+(encoder==='hardware'?'Intel av1_qsv':'libsvtav1')+' + Opus encoded synthetic WebM on this machine.');
   console.log('Probe output: ' + out);
   console.log('This does not verify Plex access, HDR tone mapping, live Discord streaming, or high-resolution performance.');
 }

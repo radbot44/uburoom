@@ -128,7 +128,7 @@ test('AV1 room outputs share across principals and each new chunk uses its reque
 });
 
 test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disconnected work', async () => {
-  assert.throws(() => new AV1({},{}).acquire({id:'1'},'direct'), /FFMPEG_PATH/);
+  assert.throws(() => new AV1({},{}).acquire({id:'1'},'direct'), /tools.ffmpeg/);
   let calls=0;
   const manager = new AV1({}, {ffmpegPath:'fixture'}, async () => { calls++; throw new PlaybackError('Hardware unavailable'); });
   const lease = manager.acquire({id:'1',duration:60},'720p4'), signal = new AbortController().signal;

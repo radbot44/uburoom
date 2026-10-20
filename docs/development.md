@@ -2,6 +2,8 @@
 
 Use a local-disk checkout and Node 22.13.0+. Install from the committed lockfile; ordinary development needs no frontend build.
 
+Configuration-policy regression: `node --test tests/installation-policy.test.js`. Browser checks: `node scripts/installation-policy-smoke.js --browsers=chrome,firefox` for password, Plex-required, anonymous single-room/fixed-owner/reset UI and Activity-only entry; `node scripts/account-ui-smoke.js --browsers=chrome,firefox` for existing account flows. Both use disposable profiles and synthetic providers, with output under ignored `artifacts/`. They do not load private YAML, call real accounts or certify the live Discord SDK/proxy. For explicitly authorized server encoder checks, `node scripts/av1-probe.js --encoder=hardware` selects QSV or `--encoder=software` selects libsvtav1; an explicit `--ffmpeg=<path>` overrides PATH discovery. These probes use synthetic media and do not certify playback/load at other resolutions.
+
 Chrome and Firefox are equal required web-client test targets. Run relevant browser checks in both. The current remote extension is Firefox-only; Chromium extension support is deferred to M2-P10.
 
 The independent uburoom-remote repository owns the extension source, configuration, packaging and ten Node tests without a runtime dependency on this checkout. uburoom owns `shared/` command modules and `web/remote-ui.js`; there is no local extension directory. For cross-repository checks, pass explicit artifact and fixture paths; the runner starts a disposable local TLS fixture without loading `.env` or restarting an installation:
@@ -24,7 +26,7 @@ node scripts/watch-demo.js --accounts
 
 Generate certificates only on a fresh checkout. The script refuses to overwrite them and installs no trust root. Certificates are required for a passing full suite: without them, 18 TLS checks skip and three additional TLS checks fail while reading the missing certificate. Inspect the summary and complete setup before treating a run as verified.
 
-Keep production environment variables/configuration, databases, keys and certificates out of this checkout. Start/dev/demo npm scripts load `.env` if present. The explicit fixture-demo command does not load an environment file but still inherits process environment; use a clean shell without production Plex/Discord credentials.
+Keep production configuration, databases, keys and certificates out of this checkout. Start/dev load private `config.yaml` through `server/config.js`; use `--config <path>` for an external file. `.env` and application environment overrides are no longer loaded. Synthetic demos and smoke tests do not load YAML or inherited provider credentials. Only an explicit real-Plex path (`node scripts/watch-demo.js --plex`, or `watch-smoke.js --plex`) reads YAML for provider settings; `--accounts` uses simulated providers. Keep `DEMO_PORT` and browser-binary environment variables for disposable tooling only. Never share private YAML or attach it to diagnostics.
 
 For the watch layout modes, run `node scripts/watch-layout-smoke.js`. It runs Chrome and Firefox sequentially with disposable profiles, isolated identities and synthetic library/media, using the development certificates without loading `.env`. Screenshots go into a fresh `artifacts/watch-layout-*` directory. It checks normal/sidebar, theater/stacked and phone layouts, real browser fullscreen with its drawer, restoration of both page layouts, decoded playback/pause/resume across transitions and simulated Activity/PIP layout restrictions. It does not authenticate with real Discord or Plex. `--before` captures the existing layouts without enforcing the new mode contract.
 
@@ -45,7 +47,7 @@ Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create
 
 ## Isolated playback baseline
 
-The codec diagnostic UI lives in `diagnostics/`. Normal servers return 404 for its page, scripts and sample routes, including the retired `/watch/test`; the library has no diagnostic entry or embedded player. Start an isolated local server explicitly:
+The codec diagnostic UI lives in `diagnostics/`. Turn on Admin mode and choose **Media > Libraries home > Other > Codec tester** to open it inside the app, including Discord Activity. Synthetic media requests require current admission and active Admin mode; the non-private HTML/JS/CSS shell is public. Closing the dialog unloads its player. No account tokens enter the exported report. Start an isolated local server explicitly:
 
 ```powershell
 node scripts/codec-diagnostics.js

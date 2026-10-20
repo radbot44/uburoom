@@ -4,7 +4,7 @@ uburoom's original source is **GPL-3.0-only**, GNU General Public License versio
 
 ## Dependency inventory
 
-The version 0.5.3 lockfile contains 70 dependency entries, including optional platform packages. In addition to MIT, Apache-2.0, Unlicense and 0BSD declarations, JASSUB declares the native/font component terms listed below. These declarations are an inventory, not a substitute for the upstream notices or a completed provenance review.
+The version 0.5.3 lockfile contains 71 dependency entries, including optional platform packages. In addition to MIT, Apache-2.0, Unlicense and 0BSD declarations, JASSUB declares the native/font component terms listed below. These declarations are an inventory, not a substitute for the upstream notices or a completed provenance review.
 
 | Direct dependency | Locked version | Declared license | Distribution/use |
 | --- | --- | --- | --- |
@@ -14,6 +14,7 @@ The version 0.5.3 lockfile contains 70 dependency entries, including optional pl
 | jassub | 2.5.21 | LGPL-2.1-or-later AND (FTL OR GPL-2.0-or-later) AND MIT AND MIT-Modern-Variant AND ISC AND NTP AND Zlib AND BSL-1.0 | Browser ASS/SSA renderer, worker and WASM |
 | libbitsub | 1.13.0 | MIT | Browser PGS/VobSub renderer and WASM |
 | ws | 8.22.0 | MIT | Installed server/test dependency |
+| yaml | 2.9.1 | ISC | Installed server configuration parser; supports YAML without a custom parser |
 | esbuild | 0.28.2 | MIT | Development bundler |
 
 The SDK's published modules also embed eventemitter3, zod, big-integer, uuid, decimal.js-light, lodash.transform and tslib below their own `output/lib` directory. These are identified from actual bundle inputs, even though the outer package path is the SDK. Published embedded versions are not consistently specified: notice headings distinguish the embedded copy from the locked package whose upstream license text is reproduced.

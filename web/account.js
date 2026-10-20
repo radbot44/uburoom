@@ -32,7 +32,7 @@ async function showAccount(){
       const name=identity&&identity.name!==identity.subject?identity.name:'';
       $(provider+'-identity').textContent=identity?(connected?(name?'Connected as '+name:'Connected'):'Sign-in needed'+(name?' · '+name:'')):'Not connected';
       const button=$('connect-'+provider);button.textContent='Connect '+label;button.hidden=!!identity;
-      button.disabled=provider==='plex'&&!config.plexConfigured;
+      button.disabled=provider==='plex'&&!config.plexConfigured||config.access?.[provider]===false;
       if(button.disabled)$(provider+'-identity').textContent='Unavailable on this server'+(name?' · '+name:'');
       const remove=$('remove-'+provider);remove.hidden=!identity;
       remove.disabled=!activity&&!value.account.identities.some(i=>i.provider!==provider&&i.authenticated&&(i.provider!=='plex'||i.credentialStored));

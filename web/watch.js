@@ -7,7 +7,7 @@ let reconnecting=false;
 let disconnectGraceTimer, disconnectExtended = false;
 const DISCONNECT_GRACE_MS = 8000;
 let switchingRoom=false, knownRooms=[];
-const pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
+let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
 let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = false, sdk;
@@ -166,8 +166,23 @@ const library = uburoomLibrary.mount($('library-content'), {
   },
   addBulkToQueue: item => queueUI.bulk(item),
   autoQueue: source => queueUI.openAuto(source),
+  isAdmin:() => !!me?.adminMode,
+  openCodecTester:() => {
+    if (!me?.adminMode) return;
+    $('codec-test-frame').src = '/__diagnostics/codec';
+    $('codec-test-dialog').showModal();
+  },
   close:returnToVideo, getPlayer:() => state
 });
+// The nested same-origin tester uses current Activity authorization without
+// copying its bearer token into a URL, iframe or exported diagnostics.
+globalThis.uburoomCodecSample = async (path, options = {}) => {
+  if (!me?.adminMode || !/^\/__diagnostics\/media\/[a-z0-9.-]+$/.test(path)) throw new Error('Turn on Admin mode to use the codec tester.');
+  return fetch(path,{...options,headers:token?{Authorization:'Bearer '+token}:{}});
+};
+globalThis.uburoomCloseCodecTester = () => $('codec-test-dialog').close();
+$('codec-test-close').onclick = globalThis.uburoomCloseCodecTester;
+$('codec-test-dialog').addEventListener('close',() => {$('codec-test-frame').src = 'about:blank';});
 function fail(message) {
   const changed = $('error').textContent !== message;
   $('error').textContent = message;
@@ -377,9 +392,11 @@ function renderAccount() {
   $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
   $('admin-mode').hidden = !(me.adminEligible ?? me.owner); $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
-  $('open-browser').hidden = !activity;
+  $('open-browser').hidden = !activity||config.access?.publicWeb===false;
   if(typeof updateAccountButton==='function')updateAccountButton();
   roomUI.render();
+  library.refreshAdmin();
+  if (!me.adminMode && $('codec-test-dialog').open) $('codec-test-dialog').close();
 }
 function stopBrowserHandoff(cancel = false) {
   clearTimeout(browserHandoffTimer);
@@ -780,7 +797,9 @@ function renderVisibility() {
   $('refresh').hidden = true;
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('switch-room').textContent = state ? 'Switch room' : 'Choose room';
-  $('create').hidden = !!state;
+  $('switch-room').hidden=!!config?.singleRoom;
+  $('create').hidden = !!state||!!config?.singleRoom;
+  if(config?.singleRoom)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
   if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
   if ($('remote-consent-text')) $('remote-consent-text').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
   if (state) {
@@ -1003,7 +1022,7 @@ function applyState(next) {
   $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
   $('empty-title').textContent = 'Choose something to watch…'; $('empty-hint').textContent = '...or he\'ll be watching you.';
   $('empty-browse').hidden = !isIdle || !next.canBrowse;
-  $('close-room').hidden = false;
+  $('close-room').hidden = !!config?.singleRoom;
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
   const choices = next.qualities || uburoom.QUALITIES;
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
@@ -1092,13 +1111,19 @@ function applyRooms(rooms) {
   if (!reconnecting && !switchingRoom && !rooms.some(room => room.id === selected && !room.locked)) {
     if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
   }
-  $('status').textContent = !selected && rooms.length ? 'Choose an active room or create your own.' : '';
+  $('status').textContent = !config?.singleRoom&&!selected && rooms.length ? 'Choose an active room or create your own.' : '';
   $('create').textContent = 'New room';
   $('create').hidden = !!selected;
+  if(config?.singleRoom){
+    for(const id of ['create','lobby-create','lobby-reopen','room-chooser-new'])if($(id))$(id).hidden=true;
+    $('rooms').hidden=true;
+    if(!selected&&transport?.ready&&rooms[0]&&!rooms[0].locked&&!switchingRoom)void selectRoom(rooms[0].id).catch(error=>fail(error.message));
+  }
   if (!selected) { $('viewers').textContent = ''; $('close-room').hidden = true; $('empty-browse').hidden = true;
     $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.'; }
   placeRoomBar();
   renderBrowsing(); renderVisibility();
+  if(config?.singleRoom)$('close-room').hidden=true;
 }
 function renderBrowsing() {
   browseRoom = !transport?.ready && !reconnecting ? undefined : !selected && me ? 'lobby' : state?.canBrowse ? state.id : undefined;
@@ -1374,15 +1399,38 @@ async function start() {
   await syncReady;
   config = pageBootstrap?.config||await api('/api/watch/config');
   if (config.watchVersion !== 18) throw new Error('The player and server versions differ. Reload after the server update.');
-  $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured;
+  $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
+  const discordButton=$('welcome').querySelector('.discord-button');
+  discordButton.hidden=config.access?.discord===false;
   if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
     if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});
     else acceptIdentity(await api('/api/watch/demo-login', { persona:params.get('demo'), activity }));
-  } else if (params.has('frame_id')) {
+  } else if (params.has('frame_id') && !token) {
     if (!config.clientId) throw new Error('Configure Discord OAuth on the server first');
     sdk = new uburoomDiscord.DiscordSDK(config.clientId); await sdk.ready();
     acceptIdentity(await activityIdentity());
     await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', updateActivityLayout);
+  }
+  if(config.access){
+    let admission=await api('/api/watch/admission');
+    if(config.access.anonymous&&!admission.identity&&!admission.passwordNeeded&&!admission.activityOnly){await api('/api/watch/entry',{});admission=await api('/api/watch/admission');pageBootstrap=undefined;}
+    if(!admission.admitted){
+      $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
+      $('empty-title').textContent=admission.activityOnly?'Discord Activity only':admission.passwordNeeded?'Enter uburoom':config.access.requirePlex?'Connect Plex to join':'Sign in to join';
+      $('entry-form').hidden=!admission.passwordNeeded||admission.activityOnly;
+      $('entry-status').textContent=admission.activityOnly?'Open uburoom through Discord Activity. Browser playback is disabled.':
+        admission.passwordNeeded?'Enter this server’s password to continue.':
+        config.access.requirePlex?'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.':
+        admission.identity?'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.':'Sign in to join this server.';
+      discordButton.hidden=config.access.discord===false||admission.passwordNeeded||admission.activityOnly;
+      $('plex-login').hidden=config.access.plex===false||admission.passwordNeeded||admission.activityOnly&&!admission.identity;
+      if(admission.identity){me={...admission.pendingIdentity,adminEligible:false};renderAccount();}
+      $('entry-plex-activity').hidden=!activity||!admission.identity||admission.passwordNeeded||!config.access.plex;
+      $('entry-recheck').hidden=!admission.identity;
+      if(admission.identity&&!activity&&params.get('account')==='1'&&typeof showAccount==='function')await showAccount();
+      return;
+    }
+    $('entry-form').hidden=true;
   }
   try {
     if(pageBootstrap?.me){if(pageBootstrap.me.status!==200)throw Object.assign(new Error(pageBootstrap.me.value.error),{status:pageBootstrap.me.status});me=pageBootstrap.me.value;}
@@ -1441,6 +1489,13 @@ async function start() {
     await selectRoom(requestedRoom);
   }
 }
+$('entry-form').addEventListener('submit',async event=>{
+  event.preventDefault();const button=$('entry-submit');button.disabled=true;
+  try{await api('/api/watch/entry',{password:$('entry-password').value});$('entry-password').value='';pageBootstrap=undefined;await start();}
+  catch(error){$('entry-status').textContent=error.message;}finally{button.disabled=false;}
+});
+$('entry-recheck').addEventListener('click',()=>{pageBootstrap=undefined;void start().catch(error=>fail(error.message));});
+$('entry-plex-activity').addEventListener('click',()=>void openInBrowser());
 $('auth-retry').addEventListener('click', () => location.reload());
 renderVisibility();renderRemote();renderTransport();
 start().catch(error => {

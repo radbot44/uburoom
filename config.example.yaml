@@ -1,0 +1,86 @@
+# PRIVATE CONFIGURATION: contains secrets and API tokens. NEVER share this file,
+# attach it to bug reports, commit it, or put it in a public/shared web folder.
+# Copy to config.yaml. Share only this blank example. Restart after changes.
+# Quote IDs and secrets. Use single quotes for Windows paths (C:\tools\ffmpeg.exe),
+# or use forward slashes. Relative paths are relative to this YAML file.
+
+# API connections and secrets first. Blank Discord credentials disable the bot.
+secrets:
+  entry_password: '' # Optional extra password, in addition to provider requirements.
+plex:
+  url: 'http://127.0.0.1:32400'
+  token: ''
+  machine_identifier: '' # Optional; otherwise pinned on first verification.
+  # SHARING: enabled by default. Viewers without a Plex account or confirmed
+  # server membership can access the fallback account's libraries and media.
+  # This can grant more media access than their personal account has.
+  # Expired/revoked credentials, outages and item denials NEVER use fallback.
+  fallback_enabled: true
+  fallback_token: '' # Blank uses token above; supply a dedicated server-access token.
+discord:
+  bot_token: ''
+  client_id: ''
+  client_secret: ''
+  owner_id: ''
+  guild_id: ''
+  command_channel_ids: [] # e.g. ['123456789012345678']
+
+# Application settings
+server:
+  host: '127.0.0.1' # Containers: '0.0.0.0'; publish the desired port explicitly.
+  port: 6767
+  public_url: 'https://localhost:6767' # Public HTTPS origin, without a path.
+  public_web_app: true # false: playback/APIs require a verified Activity bearer.
+  tls_cert: 'certs/server-cert.pem'
+  tls_key: 'certs/server-key.pem'
+storage:
+  data_directory: 'data' # Persist this directory across container replacements.
+  # Outside the project. Preserve the EXACT original key for existing data.
+  # Blank uses LOCALAPPDATA/uburoom/credentials.key, or HOME/uburoom/credentials.key.
+  credential_key_file: ''
+tools:
+  # Blank searches the runtime user's PATH on Windows, Linux and macOS.
+  # Explicit paths override PATH; relative paths resolve beside this YAML file.
+  # Needed for subtitle extraction and optional AV1 conversion.
+  ffmpeg: ''
+  ffprobe: '' # Searches PATH first, then defaults beside the selected ffmpeg.
+rooms:
+  single_room: false # Fixed leader: discord.owner_id; no create/delete/transfer.
+  single_room_name: 'Room'
+  # Set initial room permissions.
+  # Leave blank for defaults: hosts all except deletion; viewers only playPause.
+  # Lists replace defaults. [] or 'none' grants none; 'all' grants all eligible rights.
+  # Hosts inherit viewer perms. Viewer management perms are always disabled.
+  # Creators have all permissions.
+  # Names: playPause, seek, chooseMedia, addQueue, editQueue, autoplay,
+  # roomSettings, closeRoom, deleteRoom, continueWithoutHost
+  host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost]
+  viewer_permissions: [playPause]
+  # Exact provider IDs / guild role IDs; admins can toggle Admin mode.
+  # Admin mode grants full permissions in every room.
+  admin_discord_ids: []
+  admin_plex_ids: []
+  admin_discord_role_ids: []
+
+access:
+  # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
+  # Discord sign-in requires guild membership. Plex proves the account identity.
+  discord: true
+  plex: true
+  # Require confirmed personal access to THIS Plex server, before any entry.
+  # This always applies, including in Activity; fallback/password cannot bypass it.
+  require_plex: false
+
+transcoding:
+  # follow_plex: honors Plex's disable-video-transcoding setting for both providers.
+  # disabled: no conversion paths. override: explicitly permits local video
+  # conversion despite Plex policy; cannot bypass restrictions enforced by PMS.
+  policy: 'follow_plex' # follow_plex | disabled | override
+  plex: true
+  uburoom: true
+  # uburoom encoder. Plex controls its own hardware/software settings in PMS.
+  # hardware requires Intel QSV; software requires FFmpeg with libsvtav1.
+  # There is no automatic CPU fallback. Both modes are probed before playback.
+  encoder: 'hardware' # hardware | software
+  formats: [av1] # Current uburoom output; [] disables its video conversion.
+  max_jobs: 5 # Across uburoom conversions + Plex output jobs, not viewers.

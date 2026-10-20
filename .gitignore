@@ -1,4 +1,7 @@
 # Private configuration (keep the distributable example).
+config*.yaml
+config*.yml
+!config.example.yaml
 .env
 .env.*
 *.env

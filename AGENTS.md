@@ -28,17 +28,19 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 - **No frameworks.** HTTP/HTTPS routing is a hand-rolled router in `server/app.js` (raw `node:https`). There is no Express, Koa, or Fastify. Do not introduce one.
 - **Plain JavaScript with JSDoc type safety.** No TypeScript compiler, no JSX, no transpilers, no minifiers. Use standard JavaScript with JSDoc annotations (`@typedef`, `@param`, `@type`) and `// @ts-check` for complex contracts (sync timing, room epochs, track choices, auth tokens). Server code is CommonJS (`require`/`module.exports`); web client code uses standard native ES modules (`<script type="module">`) or plain scripts without build steps. 2-space indentation, semicolons, single quotes.
 - **SQLite for persistence.** Primary database is `data/accounts.sqlite` using Node's built-in `node:sqlite` (`DatabaseSync` — synchronous API). `server/storage.js` defines the first-release baseline and rejects incomplete private pre-release layouts; legacy JSON imports and implicit schema upgrades have been removed. Keep schema versioning for forward migrations between published releases. Do not introduce ORMs (Prisma, TypeORM), external database servers, or secondary databases.
-- **Minimal dependencies.** Production deps: `@discord/embedded-app-sdk`, `discord.js`, `hls.js`, `jassub`, `libbitsub`, `ws`. Dev dep: `esbuild` (for vendor bundle builds only). Justify any new dependency; prefer Node built-ins and vendoring small libraries into `web/vendor/` with proper license notices.
+- **Minimal dependencies.** Production deps: `@discord/embedded-app-sdk`, `discord.js`, `hls.js`, `jassub`, `libbitsub`, `ws`, `yaml` (configuration parsing). Dev dep: `esbuild` (for vendor bundle builds only). Justify any new dependency; prefer Node built-ins and vendoring small libraries into `web/vendor/` with proper license notices.
 - **Node ≥ 22.13.0 required.** Tests use the built-in `node:test` runner and `node:assert/strict` — no Jest, Mocha, or external test framework.
 
 ---
 
 ## Configuration
 
-- **All config via `.env` file** (loaded by `--env-file-if-exists=.env`). Not `config.json`, not environment variables set externally. The `.env` file is gitignored.
-- Key variables: `HOST`, `PORT`, `PUBLIC_URL` (must be HTTPS), `TLS_CERT`/`TLS_KEY`, Discord credentials (`DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_COMMAND_CHANNEL_IDS`), Plex credentials (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MACHINE_IDENTIFIER`), `UBUROOM_CREDENTIAL_KEY_FILE`, `FFMPEG_PATH`/`FFPROBE_PATH`.
+- **All config via private `config.yaml`**, loaded by `server/config.js`; `--config <path>` selects a mounted/external file. No `.env` loading or application environment overrides. Relative paths resolve beside the YAML file. Never share, log, commit or package private configuration; only `config.example.yaml` is distributable.
+- YAML sections: API/secrets first (`plex`, `discord`), then `server`, `storage`, `tools`, `rooms`. Quote IDs and secrets; use native YAML lists. Validate settings before opening state or contacting providers. Use `node scripts/migrate-config.js` for explicit one-time legacy conversion; preserve the original key and state paths. Keep Linux/macOS/container mounting and persistent-state needs in mind.
 - Device, browser-login and playback-history state live in `data/accounts.sqlite`. Baseline version 4 includes room records/hosts, queue occurrences, auto-queue state and the autoplay setting; earlier private state is rejected unchanged and requires a reviewed matched backup/manual transfer before deployment. Legacy JSON files are not runtime inputs. Runtime SQLite uses an in-memory mirror/bounded writer; await persistence before acknowledging durable changes. Saved rooms integrate with live viewing, while playback authority remains process-local. Remote consent always remains ephemeral.
 - See [docs/self-hosting.md](docs/self-hosting.md) for the full configuration reference.
+- Entry, personal Plex-server admission and playback credentials are separate policies (`server/access-policy.js`). The optional shared password is additional to provider rules. Fallback sharing is explicitly enabled by default and may use a dedicated token; never sponsor expired/revoked credentials, provider failures or item restrictions. Required personal Plex-server access cannot be bypassed by fallback. Activity-only viewing requires a verified Activity identity; browser linking remains separate from playback.
+- Single-room mode fixes the creator to `discord.owner_id`, assigns configured Discord admins as initial hosts, forbids leadership transfer and substitutes reset for deletion. Admin mode remains explicit and grants creator rights; ordinary hosts cannot edit management permissions. Conversion policy/counting is shared across Plex output jobs and uburoom conversion jobs, with explicit local encoder choice and no silent CPU fallback.
 
 ---
 
@@ -74,7 +76,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - Accounts use **stable UUIDs** — never regenerate them. Account merging retires one UUID into another via `retiredInto`; `canonical()` follows the chain.
 - Plex OAuth tokens are encrypted with **AES-256-GCM** using a 32-byte key. The key file defaults to `LOCALAPPDATA/uburoom/credentials.key` and **must be stored outside the project folder** (startup validates this).
-- Credentials belong in **private server configuration** (`.env`, gitignored) or **extension storage** (`browser.storage.local`). Never log, commit, or package secrets, private state, TLS certificates, or key files.
+- Credentials belong in **private server configuration** (`config.yaml`, gitignored) or **extension storage** (`browser.storage.local`). Never log, commit, or package secrets, private state, TLS certificates, or key files.
 - See [docs/upgrading.md](docs/upgrading.md) for current pre-release transition notes and rules preserving UUIDs and exact original key bytes when retaining state.
 
 ---

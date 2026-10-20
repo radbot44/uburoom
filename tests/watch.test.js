@@ -481,10 +481,13 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
     });
   }
   assert.equal((await request('/api/watch/rooms')).status, 401);
-  for(const route of ['/watch/test','/watch-test.js','/watch-test.css','/watch/test/sample.mp4',
-    '/__diagnostics/codec','/__diagnostics/codec.js','/__diagnostics/codec.css','/__diagnostics/media/sample.mp4']) {
+  for(const route of ['/watch/test','/watch-test.js','/watch-test.css','/watch/test/sample.mp4']) {
     assert.equal((await request(route)).status,404,route+' is absent from the normal server');
   }
+  for(const route of ['/__diagnostics/codec','/__diagnostics/codec.js','/__diagnostics/codec.css']) {
+    assert.equal((await request(route)).status,200,'Non-private tester shell is available');
+  }
+  assert.equal((await request('/__diagnostics/media/sample.mp4')).status,403,'Tester samples require active admin authorization');
   const activityOrigin = `https://${config.clientId}.discordsays.com`;
   assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' })).status, 403, 'web origin cannot impersonate an Activity login');
   const activityLogin = (await request('/api/watch/activity-login', 'POST', { code: 'fixture', userId: 'host', owner: true }, { Origin: activityOrigin })).body;

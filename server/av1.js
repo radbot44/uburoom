@@ -74,7 +74,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     child.on('exit',()=>{child.stdout.resume();child.stderr.resume();drainTimer=setTimeout(()=>{child.stdout.destroy();child.stderr.destroy();},250);});
     child.on('close', code => {
       diagnostic?.(code, stderr);
-      finish(failure || (code === 0 ? null : new PlaybackError('AV1 hardware encoding/probing failed. Run the AV1 probe on the server; no CPU encoder was used.')), Buffer.concat(chunks));
+      finish(failure || (code === 0 ? null : new PlaybackError('The configured AV1 encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.')), Buffer.concat(chunks));
     });
     });
     if (!webm) return output;
@@ -90,10 +90,10 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
   }
 }
 
-function encoderArgs() { return ['-c:v','av1_qsv','-preset','veryfast','-pix_fmt','nv12','-bf','0','-flags','+global_header']; }
-async function probeEncoder(ffmpeg, signal, execute = run) {
+function encoderArgs(encoder = 'hardware') { return encoder === 'software' ? ['-c:v','libsvtav1','-preset','10','-pix_fmt','yuv420p','-flags','+global_header'] : ['-c:v','av1_qsv','-preset','veryfast','-pix_fmt','nv12','-bf','0','-flags','+global_header']; }
+async function probeEncoder(ffmpeg, signal, execute = run, encoder = 'hardware') {
   const output = await execute(ffmpeg, ['-hide_banner','-loglevel','error','-nostdin','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
-    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','0.5', ...encoderArgs(), '-b:v','500k','-c:a','libopus','-ac','2','-f','webm','-live','1','pipe:1'], signal, 15000);
+    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','0.5', ...encoderArgs(encoder), '-b:v','500k','-c:a','libopus','-ac','2','-f','webm','-live','1','pipe:1'], signal, 15000);
   if (output.length < 100) throw new PlaybackError('AV1 hardware probe produced no video.');
   return output;
 }
@@ -130,6 +130,7 @@ function outputSpec(info, quality) {
 class AV1 {
   constructor(plex, config, execute = run) {
     this.plex = plex; this.ffmpeg = config.ffmpegPath; this.jobs = new Set();
+    this.encoder = config.transcoding?.encoder || 'hardware';
     this.run = (...args) => {
       const job = Promise.resolve().then(() => execute(...args)); this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
@@ -138,7 +139,7 @@ class AV1 {
     this.groups = new Map(); this.inputs = new Map(); this.controllers = new Set(); this.queue = []; this.active = 0; this.closed = false;
   }
   acquire(source, quality) {
-    if (!this.ffmpeg) throw new PlaybackError('AV1 unavailable: set FFMPEG_PATH after running the encoder probe on the server.');
+    if (!this.ffmpeg) throw new PlaybackError('AV1 unavailable: install FFmpeg on the server PATH or set tools.ffmpeg in config.yaml, then run the encoder probe.');
     if (this.closed) throw new PlaybackError('Server is shutting down.');
     const scope=source.shareKey?[source.shareKey,source.sourceKey]:source.principal;
     const key = createHash('sha256').update(JSON.stringify([scope,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality)])).digest('hex');
@@ -225,12 +226,15 @@ class AV1 {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
       entry = { users:0, at:Date.now(), controller };
       entry.promise = this.slot(controller.signal, async () => {
-        this.probePromise ||= probeEncoder(this.ffmpeg, this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal, this.run).catch(error => {
+        await this.conversionPolicy?.video('uburoom');
+        const releaseConversion=this.conversionPolicy?.acquire();
+        try {
+        this.probePromise ||= probeEncoder(this.ffmpeg, this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal, this.run,this.encoder).catch(error => {
           this.probePromise = undefined; // A temporary probe failure must not disable AV1 until restart.
           throw error;
         });
         await this.probePromise;
-        return this.input(source, controller.signal, async url => {
+        return await this.input(source, controller.signal, async url => {
           if (!group.info) group.info = JSON.parse((await this.run(this.ffprobe, ['-v','error','-show_entries',
             'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal)).toString());
           const spec = outputSpec(group.info, group.quality);
@@ -243,7 +247,7 @@ class AV1 {
           const duration = String(Math.min(CHUNK, source.duration - start));
           args.push('-t',duration, '-map','0:v:0','-an',
             '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',spec.filter,
-            ...encoderArgs(),'-b:v',`${spec.bitrate}k`,'-maxrate',`${spec.bitrate}k`,'-bufsize',`${spec.bitrate * 2}k`,
+            ...encoderArgs(this.encoder),'-b:v',`${spec.bitrate}k`,'-maxrate',`${spec.bitrate}k`,'-bufsize',`${spec.bitrate * 2}k`,
             ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
             '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
@@ -251,6 +255,7 @@ class AV1 {
             '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3');
           return this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024);
         });
+        } finally {releaseConversion?.();}
       }).then(bytes => {
         if (controller.signal.aborted || group.chunks.get(index)!==entry) throw new PlaybackError('AV1 preparation cancelled.');
         entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry); return bytes;

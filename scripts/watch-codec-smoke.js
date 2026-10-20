@@ -1,5 +1,5 @@
 /* Live Plex decode verification in an isolated Chromium profile with GPU decoding off.
-   Usage: node --env-file=.env scripts/watch-codec-smoke.js --plex-url=http://host:32400 --media-id=123 */
+   Usage: node scripts/watch-codec-smoke.js --config=/private/config.yaml --media-id=123 */
 'use strict';
 const fs = require('node:fs');
 const os = require('node:os');
@@ -13,9 +13,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const root = path.resolve(__dirname, '..'), mediaId = process.argv.find(x => x.startsWith('--media-id='))?.slice(11);
   assert.match(mediaId || '', /^\d+$/);
+  const provider = require('../server/config').loadConfig();
   const config = {cert:fs.readFileSync(path.join(root,'certs/server-cert.pem')),key:fs.readFileSync(path.join(root,'certs/server-key.pem')),
     publicUrl:'https://localhost',ownerId:'demo-host',guildId:'demo-guild',channels:['demo-commands'],demo:true,
-    plexUrl:process.argv.find(x => x.startsWith('--plex-url='))?.slice(11),plexToken:process.env.PLEX_TOKEN};
+    plexUrl:process.argv.find(x => x.startsWith('--plex-url='))?.slice(11) || provider.plexUrl,plexToken:provider.plexToken};
   const app = createApp(config);
   app.hub.access = {refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve)); config.publicUrl=`https://localhost:${app.server.address().port}`;

@@ -4,9 +4,11 @@ const path = require('node:path');
 const { createApp } = require('../server/app');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.DEMO_PORT || 6768);
+// Fixture demos never read private configuration or inherited provider secrets.
+const provider = !process.argv.includes('--accounts') && process.argv.includes('--plex') ? require('../server/config').loadConfig() : {};
 const config = { publicUrl: `https://localhost:${port}`, cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),
   key: fs.readFileSync(path.join(root, 'certs/server-key.pem')), ownerId: 'demo-host', guildId: 'demo-guild', channels: ['demo-commands'], demo: true,
-  plexUrl: process.env.PLEX_URL, plexToken: process.env.PLEX_TOKEN };
+  plexUrl: provider.plexUrl, plexToken: provider.plexToken };
 const fixture=process.argv.includes('--accounts')?require('./account-fixture').accountFixture():undefined;
 if(fixture)Object.assign(config,{unifiedAccounts:true,ownerId:fixture.subjects.host,demoSubjects:fixture.subjects,clientId:'100000000000000010',clientSecret:'fixture-secret',plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'});
 const app = createApp(config,fixture?{plexFetch:fixture.fetch,oauthFetch:fixture.discordFetch,plexDemo:fixture}:undefined);

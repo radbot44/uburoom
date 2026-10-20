@@ -1,5 +1,5 @@
 /* Test a copied Discord Electron runtime, without opening Discord or its account profile.
-   node --env-file=.env scripts/discord-decoder-smoke.js --discord-dir=C:/.../app-... --plex-url=http://host:32400 --media-id=123 */
+   node scripts/discord-decoder-smoke.js --config=/private/config.yaml --discord-dir=C:/.../app-... --media-id=123 */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
