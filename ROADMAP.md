@@ -12,6 +12,8 @@ The shared player, room timeline, linked accounts, per-user Plex access, command
 
 The main gap is evidence and completeness across real Plex sessions, Discord surfaces, content combinations and devices. A first two-hour real Plex HLS browser baseline is recorded, with one observed automatic unload/recovery and unresolved process memory growth. Passing a fixture or receiving a command acknowledgement does not establish live playback support. See [current verification and known gaps](docs/testing.md); keep detailed results there rather than copying them into this roadmap.
 
+**Next planning priority:** Review configuration in depth and define a proper in-app administration panel with explicit account admission and media authorization (M1-P14). Plex activity and watch-state reporting is a high-priority M1-P4 track alongside that foundation. Preserve Discord sign-in and the Activity's authorized **Open in web app** handoff. These directions are approved for future work; implementation has not started. First produce the configuration inventory, access matrix and reporting-attribution contract described in [accounts, administration and Plex reporting](docs/accounts-and-access.md).
+
 ## Architecture to preserve
 
 | Boundary | Direction |
@@ -19,6 +21,7 @@ The main gap is evidence and completeness across real Plex sessions, Discord sur
 | Service and state | Keep one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. Develop on local disk; keep runtime state and credentials private. Keep device, login and playback-history persistence in SQLite, while removing private pre-release migration paths before the first public release. Protect the single event loop from synchronous disk/crypto spikes during playback synchronization. |
 | Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. M1-P13 durable records, live-room integration, queues, generation and cancellable autoplay use the existing SQLite writer; real Plex/Activity continuity checks remain. Current viewing rooms are still process-local. Preserve native playback history for future per-viewer Plex watch-state reporting. |
 | Commands and access | Every control surface uses the shared validated engine. Recheck current access around awaited operations, reject stale work, and keep remote consent off after disconnect/restart. |
+| Identity and authorization | Keep one canonical account UUID independent of display names and login provider. Separate sign-in, admission, media entitlement, room roles and server administration. Replace implicit owner-token fallback with explicit media grants; sponsored viewers must not be attributed to another person's Plex watch history. M1-P14 defines the policy/configuration foundation; M1-P4 owns Plex reporting. |
 | Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. Make authenticated WebSockets the native room-control transport; retain HTTP where appropriate for auth/bootstrap, catalog, artwork, media and health. |
 | Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Chrome and Firefox are equal required web test targets, alongside real Discord Activity coverage. Keep a single primary `/watch` entry point after the remote split, and keep diagnostics/experimental tools outside normal viewer navigation. Maintain native ES modularity in the browser without bundlers or frameworks. |
 
@@ -30,6 +33,7 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 
 - Verify a clean installation on an unrelated host/origin with separate provider applications and fresh profiles. Test backup/restore, stable account UUIDs and exact original encryption-key preservation for retained state, code/state separation and rollback. The sole pre-release installation may be reset or manually transferred with an explicit backup; do not add compatibility migrations solely for it or silently discard its data.
 - Verify restricted/revoked Plex access, linked accounts, `/ubu` and `!ubu`, real Activity setup and the claimed browser/transport combinations without owner-token fallback.
+- Close the confirmed media-access expansion when a restricted Plex identity is removed from a Discord-eligible account. Require an explicit authorization policy for viewers without personal Plex entitlement; verify admission, media grants and reporting attribution independently. Complete the M1-P14 configuration/security foundation before exposing expanded sharing controls.
 - Complete real Firefox/YouTube TV lifecycle, consent, latency and configured-origin checks. The known full extension smoke failure remains deferred; preserve that exception explicitly and do not weaken permissions or throttling to conceal it.
 - Finish branding/artwork/media provenance, dependency notices and GPL-3.0-only distribution review. Switch `scripts/build-demo-media.js` to approved current branding and remove `assets/branding/old/` from the active source before packaging; retain prior artwork in Git history. Audit source, full publication history, assets and ZIP contents for private material; include LICENSE and required notices.
 - **Final M1 pre-release cleanup gate:** Remove obsolete `session.*`/`/api/sessions` compatibility, private pre-release JSON imports/schema upgrade paths and legacy HTTP room-control compatibility routes after their callers/tests are switched to the canonical room/WebSocket contract. Keep post-release database schema versioning and future migration capability; this is not permission to discard a public release user’s data. Complete the remote split and production-vs-diagnostic entry-point cleanup before the first public source/package cut.
@@ -49,7 +53,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P1 | Prove sustained real playback and room continuity | Now; implementation exists, live coverage remains | Existing playback and fixture baseline |
 | M1-P2 | Choose compatible delivery automatically | Next; partial implementation | M1-P1 measurements and complete source inventory |
 | M1-P3 | Complete audio, subtitles and content fidelity | Next; first slice implemented | M1-P2 delivery model; validation can start now |
-| M1-P4 | Complete the Plex viewing experience | Later; planned | Stable source/track selection and item timeline |
+| M1-P4 | Complete the Plex viewing experience | Next: high-priority per-viewer Plex activity/reporting design and verification; other parity work later | Native playback observations/history, M1-P14 authorization/attribution contract; source/track selection and item timeline for broader parity |
 | M1-P5 | Real-time playback synchronization | In progress; timing instrumentation and clock estimation implemented, live targets unverified | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
 | M1-P6 | Frame-pacing preservation during synchronization | In progress; experimental candidates gated, disposition/production cleanup and joint live verification pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | In progress; normal/theater/fullscreen layout split implemented, broader UI review remains | Existing design guide, rendered surfaces and playback/permission behavior |
@@ -59,6 +63,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
 | M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 | M1-P13 | Persistent rooms and playback queues | In progress; P13-1 durable core, P13-2 live integration/Admin mode, P13-3 manual queues, P13-4 bulk/generation/shuffle and P13-5 verified cancellable autoplay implemented | M1-P11 SQLite/WebSocket foundation, M1-P7 lobby/library UI, shared timeline and recorded lifecycle/role decisions |
+| M1-P14 | Configuration, administration and account authorization | Approved for future work; next planning priority, implementation not started | Existing accounts/SQLite, M1-P11 transport/auth foundation and M1-P13 durable roles; coordinates with M1-P4 reporting and M2-P3 guests |
 
 ### M1-P1 — Sustained real playback and room continuity
 
@@ -112,6 +117,10 @@ Details: [playback decisions and implementation order](docs/playback-reliability
 - Coordinate continuation with M1-P13's queue/current-entry transition; do not build a second episode-advance path. Room bookmarks/history and per-viewer Plex reporting have different authority and retention.
 - Work through the existing parity inventory for subtitle search/download, renderer-supported presentation controls, available audio timing and shared playback speed. Decide and verify each control's behavior before exposing it.
 - Retain native per-viewer playback observations **and durable history** as the foundation for planned Plex timeline, resume and watched-state updates across linked clients/servers. Define per-user reporting, cross-device reconciliation, consent/authorization and idempotency before enabling Plex writes. Reporting is currently disabled; experiments must use consenting accounts and account for resume/history effects. Do not remove playback history as part of pre-release storage cleanup.
+- **High-priority Plex activity/reporting track:** Design alongside M1-P14, ahead of guest media delivery. Attribute actual observed playback to each verified Plex viewer independently of shared transcodes; handle duplicate tabs, Activity/browser handoff, concurrent devices, revoked access and stale retries without conflicting progress or identity reassignment. Verify Plex dashboard presence, resume and completion separately across Original, HLS and AV1; a successful API request or running transcode is insufficient evidence.
+- **Viewers without an authorized Plex account:** Specify separately how the operator-authorized source appears on Plex and how each guest/Discord-only viewer is tracked in uburoom. Keep transport/source credentials separate from personal reporting credentials. Preserve distinct local viewer progress and truthful reporting status; never invent a Plex identity, label shared producer activity as proof of every viewer, or write the owner's personal resume/watched state on behalf of guests. Establish actual Plex behavior and any unavoidable source-account side effects before choosing or advertising a sponsored-reporting mode.
+
+Reporting requirements and open decisions: [accounts and access — Plex reporting](docs/accounts-and-access.md#plex-activity-and-viewer-attribution).
 
 **Done per increment:** One complete viewing flow works across its declared surfaces, including cancellation and room synchronization. This phase is several small features, not a promise to reproduce every Plex screen at once. Details: [content fidelity and playback UX](docs/playback-reliability.md#content-fidelity-and-playback-ux).
 
@@ -304,6 +313,25 @@ Queue UI follow-up: portrait poster cards, a centered chronological List, separa
 
 Details: [implemented core, recorded owner decisions, remaining design and increment gates](docs/rooms-and-queues.md). Evidence and limitations: [P13-4/P13-5 verification](docs/testing.md#bulk-queues-generation-and-cancellable-autoplay-p13-4--p13-5-2026-10-18).
 
+### M1-P14 — Configuration, administration and account authorization
+
+**Status:** Approved for future work; implementation not started. Review configuration comprehensively and design a proper in-app administration panel before adding isolated provider switches or guest exceptions. Keep the existing `.env` configuration authority until the storage/editing contract is explicitly settled; do not silently add a competing configuration store.
+
+**Outcome:** Operators can understand and deliberately control who signs in, enters rooms, receives media and administers the installation, with consistent behavior in the web app, Discord Activity and bot. Users retain one stable account and a secure, understandable way to manage connected identities.
+
+- **Configuration and admin panel:** Inventory current settings, defaults, secrets, ownership and restart requirements. Define validated settings, protected secret handling, operator bootstrap/recovery with Plex-only or Discord sign-in, effective-policy previews, durable audited changes and live revocation. Distinguish server administration from room hosts and the existing opt-in Admin mode. Preserve a recovery path when disabling a provider.
+- **Explicit authorization:** Independently choose available login methods (Plex, Discord or either) and admission requirements (Plex access, Discord membership/roles, both or an invitation). Require personal Plex entitlement by default; sponsored media requires an explicit operator grant with a source/library/item ceiling. Absence, removal, expiry or revocation of a provider must never silently broaden access. Apply canonical-account deny rules and current policy across all media/catalog/caption/artwork and control surfaces.
+- **Sensitive account changes:** Require recent proof of the initiating account before linking, unlinking or merging, plus proof of any incoming provider. Preserve conflict rejection, canonical UUIDs and last-usable-login checks; show identity/role/history effects, provide session revocation and test stale/concurrent operations. Keep ordinary watching and authorized Activity-to-web handoff usable without treating every transition as a new sensitive account change.
+- **Discord Activity and Open in web app:** Preserve Discord login and the existing authorization-based browser handoff. Also support Plex-only admission with verified Discord Activity context and securely bound Plex proof. Carry the same account and current policy through one-use, expiring handoff authorization; require confirmation for an existing browser-account mismatch. Context verification must not silently enroll a permanent login or bypass disabled providers/admission rules.
+- **Names and invitations:** Seed display name from first login, allow preferred connected-provider names and search both verified aliases as one canonical account result with collision labels/privacy limits. Extend existing UUID-based durable hosts to searchable offline assignment and provider-subject-bound pending invitations. Name changes do not change roles or Plex attribution; unlinked accounts remain separate until verified merging.
+- **Guest boundary:** Define temporary room passes and operator-delegated sponsorship under the same policy. Implementation remains M2-P3; invitation permission alone does not grant Plex media, host status or server administration. Coordinate attribution with M1-P4 before guest playback is enabled.
+
+**Next useful slice:** Inventory configuration and produce an admission/media/role matrix plus a Plex reporting-attribution matrix covering personal Plex viewers, Discord-only sponsored viewers, guests and shared conversions. Specify admin sections, setting persistence/restart behavior and safe initial defaults. Use these to select a small first implementation that closes implicit credential fallback without breaking intended sharing or Activity handoff.
+
+**Done:** Operators can configure and inspect effective access through the admin panel, including Plex-only operation, without losing administration. Link conflicts, recent-auth checks, policy changes, provider revocation, account merges and browser/Activity handoff pass adversarial regression checks. Chrome/Firefox and real provider/Activity behavior are verified before support claims; guest delivery remains subject to M2-P3's separate completion gates.
+
+Details and ordered increments: [accounts, administration and Plex reporting](docs/accounts-and-access.md).
+
 ## M2 — Future planned capabilities
 
 **Outcome:** Broaden media sources, accessibility, and frictionless room entry beyond the initial self-hosted release baseline.
@@ -316,7 +344,7 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 | --- | --- | --- | --- |
 | M2-P1 | High Dynamic Range (HDR) support | Planned | M1-P2/M1-P3 delivery model and capability negotiation |
 | M2-P2 | Enhanced browser Picture-in-Picture with subtitles | Planned | M1-P9 browser subtitle rendering |
-| M2-P3 | Guest room codes | Planned | M1-P10 room terminology, M1-P11 unified persistence |
+| M2-P3 | Guest room passes | Approved for future work; after authorization and reporting foundations | M1-P14 explicit grants/admin configuration, M1-P4 attribution contract and M1-P13 room roles |
 | M2-P4 | Rudimentary uburoom-hosted video library | Planned | M1-P2 direct playback and local storage |
 | M2-P5 | Shared YouTube video playback | Planned | M1-P5 synchronization engine and M1-P8 protocol split |
 | M2-P6 | Web Audio dynamic range compression (Dialogue Boost / Night Mode) | Planned | M1-P3 audio playback pipeline |
@@ -341,13 +369,18 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 - Implement subtitle-aware PiP using the Document Picture-in-Picture API where supported, or canvas video-stream compositing as a fallback.
 - Preserve viewer-selected subtitle styling, positioning, and language tracks within the PiP surface.
 
-### M2-P3 — Guest room codes
+### M2-P3 — Guest room passes
 
 **Goal:** Enable frictionless room entry via temporary invite codes without requiring Discord OAuth or linked Plex accounts.
 
-- Allow room hosts to generate temporary, time-bounded guest invite codes or shareable links.
+- Allow room hosts to generate temporary, time-bounded guest invite codes or shareable links only within operator-delegated authority. Keep room invitations and explicit sponsored media grants separate; guests without Plex entitlement cannot receive an implicit owner-token fallback.
 - Grant guest viewers synchronized playback, personal volume, and audio/subtitle track choices within the room.
 - Maintain safe permission boundaries: guests cannot manage room settings, transfer host status, access Plex server libraries, or view private credentials.
+- Use revocable room-scoped passes with hashed high-entropy tokens, expiry, atomic redemption/use limits, attendance/concurrency ceilings and bounded reconnect. Mark guest names as unverified; rate-limit redemption and prevent a forwarded pass from claiming a named host invitation.
+- Revocation must stop existing sockets and media/caption/artwork grants. Cap guest authority independently of generous room participant presets; require fresh provider proof for conversion to a regular account.
+- Keep local guest playback identity/progress separate from Plex source activity and personal watch-state writes. Resolve M1-P4's sponsored-viewer attribution and side-effect questions before enabling guest media; never impersonate a guest as the Plex owner.
+
+**Done:** Operators can deliberately allow limited guest viewing, inspect its actual uburoom/Plex reporting behavior and revoke it during playback. Expired, reused, forwarded and concurrently redeemed passes fail within defined limits, and personal Plex restrictions and host/admin boundaries remain intact. See [guest requirements](docs/accounts-and-access.md#guest-passes).
 
 ### M2-P4 — Rudimentary uburoom-hosted video library
 
@@ -442,6 +475,7 @@ These are already identified directions or placeholders, outside the current del
 | [SPEC.md](SPEC.md) | Product behavior and enduring boundaries |
 | [Playback reliability plan](docs/playback-reliability.md) | Detailed playback architecture, requirements, corpus and proposed performance targets |
 | [Persistent rooms and queues](docs/rooms-and-queues.md) | M1-P13 implemented core, recorded lifecycle/role/admin/queue decisions, remaining integration and ordered increments |
+| [Accounts, administration and Plex reporting](docs/accounts-and-access.md) | M1-P14 configuration/admin/security model, M1-P4 personal/sponsored reporting, account names/invitations and M2-P3 guest boundaries |
 | [Testing status](docs/testing.md) | Actual evidence, limitations, deferred failures and remaining verification |
 | [Development](docs/development.md) | Reproducible local/isolated commands and fixture prerequisites |
 | [Design guide](docs/design-guide.md) | Established interface and asset rules |
