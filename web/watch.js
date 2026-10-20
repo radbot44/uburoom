@@ -4,6 +4,8 @@ const viewerId = crypto.randomUUID(), params = new URLSearchParams(location.sear
 let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
 let stateTransportSequence=0;
 let reconnecting=false;
+let disconnectGraceTimer, disconnectExtended = false;
+const DISCONNECT_GRACE_MS = 8000;
 let switchingRoom=false, knownRooms=[];
 const pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
@@ -98,6 +100,7 @@ function diagnosticSample(event='sample',fields={}) {
 }
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
+    if(event==='waiting'&&disconnectExtended)fullPlayerClear();
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
     sync?.event(event);
@@ -506,6 +509,8 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
+  disconnectExtended = false; hideDisconnectToast();
   clearTimeout(badgeTimer); $('badge').classList.remove('visible'); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
@@ -593,9 +598,14 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
+  const detail = data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET ? 'reset' :
+    data.error?.name === 'QuotaExceededError' ? 'quota-exceeded' :
+    data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR ? 'buffer-append' :
+    /^frag/.test(data.details) ? 'fragment' :
+    /^manifest/.test(data.details) ? 'manifest' : 'other';
   diagnosticSample('hls-error',{fatal:!!data.fatal,status:data.response?.code,
     category:data.type===Hls.ErrorTypes.NETWORK_ERROR?'network':data.type===Hls.ErrorTypes.MEDIA_ERROR?'media':'other',
-    detail:data.details===Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET?'reset':/^frag/.test(data.details)?'fragment':/^manifest/.test(data.details)?'manifest':'other'});
+    detail});
   if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     hlsNetworkInterrupted = true;
     // A vanished Plex conversion can be reported as a nonfatal fragment
@@ -650,6 +660,8 @@ function handleHlsError(client, data) {
   fail(playbackError);
 }
 function unavailable(message,reason='room-unavailable') {
+  clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
+  disconnectExtended = false; hideDisconnectToast();
   reconnecting=false;
   qualityPending=false;
   playbackClock.reset();
@@ -664,12 +676,38 @@ function connectionLost(details={}) {
   if(reconnecting)return;
   reconnecting=true;stateRequestSequence++;stateTransportSequence=0;
   playbackClock.reset();queueUI.rememberPosition();
-  // Keep the room and catalog context. Only the player/temporary consent are
-  // discarded; a new authorized stream and observation epoch arrive on rejoin.
-  clearPlayer('control-disconnected');toggleRemote(false);
+  toggleRemote(false);
   if(state)state={...state,enabled:false,reachable:false};
   renderRemote();renderTransport();renderBrowsing();renderVisibility();
   document.title=document.title.replace(/^🟢 /,'');
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer=setTimeout(()=>{
+    if(!reconnecting)return;
+    const buffered=uburoomPlayback.bufferedAhead(video.buffered,video.currentTime);
+    if(buffered>2){
+      disconnectExtended=true;
+      diagnostics.record('disconnect-extended',{bufferAhead:buffered});
+      hls?.stopLoad();
+      showDisconnectToast();
+    } else {
+      diagnostics.record('disconnect-expired',{bufferAhead:buffered});
+      fullPlayerClear();
+    }
+  },DISCONNECT_GRACE_MS);
+}
+function showDisconnectToast() {
+  const toast=$('disconnect-toast');if(!toast)return;
+  const symbol=toast.querySelector('.disconnect-toast-symbol');
+  if(symbol&&!symbol.firstChild)symbol.append(uburoomUI.icon(document,'refresh'));
+  toast.hidden=false;
+}
+function hideDisconnectToast() {
+  const toast=$('disconnect-toast');if(toast)toast.hidden=true;
+}
+function fullPlayerClear() {
+  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
+  disconnectExtended=false;hideDisconnectToast();
+  clearPlayer('control-disconnected');toggleRemote(false);
   if(selected){$('empty-title').textContent='Reconnecting to your room…';$('empty-hint').textContent='Your library and queue position are kept.';}
   fail('Disconnected. Reconnecting…');
 }
@@ -911,6 +949,8 @@ async function reportReadiness() {
 function applyState(next) {
   if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
   stateTransportSequence=next.transportSequence;
+  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
+  const wasExtended=disconnectExtended;disconnectExtended=false;hideDisconnectToast();
   const resumed=reconnecting;reconnecting=false;
   sync.transition(next);
   diagnostics.state(next);
@@ -938,6 +978,9 @@ function applyState(next) {
         // the target seek; aborting that speculative load adds recovery noise.
         client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&sync.timelinePending)client.pauseBuffering();});
         client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
+        client.on(Hls.Events.BUFFER_FLUSHING, (_, data) => {
+          if (hls === client) diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
+        });
         client.loadSource(next.mediaUrl); client.attachMedia(video);
       } else video.src = next.mediaUrl;
     }
@@ -946,6 +989,8 @@ function applyState(next) {
     sync.sharedSeek();
     if(sync.preparationUntil&&hls){hls.startLoad(expected());}
     else restartHlsForSeek(expected());
+  } else if (wasExtended && !changed && hls) {
+    hls.startLoad(expected());
   }
   captions.update(next);
   if(next.mediaError)playbackError=next.mediaError;
@@ -995,6 +1040,8 @@ async function refreshState() {
   } }
 }
 async function selectRoom(id,initial) {
+  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
+  disconnectExtended=false;hideDisconnectToast();
   if (id === selected) return;
   if(switchingRoom)throw new Error('Wait for the room to open.');
   switchingRoom=true;
@@ -1354,7 +1401,7 @@ async function start() {
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
     onReady:()=>bootstrap=(async()=>{
       await refreshState();if(initialRooms)initialRooms=undefined;else await refreshRooms();
-      if(!selected){if(reconnecting)diagnostics.record('control-reconnected');reconnecting=false;fail('');}
+      if(!selected){if(reconnecting)diagnostics.record('control-reconnected');clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
       $('auth-loading').hidden=$('auth-overlay').hidden=true;
       document.body.classList.remove('auth-pending');
       renderBrowsing();renderVisibility();placeRoomBar();

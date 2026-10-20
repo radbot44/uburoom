@@ -205,3 +205,94 @@ test('fresh HLS media clears an exhausted delivery error and resumes synchroniza
   assert.equal(context.hlsNetworkInterrupted,false);
   assert.deepEqual(calls,[['cancel',7],['error',''],['synchronize']]);
 });
+
+test('brief WebSocket disconnect does not tear down player, and extended disconnect plays from buffer with toast', async () => {
+  const timers = [];
+  let cleared = 0, stoppedLoad = 0, failedMessage = '';
+  const client = { stopLoad() { stoppedLoad++; }, startLoad() {} };
+  const toast = { hidden: true, querySelector() { return { firstChild: null, append() {} }; } };
+  const elements = {
+    'disconnect-toast': toast,
+    'empty-title': { textContent: '' },
+    'empty-hint': { textContent: '' },
+    'badge': { classList: { remove() {} } }
+  };
+  const $ = id => elements[id];
+  const context = {
+    $: $,
+    uburoomUI: { icon: () => ({}) },
+    uburoomPlayback: playback,
+    diagnostics: diagnosticLog(),
+    transport: { ready: false, interrupt() {} },
+    reconnecting: false,
+    stateRequestSequence: 0,
+    stateTransportSequence: 0,
+    playbackClock: { reset() {} },
+    queueUI: { rememberPosition() {} },
+    toggleRemote() {},
+    renderRemote() {},
+    renderTransport() {},
+    renderBrowsing() {},
+    renderVisibility() {},
+    document: { title: '🟢 Room · uburoom' },
+    selected: 'room-1',
+    state: { enabled: true, reachable: true, mediaUrl: '/media' },
+    video: {
+      currentTime: 10,
+      buffered: { length: 1, start: () => 0, end: () => 30 }
+    },
+    hls: client,
+    clearPlayer: () => { cleared++; },
+    fail: msg => { failedMessage = msg; },
+    clearTimeout: id => {
+      const idx = timers.findIndex(t => t.id === id);
+      if (idx !== -1) timers.splice(idx, 1);
+    },
+    setTimeout: (fn, delay) => {
+      const id = timers.length + 1;
+      timers.push({ id, fn, delay });
+      return id;
+    },
+    disconnectGraceTimer: undefined,
+    disconnectExtended: false,
+    DISCONNECT_GRACE_MS: 8000
+  };
+
+  const code = source.slice(
+    source.indexOf('function connectionLost('),
+    source.indexOf('async function unlockLocal(')
+  );
+  vm.runInNewContext(code, context);
+
+  // 1. connectionLost is called
+  context.connectionLost({ code: 1006 });
+  assert.equal(context.reconnecting, true);
+  assert.equal(cleared, 0, 'player is not cleared immediately on disconnect');
+  assert.equal(toast.hidden, true, 'toast is not shown during silent grace period');
+  assert.equal(timers.length, 1, 'grace timer is armed');
+  assert.equal(timers[0].delay, 8000);
+
+  // 2. Fast reconnect scenario:
+  // If timer is cleared before 8s, player remains uncleared
+  context.clearTimeout(timers[0].id);
+  assert.equal(cleared, 0);
+
+  // 3. Extended disconnect scenario:
+  timers.length = 0;
+  context.reconnecting = false;
+  context.connectionLost({ code: 1006 });
+  assert.equal(timers.length, 1);
+  // Fire the 8s timer with 20s buffer ahead (end=30, currentTime=10)
+  timers[0].fn();
+  assert.equal(context.disconnectExtended, true, 'enters extended disconnect mode');
+  assert.equal(stoppedLoad, 1, 'hls.stopLoad is called to preserve buffer');
+  assert.equal(toast.hidden, false, 'toast is shown after grace period with buffer');
+  assert.equal(cleared, 0, 'player is still not cleared while buffer remains');
+
+  // 4. Buffer exhausted: fullPlayerClear is called
+  context.fullPlayerClear();
+  assert.equal(context.disconnectExtended, false);
+  assert.equal(toast.hidden, true, 'toast is hidden on full clear');
+  assert.equal(cleared, 1, 'player is cleared when buffer runs out');
+  assert.equal(failedMessage, 'Disconnected. Reconnecting…');
+});

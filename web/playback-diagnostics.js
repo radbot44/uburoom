@@ -7,7 +7,7 @@
     request:['room-poll','rooms','observe','ready','command','identity','other'],
     failure:['http','network','timeout','abort','decode','other'],
     category:['network','media','other'],
-    detail:['reset','fragment','manifest','other'],
+    detail:['reset','fragment','manifest','quota-exceeded','buffer-append','other'],
     format:['hls','file','av1'], delivery:['text','burn','off'],syncMode:['speed','jumps'],
     visibility:['visible','hidden','prerender'],
     rejection:['media-unavailable','media-changed','stream-changed','epoch-changed','invalid-discontinuity','invalid-state','invalid-sequence','sequence-replayed',
@@ -19,7 +19,7 @@
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered','control-disconnected','control-reconnected',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
-    'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','start-prepare','start-timer','hls-anchor']);
+    'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','start-prepare','start-timer','hls-anchor','hls-buffer-flushing']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',

@@ -1,5 +1,59 @@
 # Verification status
 
+## HLS buffering expansion and Plex transcoder lifecycle evaluation (2026-10-19)
+
+Empirically evaluated HLS forward and back-buffer configuration, browser MSE SourceBuffer quotas, back-buffer eviction, and Plex transcode session lifetimes across network interruptions.
+
+1. **HLS.js Buffer Configuration & Adaptive Engine:**
+   - Previously, `web/playback-policy.js` set `maxMaxBufferLength` equal to `maxBufferLength` (clamped to `ahead`, which was derived from a 64 MiB cap). At higher bitrates (12–24 Mbps), this choked HLS.js down to 14–29 seconds of forward buffer, causing playback to stall quickly during brief network blips.
+   - Updated `web/playback-policy.js` to configure HLS.js with:
+     - `maxBufferSize: 256 * 1024 * 1024` (256 MiB byte budget)
+     - `maxBufferLength: 30` (30s minimum forward buffer)
+     - `maxMaxBufferLength: 180` (180s maximum forward buffer cap)
+     - `backBufferLength: 30` (30s bounded backward eviction window)
+   - Tested mathematical targets across stream bitrates (1.5 Mbps to 80 Mbps):
+     - 4 Mbps (720p): 180s cap (~86 MB).
+     - 12 Mbps (1080p high transcode): ~179s (~256 MB).
+     - 24 Mbps (1080p remux / direct stream): ~90s (~256 MB).
+     - 40 Mbps (4K standard): ~54s (~256 MB).
+   - Preserved `BUFFER.maxBytes = 64 * 1024 * 1024` and `BUFFER.ahead = 60` for AV1 chunk-window authorization, maintaining complete compatibility and test invariance for AV1 WebM.
+
+2. **Browser Execution & Quota Eviction:**
+   - Executed headless Chrome 155 and Firefox 158 with actual 240-second HLS media:
+     - Both browsers filled forward buffer cleanly without unhandled errors.
+     - Back-buffer eviction verified: after seeking forward to 60s, earlier segments `[0.08, 30.03]` were evicted from the MSE SourceBuffer in both Chrome and Firefox, keeping only `[58.1, 90.0]`.
+     - Tested HLS.js recovery from MSE `QuotaExceededError`: HLS.js's built-in `reduceLengthAndFlushBuffer` automatically halves `maxMaxBufferLength` and flushes back/forward buffer, allowing continuous playback without a crash.
+   - Extended playback diagnostics (`web/playback-diagnostics.js` and `web/watch.js`):
+     - Added `'quota-exceeded'` and `'buffer-append'` to diagnostic details.
+     - Subscribed to `Hls.Events.BUFFER_FLUSHING` to record buffer evictions (`hls-buffer-flushing`).
+
+3. **Plex Transcoder Lifetimes & Session Expiration:**
+   - Verified Plex transcode lifecycle:
+     - The sync server pings Plex every 15s (`/video/:/transcode/universal/ping`).
+     - If a viewer disconnects from the sync server for >10s, the server prunes the viewer and terminates the transcode session via `this.plex.stop(viewer.media)`.
+     - When internet drops to Plex directly, PMS universal transcode sessions terminate after ~60s of inactivity.
+     - Transcoded HLS segments from different Plex sessions have incompatible PTS/DTS timestamps and cannot be appended to the same `MediaSource`.
+   - Verified recovery flow across drop durations:
+     - Drops ≤8s: Silent grace period; player untouched, playback proceeds from local buffer; resumes instantly on reconnect.
+     - Drops 8s–10s: Extended disconnect; toast overlays player, `hls.stopLoad()` suspends fetches; resumes smoothly from existing transcode if reconnected.
+     - Drops >10s / Expired Session (410 Gone): When the client attempts to fetch from an expired session, Plex/proxy returns 410 Gone. `handleHlsError` catches 410, requests `media.stream.refresh`, the server provisions a fresh transcode session and `mediaUrl`, and `applyState` cleanly reinitializes the player at the synchronized room position (`expected()`), avoiding decode corruption.
+
+Verification:
+- `npm run test:full`: **367 passed, 0 failed, 0 skipped**.
+- `node scripts/buffer-eval.js`: Theoretical calculations, headless Chrome & Firefox buffer tests, back-buffer eviction tests, and Plex session expiration lifecycle tests passed. Artifact generated at `artifacts/hls-buffer-evaluation/evaluation-results.json`.
+
+## Graceful disconnect tolerance and playback buffer retention (2026-10-19)
+
+Brief control socket drops (such as TCP drops, WiFi band switches or transient network hiccups) no longer immediately tear down the active player, flush MSE buffers or clear video elements. Temporary remote consent is still revoked immediately, commands remain blocked while reconnecting, and playback clocks reset to suspend active drift correction.
+
+During the initial 8-second grace window, playback continues silently from existing buffer without interrupting the user or changing the player view. When the control connection recovers within the grace period with the same media, the existing stream and buffer are retained, segment buffering continues, and timeline synchronization resumes naturally.
+
+If disconnection extends past 8 seconds while sufficient buffered media remains ahead (>2s), the player enters an extended disconnected state: segment fetching is halted (`hls.stopLoad()`) to protect against expired session URLs while existing buffered ranges remain attached for playback, and an unobtrusive toast ("Disconnected from room / Reconnecting…") overlays the stage. Should the buffer run out while disconnected, the player's `waiting` event triggers full teardown to the reconnecting stage. When connection is re-established before the buffer exhausts, the toast is dismissed and segment loading resumes.
+
+Verification:
+
+- `npm run test:full`: **367 passed, 0 failed, 0 skipped**. Added regression coverage in `tests/watch-recovery.test.js` covering silent grace retention during brief disconnects, extended playback from buffer with toast display, buffer-exhaustion teardown, and clean recovery upon reconnection.
+
 ## Shared lobby layout and room entry latency (2026-10-19)
 
 Home and empty-room lobbies now share the existing black player frame, centered empty-room presentation and the actual video dimensions, including normal/theater/phone layouts. Their text and available actions differ by room/sign-in state. Inline sign-in stays within that frame; compact phone copy avoids enlarging the player. Rendered desktop home/empty-room and phone surfaces were inspected.

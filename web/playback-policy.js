@@ -1,14 +1,11 @@
 /* Shared browser/server playback limits. No credentials, DOM or network calls. */
 (function (root) {
   'use strict';
-  const BUFFER = Object.freeze({ahead:60,behind:30,maxBytes:64 * 1024 * 1024,chunkSeconds:6});
+  const BUFFER = Object.freeze({ahead:60,behind:30,maxBytes:64 * 1024 * 1024,hlsMaxBytes:256 * 1024 * 1024,chunkSeconds:6});
   function hlsConfig(bitrateKbps) {
-    const rate = Number(bitrateKbps), seconds = rate > 0 && Number.isFinite(rate) ? BUFFER.maxBytes * 8 / (rate * 1000) : 90;
-    const ahead = Math.min(BUFFER.ahead,Math.max(12,Math.floor(seconds * 2 / 3)));
-    const behind = Math.min(BUFFER.behind,Math.max(0,Math.floor(seconds / 3)));
     // Establish transport timestamps from the first segment before any seek.
     return {enableWorker:true,startPosition:0,
-      maxBufferLength:ahead,maxMaxBufferLength:ahead,backBufferLength:behind,maxBufferSize:BUFFER.maxBytes};
+      maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024)};
   }
   function chunkWindow(position,duration) {
     const current = Math.max(0,Math.min(position,Math.max(0,duration - .05)));

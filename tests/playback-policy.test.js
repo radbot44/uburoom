@@ -11,10 +11,12 @@ test('shared buffer window clamps start/end and bounds authorized ahead/rewind',
 });
 test('HLS uses explicit time limits and reduces high-bitrate buffering toward the byte target',() => {
   const normal = p.hlsConfig(4000), high = p.hlsConfig(24000);
-  assert.equal(normal.maxBufferLength,60); assert.equal(normal.backBufferLength,30);
-  assert.equal(high.maxBufferLength,14); assert.equal(high.backBufferLength,7);
-  assert.equal(normal.maxMaxBufferLength,normal.maxBufferLength);
-  assert.equal(p.hlsConfig(NaN).maxBufferLength,60);
+  assert.equal(normal.maxBufferLength,30); assert.equal(normal.backBufferLength,30);
+  assert.equal(normal.maxMaxBufferLength,180);
+  assert.equal(high.maxBufferLength,30); assert.equal(high.backBufferLength,30);
+  assert.equal(high.maxMaxBufferLength,180);
+  assert.equal(normal.maxBufferSize,256 * 1024 * 1024);
+  assert.equal(p.hlsConfig(NaN).maxBufferLength,30);
   assert.equal(normal.startPosition,0,'every stream establishes its timestamp origin at the beginning');
 });
 test('buffer display preserves holes and clamps values without including external text',() => {
