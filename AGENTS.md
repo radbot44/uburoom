@@ -36,11 +36,11 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 ## Configuration
 
 - **All config via private `config.yaml`**, loaded by `server/config.js`; `--config <path>` selects a mounted/external file. No `.env` loading or application environment overrides. Relative paths resolve beside the YAML file. Never share, log, commit or package private configuration; only `config.example.yaml` is distributable.
-- YAML sections: API/secrets first (`plex`, `discord`), then `server`, `storage`, `tools`, `rooms`. Quote IDs and secrets; use native YAML lists. Validate settings before opening state or contacting providers. Use `node scripts/migrate-config.js` for explicit one-time legacy conversion; preserve the original key and state paths. Keep Linux/macOS/container mounting and persistent-state needs in mind.
+- YAML sections: API/secrets first (`plex`, `discord`), then `server`, `storage`, `tools`, `rooms`. Quote IDs and secrets; use native YAML lists. Validate settings before opening state or contacting providers. Until the final release preparation steps, save private configuration and schema/data migration scripts in `personal/migrations/` outside the shipped application; configuration defaults may use a reusable script reading the current example, while database migrations remain task-specific; do not retain migration commands or run migrations automatically at startup/deployment. Preserve the original key and state paths. Keep Linux/macOS/container mounting and persistent-state needs in mind.
 - Device, browser-login and playback-history state live in `data/accounts.sqlite`. Baseline version 4 includes room records/hosts, queue occurrences, auto-queue state and the autoplay setting; earlier private state is rejected unchanged and requires a reviewed matched backup/manual transfer before deployment. Legacy JSON files are not runtime inputs. Runtime SQLite uses an in-memory mirror/bounded writer; await persistence before acknowledging durable changes. Saved rooms integrate with live viewing, while playback authority remains process-local. Remote consent always remains ephemeral.
 - See [docs/self-hosting.md](docs/self-hosting.md) for the full configuration reference.
-- Entry, personal Plex-server admission and playback credentials are separate policies (`server/access-policy.js`). The optional shared password is additional to provider rules. Fallback sharing is explicitly enabled by default and may use a dedicated token; never sponsor expired/revoked credentials, provider failures or item restrictions. Required personal Plex-server access cannot be bypassed by fallback. Activity-only viewing requires a verified Activity identity; browser linking remains separate from playback.
-- Single-room mode fixes the creator to `discord.owner_id`, assigns configured Discord admins as initial hosts, forbids leadership transfer and substitutes reset for deletion. Admin mode remains explicit and grants creator rights; ordinary hosts cannot edit management permissions. Conversion policy/counting is shared across Plex output jobs and uburoom conversion jobs, with explicit local encoder choice and no silent CPU fallback.
+- Entry, personal Plex-server admission and playback credentials are separate policies (`server/access-policy.js`). The optional shared password is additional to provider rules. Fallback sharing is explicitly enabled by default and may use a dedicated token; never sponsor expired/revoked credentials, provider failures or item restrictions. Required personal Plex-server access cannot be bypassed by fallback; the explicit Activity exception applies only to server-verified Activity identities and never to browser handoffs. Activity-only viewing requires a verified Activity identity; browser linking remains separate from playback.
+- Single-room mode fixes the creator to an explicit Plex leader ID, otherwise `discord.owner_id` for Discord sign-in or the verified `plex.token` account for Plex-only sign-in; both methods off retains the Discord owner. It assigns configured Discord/Plex admins as initial hosts, forbids leadership transfer and substitutes reset for deletion. Admin mode remains explicit and grants creator rights; ordinary hosts cannot edit management permissions. Conversion policy/counting is shared across Plex output jobs and uburoom conversion jobs, with hardware-first QSV/NVENC selection and configurable CPU fallback under the same reservation.
 
 ---
 
@@ -75,7 +75,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 ## Accounts, Credentials & Encryption
 
 - Accounts use **stable UUIDs** — never regenerate them. Account merging retires one UUID into another via `retiredInto`; `canonical()` follows the chain.
-- Plex OAuth tokens are encrypted with **AES-256-GCM** using a 32-byte key. The key file defaults to `LOCALAPPDATA/uburoom/credentials.key` and **must be stored outside the project folder** (startup validates this).
+- Plex OAuth tokens are encrypted with **AES-256-GCM** using a 32-byte key. The key file defaults to `LOCALAPPDATA/uburoom/credentials.key` on Windows, `XDG_DATA_HOME/uburoom/credentials.key` (normally `~/.local/share/uburoom/credentials.key`) on Linux, and `~/Library/Application Support/uburoom/credentials.key` on macOS and **must be stored outside the project folder** (startup validates this).
 - Credentials belong in **private server configuration** (`config.yaml`, gitignored) or **extension storage** (`browser.storage.local`). Never log, commit, or package secrets, private state, TLS certificates, or key files.
 - See [docs/upgrading.md](docs/upgrading.md) for current pre-release transition notes and rules preserving UUIDs and exact original key bytes when retaining state.
 
@@ -104,7 +104,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - The watch page (`web/watch.html` + `web/watch.js`) is an SPA. It uses a standard `<video>` element, HLS.js for HLS streams, and native playback for direct streams.
 - **Sync timing:** Clock offset estimation (midpoint exchange, rolling low-delay filter, bounded slew). Initial readiness publishes a start 1.75s in the future. Drift correction via `web/playback-timing.js`.
-- **Playback decisions:** Resolve Plex access → gather runtime codec support → prefer direct → consider remux/audio-only → fall back to full conversion. Delivery paths: Original (direct file), Plex HLS (H.264/AAC), custom AV1/Opus (Intel QSV via FFmpeg).
+- **Playback decisions:** Resolve Plex access → gather runtime codec support → prefer direct → consider remux/audio-only → fall back to full conversion. Delivery paths: Original (direct file), Plex HLS (H.264/AAC), local WebM/Opus: AV1 (QSV/NVENC/software), VP9 (probed QSV/software) and VP8 (software). Ordered allowed codecs participate in conversion sharing and bounded fallback; use decoded frames rather than positive support hints to claim playback.
 - **Recovery:** Bounded retries, HLS session refresh, 60s reconnect grace, host heartbeat loss revokes consent. See [docs/playback-reliability.md](docs/playback-reliability.md).
 - Report unsupported or site-dependent behavior honestly — do not silently swallow codec/browser limitations.
 
@@ -135,7 +135,7 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 - The server connects to Plex using the configured `PLEX_URL` and `PLEX_TOKEN` (owner token for library browsing/metadata).
 - Per-viewer media preparation: resolves Plex access, handles quality selection, compatibility, track choices, browser subtitles, shared conversion keys. Collapses concurrent polls per viewer.
-- Quality presets: Original, 1080p at 20/12/8 Mbps, 720p at 4/2 Mbps.
+- Quality defaults: Original, 1080p at 20/12/8 Mbps, 720p at 4/2 Mbps; owners can configure validated [height, Mbps] pairs. Server-side offered choices remain authoritative.
 - Optional FFmpeg/FFprobe for AV1 encoding (`server/av1.js`) and subtitle extraction.
 
 ---
@@ -170,7 +170,7 @@ For every new or materially updated result in [docs/testing.md](docs/testing.md)
 - **Extension dev:** Use uburoom-remote's source, build/configuration scripts and independent tests. Integration fixtures here require an explicit external build path; no sibling checkout layout is assumed.
 - **Vendor builds:** `npm run build:player` bundles Discord SDK, HLS.js, and subtitle renderers via esbuild into `web/vendor/`.
 - **Database:** `data/accounts.sqlite` is created automatically on first run. The credential key file must exist and be outside the project folder.
-- See [docs/development.md](docs/development.md) for the full dev guide. M1-P7 will isolate the browser codec-test page from normal viewing, and M1-P11 uses transport-neutral room operations directly from WebSockets while preserving necessary HTTP resources.
+- See [docs/development.md](docs/development.md) for the full dev guide. Codec tester access is in Other during active Admin mode, with protected synthetic samples. M1-P11 uses transport-neutral room operations directly from WebSockets while preserving necessary HTTP resources.
 
 ---
 

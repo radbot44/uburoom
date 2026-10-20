@@ -13,7 +13,6 @@
     "test:full": "node --test tests/*.test.js",
     "test:playback": "node scripts/playback-baseline.js",
     "demo": "node scripts/watch-demo.js",
-    "config:migrate": "node scripts/migrate-config.js",
     "build:player": "node scripts/build-player-vendor.js && node scripts/build-subtitle-vendor.js"
   },
   "dependencies": {

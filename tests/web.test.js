@@ -12,7 +12,7 @@ const certFile = path.join(__dirname, '../certs/server-cert.pem');
 
 test('web login, visibility, explicit UUID routing and writes enforce current permission and CSRF', { skip: !fs.existsSync(certFile) }, async t => {
   const cert = fs.readFileSync(certFile), config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
-    publicUrl: 'https://localhost:6767', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret' };
+    publicUrl: 'https://localhost:5756', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret' };
   const firstVoice = '111111111111111111', secondVoice = '222222222222222222';
   let identity = 'owner', member = true, voice = firstVoice, hostVoice = firstVoice;
   const app = createApp(config, { oauthFetch: async url => new Response(JSON.stringify(url.endsWith('/token') ? { access_token: 'fixture' } : { id: identity, username: identity + '-name' })) });

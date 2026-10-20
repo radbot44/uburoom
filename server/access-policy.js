@@ -29,7 +29,11 @@ class AccessPolicy {
     this.sweep();
     return token;
   }
-  async admit(id) {
+  requiresPlex(context) {
+    return !!this.settings?.requirePlex && !(context?.activity === true && this.settings.requirePlexInActivity === false);
+  }
+  admissionKey(id, context) { return context?.activity === true ? 'activity:' + id : id; }
+  async admit(id, context) {
     if (!this.settings) return false;
     const account = this.registry?.canonical(id);
     if (!account) return false;
@@ -38,11 +42,11 @@ class AccessPolicy {
     const discord = identities.find(identity => identity.provider === 'discord');
     const plex = identities.find(identity => identity.provider === 'plex');
     let allowed = false;
-    if (this.settings.requirePlex) {
+    if (this.requiresPlex(context)) {
       try { allowed = !!plex && !!await this.plexAuth.forUser(account.id); } catch { allowed = false; }
     } else if (this.anonymous || discord?.subject === this.config.ownerId) allowed = true;
     else {
-      if (this.settings.discord && discord) {
+      if ((this.settings.discord || context?.activity === true) && discord) {
         const access = this.discordAccess();
         try { allowed = !!access?.isMember(discord.subject) || !!await access?.refresh(discord.subject); } catch { allowed = false; }
       }
@@ -50,14 +54,15 @@ class AccessPolicy {
         try { allowed = !!await this.plexAuth.forUser(account.id); } catch(error) { allowed = error.noServerAccess === true; }
       }
     }
-    if (allowed) this.allowed.set(account.id, Date.now() + 1000);
-    else this.allowed.delete(account.id);
+    const key = this.admissionKey(account.id, context);
+    if (allowed) this.allowed.set(key, Date.now() + 1000);
+    else this.allowed.delete(key);
     return allowed;
   }
-  fresh(id) { return (this.allowed.get(id) || 0) > Date.now(); }
+  fresh(id, context) { return (this.allowed.get(this.admissionKey(id, context)) || 0) > Date.now(); }
   entered(id) {this.entryUsers.set(id,Date.now()+12*3600000);}
   public() {
-    return this.settings ? { discord:this.settings.discord, plex:this.settings.plex, requirePlex:this.settings.requirePlex,
+    return this.settings ? { discord:this.settings.discord, plex:this.settings.plex, requirePlex:this.settings.requirePlex, requirePlexInActivity:this.settings.requirePlexInActivity !== false,
       passwordRequired:this.passwordRequired, anonymous:this.anonymous, publicWeb:this.settings.publicWeb } : undefined;
   }
   sweep() { for(const map of [this.passwordGrants,this.entryUsers,this.allowed])for(const [key,expires]of map)if(expires<=Date.now())map.delete(key); }

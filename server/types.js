@@ -15,6 +15,7 @@
  * @property {string} [guildId] - Discord guild snowflake if origin is linked to Discord.
  * @property {string} [channelId] - Discord command or text channel snowflake.
  * @property {string} [discordId] - Raw Discord user ID if available.
+ * @property {boolean} [activity] - Set by the server after verified Activity sign-in.
  */
 
 /**

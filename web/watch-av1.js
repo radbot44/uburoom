@@ -1,5 +1,5 @@
 'use strict';
-// AV1 WebM goes directly to MediaSource, never through hls.js. Each independently
+// AV1/VP9/VP8 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
 class uburoomAV1 {
   constructor(video, url, target, failed) {
@@ -21,7 +21,7 @@ class uburoomAV1 {
     catch (error) { error.retryable = true; throw error; }
     if (!response.ok) {
       const value = await response.json().catch(() => ({}));
-      const error = new Error(value.error || 'AV1 stream could not load.');
+      const error = new Error(value.error || 'Converted stream could not load.');
       error.retryable = response.status >= 500 || [408,429].includes(response.status); throw error;
     }
     return response;
@@ -42,7 +42,7 @@ class uburoomAV1 {
         buffer.removeEventListener('updateend', done); buffer.removeEventListener('error', bad);
         this.abort.signal.removeEventListener('abort', cancelled); error ? reject(error) : resolve();
       };
-      const done = () => finish(), bad = () => finish(new Error('AV1 WebM could not be decoded.'));
+      const done = () => finish(), bad = () => finish(new Error('Converted WebM could not be decoded.'));
       const cancelled = () => finish(new DOMException('Replaced','AbortError'));
       buffer.addEventListener('updateend', done, {once:true}); buffer.addEventListener('error', bad, {once:true});
       this.abort.signal.addEventListener('abort', cancelled, {once:true});
@@ -174,7 +174,7 @@ class uburoomAV1 {
   }
   fail(error) {
     if (this.abort.signal.aborted) return;
-    this.destroy(); this.failed('AV1 playback failed: ' + error.message);
+    this.destroy(); this.failed('Converted playback failed: ' + error.message);
   }
   destroy() {
     clearTimeout(this.timer); this.abort.abort(); this.request?.abort();

@@ -71,32 +71,28 @@ function commandCapability(action) {
 }
 
 function permissionList(value, base) {
-  if (value === undefined || value.trim() === '') return { ...base };
-  const names = value.split(',').map(name => name.trim());
-  if (names.length === 1 && ['all', 'none'].includes(names[0])) {
-    return Object.fromEntries(CAPABILITIES.map(key => [key, names[0] === 'all']));
-  }
-  if (names.some(name => !CAPABILITIES.includes(name) && name !== 'picture')) throw new Error('Unknown capability in room permission defaults');
-  return Object.fromEntries(CAPABILITIES.map(key => [key, names.includes(key)]));
+  if (value === undefined) return { ...base };
+  if (['all', 'none'].includes(value)) return Object.fromEntries(CAPABILITIES.map(key => [key, value === 'all']));
+  if (!Array.isArray(value) || value.some(name => !CAPABILITIES.includes(name) && name !== 'picture')) throw new Error('Unknown capability in room permission defaults');
+  return Object.fromEntries(CAPABILITIES.map(key => [key, value.includes(key)]));
 }
 
 function identifiers(value, pattern, setting) {
-  if (value === undefined || value.trim() === '') return [];
-  const ids = [...new Set(value.split(',').map(id => id.trim()))];
-  if (ids.some(id => !pattern.test(id))) throw new Error(setting + ' requires exact account or role IDs');
-  return ids;
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || !pattern.test(id))) throw new Error(setting + ' requires exact account or role IDs');
+  return [...new Set(value)];
 }
 
-function configuration(env) {
+function configuration(rooms) {
   return {
     roomPermissions: policy({
-      host: permissionList(env.ROOM_HOST_PERMISSIONS, DEFAULTS.host),
-      viewer: permissionList(env.ROOM_VIEWER_PERMISSIONS, DEFAULTS.viewer)
+      host: permissionList(rooms.host_permissions, DEFAULTS.host),
+      viewer: permissionList(rooms.viewer_permissions, DEFAULTS.viewer)
     }),
     roomAdministrators: {
-      discord: identifiers(env.ROOM_ADMIN_DISCORD_IDS, /^\d{17,20}$/, 'ROOM_ADMIN_DISCORD_IDS'),
-      plex: identifiers(env.ROOM_ADMIN_PLEX_IDS, /^\d{1,20}$/, 'ROOM_ADMIN_PLEX_IDS'),
-      discordRoles: identifiers(env.ROOM_ADMIN_DISCORD_ROLE_IDS, /^\d{17,20}$/, 'ROOM_ADMIN_DISCORD_ROLE_IDS')
+      discord: identifiers(rooms.admin_discord_ids, /^\d{17,20}$/, 'rooms.admin_discord_ids'),
+      plex: identifiers(rooms.admin_plex_ids, /^\d{1,20}$/, 'rooms.admin_plex_ids'),
+      discordRoles: identifiers(rooms.admin_discord_role_ids, /^\d{17,20}$/, 'rooms.admin_discord_role_ids')
     }
   };
 }

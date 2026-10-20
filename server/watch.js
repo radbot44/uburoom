@@ -32,7 +32,7 @@ class Watch {
   }
   create(actor, visibility = 'public', saved) {
     if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
-    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing room');
+    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing room');
     if (this.rooms.size >= 4) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = saved?.id || randomUUID();
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
@@ -96,6 +96,26 @@ class Watch {
       }
     }
   }
+  async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized) {
+    const {alternatives}=require('./quality-options');
+    const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
+    if(!choices.length)throw new PlaybackError('No configured quality is available for this video. Ask the owner to offer a lower quality or Original.');
+    const quality=choices.some(q=>q.id===Engine.qualityId(requested))?Engine.qualityId(requested):alternatives(choices,requested)[0]?.id;
+    const prepare=(value,sharedOnly=false)=>plex.prepare(source.id,value,compatible,source,fallback,
+      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,authorized,sharedOnly});
+    let media;
+    try {media=await prepare(quality);}
+    catch(error) {
+      if(!error.conversionCapacity)throw error;
+      for(const option of alternatives(choices,quality)) {
+        try {media=await prepare(option.id,true);break;}
+        catch(next) {if(!next.conversionCapacity)throw next;}
+      }
+      if(!media)throw error;
+    }
+    media.qualityNotice=media.quality!==Engine.qualityId(requested)?'Your requested quality is unavailable. Playing '+(choices.find(q=>q.id===media.quality)?.label || media.quality)+'. You can try your preferred quality again later.':'';
+    return media;
+  }
   async prepareViewer(room, actor, viewerId) {
     const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId || !room.media) return;
@@ -105,14 +125,9 @@ class Watch {
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) { await viewer.preparing; return this.prepareViewer(room, actor, viewerId); }
     const prepare = async () => {
-      const choices = this.plex.qualities?.(room.media);
-      if (choices && !choices.some(q => q.id === Engine.qualityId(viewer.quality))) {
-        const requested = Engine.QUALITIES.find(q => q.id === Engine.qualityId(viewer.quality));
-        viewer.quality = (choices.find(q => q.bitrate && q.bitrate <= requested?.bitrate && q.height <= requested?.height) || choices[0]).id;
-      }
       await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
-        plex.prepare(source.id,viewer.quality,viewer.compatible,source,viewer.fallback,
-          {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized}),{retainUnavailable:true});
+        this.prepareQuality(room,viewer,plex,source,viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
+      if(viewer.media?.quality)viewer.quality=viewer.media.quality;
     };
     viewer.preparing = prepare();
     try { await viewer.preparing; } finally { viewer.preparing = undefined; }
@@ -193,8 +208,8 @@ class Watch {
   async canView(room, actor) {
     if (!room || this.rooms.get(room.s.roomId) !== room) return false;
     if (room.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
-    if (!canWatch(this.hub.access,actor.userId)) {
-      try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId)) return false; } catch { return false; }
+    if (!canWatch(this.hub.access,actor.userId,actor)) {
+      try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId,actor)) return false; } catch { return false; }
     }
     if(room.media?.kind==='plex'&&this.hub.plexFor){try{if(!await (await this.hub.plexFor(actor)).allows(room.media.id))return false;}catch{return false;}}
     return viewEligible(room.s, actor, this.hub.config, Date.now(), this.hub.access, this.hub.isAdmin(actor));
@@ -222,7 +237,7 @@ class Watch {
       for (const [viewerId, candidate] of candidates) {
         try { if (candidate.alive && !await candidate.alive()) continue; } catch { continue; }
         let member;
-        try { member = !!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(candidate.userId);if(member&&room.media?.kind==='plex'&&this.hub.plexFor)member=await (await this.hub.plexFor(candidate.actor)).allows(room.media.id); } catch { member = false; }
+        try { member = !!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(candidate.userId,candidate.actor);if(member&&room.media?.kind==='plex'&&this.hub.plexFor)member=await (await this.hub.plexFor(candidate.actor)).allows(room.media.id); } catch { member = false; }
         if (this.rooms.get(room.s.roomId) !== room || room.s.hostId !== oldHost) return;
         if ([...room.viewers.values()].some(v => v.userId === oldHost)) return;
         if (!member || room.s.visibility !== 'public' || room.viewers.get(viewerId) !== candidate || Date.now() - candidate.at >= 10000) continue;
@@ -319,6 +334,10 @@ class Watch {
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
       mediaError:viewer.media?.playbackError,
+      qualityNotice:viewer.media?.qualityNotice,
+      deliveryInfo:viewer.media?{format:viewer.media.format,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
+        width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
+        encoder:viewer.media.av1Lease?.group.encoder,cpuFallback:!!viewer.media.av1Lease?.group.cpuFallback}:undefined,
       ...(viewer.media?.tracks ? {tracks:{...Tracks.publicCatalog(viewer.media.tracks),audioChoice:viewer.trackChoice?.audioId || 'auto',subtitleChoice:viewer.trackChoice?.subtitleId || 'auto',
         audioId:viewer.media.selection.audio?.id,subtitleId:viewer.media.selection.subtitle?.id,subtitleOffset:viewer.subtitleOffset || 0,
         subtitleDelivery:viewer.media.selection.subtitle?.delivery,subtitleMode:viewer.trackChoice?.subtitleMode || 'auto',
@@ -659,16 +678,14 @@ class Watch {
       if (action === 'media.quality.set') {
         if (!room.media || room.media.kind === 'demo') return { status: 'unsupported', message: 'Quality is unavailable for this video.' };
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
-        if (this.plex.qualities && !this.plex.qualities(room.media).some(q => q.id === Engine.qualityId(args.quality))) return { status:'unsupported', message:'This quality exceeds the original source.' };
         const version = room.mediaVersion;
         const fallback = args.fallback || viewer.fallback;
         viewer.updating = true;
         try {
           const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-            (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,args.quality,args.compatible===true || !!viewer.compatible,source,fallback,
-              {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],shareWaitMs:8000,authorized}),{permitted});
+            this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,args.quality,args.compatible===true || !!viewer.compatible,fallback,authorized),{permitted});
           if(result.status!=='applied')return result;
-          viewer.quality=args.quality;viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
+          viewer.quality=viewer.media.quality;viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
         } catch(error) {
           if(error instanceof PlaybackError)return {status:'failed',message:error.message};
           throw error;

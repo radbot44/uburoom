@@ -5,7 +5,7 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { randomBytes, randomUUID } = require('node:crypto');
 const { UUID, hash } = require('./core');
-const { PlaybackError, CHUNK, MIME, AUDIO_MIME } = require('./av1');
+const { PlaybackError, CHUNK, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
@@ -15,7 +15,7 @@ const { watchOperations } = require('./watch-operations');
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins }) {
   const identities = new Map(), grants = new Map();
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom });
+  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'] });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
@@ -39,7 +39,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if(!config.accessPolicy.publicWeb && !identity.activity)return;
       if(!entryPolicy.password(req,identity))return;
       entryPolicy.entered(identity.userId);
-      if(!await entryPolicy.admit(identity.userId))return;
+      if(!await entryPolicy.admit(identity.userId,identity))return;
       return identity;
     }
     if (!(hub.access?.canWatch?hub.access.canWatch(identity.userId):hub.access?.isMember(identity.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(identity.userId)) return;
@@ -114,8 +114,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       finally {clearInterval(check);res.off('close',cancel);}
       return;
     }
-    if (media.format === 'av1') {
-      if (key === 'start') return json(res, 200, { format:'av1', mime:MIME, audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration,buffer:Playback.BUFFER });
+    if (Playback.localFormat(media.format)) {
+      if (key === 'start') return json(res, 200, { format:media.format, mime:Playback.LOCAL_CODECS[media.format], audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration,buffer:Playback.BUFFER });
       const match = /^chunk-(video|audio)-(\d{1,9})$/.exec(key), index = Number(match?.[2]);
       // The authoritative timeline selects source time. The grant cannot be used
       // as an arbitrary transcoding API, even by an authenticated viewer.
@@ -130,7 +130,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         res.writeHead(200, {'Content-Type':'video/webm','Content-Length':bytes.length});
         if (req.method === 'HEAD') res.end(); else await pipeline(Readable.from([bytes]), res);
       } catch (error) {
-        if (!res.headersSent && !res.destroyed) json(res, 503, {error:error instanceof PlaybackError ? error.message : 'AV1 playback failed'});
+        if (!res.headersSent && !res.destroyed) json(res, 503, {error:error instanceof PlaybackError ? error.message : 'Local video conversion failed'});
         else res.destroy();
       } finally { clearInterval(check); res.off('close', cancel); }
       return;
@@ -213,7 +213,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const identity=await rawLogin(req);
       json(res,200,{identity:!!identity,passwordNeeded:!entryPolicy.password(req,identity),
         activityOnly:!config.accessPolicy.publicWeb&&!identity?.activity,
-        plexRequired:config.accessPolicy.requirePlex,
+        plexRequired:entryPolicy.requiresPlex(identity),
         admitted:!!identity&&!!await login(req),csrf:identity?.csrf,
         pendingIdentity:identity?{name:identity.name,csrf:identity.csrf,account:registry?.summary(identity.userId)}:undefined});return true;
     }

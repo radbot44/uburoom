@@ -128,7 +128,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
-  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord')?.subject}:{}),name: login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web' }; }
+  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord')?.subject}:{}),name: login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
   async function body(req) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
@@ -148,6 +148,22 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   if(registry){
     let rawAccess;
     entryPolicy = new AccessPolicy(config,registry,plexAuth,()=>rawAccess);
+    let singleLeader;
+    hub.singleRoomLeader = async () => {
+      if (!singleLeader) {
+        singleLeader = (async () => {
+          if (config.singleRoomLeaderPlexId) return registry.resolve('plex',config.singleRoomLeaderPlexId,'Assigned account',false);
+          if (config.accessPolicy?.discord !== false || !config.accessPolicy?.plex) return registry.resolve('discord',config.ownerId,'Assigned account',false);
+          let profile;
+          try { profile = await plexAuth.request('/user',{token:config.plexToken}); }
+          catch { throw new Error('Cannot identify the single-room leader from plex.token; check the token or set rooms.single_room_leader_plex_id'); }
+          if (!/^\d{1,20}$/.test(String(profile?.id || ''))) throw new Error('Plex did not identify the token account; set rooms.single_room_leader_plex_id');
+          return registry.resolve('plex',String(profile.id),'Assigned account',false);
+        })();
+        singleLeader.catch(() => { singleLeader = undefined; });
+      }
+      return singleLeader.then(account => registry.canonical(account.id));
+    };
     hub.adminEligible = actor => RoomPolicy.administrator(registry,config,actor.userId,rawAccess);
     hub.refreshAdmin = async actor => {
       const roles = config.roomAdministrators?.discordRoles || [];
@@ -165,8 +181,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       hasRole:(id,role)=>{const discord=discordId(id);return !!discord&&rawAccess?.hasRole?.(discord,role)===true;},
       identity:async id=>rawAccess?.identity?rawAccess.identity(id):await rawAccess?.refresh(id)?{id,name:registry.identity('discord',id)?.name||id}:undefined,
       validVoiceChannel:id=>!!rawAccess?.validVoiceChannel(id),options:()=>rawAccess?.options()||{available:false},
-      canWatch:id=>config.accessPolicy ? entryPolicy.fresh(id) : access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
-      refreshWatch:async id=>{if(config.accessPolicy)return entryPolicy.admit(id);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
+      canWatch:(id,actor)=>config.accessPolicy ? entryPolicy.fresh(id,actor) : access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
+      refreshWatch:async (id,actor)=>{if(config.accessPolicy)return entryPolicy.admit(id,actor);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
     };
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
     hub.accountActor=actor=>registry.canonical(actor.userId)?actor:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
@@ -182,7 +198,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       catch(error){
         // Only a confirmed lack of server membership may use explicit open-entry
         // sponsorship. Expiry, network errors and item restrictions never do.
-        if(config.accessPolicy && !config.accessPolicy.requirePlex && error.noServerAccess)return fallback();
+        if(config.accessPolicy && !entryPolicy.requiresPlex(actor) && error.noServerAccess)return fallback();
         throw error;
       }
     };

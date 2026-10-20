@@ -14,7 +14,7 @@ const { FIREFOX_REDIRECT } = require('../server/login');
 const certFile = path.join(__dirname, '../certs/server-cert.pem');
 test('real TLS transport authenticates devices, gates consent, acknowledges execution and drops on disconnect', { skip: !fs.existsSync(certFile) && 'Generate the development certificate to run the TLS integration check' }, async t => {
   const cert = fs.readFileSync(certFile);
-  const app = createApp({ publicUrl: 'https://localhost:6767', cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+  const app = createApp({ publicUrl: 'https://localhost:5756', cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
     ownerId: 'owner', guildId: 'guild', channels: ['commands'] });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
@@ -81,7 +81,7 @@ test('real TLS transport authenticates devices, gates consent, acknowledges exec
 });
 test('Discord sign-in pairs automatically only through the fixed Firefox return URL and matching proof', { skip: !fs.existsSync(certFile) }, async t => {
   const cert = fs.readFileSync(certFile), config = {
-    publicUrl: 'https://localhost:6767', cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+    publicUrl: 'https://localhost:5756', cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
     ownerId: 'owner', clientId: 'test-client', clientSecret: 'test-secret', guildId: 'guild', channels: ['commands']
   };
   // Mock only Discord's external OAuth endpoints; local TLS, cookies and writes are real.

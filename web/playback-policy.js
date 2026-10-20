@@ -2,6 +2,11 @@
 (function (root) {
   'use strict';
   const BUFFER = Object.freeze({ahead:60,behind:30,maxBytes:64 * 1024 * 1024,hlsMaxBytes:256 * 1024 * 1024,chunkSeconds:6});
+  const LOCAL_CODECS = Object.freeze({av1:'video/webm; codecs="av01.0.12M.08"',vp9:'video/webm; codecs="vp9"',vp8:'video/webm; codecs="vp8"'});
+  const localFormat = value => Object.hasOwn(LOCAL_CODECS,value);
+  function fallbackCodecs(allowed, attempted, supports) {
+    return [...new Set(allowed)].filter(codec=>localFormat(codec) && !attempted.has(codec) && supports(LOCAL_CODECS[codec]));
+  }
   function hlsConfig(bitrateKbps) {
     // Establish transport timestamps from the first segment before any seek.
     return {enableWorker:true,startPosition:0,
@@ -80,7 +85,7 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  const api = {BUFFER,hlsConfig,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
+  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

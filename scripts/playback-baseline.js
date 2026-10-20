@@ -179,7 +179,8 @@ async function main() {
   const allCases = [
     {id:'direct-23976',sourceId:'101',format:'file'},{id:'direct-24',sourceId:'102',format:'file'},{id:'direct-60',sourceId:'103',format:'file'},
     {id:'auto-hevc-tracks',sourceId:'104'},{id:'hls-hevc',sourceId:'104',format:'hls'},
-    {id:'av1-23976',sourceId:'101',format:'av1'},{id:'av1-60',sourceId:'103',format:'av1'}
+    {id:'av1-23976',sourceId:'101',format:'av1'},{id:'av1-60',sourceId:'103',format:'av1'},
+    ...['vp8','vp9'].flatMap(format=>[{id:format+'-23976',sourceId:'101',format},{id:format+'-60',sourceId:'103',format}])
   ];
   if (selected.some(id => !allCases.some(c => c.id === id))) throw new Error('Unknown playback case');
   const cases = allCases.filter(c => !selected.length || selected.includes(c.id));
@@ -187,14 +188,14 @@ async function main() {
   if (!['on','off'].includes(buffering)) throw new Error('Use --buffering=on|off');
   if (buffering === 'on' && cases.some(c => manifest.sources.find(s => s.id === c.sourceId).duration < 85)) throw new Error('Buffering checks require a synthetic corpus at least 85 seconds long. Generate with --duration=90.');
   const report = {schema:1,createdAt:new Date().toISOString(),environment:{platform:process.platform,node:process.version,headless:true,acceleration},
-    isolation:{liveAccounts:false,livePlex:false,realDiscordActivity:false,productionEncoder:'av1_qsv',testEncoder:'libsvtav1'},
+    isolation:{liveAccounts:false,livePlex:false,realDiscordActivity:false,productionEncoder:'configured per codec',testEncoder:'software (libsvtav1/libvpx/libvpx-vp9)'},
     results:[],encodedVideo:[],notCovered:[...manifest.notCovered,'Source audio switching','Production subtitle delivery/rendering',
       'VFR timing, A/V and caption alignment, final end-of-stream semantics','Safari/iOS/Android','Two-hour soak and bandwidth/load tests']};
   const writeReport = () => {
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');
     const rows = report.results.map(r => `| ${r.browser} ${r.version || ''} | ${r.case} | ${r.status} | ${r.metrics?.firstFrameMs?.toFixed(0) ?? '-'} | ${r.metrics?.observedFps?.toFixed(2) ?? '-'} / ${r.metrics?.expectedFps?.toFixed(2) ?? '-'} | ${r.metrics?.audioSamples ?? '-'} | ${(r.errors || []).join('; ')} |`);
     const buffered = report.results.filter(r=>r.buffering).map(r=>`| ${r.browser} | ${r.case} | ${r.buffering.filled.loaded.toFixed(1)} | ${(r.buffering.outageEnd.position-r.buffering.outageStart.position).toFixed(1)} | ${r.buffering.distantSeek.recoveryMs} |`);
-    fs.writeFileSync(path.join(output,'report.md'),'# Isolated playback baseline\n\nSynthetic sources and simulated Plex responses; actual watch player and authorized media routes. AV1 uses a test-only software encoder. Headless ' + acceleration + ' decode mode; this is not Discord or hardware certification.\n\n' +
+    fs.writeFileSync(path.join(output,'report.md'),'# Isolated playback baseline\n\nSynthetic sources and simulated Plex responses; actual watch player and authorized media routes. Local WebM codecs use the software backend in this fixture. Headless ' + acceleration + ' decode mode; this is not Discord or hardware certification.\n\n' +
       '| Browser | Case | Result | Startup ms | Observed / source fps | Audio tone samples | Failure |\n| --- | --- | --- | --- | --- | --- | --- |\n' + rows.join('\n') +
       '\n\nAudio evidence measures decoded PCM, not speakers. HLS is pre-generated and does not establish live Plex negotiation. Metrics are single-run observations, not performance percentiles.\n' +
       (buffered.length ? '\n## Buffering and media interruption\n\nControl stayed reachable during a ten-second media delivery outage. Cached rewind, recovery and desktop/theater/phone renders were also checked. JSON records exact ranges, frames and decoded audio evidence.\n\n| Browser | Case | Ahead while paused (s) | Advanced during outage (s) | Distant seek/resume (ms) |\n| --- | --- | --- | --- | --- |\n'+buffered.join('\n')+'\n' : '') +
@@ -208,11 +209,12 @@ async function main() {
   // Substitute the encoder only in this fixture's instance. Production policy stays intact.
   const originalAV1 = app.watch.plex.av1;
   let encoded = 0;
-  app.watch.plex.av1 = new AV1(app.watch.plex,{ffmpegPath:ffmpeg,ffprobePath:ffprobe},async (binary,parameters,signal) => {
-    const encoding = parameters.includes('av1_qsv');
+  app.watch.plex.av1 = new AV1(app.watch.plex,{ffmpegPath:ffmpeg,ffprobePath:ffprobe,transcoding:{encoder:'software'}},async (binary,parameters,signal) => {
+    const encoding = parameters.includes('-c:v');
+    const av1Encoding = parameters.includes('libsvtav1');
     let actual = [...parameters];
-    if (encoding) {
-      actual = actual.map(value => value === 'av1_qsv' ? 'libsvtav1' : value === 'veryfast' ? '12' : value === 'nv12' ? 'yuv420p' : value.replaceAll('format=nv12','format=yuv420p'));
+    if (av1Encoding) {
+      actual = actual.map(value => value === 'av1_qsv' ? 'libsvtav1' : value === '10' ? '12' : value === 'nv12' ? 'yuv420p' : value.replaceAll('format=nv12','format=yuv420p'));
       for (const flag of ['-maxrate','-bufsize']) { const index = actual.indexOf(flag); if (index !== -1) actual.splice(index,2); }
       actual.splice(actual.indexOf('-c:v'),0,'-svtav1-params','lp=2:pred-struct=1:rc=2');
     }
@@ -236,6 +238,7 @@ async function main() {
         await browser.evaluate(page,'preferredQuality="direct"; document.getElementById("create").click();document.getElementById("room-create").click(); true');
         await browser.until(page,'!!state','Room creation');
         await browser.evaluate(page,'(' + installMeter.toString() + ')()');
+        await browser.evaluate(page,'globalThis.codecFailures=[];const originalFallback=compatibleFallback;compatibleFallback=(reason,...args)=>{codecFailures.push({reason,format:state?.format});return originalFallback(reason,...args);};true');
         await browser.evaluate(page,'playbackMeter.resumeAudio()');
         for (const entry of cases) {
           const source = manifest.sources.find(s => s.id === entry.sourceId);
@@ -245,8 +248,8 @@ async function main() {
             await browser.evaluate(page,'state?.mediaId ? execute({action:"media.pause"}).then(()=>true) : true');
             await browser.evaluate(page,`playbackMeter.reset(${JSON.stringify(source.id)},${JSON.stringify(entry.format || null)}); true`);
             await browser.evaluate(page,`execute({action:"media.load",args:{mediaId:${JSON.stringify(source.id)},quality:"direct"}}).then(()=>true)`);
-            if (['hls','av1'].includes(entry.format)) {
-              await browser.evaluate(page,`playbackMeter.reset(${JSON.stringify(source.id)},${JSON.stringify(entry.format)}); execute({action:"media.quality.set",args:{quality:"direct",compatible:true${entry.format === 'av1' ? ',fallback:"av1"' : ''}}}).then(()=>true)`);
+            if (['hls','av1','vp8','vp9'].includes(entry.format)) {
+              await browser.evaluate(page,`playbackMeter.reset(${JSON.stringify(source.id)},${JSON.stringify(entry.format)}); execute({action:"media.quality.set",args:{quality:"direct",compatible:true${entry.format !== 'hls' ? ',fallback:'+JSON.stringify(entry.format) : ''}}}).then(()=>true)`);
             }
             await browser.until(page,'(()=>{ const s=playbackMeter.sample(); return s && !s.error && !s.paused && s.position>.15 && s.frames>0 && s.readyState>=3; })()','Decoded playback',25000);
             const until = Date.now() + 7200;
@@ -266,7 +269,7 @@ async function main() {
             fs.writeFileSync(path.join(output,result.evidence),JSON.stringify(JSON.parse(await browser.evaluate(page,'JSON.stringify(playbackMeter.report())')),null,2)+'\n');
           } catch (error) {
             result.errors.push(error.message);
-            result.diagnostic = JSON.parse(await browser.evaluate(page,'JSON.stringify({error:playbackError,format:state?.format,position:video.currentTime,ready:video.readyState,paused:video.paused,frames:decodedFrames(),buffered:Array.from({length:video.buffered.length},(_,i)=>[video.buffered.start(i),video.buffered.end(i)])})').catch(() => 'null'));
+            result.diagnostic = JSON.parse(await browser.evaluate(page,'JSON.stringify({error:playbackError,format:state?.format,position:video.currentTime,ready:video.readyState,codecFailures,paused:video.paused,frames:decodedFrames(),buffered:Array.from({length:video.buffered.length},(_,i)=>[video.buffered.start(i),video.buffered.end(i)])})').catch(() => 'null'));
             result.evidence = entry.id + '-' + name + '.json';
             const evidence = await browser.evaluate(page,'JSON.stringify(playbackMeter.report())').catch(() => 'null');
             fs.writeFileSync(path.join(output,result.evidence),JSON.stringify(JSON.parse(evidence),null,2)+'\n');

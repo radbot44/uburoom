@@ -368,7 +368,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal(watch.snapshot(room,guest,b).state.volume,25); assert.equal(watch.snapshot(room,guest,b).state.muted,true);
   assert.equal(watch.snapshot(room,host,a).state.volume,50); assert.equal(room.s.state.muted,false);
   assert.equal((await command(guest,b,'media.quality.set',{quality:'1080p',compatible:true})).status,'applied');
-  assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p');
+  assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p8');
   assert.ok(stopped.includes(guestOld));
   assert.equal((await command(guest,a,'media.mute')).status,'unsupported','cannot spoof another viewer');
   assert.equal((await hub.dispatch({...host,surface:'discord'},{roomId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
@@ -380,7 +380,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   const personal = room.viewers.get(b); personal.compatible = true; personal.fallback = 'av1';
   watch.dropMedia(room);
   assert.equal(personal.compatible,false,'new content gets a fresh compatibility decision');
-  assert.equal(personal.fallback,undefined); assert.equal(personal.quality,'720p','personal quality survives new content');
+  assert.equal(personal.fallback,undefined); assert.equal(personal.quality,'720p4','personal quality survives new content');
   watch.close();
 });
 

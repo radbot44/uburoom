@@ -130,7 +130,7 @@ test('AV1 room outputs share across principals and each new chunk uses its reque
 test('AV1 fails closed on encoder errors, bounds chunk offsets, and cancels disconnected work', async () => {
   assert.throws(() => new AV1({},{}).acquire({id:'1'},'direct'), /tools.ffmpeg/);
   let calls=0;
-  const manager = new AV1({}, {ffmpegPath:'fixture'}, async () => { calls++; throw new PlaybackError('Hardware unavailable'); });
+  const manager = new AV1({}, {ffmpegPath:'fixture',transcoding:{encoder:'qsv',cpuFallback:false}}, async () => { calls++; throw new PlaybackError('Hardware unavailable'); });
   const lease = manager.acquire({id:'1',duration:60},'720p4'), signal = new AbortController().signal;
   await assert.rejects(manager.chunk(lease,0,signal), /Hardware unavailable/);
   await assert.rejects(manager.chunk(lease,0,signal), /Hardware unavailable/);
@@ -180,7 +180,7 @@ test('a fresh AV1 request can replace a cancelled chunk before its encoder settl
 });
 test('AV1 retries the hardware probe after an initial transient failure',async () => {
   let probes=0;
-  const manager=new AV1({}, {ffmpegPath:'fixture'},async (_binary,args) => {
+  const manager=new AV1({}, {ffmpegPath:'fixture',transcoding:{encoder:'qsv',cpuFallback:false}},async (_binary,args) => {
     if (args.includes('testsrc2=size=320x180:rate=30')) {
       if (++probes === 1) throw new PlaybackError('Temporary probe failure');
       return Buffer.alloc(200);

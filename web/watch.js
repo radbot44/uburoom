@@ -17,7 +17,7 @@ const activity = params.has('frame_id');
 let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
-let av1, av1FallbackVersion;
+let av1, localFallbackVersion, localFallbackAttempts = new Set();
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
@@ -154,7 +154,7 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
   changed:async()=>{if(selected)await refreshState();}
 });
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
-  beforeSettings:()=>{trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
+  beforeSettings:()=>{renderMediaInformation(state);trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
   afterSettings:()=>{trackContext=undefined;}});
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
@@ -482,22 +482,36 @@ $('drawer-open').addEventListener('click', () => {
 });
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
 async function compatibleFallback(reason, preferHLS = false) {
-  if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
-  const useAV1 = !preferHLS && (state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || ''));
-  if (state.format === 'av1' || useAV1 && av1FallbackVersion === state.mediaVersion || !useAV1 && fallbackVersion === state.mediaVersion) {
-    if (state.format === 'av1') { av1?.destroy(); video.pause(); playbackError = 'AV1 played no decoded video. Check the Playback test and server encoder probe.'; fail(playbackError); }
-    return;
+  if (!state?.mediaUrl || state.mediaId === 'demo') return;
+  const useLocal = !preferHLS && (state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || ''));
+  if (pending || qualityPending || fallbackPending) {
+    const id = selected, version = state.mediaVersion, stream = state.streamVersion;
+    setTimeout(() => { if (selected === id && state?.mediaVersion === version && state?.streamVersion === stream) void compatibleFallback(reason,preferHLS); }, 200); return;
   }
-  if (pending || qualityPending) {
-    const id = selected, version = state.mediaVersion;
-    setTimeout(() => { if (selected === id && state?.mediaVersion === version) void compatibleFallback(reason,preferHLS); }, 200); return;
+  if (localFallbackVersion !== state.mediaVersion) {localFallbackVersion=state.mediaVersion;localFallbackAttempts=new Set();}
+  if (uburoomPlayback.localFormat(state.format)) localFallbackAttempts.add(state.format);
+  const localCandidates=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],localFallbackAttempts,
+    mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
+  const candidates=useLocal || fallbackVersion===state.mediaVersion?localCandidates:[undefined,...localCandidates];
+  if (!candidates.length) {
+    av1?.destroy();video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
+    $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
   }
-  if (useAV1) av1FallbackVersion = state.mediaVersion; else fallbackVersion = state.mediaVersion;
-  fallbackPending = true;
-  diagnosticSample('fallback');stopHls('fallback');
-  try { await execute({ action:'media.quality.set', args:{quality:state.quality, compatible:true, ...(useAV1 ? {fallback:'av1'} : {})} }); }
-  catch (error) { playbackError = reason + ' ' + (useAV1 ? 'AV1' : 'H.264') + ' fallback failed: ' + error.message; fail(playbackError); }
-  finally { fallbackPending = false; }
+  const id=selected,version=state.mediaVersion;
+  fallbackPending = true;diagnosticSample('fallback');stopHls('fallback');
+  try {
+    for (const codec of candidates) {
+      if(selected!==id || state?.mediaVersion!==version)return;
+      if(codec)localFallbackAttempts.add(codec);else fallbackVersion=version;
+      try {
+        await execute({action:'media.quality.set',args:{quality:state.quality,compatible:true,...(codec?{fallback:codec}:{})}});
+        return;
+      } catch(error) {
+        playbackError=reason+' '+(codec?.toUpperCase() || 'H.264')+' fallback failed: '+error.message;
+      }
+    }
+    fail(playbackError);
+  } finally {fallbackPending=false;}
 }
 function watchFrames() {
   if (!video.requestVideoFrameCallback) return;
@@ -549,14 +563,6 @@ function stopHls(reason) {
   clearTimeout(hlsRecoveryTimer);
   hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   const client = hls; hls = undefined; client?.destroy();
-}
-function unsupportedDecoder() {
-  av1?.destroy(); video.pause(); stopHls('decoder'); clearTimeout(hlsRecoveryTimer);
-  playbackError = activity ? 'Discord cannot decode this video with hardware acceleration off. Enable acceleration and reopen the Activity, or watch on the website.' :
-    'This browser cannot decode the video. Try Firefox or Chrome, or enable hardware acceleration.';
-  $('acceleration-help').hidden = !activity;
-  $('enable-acceleration').hidden = !sdk;
-  fail(playbackError);
 }
 function restartHlsForSeek(target) {
   if(sync.timelinePending)return;
@@ -782,6 +788,13 @@ async function execute(command) {
     renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume();
   }
 }
+function renderMediaInformation(next) {
+  if (!next) return;
+  const info=next.deliveryInfo;
+  const mediaWidth=video.videoWidth || info?.width,mediaHeight=video.videoHeight || info?.height;
+  $('media-information').textContent=info?[mediaWidth&&mediaHeight?mediaWidth+' x '+mediaHeight:null,info.videoCodec?.toUpperCase(),info.audioCodec?.toUpperCase(),info.bitrate?Number(info.bitrate/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'Choose a video to see media information.';
+  $('delivery-information').textContent=info?[info.format==='file'?'Original file':info.format==='hls'?'Plex streaming':uburoomPlayback.localFormat(info.format)?'uburoom conversion':info.format,info.encoder?'Encoder: '+info.encoder:null,info.cpuFallback?'Using CPU fallback':null,info.bitrateCeiling?'Requested limit: '+Number(info.bitrateCeiling/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'No playback delivery yet.';
+}
 function renderRemote() {
   const options = { available: !reconnecting && !!state, canSave: !reconnecting && !!state?.canManage,
     canPlayback: !reconnecting && !!state?.canPlayback, canAudio: !reconnecting && !!state?.mediaUrl, canTransform: !reconnecting && !!state?.canTransform,
@@ -986,9 +999,9 @@ function applyState(next) {
       watchFrames();
       if (next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) {
         queueMicrotask(() => { if (state === next) void compatibleFallback('The browser does not support the original codecs.',true); });
-      } else if (next.format === 'av1') {
-        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { playbackError = message; video.pause(); fail(message); }); }
-        catch (error) { playbackError = 'AV1 WebM transport unavailable: ' + error.message; fail(playbackError); }
+      } else if (uburoomPlayback.localFormat(next.format)) {
+        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }); }
+        catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
         const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling));
@@ -1024,6 +1037,10 @@ function applyState(next) {
   $('empty-browse').hidden = !isIdle || !next.canBrowse;
   $('close-room').hidden = !!config?.singleRoom;
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
+  $('quality-notice').textContent=next.qualityNotice || '';
+  $('quality-fallback-notice').textContent=next.qualityNotice || '';
+  $('quality-fallback-notice').hidden=!next.qualityNotice;
+  renderMediaInformation(next);
   const choices = next.qualities || uburoom.QUALITIES;
   if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));
@@ -1185,12 +1202,11 @@ video.addEventListener('error', () => {
     void compatibleFallback('The original video could not be decoded.'); return;
   }
   if ([3,4].includes(code) && /kUnsupportedConfig|DECODER_ERROR_NOT_SUPPORTED|decoder.*(?:not supported|initialization failed)/i.test(message)) {
-    if (state.format !== 'av1') void compatibleFallback('The video decoder is unsupported.');
-    else unsupportedDecoder(); return;
+    void compatibleFallback('The video decoder is unsupported.'); return;
   }
   // HLS manages recoverable media errors through its bounded handler.
   if (hls && [3,4].includes(code)) return;
-  if (state.format === 'av1') { av1?.destroy(); video.pause(); }
+  if (uburoomPlayback.localFormat(state.format)) {void compatibleFallback('The converted video could not be decoded.');return;}
   playbackError = 'Video could not play (media error ' + (code || 'unknown') + ').'; fail(playbackError);
 });
 $('enable-acceleration').addEventListener('click', async () => {
@@ -1416,11 +1432,11 @@ async function start() {
     if(config.access.anonymous&&!admission.identity&&!admission.passwordNeeded&&!admission.activityOnly){await api('/api/watch/entry',{});admission=await api('/api/watch/admission');pageBootstrap=undefined;}
     if(!admission.admitted){
       $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
-      $('empty-title').textContent=admission.activityOnly?'Discord Activity only':admission.passwordNeeded?'Enter uburoom':config.access.requirePlex?'Connect Plex to join':'Sign in to join';
+      $('empty-title').textContent=admission.activityOnly?'Discord Activity only':admission.passwordNeeded?'Enter uburoom':admission.plexRequired?'Connect Plex to join':'Sign in to join';
       $('entry-form').hidden=!admission.passwordNeeded||admission.activityOnly;
       $('entry-status').textContent=admission.activityOnly?'Open uburoom through Discord Activity. Browser playback is disabled.':
         admission.passwordNeeded?'Enter this server’s password to continue.':
-        config.access.requirePlex?'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.':
+        admission.plexRequired?'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.':
         admission.identity?'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.':'Sign in to join this server.';
       discordButton.hidden=config.access.discord===false||admission.passwordNeeded||admission.activityOnly;
       $('plex-login').hidden=config.access.plex===false||admission.passwordNeeded||admission.activityOnly&&!admission.identity;

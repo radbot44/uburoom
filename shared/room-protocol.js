@@ -12,7 +12,16 @@
     { id:'720p2', label:'720p · 2 Mbps', width:1280, height:720, bitrate:2000 }
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
-  const validQuality = id => QUALITIES.some(q => q.id === qualityId(id));
+  function qualityDefinition(id) {
+    id = qualityId(id);
+    if (id === 'direct') return QUALITIES[0];
+    const match = /^(\d{3,4})p(\d{1,3}(?:\.\d{1,3})?)$/.exec(id || '');
+    if (!match) return;
+    const height = Number(match[1]), mbps = Number(match[2]);
+    if (height < 144 || height > 4320 || height % 2 || mbps < .1 || mbps > 200 || Math.abs(mbps * 1000 - Math.round(mbps * 1000)) > 1e-8) return;
+    return {id,label:height+'p · '+mbps+' Mbps',width:Math.round(height*16/9/2)*2,height,bitrate:Math.round(mbps*1000)};
+  }
+  const validQuality = id => !!qualityDefinition(id);
   const MANAGEMENT = Object.freeze(['room.enable', 'room.sharing', 'room.visibility', 'room.controls', 'room.autojoin', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh','media.ready.start','media.ready.wait','media.ready.cancel']);
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
@@ -122,8 +131,8 @@
           args.compatible = a.compatible;
         }
         if (a.fallback !== undefined) {
-          if (a.fallback !== 'av1') throw new Error('Invalid playback fallback');
-          args.fallback = 'av1';
+          if (!['av1','vp8','vp9'].includes(a.fallback)) throw new Error('Invalid playback fallback');
+          args.fallback = a.fallback;
         }
         break;
       case 'room.controls':
@@ -153,7 +162,7 @@
     }
     return { action, args };
   }
-  const api = { VERSION, CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible, senderName, validate };
+  const api = { VERSION, CONTROLS, QUALITIES, qualityId, qualityDefinition, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible, senderName, validate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomRoomProtocol = api;
 })(globalThis);

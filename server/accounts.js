@@ -4,7 +4,7 @@ const path = require('node:path');
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database');
-const { migrate } = require('./storage');
+const { initializeSchema } = require('./storage');
 
 function privateFile(file) {
   if (process.platform !== 'win32') { fs.chmodSync(file,0o600); return; }
@@ -28,7 +28,7 @@ function credentialVault(file) {
 class Accounts {
   constructor(file,vault) {
     if (file) fs.mkdirSync(path.dirname(file),{recursive:true});
-    this.persistence=openDatabase(file,migrate);this.db=this.persistence.db;this.vault=vault;
+    this.persistence=openDatabase(file,initializeSchema);this.db=this.persistence.db;this.vault=vault;
     this.credentialCache=new Map();
     if(file)try{privateFile(file);}catch(error){Promise.resolve(this.persistence.abort()).catch(()=>{});throw error;}
   }

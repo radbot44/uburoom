@@ -55,7 +55,7 @@ async function main() {
   ].join('\n'));
   const cert = fs.readFileSync(path.join(project, 'certs/server-cert.pem'));
   const key = fs.readFileSync(path.join(project, 'certs/server-key.pem'));
-  const config = { publicUrl: 'https://localhost:6767', cert, key, ownerId: 'test-owner', guildId: 'test-guild', channels: ['test-channel'], clientId: 'fixture-client', clientSecret: 'fixture-secret' };
+  const config = { publicUrl: 'https://localhost:5756', cert, key, ownerId: 'test-owner', guildId: 'test-guild', channels: ['test-channel'], clientId: 'fixture-client', clientSecret: 'fixture-secret' };
   // Real Firefox identity flow and local TLS; only Discord's external service is simulated.
   const app = createApp(config, { authorizeUrl: 'https://localhost:9443/mock-discord', oauthFetch: async url => {
     assert.ok(['https://discord.com/api/oauth2/token', 'https://discord.com/api/users/@me'].includes(url));
@@ -67,7 +67,7 @@ async function main() {
   app.hub.access = { refresh: async id => id === friend || id === config.ownerId, isMember: id => id === friend || id === config.ownerId,
     validVoiceChannel: id => [fixtureVoice, otherVoice].includes(id), voiceChannel: id => id === config.ownerId ? hostVoice : friendVoice,
     options: () => ({ available: true, guildName: 'Fixture guild' }) };
-  await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(6767, '127.0.0.1', resolve); });
+  await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(5756, '127.0.0.1', resolve); });
   const fixture = https.createServer({ cert, key }, (req, res) => {
     const url = new URL(req.url, 'https://localhost:9443');
     if (url.pathname === '/mock-discord') {
@@ -145,7 +145,7 @@ async function main() {
     await command('browsingContext.navigate', { context: popup, url: popupUrl, wait: 'complete' });
     if (process.argv.includes('--startup-only')) {
       assert.equal(await evaluate(popup, 'document.title'), 'uburoom');
-      assert.equal(await evaluate(popup, "[...document.querySelectorAll('[data-server]')].map(b=>b.dataset.server).join(',')"), 'https://localhost:6767');
+      assert.equal(await evaluate(popup, "[...document.querySelectorAll('[data-server]')].map(b=>b.dataset.server).join(',')"), 'https://localhost:5756');
       assert.equal(await evaluate(popup, "browser.runtime.sendMessage({type:'popup-state'}).then(s=>!!s.room?.enabled)"), false);
       console.log('[Firefox] PASS: extension startup, configured server picker, local controls/CSP and remote off. Full extension fixture remains deferred.');
       return;

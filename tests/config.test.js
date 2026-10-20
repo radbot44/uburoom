@@ -5,8 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { spawnSync, spawn } = require('node:child_process');
-const { ROOT, LEGACY, configPath, parseConfig, normalizeConfig, loadConfig } = require('../server/config');
-const { convert } = require('../scripts/migrate-config');
+const { ROOT, configPath, parseConfig, normalizeConfig, loadConfig } = require('../server/config');
 const Policy = require('../server/room-policy');
 
 function temporary(t) {
@@ -17,7 +16,7 @@ function temporary(t) {
 
 test('example YAML is usable, private inputs are absent and defaults preserve existing paths/policy', () => {
   const config = normalizeConfig(parseConfig(fs.readFileSync(path.join(ROOT, 'config.example.yaml'), 'utf8')));
-  assert.equal(config.port, 6767);
+  assert.equal(config.port, 5756);
   assert.equal(config.transcoding.maxJobs, 5);
   assert.equal(config.host, '127.0.0.1');
   assert.equal(config.plexToken, '');
@@ -27,7 +26,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [] });
   assert.equal(config.accountFile, path.join(ROOT, 'data/accounts.sqlite'));
   const environment = { HOME: path.join(os.tmpdir(), 'old-home') };
-  assert.equal(normalizeConfig({}, { environment }).credentialKeyFile, path.join(environment.HOME, 'uburoom/credentials.key'));
+  assert.equal(normalizeConfig({}, { environment, platform:'linux' }).credentialKeyFile, path.join(environment.HOME, '.local/share/uburoom/credentials.key'));
 });
 
 test('custom file, mount paths, native lists and quoted snowflakes survive from a different cwd', t => {
@@ -85,7 +84,7 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     assert.throws(() => parseConfig(source), error => !error.message.includes(secret));
   }
   for (const value of [null, [], {server:null}, {server:[]}, {server:{prot:42}}, {typo:{}},
-    {server:{port:'6767'}}, {server:{port:0}}, {server:{port:65536}}, {server:{host:''}},
+    {server:{port:'5756'}}, {server:{port:0}}, {server:{port:65536}}, {server:{host:''}},
     {discord:{client_id:123456789012345678}}, {discord:{command_channel_ids:[123456789012345678]}},
     {rooms:{viewer_permissions:['manageHosts']}}, {rooms:{admin_plex_ids:['name']}},
     {server:{public_url:'http://localhost'}}, {server:{public_url:'https://private:token@example.com'}},
@@ -93,55 +92,6 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     {storage:{credential_key_file:path.join(ROOT,'key')}}]) {
     assert.throws(() => normalizeConfig(value));
   }
-});
-
-test('legacy conversion maps every supported setting, paths and permissions without altering key bytes', t => {
-  const dir = temporary(t), key = path.join(dir, 'private.key');
-  const bytes = Buffer.alloc(32, 27); fs.writeFileSync(key, bytes);
-  const settings = {
-    HOST:'0.0.0.0', PORT:'7890', PUBLIC_URL:'https://watch.example', TLS_CERT:'tls/cert.pem', TLS_KEY:'tls/key.pem',
-    PLEX_URL:'http://localhost:32400', PLEX_TOKEN:'private-token', PLEX_MACHINE_IDENTIFIER:'machine-id',
-    DISCORD_BOT_TOKEN:'bot-token', DISCORD_CLIENT_ID:'111111111111111111', DISCORD_CLIENT_SECRET:'oauth-secret',
-    DISCORD_OWNER_ID:'222222222222222222', DISCORD_GUILD_ID:'333333333333333333', DISCORD_COMMAND_CHANNEL_IDS:'444444444444444444,555555555555555555',
-    ROOM_HOST_PERMISSIONS:'all', ROOM_VIEWER_PERMISSIONS:'playPause,seek', ROOM_ADMIN_DISCORD_IDS:'666666666666666666',
-    ROOM_ADMIN_PLEX_IDS:'101', ROOM_ADMIN_DISCORD_ROLE_IDS:'777777777777777777',
-    UBUROOM_CREDENTIAL_KEY_FILE:key, FFMPEG_PATH:'tools/ffmpeg', FFPROBE_PATH:'tools/ffprobe'
-  };
-  assert.deepEqual(Object.keys(settings).sort(), Object.keys(LEGACY).sort());
-  const text = convert(Object.entries(settings).map(([name,value]) => `${name}='${value}'`).join('\n'), dir);
-  const config = normalizeConfig(parseConfig(text), {base:path.join(dir,'elsewhere')});
-  assert.equal(config.port, 7890);
-  assert.equal(config.botToken, 'bot-token');
-  assert.equal(config.clientSecret, 'oauth-secret');
-  assert.equal(config.plexMachineIdentifier, 'machine-id');
-  assert.equal(config.tlsCert, path.join(dir,'tls/cert.pem'));
-  assert.equal(config.accountFile, path.join(dir,'data/accounts.sqlite'));
-  assert.equal(config.ffmpegPath, path.join(dir,'tools/ffmpeg'));
-  assert.equal(config.credentialKeyFile, key);
-  assert.deepEqual(fs.readFileSync(key), bytes);
-  assert.deepEqual(config.roomPermissions, Policy.configuration(settings).roomPermissions);
-  assert.deepEqual(config.roomAdministrators, Policy.configuration(settings).roomAdministrators);
-  assert.ok(text.indexOf('plex:') < text.indexOf('server:'));
-  assert.throws(() => convert('UNRECOGNIZED=secret', dir), /Unrecognized/);
-  const blanks = normalizeConfig(parseConfig(convert('ROOM_HOST_PERMISSIONS="   "\nROOM_ADMIN_PLEX_IDS="   "\nDISCORD_COMMAND_CHANNEL_IDS=" , "', dir)));
-  assert.deepEqual(blanks.roomPermissions, Policy.policy());
-  assert.deepEqual(blanks.channels, []);
-});
-
-test('converter creates protected config, preserves source and refuses overwrite', t => {
-  const dir = temporary(t), input = path.join(dir,'.env'), output = path.join(dir,'config.yaml');
-  const source = 'PORT=6789\nPLEX_TOKEN="private:#token"\n';
-  fs.writeFileSync(input,source);
-  const args = [path.join(ROOT,'scripts/migrate-config.js'),input,output];
-  const first = spawnSync(process.execPath,args,{encoding:'utf8'});
-  assert.equal(first.status,0,first.stderr);
-  assert.ok(!first.stdout.includes('private:#token'));
-  assert.equal(loadConfig(output).plexToken,'private:#token');
-  assert.equal(fs.readFileSync(input,'utf8'),source);
-  const before = fs.readFileSync(output);
-  assert.notEqual(spawnSync(process.execPath,args).status,0);
-  assert.deepEqual(fs.readFileSync(output),before);
-  if(process.platform!=='win32')assert.equal(fs.statSync(output).mode & 0o777,0o600);
 });
 
 test('missing YAML fails before TLS or providers and never falls back to .env/environment', t => {
@@ -209,4 +159,33 @@ test('real entry point serves health from external YAML with isolated persistent
   assert.ok(fs.existsSync(path.join(dir,'state/accounts.sqlite')));
   assert.equal(fs.readFileSync(path.join(dir,'original.key')).length,32);
   assert.doesNotMatch(output,/ignored-inherited-token/);
+});
+
+
+test('Activity Plex requirement defaults on and accepts only YAML booleans',()=>{
+  assert.equal(normalizeConfig({}).accessPolicy.requirePlexInActivity,true);
+  assert.equal(normalizeConfig({access:{require_plex_in_activity:false}}).accessPolicy.requirePlexInActivity,false);
+  assert.throws(()=>normalizeConfig({access:{require_plex_in_activity:'false'}}),/true or false/);
+});
+
+
+test('credential key defaults follow each OS and honor explicit paths without migration',t=>{
+  const home=temporary(t),local=path.join(home,'local'),xdg=path.join(home,'xdg');
+  const key=(platform,environment)=>normalizeConfig({}, {platform,environment}).credentialKeyFile;
+  assert.equal(key('win32',{HOME:home,LOCALAPPDATA:local}),path.join(local,'uburoom/credentials.key'));
+  assert.equal(key('win32',{USERPROFILE:home}),path.join(home,'AppData/Local/uburoom/credentials.key'));
+  assert.equal(key('linux',{HOME:home}),path.join(home,'.local/share/uburoom/credentials.key'));
+  assert.equal(key('linux',{HOME:home,XDG_DATA_HOME:xdg,LOCALAPPDATA:local}),path.join(xdg,'uburoom/credentials.key'));
+  assert.equal(key('linux',{HOME:home,XDG_DATA_HOME:'relative'}),path.join(home,'.local/share/uburoom/credentials.key'));
+  assert.equal(key('darwin',{HOME:home,XDG_DATA_HOME:xdg,LOCALAPPDATA:local}),path.join(home,'Library/Application Support/uburoom/credentials.key'));
+  const original=path.join(home,'original.key');fs.writeFileSync(original,'unchanged');
+  assert.equal(normalizeConfig({storage:{credential_key_file:original}},{platform:'linux'}).credentialKeyFile,original);
+  assert.equal(fs.readFileSync(original,'utf8'),'unchanged');
+});
+
+test('single-room Plex leader accepts an explicit ID or token default without Discord ownership',()=>{
+  assert.equal(normalizeConfig({rooms:{single_room:true,single_room_leader_plex_id:'101'}}).singleRoomLeaderPlexId,'101');
+  assert.equal(normalizeConfig({access:{discord:false},plex:{token:'fixture-token'},rooms:{single_room:true}}).singleRoom,true);
+  assert.throws(()=>normalizeConfig({access:{discord:false},rooms:{single_room:true}}),/plex.token/);
+  assert.throws(()=>normalizeConfig({rooms:{single_room_leader_plex_id:'alice'}}),/Plex account ID/);
 });

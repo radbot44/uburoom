@@ -17,7 +17,7 @@ const MODES = new Set(['owner', 'voice', 'guild']);
 const isOwner = (actor,config) => (actor?.discordId||actor?.userId)===config.ownerId;
 const isHost = (room, actor) => room.kind==='watch' ? room.creatorId ? actor.userId===room.creatorId || room.hosts.includes(actor.userId) : actor.userId===room.hostId : (actor.discordId||actor.userId)===room.ownerId;
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin && (room.kind === 'watch' || isOwner(actor,config));
-const canWatch = (access,id) => access?.canWatch ? access.canWatch(id) : !!access?.isMember(id);
+const canWatch = (access,id,actor) => access?.canWatch ? access.canWatch(id,actor) : !!access?.isMember(id);
 function sameVoice(room, actor, access) {
   const channel = access?.voiceChannel?.(room.hostId || room.ownerId);
   return !!channel && !!access?.validVoiceChannel?.(channel) && access.voiceChannel(actor.userId) === channel;
@@ -28,7 +28,7 @@ function watching(room, actor, now = Date.now()) {
 
 function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
   return room.kind === 'watch' && actor.guildId === config.guildId && config.channels.includes(actor.channelId) &&
-    canWatch(access,actor.userId) && room.reachable && now - room.lastSeen < PRESENCE_MS && room.socket.readyState === 1 &&
+    canWatch(access,actor.userId,actor) && room.reachable && now - room.lastSeen < PRESENCE_MS && room.socket.readyState === 1 &&
     (privileged(room, actor, config, admin) || room.visibility === 'public');
 }
 function eligible(room, actor, config, now = Date.now(), access, manage = false, admin = false) {
@@ -106,7 +106,7 @@ class Hub {
   }
   setAdminMode(actor, enabled) {
     if (actor.surface !== 'web' || !this.canAdmin(actor) || actor.guildId !== this.config.guildId ||
-      !this.config.channels.includes(actor.channelId) || !canWatch(this.access,actor.userId) || typeof enabled !== 'boolean') throw new Error('Only an authorized administrator can change Admin mode');
+      !this.config.channels.includes(actor.channelId) || !canWatch(this.access,actor.userId,actor) || typeof enabled !== 'boolean') throw new Error('Only an authorized administrator can change Admin mode');
     if (!enabled) { this.clearAdmin(actor); return; }
     if (this.isAdmin(actor)) return;
     if (this.isOwner(actor)) this.adminMode = true;
@@ -168,7 +168,7 @@ class Hub {
     if (this.refreshAdmin) await this.refreshAdmin(actor);
     if (actor.guildId !== this.config.guildId || !this.config.channels.includes(actor.channelId)) return { status: 'forbidden', message: 'No controllable room.' };
     if (!this.isOwner(actor) || [...this.rooms.values()].some(s => s.kind === 'watch')) {
-      try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId)) return { status: 'forbidden', message: 'No controllable room.' }; }
+      try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId,actor)) return { status: 'forbidden', message: 'No controllable room.' }; }
       catch { return { status: 'forbidden', message: 'No controllable room.' }; }
     }
     if (input.roomId && !UUID.test(input.roomId)) return { status: 'forbidden', message: 'No controllable room.' };
@@ -179,7 +179,7 @@ class Hub {
       const acceptedAt = Date.now(), admissionDeadline = Math.min(acceptedAt + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
       if (acceptedAt >= admissionDeadline) return {status:'unavailable',message:'Room changed or command expired.'};
       const deadline = acceptedAt + (['queue.bulk','queue.auto'].includes(command.action) ? 30000 : COMMAND_MS), adminEpoch = this.adminEpoch;
-      const permitted = () => Date.now() < deadline && this.adminEpoch === adminEpoch && !this.rooms.has(input.roomId) && canWatch(this.access,actor.userId);
+      const permitted = () => Date.now() < deadline && this.adminEpoch === adminEpoch && !this.rooms.has(input.roomId) && canWatch(this.access,actor.userId,actor);
       try { return await this.savedQueueExecute(input.roomId, command, actor, permitted); }
       catch (error) { return { status:error.status === 403 ? 'forbidden' : 'failed', message:error.message, httpStatus:error.status || 400 }; }
     }
@@ -269,8 +269,8 @@ class Hub {
   async list(actor) {
     actor=this.accountActor?.(actor)||actor;
     if (actor.guildId !== this.config.guildId || !this.config.channels.includes(actor.channelId)) return [];
-    if (!this.isOwner(actor) || actor.surface === 'web' && !canWatch(this.access,actor.userId)) {
-      try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId)) return []; } catch { return []; }
+    if (!this.isOwner(actor) || actor.surface === 'web' && !canWatch(this.access,actor.userId,actor)) {
+      try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId,actor)) return []; } catch { return []; }
     }
     const visible=[];
     for(const entry of labels([...this.rooms.values()].filter(s => eligible(s, actor, this.config, Date.now(), this.access,

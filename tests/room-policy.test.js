@@ -32,14 +32,14 @@ test('operator room defaults are complete snapshots and reject unknown roles or 
   assert.throws(() => Policy.policy({ viewer: { manageHosts: true } }), /permissions/);
   assert.throws(() => Policy.policy({ host: { seek: 'true' } }), /permissions/);
   assert.throws(() => Policy.policy(JSON.parse('{"viewer":{"__proto__":true}}')), /permissions/);
-  const config = Policy.configuration({ ROOM_HOST_PERMISSIONS: 'all', ROOM_VIEWER_PERMISSIONS: 'playPause,seek' });
+  const config = Policy.configuration({ host_permissions: 'all', viewer_permissions: ['playPause','seek'] });
   assert.equal(config.roomPermissions.host.deleteRoom, true);
   assert.equal(config.roomPermissions.viewer.seek, true);
   assert.equal(config.roomPermissions.viewer.chooseMedia, false);
-  assert.ok(Object.values(Policy.configuration({ ROOM_VIEWER_PERMISSIONS: 'none' }).roomPermissions.viewer).every(value => !value));
+  assert.ok(Object.values(Policy.configuration({ viewer_permissions: 'none' }).roomPermissions.viewer).every(value => !value));
   assert.deepEqual(Policy.configuration({}).roomPermissions, Policy.policy());
-  assert.throws(() => Policy.configuration({ ROOM_VIEWER_PERMISSIONS: 'manageHosts' }), /Unknown capability/);
-  assert.throws(() => Policy.configuration({ ROOM_VIEWER_PERMISSIONS: 'playPause,' }), /Unknown capability/);
+  assert.throws(() => Policy.configuration({ viewer_permissions: ['manageHosts'] }), /Unknown capability/);
+  assert.throws(() => Policy.configuration({ viewer_permissions: ['playPause',''] }), /Unknown capability/);
 });
 
 test('administrator configuration uses exact stable provider IDs rather than names or room-supplied flags', async t => {
@@ -48,15 +48,15 @@ test('administrator configuration uses exact stable provider IDs rather than nam
   const discordId = '111111111111111111', roleId = '222222222222222222';
   const user = registry.resolve('discord', discordId, 'Alice');
   const other = registry.resolve('plex', '101', 'Other');
-  const config = Policy.configuration({ ROOM_ADMIN_DISCORD_IDS: discordId + ',' + discordId, ROOM_ADMIN_DISCORD_ROLE_IDS: roleId });
+  const config = Policy.configuration({ admin_discord_ids: [discordId,discordId], admin_discord_role_ids: [roleId] });
   assert.deepEqual(config.roomAdministrators.discord, [discordId]);
   assert.equal(Policy.administrator(registry, config, user.id), true);
   assert.equal(Policy.administrator(registry, config, other.id), false);
   assert.equal(Policy.administrator(registry, { ownerId: discordId }, user.id), true);
-  assert.equal(Policy.administrator(registry, Policy.configuration({ ROOM_ADMIN_PLEX_IDS: '101' }), other.id), true);
-  assert.throws(() => Policy.configuration({ ROOM_ADMIN_DISCORD_IDS: 'Alice' }), /exact account/);
-  assert.throws(() => Policy.configuration({ ROOM_ADMIN_PLEX_IDS: 'Alice' }), /exact account/);
-  assert.throws(() => Policy.configuration({ ROOM_ADMIN_DISCORD_ROLE_IDS: '@moderators' }), /exact account/);
+  assert.equal(Policy.administrator(registry, Policy.configuration({ admin_plex_ids: ['101'] }), other.id), true);
+  assert.throws(() => Policy.configuration({ admin_discord_ids: ['Alice'] }), /exact account/);
+  assert.throws(() => Policy.configuration({ admin_plex_ids: ['Alice'] }), /exact account/);
+  assert.throws(() => Policy.configuration({ admin_discord_role_ids: ['@moderators'] }), /exact account/);
   registry.db.prepare('UPDATE identities SET verified=0,assigned=1 WHERE userId=?').run(user.id);
   assert.equal(Policy.administrator(registry, config, user.id), false, 'an assigned but unproven identity cannot become an administrator');
 });
@@ -68,7 +68,7 @@ test('role administrators require fresh trusted guild membership and lose author
   const user = registry.resolve('discord', discordId, 'Alice');
   let present = true, role = true;
   const access = { isMember: id => id === discordId && present, hasRole: (id, requested) => id === discordId && requested === roleId && role };
-  const config = Policy.configuration({ ROOM_ADMIN_DISCORD_ROLE_IDS: roleId });
+  const config = Policy.configuration({ admin_discord_role_ids: [roleId] });
   assert.equal(Policy.administrator(registry, config, user.id, access), true);
   role = false;
   assert.equal(Policy.administrator(registry, config, user.id, access), false);
@@ -106,9 +106,9 @@ test('participant management grants are denied even in old stored/default polici
   assert.equal(Policy.allowed(room,'viewer','picture'),false);
   assert.equal(Policy.allowed(room,'host','picture'),true);
   assert.equal(Policy.allowed(room,'creator','picture'),true);
-  const configured = Policy.configuration({ROOM_VIEWER_PERMISSIONS:'all'}).roomPermissions;
+  const configured = Policy.configuration({viewer_permissions:'all'}).roomPermissions;
   assert.ok(Policy.VIEWER_BLOCKED.every(key => !configured.viewer[key]));
-  const retired = Policy.configuration({ROOM_HOST_PERMISSIONS:'playPause,picture'}).roomPermissions.host;
+  const retired = Policy.configuration({host_permissions:['playPause','picture']}).roomPermissions.host;
   assert.equal(retired.playPause,true);
   assert.equal(Object.hasOwn(retired,'picture'),false);
 });

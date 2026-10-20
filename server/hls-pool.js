@@ -50,7 +50,9 @@ class HLSPool {
     if(group.anchor){this.bytes-=group.anchor.bytes.length;group.anchor=undefined;}
     if(group.media&&!group.claimed)await this.stop(group.media);
   }
-  async acquire(key,create,authorized,exclude,warmMs=1000) {
+  async acquire(key,create,authorized,exclude,warmMs=1000,existingOnly=false) {
+    const unavailable=()=>{throw Object.assign(new PlaybackError('No matching shared output is available.'),{conversionCapacity:true});};
+    if(existingOnly && (!this.groups.has(key) || !this.groups.get(key).anchor))return unavailable();
     this.invalidate(exclude);
     if(this.closed)throw new PlaybackError('Server is shutting down.');
     if(!key||!this.groups.has(key)&&this.live.size>=this.maxGroups)return {media:await create(authorized)};
@@ -75,7 +77,7 @@ class HLSPool {
       let media;
       try{media=await group.promise;}
       catch(error){
-        if(!producer&&!this.closed&&(!authorized||await authorized()))return {media:await create(authorized)};
+        if(!producer&&!this.closed&&(!authorized||await authorized()))return existingOnly?unavailable():{media:await create(authorized)};
         throw error;
       }
       const live=!authorized||await authorized();
@@ -84,7 +86,7 @@ class HLSPool {
         // No anchor cache means a future join could restart the encoder at zero.
         // Transfer the first private output once; other callers prepare their own.
         if(!group.claimed){group.claimed=true;return {media};}
-        return {media:await create(authorized)};
+        return existingOnly?unavailable():{media:await create(authorized)};
       }
       retained=true;
       const lease={group,released:false};

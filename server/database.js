@@ -6,13 +6,13 @@ const { DatabaseSync } = require('node:sqlite');
 
 // Only startup touches disk here. Runtime SQL targets memory; atomic changesets
 // are written to the same accounts.sqlite by one bounded worker.
-function openDatabase(file, migrate) {
+function openDatabase(file, initializeSchema) {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON;');
-  if (!file) { migrate(db); return { db, flush: async () => {}, close: () => db.close(), abort: () => db.close() }; }
+  if (!file) { initializeSchema(db); return { db, flush: async () => {}, close: () => db.close(), abort: () => db.close() }; }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const disk = new DatabaseSync(file);
-  try { migrate(disk); disk.exec('PRAGMA journal_mode=DELETE;'); }
+  try { initializeSchema(disk); disk.exec('PRAGMA journal_mode=DELETE;'); }
   catch (error) { db.close(); throw error; }
   finally { disk.close(); }
   db.prepare('ATTACH DATABASE ? AS durable').run(file);

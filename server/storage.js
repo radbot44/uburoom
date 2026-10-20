@@ -1,7 +1,7 @@
 'use strict';
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly.
-function migrate(db) {
+function initializeSchema(db) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > 4) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
@@ -78,4 +78,4 @@ function loginStore(context, vault, registry) {
   if (!matching) { db.exec('DELETE FROM browser_logins'); registry.meta('loginContext', context); }
   return store;
 }
-module.exports = { deviceStore, loginStore, migrate };
+module.exports = { deviceStore, loginStore, initializeSchema };

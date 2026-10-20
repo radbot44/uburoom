@@ -318,3 +318,5 @@ body.idle-player #video{visibility:hidden}
 @media(max-width:700px){body.idle-player:not(.immersive) #empty-stage{position:relative;inset:auto;width:calc(100% - 24px);max-height:calc(100% - 64px);padding:8px}body.idle-player #empty-stage h1{font-size:16px}body.idle-player #empty-symbol{display:none}body.idle-player #empty-hint{font-size:12px;margin:4px 0 10px}body.idle-player #room-lobby{margin:10px auto 0}}
 
 .codec-test-dialog{width:min(1060px,96vw);max-width:96vw;height:90dvh;padding:12px;overflow:hidden}.codec-test-dialog[open]{display:flex;flex-direction:column;gap:10px}.codec-test-dialog iframe{width:100%;flex:1;min-height:0;border:0;border-radius:12px;background:var(--background)}
+
+.quality-fallback-notice{position:absolute;top:68px;left:16px;right:16px;margin:0;padding:10px 14px;border-radius:10px;background:#1b1e26e8;color:#f8f7f4;font-size:13px;z-index:4}

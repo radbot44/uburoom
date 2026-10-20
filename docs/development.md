@@ -43,7 +43,7 @@ node scripts/watch-smoke.js
 node scripts/plex-library-smoke.js
 ```
 
-Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create disposable profiles. The full `scripts/firefox-smoke.js --extension=<remote-build-directory>` check still stops at the popup-height assertion and has a separately deferred permission/rate-limit failure; it binds localhost 6767/9443 when run. The retired standalone-homepage assertions were removed; extension consent, guest permission, expiry and popup-height checks remain. Current watch entry/drawer checks run in both browsers with the cutover smoke. Fixtures do not prove real YouTube TV or Activity behavior.
+Use the standard Windows Firefox location or set `FIREFOX_BINARY`. Checks create disposable profiles. The full `scripts/firefox-smoke.js --extension=<remote-build-directory>` check still stops at the popup-height assertion and has a separately deferred permission/rate-limit failure; it binds localhost 5756/9443 when run. The retired standalone-homepage assertions were removed; extension consent, guest permission, expiry and popup-height checks remain. Current watch entry/drawer checks run in both browsers with the cutover smoke. Fixtures do not prove real YouTube TV or Activity behavior.
 
 ## Isolated playback baseline
 
@@ -263,3 +263,17 @@ Watch library requests omit `room` for authenticated lobby browsing, or supply t
 Run `node scripts/lobby-library-smoke.js --browser=chrome` and `--browser=firefox` for isolated lobby browsing, disabled settings, cancel, public/private creation, selected-title loading, private-room hiding, joining and responsive layout checks. The runner uses disposable identities/media and writes screenshots under ignored `artifacts/`.
 
 Run `node scripts/theme-smoke.js --browser=chrome` and `--browser=firefox` for all four appearance combinations, branding, shadow-DOM remote, menu/dialog and narrow phone checks, plus persistence across tabs and sign-in pages. It uses the existing `artifacts/playback-media-tracks` fixture corpus and writes screenshots under `artifacts/theme-<browser>/`.
+
+### Configuration and quality checks
+
+`node --test tests/transcoding-options.test.js` checks custom pairs, capacity waiting/cancellation, quality ranking, backend probing, CPU retry reservation and numerical Plex parameters against fixtures. `node scripts/transcoding-options-smoke.js --browser=chrome` (also `--browser=firefox`) checks the configured menu and full settings dialog with synthetic media. `node scripts/av1-probe.js --encoder=auto` tests available hardware/CPU selection with synthetic AV1/Opus; `qsv`, `nvenc` and `software` select a backend. These commands do not establish live Plex custom output, Activity codec compatibility or sustained GPU capacity.
+
+Pre-release configuration conversions and schema/data migrations belong in reviewed task-specific one-off scripts outside shipped sources. The application and deployment updater must not perform them automatically. Fresh database initialization and strict existing-schema validation remain runtime responsibilities.
+
+### VP8 and VP9 local WebM checks
+
+The shared local chunk pipeline now accepts AV1, VP9 and VP8. Probe software codecs with `node scripts/av1-probe.js --codec=vp9 --encoder=software` (or `--codec=vp8`). The historical script/module names do not restrict the output codec. `--encoder=auto` probes per-codec hardware candidates and permits CPU fallback; it does not certify a remote GPU.
+
+For an existing procedural corpus, run `node scripts/playback-baseline.js --out=artifacts/new-vpx-report --media=artifacts/playback-media-initial --browsers=chrome,firefox --cases=vp8-23976,vp8-60,vp9-23976,vp9-60`. Without `--media`, the runner generates new fixtures inside the new output directory. Reports check decoded pixels/PCM, cadence, chunk playback and pause/seek/resume; no real accounts or PMS are used.
+
+`node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` checks configured automatic selection, codec-specific manifests, two-viewer chunk sharing, cached rewind, producer departure and final cleanup. Run both browsers and both codecs. `--codec=vp8 --fail-first` deliberately fails the preceding configured VP9 encoder and verifies bounded recovery to VP8. `--media=<procedural corpus>` and `--out=<new directory>` override fixture/report locations. Screenshots and sanitized reports remain under ignored artifacts; these checks do not establish real Discord proxy playback, QSV VP9 support or sustained hardware capacity.

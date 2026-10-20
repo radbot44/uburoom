@@ -156,7 +156,7 @@ test('active server Admin mode gives creator authority over private saved rooms 
   const f = fixture(t, { isAdmin: id => active.has(id) });
   let room = await f.store.create(f.creator, { visibility: 'private' });
   assert.equal(f.store.list(f.viewer).total, 0);
-  const candidates = Policy.configuration({ ROOM_ADMIN_DISCORD_IDS: '222222222222222222' });
+  const candidates = Policy.configuration({ admin_discord_ids: ['222222222222222222'] });
   assert.equal(Policy.administrator(f.registry, candidates, f.viewer), true, 'the viewer is an eligible administrator');
   assert.throws(() => f.store.restore(room.id, f.viewer), status(403), 'eligibility alone does not enable Admin mode');
   const pendingAdmin = new RoomStore(f.registry, { isAdmin: () => Promise.resolve(false) });

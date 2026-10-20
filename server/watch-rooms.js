@@ -28,7 +28,7 @@ class WatchRooms {
   async eligible(actor, current = async () => true) {
     const hub = this.watch.hub;
     if (this.stopped || actor.surface !== 'web' || actor.guildId !== hub.config.guildId || !hub.config.channels.includes(actor.channelId) ||
-        !await current() || !canWatch(hub.access, actor.userId) && !await (hub.access?.refreshWatch || hub.access?.refresh)?.(actor.userId)) {
+        !await current() || !canWatch(hub.access, actor.userId, actor) && !await (hub.access?.refreshWatch || hub.access?.refresh)?.(actor.userId,actor)) {
       throw failure('Room access expired; sign in again', 403);
     }
     await hub.refreshAdmin?.(actor);
@@ -204,13 +204,16 @@ class WatchRooms {
     if(!this.singleOpening){
       this.singleOpening=(async()=>{
         const config=this.watch.hub.config;
-        const owner=this.registry.resolve('discord',config.ownerId,'Assigned account',false);
+        const owner=await this.watch.hub.singleRoomLeader();
+        await this.eligible(actor,current);
         let id=this.registry.meta('singleRoomId');
         let record;
         if(id){try{record=this.store.get(id);}catch(error){if(error.status!==404)throw error;}}
         if(!record){record=await this.store.create(owner.id,{name:config.singleRoomName||'Room',visibility:'public'});id=record.id;this.registry.meta('singleRoomId',id);}
-        const hosts=(config.roomAdministrators?.discord||[]).filter(subject=>subject!==config.ownerId)
-          .map(subject=>this.registry.resolve('discord',subject,'Assigned account',false).id);
+        const hosts=[...new Set([
+          ...(config.roomAdministrators?.discord||[]).map(subject=>this.registry.resolve('discord',subject,'Assigned account',false).id),
+          ...(config.roomAdministrators?.plex||[]).map(subject=>this.registry.resolve('plex',subject,'Assigned account',false).id)
+        ])].filter(id=>id!==owner.id);
         const previousHosts=JSON.parse(this.registry.meta('singleRoomDefaultHosts')||'[]');
         const added=hosts.filter(host=>!previousHosts.includes(host)),removed=previousHosts.filter(host=>!hosts.includes(host));
         if(record.creatorId!==owner.id||added.length||removed.length)this.registry.transaction(()=>{
@@ -252,7 +255,7 @@ class WatchRooms {
     this.registry.transaction(()=>{
       this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
-      for(const subject of this.watch.hub.config.roomAdministrators?.discord||[]){const host=this.registry.identity('discord',subject)?.userId;if(host&&host!==record.creatorId)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);}
+      for(const provider of ['discord','plex'])for(const subject of this.watch.hub.config.roomAdministrators?.[provider]||[]){const host=this.registry.identity(provider,subject)?.userId;if(host&&host!==record.creatorId)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);}
       this.store.db.prepare("UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,permissions=?,name=?,visibility='public' WHERE id=?")
         .run(JSON.stringify(this.store.defaults),this.watch.hub.config.singleRoomName||'Room',id);
     });

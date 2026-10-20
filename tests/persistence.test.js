@@ -13,7 +13,7 @@ const certFile = path.join(__dirname, '../certs/server-cert.pem');
 test('logins survive restart, renew Discord tokens, persist logout/revocation and never restore player consent', { skip: !fs.existsSync(certFile) }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-auth-test-'));
   const cert = fs.readFileSync(certFile), config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
-    publicUrl: 'https://localhost:6767', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret',
+    publicUrl: 'https://localhost:5756', ownerId: 'owner', guildId: 'guild', channels: ['commands'], clientId: 'fixture', clientSecret: 'fixture-secret',
     accountFile: path.join(directory, 'accounts.sqlite'), credentialKeyFile: path.join(directory, 'credentials.key') };
   let app, renewals = 0, renewalStatus = 200;
   const oauthFetch = async (url, options) => {
