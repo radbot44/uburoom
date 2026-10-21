@@ -129,9 +129,9 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 const subtitleMode=$('subtitle-mode');
 video.volume = .5;
-function glyph(id, symbol) { $(id)?.replaceChildren(uburoomUI.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['open-remote','remote'],['fullscreen','fullscreen'],
-  ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','mute'],
+function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
+for (const pair of [['refresh','refresh'],['room-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
+  ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
@@ -250,7 +250,7 @@ const sectionToggles = sections.map(([key,, id]) => {
   if (!button) {
     button = document.createElement('button'); button.type = 'button';
     button.className = 'section-toggle'; button.id = key + '-collapse';
-    button.append(...heading.childNodes, uburoomUI.icon(document, 'chevron'));
+    button.append(...heading.childNodes, uburoomIcons.icon(document, 'chevron'));
     heading.append(button);
   }
   button.setAttribute('aria-controls', key === 'room' ? 'options-content' : key === 'media' ? 'library-content' : 'queue-body');
@@ -270,8 +270,8 @@ for (const [key, label, panel] of sections) {
   tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
   if (key === 'room') {
-    const icon = document.createElement('span'); icon.className = 'oomark-icon'; icon.setAttribute('aria-hidden', 'true'); tab.append(icon);
-  } else tab.append(uburoomUI.icon(document, key === 'queue' ? 'queue' : 'media'));
+    tab.append(uburoomIcons.icon(document,'oomark'));
+  } else tab.append(uburoomIcons.icon(document, key === 'queue' ? 'queue' : 'media'));
   tab.append(document.createTextNode(label));
   tab.addEventListener('click', () => selectSection(key));
   sectionTabs.append(tab);
@@ -724,7 +724,7 @@ function connectionLost(details={}) {
 function showDisconnectToast() {
   const toast=$('disconnect-toast');if(!toast)return;
   const symbol=toast.querySelector('.disconnect-toast-symbol');
-  if(symbol&&!symbol.firstChild)symbol.append(uburoomUI.icon(document,'refresh'));
+  if(symbol&&!symbol.firstChild)symbol.append(uburoomIcons.icon(document,'refresh'));
   toast.hidden=false;
 }
 function hideDisconnectToast() {
@@ -874,7 +874,7 @@ function renderTransport() {
   const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
   $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
-  glyph('player-mute', state?.state.muted ? 'muted' : 'mute'); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
+  renderVolumeIcon(); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
   $('player-mute').title = state?.state.muted ? 'Unmute' : 'Mute';
   $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut;
   $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
@@ -1112,8 +1112,8 @@ function renderRooms(host, rooms, join = id => selectRoom(id)) {
   }
   for (const room of rooms) {
     const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
-    button.append(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
-    const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomUI.icon(document,'users'));
+    button.append(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
+    const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomIcons.icon(document,'users'));
     const count = document.createElement('span'); count.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers); button.append(count);
     button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
     button.setAttribute('aria-label', (room.name || room.hostName) + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
@@ -1166,6 +1166,9 @@ function toggleRemote(show = $('remote').hidden) {
   $('remote').hidden = !show; $('stage').classList.toggle('remote-open', show); $('open-remote')?.setAttribute('aria-expanded', String(show));
   if (!show) remote.stop();
 }
+function renderVolumeIcon() {
+  glyph('player-mute',uburoomIcons.volumeName(volumeDraft ?? state?.state?.volume ?? Number($('player-volume').value),!!state?.state?.muted));
+}
 function pumpVolume() {
   clearTimeout(volumeTimer);
   if (volumeWanted === undefined || !selected || !state) return;
@@ -1177,8 +1180,8 @@ function pumpVolume() {
   }).catch(error => { dropVolume(); fail(error.message); });
 }
 $('player-volume').addEventListener('pointerdown', () => { volumeDragging = true; });
-$('player-volume').addEventListener('input', () => { volumeWanted = volumeDraft = Number($('player-volume').value); pumpVolume(); });
-$('player-volume').addEventListener('change', () => { volumeDragging = false; volumeWanted = volumeDraft = Number($('player-volume').value); pumpVolume(); });
+$('player-volume').addEventListener('input', () => { volumeWanted = volumeDraft = Number($('player-volume').value); renderVolumeIcon(); pumpVolume(); });
+$('player-volume').addEventListener('change', () => { volumeDragging = false; volumeWanted = volumeDraft = Number($('player-volume').value); renderVolumeIcon(); pumpVolume(); });
 $('player-volume').addEventListener('pointercancel', () => { volumeDragging = false; });
 for (const [id, command] of [['previous',{action:'media.previous'}],['seek-back',{action:'media.seek.relative',args:{seconds:-15}}],
   ['seek-forward',{action:'media.seek.relative',args:{seconds:15}}],['next',{action:'media.next'}]]) $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
@@ -1255,13 +1258,13 @@ function renderRoomChoices(rooms, container = $('room-choices')) {
     const row = document.createElement('div'); row.className = 'saved-room';
     const copy = document.createElement('div'), name = document.createElement('strong'), info = document.createElement('p');
     name.textContent = room.name || room.hostName;
-    name.prepend(uburoomUI.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
+    name.prepend(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
     info.className = 'hint';
     info.textContent = (room.recovering ? 'Recovering · ' : '') + (room.title || 'No video selected') + ' · ' + room.viewers + ' / ' + (room.maxMembers || 20) + ' people'; copy.append(name,info);
     const actions = document.createElement('div'); actions.className = 'room-actions';
     const currentRoom = container.id === 'room-choices' && room.id === selected;
     const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = currentRoom ? 'Cancel' : 'Join';
-    if (!currentRoom) button.prepend(uburoomUI.icon(document,'login')); button.disabled = !currentRoom && !!room.locked;
+    if (!currentRoom) button.prepend(uburoomIcons.icon(document,'login')); button.disabled = !currentRoom && !!room.locked;
     button.addEventListener('click',async () => {
       if (currentRoom) { $('room-dialog').close('cancel'); return; }
       if (creating) return;
@@ -1283,10 +1286,10 @@ syncButtonGroup('room-create-preset', 'room-create-preset-group');
 syncButtonGroup('room-settings-visibility', 'room-settings-visibility-group');
 syncButtonGroup('room-permission-preset', 'room-permission-preset-group');
 for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') || []) {
-  btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
+  btn.prepend(uburoomIcons.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
 for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button') || []) {
-  btn.prepend(uburoomUI.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
+  btn.prepend(uburoomIcons.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
 const roomOptionHints = {
   public:'Eligible viewers can find and join this room.', private:'Only the room leader and assigned hosts can join.',
@@ -1355,7 +1358,7 @@ async function createRoom(advanced = roomUI.draftOptions()) {
 for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
 for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
 $('room-create').addEventListener('click', () => void createRoom().catch(error=>fail(error.message)));
-$('room-create-settings').append(uburoomUI.icon(document,'settings'));
+$('room-create-settings').append(uburoomIcons.icon(document,'settings'));
 $('room-create-settings').addEventListener('click',()=>roomUI.openDraft({name:$('room-name').value,visibility:$('room-create-visibility').value,permissionPreset:$('room-create-preset').value}));
 $('room-create-preset').addEventListener('change',()=>{ roomPresetDraft = $('room-create-preset').value; roomUI.updateDraftPreset(roomPresetDraft); });
 $('room-chooser-new').addEventListener('click',() => { roomChooserSection('new'); if (roomNameDraft) $('room-name').value = roomNameDraft; $('room-name').focus(); });
@@ -1372,7 +1375,7 @@ function browseMedia() {
   panel.classList.add('media-glow');
 }
 $('library-panel').addEventListener('animationend', event => { if (event.animationName === 'media-glow') $('library-panel').classList.remove('media-glow'); });
-$('empty-browse').prepend(uburoomUI.icon(document, 'media'));
+$('empty-browse').prepend(uburoomIcons.icon(document, 'media'));
 $('empty-browse').addEventListener('click', browseMedia);
 $('close-room').addEventListener('click', async () => {
   if (!selected || pending) return;

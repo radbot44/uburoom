@@ -6,9 +6,9 @@ accountPopups.register(accountDialog,{dirty:()=>!!accountValue &&
   ($('account-display-name').value!==accountValue.name || !!$('match-discord').value || !!$('match-plex').value)});
 $('account-display-name').addEventListener('input',()=>{accountNameDraft={id:accountValue?.id,name:$('account-display-name').value};});
 const accountButton=$('identity');
-$('account-close').append(uburoomUI.icon(document,'close'));
+$('account-close').append(uburoomIcons.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
-logoutButton.append(uburoomUI.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
+logoutButton.append(uburoomIcons.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
 function updateAccountButton(){accountButton.disabled=!config?.unifiedAccounts||!me;}
 function accountError(message=''){$('account-error').textContent=message;}
 function identityRows(host,account){
@@ -78,7 +78,7 @@ logoutButton.addEventListener('click',async()=>{
 });
 $('account-close').addEventListener('click',()=>accountPopups.close(accountDialog));
 for(const provider of ['discord','plex']){
-  const button=$('remove-'+provider);button.append(uburoomUI.icon(document,'close'));
+  const button=$('remove-'+provider);button.append(uburoomIcons.icon(document,'close'));
   button.addEventListener('click',()=>{
     if(activity){$('account-dialog').close();void openInBrowser();return;}
     removeProvider=provider;

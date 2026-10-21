@@ -48,7 +48,7 @@
       if (!['creator','host'].includes(role)) return;
       const name = role === 'creator' ? 'Room Leader' : 'Host';
       cell.title = name; cell.setAttribute('aria-label',name);
-      cell.append(root.uburoomUI.icon(document,role === 'creator' ? 'creator' : 'host'));
+      cell.append(root.uburoomIcons.icon(document,role === 'creator' ? 'creator' : 'host'));
       node('span',cell,name,'room-roster-role-text');
     }
     let rosterBusy = false, rosterRoom;
@@ -495,7 +495,7 @@
     $('room-rename').addEventListener('input',event => { renameDraft = event.target.value; });
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
     $('room-more-permissions').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'permissions'); });
-    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen']]) $(id).prepend(root.uburoomUI.icon(document,icon));
+    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen']]) $(id).prepend(root.uburoomIcons.icon(document,icon));
     controls.content($('reopen'),{label:'Reopen room',icon:'reopen'});
     let quickBusy = false, quickRoom, quickStatusTimer;
     function setQuickStatus(text, transient = false) {

@@ -65,8 +65,12 @@ async function main() {
       assert.equal(await evaluate('document.getElementById("sync-correction").closest("dialog").id'),'tracks-dialog');await shot('full-settings');
       await browser.click(page,'tracks-close');await until('state.tracks.subtitleId==="10190"&&captions.loaded','Default CC track');
       assert.equal(await evaluate('document.getElementById("captions-toggle").getAttribute("aria-pressed")'),'true');
+      assert.equal(await evaluate('document.querySelector("#captions-toggle svg")?.getAttribute("data-tabler-icon")'),'badge-cc');
+      assert.equal(await evaluate('document.querySelector("#room-symbol svg")?.getAttribute("data-tabler-icon")'),'oomark');
       await browser.click(page,'captions-toggle');await until('!state.tracks.subtitleId','CC off');
+      assert.equal(await evaluate('document.querySelector("#captions-toggle svg")?.getAttribute("data-tabler-icon")'),'badge-cc','CC stays outlined while off');
       await browser.click(page,'captions-toggle');await until('state.tracks.subtitleId==="10190"','CC restored');
+      assert.equal(await evaluate('document.querySelector("#captions-toggle svg")?.getAttribute("data-tabler-icon")'),'badge-cc','CC stays outlined while on');
       await browser.click(page,'tracks-open');await browser.click(page,'settings-quality');
       await evaluate('document.querySelector(".settings-submenu [data-value=\\\"1080p8\\\"]").click();true');
       await until('!qualityPending&&state.quality==="1080p8"&&video.readyState>=2','Quality selection through submenu');

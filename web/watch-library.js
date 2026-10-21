@@ -6,7 +6,7 @@
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
       const b = node('button',parent,undefined,className); b.type = 'button'; b.setAttribute('aria-label',label); b.title = label;
-      if (symbol) b.append(uburoomUI.icon(doc,symbol)); return b;
+      if (symbol) b.append(uburoomIcons.icon(doc,symbol)); return b;
     }
     function option(select, value, label) { const n = node('option',select,label); n.value = value; }
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
@@ -28,12 +28,12 @@
     const tools = node('div',host,undefined,'library-tools');
     const row = node('div',tools,undefined,'library-toolbar');
     const searchField = node('label',row,undefined,'search-field');
-    searchField.append(uburoomUI.icon(doc,'search'));
+    searchField.append(uburoomIcons.icon(doc,'search'));
     const search = node('input',searchField); search.type = 'search'; search.id = 'search'; search.placeholder = 'Search this library'; search.setAttribute('aria-label','Search this library'); search.maxLength = 200;
     const toolControls = node('div',row,undefined,'tool-controls');
     const sortWrap = node('div',toolControls,undefined,'sort-wrap');
     const sort = select(sortWrap,'Sort library'); sort.id = 'library-sort';
-    sortWrap.append(uburoomUI.icon(doc,'chevron'));
+    sortWrap.append(uburoomIcons.icon(doc,'chevron'));
     const direction = button(toolControls,'Ascending','sort','library-key library-direction'); direction.id = 'library-direction';
     const filterHolder = node('div',toolControls,undefined,'filter-holder');
     const filterButton = button(filterHolder,'Filters','filter','library-key'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
@@ -187,7 +187,7 @@
     }
     function art(parent,item,landscape = false) {
       const box = node('div',parent,undefined,'library-art' + (landscape ? ' landscape' : ''));
-      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomUI.icon(doc,['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
+      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomIcons.icon(doc,['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
       if (landscape ? item.hasLandscape : item.hasPoster) {
         const img = node('img',box); img.alt = ''; img.decoding = 'async'; img.dataset.item = item.id; img.dataset.kind = landscape ? 'landscape' : 'poster'; img.dataset.type = item.type;
         img.addEventListener('load',() => { box.classList.add('loaded'); });
@@ -377,7 +377,7 @@
       option(sort,'random','Random');
       sort.value = screen.sort; direction.disabled = screen.sort === 'default';
       direction.title = direction.ariaLabel = screen.sort === 'random' ? 'Shuffle again' : screen.order === 'asc' ? 'Ascending: switch to descending' : 'Descending: switch to ascending';
-      direction.replaceChildren(uburoomUI.icon(doc,screen.sort === 'random' ? 'refresh' : 'sort')); direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
+      direction.replaceChildren(uburoomIcons.icon(doc,screen.sort === 'random' ? 'refresh' : 'sort')); direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
       genre.value = screen.genre; year.value = screen.year;
       chips.replaceChildren();
       for (const [key,control] of [['genre',genre],['year',year]]) if (screen[key]) {

@@ -1,6 +1,6 @@
 # uburoom design guide
 
-Keep the established layout and behavior. The main site enters `/watch`; the standalone remote-only homepage is retired. The web-owned remote renderer is `web/remote-ui.js` (styles, SVGs, controls/badges), with the watch shell in `web/watch*.css`. uburoom-remote owns its own renderer and popup; do not import another checkout's UI files. Inspect affected renders before UI changes and use safe-DOM components.
+Keep the established layout and behavior. The main site enters `/watch`; the standalone remote-only homepage is retired. The web-owned remote renderer is `web/remote-ui.js` (remote styles, controls/badges) and the icon pack is `web/icons.js`, with the watch shell in `web/watch*.css`. uburoom-remote owns its own renderer and popup; do not import another checkout's UI files. Inspect affected renders before UI changes and use safe-DOM components.
 
 ## Design authority, change control and approval (mandatory)
 
@@ -145,7 +145,9 @@ Five named button classes define the existing interactive action roles. Never mi
 
 ### Icon button rules
 - Icon-only buttons must always have `aria-label` and `title`. No visible text label is needed when the icon is universally understood (⚙ settings, × close, ↻ refresh).
-- Use 24×24 SVG paths from the shared `remote-ui.js` icon set (`currentColor` stroke, 1.9px width, rounded caps/joins). No emoji or icon library substitutions.
+- Use inline 24×24 SVGs from the shared, self-hosted `web/icons.js` Tabler **outline** icon pack (`currentColor` stroke, Tabler geometry and rounded caps/joins). The original monochrome Room `oomark` belongs to the same provider. No emoji/icon fonts or remote CDNs.
+- **To add an icon:** copy only the SVG's inner markup from its official `tabler/tabler-icons/icons/outline/<slug>.svg` source into the `glyphs` map in `web/icons.js`, keyed by the exact Tabler slug. Verify the markup and slug against upstream, retain the 24×24 Tabler geometry, and add an `aliases` mapping only when preserving an existing application-level name. Any future named Tabler icon can then be rendered by `uburoomIcons.icon(document, '<slug>')`. Update `tests/icons.test.js`, inspect both Chrome and Firefox, and retain the MIT attribution in `web/vendor/THIRD_PARTY_NOTICES.txt`. All glyph data ships locally in `/icons.js`, loaded in the page head, before `/remote-ui.js`; never fetch icons on demand or reactivate the archived SVG paths in `remote-ui.js`.
+- **Stateful controls:** use only `captions` (`badge-cc`) for both subtitle states, with `aria-pressed` and color indicating enabled. `uburoomIcons.volumeName(percent, muted)` maps mute/0 → `volume-off`, below 10 → `volume-4`, 10–50 → `volume-2`, and over 50 → `volume`. Use `uburoomIcons.icon(document, 'back' or 'forward', seconds)` for 15/30/60 second seek variants; other durations use a generic skip shape with the true interval written in feedback. Refresh animations must rotate counter-clockwise.
 - Panel-header secondary icon buttons (settings, refresh, close, collapse) use `.icon-button`. Content-area action icon buttons (queue move, remove, play) use `'icon-button quiet'` to add the elevated hover state.
 
 ### Toggles

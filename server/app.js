@@ -325,6 +325,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+fs.readFileSync(path.join(publicDir,'theme.js'),'utf8'));
       }
       const assets = { '/remote-ui.js': ['remote-ui.js', 'text/javascript'],
+        '/icons.js': ['icons.js', 'text/javascript'],
         '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
         '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
         '/assets/branding/uburoom-oomark-mono.svg': ['assets/branding/uburoom-oomark-mono.svg', 'image/svg+xml'],

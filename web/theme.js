@@ -117,7 +117,7 @@
     for(const [id,label,pressed,next] of [['theme-toggle',light?'Light':'Dark',light,light?'dark':'light'],['accent-toggle',pink?'Pink':'Orange',pink,pink?'orange':'pink']]) {
       const button=document.getElementById(id); if(!button)continue;
       button.setAttribute('aria-checked',String(pressed));
-      const icon=id==='theme-toggle' && window.uburoomUI?.icon(document,light?'sun':'moon');
+      const icon=id==='theme-toggle' && window.uburoomIcons?.icon(document,light?'sun':'moon');
       if(icon)button.querySelector('.appearance-thumb').replaceChildren(icon);
       button.title=button.ariaLabel=(id==='theme-toggle'?'Theme: ':'Accent: ')+label+'. Switch to '+next+'.';
       if(id==='accent-toggle' && sunrise)button.title=button.ariaLabel='Sunrise Mode. Pause rapid clicking, then click to stop and return to orange.';
