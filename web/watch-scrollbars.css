@@ -1,4 +1,4 @@
-/* Theme for the document scrollbar; child scroll containers remain native. */
+/* Theme shared by the document scrollbar and compatible internal scroll areas. */
 .os-theme-uburoom {
   box-sizing: border-box;
   --os-size: 10px;
