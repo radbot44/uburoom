@@ -65,7 +65,7 @@
       b.setAttribute('aria-label', label);
       b.title = label;
       b.disabled = disabled;
-      if (iconName && root.uburoomUI?.icon) {
+      if (iconName && root.uburoomIcons?.icon) {
         b.append(root.uburoomIcons.icon(doc, iconName));
       } else {
         b.textContent = label;
