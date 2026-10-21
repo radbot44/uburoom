@@ -256,7 +256,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .room-role-badge.participant{color:var(--muted)}
 #room-permission-preset-group{width:100%}#room-permission-preset-group [hidden]{display:none}
 .permission-inherited{display:inline-block;margin:0 0 0 4px;font-size:16px;color:var(--muted)}.room-permission-table{width:100%;border-collapse:collapse;margin:0}.room-permission-table td{position:relative}.room-permission-table .permission-group{font-weight:700;padding-top:14px;color:var(--accent-text)}
-.queue-settings select{display:block;width:100%;margin:6px 0 16px}.queue-settings .queue-check{display:flex!important;align-items:center;gap:10px}
+.queue-settings select{display:block;width:100%;margin:6px 0 16px}.queue-settings .queue-check{display:flex!important;align-items:center;gap:var(--watch-control-gap)}
 .queue-settings-footer{position:sticky;bottom:-16px;background:var(--card);padding:12px 0;z-index:2}
 .queue-source-picker{border:1px solid var(--border);border-radius:10px;padding:12px;margin:12px 0}.source-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)}.source-row>span{flex:1;min-width:100px;overflow-wrap:anywhere}.source-row button{min-height:44px}#queue-source-change{min-height:44px;margin-bottom:10px}
 .queue-countdown-seconds{flex:none;font-variant-numeric:tabular-nums;min-width:3ch;white-space:nowrap;font-weight:700}

@@ -78,24 +78,26 @@
     const confirm = message => popups.confirm(message, {destructive:true});
 
     host.dataset.view = view;
-    const header = node('header', host, undefined, 'queue-header');
-    const heading = node('h2', header, undefined, 'queue-heading');
+    const header = node('header', host, undefined, 'queue-header watch-panel-header');
+    const heading = node('h2', header, undefined, 'queue-heading watch-panel-heading');
     heading.append(root.uburoomIcons.icon(doc, 'queue'), doc.createTextNode('Queue'));
-    const views = node('div', header, undefined, 'queue-view-switch');
+    const views = node('div', header, undefined, 'queue-view-switch watch-segmented watch-segmented-view');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Queue layout');
     const viewButtons = ['cards', 'list'].map(value => {
       const b = button(views, value === 'cards' ? 'Cards' : 'List', value === 'cards' ? 'libraryCards' : 'libraryList', () => {
         view = value; host.dataset.view = view;
         try { localStorage.setItem('uburoom-queue-view', view); } catch {}
         centerPending = true; renderNowPlaying(); renderTab(); updateView();
-      }, false, 'queue-view-button');
+      }, false, 'queue-view-button group-button');
       node('span', b, value === 'cards' ? 'Cards' : 'List');
       b.id = 'queue-view-' + value; return b;
     });
+    root.uburoomControls.segmented(views);
     const body = node('div', host); body.id = 'queue-body';
-    const toolbar = node('div', header, undefined, 'queue-toolbar'); toolbar.append(views);
+    const toolbar = node('div', header, undefined, 'queue-toolbar watch-toolbar'); toolbar.append(views);
     const centerButton = button(toolbar, 'Center Now Playing', 'center', () => centerCurrent(true));
-    centerButton.id = 'queue-center'; node('span', centerButton, 'Center Now Playing');
+    root.uburoomControls.content(centerButton,{label:'Center Now Playing',icon:'center'});
+    centerButton.id = 'queue-center';
     const timeline = node('div', body, undefined, 'queue-timeline');
     const navigation = node('div', timeline, undefined, 'queue-navigation');
     const previousCard = button(navigation, 'Scroll toward history', 'left', () => scrollCards(-1));
@@ -119,25 +121,29 @@
     const notice = node('p', footer, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
 
 
-    const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls');
-    const autoplayLabel = node('label', continuation, undefined, 'queue-check');
+    const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
+    const autoplayLabel = node('label', continuation, undefined, 'queue-check watch-switch-label');
     const autoplayToggle = node('input', autoplayLabel);
     autoplayToggle.type = 'checkbox';
     autoplayToggle.id = 'queue-autoplay';
+    autoplayToggle.className = 'watch-switch'; autoplayToggle.setAttribute('role','switch');
     autoplayLabel.append(doc.createTextNode('Auto-play'));
     const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
+    root.uburoomControls.content(autoOpen,{label:'Queue settings',icon:'settings',iconOnly:true});
     autoOpen.id = 'queue-auto-open';
-    const autoLabel = node('label', continuation, undefined, 'queue-check');
+    const autoLabel = node('label', continuation, undefined, 'queue-check watch-switch-label');
     const autoToggle = node('input', autoLabel); autoToggle.type = 'checkbox'; autoToggle.id = 'queue-auto-toggle';
+    autoToggle.className = 'watch-switch'; autoToggle.setAttribute('role','switch');
     autoLabel.append(doc.createTextNode('Auto-queue')); continuation.append(autoOpen);
     let rememberedAuto = null, rememberedRoom;
     autoToggle.addEventListener('change', async () => {
       if (autoPending) return;
       if (autoToggle.checked && !rememberedAuto) { autoToggle.checked = false; await openSettings(); return; }
       autoPending = true; autoToggle.disabled = true;
+      notice.textContent = 'Saving Auto-queue…';
       try { await mutate('auto', autoToggle.checked ? rememberedAuto : { mode: 'off' }); await changed(); }
       catch (error) { notice.textContent = error.message; }
-      finally { autoPending = false; renderContinuation(); }
+      finally { autoPending = false; if (notice.textContent === 'Saving Auto-queue…') notice.textContent = 'Auto-queue saved.'; renderContinuation(); }
     });
     const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
     countdown.id = 'queue-autoplay-countdown';
@@ -168,9 +174,10 @@
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
       autoplayPending = true; autoplayToggle.disabled = true;
+      notice.textContent = 'Saving Auto-play…';
       try { await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } }); }
       catch (error) { notice.textContent = error.message; }
-      finally { autoplayPending = false; renderContinuation(); }
+      finally { autoplayPending = false; if (notice.textContent === 'Saving Auto-play…') notice.textContent = 'Auto-play saved.'; renderContinuation(); }
     });
 
     function renderContinuation() {
@@ -178,11 +185,14 @@
       if (!autoplayPending) autoplayToggle.checked = state?.autoplay?.enabled !== false;
       autoplayToggle.disabled = autoplayPending || !state?.capabilities?.autoplay;
       autoOpen.disabled = !state?.durable;
+      autoplayToggle.title = autoplayToggle.disabled ? (autoplayPending ? 'Saving Auto-play…' : 'Auto-play is unavailable for your role.') : 'Auto-play';
+      autoOpen.title = autoOpen.disabled ? 'Join a room to change queue settings.' : 'Queue settings';
       const auto = state?.queueSummary?.autoQueue;
       if (rememberedRoom !== state?.id) { rememberedAuto = null; rememberedRoom = state?.id; }
       if (auto?.mode && auto.mode !== 'off') rememberedAuto = { mode: auto.mode, scope: auto.scope, includeSpecials: auto.includeSpecials };
       if (!autoPending) autoToggle.checked = !!auto?.mode && auto.mode !== 'off';
       autoToggle.disabled = autoPending || !state?.capabilities?.editQueue;
+      autoToggle.title = autoToggle.disabled ? (autoPending ? 'Saving Auto-queue…' : 'Queue editing is unavailable for your role.') : 'Auto-queue';
       const next = state?.autoplay?.countdown;
       countdown.hidden = !state?.durable || !next;
       if (next) {
@@ -210,8 +220,9 @@
     for (const [value, label] of [['all', 'All episodes'], ['unfinished', 'Unfinished by this room']]) {
       const option = node('option', bulkFilter, label); option.value = value;
     }
-    const bulkSpecialLabel = node('label', bulkDialog, undefined, 'queue-check');
+    const bulkSpecialLabel = node('label', bulkDialog, undefined, 'queue-check watch-switch-label');
     const bulkSpecials = node('input', bulkSpecialLabel); bulkSpecials.type = 'checkbox'; bulkSpecials.id = 'queue-bulk-specials';
+    bulkSpecials.className = 'watch-switch'; bulkSpecials.setAttribute('role','switch');
     bulkSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     node('p', bulkDialog, 'Current and upcoming episodes are excluded. The server limits upcoming videos; an addition that exceeds its limit is rejected in full.', 'hint');
     const bulkStatus = node('p', bulkDialog, '', 'hint'); bulkStatus.setAttribute('role', 'status');
@@ -244,8 +255,9 @@
     }
 
     const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
-    const settingsAutoplayLabel = node('label', autoDialog, undefined, 'queue-check');
+    const settingsAutoplayLabel = node('label', autoDialog, undefined, 'queue-check watch-switch-label');
     const settingsAutoplay = node('input', settingsAutoplayLabel); settingsAutoplay.type = 'checkbox'; settingsAutoplay.id = 'room-autoplay';
+    settingsAutoplay.className = 'watch-switch'; settingsAutoplay.setAttribute('role','switch');
     settingsAutoplayLabel.append(doc.createTextNode('Auto-play next video'));
     settingsAutoplay.addEventListener('change',async () => {
       settingsAutoplay.disabled = true; setAutoNotice('Saving…');
@@ -261,7 +273,7 @@
     for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
       const option = node('option', autoMode, label); option.value = value;
     }
-    const autoModeGroup = node('div', autoDialog, undefined, 'button-group');
+    const autoModeGroup = node('div', autoDialog, undefined, 'button-group watch-segmented');
     autoModeGroup.id = 'queue-auto-mode-group';
     autoModeGroup.setAttribute('role', 'group');
     autoModeGroup.setAttribute('aria-label', 'Mode');
@@ -287,6 +299,7 @@
         btn.disabled = autoMode.disabled || (val === 'following' && draftScope.type !== 'show');
       }
     }
+    root.uburoomControls.segmented(autoModeGroup);
     const autoSource = node('p', autoDialog, '', 'hint'); autoSource.id = 'queue-auto-source';
     const sourceChange = button(autoDialog,'Change source',undefined,() => { sourcePicker.hidden = false; void browseSources(); }); sourceChange.id = 'queue-source-change';
     const sourcePicker = node('section',autoDialog,undefined,'queue-source-picker'); sourcePicker.id = 'queue-source-picker'; sourcePicker.hidden = true;
@@ -356,8 +369,9 @@
       syncAutoModeButtons();
     }
     autoMode.addEventListener('change',() => { hasAutoDraft = true; updateAutoFields(); });
-    const autoSpecialLabel = node('label', autoDialog, undefined, 'queue-check');
+    const autoSpecialLabel = node('label', autoDialog, undefined, 'queue-check watch-switch-label');
     const autoSpecials = node('input', autoSpecialLabel); autoSpecials.type = 'checkbox'; autoSpecials.id = 'queue-auto-specials';
+    autoSpecials.className = 'watch-switch'; autoSpecials.setAttribute('role','switch');
     autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     autoSpecials.addEventListener('change',() => { hasAutoDraft = true; });
     const autoNotice = node('p', autoDialog, '', 'hint'); autoNotice.setAttribute('role', 'status');
@@ -366,7 +380,7 @@
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
     const autoReset = button(autoActions,'Reset auto-queue progress',undefined,async () => {
       if (!await confirm('Reset auto-queue progress? Episode progress and repeat prevention will restart. Upcoming items and visible history stay unchanged.')) return;
-      autoReset.disabled = true;
+      autoReset.disabled = true; setAutoNotice('Resetting…');
       try { await saveSettings({resetProgress:true}); setAutoNotice('Auto-queue progress reset',true); await changed(); }
       catch (error) { setAutoNotice(error.message); }
       finally { autoReset.disabled = !getSettingsState()?.capabilities?.editQueue; }

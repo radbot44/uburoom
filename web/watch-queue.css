@@ -2,20 +2,19 @@
 #queue-panel{min-width:0;container-type:inline-size;container-name:queue}
 #queue-content{--queue-card-width:clamp(220px,30cqw,290px);min-width:0}
 #queue-content svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+#queue-content :is(.queue-heading,.watch-control,.queue-view-switch)>svg,#queue-content .queue-view-button>svg{width:var(--watch-icon-size);height:var(--watch-icon-size)}
 .queue-header,.queue-toolbar,.queue-heading,.queue-view-switch,.queue-navigation{display:flex;align-items:center}
-.queue-header,.queue-toolbar{justify-content:space-between;gap:12px}
+.queue-header,.queue-toolbar{justify-content:space-between;gap:var(--watch-group-gap)}
 .queue-header{margin-bottom:16px;flex-wrap:wrap}
-.queue-heading{gap:10px;font-size:17px}
+.queue-heading{gap:var(--watch-control-gap)}
 .queue-heading>svg{color:var(--accent-text)}
-.queue-view-switch{gap:var(--watch-icon-gap);padding:4px;border-radius:12px;background:var(--elevated)}
-.queue-view-button{display:flex;align-items:center;gap:7px;min-height:36px;padding:8px 11px;border-radius:9px;background:none;color:var(--muted);font-size:12px}
-.queue-view-button[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
+.queue-view-button{display:flex;align-items:center}
 .queue-toolbar{margin-bottom:16px;flex-wrap:wrap}
 .queue-navigation{gap:5px;margin-left:auto}
 .queue-navigation button{display:grid;place-items:center;min-width:36px;min-height:36px;padding:7px;background:none;border:1px solid var(--border);border-radius:11px;color:var(--muted)}
 .queue-navigation button:hover{background:var(--hover);color:var(--text)}
 .queue-layout{min-width:0;width:100%}
-.queue-layout:focus-visible{outline:2px solid var(--text);outline-offset:4px;border-radius:12px}
+.queue-layout:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:12px}
 .queue-entry,.queue-history-entry,.queue-now-playing{min-width:0;background:var(--elevated);border:1px solid var(--border);border-radius:16px;padding:12px}
 .queue-now-playing{border-color:color-mix(in srgb,var(--primary) 60%,var(--border));background:color-mix(in srgb,var(--primary) 5%,var(--elevated))}
 .queue-now-playing-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -57,26 +56,21 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-notice{margin:0;color:var(--accent-text);flex:1;min-width:0;overflow-wrap:anywhere}
 .queue-notice:empty{display:none}
 .queue-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:nowrap;margin-top:16px;padding-top:14px;border-top:0}
-.queue-continuation{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1}
-.queue-check{display:flex!important;align-items:center;gap:8px;min-height:36px;font-size:12px;cursor:pointer}
-.queue-check input{appearance:none;position:relative;width:36px;height:21px;flex:0 0 36px;margin:0;border:0;border-radius:999px;background:var(--border);cursor:pointer}
-.queue-check input::after{content:'';position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;background:var(--text);transition:translate .12s}
-.queue-check input:checked{background:var(--primary)}
-.queue-check input:checked::after{translate:15px;background:var(--on-primary)}
-.queue-check input:disabled{cursor:default}
-#queue-auto-open{font-size:12px;padding:9px;width:44px;height:44px;background:transparent;border:0;border-radius:10px;color:var(--muted);display:grid;place-items:center}
-#queue-auto-open:hover{background:var(--hover);color:var(--text)}
-#queue-auto-open svg{width:24px;height:24px}
+.queue-continuation{display:flex;align-items:center;gap:var(--watch-control-gap);flex-wrap:wrap;flex:1}
+.queue-quick-controls .queue-check{flex:none;white-space:nowrap}
+.queue-check{display:flex!important;align-items:center;gap:var(--watch-control-gap);min-height:44px;font-size:12px}
+#queue-auto-open{color:var(--muted)}
 .queue-footer-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .queue-footer-actions button{font-size:12px;min-height:36px}
 
 /* One timeline, horizontal posters or vertically scrolling rows. */
-.queue-header{display:grid;grid-template-columns:1fr auto;gap:6px 10px}
+.queue-header{display:grid;grid-template-columns:1fr auto}
 .queue-heading{grid-column:1;grid-row:1}
 .queue-quick-controls{grid-column:2;grid-row:1}
-.queue-toolbar{grid-column:1/-1;grid-row:2;position:relative;display:grid;grid-template-columns:1fr auto 1fr;min-height:48px;margin:8px 0 0}
-.queue-header .queue-view-switch{grid-column:3;grid-row:1;justify-self:end;display:flex;flex-basis:auto;width:auto;margin:0;background:var(--elevated)}
-#queue-center{grid-column:2;grid-row:1;display:flex;align-items:center;justify-content:center;gap:5px;max-width:150px;padding:8px;font-size:11px}
+.queue-toolbar{grid-column:1/-1;grid-row:2;position:relative;display:grid;grid-template-columns:1fr auto 1fr;min-height:48px;margin:0}
+.queue-header .queue-view-switch{grid-column:3;grid-row:1;justify-self:end;flex-basis:auto;width:auto;margin:0}
+#queue-center{grid-column:2;grid-row:1;max-width:200px;font-size:11px}
+#queue-center .watch-control-label{white-space:nowrap}
 .queue-timeline{position:relative;min-width:0}
 .queue-navigation{position:absolute;inset:0;pointer-events:none;z-index:5;justify-content:space-between;margin:0}
 .queue-navigation[hidden]{display:none}
@@ -112,12 +106,11 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 [data-view=list] .queue-history-status{padding:0;min-height:0}
 [data-view=list] .queue-rank{padding-top:0}
 [data-view=list] .queue-history-older{flex:none;font-size:12px}
-@container queue (max-width:560px){.queue-heading{font-size:15px}.queue-header{gap:6px}.queue-quick-controls .queue-check{gap:4px;font-size:11px}.queue-quick-controls{gap:6px}.queue-view-button{padding:7px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-entry-actions button{padding:4px;min-width:28px}.queue-header .queue-view-switch{flex-basis:auto}.queue-quick-controls #queue-auto-open{width:30px;padding:3px}}
+@container queue (max-width:560px){.queue-quick-controls .queue-check{font-size:11px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-entry-actions button{padding:4px;min-width:28px}.queue-header .queue-view-switch{flex-basis:auto}}
 @container queue (max-width:370px){.queue-quick-controls{grid-row:2;grid-column:1/-1;justify-self:end}.queue-header .queue-view-switch{grid-row:1}.queue-toolbar{grid-row:3}}
 @media(pointer:coarse){.queue-navigation button,.queue-view-button,.queue-entry-actions button{min-height:40px}.queue-move-actions button{min-height:36px;min-width:28px}}
-@media(prefers-reduced-motion:reduce){.queue-check input::after{transition:none}}
 
-.queue-quick-controls{display:flex;align-items:center;flex-wrap:nowrap;gap:10px;flex:none}
+.queue-quick-controls{display:flex;align-items:center;flex-wrap:nowrap;gap:var(--watch-control-gap);flex:none}
 .queue-no-current .queue-now-playing{min-height:150px!important;border:0;background:transparent;padding:16px;text-align:center;display:flex!important;flex-direction:column;align-items:center;justify-content:center}
 .queue-no-current .queue-now-playing button{min-height:44px;display:flex;gap:8px;align-items:center;width:auto}
 /* Empty queues use a neutral screen, independent of the remembered timeline layout. */
@@ -129,7 +122,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-is-empty .queue-footer-actions{display:none}
 .queue-is-empty .queue-footer:has(.queue-notice:empty){display:none}
 .queue-playback-state{margin-right:auto}
-@container queue (max-width:370px){#queue-center{max-width:100px;font-size:10px;gap:3px;padding:6px}#queue-center span{max-width:65px}#queue-content #queue-center svg{width:16px;height:16px}.queue-footer-actions{gap:4px}.queue-footer-actions button{padding:7px;font-size:11px}}
+@container queue (max-width:370px){#queue-center{max-width:40px;padding:0}#queue-center .watch-control-label{display:none}.queue-footer-actions{gap:4px}.queue-footer-actions button{padding:7px;font-size:11px}}
 
 .queue-layout{scrollbar-width:none!important;-ms-overflow-style:none}.queue-layout::-webkit-scrollbar{display:none}
 .queue-navigation button{width:auto;min-width:40px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 6px}
