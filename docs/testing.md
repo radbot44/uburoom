@@ -27,6 +27,15 @@
 
 # Verification status
 
+## 2026-10-21 - Restore remote Tabler wiring after legacy regression
+
+- **Revision/environment:** working tree based on `aaed1e2`, Windows / Node 22.22.2, isolated test fixtures. Owner requested repair of the three reported icon failures. Required A/B completed; no production or Vigrid installation changes, deployment or commit.
+- **Reproduction:** `npm run test:full > artifacts/permission-pill-reported-errors.tap 2>&1` reproduced **452 passed, 3 failed, 0 skipped**. The prior remote edit had been included in `aaed1e2`: it reactivated the old icon renderer/export and old mute names, reversing the approved Tabler migration. The tests correctly detected that regression.
+- **Repair:** restore `web/remote-ui.js` to its Tabler implementation from `1f92a27`: shared icon provider, inert legacy archive/renderer, no exported remote icon provider, volume-state glyphs and true nonstandard seek-distance feedback. Keep the existing assertions; extend badge coverage for muted volume, unmute and bundled glyph resolution. No remote layout redesign.
+- **B pass:** `node --test tests/badge.test.js tests/icons.test.js`: **6 passed, 0 failed, 0 skipped** (`artifacts/tabler-regression-focused.tap`). `npm run test:full`: **455 passed, 0 failed, 0 skipped** (`artifacts/tabler-regression-full.tap`). No diagnostic source substitution/preload was used in these passing runs. `git diff --check` passed.
+- **A/B pass:** ignored isolated `node artifacts/tabler-remote-check.cjs` rendered the actual shared remote and badge modules in Chrome 155.0.8059.84 and Firefox 158.0.1. It asserted volume/mute/unmute/60-second seek glyphs, 42-second fallback feedback, populated Tabler SVGs and absence of the deprecated export. Both passed; screenshots inspected in `artifacts/tabler-remote-{chrome,firefox}.png`, log `artifacts/tabler-remote-browser.log`. The fixture omits application branding assets and real playback; this is icon rendering evidence, not a full remote interaction/provider test. An initial fixture navigation timeout came from an omitted trailing slash in its expected URL; corrected the fixture URL, then both browsers passed.
+- **C/D:** live provider/device checks and owner visual acceptance not run; no new layout decision is introduced. This resolves the earlier permission-pill full-suite limitation locally. Vigrid must receive the fix through a separately authorized update.
+
 ## 2026-10-21 - Room permission thumb pills (M1-P7)
 
 - **Revision/environment:** working tree based on `1f92a27`, Windows / Node 22.22.2, development TLS, disposable synthetic accounts and headless Chrome/Firefox profiles. Required A/B completed for the changed Room controls; full-suite status is qualified below. C real providers/devices and D owner visual approval remain not run/pending. No Settings Permissions matrix, Queue, Media or production changes.
