@@ -76,6 +76,20 @@
     "chair-director": "<path d=\"M6 21l12 -9\" /><path d=\"M6 12l12 9\" /><path d=\"M5 12h14\" /><path d=\"M6 3v9\" /><path d=\"M18 3v9\" /><path d=\"M6 8h12\" /><path d=\"M6 5h12\" />",
     "chevron-down": "<path d=\"M6 9l6 6l6 -6\" />",
     "columns-2": "<path d=\"M3 4a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-16\" /><path d=\"M12 3v18\" />",
+    "crown": "<path d=\"M12 6l4 6l5 -4l-2 10h-14l-2 -10l5 4l4 -6\" />",
+    "device-remote": "<path d=\"M10 10a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M7 5a2 2 0 0 1 2 -2h6a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-6a2 2 0 0 1 -2 -2l0 -14\" /><path d=\"M12 3v2\" /><path d=\"M10 15v.01\" /><path d=\"M10 18v.01\" /><path d=\"M14 18v.01\" /><path d=\"M14 15v.01\" />",
+    "device-tv": "<path d=\"M3 9a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -9\" /><path d=\"M16 3l-4 4l-4 -4\" />",
+    "external-link": "<path d=\"M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6\" /><path d=\"M11 13l9 -9\" /><path d=\"M15 4h5v5\" />",
+    "filter-2": "<path d=\"M4 6h16\" /><path d=\"M6 12h12\" /><path d=\"M9 18h6\" />",
+    "history": "<path d=\"M12 8l0 4l2 2\" /><path d=\"M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5\" />",
+    "karate": "<path d=\"M3 9l4.5 1l3 2.5\" /><path d=\"M13 21v-8l3 -5.5\" /><path d=\"M8 4.5l4 2l4 1l4 3.5l-2 3.5\" /><path d=\"M15.007 5a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" />",
+    "layout-sidebar-right": "<path d=\"M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12\" /><path d=\"M15 4l0 16\" />",
+    "list-details": "<path d=\"M13 5h8\" /><path d=\"M13 9h5\" /><path d=\"M13 15h8\" /><path d=\"M13 19h5\" /><path d=\"M3 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4\" /><path d=\"M3 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4\" />",
+    "maximize": "<path d=\"M4 8v-2a2 2 0 0 1 2 -2h2\" /><path d=\"M4 16v2a2 2 0 0 0 2 2h2\" /><path d=\"M16 4h2a2 2 0 0 1 2 2v2\" /><path d=\"M16 20h2a2 2 0 0 0 2 -2v-2\" />",
+    "microphone": "<path d=\"M9 5a3 3 0 0 1 3 -3a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3a3 3 0 0 1 -3 -3l0 -5\" /><path d=\"M5 10a7 7 0 0 0 14 0\" /><path d=\"M8 21l8 0\" /><path d=\"M12 17l0 4\" />",
+    "minimize": "<path d=\"M15 19v-2a2 2 0 0 1 2 -2h2\" /><path d=\"M15 5v2a2 2 0 0 0 2 2h2\" /><path d=\"M5 15h2a2 2 0 0 1 2 2v2\" /><path d=\"M5 9h2a2 2 0 0 0 2 -2v-2\" />",
+    "movie": "<path d=\"M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12\" /><path d=\"M8 4l0 16\" /><path d=\"M16 4l0 16\" /><path d=\"M4 8l4 0\" /><path d=\"M4 16l4 0\" /><path d=\"M4 12l16 0\" /><path d=\"M16 8l4 0\" /><path d=\"M16 16l4 0\" />",
+    "photo-video": "<path d=\"M9 15h-3a3 3 0 0 1 -3 -3v-6a3 3 0 0 1 3 -3h6a3 3 0 0 1 3 3v3\" /><path d=\"M9 12a3 3 0 0 1 3 -3h6a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h-6a3 3 0 0 1 -3 -3l0 -6\" /><path d=\"M3 12l2.296 -2.296a2.41 2.41 0 0 1 3.408 0l.296 .296\" /><path d=\"M14 13.5v3l2.5 -1.5l-2.5 -1.5\" /><path d=\"M7 6v.01\" />",
     // MORE_TABLER_GLYPHS
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
