@@ -37,10 +37,23 @@ class Accounts {
   identity(provider,subject) {return this.db.prepare('SELECT * FROM identities WHERE provider=? AND subject=?').get(provider,String(subject));}
   identities(userId) {return this.db.prepare('SELECT provider,subject,name,verified,assigned FROM identities WHERE userId=? ORDER BY provider').all(userId);}
   create(name) {const id=randomUUID();this.db.prepare('INSERT INTO users(id,name) VALUES(?,?)').run(id,name);return id;}
+  rename(userId, value) {
+    const user = this.canonical(userId);
+    if (!user || typeof value !== 'string') throw new Error('Invalid display name');
+    const name = value.trim().normalize('NFC');
+    if (!name || [...name].length > 80 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name)) throw new Error('Use a display name of 1–80 characters without control or invisible formatting characters');
+    this.db.prepare('UPDATE users SET name=? WHERE id=?').run(name,user.id);
+    return this.canonical(user.id);
+  }
+  seen(userId) { this.db.prepare('UPDATE users SET signedInAt=COALESCE(signedInAt,?) WHERE id=?').run(Date.now(),userId); }
+  directory() {
+    return this.db.prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL').all()
+      .map(user => ({...user,identities:this.identities(user.id).filter(identity=>identity.verified).map(({provider,subject,name})=>({provider,subject,name}))}));
+  }
   resolve(provider,subject,name,verified=true) {
     subject=String(subject);const old=this.identity(provider,subject);
-    if(old){if(verified){this.db.prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?').run(name,provider,subject);this.db.prepare("UPDATE users SET name=? WHERE id=? AND name='Assigned account'").run(name,old.userId);}return this.canonical(old.userId);}
-    return this.transaction(()=>{const id=this.create(name);this.db.prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,?)').run(provider,subject,id,name,Number(verified));return this.canonical(id);});
+    if(old){if(verified){this.db.prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?').run(name,provider,subject);this.db.prepare('UPDATE users SET name=? WHERE id=? AND signedInAt IS NULL').run(name,old.userId);this.seen(old.userId);}return this.canonical(old.userId);}
+    return this.transaction(()=>{const id=this.create(name);this.db.prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,?)').run(provider,subject,id,name,Number(verified));if(verified)this.seen(id);return this.canonical(id);});
   }
   link(userId,provider,subject,name) {
     const user=this.canonical(userId),old=this.identity(provider,subject),current=this.identities(user.id).find(i=>i.provider===provider);
@@ -58,7 +71,7 @@ class Accounts {
     this.transaction(()=>{
       this.db.prepare('DELETE FROM identities WHERE userId=? AND provider=? AND subject=?').run(user.id,provider,subject);
       if(provider==='plex')this.db.prepare('DELETE FROM credentials WHERE subject=?').run(subject);
-      this.db.prepare('UPDATE users SET name=?,revision=revision+1 WHERE id=?').run(remaining.name,user.id);
+      this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(user.id);
       this.audit(user.id,'self-unlink',{provider,subject});
     });
     if(provider==='plex')this.credentialCache.delete(subject);
@@ -70,7 +83,7 @@ class Accounts {
     return this.transaction(()=>{
       this.db.prepare('UPDATE identities SET userId=? WHERE userId=?').run(survivor,retired);
       this.db.prepare('UPDATE users SET retiredInto=?,revision=revision+1 WHERE id=?').run(survivor,retired);
-      this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(survivor);
+      this.db.prepare('UPDATE users SET revision=revision+1,signedInAt=COALESCE(signedInAt,(SELECT signedInAt FROM users WHERE id=?)) WHERE id=?').run(retired,survivor);
       this.audit(actor,action,{survivor,retired,identities:all});return survivor;
     });
   }

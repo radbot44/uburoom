@@ -8,6 +8,7 @@ const { findOnPath } = require('./media-tools');
 const ROOT = path.resolve(__dirname, '..');
 
 const KEYS = [
+  'directory.expose_discord_members', 'directory.expose_plex_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'plex.url', 'plex.token', 'plex.machine_identifier', 'plex.fallback_enabled', 'plex.fallback_token',
   'discord.bot_token', 'discord.client_id', 'discord.client_secret', 'discord.owner_id',
@@ -125,6 +126,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   };
   config.plexFallback = { enabled:boolean('plex.fallback_enabled',true), token:get('plex.fallback_token') };
   config.singleRoom = boolean('rooms.single_room',false);
+  config.directory = {discord:boolean('directory.expose_discord_members',true),plex:boolean('directory.expose_plex_members',false)};
   config.roomLimits = require('./room-limits').configuration(value.rooms);
   config.singleRoomLeaderPlexId = get('rooms.single_room_leader_plex_id');
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId)) throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');

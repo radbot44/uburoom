@@ -203,6 +203,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       }
       if(entryPolicy.anonymous && !identity){
         const id=randomBytes(32).toString('hex'), accountId=registry.create('Guest'), account=registry.canonical(accountId);
+        registry.seen(accountId);
         logins.set(hash(id),{userId:account.id,accountRevision:account.revision,name:'Guest',csrf:randomBytes(32).toString('hex'),expires:Date.now()+86400000});accounts.save();
         const existing=res.getHeader('Set-Cookie');
         res.setHeader('Set-Cookie',[...(existing?[existing]:[]),cookie('uburoom',id,86400)]);

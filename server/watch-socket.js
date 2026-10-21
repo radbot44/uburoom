@@ -90,9 +90,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             try { watch.roomState?.people.enter(auth.actor.userId); } catch { send(client,{type:'unavailable',status:429,value:{error:'Server full; try again when someone leaves'}}); return ws.close(4029,'Server full'); }
             client.headers=headers;
             client.userId=auth.actor.userId;client.authenticating=false;
-            client.authenticated = true; clearTimeout(timer); send(client, { type: 'auth-ok' }); return;
+            client.authenticated = true; hub.directory?.connected(ws,client.userId); clearTimeout(timer); send(client, { type: 'auth-ok' }); return;
           }
           client.lastSeen = Date.now();
+          hub.directory?.connected(ws,client.userId);
           if (message.type === 'clock') {
             if(!Number.isSafeInteger(message.id)||message.id<0)return ws.close(4002,'Invalid clock message');
             const serverReceivedAt = Date.now(), received = performance.now();
@@ -101,7 +102,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             send(client, { type: 'clock', id: message.id, serverNow: Date.now(), timing: { serverReceivedAt, serverSentAt: Date.now(), serverProcessingMs: performance.now() - received, clockEpoch } }); return;
           }
           if (message.type !== 'request' || !Number.isSafeInteger(message.id) || message.id < 0 || client.inflight.has(message.id) || client.inflight.size >= 8 ||
-            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|reopen|settings|queue|history))?)?|library(?:\/(?:item|filters))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
+            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|reopen|settings|queue|history|people))?)?|library(?:\/(?:item|filters))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
           client.inflight.add(message.id);
           try {
             const result = await request(client, message.path, message.data);
@@ -115,6 +116,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         })().catch(() => ws.close(4002, 'Request failed'));
       });
       ws.on('close', () => {
+        hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         for (const room of watch.rooms.values()) {
           for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = Date.now() - 10001;

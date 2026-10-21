@@ -1,5 +1,5 @@
 'use strict';
-const { Events, Status } = require('discord.js');
+const { Events, Status, GatewayIntentBits } = require('discord.js');
 const { COMMAND_MS } = require('./core');
 const { CircuitBreaker } = require('./resilience');
 
@@ -41,6 +41,29 @@ function discordAccess(client, guildId) {
       } finally { clearTimeout(timer); }
   }
   return {
+    async directory() {
+      const g = guild(), epoch = generation;
+      if (!g || !client.options?.intents?.has(GatewayIntentBits.GuildMembers)) throw new Error('Discord member directory unavailable');
+      const result = []; let after, pages = 0;
+      // REST pages avoid a full gateway chunk request on every search.
+      do {
+        if (++pages>100) throw new Error('Discord directory too large');
+        const page = await g.members.list({limit:1000,...(after?{after}:{})});
+        if (epoch !== generation || guild() !== g) throw new Error('Discord connection changed');
+        for (const member of page.values()) if (!member.user.bot) result.push({subject:member.id,name:member.displayName || member.user.globalName || member.user.username,alias:member.user.username});
+        if (result.length>100000) throw new Error('Discord directory too large');
+        const next = page.last()?.id;
+        if (page.size<1000) break;
+        if (!next || next===after) throw new Error('Discord directory page did not advance');
+        after = next;
+      } while (true);
+      return result;
+    },
+    discordOnline(subject) {
+      if (!guild() || !client.options?.intents?.has(GatewayIntentBits.GuildPresences)) return undefined;
+      const status = guild().presences.cache.get(subject)?.status;
+      return status === undefined ? undefined : ['online','idle','dnd'].includes(status);
+    },
     async identity(userId) {
       if(!client.isReady())return;
       try{const profile=await client.users.fetch(userId);if(!profile||profile.bot)return;return {id:profile.id,name:String(profile.globalName||profile.username).slice(0,100)};}catch{return;}

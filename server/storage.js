@@ -3,14 +3,14 @@
 // Never repair or upgrade an unpublished layout implicitly.
 function initializeSchema(db) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 5) throw new Error('Account database requires a newer uburoom version');
+  if (version > 6) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-  if (version === 5) {
-    const columns = { users:['id','name','revision','retiredInto'], identities:['provider','subject','userId','name','verified','assigned'],
+  if (version === 6) {
+    const columns = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
       credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'], devices:['id','record'],
       browser_logins:['id','record'], playback_history:['id','userId','at','record'],
       watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState'],
-      watch_room_hosts:['roomId','userId'],
+      watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
       watch_room_progress:['roomId','serverId','mediaId'],
       watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'] };
     if (tables.length !== Object.keys(columns).length) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
@@ -22,7 +22,7 @@ function initializeSchema(db) {
   }
   if (version !== 0 || tables.length) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
   db.exec(`BEGIN IMMEDIATE;
-    CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT);
+    CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT,signedInAt INTEGER);
     CREATE TABLE identities(provider TEXT NOT NULL,subject TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,assigned INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,subject),UNIQUE(provider,userId));
     CREATE TABLE credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -36,11 +36,13 @@ function initializeSchema(db) {
     CREATE TABLE watch_room_progress(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,PRIMARY KEY(roomId,serverId,mediaId));
     CREATE TABLE watch_room_hosts(roomId TEXT NOT NULL REFERENCES watch_rooms(id),userId TEXT NOT NULL REFERENCES users(id),PRIMARY KEY(roomId,userId));
     CREATE INDEX watch_room_hosts_user ON watch_room_hosts(userId,roomId);
+    CREATE TABLE watch_room_host_grants(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,provider TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,issuerId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,provider,subject));
+    CREATE INDEX watch_room_host_grants_subject ON watch_room_host_grants(provider,subject,roomId);
     CREATE TABLE watch_queue_entries(id TEXT PRIMARY KEY,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,state TEXT NOT NULL,rank INTEGER,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,type TEXT NOT NULL,title TEXT NOT NULL,parentTitle TEXT,grandparentTitle TEXT,thumb TEXT,duration REAL NOT NULL,position REAL NOT NULL DEFAULT 0,outcome TEXT,provenance TEXT,createdAt INTEGER NOT NULL,startedAt INTEGER,endedAt INTEGER,updatedAt INTEGER NOT NULL);
     CREATE INDEX watch_queue_room_state_rank ON watch_queue_entries(roomId, state, rank);
     CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
-    PRAGMA user_version=5;
+    PRAGMA user_version=6;
     COMMIT;`);
 }
 // Fixtures without a database stay ephemeral; production always supplies Accounts.

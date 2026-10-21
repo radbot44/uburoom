@@ -161,6 +161,9 @@ async function main() {
       await browser.until(activityPage,'!document.getElementById("account-content").hidden','Activity account');
       assert.equal(await browser.evaluate(activityPage,'document.getElementById("account-logout").hidden && !document.getElementById("account-browser-hint").hidden && !document.getElementById("remove-discord").hidden && !document.getElementById("connect-plex").hidden'),true,'Activity offers both providers through browser handoff, without cookie logout');
       await browser.screenshot(activityPage,path.join(output,name+'-activity.png'));
+      // This Activity journey is complete. Release it before unlinking its identity
+      // in the separate browser journey; a live demo auto-login can sign in again.
+      await browser.evaluate(activityPage,'transport.close();location.replace("about:blank");true');
       await browser.click(page,'identity');
       await until('!document.getElementById("account-content").hidden','Fresh account');
       await browser.click(page,'connect-plex');
@@ -177,12 +180,20 @@ async function main() {
       await browser.click(page,'connect-discord');
       await until('!!document.getElementById("demo-host")','Discord connect again');
       await browser.click(page,'demo-host');
-      await until('typeof me!=="undefined" && me?.account?.identities.length===2 && document.getElementById("account-dialog").open && !document.getElementById("account-content").hidden','Discord reconnect');
+      // An independently active Activity may reauthenticate a removed Discord
+      // identity into its own account. Reconnecting then requires explicit merge.
+      await until('typeof me!=="undefined" && document.getElementById("account-dialog").open && !document.getElementById("account-content").hidden && (me?.account?.identities.length===2 || !document.getElementById("account-merge").hidden)','Discord reconnect or verified merge');
+      if(await evaluate('!document.getElementById("account-merge").hidden')){
+        await evaluate('document.getElementById("account-merge-confirm").scrollIntoView({block:"center"});true');
+        await browser.click(page,'account-merge-confirm');
+        try { await until('typeof me!=="undefined" && me?.account?.identities.length===2 && !document.getElementById("account-content").hidden','Explicit reconnect merge'); }
+        catch(error){console.error(await evaluate('({url:location.href,error:document.getElementById("account-error")?.textContent,auth:document.getElementById("auth-status")?.textContent,account:typeof me!=="undefined"?me?.account:undefined,button:document.getElementById("account-merge-confirm")?.disabled})'));await shot('merge-failure');throw error;}
+      }
       assert.equal(await evaluate('me.account.id'),secondId,'Discord reconnect preserves UUID');
       // Provider round trips reload all assets; keep logout independent of the
       // fixture's accumulated HTTP rate-limit bucket without relaxing it.
       await evaluate('transport.close();true');
-      await browser.evaluate(activityPage,'transport.close();true');
+      await browser.evaluate(activityPage,'if(typeof transport!=="undefined")transport.close();true');
       await app.close();app=await startFixture();
       await evaluate('location.assign('+JSON.stringify(config.publicUrl+'/watch?demo=host')+');true');
       await until('typeof me!=="undefined" && !!me && transport?.ready','Logout fixture login');

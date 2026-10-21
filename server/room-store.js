@@ -99,7 +99,7 @@ class RoomStore {
     if (fullPermissions) permissions.viewer = Policy.preset('queue').viewer;
     if (customPermissions !== undefined) {
       Policy.policy(customPermissions);
-      permissions = {host:Policy.permissions(customPermissions.host ?? {},permissions.host),viewer:Policy.permissions(customPermissions.viewer ?? {},permissions.viewer,{role:'viewer'})};
+      permissions = {host:Policy.permissions(customPermissions.host ?? {},permissions.host),viewer:Policy.permissions(customPermissions.viewer ?? {},permissions.viewer,{role:'viewer'}),allHosts:customPermissions.allHosts ?? false};
     }
     if (typeof autoplay !== 'boolean') throw error('Choose auto-play on or off');
     const automatic = validateAuto(autoQueue);
@@ -116,14 +116,14 @@ class RoomStore {
     // measured room listing exceeds 50 ms. Closed rooms consume no player slots.
     for (const row of this.db.prepare('SELECT id FROM watch_rooms ORDER BY lastAccessedAt DESC,id').all()) {
       const room = this.get(row.id);
-      if (this.isAdmin(userId) === true || Policy.role(room, userId) !== 'viewer') rooms.push(room);
+      if (this.isAdmin(userId) === true || Policy.assigned(room, userId)) rooms.push(room);
     }
     return { rooms: rooms.slice(offset, offset + limit), total: rooms.length };
   }
   restore(id, userId) {
     const room = this.get(id);
     userId = this.account(userId);
-    if (this.isAdmin(userId) !== true && Policy.role(room, userId) === 'viewer') throw error('Only a room creator, host or active administrator can reopen it', 403);
+    if (this.isAdmin(userId) !== true && !Policy.assigned(room, userId)) throw error('Only a room creator, assigned host or active administrator can reopen it', 403);
     // The caller must obtain fresh media/command authority. A stored position
     // never includes elapsed downtime, remote consent or an autoplay intent.
     return { ...room, paused: true };
@@ -133,16 +133,30 @@ class RoomStore {
     userId = this.account(userId);
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
     const capabilities = {
-      'keepEmpty':'roomSettings', 'maxMembers':'roomSettings', 'auto.reset':'editQueue', rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'manageHosts',
-      'host.remove': 'manageHosts', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
+      'keepEmpty':'roomSettings', 'maxMembers':'roomSettings', 'auto.reset':'editQueue', rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'addHosts',
+      'host.remove': 'manageHosts', 'host.leave':'self', 'host.pending.add':'addHosts', 'host.pending.remove':'manageHosts', 'allHosts':'leader', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
     };
     const capability = Object.hasOwn(capabilities, change.action) && capabilities[change.action];
     if (!capability) throw error('Unsupported room change');
-    if (this.isAdmin(userId) !== true && !Policy.allowed(room, userId, capability)) throw error('Room permission required', 403);
+    if (capability === 'leader' ? userId !== room.creatorId : capability === 'self' ? !room.hosts.includes(userId) : this.isAdmin(userId) !== true && !Policy.allowed(room, userId, capability)) throw error('Room permission required', 403);
     if (!Number.isSafeInteger(revision) || revision !== room.revision) throw error('Room changed; refresh before editing', 409);
     const at = this.now();
     this.registry.transaction(() => {
       switch (change.action) {
+        case 'allHosts':
+          if (typeof change.enabled !== 'boolean') throw error('Choose All hosts on or off');
+          room.permissions.allHosts = change.enabled; break;
+        case 'host.pending.add': {
+          if (!['discord','plex'].includes(change.provider) || typeof change.subject !== 'string' || !(change.provider === 'discord' ? /^\d{17,20}$/ : /^\d{1,20}$/).test(change.subject)) throw error('Invalid provider account');
+          const identity = this.registry.identity(change.provider,change.subject);
+          if (identity?.verified) {
+            const target = this.account(identity.userId);
+            if (target !== room.creatorId) this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,target);
+          } else this.db.prepare('INSERT OR IGNORE INTO watch_room_host_grants VALUES(?,?,?,?,?,?)').run(id,change.provider,change.subject,text(change.name,100,'host name'),userId,at);
+          break;
+        }
+        case 'host.pending.remove':
+          this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=? AND provider=? AND subject=?').run(id,String(change.provider),String(change.subject)); break;
         case 'keepEmpty':
           if (typeof change.enabled !== 'boolean') throw error('Choose whether to keep the room when empty');
           this.db.prepare('UPDATE watch_rooms SET keepEmpty=? WHERE id=?').run(change.enabled ? 1 : 0,id); break;
@@ -161,7 +175,7 @@ class RoomStore {
           this.db.prepare('UPDATE watch_rooms SET autoplay=? WHERE id=?').run(change.enabled ? 1 : 0,id);
           break;
         case 'permissions.preset': {
-          room.permissions = Policy.preset(change.preset);
+          room.permissions = {...Policy.preset(change.preset),allHosts:room.permissions.allHosts};
           break;
         }
         case 'permissions': {
@@ -182,8 +196,9 @@ class RoomStore {
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, target);
           break;
         }
+        case 'host.leave':
         case 'host.remove': {
-          const target = this.account(change.userId);
+          const target = change.action === 'host.leave' ? userId : this.account(change.userId);
           if (target === room.creatorId) throw error('Transfer room leadership before removing the room leader');
           for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
             if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
@@ -204,6 +219,7 @@ class RoomStore {
           this.db.prepare('UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1 WHERE id=?').run(id);
           break;
         case 'delete':
+          this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
@@ -218,6 +234,21 @@ class RoomStore {
   validateMembers(value) {
     if (value !== null && (!Number.isSafeInteger(value) || value < 1 || value > this.limits.maxMembers)) throw error('Room capacity must be from 1 to ' + this.limits.maxMembers);
   }
+  pendingHosts(id) { return this.db.prepare('SELECT provider,subject,name FROM watch_room_host_grants WHERE roomId=? ORDER BY name,provider,subject').all(id); }
+  async claimHosts(userId) {
+    const grants = this.db.prepare('SELECT g.* FROM watch_room_host_grants g JOIN identities i ON i.provider=g.provider AND i.subject=g.subject WHERE i.userId=? AND i.verified=1').all(userId);
+    if (!grants.length) return [];
+    this.healthy();
+    this.registry.transaction(() => {
+      for (const grant of grants) {
+        const room = this.get(grant.roomId);
+        if (userId !== room.creatorId) this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(room.id,userId);
+        this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=? AND provider=? AND subject=?').run(room.id,grant.provider,grant.subject);
+        this.db.prepare('UPDATE watch_rooms SET revision=revision+1 WHERE id=?').run(room.id);
+      }
+    });
+    await this.commit(); return [...new Set(grants.map(grant=>grant.roomId))];
+  }
   touch(id, at = this.now()) {
     this.healthy();
     this.db.prepare('UPDATE watch_rooms SET lastAccessedAt=MAX(lastAccessedAt,?) WHERE id=?').run(at,id);
@@ -225,7 +256,7 @@ class RoomStore {
   async destroy(id) {
     this.healthy();
     this.registry.transaction(() => {
-      for (const table of ['watch_room_progress','watch_queue_entries','watch_room_hosts','watch_rooms']) {
+      for (const table of ['watch_room_progress','watch_queue_entries','watch_room_host_grants','watch_room_hosts','watch_rooms']) {
         this.db.prepare('DELETE FROM ' + table + ' WHERE ' + (table === 'watch_rooms' ? 'id' : 'roomId') + '=?').run(id);
       }
     });

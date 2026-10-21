@@ -320,3 +320,12 @@ body.idle-player #video{visibility:hidden}
 .codec-test-dialog{width:min(1060px,96vw);max-width:96vw;height:90dvh;padding:12px;overflow:hidden}.codec-test-dialog[open]{display:flex;flex-direction:column;gap:10px}.codec-test-dialog iframe{width:100%;flex:1;min-height:0;border:0;border-radius:12px;background:var(--background)}
 
 .quality-fallback-notice{position:absolute;top:68px;left:16px;right:16px;margin:0;padding:10px 14px;border-radius:10px;background:#1b1e26e8;color:#f8f7f4;font-size:13px;z-index:4}
+
+/* Account names and two-line host discovery reuse the room controls. */
+#room-person-search { width:100%; }
+#room-person-results { display:flex; flex-direction:column; gap:4px; max-height:260px; overflow-y:auto; margin-top:6px; }
+#room-person-results button { display:flex; flex-direction:column; align-items:flex-start; text-align:left; gap:4px; padding:10px 12px; flex-shrink:0; }
+#room-person-results button[aria-selected="true"] { outline:2px solid var(--primary); outline-offset:-2px; }
+#room-person-results small { overflow-wrap:anywhere; }
+#room-permission-custom.all-hosts [data-permission-role="viewer"] { display:none; }
+#account-display-name { min-width:0; flex:1; padding:11px 12px; border:1px solid var(--border); border-radius:12px; background:var(--elevated); color:var(--text); font:inherit; }

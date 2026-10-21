@@ -7,6 +7,63 @@ const { controlClient } = require('./helpers/control-client');
 const certFile = path.join(__dirname,'../certs/server-cert.pem');
 const tls = {skip:!fs.existsSync(certFile)};
 
+test('room-scoped People search and pending hosts recheck authority and activate only on provider sign-in',tls,async t=>{
+  const f=await fixture(t),creator=await f.login('host');
+  const id=(await creator.call('/api/watch/rooms',{name:'Host directory',keepEmpty:true})).body.id;
+  const root='/api/watch/rooms/'+id;
+  const edit=async(client,change)=>{const current=await creator.call(root+'/settings');return client.call(root+'/settings',{revision:current.body.revision,change});};
+  f.app.hub.directory.discord=async()=>[{subject:f.subjects.guest,name:'Future guest'}];
+  const count=f.app.registry.directory().length;
+  const found=await creator.call(root+'/people?q=Future');assert.equal(found.status,200);assert.equal(found.body.results[0].userId,undefined);
+  assert.equal((await edit(creator,{action:'host.pending.add',provider:'discord',subject:f.subjects.guest,name:'Forged name'})).status,200);
+  assert.equal(f.app.registry.directory().length,count);
+  assert.equal(f.app.watch.roomState.store.pendingHosts(id)[0].name,'Future guest','Provider label is authoritative');
+  const guest=await f.login('guest');
+  const me=await guest.call('/api/watch/me');assert.equal(me.status,200);
+  assert.equal(f.app.watch.roomState.store.pendingHosts(id).length,0);
+  assert.ok(f.app.watch.roomState.store.get(id).hosts.includes(me.body.account.id));
+  assert.equal((await guest.call(root+'/people?q=Demo')).status,403);
+  assert.equal((await edit(creator,{action:'permissions',role:'host',permissions:{addHosts:true}})).status,200);
+  assert.equal((await guest.call(root+'/people?q=Demo')).status,200);
+  assert.equal((await edit(guest,{action:'host.remove',userId:me.body.account.id})).status,403);
+  // Suspend an external lookup, then revoke the caller's delegation while it waits.
+  let entered,finish;
+  const waiting=new Promise(resolve=>entered=resolve), release=new Promise(resolve=>finish=resolve);
+  f.app.hub.directory.cache.clear();
+  f.app.hub.directory.discord=async()=>{entered();await release;return [];};
+  const search=guest.call(root+'/people?q=Demo');await waiting;
+  await edit(creator,{action:'permissions',role:'host',permissions:{addHosts:false}});finish();
+  assert.equal((await search).status,403);
+});
+
+test('editable canonical names propagate through existing browser/Activity sockets without account revision changes',tls,async t=>{
+  const f=await fixture(t),creator=await f.login('host');
+  const before=(await creator.call('/api/watch/me')).body;
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id;
+  await creator.call('/api/watch/rooms/'+id+'?viewer='+randomUUID());
+  const updated=await creator.call('/api/watch/profile',{name:'Chosen name'});assert.equal(updated.status,200);
+  const after=(await creator.call('/api/watch/me')).body;
+  assert.equal(after.name,'Chosen name');assert.equal(after.account.name,'Chosen name');
+  assert.equal(after.account.id,before.account.id);assert.equal(after.account.revision,before.account.revision);
+  assert.equal((await creator.call('/api/watch/rooms')).body.rooms[0].hostName,'Chosen name');
+  assert.equal((await creator.call('/api/watch/profile',{name:'\u202eHidden'})).status,400);
+});
+
+test('All hosts and pending assignments persist over restart without promoting arbitrary users into private rooms',tls,async t=>{
+  const f=await fixture(t,true),creator=await f.login('host');
+  const id=(await creator.call('/api/watch/rooms',{name:'Persistent roles',visibility:'private',keepEmpty:true,permissions:{allHosts:true}})).body.id;
+  f.app.hub.directory.discord=async()=>[{subject:'100000000000000088',name:'Future'}];
+  let settings=(await creator.call('/api/watch/rooms/'+id+'/settings')).body;
+  assert.equal((await creator.call('/api/watch/rooms/'+id+'/settings',{revision:settings.revision,change:{action:'host.pending.add',provider:'discord',subject:'100000000000000088'}})).status,200);
+  await f.restart();
+  const leader=await f.login('host'),guest=await f.login('guest');
+  settings=(await leader.call('/api/watch/rooms/'+id+'/settings')).body;
+  assert.equal(settings.allHosts,true);assert.equal(settings.pendingHosts.length,1);assert.deepEqual(settings.hosts,[]);
+  assert.equal((await guest.call('/api/watch/rooms/saved')).body.rooms.length,0);
+  assert.equal((await guest.call('/api/watch/rooms/'+id+'/settings')).status,403);
+  assert.equal((await guest.call('/api/watch/rooms/'+id+'/reopen',{})).status,403);
+});
+
 async function fixture(t, disk = false, settings = {}) {
   const cert = fs.readFileSync(certFile), directory = disk ? fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-room-live-')) : undefined;
   const subjects = {host:'100000000000000001',guest:'100000000000000002',guest2:'100000000000000003'}, role = '100000000000000099';

@@ -194,7 +194,7 @@ async function api(path, data, options = {}) {
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
   try {
   if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
-  if(transport && /^\/api\/watch\/(rooms|me|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
+  if(transport && /^\/api\/watch\/(rooms|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
     try {return await transport.request(path,data,options);} catch(error){rejection=error.rejection;if(error.status)response={status:error.status,ok:false};throw error;}
   }
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,

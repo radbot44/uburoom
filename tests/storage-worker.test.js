@@ -87,7 +87,7 @@ test('unsupported pre-release schema fails startup without leaving a live storag
 
 test('unsupported schemas fail without changing existing data or installing missing tables', t => {
   const {initializeSchema}=require('../server/storage');
-  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[6,'CREATE TABLE future_state(id TEXT);','newer']]) {
+  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE users(id TEXT);','pre-release'],[7,'CREATE TABLE future_state(id TEXT);','newer']]) {
     const db=new DatabaseSync(':memory:');db.exec(sql+'PRAGMA user_version='+version);
     const before=db.prepare('SELECT name,sql FROM sqlite_master').all();
     assert.throws(()=>initializeSchema(db),new RegExp(message));

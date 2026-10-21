@@ -4,12 +4,12 @@
 // These are room capabilities, independent of remote consent and Plex access.
 const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
-  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts'
 ]);
-const VIEWER_BLOCKED = Object.freeze(['roomSettings', 'closeRoom', 'deleteRoom']);
+const VIEWER_BLOCKED = Object.freeze(['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts']);
 const CREATOR_ONLY = Object.freeze(['manageHosts', 'transferCreator', 'managePermissions']);
 const DEFAULTS = Object.freeze({
-  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key !== 'deleteRoom']))),
+  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom','addHosts'].includes(key)]))),
   viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause'])))
 });
 
@@ -19,7 +19,8 @@ function preset(name) {
   return {
     host: { ...DEFAULTS.host },
     viewer: Object.fromEntries(CAPABILITIES.map(key => [key,
-      name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)]))
+      name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay'].includes(key)])),
+    allHosts:false
   };
 }
 
@@ -35,17 +36,20 @@ function permissions(value, base, { role, stored = false } = {}) {
 }
 
 function policy(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['host', 'viewer'].includes(key))) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['host', 'viewer', 'allHosts'].includes(key)) || value.allHosts !== undefined && typeof value.allHosts !== 'boolean') {
     throw new Error('Invalid room permission roles');
   }
   // Old saved policies may contain the retired picture flag; it no longer grants authority.
-  return { host: permissions(value.host ?? {}, DEFAULTS.host, { stored:true }), viewer: permissions(value.viewer ?? {}, DEFAULTS.viewer, { role:'viewer', stored:true }) };
+  return { host: permissions(value.host ?? {}, DEFAULTS.host, { stored:true }), viewer: permissions(value.viewer ?? {}, DEFAULTS.viewer, { role:'viewer', stored:true }), allHosts:value.allHosts ?? false };
 }
 
 /** @param {{creatorId:string,hosts:string[]}} room @param {string} userId */
 function role(room, userId) {
-  return userId === room.creatorId ? 'creator' : room.hosts.includes(userId) ? 'host' : 'viewer';
+  return userId === room.creatorId ? 'creator' : room.hosts.includes(userId) || room.permissions?.allHosts ? 'host' : 'viewer';
 }
+
+// Mode changes permissions, never private-room membership or saved-room discovery.
+function assigned(room, userId) { return userId === room.creatorId || room.hosts.includes(userId); }
 
 function allowed(room, userId, capability) {
   const level = role(room, userId);
@@ -112,4 +116,4 @@ function administrator(registry, config, userId, access) {
     access?.isMember(identity.subject) === true && configured.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
 }
 
-module.exports = { preset, CAPABILITIES, VIEWER_BLOCKED, CREATOR_ONLY, DEFAULTS, permissions, policy, role, allowed, commandCapability, configuration, administrator };
+module.exports = { preset, CAPABILITIES, VIEWER_BLOCKED, CREATOR_ONLY, DEFAULTS, permissions, policy, role, assigned, allowed, commandCapability, configuration, administrator };

@@ -22,6 +22,10 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
       watch.roomState?.people.enter(auth.actor.userId);
+      if (registry) {
+        if (context.controlSocket) hub.directory?.connected(context.controlSocket,auth.actor.userId);
+        await watch.roomState?.claimHosts(auth.actor.userId);
+      }
       await hub.refreshAdmin?.(auth.actor);
       const current = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
       const opened = async id => {
@@ -40,7 +44,12 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.identity.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomLimits:watch.roomState?.limits,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.actor.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomLimits:watch.roomState?.limits,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+      }
+      if (write && url.pathname === '/api/watch/profile' && registry) {
+        if (!throttle('profile-name:'+auth.actor.userId,20)) return result(429,{error:'Too many name changes; try again shortly'});
+        const account = await hub.renameAccount(auth.actor.userId,data.name);
+        return result(200,{name:account.name});
       }
       if (write && url.pathname === '/api/watch/admin-mode') {
         if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}
@@ -85,12 +94,27 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history|people))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
         if(data.viewerId!==undefined&&!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
         return opened(await watch.roomState.reopen(match[1],auth.actor,current));
+      }
+      if (watch.roomState && match[2] === 'people' && !write) {
+        if (!throttle('room-people:'+auth.actor.userId,120)) return result(429,{error:'Too many searches'});
+        const check = async () => {
+          await watch.roomState.eligible(auth.actor,current); await watch.roomState.metadata(match[1],auth.actor);
+          const room = watch.roomState.store.get(match[1]);
+          if (!hub.isAdmin(auth.actor) && !RoomPolicy.allowed(room,auth.actor.userId,'addHosts')) throw Object.assign(new Error('Add hosts permission required'),{status:403});
+          return room;
+        };
+        const room = await check();
+        const members = [...(watch.rooms.get(room.id)?.viewers.values() || [])].filter(v=>!v.watchSocket || v.watchSocket.readyState===1).map(v=>v.userId);
+        const found = await hub.directory.search(url.searchParams.get('q') || '',{members,hosts:room.hosts,creatorId:room.creatorId,allHosts:room.permissions.allHosts,pending:watch.roomState.store.pendingHosts(room.id)});
+        const latest = await check();
+        if (latest.revision !== room.revision) return result(409,{error:'Room changed; search again'});
+        return result(200,found);
       }
       if (watch.roomState && match[2] === 'settings') {
         if (write) {

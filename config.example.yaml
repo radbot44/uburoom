@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2c
+# Config schema v2d
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -86,11 +86,11 @@ rooms:
   max_history: 150 # Oldest history is removed first; 0 keeps no history.
 
   # Set initial room permissions.
-  # Leave blank for defaults: hosts all except deletion; viewers only playPause.
+  # Leave blank for defaults: hosts all except deletion/addHosts; viewers only playPause.
   # [] or 'none' grants none; 'all' grants all eligible rights.
   # Creators have all perms; hosts inherit from viewers; viewers can't get management perms.
   # Names: playPause, seek, chooseMedia, addQueue, editQueue, autoplay,
-  # roomSettings, closeRoom, deleteRoom, continueWithoutHost
+  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts
   host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost]
   viewer_permissions: [playPause]
 
@@ -107,6 +107,12 @@ rooms:
   # Blank: Discord owner if Discord sign-in is on; otherwise the Plex token account.
   # With both sign-in methods off, the Discord owner stays the leader.
   single_room_leader_plex_id: ''
+
+# Show never-signed-in provider members in authorized room host search.
+# Discord discovery/presence also need the matching privileged bot intents enabled.
+directory:
+  expose_discord_members: true
+  expose_plex_members: false # Requires the configured Plex server owner's token.
 
 # Transcoding behavior
 transcoding:

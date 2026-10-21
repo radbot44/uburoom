@@ -3,10 +3,10 @@
   'use strict';
   const labels = { playPause:'Play / pause', seek:'Seek', chooseMedia:'Choose video', addQueue:'Add to queue',
     editQueue:'Edit queue', autoplay:'Manage auto-play', roomSettings:'Room settings',
-    closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts' };
+    closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts', addHosts:'Add hosts' };
   function presetPolicy(name) {
-    return { host:Object.fromEntries(Object.keys(labels).map(key => [key,key !== 'deleteRoom'])),
-      viewer:Object.fromEntries(Object.keys(labels).map(key => [key,name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause','seek','chooseMedia','addQueue','editQueue','autoplay'].includes(key)])) };
+    return { host:Object.fromEntries(Object.keys(labels).map(key => [key,!['deleteRoom','addHosts'].includes(key)])),
+      viewer:Object.fromEntries(Object.keys(labels).map(key => [key,name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause','seek','chooseMedia','addQueue','editQueue','autoplay'].includes(key)])), allHosts:false };
   }
   function presetName(permissions) {
     return ['host-control','play-pause','queue'].find(name => {
@@ -80,6 +80,7 @@
       const seconds = Math.floor(position || 0); return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2,'0');
     }
     async function open(id, targetSection = 'general') {
+      clearSearch(); $('room-person-search').value='';
       selectSection(targetSection);
       const ticket = ++generation; details = undefined; $('room-settings-content').hidden = true;
       $('room-settings-status').textContent = 'Loading room settings…';
@@ -98,7 +99,7 @@
     }
     function openDraft(options) {
       const person = {id:getMe().account.id,name:getMe().name};
-      const base = draftRecord || {id:'draft-' + crypto.randomUUID(),draft:true,creator:person,candidates:[person],hosts:[],viewers:[],role:'creator',active:false,hasLiveRoom:false,hasBookmark:false,revision:0,
+      const base = draftRecord || {canSetAllHosts:true,allHosts:false,actorId:person.id,pendingHosts:[],id:'draft-' + crypto.randomUUID(),draft:true,creator:person,candidates:[person],hosts:[],viewers:[],role:'creator',active:false,hasLiveRoom:false,hasBookmark:false,revision:0,
         permissions:presetPolicy(options.permissionPreset || 'host-control'),autoplay:{enabled:true},queueSummary:{queueRevision:0,autoQueue:{mode:'off',includeSpecials:false}},
         capabilities:Object.fromEntries([...Object.keys(labels),'manageHosts','managePermissions','transferCreator'].map(key=>[key,!['deleteRoom','closeRoom','transferCreator'].includes(key)]))};
       draftRecord = {...base,name:options.name?.trim() || 'Room',visibility:options.visibility};
@@ -131,6 +132,48 @@
       if (details?.id === id && dialog.open) { details = result; renderSettings(); }
       await changed(); return result;
     }
+    let searchTimer, searchGeneration = 0, searchIndex = -1, searchButtons = [];
+    function clearSearch() {
+      clearTimeout(searchTimer); searchGeneration++; searchIndex=-1; searchButtons=[];
+      $('room-person-results').replaceChildren(); $('room-person-search').setAttribute('aria-expanded','false');
+      $('room-person-search').removeAttribute('aria-activedescendant'); $('room-person-search-status').textContent='';
+    }
+    function selectSearch(index) {
+      searchIndex=index;
+      searchButtons.forEach((button,i)=>button.setAttribute('aria-selected',String(i===index)));
+      if (index>=0) { $('room-person-search').setAttribute('aria-activedescendant',searchButtons[index].id); searchButtons[index].scrollIntoView({block:'nearest'}); }
+      else $('room-person-search').removeAttribute('aria-activedescendant');
+    }
+    $('room-person-search').addEventListener('input',()=>{
+      clearSearch(); const query=$('room-person-search').value.trim(), target=details, ticket=searchGeneration;
+      if (!query || !target?.capabilities.addHosts || target.draft) return;
+      $('room-person-search-status').textContent='Searching…';
+      searchTimer=setTimeout(async()=>{
+        try {
+          const result=await request('/api/watch/rooms/'+target.id+'/people?q='+encodeURIComponent(query));
+          if(ticket!==searchGeneration || details?.id!==target.id || !dialog.open || !details.capabilities.addHosts) return;
+          for (const [index,person] of result.results.entries()) {
+            const control=button($('room-person-results'),'',async()=>{
+              if (busy || person.assigned) return;
+              clearSearch(); $('room-person-search').value='';
+              await edit(person.userId ? {action:'host.add',userId:person.userId} : {action:'host.pending.add',provider:person.provider,subject:person.subject});
+            },person.assigned);
+            control.id='room-person-result-'+index; control.setAttribute('role','option');control.setAttribute('aria-selected','false');control.tabIndex=-1;
+            node('strong',control,person.name);node('small',control,person.caption+(person.assigned?' · Already assigned':person.host?' · Host through All hosts':''),'hint');
+            searchButtons.push(control);
+          }
+          $('room-person-search').setAttribute('aria-expanded',String(searchButtons.length>0));
+          $('room-person-search-status').textContent=[result.results.length ? result.results.length+(result.results.length===1?' result.':' results.')+' Choose a person to assign host.' : 'No matching people.',...result.notices].join(' ');
+        } catch(error) { if(ticket===searchGeneration) $('room-person-search-status').textContent=error.message; }
+      },250);
+    });
+    $('room-person-search').addEventListener('keydown',event=>{
+      if (event.key==='Escape' && searchButtons.length) {event.preventDefault();event.stopPropagation();clearSearch();}
+      else if (['ArrowDown','ArrowUp'].includes(event.key) && searchButtons.length) {
+        event.preventDefault(); const step=event.key==='ArrowDown'?1:-1;
+        selectSearch((searchIndex+step+searchButtons.length)%searchButtons.length);
+      } else if(event.key==='Enter') {event.preventDefault(); if(searchIndex>=0) searchButtons[searchIndex].click();}
+    });
     function renderSettings() {
       const value = details; if (!value) return;
       $('room-settings-content').hidden = false; $('room-settings-status').textContent = '';
@@ -147,18 +190,41 @@
       if ($('room-rename').value !== renameDraft) $('room-rename').value = renameDraft;
       $('room-settings-visibility').value = value.visibility;
       for (const id of ['room-rename','room-rename-save','room-settings-visibility']) $(id).disabled = busy || !value.capabilities.roomSettings;
+      $('room-host-search').hidden = !!value.draft || !value.capabilities.addHosts;
+      $('room-person-search').disabled = busy;
+      if (!value.capabilities.addHosts) clearSearch();
+      $('room-all-hosts').checked = !!value.permissions.allHosts;
+      $('room-all-hosts').disabled = busy || !value.canSetAllHosts;
+      $('room-host-inheritance').textContent = value.permissions.allHosts ? 'All hosts is on. Everyone uses the host permissions below.' : 'Hosts also receive participant permissions.';
+      $('room-permission-roles').hidden = !!value.permissions.allHosts;
+      if (value.permissions.allHosts) selectPermissionRole('host');
+      $('room-permission-custom').classList.toggle('all-hosts',!!value.permissions.allHosts);
       const roster = $('room-current-people'); roster.replaceChildren();
       for (const person of value.candidates) {
         const isCreator = person.id === value.creator.id;
         const isHost = value.hosts.some(host => host.id === person.id);
-        const role = isCreator ? 'Room Leader' : isHost ? 'Host' : 'Participant';
+        const effectiveHost = isHost || value.permissions.allHosts;
+        const role = isCreator ? 'Room Leader' : effectiveHost ? 'Host' : 'Participant';
         const row = node('div',roster,undefined,'room-person'); node('span',row,person.name);
         const badge = node('small',row,undefined,'room-role-badge ' + (isCreator ? 'creator' : role.toLowerCase()));
-        badge.append(root.uburoomUI.icon(document, isCreator ? 'creator' : isHost ? 'host' : 'users'), document.createTextNode(role));
-        if (!isCreator && value.capabilities.manageHosts) {
-          const action = button(row, isHost ? 'Remove host' : 'Make host', () => void edit({action: isHost ? 'host.remove' : 'host.add', userId: person.id}), busy);
-          action.id = 'room-host-' + person.id;
+        badge.append(root.uburoomUI.icon(document, isCreator ? 'creator' : effectiveHost ? 'host' : 'users'), document.createTextNode(role));
+        if (effectiveHost && !isCreator) node('small',row,isHost ? 'Explicitly assigned' : 'All hosts mode','hint');
+        if (!isCreator) {
+          const self = person.id === (value.actorId || getMe()?.account?.id);
+          if (isHost && (self || value.capabilities.manageHosts)) {
+            const action = button(row,self ? 'Give up host role' : 'Remove host',async () => {
+              if (self && !await confirm(value.permissions.allHosts ? 'Remove your explicit host assignment? You will remain a host while All hosts is on.' : 'Give up your host role? You may lose access to this room if it is private or closed.')) return;
+              await edit({action:self ? 'host.leave' : 'host.remove',userId:person.id});
+            },busy); action.id='room-host-'+person.id;
+          } else if (!isHost && value.capabilities.addHosts) {
+            const action=button(row,value.permissions.allHosts ? 'Assign host explicitly' : 'Make host',()=>void edit({action:'host.add',userId:person.id}),busy);action.id='room-host-'+person.id;
+          }
         }
+      }
+      for (const pending of value.pendingHosts || []) {
+        const row=node('div',roster,undefined,'room-person');node('span',row,pending.name);
+        node('small',row,'Host · Awaiting '+(pending.provider==='discord'?'Discord':'Plex')+' sign-in','hint');
+        if (value.capabilities.manageHosts) button(row,'Remove assignment',()=>void edit({action:'host.pending.remove',provider:pending.provider,subject:pending.subject}),busy);
       }
       $('room-transfer-target').replaceChildren();
       const transferGroup = $('room-transfer-target-group');
@@ -204,7 +270,7 @@
       $('room-permissions').replaceChildren();
       const header = node('tr',$('room-permissions'));
       for (const [label,role] of [['Permission',''],['Host','host'],['Participant','viewer']]) { const cell = node('th',header,label); cell.scope = 'col'; if (role) cell.dataset.permissionRole = role; }
-      for (const [group, keys] of Object.entries({Playback:['playPause','seek','chooseMedia'],Queue:['addQueue','editQueue','autoplay'],'Room management':['roomSettings','closeRoom','deleteRoom'],Continuity:['continueWithoutHost']})) {
+      for (const [group, keys] of Object.entries({Playback:['playPause','seek','chooseMedia'],Queue:['addQueue','editQueue','autoplay'],'Room management':['roomSettings','closeRoom','deleteRoom','addHosts'],Continuity:['continueWithoutHost']})) {
         const heading = node('th',node('tr',$('room-permissions')),group,'permission-group'); heading.colSpan = 3;
         for (const key of keys) {
           const label = labels[key];
@@ -212,7 +278,7 @@
           for (const role of ['host','viewer']) {
             const cell = node('td',row), input = node('input',cell); cell.dataset.permissionRole = role; input.type = 'checkbox'; input.setAttribute('role','switch');
             input.checked = !!value.permissions[role][key];
-            input.disabled = busy || !value.capabilities.managePermissions || role === 'viewer' && ['roomSettings','closeRoom','deleteRoom'].includes(key);
+            input.disabled = busy || !value.capabilities.managePermissions || role === 'viewer' && ['roomSettings','closeRoom','deleteRoom','addHosts'].includes(key);
             input.setAttribute('aria-label',role + ': ' + label); input.dataset.role = role; input.dataset.permission = key;
             input.addEventListener('change',() => {
               if (role === 'host' && !input.checked) {
@@ -249,7 +315,8 @@
         else if (change.action === 'keepEmpty') details.keepEmpty = change.enabled;
         else if (change.action === 'maxMembers') details.maxMembers = change.value;
         else if (change.action === 'visibility') details.visibility = change.visibility;
-        else if (change.action === 'permissions.preset') details.permissions = presetPolicy(change.preset);
+        else if (change.action === 'allHosts') details.permissions.allHosts = change.enabled;
+        else if (change.action === 'permissions.preset') details.permissions = {...presetPolicy(change.preset),allHosts:details.permissions.allHosts};
         else if (change.action === 'permissions') {
           Object.assign(details.permissions[change.role],change.permissions);
           for (const key of Object.keys(labels)) {
@@ -290,6 +357,7 @@
       const control = button($('room-settings-nav'),label,() => selectSection(key)); control.dataset.section = key;
     }
     $('room-settings-section').addEventListener('change',event => selectSection(event.target.value));
+    $('room-all-hosts').addEventListener('change',()=>void edit({action:'allHosts',enabled:$('room-all-hosts').checked}));
     $('room-keep-empty').addEventListener('change',async () => {
       const enabled = $('room-keep-empty').checked;
       if (!enabled && !await confirm('When everyone leaves and there is no unfinished video, upcoming queue or auto-queue source, this room and its hosts, permissions and history will be deleted. Allow this?')) { $('room-keep-empty').checked = true; return; }
@@ -318,7 +386,8 @@
         try {
           const current = await request('/api/watch/rooms/' + id + '/settings');
           if (getState()?.id !== id) return;
-          await request('/api/watch/rooms/' + id + '/settings',{revision:current.revision,change:{action:'permissions',role:'viewer',permissions:{[key]:enabled}}});
+          if (!!current.allHosts !== !!state.allHosts) throw new Error('Room mode changed; check the controls again');
+          await request('/api/watch/rooms/' + id + '/settings',{revision:current.revision,change:{action:'permissions',role:current.allHosts?'host':'viewer',permissions:{[key]:enabled}}});
           await changed(); if (getState()?.id === id) setQuickStatus('Saved', true);
         } catch (error) { if (getState()?.id === id) setQuickStatus(error.message); }
         finally { quickBusy = false; renderQuick(); if (focused && getState()?.id === id && document.activeElement === document.body) input.focus(); }
@@ -328,15 +397,17 @@
       const state = getState(); if (quickRoom !== state?.id) { quickRoom = state?.id; setQuickStatus(''); }
       $('room-quick-permissions').hidden = !state?.durable;
       const canEdit = !!state?.capabilities?.managePermissions;
+      const controls = state?.allHosts ? state.hostPermissions : state?.participantPermissions;
+      $('room-quick-permissions').querySelector('h4').textContent = state?.allHosts ? 'Host controls' : 'Participant controls';
       $('room-quick-switches').hidden = !canEdit;
       $('room-quick-readonly').hidden = canEdit;
       for (const input of quickInputs) {
-        input.checked = !!state?.participantPermissions?.[input.dataset.quickPermission];
+        input.checked = !!controls?.[input.dataset.quickPermission];
         input.disabled = quickBusy || !canEdit;
       }
       if (!canEdit) {
-        const allowed = [['playPause','Play/pause'],['seek','Seek'],['addQueue','Add to queue']].filter(([k]) => state?.participantPermissions?.[k]).map(([,l]) => l);
-        $('room-quick-readonly').textContent = allowed.length ? 'Participant controls: ' + allowed.join(', ') : 'Participants: no playback or queue controls';
+        const allowed = [['playPause','Play/pause'],['seek','Seek'],['addQueue','Add to queue']].filter(([k]) => controls?.[k]).map(([,l]) => l);
+        $('room-quick-readonly').textContent = (state?.allHosts ? 'Hosts: ' : 'Participants: ') + (allowed.length ? allowed.join(', ') : 'no playback or queue controls');
         $('room-more-permissions').replaceChildren(root.uburoomUI.icon(document,'settings'),document.createTextNode('View permissions'));
       } else {
         $('room-more-permissions').replaceChildren(root.uburoomUI.icon(document,'settings'),document.createTextNode('More permissions'));
@@ -362,7 +433,7 @@
     dialog.addEventListener('cancel',() => {
       if (openedFromSaved) { openedFromSaved = false; void showChooser('saved'); }
     });
-    dialog.addEventListener('close',() => { if (!dialog.open) { generation++; details = undefined; draftRoom = undefined; } });
+    dialog.addEventListener('close',() => { if (!dialog.open) { clearSearch(); generation++; details = undefined; draftRoom = undefined; } });
     $('room-settings-refresh').addEventListener('click',() => { if (details && !busy) { if (details.draft) renderSettings(); else void open(details.id, section); } });
     $('room-rename-save').addEventListener('click',() => void edit({action:'rename',name:$('room-rename').value}));
     $('room-settings-visibility').addEventListener('change',() => void edit({action:'visibility',visibility:$('room-settings-visibility').value}));

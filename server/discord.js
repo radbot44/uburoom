@@ -93,6 +93,19 @@ async function startBot(config, hub, { createClient = options => new Client(opti
   if (!config.botToken) { console.log('[Discord] Not configured. Local picture controls and HTTPS setup are available.'); return; }
   if (!config.ownerId || !config.guildId || !config.channels.length) throw new Error('Configure Discord owner, guild and command channels');
   const client = createClient({ rest: { timeout:10000,retries:0,rejectOnRateLimit:()=>true }, intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
+  if (client.rest?.setToken && client.options?.intents?.add) {
+    try {
+      client.rest.setToken(config.botToken);
+      const application = await client.rest.get('/oauth2/applications/@me');
+      const flags = Number(application.flags || 0);
+      if (config.directory?.discord !== false) {
+        if (flags & ((1<<14)|(1<<15))) client.options.intents.add(GatewayIntentBits.GuildMembers);
+        else console.warn('[Discord] Host search cannot list new members: enable Server Members Intent in the Developer Portal.');
+      }
+      if (flags & ((1<<12)|(1<<13))) client.options.intents.add(GatewayIntentBits.GuildPresences);
+      else console.warn('[Discord] Host search cannot show Discord availability: enable Presence Intent in the Developer Portal.');
+    } catch { console.warn('[Discord] Could not check optional directory intents. Known uburoom account search remains available.'); }
+  }
   hub.access = discordAccess(client, config.guildId);
   watchVoice(config, client, hub);
   const buckets = new Map();

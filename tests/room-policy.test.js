@@ -9,11 +9,11 @@ test('room roles keep creator-only authority independent of full participant per
   assert.equal(Policy.role(room, 'host'), 'host');
   for (const capability of Policy.CAPABILITIES) {
     assert.equal(Policy.allowed(room, 'creator', capability), true);
-    assert.equal(Policy.allowed(room, 'host', capability), capability !== 'deleteRoom');
+    assert.equal(Policy.allowed(room, 'host', capability), !['deleteRoom','addHosts'].includes(capability));
     assert.equal(Policy.allowed(room, 'viewer', capability), capability === 'playPause');
   }
   room.permissions.viewer = Object.fromEntries(Policy.CAPABILITIES.map(key => [key, true]));
-  assert.ok(Policy.CAPABILITIES.every(key => Policy.allowed(room, 'host', key) === (key !== 'deleteRoom')), 'participant flags cannot confer management authority on hosts');
+  assert.ok(Policy.CAPABILITIES.every(key => Policy.allowed(room, 'host', key) === (!['deleteRoom','addHosts'].includes(key))), 'participant flags cannot confer management authority on hosts');
   for (const capability of Policy.CREATOR_ONLY) {
     assert.equal(Policy.allowed(room, 'creator', capability), true);
     assert.equal(Policy.allowed(room, 'host', capability), false);
@@ -85,7 +85,7 @@ test('the three presets grant exact participant controls and keep host deletion 
   for (const [name, granted] of Object.entries(expected)) {
     const policy = Policy.preset(name);
     assert.deepEqual(Object.keys(policy.viewer).filter(key => policy.viewer[key]), granted);
-    assert.ok(Policy.CAPABILITIES.every(key => policy.host[key] === (key !== 'deleteRoom')));
+    assert.ok(Policy.CAPABILITIES.every(key => policy.host[key] === (!['deleteRoom','addHosts'].includes(key))));
     assert.equal(Object.hasOwn(policy.host,'picture'), false);
     assert.equal(Object.hasOwn(policy.viewer,'picture'), false);
   }

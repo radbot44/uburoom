@@ -45,10 +45,20 @@ async function showAccount(){
     if(accountMerge){$('account-merge-details').replaceChildren();for(const account of accountMerge.accounts){const section=document.createElement('div');identityRows(section,account);$('account-merge-details').append(section);}}
     if(known){for(const provider of ['discord','plex']){const list=$('known-'+provider);list.replaceChildren();for(const account of known.accounts)for(const identity of account.identities.filter(i=>i.provider===provider)){const option=document.createElement('option');option.value=identity.subject;option.label=identity.name;list.append(option);}}}
     accountValue=value.account;
+    $('account-display-name').value=value.account.name;
+    $('account-name-status').textContent='';
     $('account-content').hidden=false;
   }catch(error){if(load===accountLoad&&$('account-dialog').open){accountError(error.message);$('account-retry').hidden=false;}}
   finally{if(load===accountLoad)$('account-loading').hidden=true;}
 }
+$('account-name-save').addEventListener('click',async()=>{
+  const button=$('account-name-save');button.disabled=true;accountError();
+  try {
+    await api('/api/watch/profile',{name:$('account-display-name').value});
+    me=await api('/api/watch/me');renderAccount();
+    accountValue=me.account;$('account-display-name').value=me.name;$('account-name-status').textContent='Saved';
+  } catch(error){accountError(error.message);} finally{button.disabled=false;}
+});
 accountButton.addEventListener('click',showAccount);
 $('account-retry').addEventListener('click',showAccount);
 $('account-dialog').addEventListener('close',()=>{accountLoad++;});

@@ -370,6 +370,7 @@ class Watch {
         canStart:[...room.initialViewers].some(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; }) } : undefined,
       recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
       roomName:room.s.name, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
+      allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
       capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
       hostName: room.s.hostName, canBrowse:room.saved ? this.hub.canRoom(room.s,actor,'chooseMedia') : owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),

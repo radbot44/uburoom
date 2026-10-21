@@ -7,6 +7,39 @@ const { startBot, connectBot, slashInput, helpText, watchVoice } = require('../s
 const { discordAccess } = require('../server/sharing');
 const Engine = require('../shared/engine');
 
+test('optional host-directory intents follow application flags without breaking ordinary bot login',async t=>{
+  t.mock.method(console,'log',()=>{});t.mock.method(console,'warn',()=>{});
+  const {IntentsBitField,GatewayIntentBits}=require('discord.js');
+  for(const flags of [0,(1<<13)|(1<<15)]){
+    const client=fakeClient(async()=>{queueMicrotask(()=>client.emit(Events.ClientReady));return 'fixture';});
+    client.options={intents:new IntentsBitField([GatewayIntentBits.Guilds])};
+    client.rest={setToken(){},async get(route){assert.equal(route,'/oauth2/applications/@me');return {flags};}};
+    client.guilds={cache:new Map()};client.users={fetch:async()=>({username:'Owner'})};client.isReady=()=>true;
+    client.application={commands:{set:async()=>{}}};
+    const hub={publishVoice(){},dispatch:async()=>({status:'ok'})};
+    await startBot({botToken:'fixture',ownerId:'owner',guildId:'guild',channels:['commands']},hub,{createClient:()=>client});
+    assert.equal(client.options.intents.has(GatewayIntentBits.GuildMembers),!!flags);
+    assert.equal(client.options.intents.has(GatewayIntentBits.GuildPresences),!!flags);
+  }
+});
+
+test('Discord directory pages the configured guild, excludes bots, and rejects connection changes; presence unknown stays unknown',async()=>{
+  const {Collection,IntentsBitField,GatewayIntentBits}=require('discord.js');
+  const client=new EventEmitter();client.isReady=()=>true;
+  client.options={intents:new IntentsBitField([GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildPresences])};
+  const first=new Collection(Array.from({length:1000},(_,n)=>{const id=String(100000000000000000n+BigInt(n));return [id,{id,displayName:'User '+n,user:{bot:n===0,username:'alias'+n}}];}));
+  let calls=0,release;
+  const guild={available:true,shard:{status:Status.Ready},members:{async list(options){calls++;assert.equal(options.limit,1000);if(calls===1)return first;assert.equal(options.after,first.last().id);return new Collection();}},presences:{cache:new Map([['person',{status:'idle'}],['invisible',{status:'offline'}]])}};
+  client.guilds={cache:new Map([['configured',guild]])};
+  const access=discordAccess(client,'configured');
+  assert.equal((await access.directory()).length,999);assert.equal(calls,2);
+  assert.equal(access.discordOnline('person'),true);assert.equal(access.discordOnline('invisible'),false);assert.equal(access.discordOnline('unknown'),undefined);
+  guild.members.list=()=>new Promise(resolve=>release=resolve);
+  const request=access.directory();client.emit(Events.ShardDisconnect);release(new Collection());
+  await assert.rejects(request,/connection changed/);
+  guild.available=false;assert.equal(access.discordOnline('person'),undefined);await assert.rejects(access.directory(),/unavailable/);
+});
+
 function fakeClient(login) {
   const client = new EventEmitter();
   client.login = login;

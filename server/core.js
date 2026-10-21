@@ -15,7 +15,7 @@ const PRESENCE_MS = 10000;
 const COMMAND_MS = 3000;
 const MODES = new Set(['owner', 'voice', 'guild']);
 const isOwner = (actor,config) => (actor?.discordId||actor?.userId)===config.ownerId;
-const isHost = (room, actor) => room.kind==='watch' ? room.creatorId ? actor.userId===room.creatorId || room.hosts.includes(actor.userId) : actor.userId===room.hostId : (actor.discordId||actor.userId)===room.ownerId;
+const isHost = (room, actor) => room.kind==='watch' ? room.creatorId ? RoomPolicy.role(room,actor.userId) !== 'viewer' : actor.userId===room.hostId : (actor.discordId||actor.userId)===room.ownerId;
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin && (room.kind === 'watch' || isOwner(actor,config));
 const canWatch = (access,id,actor) => access?.canWatch ? access.canWatch(id,actor) : !!access?.isMember(id);
 function sameVoice(room, actor, access) {
@@ -29,7 +29,7 @@ function watching(room, actor, now = Date.now()) {
 function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
   return room.kind === 'watch' && actor.guildId === config.guildId && config.channels.includes(actor.channelId) &&
     canWatch(access,actor.userId,actor) && room.reachable && now - room.lastSeen < PRESENCE_MS && room.socket.readyState === 1 &&
-    (privileged(room, actor, config, admin) || room.visibility === 'public');
+    (admin || room.visibility === 'public' || (room.creatorId ? RoomPolicy.assigned(room,actor.userId) : isHost(room,actor)));
 }
 function eligible(room, actor, config, now = Date.now(), access, manage = false, admin = false) {
   const manager = privileged(room, actor, config, admin);

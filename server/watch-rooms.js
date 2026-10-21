@@ -65,7 +65,7 @@ class WatchRooms {
     const recovery = this.recoveries.get(id);
     if (!recovery || recovery.until <= Date.now()) return;
     const record = this.store.get(id);
-    if (record.visibility === 'private' && Policy.role(record,actor.userId) === 'viewer' && !this.watch.hub.isAdmin(actor)) return;
+    if (record.visibility === 'private' && !Policy.assigned(record,actor.userId) && !this.watch.hub.isAdmin(actor)) return;
     await this.eligible(actor,current);
     if (!this.opening.has(id)) {
       const opening = (async () => {
@@ -150,6 +150,12 @@ class WatchRooms {
     }
     await hub.refreshAdmin?.(actor);
     if (this.stopped || !await current()) throw failure('Room connection changed; retry manually', 403);
+  }
+  async claimHosts(userId) {
+    for (const id of await this.store.claimHosts(userId)) {
+      const room = this.watch.rooms.get(id);
+      if (room) { this.apply(room,this.store.get(id)); room.revision++; }
+    }
   }
   apply(room, record) {
     const previous = room.saved;
@@ -269,6 +275,7 @@ class WatchRooms {
     return { id, createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,keepEmpty:record.keepEmpty,
       maxMembers:record.maxMembers,serverMaxMembers:this.limits.maxMembers,retentionReason:this.reason(record),singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
       creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
+      actorId:actor.userId,allHosts:!!record.permissions.allHosts,canSetAllHosts:record.creatorId===actor.userId,pendingHosts:this.store.pendingHosts(id),
       role:Policy.role(record, actor.userId), permissions:record.permissions, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
       capabilities:Object.fromEntries([...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].map(key =>
         [key, this.watch.hub.config.singleRoom&&key==='transferCreator' ? false : this.watch.hub.config.singleRoom&&key==='deleteRoom' ? this.watch.hub.isAdmin(actor)||record.creatorId===actor.userId : this.watch.hub.isAdmin(actor) || Policy.allowed(record, actor.userId, key)])) };
@@ -288,6 +295,12 @@ class WatchRooms {
     if (change?.action === 'bookmark.clear' && room) throw failure('Close the room before clearing its saved video');
     await this.metadata(id,actor);
     if (!await current()) throw failure('Room connection changed', 403);
+    if (change?.action === 'host.pending.add') {
+      if (!this.watch.hub.isAdmin(actor) && !Policy.allowed(this.store.get(id),actor.userId,'addHosts')) throw failure('Add hosts permission required',403);
+      const candidate = await this.watch.hub.directory.candidate(change.provider,change.subject);
+      await this.eligible(actor,current); await this.metadata(id,actor);
+      change = {...change,name:candidate.name};
+    }
     const record = await this.store.edit(id, actor.userId, revision, change);
     if (change.action === 'delete') {
       if (room) this.watch.remove(id, false);
@@ -304,7 +317,7 @@ class WatchRooms {
   }
   async metadata(id, actor) {
     const record = this.store.get(id);
-    if (Policy.role(record,actor.userId) !== 'viewer' || this.watch.hub.isAdmin(actor)) return;
+    if (Policy.assigned(record,actor.userId) || this.watch.hub.isAdmin(actor)) return;
     const room = this.watch.rooms.get(id);
     if (!room || !await this.watch.canView(room,actor)) throw failure('Room unavailable',403);
   }
@@ -382,6 +395,7 @@ class WatchRooms {
       this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
+      this.store.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
       for(const provider of ['discord','plex'])for(const subject of this.watch.hub.config.roomAdministrators?.[provider]||[]){const host=this.registry.identity(provider,subject)?.userId;if(host&&host!==record.creatorId)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);}
       this.store.db.prepare("UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,permissions=?,name=?,visibility='public' WHERE id=?")
         .run(JSON.stringify(this.store.defaults),'Room',id);

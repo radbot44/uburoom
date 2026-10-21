@@ -43,16 +43,18 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   const hub = new Hub(config, store.devices), deviceLogin = new DeviceLogin();
   hub.ownerName = accounts.ownerName;
   hub.setOwnerName = name => {
+    const owner = registry?.identity('discord',config.ownerId);
+    if (owner) name = registry.canonical(owner.userId)?.name || name;
     if (typeof name !== 'string' || !name || name === accounts.ownerName) return;
     hub.ownerName = accounts.ownerName = name.slice(0, 100);
-    for (const s of hub.rooms.values()) s.ownerName = hub.ownerName;
+    for (const s of hub.rooms.values()) if (s.kind !== 'watch') s.ownerName = hub.ownerName;
     accounts.save();
   };
   const logins = accounts.logins, oauthStates = new Map(), limits = new Map();
   function discordIdentity(identity) {
     if(!registry)return identity;
     const account=registry.resolve('discord',identity.userId,identity.name);
-    return {...identity,userId:account.id,accountRevision:account.revision};
+    return {...identity,name:account.name,userId:account.id,accountRevision:account.revision};
   }
   function validIdentity(identity) {if(!registry)return true;const account=registry.canonical(identity.userId);return !!account&&account.id===identity.userId&&account.revision===identity.accountRevision;}
   const publicDir = path.join(__dirname, '../web');
@@ -128,7 +130,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
-  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord')?.subject}:{}),name: login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
+  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord')?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
   async function body(req) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
@@ -180,12 +182,14 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       voiceChannel:id=>{const discord=discordId(id);return discord&&rawAccess?.voiceChannel(discord);},
       hasRole:(id,role)=>{const discord=discordId(id);return !!discord&&rawAccess?.hasRole?.(discord,role)===true;},
       identity:async id=>rawAccess?.identity?rawAccess.identity(id):await rawAccess?.refresh(id)?{id,name:registry.identity('discord',id)?.name||id}:undefined,
+      directory:()=>rawAccess?.directory?.() || Promise.reject(new Error('Discord directory unavailable; check the bot and Server Members Intent')),
+      discordOnline:subject=>rawAccess?.discordOnline?.(subject),
       validVoiceChannel:id=>!!rawAccess?.validVoiceChannel(id),options:()=>rawAccess?.options()||{available:false},
       canWatch:(id,actor)=>config.accessPolicy ? entryPolicy.fresh(id,actor) : access.isMember(id)||!!registry.canonical(id)&&plexAuth.fresh(id),
       refreshWatch:async (id,actor)=>{if(config.accessPolicy)return entryPolicy.admit(id,actor);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
     };
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
-    hub.accountActor=actor=>registry.canonical(actor.userId)?actor:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
+    hub.accountActor=actor=>registry.canonical(actor.userId)?{...actor,name:registry.canonical(actor.userId).name}:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex');
       const fallback=()=>{
@@ -204,6 +208,20 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
   }
   const watch = new Watch(hub, plex, fs.existsSync(demoFile) ? { kind: 'demo', title: 'uburoom synchronization test', duration: 60, format: 'file', quality: 'direct', file: demoFile } : undefined, registry);
+  if (registry) {
+    hub.directory = new (require('./user-directory').UserDirectory)({registry,config,discord:()=>hub.access.directory(),discordOnline:subject=>hub.access.discordOnline(subject),plex:()=>require('./plex-directory').plexDirectory(plexAuth)});
+    hub.renameAccount = async (id,name) => {
+      const account = registry.rename(id,name); await registry.flush();
+      if (registry.identities(id).some(identity=>identity.provider==='discord'&&identity.subject===config.ownerId)) hub.setOwnerName(account.name);
+      for (const login of logins.values()) if (login.userId === id) login.name = account.name;
+      for (const room of watch.rooms.values()) {
+        if (room.s.hostId === id) room.s.hostName = account.name;
+        if (room.s.ownerId === id) room.s.ownerName = account.name;
+        for (const viewer of room.viewers.values()) if (viewer.userId === id) { viewer.name = account.name; viewer.actor.name = account.name; }
+      }
+      return account;
+    };
+  }
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
   const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins });
   async function discordStart(req,res,linkLogin,extension,ownerOnly=false) {
