@@ -18,6 +18,8 @@ The owner's implementation request and seven approved decisions supersede the pe
 
 Scope: `tracks`, `handoff`, `account`, `account-remove`, `room`, `room-settings`, `room-confirm`, `codec-test`, `privacy`, dynamic `queue-bulk`, and relevant player menu/drawer interactions. No permission, authorization, streaming or queue business-rule changes. The small shared dialog lifecycle helper is an implementation choice under this authorization, not a new UI framework. Required verification is focused automated coverage, full Node tests and isolated Chrome/Firefox desktop/phone/theme/fullscreen rendering; real mobile/Activity and human appearance acceptance remain separate gates.
 
+Browser-owned Escape remains available to exit actual fullscreen. Verified Firefox 158 behavior exits fullscreen before delivering Escape to a modal, leaving it open; explicit Close/Cancel preserves fullscreen. Chrome delivers Escape to the foremost modal. Keep this browser limitation visible in verification rather than overriding reserved browser controls.
+
 The older registry/audit workflow below applies to future unapproved work, not to routine choices already delegated above.
 
 This is the canonical design reference for uburoom's web interface. `AGENTS.md` requires every future agent working on UI, CSS, layout, branding, menus, dialogs, accessibility, and interaction to read this guide **before** investigating, planning or editing. The current code is evidence of what exists, not automatic authorization to preserve an inconsistency as a new standard. Existing rules below remain in force unless the owner explicitly changes them. The separate `uburoom-remote` repository owns its own extension renderer and popup; do not silently impose web UI changes there.
