@@ -209,6 +209,7 @@ test('fresh HLS media clears an exhausted delivery error and resumes synchroniza
 test('brief WebSocket disconnect does not tear down player, and extended disconnect plays from buffer with toast', async () => {
   const timers = [];
   let cleared = 0, stoppedLoad = 0, failedMessage = '';
+  const icons = [];
   const client = { stopLoad() { stoppedLoad++; }, startLoad() {} };
   const toast = { hidden: true, querySelector() { return { firstChild: null, append() {} }; } };
   const elements = {
@@ -220,7 +221,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   const $ = id => elements[id];
   const context = {
     $: $,
-    uburoomUI: { icon: () => ({}) },
+    uburoomIcons: { icon: (_document, name) => { icons.push(name); return {}; } },
     uburoomPlayback: playback,
     diagnostics: diagnosticLog(),
     transport: { ready: false, interrupt() {} },
@@ -287,6 +288,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   assert.equal(context.disconnectExtended, true, 'enters extended disconnect mode');
   assert.equal(stoppedLoad, 1, 'hls.stopLoad is called to preserve buffer');
   assert.equal(toast.hidden, false, 'toast is shown after grace period with buffer');
+  assert.deepEqual(icons, ['refresh'], 'disconnect toast uses the current icon provider');
   assert.equal(cleared, 0, 'player is still not cleared while buffer remains');
 
   // 4. Buffer exhausted: fullPlayerClear is called

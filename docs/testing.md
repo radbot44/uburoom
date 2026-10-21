@@ -1189,3 +1189,10 @@ Single-room mode accepts `rooms.single_room_leader_plex_id`. Blank keeps Discord
 ### Private pre-release configuration update helper (2026-10-20)
 
 Required A/B; completed A/B before deployment. The reusable private helper lives outside the distributed source. Four isolated Node tests passed (0 failures/skips) for preserving owner values/comments/custom lists, adding current-example defaults and schema marker, exact protected backup/atomic replacement, repeat-run idempotence, future example versions, and rejecting invalid/duplicate/unknown/aliased inputs without changing the file. A read-only installation dry run found 27 missing settings for config schema v2b and passed current configuration validation. Runtime migration/conversion remains absent; no private script/config/state/key is included in Git or source archives. Installation deployment results are recorded privately.
+## 2026-10-21 - Vigrid recovery test fixture repair
+
+- **Milestone/check:** watch reconnect regression at revision `ae5ff9565b8cfe7cef6b2bee34f67e95ae9d3bd6`; Windows/Node local checkout. The Vigrid updater's `npm test` failed because the isolated VM fixture provided `uburoomUI.icon` while `web/watch.js` now calls `uburoomIcons.icon` for the disconnect toast. The updater reported that it kept uburoom stopped.
+- **Required/completed:** A source review pass and B automated pass. C deployed restart/health verification remains not run pending explicit owner authorization; D human acceptance is not required for this test-only fixture change.
+- **Change/expected outcome:** provide the current icon registry stub in `tests/watch-recovery.test.js` and assert the toast requests `refresh`; the disconnect recovery test should exercise the grace period, buffered playback and eventual clear without a missing-global error.
+- **Evidence:** `node --test tests/watch-recovery.test.js`: 12 passed, 0 failed, 0 skipped. `npm run test:full`: 455 passed, 0 failed, 0 skipped. `git diff --check`: passed. This verifies the local fixture and does not establish Vigrid service health.
+
