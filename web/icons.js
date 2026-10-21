@@ -90,6 +90,20 @@
     "minimize": "<path d=\"M15 19v-2a2 2 0 0 1 2 -2h2\" /><path d=\"M15 5v2a2 2 0 0 0 2 2h2\" /><path d=\"M5 15h2a2 2 0 0 1 2 2v2\" /><path d=\"M5 9h2a2 2 0 0 0 2 -2v-2\" />",
     "movie": "<path d=\"M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12\" /><path d=\"M8 4l0 16\" /><path d=\"M16 4l0 16\" /><path d=\"M4 8l4 0\" /><path d=\"M4 16l4 0\" /><path d=\"M4 12l16 0\" /><path d=\"M16 8l4 0\" /><path d=\"M16 16l4 0\" />",
     "photo-video": "<path d=\"M9 15h-3a3 3 0 0 1 -3 -3v-6a3 3 0 0 1 3 -3h6a3 3 0 0 1 3 3v3\" /><path d=\"M9 12a3 3 0 0 1 3 -3h6a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h-6a3 3 0 0 1 -3 -3l0 -6\" /><path d=\"M3 12l2.296 -2.296a2.41 2.41 0 0 1 3.408 0l.296 .296\" /><path d=\"M14 13.5v3l2.5 -1.5l-2.5 -1.5\" /><path d=\"M7 6v.01\" />",
+    "player-pause": "<path d=\"M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12\" /><path d=\"M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12\" />",
+    "player-play": "<path d=\"M7 4v16l13 -8l-13 -8\" />",
+    "player-skip-back": "<path d=\"M20 5v14l-12 -7l12 -7\" /><path d=\"M4 5l0 14\" />",
+    "player-skip-forward": "<path d=\"M4 5v14l12 -7l-12 -7\" /><path d=\"M20 5l0 14\" />",
+    "playlist-add": "<path d=\"M19 8h-14\" /><path d=\"M5 12h9\" /><path d=\"M11 16h-6\" /><path d=\"M15 16h6\" /><path d=\"M18 13v6\" />",
+    "rectangle": "<path d=\"M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10\" />",
+    "rewind-backward-15": "<path d=\"M8 20h2a1 1 0 0 0 1 -1v-1a1 1 0 0 0 -1 -1h-2v-3h3\" /><path d=\"M15 18a6 6 0 1 0 0 -12h-11\" /><path d=\"M5 14v6\" /><path d=\"M7 9l-3 -3l3 -3\" />",
+    "rewind-backward-30": "<path d=\"M19.007 16.466a6 6 0 0 0 -4.007 -10.466h-11\" /><path d=\"M12 15.5v3a1.5 1.5 0 0 0 3 0v-3a1.5 1.5 0 0 0 -3 0\" /><path d=\"M6 14h1.5a1.5 1.5 0 0 1 0 3h-.5h.5a1.5 1.5 0 0 1 0 3h-1.5\" /><path d=\"M7 9l-3 -3l3 -3\" />",
+    "rewind-backward-60": "<path d=\"M19.007 16.466a6 6 0 0 0 -4.007 -10.466h-11\" /><path d=\"M7 9l-3 -3l3 -3\" /><path d=\"M12 15.5v3a1.5 1.5 0 0 0 3 0v-3a1.5 1.5 0 0 0 -3 0\" /><path d=\"M9 14h-2a1 1 0 0 0 -1 1v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1 -1v-1a1 1 0 0 0 -1 -1h-2\" />",
+    "rewind-forward-15": "<path d=\"M17 9l3 -3l-3 -3\" /><path d=\"M9 18a6 6 0 1 1 0 -12h11\" /><path d=\"M16 20h2a1 1 0 0 0 1 -1v-1a1 1 0 0 0 -1 -1h-2v-3h3\" /><path d=\"M13 14v6\" />",
+    "rewind-forward-30": "<path d=\"M5.007 16.478a6 6 0 0 1 3.993 -10.478h11\" /><path d=\"M15 15.5v3a1.5 1.5 0 0 0 3 0v-3a1.5 1.5 0 0 0 -3 0\" /><path d=\"M17 9l3 -3l-3 -3\" /><path d=\"M9 14h1.5a1.5 1.5 0 0 1 0 3h-.5h.5a1.5 1.5 0 0 1 0 3h-1.5\" />",
+    "rewind-forward-60": "<path d=\"M5.007 16.478a6 6 0 0 1 3.993 -10.478h11\" /><path d=\"M15 15.5v3a1.5 1.5 0 0 0 3 0v-3a1.5 1.5 0 0 0 -3 0\" /><path d=\"M17 9l3 -3l-3 -3\" /><path d=\"M12 14h-2a1 1 0 0 0 -1 1v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1 -1v-1a1 1 0 0 0 -1 -1h-2\" />",
+    "shield-check": "<path d=\"M11.46 20.846a12 12 0 0 1 -7.96 -14.846a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3a12 12 0 0 1 -.09 7.06\" /><path d=\"M15 19l2 2l4 -4\" />",
+    "sort-descending": "<path d=\"M4 6l9 0\" /><path d=\"M4 12l7 0\" /><path d=\"M4 18l7 0\" /><path d=\"M15 15l3 3l3 -3\" /><path d=\"M18 6l0 12\" />",
     // MORE_TABLER_GLYPHS
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
