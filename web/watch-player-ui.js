@@ -28,9 +28,9 @@
     function button(parent,label) { const b=document.createElement('button'); b.type='button'; b.textContent=label; parent.append(b); return b; }
     for(const [id,label] of choices) {
       const row=button(menu,label); row.id='settings-'+id; row.setAttribute('role','menuitem'); row.setAttribute('aria-haspopup','menu'); row.setAttribute('aria-expanded','false'); row.setAttribute('aria-controls',submenu.id);
-      const value=document.createElement('span'); value.className='settings-value'; row.append(value,uburoomUI.icon(document,'left')); row.onclick=()=>openChoices(id); rows.push({id,row,value});
+      const value=document.createElement('span'); value.className='settings-value'; row.append(value,uburoomIcons.icon(document,'left')); row.onclick=()=>openChoices(id); rows.push({id,row,value});
     }
-    const more=button(menu,'More settings'); more.id='settings-more'; more.setAttribute('role','menuitem'); more.setAttribute('aria-haspopup','dialog'); more.setAttribute('aria-controls',dialog.id); more.append(uburoomUI.icon(document,'settings')); more.onclick=openDialog;
+    const more=button(menu,'More settings'); more.id='settings-more'; more.setAttribute('role','menuitem'); more.setAttribute('aria-haspopup','dialog'); more.setAttribute('aria-controls',dialog.id); more.append(uburoomIcons.icon(document,'settings')); more.onclick=openDialog;
     // Keep the submenu last in reading order, after the four main choices.
     menu.append(submenu);
     function placeMenu() {
@@ -99,8 +99,8 @@
       const enabled=!!tracks?.subtitleId, available=tracks?.subtitles.some(t=>t.available);
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
       cc.setAttribute('aria-pressed',String(enabled)); cc.title=cc.ariaLabel=enabled?'Disable subtitles':'Enable subtitles';
-      const symbol=enabled?'captionsOn':'captions';
-      if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomUI.icon(document,symbol));cc.dataset.symbol=symbol;}
+      const symbol='captions';
+      if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomIcons.icon(document,symbol));cc.dataset.symbol=symbol;}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {
         const select=$(id), audio=id==='audio-track';

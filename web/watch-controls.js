@@ -5,7 +5,7 @@
   function content(control, {label, icon, iconOnly = false}) {
     const doc = control.ownerDocument;
     control.replaceChildren();
-    if (icon) control.append(root.uburoomUI.icon(doc,icon));
+    if (icon) control.append(root.uburoomIcons.icon(doc,icon));
     const text = doc.createElement('span'); text.className = 'watch-control-label'; text.textContent = label;
     if (!iconOnly) control.append(text);
     control.classList.add('watch-control');

@@ -66,7 +66,7 @@
       b.title = label;
       b.disabled = disabled;
       if (iconName && root.uburoomUI?.icon) {
-        b.append(root.uburoomUI.icon(doc, iconName));
+        b.append(root.uburoomIcons.icon(doc, iconName));
       } else {
         b.textContent = label;
       }
@@ -80,7 +80,7 @@
     host.dataset.view = view;
     const header = node('header', host, undefined, 'queue-header');
     const heading = node('h2', header, undefined, 'queue-heading');
-    heading.append(root.uburoomUI.icon(doc, 'queue'), doc.createTextNode('Queue'));
+    heading.append(root.uburoomIcons.icon(doc, 'queue'), doc.createTextNode('Queue'));
     const views = node('div', header, undefined, 'queue-view-switch');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Queue layout');
     const viewButtons = ['cards', 'list'].map(value => {
@@ -112,7 +112,7 @@
     const upcomingView = node('section', layout, undefined, 'queue-view queue-upcoming-view');
     upcomingView.id = 'queue-upcoming-view'; upcomingView.setAttribute('aria-label', 'Upcoming videos');
     const emptyScreen = node('section', body, undefined, 'queue-empty-screen'); emptyScreen.id = 'queue-empty-screen';
-    emptyScreen.append(root.uburoomUI.icon(doc, 'queue'));
+    emptyScreen.append(root.uburoomIcons.icon(doc, 'queue'));
     const emptyTitle = node('p', emptyScreen, '', 'queue-empty-title');
     const emptyBrowse = button(emptyScreen, 'Browse media', 'media', () => browseMedia()); node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
@@ -483,8 +483,8 @@
       renderHeaderBadge(getState()?.queueSummary);
       viewButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(view === (i ? 'list' : 'cards'))));
       navigation.hidden = false;
-      previousCard.querySelector('svg')?.replaceWith(root.uburoomUI.icon(doc,view === 'cards' ? 'left' : 'up'));
-      nextCard.querySelector('svg')?.replaceWith(root.uburoomUI.icon(doc,view === 'cards' ? 'right' : 'down'));
+      previousCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc,view === 'cards' ? 'left' : 'up'));
+      nextCard.querySelector('svg')?.replaceWith(root.uburoomIcons.icon(doc,view === 'cards' ? 'right' : 'down'));
       layout.tabIndex = 0;
       layout.style.paddingBlock = '';
       if (view === 'list') layout.style.paddingInline = '';
@@ -566,7 +566,7 @@
     function art(parent, item) {
       node('div',parent,undefined,'queue-row-backdrop').setAttribute('aria-hidden','true');
       const box = node('div', parent, undefined, 'queue-art');
-      box.append(root.uburoomUI.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
+      box.append(root.uburoomIcons.icon(doc, item.type === 'episode' ? 'tv' : 'film'));
       if (!artwork || !/^\d{1,20}$/.test(item.mediaId || item.id || '')) return;
       const img = node('img', box);
       img.alt = ''; img.decoding = 'async';
@@ -661,7 +661,7 @@
       const label = state?.state?.paused ? 'Play' : 'Pause';
       if (toggle.title !== label) {
         toggle.title = label; toggle.setAttribute('aria-label', label);
-        toggle.replaceChildren(root.uburoomUI.icon(doc, state?.state?.paused ? 'play' : 'pause'));
+        toggle.replaceChildren(root.uburoomIcons.icon(doc, state?.state?.paused ? 'play' : 'pause'));
       }
       if (centerPending) requestAnimationFrame(() => centerCurrent());
     }
