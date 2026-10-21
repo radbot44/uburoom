@@ -60,6 +60,9 @@ async function main() {
         assert.equal(await run('$("roomies-symbol").querySelector("svg").dataset.tablerIcon'),'oomark');
         assert.equal(await run('getComputedStyle($("roomies-symbol").querySelector("line")).strokeLinecap'),'butt');
         assert.equal(await run('[...document.querySelectorAll("#room-quick-switches h4,.room-roster-heading")].every(e=>{const r=e.getBoundingClientRect(),label=e.querySelector("span:last-child").getBoundingClientRect();return r.height===44 && Math.abs(label.top+label.height/2-r.top-26)<.6})'),true,'Subheading contents move down four pixels within 44px rows');
+        assert.equal(await run('[...document.querySelectorAll("#room-quick-switches h4,.room-roster-heading")].every(e=>{const r=e.getBoundingClientRect(),first=e.firstElementChild.getBoundingClientRect(),last=e.lastElementChild.getBoundingClientRect();return Math.abs((first.left+last.right)/2-r.left-r.width/2)<.6})'),true,'Subheading icon and text groups are centered');
+        assert.equal(await run('getComputedStyle($("room-participants")).scrollbarGutter'),'auto');
+        assert.equal(await run('getComputedStyle($("room-participants")).paddingBottom'),'0px','Short roster has no overlay gutter');
         assert.deepEqual(await run('[...$("room-quick-switches").querySelectorAll("h4")].map(e=>e.textContent)'),['Participants','Hosts']);
         assert.equal(await run('document.querySelectorAll("[data-quick-permission]").length'),6);
         assert.equal(await run('[...document.querySelectorAll("[data-quick-permission]")].every(e=>e.tagName==="BUTTON" && !!e.getAttribute("aria-label") && e.hasAttribute("aria-pressed"))'),true);
@@ -105,6 +108,19 @@ async function main() {
         await run('$("room-quick-status").textContent=""');
       }
       await shot('desktop');
+      if (label === 'after') {
+        for (const width of [700,900,1100]) {
+          await browser.viewport(page,width,1000); await pause(150);
+          assert.equal(await run('(()=>{const r=$("current-room").getBoundingClientRect(),p=$("options-panel").getBoundingClientRect();return r.width<=500 && Math.abs(r.left+r.width/2-p.left-p.width/2)<1})()'),true,'Room content is capped and centered at '+width+'px');
+          assert.equal(await run('document.documentElement.scrollWidth<=innerWidth'),true);
+          assert.equal(await run('getComputedStyle($("current-room"),"::before").content'),'none');
+          assert.equal(await run('getComputedStyle($("room-quick-switches").children[4],"::before").content'),'none');
+          await run('$("options-panel").scrollIntoView({block:"center"})');
+          await shot('medium-'+width);
+        }
+        await browser.viewport(page,1360,1000);
+        await run('scrollTo(0,0)');
+      }
       if (label === 'after') {
         await run('execute({action:"room.visibility",args:{visibility:"private"}})');
         await until('state.visibility==="private" && !pending','Private visibility');
@@ -361,6 +377,7 @@ async function main() {
           transport.onMessage=message=>{if(message.type!=='state')realMessage(message)};
           state.participants=Array.from({length:35},(_,i)=>({id:crypto.randomUUID(),name:'Very long fixture participant username '+i,role:i%4===0?'host':'viewer',present:false}));roomUI.render();`);
         await until('!$("room-participants-expand").hidden','Overflow expander');
+        assert.equal(await run('getComputedStyle($("room-participants")).paddingBottom'),'40px','Visible expander reserves only a bottom gutter');
         assert.equal(await run('(()=>{const buttons=[...$("room-participants").querySelectorAll(".room-host-action")];return buttons[1].getBoundingClientRect().top-buttons[0].getBoundingClientRect().bottom})()'),4,'Roster icons have the same vertical clearance');
         assert.equal(await run('$("room-roster-frame").getBoundingClientRect().height'),352);
         assert.equal(await run('(()=>{const b=$("room-participants-expand"),r=b.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button")===b})()'),true,'Expander is visible and hit-testable');
@@ -370,11 +387,14 @@ async function main() {
         assert.equal(await run('$("room-participants").lastElementChild.getBoundingClientRect().bottom <= $("room-participants-expand").getBoundingClientRect().top + 1'),true,'Gutter protects final row');
         await run('$("room-participants-expand").click()');
         assert.equal(await run('getComputedStyle($("room-participants")).height'),'660px');
+        assert.equal(await run('getComputedStyle($("room-participants")).paddingBottom'),'40px','Visible collapse button keeps its protective gutter');
         assert.equal(await run('$("room-roster-frame").getBoundingClientRect().height'),704);
         await shot('roster-expanded');
         await run('$("options-collapse").click()');
         assert.equal(await run('$("room-participants-expand").getAttribute("aria-expanded")'),'false');
         await run('$("options-collapse").click();state.participants=realParticipants;transport.onMessage=realMessage;roomUI.render()');
+        await until('$("room-participants-expand").hidden','Short roster no longer needs an overlay');
+        assert.equal(await run('getComputedStyle($("room-participants")).paddingBottom'),'0px','Overlay gutter disappears with its button');
       }
       console.log(name + ': ' + label + ' Room desktop/390px/320px and permissions captures complete');
     } catch (error) {

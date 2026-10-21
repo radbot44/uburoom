@@ -347,12 +347,12 @@ body.idle-player #video{visibility:hidden}
 .room-header-actions #room-people-open{padding-inline:8px;font-size:12px}
 .watch-header-actions{gap:var(--watch-icon-gap)}
 :is(.watch-header-control,#options-panel .watch-header-control){background:var(--elevated);color:var(--muted);margin:0}
-.room-content-columns{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:var(--watch-group-gap)}
+.room-content-columns{position:relative;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:var(--watch-group-gap);width:100%;max-width:500px;margin-inline:auto}
 .room-controls-column,.room-participant-column{min-width:0}
 .room-roster-frame{position:relative;min-width:0;--room-row-height:var(--watch-row-height)}
-.room-roster{--role-column:40px;height:calc(8 * var(--room-row-height,40px));overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;min-width:0}
+.room-roster{--role-column:40px;height:calc(8 * var(--room-row-height,40px));overflow:auto;overscroll-behavior:contain;min-width:0;padding-bottom:0}
 .room-roster-frame.expanded .room-roster{height:calc(16 * var(--room-row-height,40px))}
-.room-roster-frame.has-overflow .room-roster{padding-bottom:40px}
+.room-roster-frame:has(>.room-roster-expand:not([hidden]))>.room-roster{padding-bottom:var(--watch-control-height)}
 .room-roster .room-person{display:grid;grid-template-columns:var(--role-column) minmax(0,1fr);align-items:center;gap:var(--watch-icon-gap);height:var(--room-row-height,44px);min-height:var(--room-row-height,44px);padding:2px;border:0;white-space:nowrap}
 .room-roster .room-person.has-kick{grid-template-columns:var(--role-column) minmax(0,1fr) 40px}
 .room-roster .room-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -407,7 +407,7 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 /* Room columns share one row metric; the roster shrinks to its actual content. */
 .room-content-columns{--room-row-height:var(--watch-row-height)}
 #room-quick-permissions .room-control-row,.room-roster-heading{box-sizing:border-box;height:var(--room-row-height);min-height:var(--room-row-height);margin:0;display:flex;align-items:center;justify-content:space-between;gap:var(--watch-icon-gap);padding:2px;border:0;font-size:12px}
-#room-quick-permissions .room-control-heading,.room-roster-heading{justify-content:flex-start;gap:4px;font-weight:600;padding-block:10px 2px}
+#room-quick-permissions .room-control-heading,.room-roster-heading{justify-content:center;gap:4px;font-weight:600;padding-block:10px 2px}
 .room-control-heading svg,.room-roster-heading svg{width:20px;height:20px;flex:none}
 #roomies-symbol{display:inline-flex;flex:none}
 .room-control-name{min-width:0;line-height:1.15;overflow-wrap:anywhere}

@@ -221,6 +221,10 @@ Room now uses Tabler door; Roomies carries the canonical oomark with protected f
 
 Owner-expanded icon-spacing scope adds shared 4px clearance beyond the header, using 44px Room row slots around unchanged 40px buttons, plus gaps in tighter Queue/Media/mobile-player icon groups. Logical-group spacing and Media sticky machinery remain intact; verification is recorded in [icon button clearance](docs/testing.md#2026-10-21---icon-button-clearance-m1-p7).
 
+Room's two-column content is now centered with a 500px total width cap and subtle section separators between columns/above Hosts. Medium-width browser coverage is recorded in [Room width verification](docs/testing.md#2026-10-21---centered-room-content-and-section-dividers-m1-p7); header/footer, row sizes and controls retain their existing behavior.
+
+The owner then removed those separators and centered the subsection icon/text groups. Roster scrollbar space is automatic; bottom gutter padding is tied directly to the visible expand/collapse button. See [heading/gutter verification](docs/testing.md#2026-10-21---centered-room-subheadings-and-overlay-only-gutter-m1-p7).
+
 The owner's subsequent Room revisions place transparent, contiguous header actions beside an ellipsized name, with controls and a participant roster in two columns. Room/Settings consistently order self first, then leader/hosts/viewers alphabetically. Updated focused browser checks and 448 Node tests pass; further participant-control guidance and visual acceptance remain pending.
 
 The latest owner revision uses a 40/60 split, aligned nonwrapping role/name/host/kick cells, and scrolling 10/30-row rosters. Confirmed participant removal is implemented through the shared validated command engine with default-on host permission, protected leader/self, host-target restrictions and immediate manual rejoin. Focused dual-browser checks and all 450 Node tests pass; visual acceptance remains pending before Queue.
