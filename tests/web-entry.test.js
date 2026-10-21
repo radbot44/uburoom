@@ -29,10 +29,13 @@ test('watch entry and application-owned static resources work without an extensi
   assert.equal(watch.status, 200);
   assert.match(watch.body.toString(), /<title>uburoom watch<\/title>/);
   assert.ok(watch.body.toString().indexOf('<script src="/icons.js"></script>') < watch.body.toString().indexOf('<body'), 'icon pack loads in the document head');
+  assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/vendor\/overlayscrollbars\/overlayscrollbars\.css">/);
+  assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/watch-scrollbars\.css">/);
+  assert.ok(watch.body.toString().indexOf('/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js') < watch.body.toString().indexOf('<script src="/watch-scrollbars.js"></script>'), 'library loads before scrollbar initialization');
   assert.match(watch.headers['content-security-policy'], /frame-ancestors 'self' https:\/\/discord.com/);
   const resources = {
     '/engine.js': 'shared/engine.js', '/room-protocol.js': 'shared/room-protocol.js', '/viewport.js': 'shared/viewport.js',
-    '/remote-ui.js': 'web/remote-ui.js', '/icons.js': 'web/icons.js', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
+    '/remote-ui.js': 'web/remote-ui.js', '/icons.js': 'web/icons.js', '/watch-scrollbars.js': 'web/watch-scrollbars.js', '/watch-scrollbars.css': 'web/watch-scrollbars.css', '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': 'web/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', '/vendor/overlayscrollbars/overlayscrollbars.css': 'web/vendor/overlayscrollbars/overlayscrollbars.css', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
     '/favicon.svg': 'web/assets/uburoom-oomark-brand.svg', '/assets/branding/uburoom-wordmark-brand.svg': 'web/assets/uburoom-wordmark-brand.svg'
   };
   for (const [route, file] of Object.entries(resources)) {
