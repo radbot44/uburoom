@@ -4,6 +4,22 @@ Keep the established layout and behavior. The main site enters `/watch`; the sta
 
 ## Design authority, change control and approval (mandatory)
 
+### Authorized popup consistency pass (2026-10-20)
+
+The owner's implementation request and seven approved decisions supersede the per-detail approval workflow below **for this pass only**. Routine CSS dimensions, safe-DOM helpers, lifecycle wiring and targeted tests are delegated to the implementer. Material product/design trade-offs and work outside this scope still require owner approval. Final appearance remains subject to owner acceptance; implementation dimensions are not individually owner-approved.
+
+1. Native dialogs share token-based surfaces, borders/radii, spacing, headers and action roles. Player menus, fullscreen drawers, remote controls, toasts, countdowns and readiness prompts retain their specialized layouts.
+2. Use small confirmations, medium forms/dialogs and large complex settings, with viewport constraints. Starting implementation widths are 420px / 560px / 920px; the room chooser may use 620px and the codec workspace retains its specialized size. These are tunable implementation values.
+3. Irreversible destructive confirmations use `.danger-button`; ordinary confirmations use `.primary`. Retain `.quiet`, `.icon-button` and title-bar-only `.solid-button` roles.
+4. Outside clicks dismiss ordinary dialogs and menus, except destructive confirmations and unsaved editors. Guard critical in-flight work across outside, Escape and explicit cancellation. Keep drafts across safe close/reopen; use native modal focus containment and restore a reachable trigger. Escape acts on the foremost surface.
+5. Room Settings keeps horizontally scrolling mobile navigation. Center a selected section gently only on selection/opening, respect reduced motion, preserve manual swipes and show subtle edge hints only where tabs are hidden.
+6. Room Settings gains modest usable height and little width, with desktop sidebar/header and independent panel scrolling. Constrain the permissions matrix to a readable width. Keep phone margins and viewport bounds; desktop should not default to nearly fullscreen.
+7. Dialogs opened during actual browser video fullscreen stay above the player without exiting fullscreen. Closing returns to that fullscreen view. Exercise the Fullscreen API in Chrome and Firefox separately from theater mode.
+
+Scope: `tracks`, `handoff`, `account`, `account-remove`, `room`, `room-settings`, `room-confirm`, `codec-test`, `privacy`, dynamic `queue-bulk`, and relevant player menu/drawer interactions. No permission, authorization, streaming or queue business-rule changes. The small shared dialog lifecycle helper is an implementation choice under this authorization, not a new UI framework. Required verification is focused automated coverage, full Node tests and isolated Chrome/Firefox desktop/phone/theme/fullscreen rendering; real mobile/Activity and human appearance acceptance remain separate gates.
+
+The older registry/audit workflow below applies to future unapproved work, not to routine choices already delegated above.
+
 This is the canonical design reference for uburoom's web interface. `AGENTS.md` requires every future agent working on UI, CSS, layout, branding, menus, dialogs, accessibility, and interaction to read this guide **before** investigating, planning or editing. The current code is evidence of what exists, not automatic authorization to preserve an inconsistency as a new standard. Existing rules below remain in force unless the owner explicitly changes them. The separate `uburoom-remote` repository owns its own extension renderer and popup; do not silently impose web UI changes there.
 
 **The owner makes ALL design and implementation decisions.** Agents may inspect, measure, compare, diagnose, summarize, propose alternatives, and ask questions. They may not decide on the owner's behalf which component type, layout, dimension, wording, colors, spacing, border, icon, animation, dismissal behavior, keyboard behavior, technical abstraction, compatibility exception, test threshold, or implementation sequence to adopt. "Obviously better," "consistent," "cleanup," "best practice," and "minor" are not exceptions. Do not treat an agent's recommendation, a passing test, an existing implementation, a prior unapproved proposal, or silence as approval. If instructions conflict or an existing rule appears defective, identify the conflict and request an explicit ruling rather than silently revising it.
@@ -42,7 +58,7 @@ The inventory is a starting map, **not a completeness claim**. Agents must find 
 
 ### Canonical popup/component type registry — owner approval required
 
-**No new popup size taxonomy, shared constructor API, overlay-stack policy or behavior contract is approved by this documentation change.** The next assigned agent must propose these to the owner, obtain explicit answers, and record the approved canonical types **here**, not solely in a chat, implementation PR or personal notes.
+The authorized pass above records the current small/medium/large conventions and specialized exceptions. It supersedes the prior pending registry status; dimensions and helper details are implementation choices. Use the following fields when proposing future material changes beyond that scope.
 
 For *each owner-approved* type, add a concise record with these fields:
 
@@ -56,9 +72,9 @@ For *each owner-approved* type, add a concise record with these fields:
 | Placement contract | Desktop, narrow/mobile, theater, actual browser fullscreen, fullscreen Menu, Activity and PIP where applicable; overflow, viewport and scroll rules |
 | Verification and exceptions | Approved tests, browser/viewport matrix, comparison baselines/tolerances, known exceptions and linked owner decisions |
 
-**Registry status as of 2026-10-20:** no additional canonical popup categories or dimensions have been approved by this effort. The existing named button roles and the documented feature-specific player/fullscreen behaviors remain in force. Do not fill the type registry by guessing. Once the owner approves types, replace this pending statement with their actual records and keep old approvals discoverable rather than silently redefining them.
+**Decision history:** the earlier 2026-10-20 documentation-only audit authorized no additional categories or dimensions. The subsequent owner implementation request authorized the seven decisions above, including delegated tuning, while retaining the existing named button roles and feature-specific exceptions.
 
-### Required popup audit questions before any implementation
+### Required popup audit questions for future unapproved changes
 
 For each overlay, inspect and explicitly ask the owner to resolve all choices not already covered by a documented rule, including:
 
