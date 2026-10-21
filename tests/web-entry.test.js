@@ -29,10 +29,24 @@ test('watch entry and application-owned static resources work without an extensi
   assert.equal(watch.status, 200);
   assert.match(watch.body.toString(), /<title>uburoom watch<\/title>/);
   assert.ok(watch.body.toString().indexOf('<script src="/icons.js"></script>') < watch.body.toString().indexOf('<body'), 'icon pack loads in the document head');
+  assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/vendor\/overlayscrollbars\/overlayscrollbars\.css">/);
+  assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/watch-scrollbars\.css">/);
+  assert.match(watch.body.toString(), /<script src="\/watch-sidebar\.js"><\/script>/);
+  assert.ok(watch.body.toString().indexOf('/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js') < watch.body.toString().indexOf('<script src="/watch-scrollbars.js"'), 'library loads before scrollbar initialization');
   assert.match(watch.headers['content-security-policy'], /frame-ancestors 'self' https:\/\/discord.com/);
+  const scriptNonce = /<script src="\/watch-scrollbars\.js" data-os-style-nonce="([A-Za-z0-9+/=]+)"><\/script>/.exec(watch.body.toString())?.[1];
+  assert.ok(scriptNonce, 'watch page exposes a generated style nonce only to the scrollbar initializer');
+  assert.ok(watch.headers['content-security-policy'].includes("'nonce-" + scriptNonce + "'"), 'CSP permits the nonce used by OverlayScrollbars');
+  assert.ok(!watch.headers['content-security-policy'].includes("'unsafe-inline'"), 'inline styles stay denied unless explicitly nonced');
+  const secondWatch = await request('/watch');
+  const secondNonce = /data-os-style-nonce="([A-Za-z0-9+/=]+)"/.exec(secondWatch.body.toString())?.[1];
+  assert.ok(secondNonce && secondNonce !== scriptNonce, 'every page request gets a fresh style nonce');
+  const activity = await request('/activity');
+  const activityNonce = /data-os-style-nonce="([A-Za-z0-9+/=]+)"/.exec(activity.body.toString())?.[1];
+  assert.ok(activityNonce && activity.headers['content-security-policy'].includes("'nonce-" + activityNonce + "'"), 'Activity shares the secure body scrollbar initialization');
   const resources = {
     '/engine.js': 'shared/engine.js', '/room-protocol.js': 'shared/room-protocol.js', '/viewport.js': 'shared/viewport.js',
-    '/remote-ui.js': 'web/remote-ui.js', '/icons.js': 'web/icons.js', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
+    '/remote-ui.js': 'web/remote-ui.js', '/icons.js': 'web/icons.js', '/watch-scrollbars.js': 'web/watch-scrollbars.js', '/watch-sidebar.js': 'web/watch-sidebar.js', '/watch-scrollbars.css': 'web/watch-scrollbars.css', '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': 'web/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', '/vendor/overlayscrollbars/overlayscrollbars.css': 'web/vendor/overlayscrollbars/overlayscrollbars.css', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
     '/favicon.svg': 'web/assets/uburoom-oomark-brand.svg', '/assets/branding/uburoom-wordmark-brand.svg': 'web/assets/uburoom-wordmark-brand.svg'
   };
   for (const [route, file] of Object.entries(resources)) {

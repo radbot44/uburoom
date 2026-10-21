@@ -262,8 +262,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
-      const player = route === '/watch' || route === '/activity' || route === '/__diagnostics/codec';
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      const watchDocument = route === '/watch' || route === '/activity';
+      // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
+      const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
+      const player = watchDocument || route === '/__diagnostics/codec';
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
@@ -346,7 +349,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/watch-queue.css':['watch-queue.css','text/css'],
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
-        '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
+        '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && ['/room-protocol.js', '/viewport.js', '/engine.js'].includes(route)) {
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../shared', route.slice(1))));
       }
@@ -363,7 +366,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const [file, type] = assets[route];
         if(file==='watch.html'){
           const initial=await watchRoutes.bootstrap(req);
-          const html=watchPage(fs.readFileSync(path.join(publicDir,file),'utf8'),initial);
+          const html=watchPage(fs.readFileSync(path.join(publicDir,file),'utf8'),initial,scrollbarStyleNonce);
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
         }
         res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(fs.readFileSync(path.join(publicDir, file)));

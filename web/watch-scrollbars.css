@@ -1,0 +1,21 @@
+/* Theme shared by the document scrollbar and compatible internal scroll areas. */
+.os-theme-uburoom {
+  box-sizing: border-box;
+  --os-size: 10px;
+  --os-padding-perpendicular: 2px;
+  --os-padding-axis: 2px;
+  --os-track-border-radius: 999px;
+  --os-handle-border-radius: 999px;
+  --os-handle-min-size: 32px;
+  --os-handle-interactive-area-offset: 4px;
+  --os-handle-bg: color-mix(in srgb, var(--muted) 70%, transparent);
+  --os-handle-bg-hover: var(--muted);
+  --os-handle-bg-active: var(--primary);
+}
+@media (forced-colors: active) {
+  .os-theme-uburoom {
+    --os-handle-bg: CanvasText;
+    --os-handle-bg-hover: CanvasText;
+    --os-handle-bg-active: Highlight;
+  }
+}
