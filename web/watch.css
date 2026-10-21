@@ -390,9 +390,15 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 .watch-switch-pill.is-on{--pill-border:var(--primary);background:color-mix(in srgb,var(--primary) 14%,var(--elevated));color:var(--accent-text)}
 .watch-switch-pill-body{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;min-height:42px;flex:1;padding:6px;cursor:pointer}
 .watch-switch-pill-label{min-width:0;overflow-wrap:anywhere}
-.watch-switch-pill.is-readonly .watch-switch-pill-body{cursor:default}
+.watch-switch-pill:is(.is-readonly,.is-disabled) .watch-switch-pill-body{cursor:default}
+.watch-permission-input{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.watch-permission-indicator{display:inline-flex;flex:0 0 24px;width:24px;height:24px}
+.watch-permission-indicator svg{width:24px;height:24px}
+.watch-permission-indicator .watch-permission-hover{display:none}
+.watch-permission-pill:not(.is-readonly):not(.is-disabled) .watch-switch-pill-body:hover .watch-permission-normal{display:none}
+.watch-permission-pill:not(.is-readonly):not(.is-disabled) .watch-switch-pill-body:hover .watch-permission-hover{display:block}
 .watch-switch-pill-state{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .watch-switch-pill:has(:focus-visible){outline:2px solid var(--primary);outline-offset:2px}
 :is(.watch-switch-pill .watch-switch-pill-action,#options-panel .watch-switch-pill-action,#room-settings-dialog .watch-switch-pill-action){align-self:stretch;width:40px;height:auto;min-height:42px;margin:0;padding:0;border-radius:0 999px 999px 0;border-inline-start:1px solid var(--pill-border);background:transparent;color:inherit}
-.watch-switch-pill:not(.is-readonly):hover{background:var(--hover)}
-.watch-switch-pill.is-on:not(.is-readonly):hover{background:color-mix(in srgb,var(--primary) 22%,var(--elevated))}
+.watch-switch-pill:not(.is-readonly):not(.is-disabled):hover{background:var(--hover)}
+.watch-switch-pill.is-on:not(.is-readonly):not(.is-disabled):hover{background:color-mix(in srgb,var(--primary) 22%,var(--elevated))}

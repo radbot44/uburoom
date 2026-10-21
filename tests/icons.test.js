@@ -11,7 +11,7 @@ test('the Tabler pack resolves every semantic name without legacy artwork', () =
     assert.equal(icons.resolveName(name), slug, name);
     assert.ok(icons.glyphs[slug]?.includes('<'), name + ' resolves to a local SVG');
   }
-  for (const slug of ['adjustments-horizontal','sparkles','karate','ban','volume-off','volume-4','volume-2','volume']) {
+  for (const slug of ['adjustments-horizontal','sparkles','karate','ban','volume-off','volume-4','volume-2','volume','thumb-up','thumb-down','thumb-up-off','thumb-down-off']) {
     assert.equal(icons.resolveName(slug), slug);
     assert.ok(icons.glyphs[slug]?.includes('<'), slug + ' is bundled');
   }

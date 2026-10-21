@@ -21,14 +21,20 @@
     if (action) control.addEventListener('click',action);
     return control;
   }
-  function switchPill(doc, {label, checked = false, editable = true, disabled = false, onChange, action}) {
+  function switchPill(doc, {label, checked = false, editable = true, disabled = false, onChange, action, variant = 'switch'}) {
     const element = doc.createElement('div'); element.className = 'watch-switch-pill';
+    const permission = variant === 'permission';
+    element.classList.toggle('watch-permission-pill',permission);
     const controlLabel = doc.createElement('label'), badge = doc.createElement('span');
     controlLabel.className = badge.className = 'watch-switch-pill-body';
     const text = doc.createElement('span'); text.className = 'watch-switch-pill-label';
     label.split('/').forEach((part,index) => { if (index) text.append(doc.createTextNode('/'),doc.createElement('wbr')); text.append(doc.createTextNode(part)); });
     const state = doc.createElement('span'); state.className = 'watch-switch-pill-state';
-    const input = doc.createElement('input'); input.type = 'checkbox'; input.className = 'watch-switch'; input.setAttribute('role','switch');
+    const input = doc.createElement('input'); input.type = 'checkbox';
+    input.className = permission ? 'watch-permission-input' : 'watch-switch';
+    if (!permission) input.setAttribute('role','switch');
+    const indicator = permission ? doc.createElement('span') : undefined;
+    if (indicator) { indicator.className = 'watch-permission-indicator'; indicator.setAttribute('aria-hidden','true'); }
     let currentEditable = editable;
     const actionButton = action ? button(doc,{label:action.label,icon:action.icon || 'settings',iconOnly:true,action:action.onClick}) : undefined;
     actionButton?.classList.add('watch-switch-pill-action');
@@ -36,16 +42,25 @@
       currentEditable = editable;
       input.checked = checked; input.disabled = disabled;
       element.classList.toggle('is-on',checked); element.classList.toggle('is-readonly',!editable);
+      element.classList.toggle('is-disabled',disabled);
       element.classList.toggle('watch-switch-pill-split',!!actionButton && editable);
-      element.title = label + (checked ? ': On' : ': Off');
+      const stateText = permission ? (checked ? ': Allowed' : ': Denied') : (checked ? ': On' : ': Off');
+      element.title = label + stateText;
+      if (indicator) {
+        const slug = checked ? 'thumb-up' : 'thumb-down';
+        const normal = root.uburoomIcons.icon(doc,slug), hover = root.uburoomIcons.icon(doc,slug + '-off');
+        normal.classList.add('watch-permission-normal'); hover.classList.add('watch-permission-hover');
+        indicator.replaceChildren(normal,hover);
+      }
       const body = editable ? controlLabel : badge;
       if (element.firstChild !== body) {
         if (editable) controlLabel.replaceChildren(text,input);
         else badge.replaceChildren(text,state);
+        if (indicator) body.append(indicator);
         element.replaceChildren(body);
         if (editable && actionButton) element.append(actionButton);
       }
-      state.textContent = checked ? ': On' : ': Off';
+      state.textContent = stateText;
       if (actionButton) actionButton.disabled = disabled;
     }
     update({checked,editable,disabled});

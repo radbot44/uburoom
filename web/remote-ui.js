@@ -1,12 +1,10 @@
 /* Shared remote: safe DOM only, used by the webpage, toolbar and player overlay. */
 (function (global) {
   'use strict';
-  const icons = typeof module !== 'undefined' && module.exports ? require('./icons') : global.uburoomIcons;
-  const icon = (doc, name, seekSeconds = 15) => icons.icon(doc, name, seekSeconds);
   const CSS = `
 :host{color:var(--text);font:14px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:inherit}
 *{box-sizing:border-box}[hidden]{display:none!important}button,input{font:inherit}button{cursor:pointer;border:0;touch-action:manipulation;user-select:none;color:inherit}button:disabled,input:disabled{opacity:.4;cursor:default}button:focus-visible,input:focus-visible{outline:3px solid var(--text);outline-offset:3px}button:active{transform:scale(.97)}
-.remote{background:var(--card);border-radius:28px;padding:24px;max-width:500px;margin:auto}svg{width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.header h2{font-size:24px;letter-spacing:-.7px;margin:0}.plain{background:transparent;border-radius:10px;padding:6px;color:var(--muted);display:grid;place-items:center}.plain:hover{background:var(--hover);color:var(--text)}.media{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.key{height:74px;border-radius:12px;background:var(--elevated);display:grid;place-items:center}.key:hover,.dpad button:hover{background:var(--hover)}.key svg{width:38px;height:38px}.play{background:var(--primary);color:var(--on-primary)}.play:hover{background:color-mix(in srgb,var(--primary),var(--text) 10%)}.volume{grid-column:span 2;display:flex;align-items:center;gap:12px;background:var(--elevated);border-radius:12px;padding:12px;min-width:0}.bars{position:relative;flex:1;height:42px;display:flex;align-items:end;gap:3px;min-width:0}.bar{flex:1;background:var(--border);border-radius:2px;height:var(--height);position:relative;overflow:hidden}.fill{height:100%;background:var(--primary)}.volume.muted .fill{background:var(--muted)}.bars input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}.bars:focus-within{outline:2px solid var(--text);outline-offset:3px}.number{background:transparent;padding:4px 0;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.volume .number{font-size:17px;width:52px;flex:0 0 52px;text-align:right}.number-input{background:var(--elevated);color:var(--text);text-align:center;border:0;border-radius:8px;padding:5px;min-width:0;width:100%;font-weight:700}.volume .number-input{width:52px;flex:0 0 52px}.separator{height:1.5px;background:var(--border);margin:26px 0}
+.remote{background:var(--card);border-radius:28px;padding:24px;max-width:500px;margin:auto}svg{width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.header h2{font-size:24px;letter-spacing:-.7px;margin:0}.plain{background:transparent;border-radius:10px;padding:6px;color:var(--muted);display:grid;place-items:center}.plain:hover{background:var(--hover);color:var(--text)}.media{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.key{height:74px;border-radius:12px;background:var(--elevated);display:grid;place-items:center}.key:hover,.dpad button:hover{background:var(--hover)}.key svg{width:38px;height:38px}.play{background:var(--primary);color:var(--on-primary)}.play:hover{background:color-mix(in srgb,var(--primary),var(--text) 10%)}.volume{grid-column:span 2;display:flex;align-items:center;gap:12px;background:var(--elevated);border-radius:12px;padding:12px;min-width:0}.bars{position:relative;flex:1;height:42px;display:flex;align-items:end;gap:3px;min-width:0}.bar{flex:1;background:var(--border);border-radius:2px;height:var(--height);position:relative;overflow:hidden}.fill{height:100%;background:var(--primary)}.volume.muted .fill{background:var(--muted)}.bars input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}.bars:focus-within{outline:2px solid var(--text);outline-offset:3px}.number{background:transparent;padding:4px 0;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.volume .number{font-size:17px;width:52px;flex:0 0 52px;text-align:right}.number-input{background:var(--elevated);color:var(--text);text-align:center;border:0;border-radius:8px;padding:5px;min-width:0;width:100%;font-weight:700}.volume .number-input{width:52px;flex:0 0 52px}.separator{height:1.5px;background:var(--border);margin:26px 0}
 .transform{background:var(--card);border-radius:18px;padding:14px 12px}
 .picture-layout{display:grid;grid-template-columns:minmax(0,1fr) 140px;gap:14px;align-items:center}
 .size-controls{display:grid;gap:12px;min-width:0}
@@ -47,7 +45,6 @@
 .master-row{display:flex;justify-content:center;gap:22px;margin-bottom:8px}.sharing-row{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0}.control[data-control=queue]:disabled,.control[data-control=playback]:disabled,.control[data-control=transform]:disabled{opacity:.35}.remote.settings-only{padding:0;max-width:none;border-radius:0;background:none}.settings-only>.header,.settings-only>.media,.settings-only>.transform,.settings-only>.separator,.settings-only>.profiles{display:none}.settings-only>.sharing{margin-bottom:0;padding:0;background:none}.settings-only .master-row{justify-content:stretch;margin:0 0 10px}.settings-only .master-row .control{width:100%;display:flex;flex-direction:row;justify-content:flex-start;gap:12px;min-height:36px;padding:0}.settings-only .master-row .control:active{transform:none}.settings-only .master-row .control-label{font-size:14px;font-weight:600}.settings-only .sharing-row{gap:10px}.settings-only [data-control=queue]{display:none}.settings-only .sharing-row .control{flex-direction:row;flex-wrap:wrap;gap:8px;min-height:36px;padding:8px;border-radius:10px;background:var(--card)}.settings-only .control-label{font-size:12px}
 
 `;
-  /* LEGACY ICON ARCHIVE — retained for reference only; never executed.
   const paths = {
     home: ['M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9'],
     sun: ['M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0','M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5'],
@@ -113,13 +110,11 @@
     }
     return path + 'Z';
   }
-  */
   function node(doc, parent, tag, text, attrs = {}) {
     const n = doc.createElement(tag); if (text !== undefined) n.textContent = text;
     for (const [key, value] of Object.entries(attrs)) n.setAttribute(key, value);
     parent.append(n); return n;
   }
-  /* LEGACY SVG RENDERER — no callers. For historical reference only.
   function icon(doc, name, seekSeconds = 15) {
     const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
     for (const d of paths[name] || []) { const p = doc.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', d); svg.append(p); }
@@ -132,10 +127,9 @@
     }
     return svg;
   }
-  */
   const BADGE_CSS = `
 .uburoom-badge{width:min(164px,calc(100vw - 32px));min-height:186px;padding:16px 12px 12px;box-sizing:border-box;background:var(--card);color:var(--text);color-scheme:inherit;border-radius:18px;text-align:center;font:14px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-.badge-symbol{display:grid;place-items:center;height:112px;color:var(--badge-color,var(--text))}.badge-symbol svg{width:min(112px,100%);height:112px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.badge-symbol{display:grid;place-items:center;height:112px;color:var(--badge-color,var(--text))}.badge-symbol svg{width:min(112px,100%);height:112px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .badge-value{min-height:20px;margin-top:5px;font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.badge-name{color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.badge-announcement{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 `;
   function badgeDetails(command, state = {}) {
@@ -148,13 +142,11 @@
         symbol = action === 'media.toggle' ? (state.paused ? 'pause' : 'play') : action.slice(6);
         label = symbol === 'play' ? 'Play' : 'Pause'; break;
       case 'media.mute': case 'media.unmute': case 'media.volume.set':
-        symbol = icons.volumeName(state.volume ?? args.percent, action === 'media.mute' || (action !== 'media.unmute' && !!state.muted));
+        symbol = action === 'media.mute' ? 'muted' : 'mute';
         label = action === 'media.volume.set' ? 'Volume' : action === 'media.mute' ? 'Mute' : 'Unmute';
         if (action === 'media.volume.set') value = (state.volume ?? args.percent) + '%'; break;
       case 'media.seek.relative':
-        symbol = args.seconds < 0 ? 'back' : 'forward'; label = args.seconds < 0 ? 'Seek back' : 'Seek forward';
-        if (![15, 30, 60].includes(Math.abs(Number(args.seconds)))) value = Math.abs(Number(args.seconds)) + 's';
-        break;
+        symbol = args.seconds < 0 ? 'back' : 'forward'; label = args.seconds < 0 ? 'Seek back' : 'Seek forward'; break;
       case 'media.seek.absolute': {
         const seconds = Math.floor(state.position ?? args.seconds ?? 0);
         symbol = 'end'; value = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); label = 'Seek'; break;
@@ -291,7 +283,7 @@
     const forward = glyph(media, 'Forward 15 seconds', 'key forward', 'forward', () => ({ action: 'media.seek.relative', args: { seconds: 15 } }));
     const start = glyph(media, 'Back to available start', 'key start', 'start', () => ({ action: 'media.seek.start' }));
     const end = glyph(media, 'Go to end / live', 'key end', 'end', () => ({ action: 'media.seek.end' }));
-    const mute = glyph(media, 'Mute', 'key audio-key', 'volume', () => ({ action: state.muted ? 'media.unmute' : 'media.mute' }));
+    const mute = glyph(media, 'Mute', 'key audio-key', 'mute', () => ({ action: state.muted ? 'media.unmute' : 'media.mute' }));
     const volume = node(doc, media, 'div', undefined, { class: 'volume', role: 'group', 'aria-label': 'Volume' });
     const bars = node(doc, volume, 'div', undefined, { class: 'bars' }), fills = [];
     for (let i = 0; i < 20; i++) {
@@ -315,7 +307,7 @@
     function volumeInput() {
       if (!available || !canAudio) return;
       volumeDraft = pendingVolume = Number(range.value); volumeSettledAt = 0;
-      volumeValue.textContent = range.value + '%'; volume.classList.remove('muted'); paintVolume(volumeDraft); mute.replaceChildren(icon(doc, icons.volumeName(volumeDraft, !!state.muted))); scheduleVolume();
+      volumeValue.textContent = range.value + '%'; volume.classList.remove('muted'); paintVolume(volumeDraft); scheduleVolume();
     }
     range.addEventListener('pointerdown', () => { dragging = true; });
     range.addEventListener('input', volumeInput);
@@ -409,10 +401,9 @@
       back.title = forward.title = state.seekable ? 'Seek 15 seconds' : 'Seeking unavailable for this player';
       start.title = state.seekable ? 'Back to available start' : 'Seeking unavailable for this player'; end.title = state.seekable ? 'Go to end / live' : 'Seeking unavailable for this player';
       play.replaceChildren(icon(doc, state.paused && !state.waitingForReady ? 'play' : 'pause')); play.setAttribute('aria-label', state.paused && !state.waitingForReady ? 'Play' : 'Pause');
-      mute.setAttribute('aria-label', state.muted ? 'Unmute' : 'Mute'); mute.setAttribute('aria-pressed', String(!!state.muted));
+      mute.replaceChildren(icon(doc, state.muted ? 'muted' : 'mute')); mute.setAttribute('aria-label', state.muted ? 'Unmute' : 'Mute'); mute.setAttribute('aria-pressed', String(!!state.muted));
       if (volumeDraft !== undefined && !dragging && pendingVolume === undefined && !busy && volumeSettledAt && Date.now() - volumeSettledAt > 1000) volumeDraft = undefined;
       const shownVolume = volumeDraft ?? state.volume;
-       mute.replaceChildren(icon(doc, icons.volumeName(shownVolume, !!state.muted)));
       volume.classList.toggle('muted', volumeDraft === undefined && (!!state.muted || state.volume === 0)); volumeValue.textContent = shownVolume === undefined ? '—' : shownVolume + '%';
       if (!dragging) range.value = shownVolume ?? 0; paintVolume(Number(range.value));
       for (const { field, number, reset } of sizeFields) {
@@ -429,7 +420,7 @@
     }
     render(); return { render, notify, stop, shadow };
   }
-  const api = { mount, CSS, mountBadge, BADGE_CSS, badgeDetails };
+  const api = { mount, CSS, icon, mountBadge, BADGE_CSS, badgeDetails };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.uburoomUI = api;
 })(globalThis);

@@ -505,7 +505,7 @@
     }
     const quickPills = [];
     for (const [key,label] of [['playPause','Play/pause'],['seek','Seek'],['addQueue','Add to queue']]) {
-      const pill = controls.switchPill(document,{label});
+      const pill = controls.switchPill(document,{label,variant:'permission'});
       $('room-quick-switches').append(pill.element);
       const input = pill.input; input.dataset.quickPermission = key;
       quickPills.push(pill);
