@@ -114,6 +114,30 @@ Raster/source exports in `assets/branding` include the 1848 px wide transparent 
 
 Use the canonical uburoom artwork. The initial theme script includes the SVG sources; appearance changes recolor cached local data URLs for header/remote logos without network requests. Preserve the established typography and component layout rules above.
 
+## Shared controls and panel consistency — pending owner audit (2026-10-21)
+
+**Status: no new canonical controls, variants, measurements or panel standards approved.** The next M1-P7 review targets the buttons, icon-only actions, toggles, switches, selected/pressed groups, tabs, navigation controls and supporting Room/Queue/Media panel headers/toolbars. The owner has requested **investigation, an options/risks report, an implementation plan and explicit numbered questions — not implementation**. See the [shared-controls agent brief](shared-controls-audit-brief.md). The 2026-10-20 popup consistency implementation authorization above was a **one-time, limited scope**; it does **not** delegate choices or permit automatic fixes for this controls audit.
+
+**Preserve the already documented five action classes and icon/toggle/appearance principles below.** Specialized classes observed in code (for example `library-key`, `queue-view-button`, `group-button`, remote-local controls) are **existing implementation facts**, not automatically approved alternatives to those roles and not proof that their behaviors must be merged. Do not replace purpose-specific controls solely because they share visual traits. Compare actual semantics, use cases, keyboard/ARIA state, sizing, theme behavior, responsiveness and permission boundaries. Inspect renderings separately from source review.
+
+Before any agent proposes or makes a related UI change, it must read this entire guide and `AGENTS.md`, inspect the relevant current code, identify confirmed rule violations versus intended exceptions and uncertain cases, and present **every unresolved choice for owner decision**. Choices include component taxonomy, DOM helpers, classes, dimensions, colors, state indicators, interactions, panel alignment, test thresholds, order, exceptions and migrations. No silent selection, default, or implied authorization. **Stop at the question packet** unless separately authorized to implement.
+
+### Canonical shared-control registry (future owner-approved records only)
+
+No new entries have been approved by this audit. Following explicit owner answers and **separate implementation authorization**, record each approved type **here, before related application changes**, with:
+
+- **Type/status/owner decision reference:** stable identifier, role, approval date and link, approved versus deprecated.
+- **Usage and boundaries:** permitted contexts, equivalent instances, intended specializations and prohibited substitutions.
+- **Structure and ownership:** permitted markup, safe-DOM helper/API, CSS class ownership, icon library, accessible names.
+- **Visual rules:** tokens, sizes/minimum targets, typography, padding/gaps, border/radius, disabled/hover/focus/selected treatments, appearance themes and device layouts.
+- **Interaction/state contract:** role and keyboard/ARIA semantics; on/off, selected, disabled, busy, failure, stale async and permission-restricted behavior.
+- **Panel integration:** header/toolbar/group alignment, collapse/navigation, scrolling, normal/theater/mobile/fullscreen/Activity conditions.
+- **Verification/exception contract:** approved test matrix, fixture/screenshot baseline if any, allowed deviations and related owner rulings.
+
+Do not treat this checklist as a predetermined set of types. Proposed control types must remain clearly **proposed/unapproved** until the owner explicitly settles their individual contracts. Subsequent agents must consult and reuse approved registry entries; if a needed variant is missing, **stop and ask the owner**.
+
+---
+
 ## Button hierarchy and interaction patterns
 
 Five named button classes define the existing interactive action roles. Never mix their semantic roles; other specialized controls require explicit owner review rather than silently adding a new class.
