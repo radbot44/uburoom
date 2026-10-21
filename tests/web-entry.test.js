@@ -31,7 +31,7 @@ test('watch entry and application-owned static resources work without an extensi
   assert.ok(watch.body.toString().indexOf('<script src="/icons.js"></script>') < watch.body.toString().indexOf('<body'), 'icon pack loads in the document head');
   assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/vendor\/overlayscrollbars\/overlayscrollbars\.css">/);
   assert.match(watch.body.toString(), /<link rel="stylesheet" href="\/watch-scrollbars\.css">/);
-  assert.ok(watch.body.toString().indexOf('/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js') < watch.body.toString().indexOf('<script src="/watch-scrollbars.js"></script>'), 'library loads before scrollbar initialization');
+  assert.ok(watch.body.toString().indexOf('/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js') < watch.body.toString().indexOf('<script src="/watch-scrollbars.js"'), 'library loads before scrollbar initialization');
   assert.match(watch.headers['content-security-policy'], /frame-ancestors 'self' https:\/\/discord.com/);
   const scriptNonce = /<script src="\/watch-scrollbars\.js" data-os-style-nonce="([A-Za-z0-9+/=]+)"><\/script>/.exec(watch.body.toString())?.[1];
   assert.ok(scriptNonce, 'watch page exposes a generated style nonce only to the scrollbar initializer');
