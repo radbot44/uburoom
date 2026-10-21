@@ -6,6 +6,16 @@ Read [ROADMAP.md](ROADMAP.md) before planning feature work or choosing the next 
 
 ---
 
+## Owner-controlled UI and design decisions — mandatory for every agent
+
+**The owner retains ALL decisions about UI, styling, popup types, interactions, component boundaries, consistency rules, exceptions, sequencing, tests and implementation details.** This includes changes an agent might call minor, obvious, standard, accessibility-related, cleanup or a bug fix. An agent may investigate and recommend, but must not interpret a recommendation, existing code, unanswered question or past unapproved proposal as permission.
+
+**Before ANY UI/design investigation, planning or code change, read [docs/design-guide.md](docs/design-guide.md) in full.** That guide is the canonical design reference and contains the owner-approval workflow and owner-approved type registry. Read the relevant actual files and test evidence too; investigate discrepancies rather than making independent design choices. In particular, popups, menus, dialogs, overlays, buttons and responsive behavior must follow the guide. Before implementation, provide an evidence-based inventory, exact issues and code locations, alternatives/trade-offs, a staged plan and explicit numbered owner questions for **every unresolved choice**. Then **stop and wait for explicit owner answers and authorization to implement**. Never silently choose a default, invent or change a canonical type, or implement a proposed refactor. A decision concerning one surface or property does not imply approval for another.
+
+After approval, record the owner's canonical types, attributes, exceptions and decision references in **docs/design-guide.md** before changing affected UI code. Keep the guide synchronized with each later owner-approved revision and preserve the existing authorized design until a change is expressly approved. When new unanswered choices arise, stop and ask again. No unrelated implementation, branch merging, deployment or publishing is authorized by a design review.
+
+---
+
 ## Codebase Quick Map
 
 | Domain | Primary Files |

@@ -229,6 +229,8 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Track-menu refinement (2026-10-18):** Quality labels include 1080p/720p; automatic audio/subtitle summaries show resolved tracks, with separate track-name captions and an indication of which track Automatic uses. Selected choices retain orange text without an edge stripe. See [verification](docs/testing.md#player-track-menu-labels-2026-10-18).
 
+**Owner design gate:** For further UI/UX and popup consistency work, all proposed visual types, dimensions, component boundaries, interaction changes, tests and exceptions are owner decisions. Agents must consult [the canonical design guide](docs/design-guide.md), inventory current surfaces and present explicit alternatives/questions before implementing any new standard. Owner-approved canonical popup/component types belong in that guide; roadmap tasks and prior recorded implementations alone are not authorization to select them.
+
 **Goal:** Review the interface and complete user experience in depth, then restructure navigation, information hierarchy and interactions so common tasks are clear, consistent and easy to complete.
 
 - Map and inspect end-to-end journeys: sign-in and account linking, library browsing, room creation/joining, playback and personal tracks/quality, remote permissions, browser/Discord handoff and recovery from failures.
