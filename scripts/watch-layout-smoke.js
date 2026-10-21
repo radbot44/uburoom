@@ -59,8 +59,24 @@ async function main() {
                 } else assert.ok(Math.abs(r.options.y-r.stage.y)<2,'Normal Room beside video');
                 await evaluate('window.scrollTo(0,document.getElementById("room-column").getBoundingClientRect().top+scrollY);true'); await pause(120);
                 const top=(await measure()).column.y;
+                const tall=await evaluate('document.getElementById("room-column").offsetHeight > innerHeight - 44');
+                assert.equal(await evaluate('getComputedStyle(document.getElementById("room-column")).overflowY'), 'visible', 'Room/Queue has no independent scroll pane');
                 await evaluate('window.scrollBy(0,300);true'); await pause(120);
-                assert.ok(Math.abs((await measure()).column.y-top)<2,label+' right column stays sticky');
+                const after=(await measure()).column;
+                if (tall) {
+                  assert.ok(after.y<top,label+' tall Room/Queue follows page down');
+                  const remaining=await evaluate('Math.max(0,document.getElementById("room-column").getBoundingClientRect().bottom-innerHeight+22)+300');
+                  await evaluate('window.scrollBy(0,'+remaining+');true'); await pause(120);
+                  const pinned=(await measure()).column;
+                  assert.ok(pinned.bottom<=height-20,label+' tall Room/Queue bottom sticks to viewport');
+                  await evaluate('window.scrollBy(0,300);true'); await pause(120);
+                  assert.ok(Math.abs((await measure()).column.bottom-pinned.bottom)<2,label+' bottom remains sticky');
+                  await evaluate('window.scrollBy(0,-100);true'); await pause(120);
+                  assert.ok((await measure()).column.y>pinned.y+20,label+' reverse scroll reveals Room/Queue top');
+                } else {
+                  assert.ok(Math.abs(after.y-top)<2,label+' short Room/Queue sticks at top');
+                }
+                assert.equal(await evaluate('document.getElementById("room-column").scrollTop'),0,'Room/Queue has no separate scroll');
                 await browser.screenshot(page,path.join(output,name+'-'+label+'-panels.png'));
                 await evaluate('window.scrollTo(0,0);true');
               }

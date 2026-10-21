@@ -28,7 +28,6 @@
   // scrolling semantics. OverlayScrollbars cancels in that case.
   if (!pageScrollbar || pageScrollbar.state().destroyed) return;
 
-  const desktop = matchMedia('(min-width: 1101px)');
   const finePointer = matchMedia('(pointer: fine)');
   const forcedColors = matchMedia('(forced-colors: active)');
   const safeInnerViewport = OverlayScrollbars.env().scrollbarsHiding;
@@ -60,9 +59,6 @@
     const useCustom = safeInnerViewport && finePointer.matches && !forcedColors.matches;
     const immersive = body.classList.contains('immersive');
     const pip = body.classList.contains('activity-pip');
-    toggleInner(document.getElementById('room-column'),
-      useCustom && desktop.matches && !immersive && !body.classList.contains('mobile-player'));
-
     const drawer = document.getElementById('drawer');
     toggleInner(drawer, useCustom && immersive && !pip && drawer && !drawer.hidden);
 
@@ -91,7 +87,7 @@
     const settingsContent = document.getElementById('room-settings-content');
     if (settingsContent) new MutationObserver(syncInnerScrollbars)
       .observe(settingsContent, { attributes: true, attributeFilter: ['hidden'] });
-    for (const media of [desktop, finePointer, forcedColors])
+    for (const media of [finePointer, forcedColors])
       media.addEventListener('change', syncInnerScrollbars);
     syncInnerScrollbars();
   }

@@ -84,58 +84,55 @@ function start({ scrollbarsHiding = true, vendor = true } = {}) {
   return { calls, elements, body, doc, notify, active, load, media, OverlayScrollbars };
 }
 
-test('custom scrollbars preserve original viewports and only initialize safe scroll areas', () => {
+test('custom scrollbars handle the page, immersive drawer, and settings without touching Room/Queue', () => {
   const app = start();
   assert.equal(app.OverlayScrollbars.styleNonce, 'nonceTest123');
-  assert.equal(app.active(app.body).length, 1, 'document starts before DOMContentLoaded');
+  assert.equal(app.active(app.body).length, 1);
   app.load();
   const column = app.elements.get('room-column');
   const drawer = app.elements.get('drawer');
   const panels = app.elements.get('room-settings-panels');
-  assert.equal(app.active(column).length, 1, 'desktop room column enabled');
-  assert.equal(app.active(drawer).length, 0, 'hidden drawer stays native');
-  assert.equal(app.active(panels).length, 0, 'closed settings stay native');
-  assert.equal(app.active(column)[0].target.elements.viewport, column, 'room scroll element unchanged');
+  assert.equal(app.active(column).length, 0, 'Room/Queue stack uses only page scrolling');
+  assert.equal(app.active(drawer).length, 0);
+  assert.equal(app.active(panels).length, 0);
 
   app.body.classList.add('immersive'); app.notify(app.body);
-  assert.equal(app.active(column).length, 0, 'desktop room column disabled in immersive mode');
   assert.equal(app.active(app.body)[0].changes.at(-1).overflow.y, 'hidden');
   drawer.hidden = false; app.notify(drawer);
-  assert.equal(app.active(drawer).length, 1, 'drawer enabled when opened');
-  assert.equal(app.active(drawer)[0].target.elements.viewport, drawer, 'drawer scrollTop is preserved');
+  assert.equal(app.active(drawer).length, 1);
+  assert.equal(app.active(drawer)[0].target.elements.viewport, drawer);
   drawer.hidden = true; app.notify(drawer);
-  assert.equal(app.active(drawer).length, 0, 'drawer restored to native when closed');
+  assert.equal(app.active(drawer).length, 0);
   app.body.classList.remove('immersive'); app.notify(app.body);
-  assert.equal(app.active(column).length, 1, 'desktop room column re-enabled');
   assert.equal(app.active(app.body)[0].changes.at(-1).overflow.y, 'scroll');
+  assert.equal(app.active(column).length, 0);
 
   const dialog = app.elements.get('room-settings-dialog');
   const content = app.elements.get('room-settings-content');
   dialog.open = true; app.notify(dialog);
-  assert.equal(app.active(panels).length, 0, 'hidden settings content is not wrapped');
+  assert.equal(app.active(panels).length, 0);
   content.hidden = false; app.notify(content);
   assert.equal(app.active(panels).length, 1);
-  assert.equal(app.active(panels)[0].target.elements.viewport, panels, 'settings scrollTop preserved');
+  assert.equal(app.active(panels)[0].target.elements.viewport, panels);
   dialog.open = false; app.notify(dialog);
-  assert.equal(app.active(panels).length, 0, 'closing dialog destroys only its inner scrollbar');
+  assert.equal(app.active(panels).length, 0);
 });
 
-test('responsive, high contrast and unsupported browsers retain native internal scrollbars', () => {
+test('touch, high contrast, unsupported browsers and missing vendor use native inner scrollbars', () => {
   const app = start(); app.load();
-  const column = app.elements.get('room-column');
-  assert.equal(app.active(column).length, 1);
-  app.media.get('(min-width: 1101px)').change(false);
-  assert.equal(app.active(column).length, 0, 'single column layout is native');
-  app.media.get('(min-width: 1101px)').change(true);
-  assert.equal(app.active(column).length, 1);
+  const dialog = app.elements.get('room-settings-dialog');
+  const content = app.elements.get('room-settings-content');
+  const panels = app.elements.get('room-settings-panels');
+  dialog.open = true; content.hidden = false; app.notify(dialog);
+  assert.equal(app.active(panels).length, 1);
   app.media.get('(pointer: fine)').change(false);
-  assert.equal(app.active(column).length, 0, 'touch pointer is native');
+  assert.equal(app.active(panels).length, 0);
   app.media.get('(pointer: fine)').change(true);
-  assert.equal(app.active(column).length, 1);
+  assert.equal(app.active(panels).length, 1);
   app.media.get('(forced-colors: active)').change(true);
-  assert.equal(app.active(column).length, 0, 'high contrast is native');
+  assert.equal(app.active(panels).length, 0);
   const unsupported = start({ scrollbarsHiding: false }); unsupported.load();
   assert.equal(unsupported.active(unsupported.elements.get('room-column')).length, 0);
   const missing = start({vendor: false});
-  assert.equal(missing.calls.length, 0, 'missing dependency never alters native behavior');
+  assert.equal(missing.calls.length, 0);
 });
