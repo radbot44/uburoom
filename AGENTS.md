@@ -24,7 +24,7 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 | **HTTP/WebSocket routing & auth** | [server/app.js](server/app.js), [server/login.js](server/login.js), [server/watch-http.js](server/watch-http.js) |
 | **Shared command engine** | [shared/engine.js](shared/engine.js), [shared/room-protocol.js](shared/room-protocol.js), [shared/viewport.js](shared/viewport.js) |
 | **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js), [web/watch-sync.mjs](web/watch-sync.mjs) |
-| **Web remote UI, SVGs & styles** | [web/remote-ui.js](web/remote-ui.js), [web/watch.css](web/watch.css) |
+| **Web Tabler icons, remote UI & styles** | [web/icons.js](web/icons.js), [web/remote-ui.js](web/remote-ui.js), [web/watch.css](web/watch.css) |
 | **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
 | **Durable rooms and queues (P13-1–P13-5)** | [server/room-store.js](server/room-store.js), [server/room-queue.js](server/room-queue.js), [server/playback-end.js](server/playback-end.js), [implementation and integration boundary](docs/rooms-and-queues.md) |
 | **Plex integration** | [server/plex.js](server/plex.js), [server/plex-auth.js](server/plex-auth.js), [server/media-tracks.js](server/media-tracks.js) |
@@ -122,9 +122,11 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 
 ## UI & Design
 
-- Read [docs/design-guide.md](docs/design-guide.md) and the web-owned styles/SVGs in `web/remote-ui.js` before any UI work. UI assets have per-repository ownership without cross-repository filesystem imports. **Inspect affected rendered surfaces** before and after changes.
+- Read [docs/design-guide.md](docs/design-guide.md), the self-hosted SVG pack in `web/icons.js`, and relevant web styles before UI work. UI assets have per-repository ownership without cross-repository filesystem imports. **Inspect affected rendered surfaces** before and after changes.
 - **Color tokens:** background `#101217`, card `#1B1E26`, elevated `#292E38`, border `#393F4D`, text `#F8F7F4`, muted `#AAB0BC`, orange `#FF9954` (main accent), pink `#FF7197` (brand accent), green `#158761` (remote enabled).
-- **Icons:** 24×24 SVGs, `currentColor` strokes, rounded ends/joins, ~1.9px stroke width. ~40 icon paths defined inline in `remote-ui.js`. No emoji or icon library substitution. Do not invent replacement graphics.
+- **Icons:** The ONLY active icon provider is `web/icons.js`: vendored **Tabler outline** SVGs with 24×24 viewBox, `currentColor` strokes and rounded ends/joins, plus the original monochrome `oomark` for Room. `web/remote-ui.js` contains an inert, commented-out archive of prior SVG paths — do not reuse or uncomment it.
+- **Adding a future icon:** When the owner names a Tabler icon (usually by its exact Tabler slug), get the official outline SVG from `https://github.com/tabler/tabler-icons/blob/main/icons/outline/<slug>.svg`; verify it exists and append its inner SVG elements as a quoted string under the exact slug in `glyphs` inside `web/icons.js`. Preserve the official paths/geometry; use the existing `icon(doc, 'slug')` entry point. If existing code uses a semantic name, add a matching entry in `aliases`. Add coverage in `tests/icons.test.js`, keep the Tabler MIT notice in `web/vendor/THIRD_PARTY_NOTICES.txt`, and inspect Chrome/Firefox rendering. No CDN, webfonts, arbitrary generated icons, additional runtime fetches, or dependency on `remote-ui.js` for icons. See [docs/design-guide.md](docs/design-guide.md#icon-button-rules).
+- **Stateful icons:** `captions` always uses outline `badge-cc` (the active state uses `aria-pressed` and styling); `volumeName(percent, muted)` picks `volume-off`, `volume-4`, `volume-2`, or `volume`; configurable seek intervals use Tabler 15/30/60 backward/forward icons. Refresh spinners rotate counter-clockwise.
 - **Title indicators are independent:**
   - 🟢 — only for that room's confirmed reachable remote enablement.
   - 🔵 — only for non-default transforms active.

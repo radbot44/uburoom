@@ -28,10 +28,11 @@ test('watch entry and application-owned static resources work without an extensi
   const watch = await request('/watch');
   assert.equal(watch.status, 200);
   assert.match(watch.body.toString(), /<title>uburoom watch<\/title>/);
+  assert.ok(watch.body.toString().indexOf('<script src="/icons.js"></script>') < watch.body.toString().indexOf('<body'), 'icon pack loads in the document head');
   assert.match(watch.headers['content-security-policy'], /frame-ancestors 'self' https:\/\/discord.com/);
   const resources = {
     '/engine.js': 'shared/engine.js', '/room-protocol.js': 'shared/room-protocol.js', '/viewport.js': 'shared/viewport.js',
-    '/remote-ui.js': 'web/remote-ui.js', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
+    '/remote-ui.js': 'web/remote-ui.js', '/icons.js': 'web/icons.js', '/favicon.ico': 'web/assets/uburoom-favicon.ico',
     '/favicon.svg': 'web/assets/uburoom-oomark-brand.svg', '/assets/branding/uburoom-wordmark-brand.svg': 'web/assets/uburoom-wordmark-brand.svg'
   };
   for (const [route, file] of Object.entries(resources)) {
