@@ -2,6 +2,78 @@
 
 Keep the established layout and behavior. The main site enters `/watch`; the standalone remote-only homepage is retired. The web-owned remote renderer is `web/remote-ui.js` (styles, SVGs, controls/badges), with the watch shell in `web/watch*.css`. uburoom-remote owns its own renderer and popup; do not import another checkout's UI files. Inspect affected renders before UI changes and use safe-DOM components.
 
+## Design authority, change control and approval (mandatory)
+
+This is the canonical design reference for uburoom's web interface. `AGENTS.md` requires every future agent working on UI, CSS, layout, branding, menus, dialogs, accessibility, and interaction to read this guide **before** investigating, planning or editing. The current code is evidence of what exists, not automatic authorization to preserve an inconsistency as a new standard. Existing rules below remain in force unless the owner explicitly changes them. The separate `uburoom-remote` repository owns its own extension renderer and popup; do not silently impose web UI changes there.
+
+**The owner makes ALL design and implementation decisions.** Agents may inspect, measure, compare, diagnose, summarize, propose alternatives, and ask questions. They may not decide on the owner's behalf which component type, layout, dimension, wording, colors, spacing, border, icon, animation, dismissal behavior, keyboard behavior, technical abstraction, compatibility exception, test threshold, or implementation sequence to adopt. "Obviously better," "consistent," "cleanup," "best practice," and "minor" are not exceptions. Do not treat an agent's recommendation, a passing test, an existing implementation, a prior unapproved proposal, or silence as approval. If instructions conflict or an existing rule appears defective, identify the conflict and request an explicit ruling rather than silently revising it.
+
+For design-standardization tasks, the default authorization is **read-only audit and owner-facing proposal only**. Follow this sequence:
+
+1. Read this guide, `AGENTS.md`, relevant roadmap/specification/verification notes, and the actual HTML, CSS, JavaScript and browser test files. Inspect rendered surfaces when an isolated fixture is available; never claim to have seen a rendering from source inspection alone.
+2. Inventory every affected UI surface, the styling/behavior it actually uses, duplicated patterns, inconsistencies against approved standards, accessibility or lifecycle risks, and its exact file/selector/function location. Distinguish **verified issue**, **suspected issue**, **intentional documented exception**, and **decision needed**.
+3. Present an owner-readable audit, proposed canonical types and migration options, dependency and risk analysis, a staged implementation plan, and **explicit numbered questions covering every open choice**. State the status quo and alternatives, their trade-offs, your nonbinding recommendation, and the exact decision needed for each question. Do not begin implementation or edit design rules as if proposals were approved.
+4. **Stop for the owner's answers.** Record each explicit approval/exception in the canonical registry below before any separately authorized implementation. Unanswered, partly answered or ambiguous choices remain blocked; ask follow-ups. Approval of one choice does not approve related or downstream choices.
+5. After approval to implement, work only within its exact scope. Reuse canonical types, update this guide alongside approved component changes, run appropriate tests, inspect before/after browser renders, report actual evidence and unresolved questions, and pause again whenever a new decision is exposed. Never merge, deploy or publish without separate authorization.
+
+### Already documented common primitives (do not invent alternatives)
+
+- Appearance: use the named CSS tokens and dark/light plus orange/pink semantics under **Visual language**. Video chrome is a deliberate separate dark surface; this does not authorize unrelated hard-coded colors.
+- Actions: the **five existing named button classes** are `.primary`, `.quiet`, `.icon-button`, `.danger-button` and `.solid-button`, each with the roles defined below. Icon-only actions require shared SVGs, accessible names and titles. A variant is not approved merely because one CSS selector exists.
+- Existing modal foundation: `<dialog>` and `.privacy-dialog` are already used for web modal surfaces; size-specific selectors and locally constructed dialog bodies currently differ. These are *implementation facts*, not approved size/type categories.
+- Existing player menu: `web/watch-player-ui.js` constructs a desktop `popover="manual"` settings menu and nested choice surface; mobile settings use a native dialog. Its documented feature flow remains authoritative until the owner decides otherwise.
+- Existing room/fullscreen surfaces: the `#drawer` and `#remote` are distinct from ordinary modal dialogs. A readiness prompt, queue countdown, disconnect toast, inline login state and feedback badges also have distinct purposes. Do not homogenize their behavior or appearance just because they overlap content.
+
+### Existing popup and overlay inventory (descriptive; NOT approved canonical types)
+
+| Surface | Where to inspect | Currently observed mechanism |
+| --- | --- | --- |
+| Room discovery/create and Room settings | `web/watch.html`, `web/watch.js`, `web/watch-rooms-ui.js`, `web/watch.css` | Native dialogs, differing widths and content/navigation arrangements; fullscreen relocation in some open paths |
+| Room change/privacy confirmation | `web/watch.html`, `web/watch-rooms-ui.js`, `web/watch.js` | Native dialogs with separately assigned confirmation actions and button treatments |
+| Account, account removal, browser handoff | `web/watch.html`, `web/account.js`, `web/watch.js`, `web/watch.css` | Native dialogs with different action/header conventions and lifecycle handlers |
+| Personal player settings | `web/watch.html`, `web/watch-player-ui.js`, `web/watch-player.css` | Native full dialog on mobile and from More settings |
+| Desktop player settings and choice menu | `web/watch-player-ui.js`, `web/watch-player.css` | Manual popover with nested submenu, imperative positioning and focus/keyboard logic |
+| Bulk queue addition | `web/watch-queue-ui.js`, `web/watch.css` | Dynamically constructed native dialog |
+| Codec tester | `web/watch.html`, `web/watch.css`, `web/watch.js` | Specialized native dialog containing an iframe |
+| Fullscreen Menu/drawer and web remote | `web/watch.js`, `web/remote-ui.js`, `web/watch.css` | Non-dialog overlays with custom placement, scrolling, visibility and fullscreen handling |
+| Readiness/recovery, autoplay countdown, disconnect/quality notices and badges | `web/watch.html`, `web/watch.js`, `web/watch-queue-ui.js`, `web/watch.css` | Inline/positioned status or action surfaces, not automatically modals |
+
+The inventory is a starting map, **not a completeness claim**. Agents must find additional popups, pseudo-popups, nested menus, dropdowns, browser/native controls and states throughout the supported watch and Activity interfaces; do not assume all of them should share one component.
+
+### Canonical popup/component type registry — owner approval required
+
+**No new popup size taxonomy, shared constructor API, overlay-stack policy or behavior contract is approved by this documentation change.** The next assigned agent must propose these to the owner, obtain explicit answers, and record the approved canonical types **here**, not solely in a chat, implementation PR or personal notes.
+
+For *each owner-approved* type, add a concise record with these fields:
+
+| Field | What to record after explicit approval |
+| --- | --- |
+| Canonical type ID and status | Stable name, purpose, scope and owner approval date/reference; clearly mark proposed vs approved vs deprecated |
+| Allowed usages / exceptions | Which exact surfaces use it, excluded surfaces and any owner-approved deviations |
+| Structural contract | Shared markup/DOM helper or CSS classes, header/title/close/footer/actions, content regions and semantics |
+| Visual contract | Approved token usage, size limits, spacing, padding, typography, radii, shadow, backdrop, icon and button-role rules across themes |
+| Interaction contract | Opening/closing triggers, Escape, outside click, focus entry/trap/restore, keyboard/screen reader semantics, busy state, nested confirmations, error handling |
+| Placement contract | Desktop, narrow/mobile, theater, actual browser fullscreen, fullscreen Menu, Activity and PIP where applicable; overflow, viewport and scroll rules |
+| Verification and exceptions | Approved tests, browser/viewport matrix, comparison baselines/tolerances, known exceptions and linked owner decisions |
+
+**Registry status as of 2026-10-20:** no additional canonical popup categories or dimensions have been approved by this effort. The existing named button roles and the documented feature-specific player/fullscreen behaviors remain in force. Do not fill the type registry by guessing. Once the owner approves types, replace this pending statement with their actual records and keep old approvals discoverable rather than silently redefining them.
+
+### Required popup audit questions before any implementation
+
+For each overlay, inspect and explicitly ask the owner to resolve all choices not already covered by a documented rule, including:
+
+- Scope and classification: ordinary confirmation, editor/settings, anchored menu, drawer, status notice, or an exception; whether surfaces should share a common type and which ones must remain distinct.
+- Hierarchy and copy: headings, close icons, labels, primary/secondary/destructive actions, button order and wording, confirmation language, loading/empty/error messages, contextual help.
+- Visual rules: widths/min-max limits, margins/padding/gaps, typography, radius, borders, shadow/backdrop/opacity, alignment, focus/hover/disabled/pressed states, icon set, token versus exception, light/dark and orange/pink behavior.
+- Modal and keyboard behavior: native dialog/popover versus nonmodal surface; focus target, trapping and restoration, Escape, outside pointer, Tab/arrow behavior, accessibility names/roles, nested dialogs and concurrent overlay handling.
+- Placement and responsiveness: position, collision and overflow, scroll ownership, long text/zoom, 320/390/700px and other relevant widths, viewport/onscreen keyboard effects, theater, actual fullscreen and fullscreen drawer relocation, simulated versus live Activity limits.
+- Async and safety: pending operations, disabled controls, cancellation, stale responses, room/permission changes, close/reopen during work, preservation of typed drafts, current media playback, privacy and consent boundaries.
+- Architecture and enforcement: approved shared constructors/components, CSS consolidation strategy, selector ownership, allowed exceptions, automated lint/static checks, screenshot baseline coverage, permitted dependency/test changes and migration order.
+
+Each finding must cite file locations and, when observable, reproducible steps or evidence. Each proposed resolution must be mapped to a numbered owner question and dependency; do not hide decisions inside a broad "approve the plan" question. After explicit approvals, document the canonical type records here before implementing those decisions.
+
+---
+
 ## Visual language
 
 Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. Dark tokens: background #101217, card #1B1E26, elevated #292E38, border #393F4D, text #F8F7F4, muted #AAB0BC. Light tokens: background #F8F6F2, card #FFFEFC, elevated #F0ECE6, border #DDD7CF, text #242329, muted #706D77. Fixed brand references remain orange #FF9954 and pink #FF7197; semantic primary/secondary swap between them. Dark/orange is the explicit default, independent of system or browser appearance. Keep semantic green #158761 for enabled remote and semantic red for destructive/error states. Video stays black with dark chrome and light overlays; sibling menus/dialogs use the selected page palette. Accent-filled controls use dark text in either theme; light surfaces use a contrast-adjusted accent ink for text/icons.
@@ -26,7 +98,7 @@ Use the canonical uburoom artwork. The initial theme script includes the SVG sou
 
 ## Button hierarchy and interaction patterns
 
-Four button classes cover all interactive controls. Never mix their semantic roles.
+Five named button classes define the existing interactive action roles. Never mix their semantic roles; other specialized controls require explicit owner review rather than silently adding a new class.
 
 - **`.primary`** — Filled accent background (`--primary`), dark text. The single dominant action per context (Create room, Connect Plex, Approve, Add to queue). Never use for toggles, state indicators, or secondary actions.
 - **`.quiet`** — Elevated background (`--elevated`), normal text. Standard secondary and action buttons: navigation choices (Active rooms, Your rooms), action buttons with icon+text (Switch room, Browse media, Cancel), state-toggle buttons with text (visibility toggle). The default for most interactive buttons.
