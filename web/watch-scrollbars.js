@@ -4,6 +4,11 @@
   const OverlayScrollbars = window.OverlayScrollbarsGlobal?.OverlayScrollbars;
   if (!OverlayScrollbars) return; // Native scrollbar fallback if the vendor script is unavailable.
 
+  // The library injects a temporary <style> to detect native scrollbar support.
+  // Pass its request-scoped CSP nonce before any OverlayScrollbars API initializes.
+  const styleNonce = document.currentScript?.dataset.osStyleNonce;
+  if (styleNonce) OverlayScrollbars.nonce(styleNonce);
+
   const body = document.body;
   const isScrollLocked = () => body.classList.contains('immersive') || body.classList.contains('activity-pip');
   let locked = isScrollLocked();

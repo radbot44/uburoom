@@ -23,3 +23,10 @@ test('unauthenticated page contains no personalized room rows and retains inline
   assert.ok(!html.includes('/watch?room='));
   assert.ok(html.includes('id="welcome"'));
 });
+
+
+test('watch page threads the supplied CSP style nonce only to its scrollbar initializer',()=>{
+  const html=watchPage(template,{config:{},me:{status:401,value:{error:'Sign in'}}},'testNonce1234==');
+  assert.match(html, /<script src="\/watch-scrollbars\.js" data-os-style-nonce="testNonce1234=="><\/script>/);
+  assert.ok(!html.includes('<style nonce="testNonce1234=="'), 'the nonce is not applied to arbitrary inline styles');
+});

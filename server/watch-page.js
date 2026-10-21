@@ -4,8 +4,13 @@ const escapeText = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&
 
 // Personalized HTML is sent with no-store. JSON remains inert, and every value
 // used in the initial visible room rows is escaped independently of that JSON.
-function watchPage(template, initial) {
+function watchPage(template, initial, scrollbarStyleNonce) {
   let html = template;
+  if (scrollbarStyleNonce) {
+    // The nonce is a server-generated base64 token (no user input).
+    html = html.replace('<script src="/watch-scrollbars.js"></script>',
+      '<script src="/watch-scrollbars.js" data-os-style-nonce="' + scrollbarStyleNonce + '"></script>');
+  }
   if (initial.me?.status === 200 && initial.rooms?.status === 200) {
     const rows = initial.rooms.value.rooms.map(room => {
       const info = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers');
