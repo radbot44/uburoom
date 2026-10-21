@@ -1321,6 +1321,7 @@ const roomOptionHints = {
 for (const group of ['room-create-visibility-group','room-create-preset-group','room-settings-visibility-group','room-permission-preset-group']) {
   for (const button of $(group).querySelectorAll('button')) button.title = roomOptionHints[button.dataset.value];
 }
+$('room-name').placeholder = uburoomUbumfa.roomName();
 let roomNameDraft = '', roomVisibilityDraft = 'public', roomPresetDraft = 'host-control';
 $('room-create-visibility').addEventListener('change',event => { roomVisibilityDraft = event.target.value; });
 $('room-name').addEventListener('input', event => { roomNameDraft = event.target.value; });
@@ -1359,10 +1360,11 @@ async function createRoom(advanced = roomUI.draftOptions()) {
   if (creating) return; creating = true;
   $('room-create').disabled = true;
   try {
-    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || 'Room',...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
+    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || $('room-name').placeholder,...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice;
     roomNameDraft = ''; roomVisibilityDraft = 'public'; roomPresetDraft = 'host-control'; $('room-name').value = '';
+    $('room-name').placeholder = uburoomUbumfa.roomName();
     $('room-dialog').close('created'); roomUI.clearDraft(); renderLibrary();
     if (item) {
       const result = await loadLibraryItem(item);

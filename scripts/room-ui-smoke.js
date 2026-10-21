@@ -283,6 +283,15 @@ async function main() {
       await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===100','First upcoming page');
       await run('[...document.querySelectorAll("#queue-panel button")].find(button=>button.textContent==="Load more upcoming").click()');
       await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===110','Additional upcoming page');
+      await run('$("create").click()');
+      await until('$("room-dialog").open','Suggested room chooser');
+      const suggestion = await run('$("room-name").placeholder');
+      assert.match(suggestion, /^Room [A-Z][a-z]{5}$/);
+      assert.equal(await run('$("room-name").value'), '');
+      await shot('suggested-name');
+      await run('$("room-name").value="   ";$("room-create").click()');
+      await until('state?.roomName===' + JSON.stringify(suggestion),'Suggested name saved');
+      assert.equal(app.watch.rooms.get(await run('selected')).s.name,suggestion);
       console.log(name + ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed');
     } catch (error) {
       console.error([...app.watch.rooms.values()].map(room=>({name:room.s.name,creator:room.saved?.creatorId,hosts:room.saved?.hosts,revision:room.saved?.revision,viewers:room.viewers.size})));

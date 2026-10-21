@@ -1,3 +1,10 @@
+## 2026-10-21 - Ubumfa room name suggestions (M1-P13)
+
+- **Revision/environment:** working tree based on `e163337`; Windows, Node 22.22.2, disposable browser/account fixtures, development TLS; no real provider or production changes.
+- **Required/completed:** A source and final Chrome/Firefox rendered suggestion review pass; B automated pass. C not required for this local naming behavior; D owner appearance acceptance not run.
+- **Commands/results:** `node --test tests/ubumfa.test.js`: 2 passed, 0 failed/skipped; `npm run test:full`: 447 passed, 0 failed/skipped. Generator checks exercise all eight patterns, distinct adjacent vowels, six-letter words, title casing and preservation of literal V in consonant pairs.
+- **Browser procedure/results:** `node scripts/room-ui-smoke.js --browsers=chrome,firefox` passed both browsers. Existing explicit-name creation remains covered; new checks observe an empty input with a `Room Xxxxxx` placeholder, create with whitespace-only input and verify that exact suggestion in live state and the room record. Final screenshots inspected in both browsers; logs and screenshots remain in ignored artifacts. Source review confirms the suggestion persists with the draft and refreshes after successful creation. No guest-pass or room-code behavior is changed.
+
 # Verification status
 
 ## 2026-10-20 - Popup consistency (M1-P7)
