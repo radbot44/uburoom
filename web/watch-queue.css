@@ -51,17 +51,15 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-now-playing>.queue-entry-actions{justify-content:flex-end}
 .queue-column-heading{margin:0;font-size:13px}
 .queue-history-heading{min-height:28px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-.queue-clear-history{font-size:11px;padding:5px 8px;background:none;color:var(--muted)}
 .queue-empty{font-size:12px;line-height:1.6;padding:18px 12px;margin:0;color:var(--muted)}
-.queue-notice{margin:0;color:var(--accent-text);flex:1;min-width:0;overflow-wrap:anywhere}
+.queue-notice{margin:0;color:var(--accent-text);flex:1;min-width:min(100%,120px);overflow-wrap:anywhere}
 .queue-notice:empty{display:none}
-.queue-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:nowrap;margin-top:16px;padding-top:14px;border-top:0}
+.queue-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:0}
 .queue-continuation{display:flex;align-items:center;gap:var(--watch-control-gap);flex-wrap:wrap;flex:1}
 .queue-quick-controls .queue-check{flex:none;white-space:nowrap}
 .queue-check{display:flex!important;align-items:center;gap:var(--watch-control-gap);min-height:44px;font-size:12px}
 #queue-auto-open{color:var(--muted)}
-.queue-footer-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
-.queue-footer-actions button{font-size:12px;min-height:36px}
+.queue-footer-actions{justify-content:flex-end;margin-left:auto}
 
 /* One timeline, horizontal posters or vertically scrolling rows. */
 .queue-header{display:grid;grid-template-columns:1fr auto}
@@ -122,7 +120,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-is-empty .queue-footer-actions{display:none}
 .queue-is-empty .queue-footer:has(.queue-notice:empty){display:none}
 .queue-playback-state{margin-right:auto}
-@container queue (max-width:370px){#queue-center{max-width:40px;padding:0}#queue-center .watch-control-label{display:none}.queue-footer-actions{gap:4px}.queue-footer-actions button{padding:7px;font-size:11px}}
+@container queue (max-width:370px){#queue-center{max-width:40px;padding:0}#queue-center .watch-control-label{display:none}}
 
 .queue-layout{scrollbar-width:none!important;-ms-overflow-style:none}.queue-layout::-webkit-scrollbar{display:none}
 .queue-navigation button{width:auto;min-width:40px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 6px}

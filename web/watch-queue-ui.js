@@ -729,16 +729,20 @@
         action(actions, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
       });
       updateUpcomingTimes();
-      const actions = node('div', footer, undefined, 'queue-footer-actions');
-      if (items.length < currentQueue.total) button(actions,'Load more upcoming',undefined,async () => {
-        const roomId = getState()?.id, revision = lastFetchedRevision;
-        try {
-          const page = await request('/api/watch/rooms/' + roomId + '/queue?limit=100&offset=' + items.length);
-          if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
-          currentQueue = {...currentQueue,items:[...items,...page.items],total:page.total}; renderTab();
-        } catch (error) { notice.textContent = error.message; }
-      });
+      const actions = node('div', footer, undefined, 'queue-footer-actions watch-control-group');
+      if (items.length < currentQueue.total) {
+        const more = button(actions,'Load more upcoming',undefined,async () => {
+          const roomId = getState()?.id, revision = lastFetchedRevision;
+          try {
+            const page = await request('/api/watch/rooms/' + roomId + '/queue?limit=100&offset=' + items.length);
+            if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
+            currentQueue = {...currentQueue,items:[...items,...page.items],total:page.total}; renderTab();
+          } catch (error) { notice.textContent = error.message; }
+        });
+        root.uburoomControls.content(more,{label:'Load more upcoming'});
+      }
       const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
+      root.uburoomControls.content(shuffle,{label:'Shuffle queue',icon:'shuffle',iconOnly:true});
       shuffle.id = 'queue-shuffle';
       const clear = button(actions, 'Clear queue', undefined, async () => {
         if (busy || !getState()?.capabilities?.editQueue || !currentQueue.items.length) return;
@@ -748,6 +752,7 @@
           try { await clearQueue(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
         }
       }, !canEdit || !items.length);
+      root.uburoomControls.content(clear,{label:'Clear queue'});
       clear.id = 'queue-clear-queue';
     }
 
@@ -764,7 +769,8 @@
           busy = true;
           try { await clearHistory(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
         }
-      }, !state?.capabilities?.editQueue || !items.length, 'queue-clear-history quiet');
+      }, !state?.capabilities?.editQueue || !items.length, 'queue-clear-history');
+      root.uburoomControls.content(clear,{label:'Clear history'});
       clear.id = 'queue-clear-history';
       footer.querySelector('.queue-footer-actions').prepend(clear);
       if (!items.length) node('p', historyView, 'No playback history yet.', 'hint queue-empty');

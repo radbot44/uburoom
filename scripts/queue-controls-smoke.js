@@ -45,6 +45,11 @@ async function main() {
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-header")).rowGap'),'16px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-view-switch")).borderRadius'),'12px');
       assert.equal(await run('document.querySelector(".queue-view-button>svg").getBoundingClientRect().width'),24);
+      assert.equal(await run('$("queue-view-cards").getBoundingClientRect().width >= 40'),true,'Selected Queue view has at least 40px width');
+      const footerGeometry = await run(`(()=>{const room=getComputedStyle($("switch-room"));return ["queue-clear-history","queue-shuffle","queue-clear-queue"].map(id=>{const e=$(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return [id,e.className,r.height,s.borderRadius,s.backgroundColor,s.borderTopWidth,room.borderRadius,room.backgroundColor]})})()`);
+      assert.equal(footerGeometry.every(([id,classes,height,radius,background,border,roomRadius,roomBackground]) => classes.includes('watch-control') && height===40 && radius===roomRadius && background===(id==='queue-clear-queue' ? roomBackground : 'rgba(0, 0, 0, 0)') && border==='0px'),true,'Queue footer shares Room button appearance and height: ' + JSON.stringify(footerGeometry));
+      assert.deepEqual(await run('(()=>{const r=$("queue-shuffle").getBoundingClientRect();return [r.width,r.height]})()'),[40,40]);
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-footer-actions")).gap'),'8px');
       assert.equal(await run('$("room-settings-open").getBoundingClientRect().height===40 && getComputedStyle($("room-settings-open")).borderTopWidth==="0px"'),true,'Room header remains unchanged');
       assert.equal(await run('$("queue-view-cards").getBoundingClientRect().height < 40 && document.querySelector(".queue-view-switch").getBoundingClientRect().height===40'),true);
       assert.equal(await run('getComputedStyle($("queue-view-cards")).backgroundColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()'),true);
@@ -104,13 +109,22 @@ async function main() {
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'),'17px');
       assert.equal(await run('$("queue-view-list").querySelector("span").getBoundingClientRect().width'),0,'Narrow view label hidden');
       assert.equal(await run('!!$("queue-view-list").getAttribute("aria-label") && !!$("queue-view-list").title'),true);
+      const viewInsets = await run('(()=>{const b=$("queue-view-cards").getBoundingClientRect(),i=$("queue-view-cards").querySelector("svg").getBoundingClientRect();return [b.width,i.width,i.left-b.left,b.right-i.right]})()');
+      assert.equal(viewInsets[0]>=40 && viewInsets[2]>=8 && viewInsets[3]>=8,true,'Selected narrow view gives its icon at least 8px on either side: ' + JSON.stringify(viewInsets));
       assert.equal(await run('document.documentElement.scrollWidth <= innerWidth + 1'),true,'No phone overflow');
       await shot('narrow');
+      await run('document.querySelector(".queue-footer").scrollIntoView({block:"end"})');
+      await pause(1200);
+      await shot('narrow-footer');
       await browser.viewport(page,320,844);
       await pause(1500);
       assert.equal(await run('document.documentElement.scrollWidth <= innerWidth + 1'),true,'No 320px overflow');
+      assert.equal(await run('(()=>{const f=document.querySelector(".queue-footer").getBoundingClientRect();return ["queue-clear-history","queue-shuffle","queue-clear-queue"].every(id=>{const r=$(id).getBoundingClientRect();return r.height===40 && r.left>=f.left-1 && r.right<=f.right+1})})()'),true,'Standard footer buttons fit inside the 320px Queue');
       assert.equal(await run('$("queue-center").getBoundingClientRect().width===40 && getComputedStyle($("queue-center").querySelector(".watch-control-label")).display==="none"'),true);
       await shot('narrow-320');
+      await run('document.querySelector(".queue-footer").scrollIntoView({block:"end"})');
+      await pause(1200);
+      await shot('narrow-320-footer');
       console.log(name + ': Queue controls and desktop/narrow captures passed');
     } finally {
       await browser?.close();
