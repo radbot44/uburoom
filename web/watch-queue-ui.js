@@ -74,17 +74,8 @@
       return b;
     }
 
-    async function confirm(message) {
-      const target = doc.getElementById('room-confirm-dialog');
-      if (!target || target.open) return false;
-      const msg = doc.getElementById('room-confirm-message');
-      if (msg) msg.textContent = message;
-      (doc.fullscreenElement || doc.body).append(target);
-      target.returnValue = '';
-      const result = new Promise(resolve => target.addEventListener('close', () => resolve(target.returnValue === 'yes'), { once: true }));
-      target.showModal();
-      return result;
-    }
+    const popups = root.uburoomDialogs;
+    const confirm = message => popups.confirm(message, {destructive:true});
 
     host.dataset.view = view;
     const header = node('header', host, undefined, 'queue-header');
@@ -225,9 +216,12 @@
     node('p', bulkDialog, 'Current and upcoming episodes are excluded. The server limits upcoming videos; an addition that exceeds its limit is rejected in full.', 'hint');
     const bulkStatus = node('p', bulkDialog, '', 'hint'); bulkStatus.setAttribute('role', 'status');
     const bulkActions = node('div', bulkDialog, undefined, 'room-actions');
-    const bulkCancel = button(bulkActions, 'Cancel', undefined, () => bulkDialog.close('cancel'));
+    const bulkCancel = button(bulkActions, 'Cancel', undefined, () => popups.close(bulkDialog));
     const bulkSubmit = button(bulkActions, 'Add to queue', undefined, undefined, false, 'primary'); bulkSubmit.id = 'queue-bulk-submit';
-    bulkDialog.addEventListener('cancel', event => { if (bulkPending) event.preventDefault(); });
+    let bulkDirty = false;
+    bulkFilter.addEventListener('change',() => { bulkDirty = true; });
+    bulkSpecials.addEventListener('change',() => { bulkDirty = true; });
+    popups.register(bulkDialog, {busy:() => bulkPending, dirty:() => bulkDirty});
 
     async function bulk(item) {
       if (bulkDialog.open) return;
@@ -235,8 +229,7 @@
       if (!roomId) return;
       bulkTitle.textContent = 'Add ' + (item.type === 'season' ? 'season' : 'show') + ' to queue';
       bulkDescription.textContent = item.title + (item.episodeCount ? ' · ' + item.episodeCount + ' episodes available' : '');
-      bulkStatus.textContent = ''; bulkSubmit.disabled = bulkCancel.disabled = false;
-      (doc.fullscreenElement || doc.body).append(bulkDialog);
+      bulkDirty = false; bulkStatus.textContent = ''; bulkSubmit.disabled = bulkCancel.disabled = false;
       bulkSubmit.onclick = async () => {
         if (getState()?.id !== roomId || !getState()?.capabilities?.addQueue) { bulkDialog.close(); return; }
         bulkPending = true; bulkSubmit.disabled = bulkCancel.disabled = bulkFilter.disabled = bulkSpecials.disabled = true; bulkStatus.textContent = 'Loading episodes…';
@@ -247,7 +240,7 @@
         } catch (error) { bulkStatus.textContent = error.message; }
         finally { bulkPending = false; bulkSubmit.disabled = bulkCancel.disabled = bulkFilter.disabled = bulkSpecials.disabled = false; }
       };
-      bulkDialog.showModal();
+      popups.open(bulkDialog);
     }
 
     const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
@@ -304,6 +297,7 @@
     button(sourceNav,'Libraries',undefined,() => void browseSources());
     button(sourceNav,'Close picker','close',() => { sourcePicker.hidden = true; });
     let draftScope = {type:'show'}, sourceTicket = 0, autoRoom, autoTicket = 0, hasAutoDraft = false, autoNoticeTimer;
+    popups.register(doc.getElementById('room-settings-dialog'), {dirty:() => hasAutoDraft, busy:() => autoPending});
     const sourceNames = new Map();
     function setAutoNotice(text, transient = false) {
       clearTimeout(autoNoticeTimer);

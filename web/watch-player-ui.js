@@ -53,7 +53,7 @@
       layoutCaptions();
     }
     function openDialog() {
-      closeSettings(); beforeSettings(); dialog.showModal(); stage.classList.add('settings-open'); cog.setAttribute('aria-expanded','true');
+      closeSettings(); beforeSettings(); global.uburoomDialogs.open(dialog,cog); stage.classList.add('settings-open'); cog.setAttribute('aria-expanded','true');
       $('quality').focus(); showChrome();
     }
     function openSettings() {
@@ -122,7 +122,7 @@
       void changeTrack({subtitleId:tracks.subtitleId?'off':track.id},{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion});
     };
     cog.onclick=openSettings;
-    $('tracks-close').onclick=()=>dialog.close();
+    $('tracks-close').onclick=()=>global.uburoomDialogs.close(dialog);
     dialog.addEventListener('close',()=>{stage.classList.remove('settings-open');cog.setAttribute('aria-expanded','false');afterSettings();cog.focus();showChrome();});
     document.addEventListener('pointerdown',event=>{if(opened&&!menu.contains(event.target)&&!cog.contains(event.target))closeSettings();});
     menu.addEventListener('focusout',event=>{if(opened&&event.relatedTarget&&!menu.contains(event.relatedTarget)&&event.relatedTarget!==cog)closeSettings();});

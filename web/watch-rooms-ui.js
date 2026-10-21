@@ -30,16 +30,12 @@
       control.addEventListener('click',action); return control;
     }
     let openedFromSaved = false, draftRecord;
-    function show(target) {
-      (document.fullscreenElement || document.body).append(target); target.returnValue = ''; target.showModal();
-    }
-    async function confirm(message) {
-      const target = $('room-confirm-dialog');
-      if (target.open) return false;
-      $('room-confirm-message').textContent = message;
-      const result = new Promise(resolve => target.addEventListener('close',() => resolve(target.returnValue === 'yes'),{once:true}));
-      show(target); return result;
-    }
+    const popups = root.uburoomDialogs, confirm = popups.confirm;
+    const show = target => popups.open(target);
+    let capacityDraft;
+    popups.register(dialog, {busy:() => busy, dirty:() => !!details &&
+      (renameDraft !== details.name || capacityDraft !== undefined && Number(capacityDraft) !== Number(details.maxMembers || $('room-member-limit').max))});
+    popups.register($('room-dialog'), {busy:() => busy});
     async function loadSaved(nextOffset = offset) {
       if (!getMe()?.durableRooms) { $('room-reopen').hidden = true; return; }
       const ticket = ++savedGeneration; offset = nextOffset;
@@ -83,15 +79,15 @@
       clearSearch(); $('room-person-search').value='';
       selectSection(targetSection);
       const ticket = ++generation; details = undefined; $('room-settings-content').hidden = true;
-      $('room-settings-status').textContent = 'Loading room settings…';
+      setSettingsStatus('Loading room settings…');
       if (!dialog.open) show(dialog);
       try {
         const result = await request('/api/watch/rooms/' + id + '/settings');
         if (ticket !== generation || !dialog.open) return;
         details = result;
-        if (draftRoom !== id) { renameDraft = result.name; draftRoom = id; }
+        if (draftRoom !== id) { renameDraft = result.name; capacityDraft = undefined; draftRoom = id; }
         renderSettings();
-      } catch (error) { if (ticket === generation && dialog.open) $('room-settings-status').textContent = error.message; }
+      } catch (error) { if (ticket === generation && dialog.open) setSettingsStatus(error.message,false,true); }
     }
     function draftOptions() {
       if (!draftRecord) return {};
@@ -103,34 +99,37 @@
         permissions:presetPolicy(options.permissionPreset || 'host-control'),autoplay:{enabled:true},queueSummary:{queueRevision:0,autoQueue:{mode:'off',includeSpecials:false}},
         capabilities:Object.fromEntries([...Object.keys(labels),'manageHosts','managePermissions','transferCreator'].map(key=>[key,!['deleteRoom','closeRoom','transferCreator'].includes(key)]))};
       draftRecord = {...base,name:options.name?.trim() || 'Room',visibility:options.visibility};
-      details = draftRecord; draftRoom = details.id; renameDraft = details.name; openedFromSaved = false; generation++;
+      details = draftRecord; capacityDraft = undefined; draftRoom = details.id; renameDraft = details.name; openedFromSaved = false; generation++;
       selectSection('general'); if (!dialog.open) show(dialog); renderSettings();
     }
     async function savePlayback(change) {
       if (!details) throw new Error('Open room settings first');
-      const target = details, id = target.id;
-      if (target.draft) {
-        if (change.autoplay !== undefined) target.autoplay.enabled = change.autoplay;
-        if (change.autoQueue) {
-          if (change.autoQueue.mode !== 'off' && !change.autoQueue.scope?.id) throw new Error('Choose an auto-queue source');
-          target.queueSummary.autoQueue = structuredClone(change.autoQueue);
+      const release = popups.hold(dialog);
+      try {
+        const target = details, id = target.id;
+        if (target.draft) {
+          if (change.autoplay !== undefined) target.autoplay.enabled = change.autoplay;
+          if (change.autoQueue) {
+            if (change.autoQueue.mode !== 'off' && !change.autoQueue.scope?.id) throw new Error('Choose an auto-queue source');
+            target.queueSummary.autoQueue = structuredClone(change.autoQueue);
+          }
+          draftRecord = target; draftChanged?.(draftOptions()); renderSettings(); return target;
         }
-        draftRecord = target; draftChanged?.(draftOptions()); renderSettings(); return target;
-      }
-      let result;
-      if (change.resetProgress) result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'auto.reset'}});
-      else if (change.autoplay !== undefined) {
-        if (getState()?.id === id && target.active) {
-          await execute({action:'media.autoplay.set',args:{enabled:change.autoplay}});
+        let result;
+        if (change.resetProgress) result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'auto.reset'}});
+        else if (change.autoplay !== undefined) {
+          if (getState()?.id === id && target.active) {
+            await execute({action:'media.autoplay.set',args:{enabled:change.autoplay}});
+            result = await request('/api/watch/rooms/' + id + '/settings');
+          } else result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'autoplay',enabled:change.autoplay}});
+        }
+        else {
+          await request('/api/watch/rooms/' + id + '/queue',{action:'auto',...change.autoQueue,expectedRevision:target.queueSummary.queueRevision},{timeoutMs:35000});
           result = await request('/api/watch/rooms/' + id + '/settings');
-        } else result = await request('/api/watch/rooms/' + id + '/settings',{revision:target.revision,change:{action:'autoplay',enabled:change.autoplay}});
-      }
-      else {
-        await request('/api/watch/rooms/' + id + '/queue',{action:'auto',...change.autoQueue,expectedRevision:target.queueSummary.queueRevision},{timeoutMs:35000});
-        result = await request('/api/watch/rooms/' + id + '/settings');
-      }
-      if (details?.id === id && dialog.open) { details = result; renderSettings(); }
-      await changed(); return result;
+        }
+        if (details?.id === id && dialog.open) { details = result; renderSettings(); }
+        await changed(); return result;
+      } finally { release(); }
     }
     let searchTimer, searchGeneration = 0, searchIndex = -1, searchButtons = [];
     function clearSearch() {
@@ -183,7 +182,7 @@
       $('room-keep-empty').checked = !!value.keepEmpty || !!value.singleRoom;
       $('room-keep-empty').disabled = busy || !!value.singleRoom || !value.capabilities.roomSettings;
       $('room-member-limit').max = value.serverMaxMembers || getMe()?.roomLimits?.maxMembers || 20;
-      if (document.activeElement !== $('room-member-limit')) $('room-member-limit').value = value.maxMembers || $('room-member-limit').max;
+      if (document.activeElement !== $('room-member-limit')) $('room-member-limit').value = capacityDraft ?? value.maxMembers ?? $('room-member-limit').max;
       $('room-member-limit').disabled = $('room-member-limit-save').disabled = busy || !value.capabilities.roomSettings;
       $('room-lifetime-details').textContent = value.createdAt ? 'Created ' + new Date(value.createdAt).toLocaleString() + ' · Last active ' + new Date(value.lastAccessedAt).toLocaleString() : '';
       $('room-capacity-details').textContent = new Set(value.viewers.map(person=>person.id)).size + ' / ' + (value.maxMembers || $('room-member-limit').max) + ' people · Server maximum ' + $('room-member-limit').max;
@@ -303,15 +302,16 @@
       $('room-clear-video').disabled = busy || !value.capabilities.chooseMedia;
     }
     let settingsStatusTimer;
-    function setSettingsStatus(text, transient = false) {
+    function setSettingsStatus(text, transient = false, error = false) {
       clearTimeout(settingsStatusTimer);
       $('room-settings-status').textContent = text;
+      $('room-settings-status').classList.toggle('error',error);
       if (transient) settingsStatusTimer = setTimeout(() => { if ($('room-settings-status').textContent === text) $('room-settings-status').textContent = ''; }, 2500);
     }
     async function edit(change) {
       if (!details || busy) return;
       if (details.draft) {
-        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name'); return; } details.name = change.name.trim(); }
+        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name',false,true); return; } details.name = change.name.trim(); }
         else if (change.action === 'keepEmpty') details.keepEmpty = change.enabled;
         else if (change.action === 'maxMembers') details.maxMembers = change.value;
         else if (change.action === 'visibility') details.visibility = change.visibility;
@@ -333,11 +333,11 @@
       try {
         const result = await request('/api/watch/rooms/' + id + '/settings',{revision,change});
         if (ticket === generation && dialog.open) {
-          if (result.deleted) dialog.close(); else { details = result; if (change.action === 'rename' && renameDraft === change.name) renameDraft = result.name; }
+          if (result.deleted) dialog.close(); else { details = result; if (change.action === 'maxMembers') capacityDraft = undefined; if (change.action === 'rename' && renameDraft === change.name) renameDraft = result.name; }
           setSettingsStatus('Saved', true);
         }
         await changed();
-      } catch (error) { if (ticket === generation && dialog.open) setSettingsStatus(error.message); else fail(error.message); }
+      } catch (error) { if (ticket === generation && dialog.open) setSettingsStatus(error.message,false,true); else fail(error.message); }
       finally {
         busy = false;
         if (ticket === generation && dialog.open) {
@@ -352,15 +352,38 @@
       for (const panel of dialog.querySelectorAll('[data-room-section]')) panel.hidden = panel.dataset.roomSection !== value;
       for (const control of $('room-settings-nav').children) control.setAttribute('aria-current', String(control.dataset.section === value));
       $('room-settings-panels').scrollTop = 0;
+      requestAnimationFrame(() => {
+        const nav = $('room-settings-nav'), selected = nav.querySelector('[aria-current=true]');
+        if (selected && matchMedia('(max-width:620px)').matches) {
+          nav.scrollTo({left:selected.offsetLeft - nav.offsetLeft - (nav.clientWidth - selected.offsetWidth) / 2,
+            behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
+        }
+        updateNavigationEdges();
+      });
     }
     for (const [key, label] of [['general','General'],['people','People'],['permissions','Permissions'],['playback','Playback & queue'],['manage','Manage']]) {
       const control = button($('room-settings-nav'),label,() => selectSection(key)); control.dataset.section = key;
     }
+    function updateNavigationEdges() {
+      const nav = $('room-settings-nav'), wrap = $('room-settings-navigation');
+      wrap.classList.toggle('hidden-before', nav.scrollLeft > 1);
+      wrap.classList.toggle('hidden-after', nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1);
+    }
+    $('room-settings-nav').addEventListener('scroll', updateNavigationEdges, {passive:true});
+    new ResizeObserver(updateNavigationEdges).observe($('room-settings-nav'));
+    $('room-settings-nav').addEventListener('keydown', event => {
+      if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = [...$('room-settings-nav').children], index = buttons.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus(); buttons[next].click();
+    });
+    $('room-member-limit').addEventListener('input', event => { capacityDraft = event.target.value; });
     $('room-settings-section').addEventListener('change',event => selectSection(event.target.value));
     $('room-all-hosts').addEventListener('change',()=>void edit({action:'allHosts',enabled:$('room-all-hosts').checked}));
     $('room-keep-empty').addEventListener('change',async () => {
       const enabled = $('room-keep-empty').checked;
-      if (!enabled && !await confirm('When everyone leaves and there is no unfinished video, upcoming queue or auto-queue source, this room and its hosts, permissions and history will be deleted. Allow this?')) { $('room-keep-empty').checked = true; return; }
+      if (!enabled && !await confirm('When everyone leaves and there is no unfinished video, upcoming queue or auto-queue source, this room and its hosts, permissions and history will be deleted. Allow this?',{destructive:true})) { $('room-keep-empty').checked = true; return; }
       void edit({action:'keepEmpty',enabled});
     });
     $('room-member-limit-save').addEventListener('click',() => void edit({action:'maxMembers',value:Number($('room-member-limit').value)}));
@@ -425,15 +448,12 @@
     selectPermissionRole('viewer');
     for (const [id,icon,label] of [['room-settings-open','settings','Room settings'],['room-settings-refresh','refresh','Refresh settings'],['room-settings-dismiss','close','Close settings'],['room-chooser-refresh','refresh','Refresh rooms']]) { $(id).replaceChildren(root.uburoomUI.icon(document,icon)); $(id).setAttribute('aria-label',label); $(id).title = label; }
     $('room-settings-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id); });
-    $('room-settings-dismiss').addEventListener('click',() => {
-      const fromSaved = openedFromSaved; openedFromSaved = false;
-      dialog.close();
-      if (fromSaved) void showChooser('saved');
-    });
-    dialog.addEventListener('cancel',() => {
+    $('room-settings-dismiss').addEventListener('click',() => popups.close(dialog));
+    dialog.addEventListener('close',() => {
+      if (dialog.open) return;
+      clearSearch(); generation++; details = undefined;
       if (openedFromSaved) { openedFromSaved = false; void showChooser('saved'); }
     });
-    dialog.addEventListener('close',() => { if (!dialog.open) { clearSearch(); generation++; details = undefined; draftRoom = undefined; } });
     $('room-settings-refresh').addEventListener('click',() => { if (details && !busy) { if (details.draft) renderSettings(); else void open(details.id, section); } });
     $('room-rename-save').addEventListener('click',() => void edit({action:'rename',name:$('room-rename').value}));
     $('room-settings-visibility').addEventListener('change',() => void edit({action:'visibility',visibility:$('room-settings-visibility').value}));
@@ -451,19 +471,19 @@
         if (target.draft) { await createDraft(draftOptions()); draftRecord = undefined; }
         else { const opened = await request('/api/watch/rooms/' + target.id + '/reopen',entry(),{timeoutMs:35000}); await join(opened.id,opened.state); }
         openedFromSaved = false; dialog.close('opened');
-      } catch (error) { setSettingsStatus(error.message); }
+      } catch (error) { setSettingsStatus(error.message,false,true); }
       finally { busy = false; if (dialog.open) { const notice = $('room-settings-status').textContent; renderSettings(); $('room-settings-status').textContent = notice; } }
     });
     $('room-settings-delete').addEventListener('click',async () => {
       const single=!!details?.singleRoom;
-      if(await confirm(single?'Reset this room? Playback, queue and room history will be cleared and permissions reset to server defaults. Accounts and fixed leadership are preserved.':'Permanently delete this room? This cannot be undone.'))await edit({action:single?'reset':'delete'});
+      if(await confirm(single?'Reset this room? Playback, queue and room history will be cleared and permissions reset to server defaults. Accounts and fixed leadership are preserved.':'Permanently delete this room? This cannot be undone.',{destructive:true}))await edit({action:single?'reset':'delete'});
     });
-    $('room-clear-video').addEventListener('click',async () => { if (await confirm('Clear this saved video and its position? The room and hosts will be kept.')) await edit({action:'bookmark.clear'}); });
+    $('room-clear-video').addEventListener('click',async () => { if (await confirm('Clear this saved video and its position? The room and hosts will be kept.',{destructive:true})) await edit({action:'bookmark.clear'}); });
     $('room-settings-close-live').addEventListener('click',async () => {
       if (!details || busy || !await confirm('Close this room for everyone and save progress? Viewers will be returned to the lobby.')) return;
       const value = details; busy = true; renderSettings();
       try { await request('/api/watch/rooms/' + value.id + '/close',{epoch:value.epoch}); dialog.close(); await changed(); }
-      catch (error) { setSettingsStatus(error.message); }
+      catch (error) { setSettingsStatus(error.message,false,true); }
       finally { busy = false; if (dialog.open) { const notice = $('room-settings-status').textContent; renderSettings(); $('room-settings-status').textContent = notice; } }
     });
     for (const id of ['reopen','lobby-reopen']) $(id).addEventListener('click',() => void showChooser('saved'));

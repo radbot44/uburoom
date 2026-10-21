@@ -1,6 +1,10 @@
 'use strict';
 // Uses the watch page's existing authenticated API and shared safe-DOM controls.
-let accountPreview, accountMerge, accountValue, removeProvider, accountLoad=0;
+let accountPreview, accountMerge, accountValue, removeProvider, accountLoad=0, accountNameDraft;
+const accountDialog=$('account-dialog'), accountPopups=uburoomDialogs;
+accountPopups.register(accountDialog,{dirty:()=>!!accountValue &&
+  ($('account-display-name').value!==accountValue.name || !!$('match-discord').value || !!$('match-plex').value)});
+$('account-display-name').addEventListener('input',()=>{accountNameDraft={id:accountValue?.id,name:$('account-display-name').value};});
 const accountButton=$('identity');
 $('account-close').append(uburoomUI.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
@@ -21,7 +25,7 @@ async function showAccount(){
   $('account-content').hidden=true;$('account-loading').hidden=false;$('account-retry').hidden=true;
   $('account-admin').open=false;
   logoutButton.hidden=activity||!!token;
-  if(!$('account-dialog').open)$('account-dialog').showModal();
+  if(!accountDialog.open)accountPopups.open(accountDialog,accountButton);
   try{
     const value=activity?{account:me.account}:await api('/api/account');if(!value.account)throw new Error('Restart the server to enable accounts');
     const known=value.admin&&!activity?await api('/api/account/admin'):undefined;
@@ -45,29 +49,34 @@ async function showAccount(){
     if(accountMerge){$('account-merge-details').replaceChildren();for(const account of accountMerge.accounts){const section=document.createElement('div');identityRows(section,account);$('account-merge-details').append(section);}}
     if(known){for(const provider of ['discord','plex']){const list=$('known-'+provider);list.replaceChildren();for(const account of known.accounts)for(const identity of account.identities.filter(i=>i.provider===provider)){const option=document.createElement('option');option.value=identity.subject;option.label=identity.name;list.append(option);}}}
     accountValue=value.account;
-    $('account-display-name').value=value.account.name;
+    $('account-display-name').value=accountNameDraft?.id===value.account.id?accountNameDraft.name:value.account.name;
     $('account-name-status').textContent='';
     $('account-content').hidden=false;
   }catch(error){if(load===accountLoad&&$('account-dialog').open){accountError(error.message);$('account-retry').hidden=false;}}
   finally{if(load===accountLoad)$('account-loading').hidden=true;}
 }
 $('account-name-save').addEventListener('click',async()=>{
+  const release=accountPopups.hold(accountDialog);
+  const submittedName=$('account-display-name').value;
   const button=$('account-name-save');button.disabled=true;accountError();
   try {
-    await api('/api/watch/profile',{name:$('account-display-name').value});
+    await api('/api/watch/profile',{name:submittedName});
     me=await api('/api/watch/me');renderAccount();
-    accountValue=me.account;$('account-display-name').value=me.name;$('account-name-status').textContent='Saved';
-  } catch(error){accountError(error.message);} finally{button.disabled=false;}
+    accountValue=me.account;
+    if($('account-display-name').value===submittedName){accountNameDraft=undefined;$('account-display-name').value=me.name;}
+    $('account-name-status').textContent='Saved';
+  } catch(error){accountError(error.message);} finally{button.disabled=false;release();}
 });
 accountButton.addEventListener('click',showAccount);
 $('account-retry').addEventListener('click',showAccount);
-$('account-dialog').addEventListener('close',()=>{accountLoad++;});
+$('account-dialog').addEventListener('close',()=>{if(!accountDialog.open)accountLoad++;});
 logoutButton.addEventListener('click',async()=>{
+  const release=accountPopups.hold(accountDialog);
   logoutButton.disabled=true;accountError();pending=true;
   try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer('logout');location.replace('/watch');}
-  catch(error){accountError(error.message);logoutButton.disabled=false;pending=false;}
+  catch(error){accountError(error.message);logoutButton.disabled=false;pending=false;}finally{release();}
 });
-$('account-close').addEventListener('click',()=>$('account-dialog').close());
+$('account-close').addEventListener('click',()=>accountPopups.close(accountDialog));
 for(const provider of ['discord','plex']){
   const button=$('remove-'+provider);button.append(uburoomUI.icon(document,'close'));
   button.addEventListener('click',()=>{
@@ -77,25 +86,28 @@ for(const provider of ['discord','plex']){
     $('account-remove-title').textContent='Remove '+label+'?';
     $('account-remove-description').textContent=(identity.name!==identity.subject?identity.name+' will be removed from uburoom. ':'')+'You can connect '+label+' again afterward. Your other browsers will be signed out.';
     $('account-remove-confirm').textContent='Remove '+label;$('account-remove-error').textContent='';
-    $('account-remove-dialog').showModal();
+    accountPopups.open($('account-remove-dialog'));
   });
 }
 $('account-remove-confirm').addEventListener('click',async()=>{
+  const release=accountPopups.hold($('account-remove-dialog'));
   const button=$('account-remove-confirm'),identity=accountValue.identities.find(i=>i.provider===removeProvider);
   button.disabled=true;$('account-remove-error').textContent='';
   try{await api('/api/account/'+removeProvider+'/remove',{subject:identity.subject});location.replace('/watch?account=1');}
   catch(error){$('account-remove-error').textContent=error.message;}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;release();}
 });
 for(const provider of ['plex','discord'])$('connect-'+provider).addEventListener('click',async()=>{
   if(activity){$('account-dialog').close();void openInBrowser();return;}
+  const release=accountPopups.hold(accountDialog);
   const button=$('connect-'+provider),label=button.textContent;button.disabled=true;button.textContent='Opening '+(provider==='plex'?'Plex':'Discord')+'…';accountError();
   try{const {url}=await api('/api/account/'+provider+'/connect',{});location.assign(url);}catch(error){accountError(error.message);}
-  finally{button.disabled=false;button.textContent=label;}
+  finally{button.disabled=false;button.textContent=label;release();}
 });
 $('account-merge-confirm').addEventListener('click',async()=>{
+  const release=accountPopups.hold(accountDialog);
   const button=$('account-merge-confirm');button.disabled=true;accountError();
-  try{await api('/api/account/merge',{id:accountMerge.id});location.replace('/watch?account=1');}catch(error){accountError(error.message);button.disabled=false;}
+  try{await api('/api/account/merge',{id:accountMerge.id});location.replace('/watch?account=1');}catch(error){accountError(error.message);button.disabled=false;}finally{release();}
 });
 for(const provider of ['discord','plex'])$('match-'+provider).addEventListener('input',()=>{accountPreview=undefined;$('match-confirm').hidden=true;$('match-summary').textContent='';});
 $('match-preview').addEventListener('click',async()=>{
@@ -106,7 +118,7 @@ $('match-preview').addEventListener('click',async()=>{
   }catch(error){accountError(error.message);}
 });
 $('match-confirm').addEventListener('click',async()=>{
-  if(!accountPreview)return;const button=$('match-confirm');button.disabled=true;accountError();
+  if(!accountPreview)return;const release=accountPopups.hold(accountDialog);const button=$('match-confirm');button.disabled=true;accountError();
   try{await api('/api/account/admin/assign',{id:accountPreview.id});accountPreview=undefined;await showAccount();$('match-summary').textContent='Match assigned.';}catch(error){accountError(error.message);}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;release();}
 });
