@@ -62,6 +62,20 @@
 });
   const glyphs = Object.freeze({
     "oomark": "<circle cx=\"618.46\" cy=\"634.45\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><circle cx=\"737.35\" cy=\"634.45\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><path d=\"M601.9475 743.0031H753.8625\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"53.0061\"/>",
+    "adjustments-horizontal": "<path d=\"M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 6l8 0\" /><path d=\"M16 6l4 0\" /><path d=\"M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 12l2 0\" /><path d=\"M10 12l10 0\" /><path d=\"M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 18l11 0\" /><path d=\"M19 18l1 0\" />",
+    "arrow-down": "<path d=\"M12 5l0 14\" /><path d=\"M18 13l-6 6\" /><path d=\"M6 13l6 6\" />",
+    "arrow-left": "<path d=\"M5 12l14 0\" /><path d=\"M5 12l6 6\" /><path d=\"M5 12l6 -6\" />",
+    "arrow-right": "<path d=\"M5 12l14 0\" /><path d=\"M13 18l6 -6\" /><path d=\"M13 6l6 6\" />",
+    "arrow-up": "<path d=\"M12 5l0 14\" /><path d=\"M18 11l-6 -6\" /><path d=\"M6 11l6 -6\" />",
+    "arrows-horizontal": "<path d=\"M7 8l-4 4l4 4\" /><path d=\"M17 8l4 4l-4 4\" /><path d=\"M3 12l18 0\" />",
+    "arrows-shuffle": "<path d=\"M18 4l3 3l-3 3\" /><path d=\"M18 20l3 -3l-3 -3\" /><path d=\"M3 7h3a5 5 0 0 1 5 5a5 5 0 0 0 5 5h5\" /><path d=\"M21 7h-5a4.978 4.978 0 0 0 -3 1m-4 8a4.984 4.984 0 0 1 -3 1h-3\" />",
+    "arrows-vertical": "<path d=\"M8 7l4 -4l4 4\" /><path d=\"M8 17l4 4l4 -4\" /><path d=\"M12 3l0 18\" />",
+    "badge-cc": "<path d=\"M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10\" /><path d=\"M10 10.5a1.5 1.5 0 0 0 -3 0v3a1.5 1.5 0 0 0 3 0\" /><path d=\"M17 10.5a1.5 1.5 0 0 0 -3 0v3a1.5 1.5 0 0 0 3 0\" />",
+    "ban": "<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" /><path d=\"M5.7 5.7l12.6 12.6\" />",
+    "border-all": "<path d=\"M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12\" /><path d=\"M4 12l16 0\" /><path d=\"M12 4l0 16\" />",
+    "chair-director": "<path d=\"M6 21l12 -9\" /><path d=\"M6 12l12 9\" /><path d=\"M5 12h14\" /><path d=\"M6 3v9\" /><path d=\"M18 3v9\" /><path d=\"M6 8h12\" /><path d=\"M6 5h12\" />",
+    "chevron-down": "<path d=\"M6 9l6 6l6 -6\" />",
+    "columns-2": "<path d=\"M3 4a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-16\" /><path d=\"M12 3v18\" />",
     // MORE_TABLER_GLYPHS
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
