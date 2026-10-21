@@ -57,6 +57,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     wss.handleUpgrade(req, socket, head, ws => {
       const client = { ws, socket: req.socket, headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
       clients.add(client);
+      ws.watchKick = roomId => {
+        if (client.subscription?.split('?')[0] === '/api/watch/rooms/' + roomId) client.subscription = undefined;
+        send(client,{type:'room-kicked',roomId});
+      };
       ws.watchRtts = [];
       ws.on('pong', () => {
         // Native pongs keep presence alive even when the browser throttles its

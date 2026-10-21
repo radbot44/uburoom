@@ -268,6 +268,12 @@ class WatchRooms {
       createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,retentionReason:this.reason(record),
       recovering:this.recoveries.has(record.id),members:new Set([...(this.watch.rooms.get(record.id)?.viewers.values() || [])].map(v=>v.userId)).size,maxMembers:Math.min(record.maxMembers || this.limits.maxMembers,this.limits.maxMembers) })) };
   }
+  participants(id) {
+    const record = this.store.get(id), room = this.watch.rooms.get(id);
+    return [...new Set([record.creatorId,...record.hosts,...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])]
+      .map(userId => ({id:userId,name:this.registry.canonical(userId)?.name || 'Room member',role:Policy.role(record,userId),
+        explicitHost:record.hosts.includes(userId),present:[...(room?.viewers.values() || [])].some(viewer => viewer.userId === userId)}));
+  }
   summary(id, actor) {
     const record = this.store.get(id), room = this.watch.rooms.get(id);
     const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member' });

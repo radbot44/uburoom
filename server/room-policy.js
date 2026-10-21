@@ -4,9 +4,9 @@
 // These are room capabilities, independent of remote consent and Plex access.
 const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
-  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants'
 ]);
-const VIEWER_BLOCKED = Object.freeze(['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts']);
+const VIEWER_BLOCKED = Object.freeze(['roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants']);
 const CREATOR_ONLY = Object.freeze(['manageHosts', 'transferCreator', 'managePermissions']);
 const DEFAULTS = Object.freeze({
   host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom','addHosts'].includes(key)]))),
@@ -63,6 +63,7 @@ function allowed(room, userId, capability) {
 }
 
 function commandCapability(action) {
+  if (action === 'room.kick') return 'kickParticipants';
   if (action.startsWith('media.autoplay.')) return 'autoplay';
   if (['queue.add','queue.bulk'].includes(action)) return 'addQueue';
   if (['queue.playNow','queue.playEntry','queue.skipTo','queue.history.replay','queue.history.goBack'].includes(action)) return 'chooseMedia';

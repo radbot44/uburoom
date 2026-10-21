@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const viewerId = crypto.randomUUID(), params = new URLSearchParams(location.search);
+let viewerId = crypto.randomUUID();
+const params = new URLSearchParams(location.search);
 let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
 let stateTransportSequence=0;
 let reconnecting=false;
@@ -819,14 +820,14 @@ function renderVisibility() {
   if ($('remote-consent-text')) $('remote-consent-text').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
   if (state) {
     if ($('current-room-name')) $('current-room-name').textContent = state.roomName || 'Room';
-    const role = state.roomRole || (state.isHost ? 'host' : 'participant');
-    const roleText = role === 'creator' ? 'Room Leader' : role === 'host' ? 'Host' : 'Participant';
-    $('current-room-meta').replaceChildren(uburoomUI.icon(document, role === 'creator' ? 'creator' : role === 'host' ? 'host' : 'users'), document.createTextNode(roleText));
-    $('room-visibility').replaceChildren(uburoomUI.icon(document, state.visibility === 'private' ? 'lock' : 'website'), document.createTextNode(state.visibility === 'private' ? 'Private · Hosts only' : 'Public'));
+    uburoomControls.content($('room-visibility'),{icon:state.visibility === 'private' ? 'lock' : 'website',label:state.visibility === 'private' ? 'Private · Hosts only' : 'Public',iconOnly:true});
     $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
     $('room-visibility').classList.toggle('private', state.visibility === 'private');
     $('room-visibility').disabled = pending || !state.canManage;
-    $('room-people-open').replaceChildren(uburoomUI.icon(document,'users'),document.createTextNode(state.viewers + ' / ' + (state.maxMembers || 20)));
+    $('room-visibility').title = pending ? 'Updating visibility...' : !state.canManage ? 'Only authorized room managers can change visibility' : 'Change room visibility';
+    uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});
+    $('room-people-open').classList.remove('watch-control-responsive');
+    $('room-people-open').setAttribute('aria-label','People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
@@ -1275,31 +1276,7 @@ function renderRoomChoices(rooms, container = $('room-choices')) {
 function syncButtonGroup(selectId, groupId) {
   const select = $(selectId), group = $(groupId);
   if (!select || !group) return;
-  function update() {
-    for (const btn of group.querySelectorAll('button')) {
-      const match = btn.dataset.value === select.value;
-      btn.setAttribute('aria-pressed', String(match));
-    }
-  }
-  for (const btn of group.querySelectorAll('button')) {
-    btn.addEventListener('click', () => {
-      if (select.value !== btn.dataset.value) {
-        select.value = btn.dataset.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        update();
-      }
-    });
-  }
-  const prop = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
-  Object.defineProperty(select, 'value', {
-    get() { return prop.get.call(this); },
-    set(val) {
-      prop.set.call(this, val);
-      update();
-    },
-    configurable: true
-  });
-  update();
+  uburoomControls.bindSelect(select, group);
 }
 syncButtonGroup('room-create-visibility', 'room-create-visibility-group');
 syncButtonGroup('room-create-preset', 'room-create-preset-group');
@@ -1486,7 +1463,8 @@ async function start() {
         if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}}
     },
     onMessage:message=>{
-      if(message.type==='identity'){me=message.value;renderAccount();}
+      if(message.type==='room-kicked' && message.roomId===selected){selected=undefined;viewerId=crypto.randomUUID();unavailable('You were removed from the room. You may rejoin.','kicked');}
+      else if(message.type==='identity'){me=message.value;renderAccount();}
       else if(message.type==='rooms'&&message.status===200)applyRooms(message.value.rooms);
       else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
         if(message.status===200){applyState(message.value);fail(playbackError);void reportReadiness();}

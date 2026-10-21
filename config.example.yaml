@@ -90,8 +90,8 @@ rooms:
   # [] or 'none' grants none; 'all' grants all eligible rights.
   # Creators have all perms; hosts inherit from viewers; viewers can't get management perms.
   # Names: playPause, seek, chooseMedia, addQueue, editQueue, autoplay,
-  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts
-  host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost]
+  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants
+  host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
   viewer_permissions: [playPause]
 
   # Exact provider IDs / guild role IDs; admins can toggle Admin mode.

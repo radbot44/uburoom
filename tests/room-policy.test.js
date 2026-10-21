@@ -4,6 +4,17 @@ const assert = require('node:assert/strict');
 const { Accounts, credentialVault } = require('../server/accounts');
 const Policy = require('../server/room-policy');
 
+test('kick permission defaults on for hosts in old and new policies, stays blocked for viewers, and maps to the room command', () => {
+  const old = Policy.policy({host:{seek:false},viewer:{seek:true}});
+  assert.equal(old.host.kickParticipants,true);
+  assert.equal(old.viewer.kickParticipants,false);
+  assert.equal(Policy.preset('queue').host.kickParticipants,true);
+  assert.equal(Policy.preset('queue').viewer.kickParticipants,false);
+  assert.equal(Policy.commandCapability('room.kick'),'kickParticipants');
+  assert.equal(Policy.policy({host:{kickParticipants:false}}).host.kickParticipants,false);
+  assert.throws(()=>Policy.permissions({kickParticipants:true},Policy.DEFAULTS.viewer,{role:'viewer'}),/unavailable/);
+});
+
 test('room roles keep creator-only authority independent of full participant permissions', () => {
   const room = { creatorId: 'creator', hosts: ['host'], permissions: Policy.policy() };
   assert.equal(Policy.role(room, 'host'), 'host');

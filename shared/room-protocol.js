@@ -57,6 +57,9 @@
     const a = command.args || {};
     let args = {};
     switch (action) {
+      case 'room.kick':
+        if (typeof a.userId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.userId)) throw new Error('Choose a participant');
+        args.userId = a.userId; break;
       case 'media.pause': case 'media.play': case 'media.mute': case 'media.unmute': case 'media.toggle':
       case 'media.seek.start': case 'media.seek.end':
       case 'status.get': case 'help.get': case 'room.disable': case 'room.enable': break;

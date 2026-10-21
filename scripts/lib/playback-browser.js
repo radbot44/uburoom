@@ -114,12 +114,13 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
       else {await command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]},page);await command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]},page);}
     };
     const key = async (page,value) => {
-      const keys = {Escape:['\uE00C',27],Tab:['\uE004',9],ArrowRight:['\uE014',39],End:['\uE010',35],Home:['\uE011',36]};
+      const keys = {Escape:['\uE00C',27],Tab:['\uE004',9],Enter:['\uE007',13],' ':['\uE00D',32],ArrowLeft:['\uE012',37],ArrowRight:['\uE014',39],End:['\uE010',35],Home:['\uE011',36]};
       if (!keys[value]) throw new Error('Unsupported fixture key');
       await activate(page);
       if (firefox) await command('input.performActions',{context:page,actions:[{type:'key',id:'playback-keyboard',actions:[
         {type:'keyDown',value:keys[value][0]},{type:'keyUp',value:keys[value][0]}]}]});
-      else for (const type of ['keyDown','keyUp']) await command('Input.dispatchKeyEvent',{type,key:value,code:value,windowsVirtualKeyCode:keys[value][1]},page);
+      else for (const type of ['keyDown','keyUp']) await command('Input.dispatchKeyEvent',{type,key:value,code:value === ' ' ? 'Space' : value,windowsVirtualKeyCode:keys[value][1],
+        ...(type === 'keyDown' && ['Enter',' '].includes(value) ? {text:value === 'Enter' ? '\r' : ' ',unmodifiedText:value === 'Enter' ? '\r' : ' '} : {})},page);
     };
     const click = async (page,id) => {
       await activate(page);

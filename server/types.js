@@ -101,7 +101,7 @@
  * @property {string} [streamVersion] - Unique generation token for current personal stream.
  * @property {Promise<any>} [preparing] - In-flight media resolution promise if polling.
  * @property {Function} [alive] - Optional liveness check callback.
- * @property {{watchRtts?: Array<{at:number,ms:number}>}} [watchSocket] - Active socket's bounded server-measured round trips; `at` is monotonic.
+ * @property {{watchRtts?: Array<{at:number,ms:number}>,watchKick?: (roomId: string) => void}} [watchSocket] - Active socket's bounded round trips and subscription-removal notification.
  */
 
 /**
@@ -115,6 +115,7 @@
  * @property {number} changedAt - Timestamp (ms) when position or pause state last changed.
  * @property {Map<string, Viewer>} viewers - Active viewers keyed by viewer ID.
  * @property {Map<string, any>} disconnectedViewers - Recently disconnected viewers preserving state across reconnects.
+ * @property {Map<string, number>} [kickedViewers] - Short-lived fences for removed viewing IDs; accounts may rejoin with a new viewing ID.
  * @property {number} [startAt] - Confirmed synchronized startup/seek release timestamp (ms).
  * @property {number} [pauseAt] - Authoritative UTC deadline for a coordinated pause.
  * @property {string} [readinessId] - Token fencing host choices for a single waiting period.

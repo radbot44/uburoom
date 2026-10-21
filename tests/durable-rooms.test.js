@@ -7,6 +7,41 @@ const { controlClient } = require('./helpers/control-client');
 const certFile = path.join(__dirname,'../certs/server-cert.pem');
 const tls = {skip:!fs.existsSync(certFile)};
 
+test('kick permission protects leader/self/hosts, removes every target tab, fences stale subscriptions and allows manual rejoining',tls,async t=>{
+  const f=await fixture(t),creator=await f.login('host'),host=await f.login('guest'),viewer=await f.login('guest2');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
+  const creatorId=(await creator.call('/api/watch/me')).body.account.id;
+  const hostId=(await host.call('/api/watch/me')).body.account.id;
+  const viewerId=(await viewer.call('/api/watch/me')).body.account.id;
+  await creator.call(root+'?viewer='+randomUUID());await host.call(root+'?viewer='+randomUUID());
+  const tabs=[randomUUID(),randomUUID()];for(const tab of tabs)assert.equal((await viewer.call(root+'?viewer='+tab)).status,200);
+  const edit=async change=>{const current=await creator.call(root+'/settings');return creator.call(root+'/settings',{revision:current.body.revision,change});};
+  const kick=(client,userId)=>client.call('/api/command',{roomId:id,command:{action:'room.kick',args:{userId}}});
+  assert.equal((await kick(viewer,hostId)).body.status,'forbidden');
+  assert.equal((await edit({action:'host.add',userId:hostId})).status,200);
+  assert.equal((await kick(host,creatorId)).body.status,'forbidden');
+  assert.equal((await kick(host,hostId)).body.status,'forbidden');
+  await edit({action:'host.add',userId:viewerId});
+  assert.equal((await kick(host,viewerId)).body.status,'forbidden');
+  await edit({action:'host.remove',userId:viewerId});
+  await edit({action:'permissions',role:'host',permissions:{kickParticipants:false}});
+  assert.equal((await kick(host,viewerId)).body.status,'forbidden');
+  await edit({action:'permissions',role:'host',permissions:{kickParticipants:true}});
+  assert.equal((await kick(host,viewerId)).body.status,'applied');
+  const room=f.app.watch.rooms.get(id);
+  assert.equal([...room.viewers.values()].some(person=>person.userId===viewerId),false);
+  for(const tab of tabs)assert.equal((await viewer.call(root+'?viewer='+tab)).status,403);
+  const replacement=randomUUID();assert.equal((await viewer.call(root+'?viewer='+replacement)).status,200);
+  assert.equal((await kick(creator,hostId)).body.status,'applied');
+  assert.equal(room.viewers.get(replacement).userId,viewerId);
+  await host.call(root+'?viewer='+randomUUID());
+  assert.equal((await viewer.call('/api/watch/admin-mode',{enabled:true})).status,200);
+  assert.equal((await kick(viewer,hostId)).body.status,'applied','active admin may remove hosts');
+  assert.equal((await kick(viewer,creatorId)).body.status,'forbidden','even an admin cannot kick the leader');
+  await viewer.call('/api/watch/admin-mode',{enabled:false});
+  assert.equal((await creator.call('/api/command',{roomId:id,command:{action:'room.kick',args:{userId:'invalid'}}})).body.status,'unsupported');
+});
+
 test('room-scoped People search and pending hosts recheck authority and activate only on provider sign-in',tls,async t=>{
   const f=await fixture(t),creator=await f.login('host');
   const id=(await creator.call('/api/watch/rooms',{name:'Host directory',keepEmpty:true})).body.id;

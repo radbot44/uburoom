@@ -67,6 +67,12 @@ If media disappeared, the configured Plex server changed or access was revoked, 
 
 ## Proposed hosts and permissions
 
+### Implemented participant removal (owner decisions, 2026-10-21)
+
+`kickParticipants` defaults to true for hosts and false for viewers. Stored policies lacking this new flag receive the same default when normalized; explicit false values and operator overrides remain respected. The example host-permission list includes it. The permission is editable under Room management and cannot be granted to viewers. No SQL schema change or private configuration migration is performed.
+
+The validated `room.kick` command accepts a canonical account UUID. The leader and self are protected; authorized hosts can remove viewers, while the leader or active administrator may also remove hosts. It removes every current viewing tab and remembered disconnected view for that person, closes the affected subscriptions, stops their streams and fences their old viewing IDs across the reconnect window. An explicit rejoin uses a fresh viewing ID and is immediately allowed under the existing access policy. Host assignments are retained; kicking does not ban an account. Confirmation, current authorization, command expiry and target-role checks apply. Ban support remains deferred.
+
 Distinguish **creator**, **explicit hosts** and **current live controller**. Disconnect does not transfer creatorship. Membership uses canonical account UUIDs, never usernames/provider IDs. Merging accounts must preserve access, deduplicate membership and prevent removed roles from reappearing through a retired UUID. Creator has all permissions, hosts have many by default and inherit viewer grants, and viewers initially share only play/pause. Full participant permissions is a one-action creation preset for all ordinary capabilities, not permission to assign hosts or transfer creatorship.
 
 | Action | Proposed authority |

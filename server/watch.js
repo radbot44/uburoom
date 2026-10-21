@@ -311,6 +311,8 @@ class Watch {
     } finally { room.starting = false; }
   }
   snapshot(room, actor, viewerId, alive, quality = '720p') {
+    if ((room.kickedViewers?.get(viewerId) || 0) > Date.now()) throw Object.assign(new Error('You were removed from this room. You may rejoin.'),{status:403});
+    room.kickedViewers?.delete(viewerId);
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
     if (this.rooms.get(room.s.roomId) !== room) throw new Error('Room unavailable');
     // A new host page never silently inherits remote consent from a previous
@@ -370,9 +372,10 @@ class Watch {
         canStart:[...room.initialViewers].some(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; }) } : undefined,
       recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
       roomName:room.s.name, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
+      participants:room.saved ? this.roomState.participants(room.s.roomId) : undefined,
       allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
-      capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
+      capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions','manageHosts'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
       hostName: room.s.hostName, canBrowse:room.saved ? this.hub.canRoom(room.s,actor,'chooseMedia') : owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
       state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, enabled: room.s.enabled, mode: room.s.mode, controls: { ...room.s.controls },
       visibility: room.s.visibility,
@@ -651,6 +654,22 @@ class Watch {
   async execute(room, input, actor, permitted) {
     const command = Engine.validate(input), { action, args } = command, s = room.s;
     if (room.saved) this.roomState.store.healthy();
+    if (action === 'room.kick') {
+      if (room.transitionCommit) await room.transitionCommit.catch(() => {});
+      if (!room.saved || !permitted() || actor.watchCurrent && !await actor.watchCurrent() || !permitted()) return {status:'unavailable',message:'Room changed or command expired.'};
+      const record = this.roomState.store.get(room.s.roomId), userId = args.userId;
+      if (!this.hub.canRoom(room.s,actor,'kickParticipants') || userId === actor.userId || userId === record.creatorId ||
+          RoomPolicy.role(record,userId) === 'host' && actor.userId !== record.creatorId && !this.hub.isAdmin(actor)) return {status:'forbidden',message:'You cannot kick this participant.'};
+      const viewers = [...room.viewers.entries()].filter(([,viewer]) => viewer.userId === userId);
+      if (!viewers.length) return {status:'unavailable',message:'This participant has already left.'};
+      const now = Date.now(); room.kickedViewers ||= new Map();
+      for (const [id,until] of room.kickedViewers) if (until <= now) room.kickedViewers.delete(id);
+      for (const [id] of viewers) room.kickedViewers.set(id,now + RECONNECT_GRACE_MS);
+      for (const [id,viewer] of room.disconnectedViewers) if (viewer.userId === userId) { room.kickedViewers.set(id,now + RECONNECT_GRACE_MS); room.disconnectedViewers.delete(id); }
+      for (const socket of new Set(viewers.map(([,viewer]) => viewer.watchSocket).filter(Boolean))) socket.watchKick?.(room.s.roomId);
+      for (const [id,viewer] of viewers) await this.leave(room,viewer.actor,id,'kicked');
+      return {status:'applied',message:'Participant removed. They may rejoin.'};
+    }
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
     if (room.transitionCommit) return {status:'unavailable',message:'Wait for the current queue transition to finish.'};
     if (action.startsWith('queue.')) return this.queueCommand(s.roomId,command,actor,permitted);
