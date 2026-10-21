@@ -122,6 +122,9 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 
 ## UI & Design
 
+**Shared-controls and panel reviews:** Read the [owner-gated shared-controls audit brief](docs/shared-controls-audit-brief.md) when working on buttons, icon buttons, toggles, switches, segmented/view choices, tabs, toolbars or related Room/Queue/Media panel conventions. Its current assignment is **read-only audit, plan, and numbered owner questions**. The approved popup consistency pass was limited to its documented scope and gives **no standing permission** to select new control types, standardize existing UI autonomously, or change implementation. The canonical approval records belong in [docs/design-guide.md](docs/design-guide.md), not only in the temporary brief. Preserve all existing owner-approved action/visual rules pending an explicit new ruling.
+
+
 - Read [docs/design-guide.md](docs/design-guide.md) and the web-owned styles/SVGs in `web/remote-ui.js` before any UI work. UI assets have per-repository ownership without cross-repository filesystem imports. **Inspect affected rendered surfaces** before and after changes.
 - **Color tokens:** background `#101217`, card `#1B1E26`, elevated `#292E38`, border `#393F4D`, text `#F8F7F4`, muted `#AAB0BC`, orange `#FF9954` (main accent), pink `#FF7197` (brand accent), green `#158761` (remote enabled).
 - **Icons:** 24×24 SVGs, `currentColor` strokes, rounded ends/joins, ~1.9px stroke width. ~40 icon paths defined inline in `remote-ui.js`. No emoji or icon library substitution. Do not invent replacement graphics.
