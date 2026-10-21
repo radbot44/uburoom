@@ -11,7 +11,7 @@ test('the Tabler pack resolves every semantic name without legacy artwork', () =
     assert.equal(icons.resolveName(name), slug, name);
     assert.ok(icons.glyphs[slug]?.includes('<'), name + ' resolves to a local SVG');
   }
-  for (const slug of ['adjustments-horizontal','sparkles','karate','ban','volume-off','volume-4','volume-2','volume','thumb-up','thumb-down','thumb-up-off','thumb-down-off']) {
+  for (const slug of ['adjustments-horizontal','sparkles','karate','user','door','ban','volume-off','volume-4','volume-2','volume','thumb-up','thumb-down','thumb-up-off','thumb-down-off']) {
     assert.equal(icons.resolveName(slug), slug);
     assert.ok(icons.glyphs[slug]?.includes('<'), slug + ' is bundled');
   }
@@ -57,8 +57,35 @@ test('all icons render as inline SVG and the monochrome oomark retains its geome
   const logo = icons.icon(doc,'oomark');
   assert.equal(logo.attrs.viewBox,'528.41 544.4 298.99 249.1061');
   assert.equal(logo.attrs.class,'oomark-icon');
+  assert.equal(logo.attrs['stroke-linecap'],'butt');
   assert.match(logo.innerHTML,/<circle/);
   assert.throws(()=>icons.icon(doc,'unknown-icon'),/Unknown uburoom icon/);
+});
+
+test('active oomark SVGs match canonical artwork geometry and flat mouth caps', () => {
+  const read = file => fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+  function geometry(source) {
+    const attrs = tag => Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(match=>[match[1],match[2]]));
+    const circles = [...source.matchAll(/<circle\b[^>]*>/g)].map(match=>attrs(match[0]));
+    const line = attrs(source.match(/<line\b[^>]*>/)?.[0] || '');
+    return {
+      eyes:circles.map(eye=>['cx','cy','r','stroke-width'].map(key=>Number(eye[key]))),
+      mouth:['x1','x2','y1','y2','stroke-width'].map(key=>Number(line[key])),
+      cap:line['stroke-linecap']
+    };
+  }
+  const canonical = geometry(read('assets/branding/uburoom-oomark-white.svg'));
+  assert.equal(canonical.cap,'butt');
+  const sources = {
+    registry:icons.glyphs.oomark,
+    monochrome:read('web/assets/branding/uburoom-oomark-mono.svg'),
+    favicon:read('web/assets/uburoom-oomark-brand.svg'),
+    lobby:read('web/watch.html').match(/<svg class="empty-oomark"[\s\S]*?<\/svg>/)[0]
+  };
+  for (const file of fs.readdirSync(path.join(__dirname,'../assets/branding')).filter(file=>file.startsWith('uburoom-oomark-') && file.endsWith('.svg'))) {
+    sources[file] = read('assets/branding/'+file);
+  }
+  for (const [name,source] of Object.entries(sources)) assert.deepEqual(geometry(source),canonical,name);
 });
 
 test('legacy remote paths are archived but never executed', () => {

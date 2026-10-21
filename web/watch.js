@@ -130,7 +130,7 @@ const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;tr
 const subtitleMode=$('subtitle-mode');
 video.volume = .5;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['room-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
+for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
 const badge = uburoomUI.mountBadge($('badge'));
@@ -270,7 +270,7 @@ for (const [key, label, panel] of sections) {
   tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
   if (key === 'room') {
-    tab.append(uburoomIcons.icon(document,'oomark'));
+    tab.append(uburoomIcons.icon(document,'door'));
   } else tab.append(uburoomIcons.icon(document, key === 'queue' ? 'queue' : 'media'));
   tab.append(document.createTextNode(label));
   tab.addEventListener('click', () => selectSection(key));

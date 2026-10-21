@@ -211,6 +211,16 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 Room quick permissions now use the owner's Tabler thumb permission-pill variant, retaining ordinary switches for on/off settings. Chrome/Firefox checks pass; current full-suite failures and the unrelated pre-existing remote edit are recorded in [permission-pill verification](docs/testing.md#2026-10-21---room-permission-thumb-pills-m1-p7). The Settings Permissions tab is the next owner-directed step, not part of this increment.
 
+The subsequent owner-directed Room Settings Permissions increment adds compact thumb rows, captions/condensed tooltips, an always-visible cosmetic Custom preset, and the merged Everyone is host row. Thumb hover substitutions are removed and standard icon backgrounds restored. See [current verification](docs/testing.md#2026-10-21---room-settings-permissions-matrix-m1-p7); Queue/Media migration and owner visual acceptance remain pending.
+
+Owner follow-up replaces Room quick pills with eight aligned Participant/Host rows and a naturally sized Roomies list with matching dividers and overflow expansion; mobile Settings shows both role columns without tabs. Shared thumb-button behavior is reused across Room/Settings. See [follow-up verification](docs/testing.md#2026-10-21---room-role-rows-and-mobile-permission-columns-m1-p7). Owner visual review still gates Queue.
+
+The roster's leading role indicator now doubles as the authorized host action; inaccessible kick/action placeholders are removed, Kick uses karate, and ordinary-host promotions confirm their inability to demote the recipient. Chrome/Firefox and full-suite evidence is in [roster action verification](docs/testing.md#2026-10-21---combined-roster-role-and-host-actions-m1-p7).
+
+Room now uses Tabler door; Roomies carries the canonical oomark with protected flat mouth geometry. Room row separators are removed and subsection contents inset downward within unchanged rows. See [icon/spacing verification](docs/testing.md#2026-10-21---room-door-canonical-oomark-and-subheading-spacing-m1-p7), including the separate Player smoke startup limitation.
+
+Owner-expanded icon-spacing scope adds shared 4px clearance beyond the header, using 44px Room row slots around unchanged 40px buttons, plus gaps in tighter Queue/Media/mobile-player icon groups. Logical-group spacing and Media sticky machinery remain intact; verification is recorded in [icon button clearance](docs/testing.md#2026-10-21---icon-button-clearance-m1-p7).
+
 The owner's subsequent Room revisions place transparent, contiguous header actions beside an ellipsized name, with controls and a participant roster in two columns. Room/Settings consistently order self first, then leader/hosts/viewers alphabetically. Updated focused browser checks and 448 Node tests pass; further participant-control guidance and visual acceptance remain pending.
 
 The latest owner revision uses a 40/60 split, aligned nonwrapping role/name/host/kick cells, and scrolling 10/30-row rosters. Confirmed participant removal is implemented through the shared validated command engine with default-on host permission, protected leader/self, host-target restrictions and immediate manual rejoin. Focused dual-browser checks and all 450 Node tests pass; visual acceptance remains pending before Queue.

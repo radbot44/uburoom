@@ -75,7 +75,7 @@
     "settings": "<path d=\"M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065\" /><path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\" />",
     "sun": "<path d=\"M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\" /><path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\" />",
     "users": "<path d=\"M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\" /><path d=\"M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\" /><path d=\"M16 3.13a4 4 0 0 1 0 7.75\" /><path d=\"M21 21v-2a4 4 0 0 0 -3 -3.85\" />",
-    "oomark": "<circle cx=\"618.46\" cy=\"634.45\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><circle cx=\"737.35\" cy=\"634.45\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><path d=\"M601.9475 743.0031H753.8625\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"53.0061\"/>",
+    "oomark": "<circle cx=\"618.4600\" cy=\"634.4500\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><circle cx=\"737.3500\" cy=\"634.4500\" r=\"48.3813\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"35.3374\"/><line x1=\"601.9475\" x2=\"753.8625\" y1=\"743.0031\" y2=\"743.0031\" stroke=\"currentColor\" stroke-width=\"53.0061\" stroke-linecap=\"butt\"/>",
     "adjustments-horizontal": "<path d=\"M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 6l8 0\" /><path d=\"M16 6l4 0\" /><path d=\"M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 12l2 0\" /><path d=\"M10 12l10 0\" /><path d=\"M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M4 18l11 0\" /><path d=\"M19 18l1 0\" />",
     "arrow-down": "<path d=\"M12 5l0 14\" /><path d=\"M18 13l-6 6\" /><path d=\"M6 13l6 6\" />",
     "arrow-left": "<path d=\"M5 12l14 0\" /><path d=\"M5 12l6 6\" /><path d=\"M5 12l6 -6\" />",
@@ -93,6 +93,7 @@
     "crown": "<path d=\"M12 6l4 6l5 -4l-2 10h-14l-2 -10l5 4l4 -6\" />",
     "device-remote": "<path d=\"M10 10a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M7 5a2 2 0 0 1 2 -2h6a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-6a2 2 0 0 1 -2 -2l0 -14\" /><path d=\"M12 3v2\" /><path d=\"M10 15v.01\" /><path d=\"M10 18v.01\" /><path d=\"M14 18v.01\" /><path d=\"M14 15v.01\" />",
     "device-tv": "<path d=\"M3 9a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -9\" /><path d=\"M16 3l-4 4l-4 -4\" />",
+    "door": "<path d=\"M14 12v.01\" /><path d=\"M3 21h18\" /><path d=\"M6 21v-16a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v16\" />",
     "external-link": "<path d=\"M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6\" /><path d=\"M11 13l9 -9\" /><path d=\"M15 4h5v5\" />",
     "filter-2": "<path d=\"M4 6h16\" /><path d=\"M6 12h12\" /><path d=\"M9 18h6\" />",
     "history": "<path d=\"M12 8l0 4l2 2\" /><path d=\"M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5\" />",
@@ -123,6 +124,7 @@
     "thumb-down": "<path d=\"M7 13v-8a1 1 0 0 0 -1 -1h-2a1 1 0 0 0 -1 1v7a1 1 0 0 0 1 1h3a4 4 0 0 1 4 4v1a2 2 0 0 0 4 0v-5h3a2 2 0 0 0 2 -2l-1 -5a2 3 0 0 0 -2 -2h-7a3 3 0 0 0 -3 3\" />",
     "thumb-up-off": "<path d=\"M7 11v8a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1v-7a1 1 0 0 1 1 -1h3a3.987 3.987 0 0 0 2.828 -1.172m1.172 -2.828v-1a2 2 0 1 1 4 0v5h3a2 2 0 0 1 2 2c-.222 1.112 -.39 1.947 -.5 2.503m-.758 3.244c-.392 .823 -1.044 1.312 -1.742 1.253h-7a3 3 0 0 1 -3 -3\" /><path d=\"M3 3l18 18\" />",
     "thumb-down-off": "<path d=\"M7 13v-6m-3 -3a1 1 0 0 0 -1 1v7a1 1 0 0 0 1 1h3a4 4 0 0 1 4 4v1a2 2 0 1 0 4 0v-3m2 -2h1a2 2 0 0 0 2 -2l-1 -5c-.295 -1.26 -1.11 -2.076 -2 -2h-7c-.57 0 -1.102 .159 -1.556 .434\" /><path d=\"M3 3l18 18\" />",
+    "user": "<path d=\"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0\" /><path d=\"M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\" />",
     "viewfinder": "<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" /><path d=\"M12 3l0 4\" /><path d=\"M12 21l0 -3\" /><path d=\"M3 12l4 0\" /><path d=\"M21 12l-3 0\" /><path d=\"M12 12l0 .01\" />",
     "volume": "<path d=\"M15 8a5 5 0 0 1 0 8\" /><path d=\"M17.7 5a9 9 0 0 1 0 14\" /><path d=\"M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5\" />",
     "volume-2": "<path d=\"M15 8a5 5 0 0 1 0 8\" /><path d=\"M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5\" />",
@@ -153,7 +155,7 @@
     const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', asset === 'oomark' ? '528.41 544.4 298.99 249.1061' : '0 0 24 24');
     svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '2'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('stroke-width', '2'); svg.setAttribute('stroke-linecap', asset === 'oomark' ? 'butt' : 'round'); svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('data-tabler-icon', asset === 'oomark' ? 'oomark' : asset);
     if (asset === 'oomark') svg.setAttribute('class', 'oomark-icon');

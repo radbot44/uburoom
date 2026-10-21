@@ -7,7 +7,7 @@
 .queue-header{margin-bottom:16px;flex-wrap:wrap}
 .queue-heading{gap:10px;font-size:17px}
 .queue-heading>svg{color:var(--accent-text)}
-.queue-view-switch{gap:3px;padding:4px;border-radius:12px;background:var(--elevated)}
+.queue-view-switch{gap:var(--watch-icon-gap);padding:4px;border-radius:12px;background:var(--elevated)}
 .queue-view-button{display:flex;align-items:center;gap:7px;min-height:36px;padding:8px 11px;border-radius:9px;background:none;color:var(--muted);font-size:12px}
 .queue-view-button[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
 .queue-toolbar{margin-bottom:16px;flex-wrap:wrap}
@@ -36,7 +36,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-progress::-webkit-progress-value{background:var(--primary);border-radius:999px}
 .queue-progress::-moz-progress-bar{background:var(--primary);border-radius:999px}
 .queue-now-playing-meta{margin-top:5px}
-.queue-entry-actions{display:flex;align-items:center;gap:3px;min-width:0}
+.queue-entry-actions{display:flex;align-items:center;gap:var(--watch-icon-gap);min-width:0}
 .queue-entry-actions button{display:grid;place-items:center;min-width:32px;min-height:34px;padding:6px;background:none;border-radius:8px;color:var(--muted)}
 .queue-entry-actions button:hover{background:var(--hover);color:var(--text)}
 .queue-card-caption{margin-right:auto;font-size:12px;color:var(--muted)}
@@ -45,7 +45,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-rank,.queue-history-status{font-size:11px;font-weight:700;letter-spacing:.5px;line-height:1.5;text-transform:none;color:var(--muted)}
 .queue-history-status{display:flex;align-items:flex-start;min-height:34px;padding-top:8px}
 .queue-entry-top>.queue-rank{padding-top:8px}
-.queue-move-actions{display:flex;flex:none;gap:0}
+.queue-move-actions{display:flex;flex:none;gap:var(--watch-icon-gap)}
 .queue-move-actions button{display:grid;place-items:center;width:28px;min-height:34px;padding:5px;background:none;border-radius:8px;color:var(--muted)}
 .queue-move-actions button:hover{background:var(--hover);color:var(--text)}
 #queue-content .queue-move-actions svg{width:16px;height:16px}

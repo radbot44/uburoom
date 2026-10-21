@@ -23,7 +23,7 @@ h1{font-size:22px;letter-spacing:-.5px;margin:0}h2{font-size:17px;margin:0}.hint
 .account,.account-actions,.room-bar,.library-header{display:flex;align-items:center;justify-content:space-between;gap:12px}.account{margin-bottom:22px}.account-actions{color:var(--muted)}
 .account-actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}.account-actions a.quiet{color:var(--text);text-decoration:none;white-space:nowrap}
 .browser-button{display:flex;align-items:center;gap:7px;color:var(--text);white-space:nowrap}.browser-button svg{width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.handoff-code{font-size:32px!important;font-weight:600;letter-spacing:.18em;font-variant-numeric:tabular-nums;color:var(--text)!important;text-align:center}.handoff-page{max-width:500px}.handoff-login{display:inline-block;color:var(--text);text-decoration:none;margin-top:20px}.activity-pip #handoff-dialog{display:none!important}.activity-pip #handoff-dialog::backdrop{background:transparent}
-.icon-button{background:transparent;border-radius:10px;padding:9px;color:var(--muted)}.icon-button:hover,.quiet:hover{background:var(--hover);color:var(--text)}
+.icon-button{background:var(--elevated);border-radius:10px;padding:9px;color:var(--muted)}.icon-button:hover,.quiet:hover{background:var(--hover);color:var(--text)}
 .icon-button svg,.player-button svg,.center-play svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block;pointer-events:none}
 .primary{background:var(--primary);color:var(--on-primary);text-decoration:none;text-align:center;border-radius:12px;padding:12px 17px;font-weight:600}.primary:hover{background:var(--primary-hover)}.quiet{background:var(--elevated);border-radius:12px;padding:10px 14px}.card{background:var(--card);border-radius:22px;padding:20px}.card p{color:var(--muted)}
 .auth-card{max-width:440px;margin:50px auto;padding:28px}.auth-card p{margin:12px 0 0}.login-options{display:grid;gap:12px;margin-top:24px}.provider-button{display:flex;align-items:center;justify-content:center;gap:12px;min-height:46px;border-radius:12px;padding:12px 16px;text-decoration:none;font-weight:600;color:var(--text)}.provider-button img{flex:none}.discord-button{background:#5865F2;color:#fff}.discord-button:hover{background:#4752c4}.auth-card #auth-retry{margin-top:20px}.room-bar{margin-bottom:16px;justify-content:flex-start;flex-wrap:wrap}.chips{display:flex;flex-wrap:wrap;gap:8px;flex:1}.chips button{background:var(--elevated);border-radius:12px;padding:10px 16px}.chips button[aria-pressed=true]{background:var(--primary)}#viewers{white-space:nowrap}
@@ -161,7 +161,7 @@ body.immersive{overflow:hidden;background:black}
 
 .readiness-choice{position:absolute;z-index:6;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100% - 24px));max-height:calc(100% - 20px);overflow:auto;padding:20px;border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:0 12px 50px #0009}.readiness-choice h2{font-size:18px;margin:0 0 10px}.readiness-choice p{color:var(--muted);font-size:13px;margin:0 0 16px}.readiness-choice>div{display:flex;flex-wrap:wrap;gap:8px}.readiness-choice button{min-height:44px}.activity-pip .readiness-choice{display:none!important}@media(max-width:600px){.readiness-choice{padding:12px}.readiness-choice h2{font-size:15px}.readiness-choice p{font-size:12px;margin-bottom:10px}.readiness-choice button{padding:8px 10px;font-size:12px}}
 
-.provider-row .provider-connect{min-height:46px;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600}.provider-row .provider-remove{width:40px;min-height:40px;padding:8px;background:transparent;color:var(--muted)}.provider-row .provider-remove:hover{background:var(--elevated);color:var(--error)}.danger-button{background:#b6263c;color:#fff;min-height:44px;border-radius:12px;padding:10px 14px;font-weight:600}.danger-button:hover{background:#9c2033}#account-remove-error{color:var(--error)}#account-remove-error:empty{display:none}
+.provider-row .provider-connect{min-height:46px;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600}.provider-row .provider-remove{width:40px;min-height:40px;padding:8px;background:var(--elevated);color:var(--muted)}.provider-row .provider-remove:hover{background:var(--elevated);color:var(--error)}.danger-button{background:#b6263c;color:#fff;min-height:44px;border-radius:12px;padding:10px 14px;font-weight:600}.danger-button:hover{background:#9c2033}#account-remove-error{color:var(--error)}#account-remove-error:empty{display:none}
 
 @media(max-width:500px){.provider-row{gap:10px}.provider-row .provider-connect{font-size:12px;padding:10px}.provider-details h3{gap:6px}.discord-symbol,.plex-symbol{width:28px;height:28px}}
 
@@ -200,8 +200,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 
 .current-room-heading{display:flex;gap:8px;align-items:center}.current-room-heading h3{flex:1;margin:0;font-size:22px;overflow-wrap:anywhere}
 .current-room-info{flex-wrap:wrap;margin:4px 0 var(--watch-group-gap)}#current-room-meta{display:inline-flex;align-items:center;gap:var(--watch-control-gap);min-height:var(--watch-control-height);padding:8px 14px;border-radius:var(--watch-control-radius);background:var(--elevated);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:500;box-sizing:border-box;margin:0}#current-room-meta svg{width:var(--watch-icon-size);height:var(--watch-icon-size);stroke:currentColor;fill:none;flex:none}
-#room-quick-permissions h4{font-size:13px;margin:8px 0 4px}#room-quick-switches{display:flex;flex-wrap:wrap;gap:8px}.room-quick-switch{font-size:12px}
-#room-quick-readonly{margin:4px 0 8px;font-size:12px;color:var(--muted)}#room-quick-readonly:empty{display:none}
+#room-quick-switches{display:flex;flex-direction:column;gap:0}
 #room-quick-status{font-size:12px;margin-left:8px}
 #room-role:empty{display:none}
 
@@ -212,8 +211,8 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #room-dialog label{display:block;margin:14px 0 6px}#room-dialog select{width:100%}
 #room-dialog input:not([type=checkbox]),#room-settings-dialog input:not([type=checkbox]){box-sizing:border-box;min-width:0;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);padding:12px;font:inherit}
 #room-dialog input:not([type=checkbox]){width:100%}#room-chooser-refresh{margin-left:auto;color:var(--muted)}
-#room-dialog .icon-button,#saved-rooms .room-actions .icon-button{background:transparent;border:none;box-shadow:none;color:var(--muted);min-width:36px;min-height:36px;padding:6px}
-#room-dialog .icon-button:hover,#saved-rooms .room-actions .icon-button:hover{background:transparent;color:var(--text)}
+#room-dialog .icon-button,#saved-rooms .room-actions .icon-button{background:var(--elevated);border:none;box-shadow:none;color:var(--muted);min-width:36px;min-height:36px;padding:6px}
+#room-dialog .icon-button:hover,#saved-rooms .room-actions .icon-button:hover{background:var(--hover);color:var(--text)}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
 #room-chooser-refresh.spinning svg{animation:spin .75s linear infinite}
 .button-group{display:flex;gap:4px;background:var(--elevated);padding:4px;border-radius:10px;margin:6px 0 12px}
@@ -255,7 +254,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .room-role-badge.creator{color:var(--primary)}
 .room-role-badge.host{color:var(--text)}
 .room-role-badge.participant{color:var(--muted)}
-#room-permission-preset-group{width:100%}#room-permission-preset-group [hidden]{display:none}#room-permission-roles{display:none}
+#room-permission-preset-group{width:100%}#room-permission-preset-group [hidden]{display:none}
 .permission-inherited{display:inline-block;margin:0 0 0 4px;font-size:16px;color:var(--muted)}.room-permission-table{width:100%;border-collapse:collapse;margin:0}.room-permission-table td{position:relative}.room-permission-table .permission-group{font-weight:700;padding-top:14px;color:var(--accent-text)}
 .queue-settings select{display:block;width:100%;margin:6px 0 16px}.queue-settings .queue-check{display:flex!important;align-items:center;gap:10px}
 .queue-settings-footer{position:sticky;bottom:-16px;background:var(--card);padding:12px 0;z-index:2}
@@ -281,11 +280,6 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
   #room-settings-nav button{flex:none;padding:8px 12px;white-space:nowrap;font-size:13px;min-height:38px}
   #room-settings-dialog .room-mobile-section{display:none}
   label.room-mobile-section{display:none}
-  #room-permission-roles{display:flex;gap:4px;background:var(--elevated);padding:4px;border-radius:10px;margin-bottom:8px}
-  #room-permission-roles button{flex:1;min-height:44px;border-radius:8px;background:none;color:var(--text)}
-  #room-permission-roles [aria-selected=true]{background:var(--card);color:var(--accent-text)}
-  #room-permission-custom[data-role=viewer] [data-permission-role=host],#room-permission-custom[data-role=host] [data-permission-role=viewer]{display:none}
-  .room-permission-table th:first-child{width:80%}.room-permission-table td{white-space:nowrap}
   .queue-countdown{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px}
   .queue-countdown-actions{grid-column:1/-1;justify-content:flex-end}.queue-countdown-text{white-space:nowrap;overflow:hidden}
   .queue-settings-footer{bottom:0}
@@ -332,7 +326,7 @@ body.idle-player #video{visibility:hidden}
 #account-display-name { min-width:0; flex:1; padding:11px 12px; border:1px solid var(--border); border-radius:12px; background:var(--elevated); color:var(--text); font:inherit; }
 
 /* Shared opt-in foundations. Queue/Media adopt these only in approved increments. */
-:root{--watch-control-height:40px;--watch-control-radius:10px;--watch-group-radius:12px;--watch-control-gap:8px;--watch-group-gap:16px;--watch-icon-size:24px;--watch-switch-width:36px;--watch-switch-height:22px}
+:root{--watch-control-height:40px;--watch-control-radius:10px;--watch-group-radius:12px;--watch-control-gap:8px;--watch-icon-gap:4px;--watch-row-height:calc(var(--watch-control-height) + var(--watch-icon-gap));--watch-group-gap:16px;--watch-icon-size:24px;--watch-switch-width:36px;--watch-switch-height:22px}
 .watch-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:var(--watch-group-gap)}
 .watch-control-group{display:flex;align-items:center;flex-wrap:wrap;gap:var(--watch-control-gap)}
 :is(.watch-control,#options-panel .watch-control,#room-dialog .watch-control,#room-settings-dialog .watch-control){display:inline-flex;align-items:center;justify-content:center;flex:none;gap:var(--watch-control-gap);box-sizing:border-box;height:var(--watch-control-height);min-height:var(--watch-control-height);padding:0 12px;border:0;border-radius:var(--watch-control-radius);background:var(--elevated);color:var(--text);font:inherit}
@@ -351,26 +345,22 @@ body.idle-player #video{visibility:hidden}
 #options-chevron{flex:none}
 .room-header-actions{flex:none;flex-wrap:nowrap}
 .room-header-actions #room-people-open{padding-inline:8px;font-size:12px}
-.watch-header-actions{gap:0}
-:is(.watch-header-control,#options-panel .watch-header-control){background:transparent;color:var(--muted);margin:0}
+.watch-header-actions{gap:var(--watch-icon-gap)}
+:is(.watch-header-control,#options-panel .watch-header-control){background:var(--elevated);color:var(--muted);margin:0}
 .room-content-columns{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:var(--watch-group-gap)}
 .room-controls-column,.room-participant-column{min-width:0}
-.room-roster-frame{position:relative;min-width:0;--room-row-height:40px}
-.room-roster{--role-column:24px;height:calc(8 * var(--room-row-height,40px));overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;min-width:0}
+.room-roster-frame{position:relative;min-width:0;--room-row-height:var(--watch-row-height)}
+.room-roster{--role-column:40px;height:calc(8 * var(--room-row-height,40px));overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;min-width:0}
 .room-roster-frame.expanded .room-roster{height:calc(16 * var(--room-row-height,40px))}
 .room-roster-frame.has-overflow .room-roster{padding-bottom:40px}
-.room-roster .room-person{display:grid;grid-template-columns:var(--role-column) minmax(0,1fr);align-items:center;gap:0;height:var(--room-row-height,40px);min-height:var(--room-row-height,40px);padding:0;border:0;white-space:nowrap}
-.room-roster.can-host .room-person,.room-roster.can-kick .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 40px}
-.room-roster.can-host.can-kick .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 40px 40px}
+.room-roster .room-person{display:grid;grid-template-columns:var(--role-column) minmax(0,1fr);align-items:center;gap:var(--watch-icon-gap);height:var(--room-row-height,44px);min-height:var(--room-row-height,44px);padding:2px;border:0;white-space:nowrap}
+.room-roster .room-person.has-kick{grid-template-columns:var(--role-column) minmax(0,1fr) 40px}
 .room-roster .room-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.room-roster-role{display:flex;align-items:center;gap:8px;min-width:0;color:var(--muted)}
+.room-roster-role{display:flex;align-items:center;justify-content:center;min-width:0;color:var(--text)}
 .room-roster-role>svg{width:24px;height:24px;fill:none;stroke:currentColor;flex:none}
 .room-roster-role[aria-label="Room Leader"]{color:var(--accent-text)}
-#room-participants .room-roster-role-text{display:none}
-#room-current-people{--role-column:124px}
 :is(#options-panel,#room-settings-dialog) .room-roster-expand{position:absolute;bottom:0;left:50%;transform:translateX(-50%);background:var(--elevated);z-index:1}
 .room-roster-frame.expanded .room-roster-expand svg{rotate:180deg}
-@media(max-width:620px){#room-current-people{--role-column:24px}.room-roster-role-text{display:none}}
 .button-group.watch-segmented,.watch-segmented{display:flex;align-items:stretch;gap:var(--watch-control-gap);height:var(--watch-control-height);min-height:var(--watch-control-height);padding:3px;border:0;border-radius:var(--watch-group-radius);background:var(--elevated);box-sizing:border-box}
 .watch-segmented .group-button{flex:1 1 0;min-width:0;min-height:0;height:100%;padding:0 2px;gap:var(--watch-control-gap);border:0;border-radius:var(--watch-control-radius);background:transparent;color:var(--muted);font-size:12px;line-height:1.15;overflow-wrap:anywhere}
 .watch-segmented .group-button[aria-pressed=true]{background:var(--card);color:var(--accent-text);font-weight:600;box-shadow:none}
@@ -385,7 +375,7 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 @container(max-width:350px){.watch-control-responsive .watch-control-label{display:none}.watch-control-responsive{width:var(--watch-control-height);padding:0}}
 #room-settings-dialog label.watch-switch-label{display:flex;align-items:center;gap:var(--watch-control-gap);min-height:44px;margin:0}
 
-/* Permission-based switch pills are opt-in; the permission matrix stays native. */
+/* Shared switch/permission pills and compact permission matrix. */
 .watch-switch-pill{--pill-border:var(--border);display:inline-flex;align-items:stretch;max-width:100%;min-width:0;min-height:44px;border:1px solid var(--pill-border);border-radius:999px;background:var(--elevated);color:var(--text);font-size:12px}
 .watch-switch-pill.is-on{--pill-border:var(--primary);background:color-mix(in srgb,var(--primary) 14%,var(--elevated));color:var(--accent-text)}
 .watch-switch-pill-body{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;min-height:42px;flex:1;padding:6px;cursor:pointer}
@@ -394,11 +384,41 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 .watch-permission-input{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .watch-permission-indicator{display:inline-flex;flex:0 0 24px;width:24px;height:24px}
 .watch-permission-indicator svg{width:24px;height:24px}
-.watch-permission-indicator .watch-permission-hover{display:none}
-.watch-permission-pill:not(.is-readonly):not(.is-disabled) .watch-switch-pill-body:hover .watch-permission-normal{display:none}
-.watch-permission-pill:not(.is-readonly):not(.is-disabled) .watch-switch-pill-body:hover .watch-permission-hover{display:block}
 .watch-switch-pill-state{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .watch-switch-pill:has(:focus-visible){outline:2px solid var(--primary);outline-offset:2px}
 :is(.watch-switch-pill .watch-switch-pill-action,#options-panel .watch-switch-pill-action,#room-settings-dialog .watch-switch-pill-action){align-self:stretch;width:40px;height:auto;min-height:42px;margin:0;padding:0;border-radius:0 999px 999px 0;border-inline-start:1px solid var(--pill-border);background:transparent;color:inherit}
 .watch-switch-pill:not(.is-readonly):not(.is-disabled):hover{background:var(--hover)}
 .watch-switch-pill.is-on:not(.is-readonly):not(.is-disabled):hover{background:color-mix(in srgb,var(--primary) 22%,var(--elevated))}
+
+/* Standard icon surfaces apply across headers; nonclickable controls are indicators. */
+:is(button:disabled,button[aria-disabled=true],.watch-control:disabled,#options-panel .watch-control:disabled,#room-dialog .watch-control:disabled,#room-settings-dialog .watch-control:disabled){background:transparent;cursor:default}
+.watch-permission-pill:is(.is-readonly,.is-disabled){background:transparent}
+#room-settings-dialog .permission-view-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;min-height:40px}
+.room-permission-table th,.room-permission-table td{padding:2px 5px}
+.room-permission-table th[scope=row]{width:64%;position:relative}
+.permission-name{display:inline-block;border-radius:4px}
+.permission-name:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.permission-caption{display:block;font-weight:400;font-size:11px;line-height:1.35;color:var(--muted);margin-top:2px;white-space:normal}
+#room-settings-dialog .permission-button{margin:0}
+.condensed .permission-caption{display:none;position:absolute;top:calc(100% - 2px);left:0;width:min(270px,calc(100vw - 64px));box-sizing:border-box;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--elevated);color:var(--text);box-shadow:0 4px 12px #0004;z-index:3}
+.condensed .permission-name:hover+.permission-caption,.condensed .permission-name:focus+.permission-caption{display:block}
+@media(max-width:620px){.room-permission-table th[scope=row]{width:56%}.room-permission-table th,.room-permission-table td{padding-inline:2px}.room-permission-table th[scope=col]{font-size:11px}}
+
+/* Room columns share one row metric; the roster shrinks to its actual content. */
+.room-content-columns{--room-row-height:var(--watch-row-height)}
+#room-quick-permissions .room-control-row,.room-roster-heading{box-sizing:border-box;height:var(--room-row-height);min-height:var(--room-row-height);margin:0;display:flex;align-items:center;justify-content:space-between;gap:var(--watch-icon-gap);padding:2px;border:0;font-size:12px}
+#room-quick-permissions .room-control-heading,.room-roster-heading{justify-content:flex-start;gap:4px;font-weight:600;padding-block:10px 2px}
+.room-control-heading svg,.room-roster-heading svg{width:20px;height:20px;flex:none}
+#roomies-symbol{display:inline-flex;flex:none}
+.room-control-name{min-width:0;line-height:1.15;overflow-wrap:anywhere}
+:is(.watch-permission-button,#options-panel .watch-permission-button,#room-settings-dialog .watch-permission-button)[aria-pressed=true]{color:var(--accent-text)}
+:is(#options-panel,#room-settings-dialog) .watch-permission-button:disabled{background:transparent;opacity:1}
+#room-participants{height:auto;max-height:calc(7 * var(--room-row-height));box-sizing:border-box}
+#room-roster-frame.expanded #room-participants{height:auto;max-height:calc(15 * var(--room-row-height))}
+#room-participants .room-person{box-sizing:border-box;border:0}
+
+/* One shared role/host slot; kick cells exist only for actionable targets. */
+:is(#options-panel,#room-settings-dialog) .room-host-action{color:var(--text)}
+.room-host-action .room-host-hover{display:none}
+.room-host-promote:not(:disabled):hover>svg:first-child{display:none}
+.room-host-promote:not(:disabled):hover>.room-host-hover{display:block}

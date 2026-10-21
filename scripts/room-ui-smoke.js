@@ -215,7 +215,7 @@ async function main() {
       await run('$("room-settings-dialog").close();roomUI.open(selected,"manage")');
       await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Room settings');
       await shot('settings');
-      await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true;document.querySelector("#room-permissions input[data-role=viewer][data-permission=seek]").click()');
+      await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true;document.querySelector("#room-permissions button[data-role=viewer][data-permission=seek]").click()');
       await browser.until(guest,'!$("timeline").disabled','Viewer seek grant');
       await until('$("room-settings-status").textContent==="Saved"','Settings save completes');
       await run('$("room-settings-section").value="people";$("room-settings-section").dispatchEvent(new Event("change"));document.querySelector("#room-current-people button").click()');
@@ -231,7 +231,7 @@ async function main() {
       await run('$("room-transfer").click()');
       await until('$("room-confirm-dialog").open','Transfer confirmation');
       await run('$("room-confirm-yes").click()');
-      await until('state?.roomRole==="host" && $("room-current-people").textContent.includes("Host")','Creator transferred');
+      await until('state?.roomRole==="host" && !!$("room-current-people").querySelector("[aria-label=Host]")','Creator transferred');
       await browser.until(guest,'state?.roomRole==="creator"','New creator');
       const admin = await browser.page(config.publicUrl + '/watch?demo=guest2');
       await browser.until(admin,'me?.adminEligible && transport?.ready','Configured administrator');

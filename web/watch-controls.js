@@ -48,9 +48,7 @@
       element.title = label + stateText;
       if (indicator) {
         const slug = checked ? 'thumb-up' : 'thumb-down';
-        const normal = root.uburoomIcons.icon(doc,slug), hover = root.uburoomIcons.icon(doc,slug + '-off');
-        normal.classList.add('watch-permission-normal'); hover.classList.add('watch-permission-hover');
-        indicator.replaceChildren(normal,hover);
+        indicator.replaceChildren(root.uburoomIcons.icon(doc,slug));
       }
       const body = editable ? controlLabel : badge;
       if (element.firstChild !== body) {
@@ -66,6 +64,17 @@
     update({checked,editable,disabled});
     input.addEventListener('change',event => { update({checked:input.checked,editable:currentEditable,disabled:input.disabled}); onChange?.(event); });
     return {element,input,update};
+  }
+  function permissionButton(doc, {label, checked = false, disabled = false, reason = '', action}) {
+    const control = button(doc,{label,icon:checked ? 'thumb-up' : 'thumb-down',iconOnly:true,disabled,action});
+    control.classList.add('watch-permission-button');
+    function update({checked,disabled,reason = ''}) {
+      content(control,{label,icon:checked ? 'thumb-up' : 'thumb-down',iconOnly:true});
+      control.disabled = disabled; control.setAttribute('aria-pressed',String(checked));
+      control.title = label + (checked ? ': Allowed' : ': Denied') + (reason ? '. ' + reason : '');
+    }
+    update({checked,disabled,reason});
+    return {element:control,update};
   }
   function segmented(group) {
     if (groups.has(group)) { groups.get(group)(); return; }
@@ -109,5 +118,5 @@
     new MutationObserver(refresh).observe(select,{attributes:true,attributeFilter:['disabled']});
     select.addEventListener('change',refresh); refresh();
   }
-  root.uburoomControls = {button,content,switchPill,segmented,bindSelect};
+  root.uburoomControls = {button,content,switchPill,permissionButton,segmented,bindSelect};
 })(globalThis);

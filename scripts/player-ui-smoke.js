@@ -66,7 +66,7 @@ async function main() {
       await browser.click(page,'tracks-close');await until('state.tracks.subtitleId==="10190"&&captions.loaded','Default CC track');
       assert.equal(await evaluate('document.getElementById("captions-toggle").getAttribute("aria-pressed")'),'true');
       assert.equal(await evaluate('document.querySelector("#captions-toggle svg")?.getAttribute("data-tabler-icon")'),'badge-cc');
-      assert.equal(await evaluate('document.querySelector("#room-symbol svg")?.getAttribute("data-tabler-icon")'),'oomark');
+      assert.equal(await evaluate('document.querySelector("#room-symbol svg")?.getAttribute("data-tabler-icon")'),'door');
       await browser.click(page,'captions-toggle');await until('!state.tracks.subtitleId','CC off');
       assert.equal(await evaluate('document.querySelector("#captions-toggle svg")?.getAttribute("data-tabler-icon")'),'badge-cc','CC stays outlined while off');
       await browser.click(page,'captions-toggle');await until('state.tracks.subtitleId==="10190"','CC restored');
