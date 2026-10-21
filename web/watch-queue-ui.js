@@ -743,6 +743,7 @@
       }
       const shuffle = action(actions, 'Shuffle queue', 'shuffle', () => mutate('shuffle'), !canEdit || items.length < 2);
       root.uburoomControls.content(shuffle,{label:'Shuffle queue',icon:'shuffle',iconOnly:true});
+      if (shuffle.disabled) shuffle.title = canEdit ? 'Add at least two upcoming videos to shuffle.' : 'Queue editing is unavailable for your role.';
       shuffle.id = 'queue-shuffle';
       const clear = button(actions, 'Clear queue', undefined, async () => {
         if (busy || !getState()?.capabilities?.editQueue || !currentQueue.items.length) return;
@@ -753,6 +754,7 @@
         }
       }, !canEdit || !items.length);
       root.uburoomControls.content(clear,{label:'Clear queue'});
+      if (clear.disabled) clear.title = canEdit ? 'There are no upcoming videos to clear.' : 'Queue editing is unavailable for your role.';
       clear.id = 'queue-clear-queue';
     }
 
@@ -771,6 +773,7 @@
         }
       }, !state?.capabilities?.editQueue || !items.length, 'queue-clear-history');
       root.uburoomControls.content(clear,{label:'Clear history'});
+      if (clear.disabled) clear.title = state?.capabilities?.editQueue ? 'There is no playback history to clear.' : 'Queue editing is unavailable for your role.';
       clear.id = 'queue-clear-history';
       footer.querySelector('.queue-footer-actions').prepend(clear);
       if (!items.length) node('p', historyView, 'No playback history yet.', 'hint queue-empty');
