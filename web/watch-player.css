@@ -12,7 +12,7 @@
 @media(hover:hover){.stage:not(.touch-controls):hover .player-chrome,.stage:not(.touch-controls):hover .center-play{opacity:1;pointer-events:auto}}
 .stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}
 .stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open) .player-chrome,.stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open) .center-play{opacity:0;pointer-events:none}
-#tracks-dialog{width:min(520px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:20px;overscroll-behavior:contain}
+
 #tracks-dialog .settings-group{margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
 #tracks-dialog h3{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px}
 #tracks-dialog label{font-size:13px;font-weight:600;margin-top:12px}#tracks-dialog select{width:100%;max-width:100%;font-size:14px;padding:10px}

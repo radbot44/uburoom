@@ -113,6 +113,14 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
       if(firefox)await command('input.performActions',{context:page,actions:[{type:'pointer',id:'playback-touch',parameters:{pointerType:'touch'},actions:[{type:'pointerMove',x,y,origin:'viewport'},{type:'pointerDown',button:0},{type:'pointerUp',button:0}]}]});
       else {await command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]},page);await command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]},page);}
     };
+    const key = async (page,value) => {
+      const keys = {Escape:['\uE00C',27],Tab:['\uE004',9],ArrowRight:['\uE014',39],End:['\uE010',35],Home:['\uE011',36]};
+      if (!keys[value]) throw new Error('Unsupported fixture key');
+      await activate(page);
+      if (firefox) await command('input.performActions',{context:page,actions:[{type:'key',id:'playback-keyboard',actions:[
+        {type:'keyDown',value:keys[value][0]},{type:'keyUp',value:keys[value][0]}]}]});
+      else for (const type of ['keyDown','keyUp']) await command('Input.dispatchKeyEvent',{type,key:value,code:value,windowsVirtualKeyCode:keys[value][1]},page);
+    };
     const click = async (page,id) => {
       await activate(page);
       const {x,y} = JSON.parse(await evaluate(page,'JSON.stringify((()=>{const r=document.getElementById('+JSON.stringify(id)+').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})())'));
@@ -129,7 +137,7 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
       const result = firefox ? await command('browsingContext.captureScreenshot',{context:page,origin:'viewport'}) : await command('Page.captureScreenshot',{format:'png'},page);
       fs.writeFileSync(file,Buffer.from(result.data,'base64'));
     };
-    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,activate,move,tap,click,screenshot,close};
+    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,activate,move,tap,key,click,screenshot,close};
   } catch (error) { await close(); throw error; }
 }
 module.exports = { playbackBrowser, pause };
