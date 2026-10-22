@@ -1,11 +1,11 @@
 'use strict';
 
-// Only an original file may leave the media proxy in this increment. Delegated
-// credentials never enter shared room state, shared producers or persistent state.
+// Direct credentials belong to one viewer, including consumers of shared HLS.
+// Credentials never enter shared room state, shared producers or persistent state.
 class PlexDelivery {
   constructor(config, plex, plexAuth, resolve) {
     this.config = config; this.plex = plex; this.plexAuth = plexAuth; this.resolve = resolve;
-    this.files = new WeakMap(); this.resources = new WeakMap();
+    this.files = new WeakMap(); this.resources = new WeakMap(); this.plans = new WeakMap();
   }
   async resource(scope) {
     const cached = this.resources.get(scope);
@@ -50,6 +50,30 @@ class PlexDelivery {
     try { return await Promise.race([timeout, this.candidate(media,auth,async()=>!controller.signal.aborted && await valid(),controller.signal)]); }
     finally { clearTimeout(timer); controller.abort(); }
   }
+  async hlsPlan(scope, viewer, room, valid) {
+    if (this.config.plexDelivery?.mode !== 'auto' || !this.config.plexDelivery.clientUrl || viewer.activity !== false ||
+      viewer.directProxyVersion === room.mediaVersion || !scope || scope === this.plex || !this.resolve || !this.plexAuth) return;
+    const existing = this.plans.get(viewer);
+    if (existing?.scope === scope && existing.version === room.mediaVersion) {
+      const plan=await existing.job;
+      return await valid() && await this.resolve(viewer.actor)===scope ? plan : undefined;
+    }
+    const controller = new AbortController(); let timer;
+    const current = async () => !controller.signal.aborted && await valid() && await this.resolve(viewer.actor) === scope;
+    const job = (async () => {
+      const timeout = new Promise(resolve => { timer=setTimeout(()=>{controller.abort();resolve(undefined);},5000); });
+      try {
+        return await Promise.race([timeout,(async()=>{
+          if (scope.clientId === 'configured-fallback' && !await this.fallbackAllowed(scope)) return;
+          if (!await current()) return;
+          const plan = await this.credentials(scope,current,controller.signal);
+          return await current() ? plan : undefined;
+        })().catch(()=>undefined)]);
+      } finally {clearTimeout(timer);controller.abort();}
+    })();
+    this.plans.set(viewer,{scope,version:room.mediaVersion,job});
+    return job;
+  }
   async candidate(media, auth, valid, signal) {
     try {
       const scope = await this.resolve(auth.actor);
@@ -66,6 +90,19 @@ class PlexDelivery {
   }
   async prepare(media, scope, valid, signal) {
     try {
+      const source = scope.url(media.start);
+      if (!/^\/library\/parts\/\d+\//.test(source.pathname)) return;
+      const credentials = await this.credentials(scope,valid,signal);
+      if (!credentials) return;
+      const target = new URL(source.pathname, credentials.origin);
+      // Never forward arbitrary upstream query parameters or credentials.
+      if (source.searchParams.get('download') === '1') target.searchParams.set('download','1');
+      target.searchParams.set('X-Plex-Token', credentials.token);
+      return target.href;
+    } catch { return; }
+  }
+  async credentials(scope, valid, signal) {
+    try {
       const origin = this.config.plexDelivery.clientUrl;
       // Authenticated Plex discovery binds this exact HTTPS origin to the
       // pinned server, even when the server cannot loop back to its public IP.
@@ -78,16 +115,10 @@ class PlexDelivery {
         if (!identity?.machineIdentifier || identity.machineIdentifier !== await this.plexAuth.machine()) return;
       }
       if (!await valid()) return;
-      const source = scope.url(media.start);
-      if (!/^\/library\/parts\/\d+\//.test(source.pathname)) return;
       const delegated = await scope.json('/security/token?type=delegation&scope=all', { method: 'POST', signal });
       if (typeof delegated.token !== 'string' || !delegated.token.startsWith('transient-') || delegated.token.length > 1024 ||
         [scope.token, scope.discoveryToken, this.config.plexToken, this.config.plexFallback?.token].includes(delegated.token)) return;
-      const target = new URL(source.pathname, origin);
-      // Never forward arbitrary upstream query parameters or credentials.
-      if (source.searchParams.get('download') === '1') target.searchParams.set('download','1');
-      target.searchParams.set('X-Plex-Token', delegated.token);
-      return target.href;
+      return await valid() ? {origin,token:delegated.token} : undefined;
     } catch { return; }
   }
 }

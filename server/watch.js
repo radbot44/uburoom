@@ -102,7 +102,7 @@ class Watch {
     const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
     if(!choices.length)throw new PlaybackError('No configured quality is available for this video. Ask the owner to offer a lower quality or Original.');
     const quality=choices.some(q=>q.id===Engine.qualityId(requested))?Engine.qualityId(requested):alternatives(choices,requested)[0]?.id;
-    const prepare=(value,sharedOnly=false)=>plex.prepare(source.id,value,compatible,source,fallback,
+    const prepare=(value,sharedOnly=false)=>this.prepareOutput(room,viewer,plex,source,value,compatible,fallback,
       {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,authorized,sharedOnly});
     let media;
     try {media=await prepare(quality);}
@@ -116,6 +116,10 @@ class Watch {
     }
     media.qualityNotice=media.quality!==Engine.qualityId(requested)?'Your requested quality is unavailable. Playing '+(choices.find(q=>q.id===media.quality)?.label || media.quality)+'. You can try your preferred quality again later.':'';
     return media;
+  }
+  prepareOutput(room,viewer,plex,source,quality,compatible,fallback,choices) {
+    return plex.prepare(source.id,quality,compatible,source,fallback,{...choices,
+      directPlan:()=>this.delivery?.hlsPlan(plex,viewer,room,choices.authorized)});
   }
   async prepareViewer(room, actor, viewerId) {
     const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
@@ -864,7 +868,7 @@ class Watch {
         (selection.subtitle?.id!==current.selection.subtitle?.id || selection.subtitle?.delivery!==current.selection.subtitle?.delivery);
       if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
         const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-          (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,viewer.quality,viewer.compatible,source,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
+          this.prepareOutput(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
             {...choices,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],authorized}),{permitted});
         if(result.status!=='applied')return result;
         if(selection.subtitle?.delivery==='burn')viewer.fallback=undefined;
@@ -893,7 +897,7 @@ class Watch {
     viewer.updating=true;
     try {
       const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-        (await (this.hub.plexFor?this.hub.plexFor(actor):this.plex)).prepare(source.id,viewer.quality,viewer.compatible,source,viewer.fallback,
+        this.prepareOutput(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
           {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],excludeLease:current.hlsLease,authorized}),
         {permitted,accept:media=>media.format==='hls'});
       return result.status==='applied'?{status:'applied',message:'Your stream refreshed.'}:result;

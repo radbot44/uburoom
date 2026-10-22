@@ -354,11 +354,15 @@ class Plex {
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
+    const directPlan = !choices.sourceOnly && !localFormat(fallback) && !(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)
+      ? await choices.directPlan?.() : undefined;
+    const directHls = !!(directPlan || choices.directHls);
+    if(directPlan)media.directHls=directPlan;
     if(choices.shareKey&&!choices.sourceOnly&&!localFormat(fallback)&&!(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)) {
       if(choices.authorized&&!await choices.authorized())throw new PlaybackError('Viewing access or stream selection expired.');
-      const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null]);
+      const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null,directHls]);
       let shared;
-      try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs,choices.sharedOnly);}
+      try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,directPlan:undefined,directHls,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs,choices.sharedOnly,directHls);}
       catch(error){media.subtitleAbort.abort();if(error instanceof PlaybackError){const failure=Object.assign(new PlaybackError(error.message),{conversionCapacity:!!error.conversionCapacity,media});throw failure;}throw error;}
       for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate','bitrateCeiling','output'])media[field]=shared.media[field];
       media.compatible=compatible;
@@ -421,7 +425,7 @@ class Plex {
       const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling});
       Object.assign(media,confirmed,{compatible,bitrateCeiling:ceiling.bitrate,output:confirmed});
       media.start = this.url('/video/:/transcode/universal/start.m3u8?' + params).href;
-      if (burn || audio) {
+      if (burn || audio || directHls) {
         if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');
         const response=await this.request(media.start,{headers:{Accept:'application/vnd.apple.mpegurl'}});
         const text=await response.text();

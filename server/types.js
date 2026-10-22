@@ -91,6 +91,9 @@
  * @property {boolean} compatible - Whether the viewer supports direct/compatible playback.
  * @property {string} [fallback] - Fallback codec or transcode profile if incompatible.
  * @property {boolean} browserSubtitles - Whether client supports browser-rendered subtitles.
+ * @property {boolean} [activity] - Server-verified Activity identity; excludes direct Plex delivery.
+ * @property {string} [directProxyVersion] - Media generation pinned to proxy recovery for this viewer.
+ * @property {any} [directDelivery] - Current personal media object using direct delivery.
  * @property {number} subtitleOffset - User's personal subtitle timing delay in seconds.
  * @property {ViewerTrackChoice} trackChoice - User's active track selections.
  * @property {number} volume - Personal volume level (0-100).

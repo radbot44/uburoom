@@ -677,6 +677,9 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
+  if(state?.directHls && data.fatal && data.type===Hls.ErrorTypes.NETWORK_ERROR) {
+    client.stopLoad();void proxyDirectFile();return;
+  }
   const detail = data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET ? 'reset' :
     data.error?.name === 'QuotaExceededError' ? 'quota-exceeded' :
     data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR ? 'buffer-append' :
@@ -1082,7 +1085,20 @@ function applyState(next) {
         catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
-        const client = hls = new Hls(uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling));
+        const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling);
+        if(next.directHls) {
+          // FetchLoader rejects redirects and adds only this viewer's temporary
+          // credential to resources under the pinned Plex output session.
+          config.progressive=true;
+          config.fetchSetup=(context,init)=>{
+            try {
+              const url=new URL(context.url,location.href);
+              const target=url.href===new URL(next.mediaUrl,location.href).href?url.href:uburoomPlayback.directHlsUrl(url.href,next.directHls);
+              return new Request(target,{...init,credentials:url.origin===location.origin?'same-origin':'omit',redirect:'error',referrerPolicy:'no-referrer'});
+            }catch{return Promise.reject(new Error('Direct Plex resource unavailable'));}
+          };
+        }
+        const client = hls = new Hls(config);
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         // Finish appending the anchor without requesting segment one before
         // the target seek; aborting that speculative load adds recovery noise.
@@ -1092,7 +1108,11 @@ function applyState(next) {
           if (hls === client) diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
         });
         client.loadSource(next.mediaUrl); client.attachMedia(video);
-      } else if (next.directDelivery) void attachDirectFile(next);
+        if(next.directHls)directStartupTimer=setTimeout(()=>{
+          if(hls===client && state?.streamVersion===next.streamVersion && video.readyState<2)void proxyDirectFile();
+        },12000);
+      } else if (next.directHls) queueMicrotask(()=>{if(state===next)void proxyDirectFile();});
+      else if (next.directDelivery) void attachDirectFile(next);
       else video.src = next.mediaUrl;
     }
   }

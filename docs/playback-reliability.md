@@ -12,7 +12,7 @@ Coverage means delivering the chosen content through a verified compatible path.
 
 This document records an investigation and implementation plan. Items below are requirements or proposed work unless explicitly described as existing. No browser or Activity certification is implied. See [verification status](testing.md).
 
-The owner's direct Plex HLS direction requires a coordination path with no server video/audio segment fetching, inspection or caching. Choose delivery before HLS preparation; retain server-cached anchoring only for the proxy path. Client timestamp mapping must remain accurate without depending on that cache. See the [direct HLS design and implementation boundaries](plex-hls-delivery.md); this is a design requirement, not an implemented capability.
+The owner's direct Plex HLS direction requires a coordination path with no server video/audio segment fetching, inspection or caching. The local candidate chooses delivery before HLS preparation, retains server-cached anchoring only for the proxy pool, and lets direct viewers read their timestamp anchor from Plex. See the [direct HLS design, implementation boundaries and remaining live gates](plex-hls-delivery.md).
 
 ## Findings from the current source
 

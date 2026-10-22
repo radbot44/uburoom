@@ -145,6 +145,50 @@ test('direct original delivery isolates delegated credentials and fences private
   assert.equal((await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).status,401);
 });
 
+test('direct HLS shares preparation without server video, keeps own credentials and recovers only the failed viewer',tls,async t=>{
+  const delegated=[],starts=[],stops=[];let segments=0;
+  const f=await fixture(t,async(input,options,provider)=>{
+    const url=new URL(input),json=value=>Response.json({MediaContainer:value});
+    if(url.pathname==='/identity')return json({machineIdentifier:'fixture-machine'});
+    if(url.pathname==='/security/token'){
+      delegated.push(options.headers['X-Plex-Token']);return json({token:'transient-hls-'+delegated.length});
+    }
+    if(url.pathname==='/library/metadata/1')return json({Metadata:[{ratingKey:'1',type:'movie',title:'Synthetic HLS',duration:60000,Media:[{videoCodec:'h264',bitrate:12000,width:1920,height:1080,Part:[{id:'1',key:'/library/parts/1/file.mp4',Stream:[{id:11,streamType:1,codec:'h264'},{id:12,streamType:2,codec:'aac',selected:true}]}]}]}]});
+    if(url.pathname.endsWith('/decision'))return json({Metadata:[{Media:[{videoCodec:'h264',audioCodec:'aac',Part:[{Stream:[{streamType:1,codec:'h264'},{id:12,streamType:2,codec:'aac',selected:1}]}]}]}]});
+    if(url.pathname.endsWith('/start.m3u8')){
+      const session=url.searchParams.get('session');starts.push(session);
+      return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4000000\n/video/:/transcode/universal/session/'+session+'/index.m3u8\n');
+    }
+    if(url.pathname.endsWith('/index.m3u8'))return new Response('#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2,\n0.ts\n#EXT-X-ENDLIST\n');
+    if(url.pathname.endsWith('.ts')){segments++;const bytes=Buffer.alloc(188*2);bytes[0]=bytes[188]=0x47;return new Response(bytes,{headers:{'Content-Type':'video/mp2t'}});}
+    if(url.pathname.endsWith('/stop')){stops.push(url.searchParams.get('session'));return json({});}
+    return provider.fetch(input,options);
+  });
+  f.config.plexDelivery={mode:'auto',clientUrl:'https://plex-client.invalid:32400',fallback:false};
+  const alice=f.browser(),bob=f.browser();await alice.plex('alice');await bob.plex('bob');
+  const roomId=(await alice.post('/api/watch/rooms',{})).body.id,a=randomUUID(),b=randomUUID();
+  const state=(browser,viewer)=>browser.request(`/api/watch/rooms/${roomId}?viewer=${viewer}&quality=720p4`);
+  let initial=(await state(alice,a)).body;
+  await alice.post(`/api/watch/rooms/${roomId}/command`,{epoch:initial.epoch,expiresAt:Date.now()+2500,viewerId:a,command:{action:'media.load',args:{mediaId:'1',quality:'720p4'}}});
+  const left=(await state(alice,a)).body,right=(await state(bob,b)).body;
+  assert.equal(left.directDelivery,true);assert.equal(right.directDelivery,true);assert.equal(left.format,'hls');
+  assert.equal(left.directHls.session,right.directHls.session);assert.deepEqual(delegated,['fixture-server-101','fixture-server-102']);
+  assert.notEqual(left.directHls.token,right.directHls.token);assert.equal(starts.length,1);assert.equal(segments,0);assert.equal(f.app.watch.plex.hlsPool.bytes,0);
+  const master=await alice.request(left.mediaUrl);assert.equal(master.status,200);
+  const child=new URL(master.body.split('\n').find(line=>line.startsWith('https://')));
+  assert.equal(child.origin,f.config.plexDelivery.clientUrl);assert.equal(child.searchParams.get('X-Plex-Token'),left.directHls.token);
+  assert.equal(master.body.includes(right.directHls.token),false);assert.equal(master.body.includes('fixture-server-'),false);
+  const recover={viewerId:a,mediaVersion:left.mediaVersion,streamVersion:left.streamVersion};
+  assert.equal((await bob.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,403);
+  assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,200);
+  assert.equal((await alice.request(left.mediaUrl)).status,403);
+  const proxy=(await state(alice,a)).body;assert.equal(proxy.directDelivery,undefined);assert.equal(proxy.format,'hls');assert.notEqual(proxy.streamVersion,left.streamVersion);
+  assert.equal(starts.length,2);assert.ok(segments>0,'only the explicit proxy recovery may warm a video anchor');
+  assert.equal(stops.includes(right.directHls.session),false);assert.deepEqual((await state(bob,b)).body.directHls,right.directHls);
+  assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,409);
+  f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await state(bob,b)).status,401);
+});
+
 test('direct fallback requires verified non-ownership and never delegates configured owner credentials',async t=>{
   const {PlexDelivery}=require('../server/plex-delivery');
   const config={plexUrl:'http://plex.invalid:32400',plexToken:'owner',plexDelivery:{mode:'auto',clientUrl:'https://plex.example',fallback:true},plexFallback:{enabled:true,token:'dedicated'}};

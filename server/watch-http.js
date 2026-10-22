@@ -16,6 +16,7 @@ const { PlexDelivery } = require('./plex-delivery');
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins, plexAuth }) {
   const identities = new Map(), grants = new Map();
   const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
+  watch.delivery=delivery;
   const clockEpoch=randomUUID();
   const publicConfig = () => ({ watchVersion:19,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'] });
   const handoff = new Handoff();
@@ -77,13 +78,24 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const key = randomBytes(12).toString('hex'); media.resources.set(key, target); return key;
   }
   function rewriteManifest(text, upstream, media, grantId) {
-    const resolve = value => `/api/watch/media/${grantId}/${resource(media, new URL(value, upstream).href)}`;
+    const resolve = value => {
+      if(media.directHls) {
+        const source=watch.plex.url(new URL(value,upstream).href);
+        const target=new URL(source.pathname+source.search,media.directHls.origin);
+        return Playback.directHlsUrl(target.href,{...media.directHls,session:media.transcodeId});
+      }
+      return `/api/watch/media/${grantId}/${resource(media, new URL(value, upstream).href)}`;
+    };
     return text.split(/\r?\n/).map(line => !line.trim() ? line : line.startsWith('#') ?
       line.replace(/URI="([^"\r\n]+)"/g, (_, value) => `URI="${resolve(value)}"`) : resolve(line.trim())).join('\n');
   }
   async function stream(req, res, grant, key) {
     if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
     const media = grant.media;
+    // A direct output never serves video through this process, even if a client
+    // tries a stale or manually constructed resource URL. Its start is text only.
+    if(media.directHls && key==='start' && !media.initialManifest)return json(res,409,{error:'Direct Plex playlist unavailable'});
+    if(media.directHls && key!=='start' && !key.startsWith('subtitle-') && !key.startsWith('captions-'))return json(res,409,{error:'Use the direct Plex media route'});
     if(key.startsWith('subtitle-')){
       const match=/^subtitle-([a-f0-9-]{36})(?:\/(data|index|font-\d{1,2}))?$/.exec(key);
       if(!match || match[1]!==media.captionVersion)return json(res,403,{error:'Subtitle selection changed or access expired.'});
@@ -160,8 +172,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     if (key==='start' && media.initialManifest) {
       // Repeated master loads must keep the captured session. Reissuing start
       // after restoring Plex's audio preference could select another track.
-      const text=media.initialManifest;
-      res.writeHead(200,{'Content-Type':'application/vnd.apple.mpegurl'}); return res.end(req.method==='HEAD' ? undefined : rewriteManifest(text,target,media,grant.id));
+      let text;
+      try{text=rewriteManifest(media.initialManifest,target,media,grant.id);}
+      catch{return json(res,409,{error:'Plex playlist could not use the selected delivery route'});}
+      res.writeHead(200,{'Content-Type':'application/vnd.apple.mpegurl'}); return res.end(req.method==='HEAD' ? undefined : text);
     }
     const abort = new AbortController(); let response;
     const timer = setTimeout(() => abort.abort(), 12000);

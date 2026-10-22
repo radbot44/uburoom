@@ -50,21 +50,21 @@ class HLSPool {
     if(group.anchor){this.bytes-=group.anchor.bytes.length;group.anchor=undefined;}
     if(group.media&&!group.claimed)await this.stop(group.media);
   }
-  async acquire(key,create,authorized,exclude,warmMs=1000,existingOnly=false) {
+  async acquire(key,create,authorized,exclude,warmMs=1000,existingOnly=false,direct=false) {
     const unavailable=()=>{throw Object.assign(new PlaybackError('No matching shared output is available.'),{conversionCapacity:true});};
-    if(existingOnly && (!this.groups.has(key) || !this.groups.get(key).anchor))return unavailable();
+    if(existingOnly && (!this.groups.has(key) || !(this.groups.get(key).anchor || this.groups.get(key).direct)))return unavailable();
     this.invalidate(exclude);
     if(this.closed)throw new PlaybackError('Server is shutting down.');
     if(!key||!this.groups.has(key)&&this.live.size>=this.maxGroups)return {media:await create(authorized)};
     let group=this.groups.get(key),producer=false;
     if(!group){
-      producer=true;group={key,users:new Set(),settled:false};this.groups.set(key,group);this.live.add(group);
+      producer=true;group={key,users:new Set(),settled:false,direct};this.groups.set(key,group);this.live.add(group);
       group.promise=Promise.resolve().then(async()=>{
         try {
           // Source preparation always uses its producer's own authorization.
           group.media=await create(authorized);
-          try{group.anchor=await this.anchor(group.media,Math.min(8000,Math.max(1,warmMs)));}catch{/* Uncacheable outputs keep independent sessions. */}
-          if(!group.anchor&&this.groups.get(key)===group)this.groups.delete(key);
+          if(!direct)try{group.anchor=await this.anchor(group.media,Math.min(8000,Math.max(1,warmMs)));}catch{/* Uncacheable outputs keep independent sessions. */}
+          if(!direct&&!group.anchor&&this.groups.get(key)===group)this.groups.delete(key);
           return group.media;
         } catch(error) {
           if(this.groups.get(key)===group)this.groups.delete(key);
@@ -82,7 +82,7 @@ class HLSPool {
       }
       const live=!authorized||await authorized();
       if(this.closed||!live)throw new PlaybackError('Viewing access or stream selection expired.');
-      if(!group.anchor) {
+      if(!direct&&!group.anchor) {
         // No anchor cache means a future join could restart the encoder at zero.
         // Transfer the first private output once; other callers prepare their own.
         if(!group.claimed){group.claimed=true;return {media};}

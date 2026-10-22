@@ -18,7 +18,7 @@ plex:
   url: 'http://127.0.0.1:32400'
   token: ''
   machine_identifier: '' # Leave blank to detect and remember your Plex server.
-  # Original files in ordinary browsers only; HLS and Activity remain proxied.
+  # Original files and Plex HLS in supported browsers; Activity remains proxied.
   delivery: 'proxy' # proxy | auto (prefer direct, recover through the proxy)
   client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
 

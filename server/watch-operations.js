@@ -207,6 +207,10 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         // playback. Fence pending readiness/observations from the old transport.
         watch.tracking.end(viewer,'delivery-changed');
         viewer.directProxyVersion = room.mediaVersion; viewer.directDelivery = undefined;
+        if(viewer.media?.directHls) {
+          const previous=viewer.media;viewer.media=undefined;viewer.mediaVersion=undefined;
+          void watch.plex.stop(previous);
+        }
         viewer.streamVersion = randomUUID(); viewer.ready = false;
         return result(200,{ok:true});
       }
@@ -234,6 +238,13 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
+      viewer.activity=!!auth.identity.activity;
+      if(viewer.activity && viewer.media?.directHls) {
+        watch.tracking.end(viewer,'delivery-changed');
+        const previous=viewer.media;viewer.media=undefined;viewer.mediaVersion=undefined;viewer.directDelivery=undefined;
+        viewer.directProxyVersion=room.mediaVersion;viewer.streamVersion=randomUUID();viewer.ready=false;
+        void watch.plex.stop(previous);
+      }
       if(context.controlSocket)viewer.watchSocket=context.controlSocket;
       if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
       room.viewers.get(viewerId).browserLoginHash=context.headers.authorization?undefined:cookies(context).uburoom&&hash(cookies(context).uburoom);
@@ -244,7 +255,11 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;
         const media=room.viewers.get(viewerId).media;
-        if (config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
+        if(media.format==='hls' && media.directHls) {
+          state.directHls={...media.directHls,session:media.transcodeId};
+          state.directDelivery=true;viewer.directDelivery=media;
+        }
+        else if (config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
           const direct = await delivery?.file(media, auth, ()=>validGrant(grant));
           if (!await validGrant(grant)) return result(409,{error:'Playback delivery changed'});
           if (direct) {

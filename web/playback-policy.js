@@ -12,6 +12,18 @@
     return {enableWorker:true,startPosition:0,
       maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024)};
   }
+  function directHlsUrl(value,plan) {
+    const url=new URL(value),origin=new URL(plan.origin);
+    if(origin.protocol!=='https:' || origin.origin!==plan.origin || url.origin!==origin.origin || url.username || url.password || url.hash ||
+      !/^[a-f0-9-]{36}$/.test(plan.session) || !url.pathname.startsWith('/video/:/transcode/universal/session/'+plan.session+'/'))throw new Error('Unexpected direct Plex HLS resource');
+    // Session resource paths identify this output. Do not forward arbitrary
+    // playlist query parameters, which could contain a permanent credential.
+    url.search='';
+    url.searchParams.set('X-Plex-Token',plan.token);
+    url.searchParams.set('X-Plex-Client-Identifier',plan.session);
+    url.searchParams.set('X-Plex-Session-Identifier',plan.session);
+    return url.href;
+  }
   function chunkWindow(position,duration) {
     const current = Math.max(0,Math.min(position,Math.max(0,duration - .05)));
     return {first:Math.max(0,Math.floor((current - BUFFER.behind) / BUFFER.chunkSeconds)),
@@ -85,7 +97,7 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
+  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

@@ -66,6 +66,30 @@ test('two matching accounts share one Plex conversion; another bitrate stays sep
   }finally{await f.plex.close();}
 });
 
+test('direct HLS shares without any server segment fetch, isolates viewer tokens and preserves proxy anchors',async()=>{
+  const f=fixture();let media=[];
+  try {
+    const direct=scope=>f.prepare(scope,'720p4',{directPlan:async()=>({origin:'https://plex.example',token:'transient-'+scope.clientId})});
+    const a=await direct(f.a),b=await direct(f.b);media.push(a,b);
+    assert.equal(a.transcodeId,b.transcodeId);assert.equal(f.state.starts.length,1);
+    assert.equal(f.state.requests.some(request=>request.path.endsWith('.ts')),false,'preparation must not fetch even one video segment');
+    assert.equal(f.plex.hlsPool.bytes,0);assert.equal(a.hlsLease.group.anchor,undefined);
+    assert.equal(a.directHls.token,'transient-alice');assert.equal(b.directHls.token,'transient-bob');
+    assert.equal(a.hlsLease.group.media.directHls,undefined,'shared producer must not retain a viewer delegation');
+    const proxy=await f.prepare(f.b,'720p4');media.push(proxy);
+    assert.notEqual(proxy.transcodeId,a.transcodeId);assert.ok(proxy.hlsLease.group.anchor);
+    await f.plex.stop(a);assert.equal(f.state.stops.includes(b.transcodeId),false);
+    await f.plex.stop(b);assert.equal(f.state.stops.includes(b.transcodeId),true);
+    const {directHlsUrl}=require('../web/playback-policy'),plan={...a.directHls,session:a.transcodeId};
+    const prefix='https://plex.example/video/:/transcode/universal/session/'+a.transcodeId+'/';
+    const url=new URL(directHlsUrl(prefix+'0.ts?token=private&x-plex-token=private&X-Plex-Client-Identifier=private',plan));
+    assert.equal(url.searchParams.get('X-Plex-Token'),'transient-alice');assert.equal(url.searchParams.has('x-plex-token'),false);
+    assert.equal(url.searchParams.get('X-Plex-Client-Identifier'),a.transcodeId);
+    assert.equal(url.searchParams.has('token'),false);assert.equal(url.searchParams.get('X-Plex-Session-Identifier'),a.transcodeId);
+    for(const invalid of[prefix.replace('plex.example','other.example')+'0.ts',prefix.replace(a.transcodeId,randomUUID())+'0.ts',prefix+'../other.ts','https://plex.example/library/parts/1/file'])assert.throws(()=>directHlsUrl(invalid,plan));
+  } finally {await Promise.all(media.map(value=>f.plex.stop(value)));await f.plex.close();}
+});
+
 test('browser captions share video but burned subtitle IDs, audio, room and media generation change the output key',async()=>{
   const f=fixture(),media=[];
   try{
