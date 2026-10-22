@@ -847,7 +847,7 @@ function renderMediaInformation(next) {
   const info=next.deliveryInfo;
   const mediaWidth=video.videoWidth || info?.width,mediaHeight=video.videoHeight || info?.height;
   $('media-information').textContent=info?[mediaWidth&&mediaHeight?mediaWidth+' x '+mediaHeight:null,info.videoCodec?.toUpperCase(),info.audioCodec?.toUpperCase(),info.bitrate?Number(info.bitrate/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'Choose a video to see media information.';
-  $('delivery-information').textContent=info?[info.format==='file'?'Original file':info.format==='hls'?'Plex streaming':uburoomPlayback.localFormat(info.format)?'uburoom conversion':info.format,info.encoder?'Encoder: '+info.encoder:null,info.cpuFallback?'Using CPU fallback':null,info.bitrateCeiling?'Requested limit: '+Number(info.bitrateCeiling/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'No playback delivery yet.';
+  $('delivery-information').textContent=info?[info.format==='file'?'Original file':info.format==='hls'?'Plex streaming':uburoomPlayback.localFormat(info.format)?'uburoom conversion':info.format,next.mediaUrl?(next.directDelivery?'Direct from Plex':'Through uburoom'):null,info.encoder?'Encoder: '+info.encoder:null,info.cpuFallback?'Using CPU fallback':null,info.bitrateCeiling?'Requested limit: '+Number(info.bitrateCeiling/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'No playback delivery yet.';
 }
 function renderRemote() {
   const options = { available: !reconnecting && !!state, canSave: !reconnecting && !!state?.canManage,
