@@ -21,6 +21,7 @@ plex:
   # Original files and Plex HLS in supported browsers; Activity remains proxied.
   delivery: 'proxy' # proxy | auto (prefer direct, recover through the proxy)
   client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
+  lan_client_url: '' # Optional LAN HTTPS Plex origin override; blank auto-detects from Plex.
 
   # SHARING: enabled by default. Viewers without a Plex account or confirmed
   # server membership can access the fallback account's libraries and media.

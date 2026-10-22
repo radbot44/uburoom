@@ -296,7 +296,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
       if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/availability', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
-        const reply = await operations.execute({ headers: req.headers }, url.href);
+        const reply = await operations.execute({ headers: req.headers, remoteAddress: req.socket.remoteAddress }, url.href);
         if (reply.resource) {
           const art = reply.resource;
           res.writeHead(reply.status, { 'Content-Type': art.type, 'Content-Length': art.bytes.length, 'Cache-Control': 'private, no-store' });
@@ -351,11 +351,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const query = new URL(req.url,config.publicUrl).searchParams;
     if(query.has('frame_id')||config.demo&&['host','guest','guest2'].includes(query.get('demo')))return initial;
     try {
-      initial.me=await operations.execute({headers:req.headers},'/api/watch/me');
-      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers},'/api/watch/rooms');
+      initial.me=await operations.execute({headers:req.headers, remoteAddress: req.socket.remoteAddress},'/api/watch/me');
+      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers, remoteAddress: req.socket.remoteAddress},'/api/watch/rooms');
     } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
     return initial;
   }
-  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest };
+  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest, deliveryOrigins: () => delivery.deliveryOrigins() };
 }
 module.exports = { watchHttp };

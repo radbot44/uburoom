@@ -20,7 +20,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.equal(config.transcoding.maxJobs, 5);
   assert.equal(config.host, '127.0.0.1');
   assert.equal(config.plexToken, '');
-  assert.deepEqual(config.plexDelivery, {mode:'proxy',clientUrl:'',fallback:false});
+  assert.deepEqual(config.plexDelivery, {mode:'proxy',clientUrl:'',lanClientUrl:'',fallback:false});
   assert.equal(config.botToken, '');
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
@@ -77,9 +77,13 @@ test('empty permission lists grant none, while omission preserves defaults', () 
 
 test('direct Plex delivery requires an explicit secure origin and cannot inherit owner fallback credentials', () => {
   assert.deepEqual(normalizeConfig({plex:{delivery:'auto',client_url:'https://plex.example:32400/'}}).plexDelivery,
-    {mode:'auto',clientUrl:'https://plex.example:32400',fallback:false});
+    {mode:'auto',clientUrl:'https://plex.example:32400',lanClientUrl:'',fallback:false});
+  assert.deepEqual(normalizeConfig({plex:{delivery:'auto',client_url:'https://plex.example:32400',lan_client_url:'https://plex-lan.example:32400/'}}).plexDelivery,
+    {mode:'auto',clientUrl:'https://plex.example:32400',lanClientUrl:'https://plex-lan.example:32400',fallback:false});
   for (const plex of [{delivery:'direct'},{delivery:'auto'}, {client_url:'http://plex.example'},
     {client_url:'https://user:secret@plex.example'},{client_url:'https://plex.example/path'},
+    {delivery:'auto',client_url:'https://plex.example:32400',lan_client_url:'http://plex-lan.example'},
+    {delivery:'auto',client_url:'https://plex.example:32400',lan_client_url:'https://plex-lan.example/path'},
     {direct_fallback_enabled:true},{token:'owner',fallback_token:'owner',direct_fallback_enabled:true},
     {fallback_token:'dedicated',fallback_enabled:false,direct_fallback_enabled:true}]) assert.throws(()=>normalizeConfig({plex}));
   assert.equal(normalizeConfig({plex:{url:'http://plex.example',fallback_token:'dedicated',direct_fallback_enabled:true}}).plexDelivery.fallback,true);

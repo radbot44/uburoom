@@ -23,7 +23,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
   }
-  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws }, path, data);
+  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws, remoteAddress: client.socket?.remoteAddress }, path, data);
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
     if(client.publishing){client.dirty=true;return;}

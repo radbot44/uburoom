@@ -238,6 +238,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
+      if (context.remoteAddress) viewer.remoteAddress = context.remoteAddress;
       viewer.activity=!!auth.identity.activity;
       if(viewer.activity && viewer.media?.directHls) {
         watch.tracking.end(viewer,'delivery-changed');
@@ -260,7 +261,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
           state.directDelivery=true;viewer.directDelivery=media;
         }
         else if (config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
-          const direct = await delivery?.file(media, auth, ()=>validGrant(grant));
+          const direct = await delivery?.file(media, auth, ()=>validGrant(grant), viewer.remoteAddress);
           if (!await validGrant(grant)) return result(409,{error:'Playback delivery changed'});
           if (direct) {
             state.mediaUrl = direct; state.directDelivery = true; viewer.directDelivery = media;

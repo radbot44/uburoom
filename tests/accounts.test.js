@@ -233,7 +233,19 @@ test('direct fallback requires verified non-ownership and never delegates config
   config.plexFallback.token='';assert.equal(await delivery().file(media(),context,async()=>true),undefined);
   config.plexFallback.token='owner';scope=plex.scope('owner','configured-fallback');assert.equal(await delivery().file(media(),context,async()=>true),undefined);
   scope=plex;assert.equal(await delivery().file(media(),context,async()=>true),undefined);
-  assert.equal(requests,3,'only verified endpoint/account combinations request delegation; late revocation suppresses its result');
+  config.plexFallback.token='dedicated';scope=plex.scope('dedicated','configured-fallback');
+  config.plexDelivery.clientUrl='https://plex.example';
+  advertised=[
+    {uri:'https://plex.example',protocol:'https',relay:false,local:false},
+    {uri:'https://plex-lan.example:32400',protocol:'https',relay:false,local:true}
+  ];
+  const d=delivery();
+  const lanFile=await d.file(media(),context,async()=>true,'192.168.1.50');
+  assert.equal(new URL(lanFile).origin,'https://plex-lan.example:32400');
+  const wanFile=await d.file(media(),context,async()=>true,'71.120.154.212');
+  assert.equal(new URL(wanFile).origin,'https://plex.example');
+  assert.deepEqual(await d.deliveryOrigins(),['https://plex.example','https://plex-lan.example:32400']);
+  assert.ok(requests >= 5,'only verified endpoint/account combinations request delegation; late revocation suppresses its result');
 });
 
 test('logout checks CSRF, revokes only this browser login and its viewers, retains links, and works after access revocation',tls,async t=>{

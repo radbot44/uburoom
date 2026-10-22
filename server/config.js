@@ -11,7 +11,7 @@ const KEYS = [
   'directory.expose_discord_members', 'directory.expose_plex_members',
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'plex.url', 'plex.token', 'plex.machine_identifier', 'plex.fallback_enabled', 'plex.fallback_token',
-  'plex.delivery', 'plex.client_url', 'plex.direct_fallback_enabled',
+  'plex.delivery', 'plex.client_url', 'plex.lan_client_url', 'plex.direct_fallback_enabled',
   'discord.bot_token', 'discord.client_id', 'discord.client_secret', 'discord.owner_id',
   'discord.guild_id', 'discord.command_channel_ids',
   'server.host', 'server.port', 'server.public_url', 'server.tls_cert', 'server.tls_key', 'server.public_web_app',
@@ -127,12 +127,18 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   };
   config.plexFallback = { enabled:boolean('plex.fallback_enabled',true), token:get('plex.fallback_token') };
   config.plexDelivery = { mode:choice('plex.delivery','proxy',['proxy','auto']), clientUrl:get('plex.client_url'),
-    fallback:boolean('plex.direct_fallback_enabled',false) };
+    lanClientUrl:get('plex.lan_client_url'), fallback:boolean('plex.direct_fallback_enabled',false) };
   if (config.plexDelivery.clientUrl) {
     let client;
     try { client = new URL(config.plexDelivery.clientUrl); } catch { throw new Error('plex.client_url must be an HTTPS origin'); }
     if (client.protocol !== 'https:' || client.username || client.password || client.search || client.hash || client.pathname !== '/') throw new Error('plex.client_url must be an HTTPS origin');
     config.plexDelivery.clientUrl = client.origin;
+  }
+  if (config.plexDelivery.lanClientUrl) {
+    let lanClient;
+    try { lanClient = new URL(config.plexDelivery.lanClientUrl); } catch { throw new Error('plex.lan_client_url must be an HTTPS origin'); }
+    if (lanClient.protocol !== 'https:' || lanClient.username || lanClient.password || lanClient.search || lanClient.hash || lanClient.pathname !== '/') throw new Error('plex.lan_client_url must be an HTTPS origin');
+    config.plexDelivery.lanClientUrl = lanClient.origin;
   }
   if (config.plexDelivery.mode === 'auto' && !config.plexDelivery.clientUrl) throw new Error('plex.client_url is required for automatic direct delivery');
   if (config.plexDelivery.fallback && (!config.plexFallback.enabled || !config.plexFallback.token || config.plexFallback.token === config.plexToken)) throw new Error('Direct fallback requires enabled sharing and a dedicated non-owner plex.fallback_token');
