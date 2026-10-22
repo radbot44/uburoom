@@ -99,7 +99,7 @@
       const enabled=!!tracks?.subtitleId, available=tracks?.subtitles.some(t=>t.available);
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
       cc.setAttribute('aria-pressed',String(enabled)); cc.title=cc.ariaLabel=enabled?'Disable subtitles':'Enable subtitles';
-      const symbol='captions';
+      const symbol=enabled?'subtitles':'subtitles-off';
       if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomIcons.icon(document,symbol));cc.dataset.symbol=symbol;}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {

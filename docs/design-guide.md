@@ -160,6 +160,8 @@ Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sectio
 
 Use stable accessible names: **Admin mode** uses checked switch state; **Room privacy**, permission thumbs, **Mute**, **Captions**, and **Theater mode** use accurate pressed state. Don't rely on color alone. **Denied** and **read-only** are different: a permission can be allowed *and* read-only.
 
+Subtitles use Tabler `subtitles` when on and `subtitles-off` when off. The active subtitle icon stays white, without an accent-colored background or stroke. Keep the subtitle toggle disabled when no subtitles are available. Notifications also use white icons in both states.
+
 ## 7. Saving and feedback
 
 - A choice made during **Create Room** stays in the form until **Create room**.
@@ -183,7 +185,7 @@ Show at most **three** at once, stacked with **newest at the bottom**; queue the
 | Success | **4 seconds** of visible time |
 | Error | **10 seconds** of visible time |
 
-Every toast has an **X**. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action.
+Click or tap anywhere on a toast to dismiss it; there is no separate X button. Toasts are also keyboard-activatable. The video controls include a **Notifications** toggle: Tabler `bell` when on, `bell-off` when off. It controls this page’s toast notifications, dismisses visible toasts when turned off, and does not replay suppressed notifications when turned back on. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action.
 
 ## 8. Quick checks before shipping
 

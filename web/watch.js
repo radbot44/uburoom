@@ -134,6 +134,14 @@ for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbo
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
+function renderNotifications() {
+  const button = $('notifications-toggle');
+  button.setAttribute('aria-pressed', String(toasts.enabled));
+  button.title = toasts.enabled ? 'Hide notifications' : 'Show notifications';
+  button.replaceChildren(uburoomIcons.icon(document, toasts.enabled ? 'bell' : 'bell-off'));
+}
+$('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
+renderNotifications();
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,

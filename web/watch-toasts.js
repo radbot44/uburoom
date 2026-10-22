@@ -5,7 +5,7 @@
     const doc = host.ownerDocument, entries = new Map();
     const view = doc.defaultView, controls = stage?.querySelector('.transport');
     const reducedMotion = view.matchMedia('(prefers-reduced-motion: reduce)');
-    let layoutFrame, animateLayout = false, movement, positioned = false;
+    let layoutFrame, animateLayout = false, movement, positioned = false, enabled = true;
     function place() {
       layoutFrame = undefined;
       const animate = animateLayout;
@@ -89,13 +89,16 @@
       }
     }
     function show(id, { title, hint = '', symbol, seekSeconds, loading = false, duration = 0 }) {
+      if (!enabled) return;
       // A stable ID updates an existing notification rather than duplicating it.
       let entry = entries.get(id);
       if (!entry) {
-        const root = doc.createElement('div');
+        const root = doc.createElement('button');
+        root.type = 'button';
         root.className = 'watch-toast';
         root.dataset.toast = id;
-        root.setAttribute('role', 'status');
+        root.title = 'Dismiss notification';
+        root.addEventListener('click', event => { event.stopPropagation(); dismiss(id); });
         const artwork = doc.createElement('span');
         artwork.className = 'watch-toast-symbol';
         artwork.setAttribute('aria-hidden', 'true');
@@ -130,13 +133,18 @@
       entry.heading.textContent = title;
       entry.detail.textContent = hint;
       entry.detail.hidden = !hint;
+      entry.root.setAttribute('aria-label', 'Dismiss notification: ' + title + (hint ? ' ' + hint : ''));
       entry.timer = duration > 0 ? schedule(() => dismiss(id), duration) : undefined;
       requestLayout();
     }
     function clear() {
       for (const id of entries.keys()) dismiss(id);
     }
-    return { show, dismiss, clear };
+    function setEnabled(value) {
+      enabled = !!value;
+      if (!enabled) clear();
+    }
+    return { show, dismiss, clear, setEnabled, get enabled() { return enabled; } };
   }
   const api = { create };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

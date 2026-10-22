@@ -5,7 +5,7 @@
 .volume-control{gap:0}.volume-control #player-volume{width:86px;margin:0 3px 0 0;flex-shrink:1}
 .time{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:32px;text-align:center}
 #tracks-open{position:relative}#quality-badge{position:absolute;right:-4px;top:-2px;background:var(--primary);color:var(--on-primary);font-size:8px;line-height:12px;padding:0 2px;border-radius:3px;font-weight:750;pointer-events:none}
-#captions-toggle[aria-pressed=true]{background:transparent;color:var(--accent-text)}
+#captions-toggle[aria-pressed=true],#notifications-toggle[aria-pressed=true]{background:transparent;color:var(--text)}
 .center-play{opacity:0;pointer-events:none;transition:opacity .18s;width:72px;height:72px;top:50%}.center-play svg{width:40px;height:40px}
 .stage:focus-within .center-play,.stage.blocked .center-play,.stage.controls-visible .center-play{opacity:1;pointer-events:auto}
 .stage.controls-visible .player-chrome,.stage.settings-open .player-chrome{opacity:1;pointer-events:auto}

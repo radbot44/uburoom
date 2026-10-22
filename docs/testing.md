@@ -53,6 +53,10 @@ Development TLS may be required: `powershell -NoProfile -ExecutionPolicy Bypass 
 
 A/B: Chrome and Firefox checks at 1280px/390px pass 40px height, 24px icons, 14px/12px text, no border, action/username rows, entrance/exit and control-avoidance animation, lobby bottom placement, actual media-control spacing, scroll visibility priority, theater and fullscreen entry/exit. Temporary procedure: `node artifacts/toast-position-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792648132726/`. Existing `node scripts/toast-ui-smoke.js` passes in both browsers across light/dark and orange/pink. Desktop/mobile renders inspected. Layout states and synthetic notifications used disposable accounts; no new permanent tests. Full-suite and real-provider/device checks were not run for this styling change; human acceptance remains open. Previous positioning work also passed the retained 12 recovery tests.
 
+## Toast and subtitle controls — 2026-10-22
+
+A/B: Chrome/Firefox rendered checks pass click/keyboard toast dismissal, fullscreen dismissal without playback activation, bell on/off states, suppression without replay, subtitle on/off icons and white active color, and disabled subtitles when none are available. Toolbar fits at 1280/390/320px. Temporary procedure: `node artifacts/toast-toggle-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792682915764/`. Official Tabler outline SVGs vendored with the existing MIT notice retained. No permanent tests added; full suite and real-provider/device checks not run. Human visual acceptance remains open.
+
 ## Latest evidenced results (historical; not rerun)
 
 | Date / scope | Last recorded pass or observation | Limitation and evidence |

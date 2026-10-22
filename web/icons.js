@@ -33,7 +33,7 @@
     "zoom": "search",
     "fullscreen": "maximize",
     "fullscreenExit": "minimize",
-    "captions": "badge-cc",
+    "captions": "subtitles",
     "theater": "rectangle",
     "drawer": "layout-sidebar-right",
     "stretchX": "arrows-horizontal",
@@ -133,6 +133,10 @@
     "volume-off": "<path d=\"M15 8a5 5 0 0 1 1.912 4.934m-1.377 2.602a5 5 0 0 1 -.535 .464\" /><path d=\"M17.7 5a9 9 0 0 1 2.362 11.086m-1.676 2.299a9 9 0 0 1 -.686 .615\" /><path d=\"M9.069 5.054l.431 -.554a.8 .8 0 0 1 1.5 .5v2m0 4v8a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l1.294 -1.664\" /><path d=\"M3 3l18 18\" />",
     "world": "<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\" /><path d=\"M3.6 9h16.8\" /><path d=\"M3.6 15h16.8\" /><path d=\"M11.5 3a17 17 0 0 0 0 18\" /><path d=\"M12.5 3a17 17 0 0 1 0 18\" />",
     "x": "<path d=\"M18 6l-12 12\" /><path d=\"M6 6l12 12\" />",
+    "bell": "<path d=\"M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6\" /> <path d=\"M9 17v1a3 3 0 0 0 6 0v-1\" />",
+    "bell-off": "<path d=\"M9.346 5.353c.21 -.129 .428 -.246 .654 -.353a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3m-1 3h-13a4 4 0 0 0 2 -3v-3a6.996 6.996 0 0 1 1.273 -3.707\" /> <path d=\"M9 17v1a3 3 0 0 0 6 0v-1\" /> <path d=\"M3 3l18 18\" />",
+    "subtitles": "<path d=\"M18 5a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3l12 0\" /> <path d=\"M7 15h5\" /> <path d=\"M15 15h2\" /> <path d=\"M17 12h-3\" /> <path d=\"M11 12h-1\" />",
+    "subtitles-off": "<path d=\"M9 5h9a3 3 0 0 1 3 3v8a3 3 0 0 1 -.13 .874m-2.006 2a3 3 0 0 1 -.864 .126h-12a3 3 0 0 1 -3 -3v-8c0 -1.35 .893 -2.493 2.12 -2.869\" /> <path d=\"M7 15h5\" /> <path d=\"M17 12h-1\" /> <path d=\"M12 12h-2\" /> <path d=\"M3 3l18 18\" />",
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {
