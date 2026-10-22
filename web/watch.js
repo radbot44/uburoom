@@ -11,7 +11,7 @@ let switchingRoom=false, knownRooms=[];
 let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
-let hls, mediaVersion, mediaSource, lastFeedback, badgeTimer, seekDragging = false, sdk;
+let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
 const activity = params.has('frame_id');
@@ -133,7 +133,8 @@ function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, 
 for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
-const badge = uburoomUI.mountBadge($('badge'));
+const participantToasts = uburoomToasts.create($('badge'));
+const reconnectToasts = uburoomToasts.create($('disconnect-toast'));
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
@@ -545,7 +546,7 @@ function checkVideoFrames() {
 function clearPlayer(reason) {
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
-  clearTimeout(badgeTimer); $('badge').classList.remove('visible'); lastFeedback = undefined;
+  participantToasts.clear(); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
   diagnosticSample('player-clear',{reason});
@@ -722,13 +723,10 @@ function connectionLost(details={}) {
   },DISCONNECT_GRACE_MS);
 }
 function showDisconnectToast() {
-  const toast=$('disconnect-toast');if(!toast)return;
-  const symbol=toast.querySelector('.disconnect-toast-symbol');
-  if(symbol&&!symbol.firstChild)symbol.append(uburoomIcons.icon(document,'refresh'));
-  toast.hidden=false;
+  reconnectToasts.show('reconnect', { title: 'Disconnected from room', hint: 'Reconnecting…', symbol: 'refresh', loading: true });
 }
 function hideDisconnectToast() {
-  const toast=$('disconnect-toast');if(toast)toast.hidden=true;
+  reconnectToasts.dismiss('reconnect');
 }
 function fullPlayerClear() {
   clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
@@ -1059,8 +1057,12 @@ function applyState(next) {
   if(resumed){queueUI.restorePosition();diagnostics.record('control-reconnected');}
   if (next.feedback && next.feedback.revision !== lastFeedback && Date.now() + offset - next.feedback.at < 3000) {
     lastFeedback = next.feedback.revision;
-    if (badge.show(next.feedback, next.state, next.feedback.sender)) {
-      $('badge').classList.add('visible'); clearTimeout(badgeTimer); badgeTimer = setTimeout(() => $('badge').classList.remove('visible'), 2500);
+    const details = uburoomUI.badgeDetails(next.feedback, next.state);
+    if (details) {
+      participantToasts.show('participant', {
+        title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : '') + ' by ' + next.feedback.sender,
+        symbol: details.symbol, seekSeconds: details.seekSeconds, duration: 2500
+      });
     }
   }
   observing = !!next.mediaUrl;

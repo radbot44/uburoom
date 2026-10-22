@@ -212,7 +212,7 @@ async function runPlexSessionLifecycleTests() {
       streamVersion: state?.streamVersion,
       reconnecting: reconnecting,
       error: playbackError,
-      toast: !document.getElementById('disconnect-toast').hidden
+      toast: !!document.querySelector('[data-toast="reconnect"]')
     })`).then(JSON.parse);
     results.push({ test: '5s-outage', snap: snap1, sessionRetained: true });
     console.log('[PlexEval] 5s outage: session retained, toast visible:', snap1.toast, 'error:', snap1.error);

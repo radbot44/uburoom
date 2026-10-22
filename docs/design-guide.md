@@ -21,9 +21,9 @@ Use this guide when creating or updating buttons, switches, checkboxes, and sele
 
 | Item | Make it like this |
 |---|---|
-| Normal text button | **44px minimum height**, **12px radius** |
-| Prominent sign-in/entry button | **48px minimum height** |
-| Icon-only button | **44 × 44px minimum clickable area**, **10px radius** |
+| Normal text button | **40px minimum height**, **12px radius** |
+| Prominent sign-in/entry button | **44px minimum height** |
+| Icon-only button | **40 × 40px minimum clickable area**, **10px radius** |
 | Standalone button icon | **24 × 24px** artwork |
 | Icon beside text | **20 × 20px** artwork |
 | Normal button label | **14px** |
@@ -80,7 +80,6 @@ Keep disabled, unavailable, ineffectual, and loading distinct. A loading action 
 - Normal text labels can wrap to **two lines**; compact labels stay on one line.
 - Use natural-width buttons on desktop. On narrow screens, major form/dialog actions may stack full-width when necessary.
 - Keep toolbar icon groups compact, with **4px** between adjacent icon actions.
-- Don't force the **44px button-height rule** onto **40px segmented selectors**.
 
 ## 4. Switches and checkboxes
 
@@ -170,6 +169,8 @@ Use stable accessible names: **Admin mode** uses checked switch state; **Room pr
 
 ### General toasts
 
+**Owner-authorized first increment (2026-10-22):** Extract the existing reconnect notification into a shared Watch toast component and route participant action feedback through it, using the reconnect card appearance. Preserve the reconnect grace/recovery behavior and participant feedback eligibility, wording and 2.5-second lifetime. For this interim step, retain the existing player positions (participant top-left, reconnect bottom-left) and one replaceable notification per source. Final design, stacking/queue policy, close controls and lifetime refinements are deferred to the next owner-directed step; the general target below remains pending for this component.
+
 Use general action-result toasts at **bottom-right on desktop** and **bottom-center on mobile**. Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
 
 | Toast | Duration |
@@ -178,7 +179,7 @@ Use general action-result toasts at **bottom-right on desktop** and **bottom-cen
 | Success | **4 seconds** of visible time |
 | Error | **10 seconds** of visible time |
 
-Show **a separate loading toast and then a separate result toast**. Every toast has an **X**. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action. Keep the player’s existing reconnecting message separate.
+Every toast has an **X**. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action.
 
 ## 8. Quick checks before shipping
 

@@ -344,6 +344,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/watch-transport.js':['watch-transport.js','text/javascript'],
         '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
         '/watch-controls.js':['watch-controls.js','text/javascript'],
+        '/watch-toasts.js':['watch-toasts.js','text/javascript'],
         '/ubumfa.js':['ubumfa.js','text/javascript'],
         '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
         '/watch-queue.css':['watch-queue.css','text/css'],

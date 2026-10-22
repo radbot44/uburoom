@@ -211,7 +211,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   let cleared = 0, stoppedLoad = 0, failedMessage = '';
   const icons = [];
   const client = { stopLoad() { stoppedLoad++; }, startLoad() {} };
-  const toast = { hidden: true, querySelector() { return { firstChild: null, append() {} }; } };
+  const toast = { hidden: true };
   const elements = {
     'disconnect-toast': toast,
     'empty-title': { textContent: '' },
@@ -221,7 +221,10 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   const $ = id => elements[id];
   const context = {
     $: $,
-    uburoomIcons: { icon: (_document, name) => { icons.push(name); return {}; } },
+    reconnectToasts: {
+      show(id, options) { toast.hidden = false; icons.push(options.symbol); },
+      dismiss() { toast.hidden = true; }
+    },
     uburoomPlayback: playback,
     diagnostics: diagnosticLog(),
     transport: { ready: false, interrupt() {} },
@@ -288,7 +291,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   assert.equal(context.disconnectExtended, true, 'enters extended disconnect mode');
   assert.equal(stoppedLoad, 1, 'hls.stopLoad is called to preserve buffer');
   assert.equal(toast.hidden, false, 'toast is shown after grace period with buffer');
-  assert.deepEqual(icons, ['refresh'], 'disconnect toast uses the current icon provider');
+  assert.deepEqual(icons, ['refresh'], 'disconnect toast requests the refresh icon');
   assert.equal(cleared, 0, 'player is still not cleared while buffer remains');
 
   // 4. Buffer exhausted: fullPlayerClear is called
