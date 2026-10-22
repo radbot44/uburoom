@@ -45,7 +45,7 @@ function fixture(){
   };
   const plex=new Plex({plexUrl:'http://pool-fixture.invalid',plexToken:'alpha'},fetch),a=plex.scope('alpha','alice'),b=plex.scope('beta','bob');
   const prepare=(scope,quality='1080p20',choices={})=>scope.prepare('1',quality,false,undefined,undefined,{shareKey:['room','media'],subtitleId:'off',authorized:async()=>true,...choices});
-  return {plex,a,b,prepare,state,bytes,fetch};
+  return {plex,a,b,prepare,state,sessions,bytes,fetch};
 }
 
 test('two matching accounts share one Plex conversion; another bitrate stays separate and leases stop only the final reference',async()=>{
@@ -78,6 +78,10 @@ test('direct HLS shares without any server segment fetch, isolates viewer tokens
     assert.equal(a.hlsLease.group.media.directHls,undefined,'shared producer must not retain a viewer delegation');
     const proxy=await f.prepare(f.b,'720p4');media.push(proxy);
     assert.notEqual(proxy.transcodeId,a.transcodeId);assert.ok(proxy.hlsLease.group.anchor);
+    f.sessions.delete(a.transcodeId);
+    const reawakened=await direct(f.b);media.push(reawakened);
+    assert.notEqual(reawakened.transcodeId,a.transcodeId,'expired direct session is replaced on join without touching segments');
+    assert.equal(f.state.requests.some(request=>request.path.endsWith('.ts')&&request.token==='alpha'),false);
     await f.plex.stop(a);assert.equal(f.state.stops.includes(b.transcodeId),false);
     await f.plex.stop(b);assert.equal(f.state.stops.includes(b.transcodeId),true);
     const {directHlsUrl}=require('../web/playback-policy'),plan={...a.directHls,session:a.transcodeId};

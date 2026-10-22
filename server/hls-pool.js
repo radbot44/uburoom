@@ -39,6 +39,15 @@ class HLSPool {
       } finally {this.pendingBytes-=size;void reader.cancel().catch(()=>{});reader.releaseLock();}
     }
   }
+  async alive(media,timeoutMs=3000) {
+    const plex=media?.plexContext,first=media?.initialManifest?.split(/\r?\n/).map(line=>line.trim()).find(line=>line&&!line.startsWith('#'));
+    if(!plex||!first||!media.start)return false;
+    try {
+      const target=plex.url(new URL(first,media.start).href).href,id=media.transcodeId;
+      const response=await plex.request(target,{signal:AbortSignal.timeout(timeoutMs),headers:{Accept:'application/vnd.apple.mpegurl','X-Plex-Client-Identifier':id,'X-Plex-Session-Identifier':id}});
+      return (await response.text()).startsWith('#EXTM3U');
+    } catch {return false;}
+  }
   invalidate(lease) {
     const group=lease?.group;
     if(group&&this.groups.get(group.key)===group)this.groups.delete(group.key);
@@ -57,6 +66,12 @@ class HLSPool {
     if(this.closed)throw new PlaybackError('Server is shutting down.');
     if(!key||!this.groups.has(key)&&this.live.size>=this.maxGroups)return {media:await create(authorized)};
     let group=this.groups.get(key),producer=false;
+    if(group&&direct&&group.settled&&group.media&&!await this.alive(group.media)) {
+      if(this.groups.get(key)===group)this.groups.delete(key);
+      if(existingOnly)return unavailable();
+      if(this.closed)throw new PlaybackError('Server is shutting down.');
+      group=this.groups.get(key);
+    }
     if(!group){
       producer=true;group={key,users:new Set(),settled:false,direct};this.groups.set(key,group);this.live.add(group);
       group.promise=Promise.resolve().then(async()=>{

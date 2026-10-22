@@ -156,10 +156,11 @@ test('a fresh outside-cache HLS seek supersedes old network backoff while cached
 });
 test('expired HLS session requests one personal refresh per stream with a bounded rate',async () => {
   const timers=[], commands=[];
-  const client={startLoad(){}};
+  let proxied=0;
+  const client={startLoad(){},stopLoad(){}};
   const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'},ErrorDetails:{MEDIA_SOURCE_REQUIRES_RESET:'reset'}},state:{format:'hls',mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream'},
     mediaSource:'/current',selected:'room',pending:false,hlsRefreshPending:false,hlsRefreshVersion:undefined,hlsRefreshTimes:[],
-    hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,
+    hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,proxyDirectFile:()=>{proxied++;},
     execute:async command=>{commands.push(command);},clearTimeout:()=>{},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
   vm.runInNewContext(source.slice(source.indexOf('async function refreshHlsSession('),source.indexOf('function handleHlsError(')),context);
   await load(context,'handleHlsError','unavailable');
@@ -176,9 +177,19 @@ test('expired HLS session requests one personal refresh per stream with a bounde
   context.handleHlsError(client,{fatal:false,type:'network',response:{code:410}});
   for(let i=0;i<4;i++) {context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});await new Promise(resolve=>setImmediate(resolve));}
   assert.equal(commands.length,3,'repeated expiry cannot create an unbounded refresh loop');
+  context.state={format:'hls',directHls:{origin:'https://plex.example',session:'s',token:'t'},mediaUrl:'/current',mediaVersion:'direct-media',streamVersion:'direct-stream'};
+  context.handleHlsError(client,{fatal:true,type:'network',details:'fragLoadError'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(commands.length,4,'expired direct HLS fragment refreshes direct session first');
+  assert.equal(proxied,0);
+  context.handleHlsError(client,{fatal:true,type:'network',details:'fragLoadError'});
+  assert.equal(proxied,1,'repeated direct HLS failure falls back to proxy delivery');
+  context.state.mediaVersion='direct-unreachable';
+  context.handleHlsError(client,{fatal:true,type:'network',details:'levelLoadError'});
+  assert.equal(proxied,2,'unreachable direct playlist falls back immediately without refresh');
   context.hls=undefined;
   context.handleHlsError(client,{fatal:true,type:'network',response:{code:410}});
-  assert.equal(commands.length,3,'superseded media cannot refresh');
+  assert.equal(commands.length,4,'superseded media cannot refresh');
 });
 test('fresh HLS media clears an exhausted delivery error and resumes synchronization',async () => {
   const client = {}, calls = [];

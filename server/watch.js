@@ -215,7 +215,7 @@ class Watch {
     if (pruned) this.settle(room, now);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
-      for (const viewer of room.viewers.values()) if (viewer.media?.transcodeId) void this.plex.ping(viewer.media);
+      for (const viewer of new Map([...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v])).values()) void this.plex.ping(viewer.media);
     }
     if (!room.saved && room.media && !room.s.state.paused && room.s.state.position >= room.media.duration) {
       room.position = room.media.duration; room.changedAt = now; room.s.state.paused = true; room.revision++;

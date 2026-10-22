@@ -643,6 +643,7 @@ async function refreshHlsSession(client) {
     diagnosticSample('stream-refresh-ok');
   } catch {
     diagnosticSample('stream-refresh-failed');
+    if (state?.directHls && state?.streamVersion === streamVersion) void proxyDirectFile();
     // The old buffered media can still play. HLS's bounded network retry
     // reports an error if delivery does not return in time.
   } finally { hlsRefreshPending = false; }
@@ -677,9 +678,6 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
-  if(state?.directHls && data.fatal && data.type===Hls.ErrorTypes.NETWORK_ERROR) {
-    client.stopLoad();void proxyDirectFile();return;
-  }
   const detail = data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET ? 'reset' :
     data.error?.name === 'QuotaExceededError' ? 'quota-exceeded' :
     data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR ? 'buffer-append' :
@@ -688,11 +686,18 @@ function handleHlsError(client, data) {
   diagnosticSample('hls-error',{fatal:!!data.fatal,status:data.response?.code,
     category:data.type===Hls.ErrorTypes.NETWORK_ERROR?'network':data.type===Hls.ErrorTypes.MEDIA_ERROR?'media':'other',
     detail});
+  if(state?.directHls && data.fatal && data.type===Hls.ErrorTypes.NETWORK_ERROR) {
+    client.stopLoad();
+    if((detail==='fragment' || [404,410].includes(data.response?.code)) && (hlsRefreshVersion!==state.mediaVersion || !hlsRefreshTimes.length)) {
+      void refreshHlsSession(client);
+    } else void proxyDirectFile();
+    return;
+  }
   if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     hlsNetworkInterrupted = true;
     // A vanished Plex conversion can be reported as a nonfatal fragment
     // error while hls.js is still spending its own retry budget.
-    if (data.response?.code === 410) void refreshHlsSession(client);
+    if ([404, 410].includes(data.response?.code)) void refreshHlsSession(client);
   }
   if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     // Keep already buffered media attached while retrying the current stream.

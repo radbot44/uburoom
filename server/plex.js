@@ -515,11 +515,17 @@ class Plex {
     media?.subtitleAbort?.abort(); media?.subtitleCache?.clear(); if(media)SubtitleResources.clear(media);
     if(media?.hlsLease){await media.hlsLease.release();return;}
     if (media?.av1Lease) this.av1.release(media.av1Lease);
-    if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
+    if (media?.transcodeId) {
+      const id = media.transcodeId, headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
+      await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers }).catch(() => {});
+    }
     media?.releaseConversion?.();if(media)media.releaseConversion=undefined;
   }
   async ping(media) {
-    if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
+    if (!media?.transcodeId) return false;
+    const id = media.transcodeId, headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
+    try { await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: id, ...headers }), { headers }); return true; }
+    catch { return false; }
   }
   close() { this.fileCache.clear(); this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
 }
