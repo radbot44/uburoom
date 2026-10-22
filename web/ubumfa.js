@@ -17,29 +17,59 @@ TB TD TF TG TK TL TM TN TP TS
 VB VD VG VL VN VR VS VT
 ZB ZD ZG ZL ZM ZN ZR ZS ZT ZV`.split(/\s+/);
   const PATTERNS = ['CVCVCV', 'CVCVVC', 'CVVCCV', 'CVVCVC', 'VCCVCV', 'VCCVVC', 'VCVCCV', 'VCVCVC'];
-  function generateName(random = Math.random) {
+  function patternForLength(length, rand) {
+    // Every two letters contain one vowel and one consonant. The eight
+    // original six-letter patterns are exactly the possible combinations.
+    if (length === 6) return PATTERNS[rand(PATTERNS.length)];
+    let pattern = '';
+    for (let i = 0; i < Math.floor(length / 2); i++) {
+      pattern += rand(2) === 0 ? 'CV' : 'VC';
+    }
+    if (length % 2) {
+      // A final unmatched letter always alternates with its neighbor.
+      pattern += pattern ? (pattern.endsWith('V') ? 'C' : 'V') : (rand(2) === 0 ? 'C' : 'V');
+    }
+    return pattern;
+  }
+
+  // generateName(random) remains supported for callers using a seeded RNG.
+  function generateName(length = 6, random = Math.random) {
+    if (typeof length === 'function') { random = length; length = 6; }
+    if (!Number.isSafeInteger(length) || length < 1) {
+      throw new RangeError('Word length must be a positive safe integer');
+    }
     const rand = n => Math.floor(random() * n);
-    const p = PATTERNS[rand(PATTERNS.length)], s = Array(6);
-    const cc = p.indexOf('CC'), vv = p.indexOf('VV');
-    if (cc !== -1) {
+    const p = patternForLength(length, rand), s = Array(length);
+    // Fill all doubled consonants before doubled vowels, preserving the
+    // existing six-letter random draw order.
+    for (let cc = p.indexOf('CC'); cc !== -1; cc = p.indexOf('CC', cc + 2)) {
       const pair = PAIRS[rand(PAIRS.length)];
       s[cc] = pair[0]; s[cc + 1] = pair[1];
     }
-    if (vv !== -1) {
+    for (let vv = p.indexOf('VV'); vv !== -1; vv = p.indexOf('VV', vv + 2)) {
       const n = rand(20), a = n >> 2, b = n & 3;
       s[vv] = V[a]; s[vv + 1] = V[b >= a ? b + 1 : b];
     }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < length; i++) {
       // Filled pairs may contain literal V; do not interpret them as pattern markers.
       if (s[i] === undefined) s[i] = p[i] === 'V' ? V[rand(5)] : C[rand(C.length)];
     }
     return s.join('');
   }
-  function roomName() {
-    const word = generateName();
-    return 'Room ' + word[0] + word.slice(1).toLowerCase();
+
+  // Each argument specifies the letter count of one title-cased word.
+  function ubumfa(...lengths) {
+    if (!lengths.length) lengths = [6];
+    return lengths.map(length => {
+      const word = generateName(length);
+      return word[0] + word.slice(1).toLowerCase();
+    }).join(' ');
   }
-  const api = {generateName, roomName};
+
+  function roomName() {
+    return 'Room ' + ubumfa(6);
+  }
+  const api = {generateName, ubumfa, roomName};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.uburoomUbumfa = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
