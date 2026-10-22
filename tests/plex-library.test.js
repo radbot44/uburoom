@@ -5,7 +5,13 @@ const {Plex} = require('../server/plex');
 const {watchHttp} = require('../server/watch-http');
 const movie = (id, more = {}) => ({ratingKey:String(id),type:'movie',title:'Movie ' + id,year:2020,duration:6000000,thumb:`/library/metadata/${id}/thumb/123`,...more});
 const json = data => new Response(JSON.stringify({MediaContainer:data}));
-function fixture(handler) { return new Plex({plexUrl:'http://127.0.0.1:32400',plexToken:'fixture-private-token'},handler); }
+function fixture(handler, files) { return new Plex({plexUrl:'http://127.0.0.1:32400',plexToken:'fixture-private-token'},(url,options)=>{
+  if (files && url.searchParams.get('checkFiles') === '1') {
+    const ids = url.pathname.split('/').pop().split(',');
+    return json({Metadata:files.filter(item=>ids.includes(item.ratingKey))});
+  }
+  return handler(url,options);
+}); }
 
 test('library pagination and native search/sort/filter queries cover titles beyond the former 200-item cutoff', async t => {
   const rows = Array.from({length:250},(_,i)=>movie(i+1)), requests = [];
@@ -14,7 +20,7 @@ test('library pagination and native search/sort/filter queries cover titles beyo
     const filtered = rows.filter(x=>!url.searchParams.get('title') || x.title.includes(url.searchParams.get('title')));
     const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
     return json({totalSize:filtered.length,Metadata:filtered.slice(start,start+size)});
-  }); t.after(()=>plex.close());
+  },rows); t.after(()=>plex.close());
   const first = await plex.browse({section:'1',sort:'year',order:'desc',genre:'5',year:'2020'});
   assert.equal(first.items.length,48); assert.equal(first.total,250); assert.equal(first.nextOffset,48);
   assert.equal(requests[0].searchParams.get('sort'),'year:desc'); assert.equal(requests[0].searchParams.get('genre'),'5'); assert.equal(requests[0].searchParams.get('year'),'2020');
@@ -31,7 +37,7 @@ test('collection order is retained; filtering reads all child pages instead of f
     assert.equal(url.pathname,'/library/collections/9/children');
     const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size')); starts.push(start);
     return json({totalSize:rows.length,Metadata:rows.slice(start,start+size)});
-  }); t.after(()=>plex.close());
+  },rows); t.after(()=>plex.close());
   const ordered = await plex.browse({section:'1',collection:'9',sort:'default'}); assert.equal(ordered.items[0].id,'245');
   const found = await plex.browse({section:'1',collection:'9',q:'Needle',sort:'default'});
   assert.ok(found.items.some(x=>x.id==='1')); assert.deepEqual(starts,[0,0,120,240]);
@@ -40,7 +46,7 @@ test('collection order is retained; filtering reads all child pages instead of f
 
 test('random sort uses one full-library shuffle across pages and a new seed produces a new order', async t => {
   const rows=Array.from({length:620},(_,i)=>movie(i+1)); let requests=0;
-  const plex=fixture(async url=>{requests++;const start=Number(url.searchParams.get('X-Plex-Container-Start')),size=Number(url.searchParams.get('X-Plex-Container-Size'));return json({totalSize:rows.length,Metadata:rows.slice(start,start+size)});});t.after(()=>plex.close());
+  const plex=fixture(async url=>{requests++;const start=Number(url.searchParams.get('X-Plex-Container-Start')),size=Number(url.searchParams.get('X-Plex-Container-Size'));return json({totalSize:rows.length,Metadata:rows.slice(start,start+size)});},rows);t.after(()=>plex.close());
   const seed='a'.repeat(32),first=await plex.browse({section:'1',sort:'random',seed}),next=await plex.browse({section:'1',sort:'random',seed,offset:48});
   assert.equal(first.total,620);assert.equal(requests,2,'matching catalog fetched once, in bounded batches');
   assert.equal(new Set([...first.items,...next.items].map(x=>x.id)).size,96);assert.ok(first.items.some(x=>Number(x.id)>200));
@@ -85,7 +91,7 @@ test('show and season queue expansion pages the complete corpus, sorts cross-sea
     const rows = url.pathname.endsWith('/children') ? episodes.filter(item => item.parentIndex === 2) : episodes;
     const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
     return json({ totalSize: rows.length, Metadata: rows.slice(start, start + size) });
-  }); t.after(() => plex.close());
+  },episodes); t.after(() => plex.close());
   const normal = await plex.queueItems({ type: 'show', id: '50' });
   assert.equal(normal.length, 165);
   assert.equal(normal[0].id, '81');
@@ -106,7 +112,7 @@ test('random scopes accept a movie library or expand mixed collections without d
     if (url.pathname === '/library/collections/9/children') return json({ totalSize: 3, Metadata: [movie(1), movie(50, { type: 'show' }), episode] });
     if (url.pathname === '/library/metadata/50/allLeaves') return json({ totalSize: 2, Metadata: [episode, movie(4, { type: 'episode', parentIndex: 0, index: 1 })] });
     throw new Error('Unexpected fixture request');
-  }); t.after(() => plex.close());
+  },[movie(1),episode,movie(4,{type:'episode'})]); t.after(() => plex.close());
   assert.deepEqual((await plex.queueItems({ type: 'library', id: '1' })).map(item => item.id), ['1']);
   await assert.rejects(plex.queueItems({ type: 'library', id: '2' }), /movie library/);
   assert.deepEqual((await plex.queueItems({ type: 'collection', id: '9' })).map(item => item.id), ['1', '3']);
@@ -175,4 +181,25 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
     signedIn=false;const denied={};await routes.route({method:'GET',headers:{},socket:{}},denied,new URL('https://localhost/api/watch/library'));
     assert.equal(denied.status,401);
   } finally { routes.close(); }
+});
+
+
+test('file checks mark missing library entries and reject playback before subtitles or queue expansion', async t => {
+  const rows = [movie(1),movie(2)], checked = rows.map((item,index)=>({...item,Media:[{id:index+1,Part:[{id:index+1,key:'/library/parts/'+(index+1)+'/file.mp4',exists:!index,accessible:!index}]}]}));
+  const plex = fixture(async url => {
+    if (url.pathname === '/library/sections') return json({Directory:[{key:'1',type:'movie'}]});
+    if (url.pathname.startsWith('/library/metadata/')) {
+      assert.equal(url.searchParams.get('checkFiles'),'1');
+      const ids = url.pathname.split('/').pop().split(',');
+      return json({Metadata:checked.filter(item=>ids.includes(item.ratingKey))});
+    }
+    return json({totalSize:rows.length,Metadata:rows});
+  }); t.after(()=>plex.close());
+  const result = await plex.browse({section:'1'});
+  assert.deepEqual(result.items.map(item=>item.available),[true,false]);
+  assert.deepEqual((await plex.queueItems({type:'library',id:'1'})).map(item=>item.id),['1']);
+  await assert.rejects(plex.playableItem('2'),{code:'MEDIA_UNAVAILABLE'});
+  await assert.rejects(plex.prepare('2','direct',false,undefined,undefined,{subtitleId:'auto'}),{code:'MEDIA_UNAVAILABLE'});
+  checked[1].Media.push({...checked[0].Media[0],id:3});
+  assert.equal((await plex.prepare('2','direct',false,undefined,undefined,{sourceOnly:true})).sourceSelection.mediaId,'3');
 });

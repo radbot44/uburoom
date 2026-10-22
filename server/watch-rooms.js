@@ -75,7 +75,7 @@ class WatchRooms {
           if (saved) {
             if (await this.identify(saved) !== saved.serverId) throw failure('The saved Plex server changed',409);
             const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
-            media = saved.mediaId === 'demo' ? this.watch.demoMedia && {...this.watch.demoMedia,id:'demo',resources:new Map()} : await plex.prepare(saved.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
+            media = saved.mediaId === 'demo' ? this.watch.demoMedia && {...this.watch.demoMedia,id:'demo',resources:new Map()} : await this.savedSource(plex,saved);
             if (!media || Math.abs(media.duration - saved.duration) > .5 || media.source?.type && media.source.type !== saved.type) throw failure('The saved video changed or is unavailable',409);
             media.roomServerId = saved.serverId;
           }
@@ -213,6 +213,13 @@ class WatchRooms {
     }
     return this.identifying;
   }
+  async savedSource(plex,saved) {
+    try { return await plex.prepare(saved.mediaId,'direct',false,undefined,undefined,{sourceOnly:true}); }
+    catch (error) {
+      if (error.code !== 'MEDIA_UNAVAILABLE') throw error;
+      return {id:saved.mediaId,title:saved.title,duration:saved.duration,source:{type:saved.type},kind:'plex',resources:new Map(),unavailable:true,playbackError:error.message};
+    }
+  }
   async reopen(id, actor, current) {
     if(this.watch.hub.config.singleRoom){const selected=await this.ensureSingle(actor,current);if(id!==selected)throw failure('Only the configured shared room is available',403);return selected;}
     await this.eligible(actor, current);
@@ -235,7 +242,7 @@ class WatchRooms {
               media = { ...this.watch.demoMedia, id:'demo', resources:new Map() };
             } else {
               const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
-              media = await plex.prepare(saved.mediaId, 'direct', false, undefined, undefined, { sourceOnly:true });
+              media = await this.savedSource(plex,saved);
             }
             if (Math.abs(media.duration - saved.duration) > .5 || media.source?.type && media.source.type !== saved.type) {
               throw failure('The saved video changed. Clear its saved video in room settings before choosing it again.');
@@ -377,7 +384,7 @@ class WatchRooms {
             const saved=record.bookmark;
             try{
               const plex=this.watch.hub.plexFor?await this.watch.hub.plexFor(actor):this.watch.plex;
-              const media=saved.mediaId==='demo'?this.watch.demoMedia&&{...this.watch.demoMedia,id:'demo',resources:new Map()}:await plex.prepare(saved.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
+              const media=saved.mediaId==='demo'?this.watch.demoMedia&&{...this.watch.demoMedia,id:'demo',resources:new Map()}:await this.savedSource(plex,saved);
               if(media&&await this.identify(saved)===saved.serverId){room.media=media;room.position=Math.min(saved.position,media.duration);media.roomServerId=saved.serverId;room.s.state.seekable=true;room.manualPaused=true;}
             }catch{room.saveError='The saved video could not be restored. Choose media after checking Plex access.';}
           }

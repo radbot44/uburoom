@@ -88,8 +88,8 @@
         motion.onfinish = () => { if (entry.motion === motion) remove(); };
       }
     }
-    function show(id, { title, hint = '', symbol, seekSeconds, loading = false, duration = 0 }) {
-      if (!enabled) return;
+    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false }) {
+      if (!enabled && type !== 'error') return;
       // A stable ID updates an existing notification rather than duplicating it.
       let entry = entries.get(id);
       if (!entry) {
@@ -127,14 +127,18 @@
         entry.exiting = false;
       }
       cancel(entry.timer);
-      entry.root.classList.toggle('loading', loading);
+      entry.type = type;
+      entry.root.classList.toggle('normal', type !== 'error');
+      entry.root.classList.toggle('error', type === 'error');
+      entry.root.dataset.loading = String(loading);
       entry.artwork.replaceChildren(...(symbol ? [icons.icon(doc, symbol, seekSeconds)] : []));
       entry.artwork.hidden = !symbol;
       entry.heading.textContent = title;
       entry.detail.textContent = hint;
       entry.detail.hidden = !hint;
       entry.root.setAttribute('aria-label', 'Dismiss notification: ' + title + (hint ? ' ' + hint : ''));
-      entry.timer = duration > 0 ? schedule(() => dismiss(id), duration) : undefined;
+      const lifetime = persistent ? 0 : type === 'error' ? 10000 : duration;
+      entry.timer = lifetime > 0 ? schedule(() => dismiss(id), lifetime) : undefined;
       requestLayout();
     }
     function clear() {
@@ -142,7 +146,7 @@
     }
     function setEnabled(value) {
       enabled = !!value;
-      if (!enabled) clear();
+      if (!enabled) for (const [id, entry] of entries) if (entry.type !== 'error') dismiss(id);
     }
     return { show, dismiss, clear, setEnabled, get enabled() { return enabled; } };
   }

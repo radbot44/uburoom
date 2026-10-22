@@ -217,6 +217,7 @@
         img.addEventListener('load',() => { box.classList.add('loaded'); });
         const key = item.id + ':' + img.dataset.kind; if (images.has(key)) img.src = images.get(key); else imageObserver.observe(img);
       }
+      if (item.available === false) { box.classList.add('unavailable'); node('span',box,'Unavailable','library-unavailable'); }
       return box;
     }
     function signalError(message, action) { note.textContent = message; note.classList.add('library-error'); retry.hidden = false; errorAction = action; }
@@ -228,12 +229,12 @@
     function setBusy(value) {
       busy = value;
       const root = host.closest('#library-panel') || host;
-      for (const b of root.querySelectorAll('[data-play]')) b.disabled = busy || !!playing || !room;
-      for (const b of root.querySelectorAll('[data-queue]')) b.disabled = busy || !room || !canAddQueue();
+      for (const b of root.querySelectorAll('[data-play]')) b.disabled = b.dataset.unavailable === 'true' || busy || !!playing || !room;
+      for (const b of root.querySelectorAll('[data-queue]')) b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
       for (const b of root.querySelectorAll('[data-auto-queue]')) b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
     }
     async function play(item) {
-      if (busy || playing || !room) return;
+      if (item.available === false || busy || playing || !room) return;
       const version = generation; playing = item.id; setBusy(busy); resetStatus(); note.textContent = 'Loading ' + identity(item) + '…';
       try {
         const result = await load(item);
@@ -246,11 +247,13 @@
     }
     function playButton(parent,item,large = false) {
       const b = button(parent,'Play ' + identity(item),'play',large ? 'library-play-now' : 'library-play'); b.dataset.play = item.id; b.dataset.action = 'play';
+      b.dataset.unavailable = String(item.available === false); b.disabled = item.available === false;
       if (large) b.append(node('span',null,'Play now')); b.addEventListener('click',() => void play(item)); return b;
     }
     function queueButton(parent, item, large = false) {
       const b = button(parent, 'Add ' + identity(item) + ' to queue', 'queue', large ? 'library-queue-add library-play-now' : 'library-queue-add');
-      b.dataset.queue = item.id; b.disabled = busy || !room || !canAddQueue();
+      b.dataset.unavailable = String(item.available === false);
+      b.dataset.queue = item.id; b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
       if (large) b.append(node('span', null, 'Add to queue'));
       b.addEventListener('click', async event => {
         event.stopPropagation();
@@ -263,11 +266,11 @@
           note.textContent = 'Added ' + identity(item) + ' to queue.';
           setTimeout(() => {
             if (span) span.textContent = 'Add to queue';
-            b.disabled = busy || !room || !canAddQueue();
+            b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
           }, 1500);
         } catch (error) {
           signalError(error.message, () => b.click());
-          b.disabled = busy || !room || !canAddQueue();
+          b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
         }
       });
       return b;
@@ -289,13 +292,15 @@
       return b;
     }
     function extras(parent,item,full = false) {
-      if (!item.contentRating && !item.genres?.length) return;
-      const line = node('div',parent,undefined,'library-extras'); if (item.contentRating) node('span',line,item.contentRating,'library-rating');
+      if (item.available !== false && !item.contentRating && !item.genres?.length) return;
+      const line = node('div',parent,undefined,'library-extras');
+      if (item.available === false) node('span',line,'Unavailable');
+      if (item.contentRating) node('span',line,item.contentRating,'library-rating');
       if (item.genres?.length) node('span',line,(full ? item.genres : item.genres.slice(0,2)).join(' · '));
     }
     function tile(item) {
       const episode = item.type === 'episode', row = episode || view === 'list';
-      const card = node('article',results,undefined,'library-tile' + (episode ? ' episode' : '')); card.dataset.item = item.id;
+      const card = node('article',results,undefined,'library-tile' + (episode ? ' episode' : '')); card.dataset.item = item.id; card.classList.toggle('unavailable',item.available === false);
       if (row) {
         card.classList.add('library-row');
         card.addEventListener('click',event => {

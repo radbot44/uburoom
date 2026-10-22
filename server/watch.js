@@ -97,6 +97,7 @@ class Watch {
     }
   }
   async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized) {
+    if (source.unavailable) source = await plex.prepare(source.id,'direct',false,undefined,undefined,{sourceOnly:true});
     const {alternatives}=require('./quality-options');
     const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
     if(!choices.length)throw new PlaybackError('No configured quality is available for this video. Ask the owner to offer a lower quality or Original.');
@@ -118,9 +119,26 @@ class Watch {
   }
   async prepareViewer(room, actor, viewerId) {
     const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
-    if (!viewer || viewer.userId !== actor.userId || !room.media) return;
+    if (!viewer || viewer.userId !== actor.userId) return;
     const plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;
     if(room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer)return;
+    const queueRevision = room.saved ? this.roomState.queue.room(room.s.roomId).queueRevision : undefined;
+    const entries = room.saved ? [this.roomState.queue.current(room.s.roomId),...this.roomState.queue.pending(room.s.roomId)].filter(Boolean) : [];
+    if (room.media && !entries.some(item=>item.mediaId===room.media.id)) entries.unshift({id:room.media.id,mediaId:room.media.id,title:room.media.title});
+    if (plex.availability) {
+      const availability = await plex.availability(entries.map(item=>item.mediaId));
+      if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
+      if (room.saved && this.roomState.queue.room(room.s.roomId).queueRevision!==queueRevision) return;
+      viewer.unavailableMedia = entries.filter(item=>availability.get(item.mediaId)===false).map(({id,mediaId,title})=>({id,mediaId,title}));
+      if (room.media && availability.get(room.media.id)===false) {
+        if (!viewer.media?.unavailable) { this.tracking.end(viewer,'media-unavailable'); await this.plex.stop(viewer.media); }
+        if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
+        viewer.media = {id:room.media.id,title:room.media.title,duration:room.media.duration,kind:'plex',format:'unavailable',resources:new Map(),unavailable:true,playbackError:room.media.title+' is unavailable.'};
+        viewer.mediaVersion = version; viewer.ready = false; return viewer.media;
+      }
+      if (viewer.media?.unavailable) viewer.media = undefined;
+    }
+    if (!room.media) return;
     if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) { await viewer.preparing; return this.prepareViewer(room, actor, viewerId); }
@@ -143,13 +161,21 @@ class Watch {
       if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
       try {media=await prepare(authorized,source);}
       catch(error) {
-        if(!retainUnavailable || !(error instanceof PlaybackError) || !error.media)throw error;
-        // Preserve the catalog so Off/another subtitle can recover a failed burn.
-        media=error.media;media.format='unavailable';media.playbackError=error.message;
+        if (retainUnavailable && error.code === 'MEDIA_UNAVAILABLE') {
+          media={id:source.id,title:source.title,duration:source.duration,kind:'plex',resources:new Map(),unavailable:true,format:'unavailable',playbackError:error.message};
+        } else {
+          if(!retainUnavailable || !(error instanceof PlaybackError) || !error.media)throw error;
+          // Preserve the catalog so Off/another subtitle can recover a failed burn.
+          media=error.media;media.format='unavailable';media.playbackError=error.message;
+        }
       }
       if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
       if(!accept(media))throw new PlaybackError('Plex could not refresh this stream.');
       this.tracking.end(viewer,'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();adopted=true;
+      if (media.unavailable) {
+        const entry=room.saved && this.roomState.queue.current(room.s.roomId);
+        viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
+      }
       if(current && current!==media)void this.plex.stop(current);
       return {status:'applied'};
     } finally {
@@ -350,7 +376,7 @@ class Watch {
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
-      mediaError:viewer.media?.playbackError,
+      mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [],
       qualityNotice:viewer.media?.qualityNotice,
       deliveryInfo:viewer.media?{format:viewer.media.format,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
         width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
@@ -445,7 +471,10 @@ class Watch {
           await queue.remove(id,actor.userId,args.entryId,revision,{allowCurrent:true});
       } else if (action === 'queue.add' || action === 'queue.playNow') {
         const raw = args.item, serverId = raw.serverId || await this.roomState.identify({id:raw.mediaId || raw.id});
-        const item = this.queueItem(raw,serverId); await check();
+        const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+        const checked = plex.playableItem && (raw.mediaId || raw.id) !== 'demo' ? await plex.playableItem(raw.mediaId || raw.id) : raw;
+        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
+        const item = this.queueItem(checked,serverId); await check();
         queue.assertRevision(queue.room(id),revision);
         if (action === 'queue.playNow' && room) {
           room.queueEditing = false;
@@ -734,6 +763,11 @@ class Watch {
     if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion || room.readinessVersion !== actor.watchReadinessVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
     if (!action.startsWith('room.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
+    if (['media.play','media.toggle'].includes(action) && room.media?.kind !== 'demo') {
+      const version = room.mediaVersion, plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+      if (plex.playableItem) await plex.playableItem(room.media.id);
+      if (!permitted() || room.mediaVersion!==version || !await this.canView(room,actor) || !permitted() || this.hub.plexFor && (await this.hub.plexFor(actor)).principal!==plex.principal) return {status:'unavailable',message:'Room changed or command expired.'};
+    }
     if (room.recovery && (['media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) this.roomState.finishRecovery(room);
     const now = Date.now(), pausePending = !!room.pauseAt, wasPlaying = !s.state.paused && !(room.startAt > now);
     const oldPosition = this.position(room, now);

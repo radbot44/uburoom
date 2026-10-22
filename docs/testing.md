@@ -65,6 +65,16 @@ A/B: Chrome/Firefox desktop and 390px mobile inspection passes empty/all-unavail
 
 A/B: Chrome/Firefox fixture checks pass partially visible content preserving page position for Browse, Home and new/cached library tabs; out-of-view Browse and Home jumps leave first cards below the sticky header. Desktop, 390px mobile and fullscreen drawer checked and captures inspected. Procedure: `node artifacts/media-scroll-inspect.cjs`; ignored captures `artifacts/media-scroll-chrome/` and `artifacts/media-scroll-firefox/`. No permanent tests added; full suite, real-provider checks and human acceptance not run.
 
+## Error toasts — 2026-10-22
+
+A/B: Chrome/Firefox fixture checks pass subtitle preparation and renderer errors using red error toasts, normal suppression while errors bypass the toggle, preserving visible errors when muted, foreground 10-second lifetime without render resets, dismissal without reappearing, later failure notification, and retained settings/retry feedback. Dark/light desktop/390px captures inspected. Procedure: `node artifacts/subtitle-error-toast-inspect.cjs`; ignored captures `artifacts/toast-ui-1792685399659/`. No permanent tests added; full suite, actual subtitle-provider failure and human acceptance not run.
+
+## Missing Plex media — 2026-10-22
+
+A/B: Current uncommitted worktree passes the full Node suite: **370 passed, 0 failed, 0 skipped** (`npm run test:full`, ignored `artifacts/unavailable-final-full.log`). Retained Plex/room tests cover checked file flags, unavailable queue filtering, rejection before subtitle preparation, a usable alternate version, raw queue rejection, missing-current restoration without a media grant, close/reopen and removal. Chrome/Firefox disposable fixtures pass Cards/Posters/List opacity and labels, disabled play/add controls, a persistent error surviving 10 seconds while muted, click dismissal without replay, removal and file recovery clearing the warning. Temporary procedure: `node artifacts/unavailable-ui.cjs`; captures are ignored. No deployment performed; human acceptance and live UI verification of this implementation remain open.
+
+C (read-only): The owner-authorized missing-title example on the real Plex server returns `exists:false` and `accessible:false` only when its metadata is requested with `checkFiles=1`. The ordinary library listing omits these flags even with that parameter; batched metadata checks return them. No live queue or playback state was changed.
+
 ## Latest evidenced results (historical; not rerun)
 
 | Date / scope | Last recorded pass or observation | Limitation and evidence |

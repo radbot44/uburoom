@@ -218,3 +218,8 @@ body.theater:not(.immersive) .library-crumbs{flex-wrap:nowrap;overflow:hidden;fl
 body.theater:not(.immersive) .library-crumbs>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 body.theater:not(.immersive) .library-crumbs>[aria-current]{flex:1 1 0}
 body.theater:not(.immersive) .library-crumb-divider{flex:none}
+
+.library-tile.unavailable { opacity: .4; }
+.library-art.unavailable img { filter: brightness(.75); }
+.library-unavailable { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--text); font-weight: 600; }
+.library-row .library-unavailable { display: none; }

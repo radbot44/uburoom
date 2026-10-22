@@ -96,6 +96,7 @@
  * @property {number} volume - Personal volume level (0-100).
  * @property {boolean} muted - Personal mute toggle.
  * @property {number} [joinedAt] - Timestamp (ms) when viewer joined.
+ * @property {Array<{id:string,mediaId:string,title:string}>} [unavailableMedia] - Missing current or pending queue entries.
  * @property {any} [media] - Resolved personal media/stream descriptor from Plex.
  * @property {string} [mediaVersion] - Version token matching room media generation.
  * @property {string} [streamVersion] - Unique generation token for current personal stream.

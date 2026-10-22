@@ -171,6 +171,12 @@ Subtitles use Tabler `subtitles` when on and `subtitles-off` when off. The activ
 - Queue and Media view choices are remembered **independently**. Volume and mute are device/browser preferences; portable preferences such as theme and layouts can sync when account support exists, with local fallback.
 - Show clear pending/error states without claiming an unsuccessful save has applied.
 
+### Unavailable media
+
+Show unavailable movies at **40% opacity** in Media, with the poster slightly darkened. In Cards and Posters views, overlay **Unavailable** on the poster. In List view, put **Unavailable** first in `.library-extras`. Keep details browsable, but disable Play and Add to queue. Check availability on the server too, including bulk and automatic queue additions.
+
+If an unavailable movie remains in the active queue, show a persistent red error toast naming it. It has no countdown, bypasses the notification toggle, and clears when the entry is removed or becomes available. Clicking it still dismisses it. A missing movie must not be reported as a subtitle failure.
+
 ### General toasts
 
 All Watch notifications use the shared toast component. Toasts are **40px tall**, with **12px corner radii**, no border or outline, and a **24 × 24px icon**. Use the standard dark player card, white text, muted grey text and accent color tokens. Media actions appear in the main row at **14px in white**; the username appears below at **12px in grey**. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
@@ -181,13 +187,16 @@ Fade each toast in while it rises slightly, and reverse that motion when it leav
 
 Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
 
-| Toast | Duration |
-|---|---|
-| Loading | Until the operation finishes or the toast is dismissed |
-| Success | **4 seconds** of visible time |
-| Error | **10 seconds** of visible time |
+There are two toast classes:
 
-Click or tap anywhere on a toast to dismiss it; there is no separate X button. Toasts are also keyboard-activatable. The video controls include a **Notifications** toggle: Tabler `bell` when on, `bell-off` when off. It controls this page’s toast notifications, dismisses visible toasts when turned off, and does not replay suppressed notifications when turned back on. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action.
+| Class | Appearance and lifetime |
+|---|---|
+| **Normal** | Standard dark player card. Participant feedback lasts 2.5 seconds; reconnect stays until recovery or dismissal. Loading is a state of a normal toast, not another class. |
+| **Error** | Red background using **`--danger`**, the same red as delete buttons, with white text and icon. Appears for **10 seconds** or until dismissed; unavailable queued media uses the persistent exception above. Always appears even when normal notifications are off. |
+
+Subtitle playback failures use an error toast: **Subtitles could not be shown.** with **Open Player settings for details.** below it. Keep the detailed error and retry action in Player settings. Report each failure once; routine renders do not restart its countdown or bring back a dismissed toast.
+
+Click or tap anywhere on a toast to dismiss it; there is no separate X button. Toasts are also keyboard-activatable. The video controls include a **Notifications** toggle: Tabler `bell` when on, `bell-off` when off. It controls normal toast notifications only, dismisses visible normal toasts when turned off, and does not replay suppressed notifications when turned back on. Error toasts remain visible and bypass the toggle. Hover/focus pauses a timed toast countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action.
 
 ## 8. Quick checks before shipping
 

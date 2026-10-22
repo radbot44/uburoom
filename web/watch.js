@@ -31,7 +31,7 @@ let qualityPending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
-let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI;
+let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
@@ -558,6 +558,7 @@ function clearPlayer(reason) {
   sync.reset();
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
+  toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
   observing = false; observationBreak++; playerWaiting = false;
   av1?.destroy(); av1 = undefined;
   clearTimeout(hlsRecoveryTimer); hlsRecoveryCount = 0; $('acceleration-help').hidden = true;
@@ -694,6 +695,7 @@ function handleHlsError(client, data) {
   fail(playbackError);
 }
 function unavailable(message,reason='room-unavailable') {
+  unavailableToasts();
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
   reconnecting=false;
@@ -930,8 +932,12 @@ function renderTracks() {
   $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title.' : '');
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
-  $('subtitle-status').hidden=!trackNoticeError && !tracks?.subtitleError;
-  $('subtitle-status').textContent='Subtitles could not be shown. Open Player settings for details.';
+  const subtitleError=tracks?.subtitleError || (trackNoticeError ? trackNotice || 'subtitle-renderer-error' : undefined);
+  const notice=subtitleError ? JSON.stringify([state?.mediaVersion,tracks?.subtitleId,subtitleError]) : undefined;
+  if(notice && notice!==subtitleErrorNotice) {
+    toasts.show('subtitle-error', {type:'error',title:'Subtitles could not be shown.',hint:'Open Player settings for details.',symbol:'subtitles-off'});
+  }
+  subtitleErrorNotice=notice;
   $('subtitle-retry').hidden=!trackNoticeError || !state?.subtitleUrl;
   playerUI?.render();
 }
@@ -995,6 +1001,16 @@ async function reportReadiness() {
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
     ready, readinessVersion }); readinessSent = key; } catch {} finally { readyPending = false; }
 }
+let unavailableNotices = new Set();
+function unavailableToasts(items = []) {
+  const ids = new Set(items.map(item => 'unavailable:' + item.id));
+  for (const id of unavailableNotices) if (!ids.has(id)) toasts.dismiss(id);
+  for (const item of items) {
+    const id = 'unavailable:' + item.id;
+    if (!unavailableNotices.has(id)) toasts.show(id,{type:'error',title:item.title + ' is unavailable.',symbol:'film',persistent:true});
+  }
+  unavailableNotices = ids;
+}
 function applyState(next) {
   if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
   stateTransportSequence=next.transportSequence;
@@ -1008,6 +1024,7 @@ function applyState(next) {
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
+  unavailableToasts(next.unavailableMedia);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
     clearPlayer('state-change'); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;

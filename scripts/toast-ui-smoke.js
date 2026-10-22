@@ -34,8 +34,8 @@ async function main() {
       await run('showDisconnectToast();showDisconnectToast()');
       assert.equal(await run('Number(!!document.querySelector("[data-toast=reconnect]"))'), 1, 'Reconnect updates in place');
       assert.equal(await run('document.querySelector("[data-toast=reconnect]").textContent'), 'Disconnected from roomReconnecting…');
-      assert.equal(await run('document.querySelector("[data-toast=participant]").classList.contains("loading")'), false, 'Participant icon stays still');
-      assert.equal(await run('document.querySelector("[data-toast=reconnect]").classList.contains("loading")'), true, 'Reconnect icon spins');
+      assert.equal(await run('document.querySelector("[data-toast=participant]").dataset.loading==="true"'), false, 'Participant icon stays still');
+      assert.equal(await run('document.querySelector("[data-toast=reconnect]").dataset.loading==="true"'), true, 'Reconnect icon spins');
       for (const width of [1280, 390]) {
         await browser.viewport(page, width, 900);
         for (const theme of ['dark', 'light']) for (const accent of ['orange', 'pink']) {

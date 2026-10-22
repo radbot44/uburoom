@@ -629,3 +629,36 @@ test('explicit Pause cancels reboot resume intent even when everyone subsequentl
   for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
   assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,true);assert.equal(room.s.state.paused,true);
 });
+
+
+test('missing queue media remains removable, blocks raw additions and restores without a media grant',tls,async t=>{
+  const f=await fixture(t), client=await f.login('host'), viewer=randomUUID();
+  const id=(await client.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
+  await client.call(root+'?viewer='+viewer);
+  const room=f.app.watch.rooms.get(id), queue=f.app.watch.roomState.queue, plex=f.app.watch.plex;
+  const item={serverId:'fixture-server',mediaId:'9',type:'movie',title:'Missing movie',duration:60};
+  f.app.hub.plexFor=async()=>plex; plex.allows=async()=>true;
+  f.app.watch.roomState.identify=async()=>item.serverId;
+  plex.availability=async ids=>new Map(ids.map(id=>[id,false]));
+  const missing=()=>Object.assign(new Error('Missing movie is unavailable.'),{code:'MEDIA_UNAVAILABLE',status:409});
+  plex.playableItem=async()=>{throw missing();};
+  plex.prepare=async()=>{throw missing();};
+  const rejected=await command(client,id,viewer,'queue.add',{item,queueRevision:queue.room(id).queueRevision});
+  assert.notEqual(rejected.body.status,'applied');assert.equal(queue.pending(id).length,0);
+  await queue.playNow(id,room.s.ownerId,item);
+  room.media=await f.app.watch.roomState.savedSource(plex,{...item,position:0});
+  room.media.roomServerId=item.serverId;
+  const response=await client.call(root+'?viewer='+viewer); assert.equal(response.status,200,JSON.stringify(response.body));
+  const state=response.body;
+  assert.equal(state.unavailableMedia[0].mediaId,'9');assert.equal(state.mediaError,'Missing movie is unavailable.');
+  assert.equal(state.mediaUrl,undefined);assert.equal(state.tracks,undefined);
+  assert.equal((await client.call(root+'/close',{epoch:state.epoch})).status,200);
+  const reopened=await client.call(root+'/reopen',{viewerId:viewer});
+  assert.equal(reopened.status,200,JSON.stringify(reopened.body));
+  assert.equal(reopened.body.state.unavailableMedia[0].mediaId,'9');
+  assert.equal(reopened.body.state.mediaUrl,undefined);
+  const entry=queue.current(id);
+  const removed=await command(client,id,viewer,'queue.remove',{entryId:entry.id,queueRevision:queue.room(id).queueRevision});
+  assert.equal(removed.body.status,'applied');
+  assert.deepEqual((await client.call(root+'?viewer='+viewer)).body.unavailableMedia,[]);
+});

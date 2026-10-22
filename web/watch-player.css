@@ -30,7 +30,7 @@
 #settings-more{border-top:1px solid var(--border);border-radius:0 0 7px 7px;margin-top:4px}
 #seek-feedback{position:absolute;top:40%;z-index:4;padding:10px 14px;margin:0;background:#101217d9;border-radius:20px;font-size:15px;color:var(--text);pointer-events:none}
 #seek-feedback[data-side=left]{left:8%}#seek-feedback[data-side=right]{right:8%}
-#stage{touch-action:manipulation}#subtitle-status{bottom:100px}
+#stage{touch-action:manipulation}
 body.mobile-player main{padding:0}body.mobile-player main>#account{margin-inline:12px}body.mobile-player .stage{border-radius:0}
 html:has(body.mobile-player:not(.immersive)){overflow-y:scroll}
 body.mobile-player #viewing-section>#room-bar{margin:12px 12px 0;width:calc(100% - 24px)}
@@ -40,7 +40,7 @@ body.mobile-player .transport{padding:20px 6px 6px;gap:0}body.mobile-player :is(
 body.mobile-player .player-button{width:30px;height:30px}body.mobile-player .player-button svg{width:21px;height:21px}
 body.mobile-player .volume-control #player-volume{width:clamp(40px,14vw,72px);margin:0 2px 0 0}
 body.mobile-player .center-play{width:48px;height:48px;top:45%}body.mobile-player .center-play svg{width:28px;height:28px}
-body.mobile-player #ready-status{top:calc(45% + 24px);font-size:10px}body.mobile-player #subtitle-status{bottom:80px}
+body.mobile-player #ready-status{top:calc(45% + 24px);font-size:10px}
 body.mobile-player .title-bar{padding:8px 10px 20px}body.mobile-player .media-heading h1{font-size:14px}
 body.mobile-player #empty-stage{max-height:calc(100% - 136px)}
 @media(prefers-reduced-motion:reduce){.center-play{transition:none}}
