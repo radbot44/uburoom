@@ -169,9 +169,11 @@ Use stable accessible names: **Admin mode** uses checked switch state; **Room pr
 
 ### General toasts
 
-All Watch notifications use the shared toast component and the compact reconnect-card appearance. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
+All Watch notifications use the shared toast component. Toasts are **40px tall**, with **12px corner radii**, no border or outline, and a **24 × 24px icon**. Use the standard dark player card, white text, muted grey text and accent color tokens. Media actions appear in the main row at **14px in white**; the username appears below at **12px in grey**. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
 
-All toasts share one stack at the **bottom-left of the video**, on desktop and mobile. Keep the stack inside the visible page: when scrolling would move it above the viewport, pin it to the **top edge of the page**. Move it above visible playback controls whenever there is room. **Visibility takes priority:** if avoiding the controls would push the stack offscreen, keep it visible even when it overlaps the controls. Keep the same positioning behavior in theater and fullscreen modes.
+All toasts share one stack at the **bottom-left of the video**, on desktop and mobile. Keep the stack inside the visible page: when scrolling would move it above the viewport, pin it to the **top edge of the page**. Move it just above the visible media-control content whenever there is room, ignoring the control container’s gradient padding. Theater and fullscreen buttons alone do not count as media controls; in the lobby, keep the stack at the bottom-left of the black video area. **Visibility takes priority:** if avoiding the controls would push the stack offscreen, keep it visible even when it overlaps the controls. Keep the same positioning behavior in theater and fullscreen modes.
+
+Fade each toast in while it rises slightly, and reverse that motion when it leaves. Use a brief **180ms** animation with **6px** of travel. Smoothly animate stack movement when media controls appear or disappear. Scrolling keeps the stack anchored immediately. Respect reduced-motion preferences.
 
 Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
 

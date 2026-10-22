@@ -1059,7 +1059,8 @@ function applyState(next) {
     const details = uburoomUI.badgeDetails(next.feedback, next.state);
     if (details) {
       toasts.show('participant', {
-        title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : '') + ' by ' + next.feedback.sender,
+        title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : ''),
+        hint: next.feedback.sender,
         symbol: details.symbol, seekSeconds: details.seekSeconds, duration: 2500
       });
     }

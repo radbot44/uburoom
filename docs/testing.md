@@ -51,7 +51,7 @@ Development TLS may be required: `powershell -NoProfile -ExecutionPolicy Bypass 
 
 ## Toast positioning — 2026-10-22
 
-A/B: shared bottom-left stack inspected in Chrome and Firefox at 1280px and 390px, with hidden/visible controls, partial/full page scrolling, visibility taking priority over controls, theater and actual browser fullscreen entry/exit. Temporary procedure: `node artifacts/toast-position-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792647085379/`. Existing `node scripts/toast-ui-smoke.js` passes in both browsers; `node --test tests/watch-recovery.test.js`: 12 passed, 0 failed, 0 skipped. Checks used disposable accounts and synthetic notifications; layout states were held for inspection. No new permanent tests. Full suite and real-provider/device checks were not run; human visual acceptance remains open.
+A/B: Chrome and Firefox checks at 1280px/390px pass 40px height, 24px icons, 14px/12px text, no border, action/username rows, entrance/exit and control-avoidance animation, lobby bottom placement, actual media-control spacing, scroll visibility priority, theater and fullscreen entry/exit. Temporary procedure: `node artifacts/toast-position-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792648132726/`. Existing `node scripts/toast-ui-smoke.js` passes in both browsers across light/dark and orange/pink. Desktop/mobile renders inspected. Layout states and synthetic notifications used disposable accounts; no new permanent tests. Full-suite and real-provider/device checks were not run for this styling change; human acceptance remains open. Previous positioning work also passed the retained 12 recovery tests.
 
 ## Latest evidenced results (historical; not rerun)
 

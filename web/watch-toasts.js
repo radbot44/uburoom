@@ -4,14 +4,20 @@
   function create(host, { stage, icons = global.uburoomIcons, schedule = setTimeout, cancel = clearTimeout } = {}) {
     const doc = host.ownerDocument, entries = new Map();
     const view = doc.defaultView, controls = stage?.querySelector('.transport');
-    let layoutFrame;
+    const reducedMotion = view.matchMedia('(prefers-reduced-motion: reduce)');
+    let layoutFrame, animateLayout = false, movement, positioned = false;
     function place() {
       layoutFrame = undefined;
+      const animate = animateLayout;
+      animateLayout = false;
       if (!entries.size || !stage) return;
       // Outside the player clipping/containment in page layouts, inside the
       // fullscreen top layer when the player enters fullscreen.
       const parent = doc.fullscreenElement || doc.body;
-      if (host.parentElement !== parent) parent.append(host);
+      const reparented = host.parentElement !== parent;
+      const previous = positioned && !reparented ? host.getBoundingClientRect() : undefined;
+      movement?.cancel();
+      if (reparented) parent.append(host);
       const viewport = view.visualViewport;
       const top = viewport?.offsetTop || 0, left = viewport?.offsetLeft || 0;
       const height = viewport?.height || view.innerHeight, width = viewport?.width || view.innerWidth;
@@ -21,8 +27,10 @@
       const stack = host.getBoundingClientRect();
       let bottom = rect.bottom - inset;
       if (controls && view.getComputedStyle(controls).pointerEvents !== 'none') {
-        const controlRect = controls.getBoundingClientRect();
-        if (controlRect.height) bottom = Math.min(bottom, controlRect.top - inset);
+        for (const element of controls.querySelectorAll('[data-media-controls]')) {
+          const controlRect = element.getBoundingClientRect();
+          if (controlRect.height && view.getComputedStyle(element).visibility !== 'hidden') bottom = Math.min(bottom, controlRect.top - inset);
+        }
       }
       // Clamp after control avoidance: staying visible always wins.
       const y = Math.max(top, Math.min(bottom - stack.height, top + height - stack.height));
@@ -31,30 +39,54 @@
       const origin = doc.fullscreenElement?.getBoundingClientRect();
       host.style.top = y - (origin?.top || 0) + 'px';
       host.style.left = x - (origin?.left || 0) + 'px';
+      if (animate && previous && !reducedMotion.matches && previous.top >= top && previous.bottom <= top + height) {
+        movement = host.animate([
+          { transform: `translate(${previous.left - x}px, ${previous.top - y}px)` },
+          { transform: 'translate(0, 0)' }
+        ], { duration: 180, easing: 'ease-out' });
+      }
+      positioned = true;
     }
-    function requestLayout() {
+    function requestLayout(animate = true) {
+      // Scrolling/resizing must not acquire a delayed animation from another
+      // observer firing in the same frame.
+      animateLayout = layoutFrame === undefined ? animate : animateLayout && animate;
       if (stage && layoutFrame === undefined) layoutFrame = view.requestAnimationFrame(place);
     }
     if (stage) {
       doc.body.append(host);
-      view.addEventListener('scroll', requestLayout, { capture: true, passive: true });
-      view.addEventListener('resize', requestLayout);
-      view.visualViewport?.addEventListener('resize', requestLayout);
-      view.visualViewport?.addEventListener('scroll', requestLayout);
-      doc.addEventListener('fullscreenchange', requestLayout);
-      for (const event of ['pointerenter', 'pointerleave', 'focusin', 'focusout']) stage.addEventListener(event, requestLayout);
-      const sizes = new view.ResizeObserver(requestLayout);
+      const anchor = () => requestLayout(false), move = () => requestLayout();
+      view.addEventListener('scroll', anchor, { capture: true, passive: true });
+      view.addEventListener('resize', anchor);
+      view.visualViewport?.addEventListener('resize', anchor);
+      view.visualViewport?.addEventListener('scroll', anchor);
+      doc.addEventListener('fullscreenchange', anchor);
+      for (const event of ['pointerenter', 'pointerleave', 'focusin', 'focusout']) stage.addEventListener(event, move);
+      const sizes = new view.ResizeObserver(move);
       for (const element of [host, stage, controls]) if (element) sizes.observe(element);
-      const attributes = new view.MutationObserver(requestLayout);
+      const attributes = new view.MutationObserver(move);
       for (const element of [stage, doc.body, controls]) if (element) attributes.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     }
     function dismiss(id) {
       const entry = entries.get(id);
-      if (!entry) return;
+      if (!entry || entry.exiting) return;
       cancel(entry.timer);
-      entry.root.remove();
-      entries.delete(id);
-      requestLayout();
+      entry.exiting = true;
+      const remove = () => {
+        entry.root.remove();
+        entries.delete(id);
+        if (!entries.size) positioned = false;
+        requestLayout();
+      };
+      const current = view.getComputedStyle(entry.root);
+      const from = { opacity: current.opacity, transform: current.transform };
+      entry.motion?.cancel();
+      if (reducedMotion.matches) remove();
+      else {
+        const motion = entry.root.animate([from, { opacity: 0, transform: 'translateY(6px)' }], { duration: 180, easing: 'ease-in', fill: 'forwards' });
+        entry.motion = motion;
+        motion.onfinish = () => { if (entry.motion === motion) remove(); };
+      }
     }
     function show(id, { title, hint = '', symbol, seekSeconds, loading = false, duration = 0 }) {
       // A stable ID updates an existing notification rather than duplicating it.
@@ -75,9 +107,21 @@
         detail.className = 'watch-toast-hint';
         message.append(heading, detail);
         root.append(artwork, message);
-        entry = { root, artwork, heading, detail, timer: undefined };
+        entry = { root, artwork, heading, detail, timer: undefined, motion: undefined, exiting: false };
         entries.set(id, entry);
         host.append(root);
+        if (!reducedMotion.matches) entry.motion = root.animate([
+          { opacity: 0, transform: 'translateY(6px)' },
+          { opacity: 1, transform: 'translateY(0)' }
+        ], { duration: 180, easing: 'ease-out' });
+      } else if (entry.exiting) {
+        const current = view.getComputedStyle(entry.root);
+        const from = { opacity: current.opacity, transform: current.transform };
+        entry.motion?.cancel();
+        entry.motion = reducedMotion.matches ? undefined : entry.root.animate([
+          from, { opacity: 1, transform: 'translateY(0)' }
+        ], { duration: 180, easing: 'ease-out' });
+        entry.exiting = false;
       }
       cancel(entry.timer);
       entry.root.classList.toggle('loading', loading);

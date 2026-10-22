@@ -30,7 +30,7 @@ async function main() {
       await run('transport.onMessage=()=>{}');
       // Use the real state application path, including revision/age filtering.
       await run('globalThis.toastState=state;applyState({...state,transportSequence:stateTransportSequence+1,feedback:{revision:"toast-1",at:Date.now()+offset,action:"media.pause",sender:"Alice <fixture>"}})');
-      assert.equal(await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'), 'Pause by Alice <fixture>');
+      assert.equal(await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'), 'PauseAlice <fixture>');
       await run('showDisconnectToast();showDisconnectToast()');
       assert.equal(await run('Number(!!document.querySelector("[data-toast=reconnect]"))'), 1, 'Reconnect updates in place');
       assert.equal(await run('document.querySelector("[data-toast=reconnect]").textContent'), 'Disconnected from roomReconnecting…');
@@ -39,7 +39,7 @@ async function main() {
       for (const width of [1280, 390]) {
         await browser.viewport(page, width, 900);
         for (const theme of ['dark', 'light']) for (const accent of ['orange', 'pink']) {
-          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.dataset.accent=${JSON.stringify(accent)};toasts.show('participant',{title:'Pause by Alice <fixture>',symbol:'pause',duration:2500})`);
+          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.dataset.accent=${JSON.stringify(accent)};toasts.show('participant',{title:'PauseAlice <fixture>',symbol:'pause',duration:2500})`);
           assert.equal(await run('[...document.querySelectorAll(".watch-toast")].every(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})'), true, 'Toasts fit viewport');
           await browser.screenshot(page, path.join(output, `${name}-${width}-${theme}-${accent}.png`));
         }
@@ -48,13 +48,13 @@ async function main() {
       assert.equal(await run('Number(!!document.querySelector("[data-toast=participant]"))'), 0, 'Participant expires');
       assert.equal(await run('Number(!!document.querySelector("[data-toast=reconnect]"))'), 1, 'Reconnect remains until cleared');
       await run('hideDisconnectToast();applyState({...toastState,transportSequence:stateTransportSequence+1,feedback:{revision:"toast-old",at:Date.now()+offset-4000,action:"media.pause",sender:"Old"}})');
-      assert.equal(await run('document.querySelectorAll(".watch-toast").length'), 0, 'Stale feedback stays silent');
+      await until('document.querySelectorAll(".watch-toast").length===0', 'Stale feedback stays silent');
       // Superseded notification timers must not dismiss their replacement.
       await run('toasts.show("participant",{title:"First",duration:100});toasts.show("participant",{title:"Second",duration:600})');
       await pause(200);
       assert.equal(await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'), 'Second');
       await run('toasts.clear()');
-      assert.equal(await run('Number(!!document.querySelector("[data-toast=participant]"))'), 0);
+      await until('!document.querySelector("[data-toast=participant]")', 'Participant cleared');
       console.log(name + ': PASS toast wiring, replacement, expiry, stale filtering and desktop/mobile theme captures');
     } finally {
       await browser?.close();
