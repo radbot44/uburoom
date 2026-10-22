@@ -1,6 +1,6 @@
 # Verification dashboard — M1
 
-> **Evidence cutoff: 2026-10-21; reorganized: 2026-10-22.** Documentation-only change: **no tests or integrations executed**. Results below belong to their original revisions, environments and scopes, not a newly verified current checkout.
+> **Historical evidence cutoff: 2026-10-21; test-suite pruning: 2026-10-22.** No runtime tests or integrations were executed for the pruning PR. Results below belong to their original revisions, environments and scopes; they are not a newly verified current checkout.
 >
 > **M1 release status: OPEN.** [Entire historical record](archive/testing-2026-10-22.md) · [M1 release requirements](../ROADMAP.md#m1--verified-self-hosted-release)
 
@@ -31,31 +31,23 @@
 
 ## Test commands and verification procedures
 
-**Reference commands only; none executed by this refactor.** More setup/corpus details: [development.md](development.md).
+**Current runnable checks only.** A 2026-10-22 cleanup retired 27 test files and 27 one-off smoke scripts; older logs, run counts and failure descriptions below are *historical evidence*, not commands to resurrect. Choose only checks relevant to the code being changed.
 
-| Check | Command | Scope / caution |
+| Check | Command | Scope |
 | --- | --- | --- |
-| Development TLS | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/new-dev-cert.ps1` | Development certificates only |
-| Fast Node suite | `npm test` | Dot reporter, no skip totals |
-| Full Node TAP | `npm run test:full` | Record pass/fail/skip and unexpected skips |
-| Durable-room targeted | `node --test tests/durable-rooms.test.js` | Isolated storage and policy |
-| Room shared controls | `node scripts/shared-controls-smoke.js` | Chrome/Firefox disposable fixtures |
-| Queue shared controls | `node scripts/queue-controls-smoke.js` | Chrome/Firefox disposable fixtures |
-| Media shared controls | `node scripts/media-controls-smoke.js` | Chrome/Firefox disposable fixtures |
-| Room lifecycle | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` | Permissions, room/queue fixture lifecycle |
-| Popup/fullscreen | `node scripts/popup-ui-smoke.js --browsers=chrome,firefox` | Actual browser fullscreen, not physical phone |
-| Queue navigation subset | `node scripts/queue-ui-smoke.js --navigation-only` | Passing narrow subset only |
-| Broad Queue smoke | `node scripts/queue-ui-smoke.js --browsers=chrome,firefox` | Recorded failure below; no pass claim |
-| Watch layout smoke | `node scripts/watch-layout-smoke.js` | Recorded failure below |
-| Player UI smoke | `node scripts/player-ui-smoke.js` | Later Room run incomplete |
-| Sync controls | `node scripts/sync-controls-smoke.js --browser=chrome` and `--browser=firefox` | Fixture timing, not physical skew |
-| Decoded playback | `npm run test:playback` | Synthetic pixels/PCM and declared corpus |
-| Local VP8/VP9 MSE | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` (repeat Firefox and VP8) | Real FFmpeg/browser, simulated provider |
-| Source/doc check | `git diff --check`; `git diff --name-only` | Diff formatting and scope, not tests |
+| Focused Node regression | `node --test tests/<relevant-file>.test.js` | Prefer one affected, retained test file |
+| Remaining Node suite | `npm test` | 34 suites; dot output omits skip counts |
+| Full TAP details | `npm run test:full` | Pass/fail/skip counts; release or broader verification |
+| Durable rooms and queue | `node --test tests/durable-rooms.test.js` | High-value isolated state/lifecycle boundary |
+| Room browser boundary | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` | Disposable cross-browser accounts |
+| Media controls | `node scripts/media-controls-smoke.js` | Two browsers, synthetic media |
+| Queue controls | `node scripts/queue-controls-smoke.js` | Two browsers, synthetic queue |
+| Library browser | `node scripts/plex-library-smoke.js` | Disposable Plex fixture (Firefox) |
+| Scheduled sync controls | `node scripts/sync-controls-smoke.js --browser=chrome` | Repeat Firefox when relevant |
+| Local WebM decode | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` | Repeat other codec/browser when relevant |
+| Decoded media baseline | `npm run test:playback` | Actual pixels/PCM from isolated generated media |
 
-- Browser smokes in `scripts/` can start isolated servers and write ignored `artifacts/`; they are not covered by `npm test`. Never run another process against production bot credentials or a private user database.
-- Real PMS/Discord/remote clients, physical touch, network/encoder resources, operator backup/restore and human viewing require **separately scoped and authorized procedures**.
-- Complete TAP/JSON, screenshots, traces and diagnostic timings normally belong in ignored `artifacts/` or approved private storage; significant sanitized findings warrant a dated tracked archive.
+Development TLS may be required: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/new-dev-cert.ps1`. A missing certificate can yield failures or skips. Browser tools can start isolated servers and write ignored `artifacts/`; they do not use production accounts. Preserve separate C/D verification for live PMS/Discord, hardware/physical playback, and owner review; no synthetic runner certifies those.
 
 ## Latest evidenced results (historical; not rerun)
 
@@ -71,6 +63,8 @@
 | **2026-10-17–20 sync/pacing** | B simulated skew, decoding and readiness; selected Plex Chrome observations and experimental cadence measurements | Physical inter-viewer percentiles unproven, owner D pending, Chrome correction-candidate drops ([sync](archive/testing-2026-10-22.md#real-time-playback-synchronization), [pacing](archive/testing-2026-10-22.md#frame-pacing-preservation-during-synchronization)) |
 
 ## Known failures and evidence limitations
+
+**Archive note:** Several runners named in the table below were deliberately retired in the lean-test cleanup. Their observed failures remain real historical evidence; the commands are no longer part of the supported developer workflow.
 
 These are **documented failures or incomplete observations**, not claims that every issue still reproduces on today's HEAD. Preserve any narrower passes separately.
 
