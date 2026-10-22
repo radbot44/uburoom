@@ -17,6 +17,7 @@ async function main() {
       const pathname = new URL(input).pathname;
       if (pathname === '/library/sections') return new Response(JSON.stringify({MediaContainer:{Directory:[
         {key:'1',type:'movie',title:'Fixture Movies'},{key:'2',type:'movie',title:'Fixture Extras'}]}}),{headers:{'Content-Type':'application/json'}});
+      if (/^\/library\/sections\/[12]\/(genre|year)$/.test(pathname)) return new Response(JSON.stringify({MediaContainer:{Directory:[{key:pathname.endsWith('/genre')?'1':'2026',title:pathname.endsWith('/genre')?'Drama':'2026'}]}}),{headers:{'Content-Type':'application/json'}});
       if (['/library/sections/1/all','/library/sections/2/all'].includes(pathname)) return new Response(JSON.stringify({MediaContainer:{totalSize:48,
         Metadata:Array.from({length:48},(_,i) => ({ratingKey:String(i+1),type:'movie',title:'Media control '+(i+1),year:2026,duration:60000}))}}),{headers:{'Content-Type':'application/json'}});
       return fixture.fetch(input,options);
@@ -116,10 +117,30 @@ async function main() {
       await browser.viewport(page,390,844);
       await run('$("section-tab-media").click();$("library-panel").scrollIntoView({block:"start"})');
       await pause(180);
+      assert.equal(await run('(()=>{const h=$("library-heading").getBoundingClientRect(),n=document.querySelector(".library-navigation-history").getBoundingClientRect(),a=document.querySelector(".library-scope-actions .watch-control").getBoundingClientRect(),t=$("library-top").getBoundingClientRect();return Math.abs(h.top-n.top)<2 && Math.abs(h.top-a.top)<2 && Math.abs(h.top-t.top)<2 && t.width===40})()'),true,'Media, navigation, auto-queue and Back to top share the phone header row');
+      assert.equal(await run('$("library-top").querySelector("svg").getAttribute("data-tabler-icon")==="arrow-bar-to-up" && getComputedStyle($("library-top").querySelector(".watch-control-label")).display==="none" && $("library-top").getAttribute("aria-label")==="Back to top"'),true,'Back to top has the requested icon and accessible compact label');
+      assert.equal(await run('getComputedStyle(document.querySelector(".library-choices")).display==="none" && !$("library-home").disabled'),true,'Phone hides the switcher but keeps Libraries home navigation');
       assert.equal(await run('getComputedStyle(document.querySelector(".library-views .group-button span")).display'),'none');
       assert.equal(await run('getComputedStyle(document.querySelector("#library-filters-toggle .filter-label")).display==="none" && getComputedStyle(document.querySelector(".library-scope-actions .queue-label")).display==="none"'),true,'Narrow toolbar labels hide with accessible button names');
       assert.equal(await run('document.querySelector(".library-views .group-button").getBoundingClientRect().width>=40 && document.documentElement.scrollWidth<=innerWidth+1'),true);
+      assert.equal(await run('Math.abs($("library-sort").getBoundingClientRect().top-document.querySelector(".library-views").getBoundingClientRect().top)<2'),true,'Phone view selector shares the sort row');
+      await run('$("library-filters-toggle").click()');
+      assert.equal(await run('(()=>{const s=[...document.querySelectorAll(".library-filters select")],status=document.querySelector(".library-filters>.hint");return s.length===2 && Math.abs(s[0].getBoundingClientRect().top-s[1].getBoundingClientRect().top)<2 && s.every(x=>x.getBoundingClientRect().width>70) && (getComputedStyle(status).display==="none" || status.getBoundingClientRect().top>=s[0].getBoundingClientRect().bottom)})()'),true,'Usable Genre and Year dropdowns share one row with status below');
+      await shot('phone-filters');
+      await run('$("library-filters-toggle").click()');
       await shot('phone');
+      if (name === 'chrome') {
+        await browser.mobileViewport(page,390,844);
+        await pause(180);
+        assert.equal(await run('matchMedia("(pointer: coarse)").matches'),true,'Chrome fixture emulates touch input');
+        assert.equal(await run('(()=>{const b=document.querySelector("[data-view=cards] .library-tile .library-play"),a=b.closest(".library-art"),r=b.getBoundingClientRect(),ar=a.getBoundingClientRect(),s=getComputedStyle(b);return s.opacity==="0" && s.pointerEvents==="none" && Math.abs(r.left+r.width/2-ar.left-ar.width/2)<2 && Math.abs(r.top+r.height/2-ar.top-ar.height/2)<2})()'),true,'Touch Cards play affordance stays hidden and centered until revealed');
+        await shot('phone-touch');
+        await run('document.querySelector(".library-tile .library-open").click()');
+        await until('!document.querySelector(".library-overview").hidden && !!document.querySelector(".library-detail-actions .library-play-now")','Cards poster opens Play details');
+        await shot('phone-touch-detail');
+        await run('$("library-back").click()');
+        await until('!!document.querySelector(".library-tile") && document.querySelector(".library-overview").hidden','Return to Cards');
+      }
       await browser.viewport(page,320,844);
       await pause(180);
       assert.equal(await run('document.documentElement.scrollWidth<=innerWidth+1'),true,'320px Media fits');

@@ -75,7 +75,7 @@ body:not(.immersive) :is(#app,.screen-column)>#library-panel>.library-header{pos
 #library-heading{font-size:18px;font-weight:700;letter-spacing:-.03em;margin:0;line-height:40px;white-space:nowrap;color:var(--text);display:flex;align-items:center;height:40px;min-height:40px;box-sizing:border-box}
 .library-header-left{display:flex;align-items:center;gap:var(--watch-group-gap);min-width:0;flex:1}
 .library-header-right{display:flex;align-items:center;gap:8px;flex:none}
-#library-top{display:none;font-size:12px;padding:0 12px;height:36px;min-height:36px;white-space:nowrap;border-radius:10px;box-sizing:border-box}
+#library-top{display:none;font-size:12px;padding:0 12px;height:var(--watch-control-height);min-height:var(--watch-control-height);white-space:nowrap;border-radius:var(--watch-control-radius);box-sizing:border-box}
 body.theater:not(.immersive) #library-top{display:inline-flex;align-items:center;flex:none}
 /* The below-video Media catalog uses page scrolling in both desktop modes. */
 body:not(.immersive) :is(#app,.screen-column)>#library-panel .library-tools{position:sticky;top:var(--media-header-height,80px);z-index:5;background:var(--card)}

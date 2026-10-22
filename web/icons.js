@@ -81,6 +81,7 @@
     "arrow-left": "<path d=\"M5 12l14 0\" /><path d=\"M5 12l6 6\" /><path d=\"M5 12l6 -6\" />",
     "arrow-right": "<path d=\"M5 12l14 0\" /><path d=\"M13 18l6 -6\" /><path d=\"M13 6l6 6\" />",
     "arrow-up": "<path d=\"M12 5l0 14\" /><path d=\"M18 11l-6 -6\" /><path d=\"M6 11l6 -6\" />",
+    "arrow-bar-to-up": "<path d=\"M12 10l0 10\" /><path d=\"M12 10l4 4\" /><path d=\"M12 10l-4 4\" /><path d=\"M4 4l16 0\" />",
     "arrows-horizontal": "<path d=\"M7 8l-4 4l4 4\" /><path d=\"M17 8l4 4l-4 4\" /><path d=\"M3 12l18 0\" />",
     "arrows-shuffle": "<path d=\"M18 4l3 3l-3 3\" /><path d=\"M18 20l3 -3l-3 -3\" /><path d=\"M3 7h3a5 5 0 0 1 5 5a5 5 0 0 0 5 5h5\" /><path d=\"M21 7h-5a4.978 4.978 0 0 0 -3 1m-4 8a4.984 4.984 0 0 1 -3 1h-3\" />",
     "arrows-vertical": "<path d=\"M8 7l4 -4l4 4\" /><path d=\"M8 17l4 4l4 -4\" /><path d=\"M12 3l0 18\" />",

@@ -20,7 +20,7 @@
     scopeActions.hidden = true;
     const topWrap = headerRight?.querySelector('.library-top');
     if (topWrap) headerRight.insertBefore(scopeActions,topWrap);
-    if (topWrap) controls.content(topWrap.querySelector('button'),{label:'Back to top'});
+    if (topWrap) controls.content(topWrap.querySelector('button'),{label:'Back to top',icon:'arrow-bar-to-up'});
     const navParent = headerLeft || host;
     const historyGroup = node('div',navParent,undefined,'library-navigation-history watch-control-group watch-header-actions');
     historyGroup.setAttribute('role','group'); historyGroup.setAttribute('aria-label','Navigation');

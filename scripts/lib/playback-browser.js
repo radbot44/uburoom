@@ -106,6 +106,11 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
     };
     const viewport = (page,width,height) => firefox ? command('browsingContext.setViewport',{context:page,viewport:{width,height}}) :
       command('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false},page);
+    const mobileViewport = async (page,width,height) => {
+      if (firefox) throw new Error('Mobile touch emulation is only available in the Chrome fixture');
+      await command('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true},page);
+      await command('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1},page);
+    };
     const activate = page => firefox ? command('browsingContext.activate',{context:page}) : command('Page.bringToFront',{},page);
     const move = (page,x,y) => firefox ? command('input.performActions',{context:page,actions:[{type:'pointer',id:'playback-pointer',parameters:{pointerType:'mouse'},actions:[{type:'pointerMove',x,y,origin:'viewport'}]}]}) : command('Input.dispatchMouseEvent',{type:'mouseMoved',x,y},page);
     const tap = async (page,x,y) => {
@@ -138,7 +143,7 @@ async function playbackBrowser(name, { binary, acceleration = 'software' } = {})
       const result = firefox ? await command('browsingContext.captureScreenshot',{context:page,origin:'viewport'}) : await command('Page.captureScreenshot',{format:'png'},page);
       fs.writeFileSync(file,Buffer.from(result.data,'base64'));
     };
-    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,activate,move,tap,key,click,screenshot,close};
+    return {name,version,pid:child.pid,headless:true,acceleration,evaluate,until,page,viewport,mobileViewport,activate,move,tap,key,click,screenshot,close};
   } catch (error) { await close(); throw error; }
 }
 module.exports = { playbackBrowser, pause };
