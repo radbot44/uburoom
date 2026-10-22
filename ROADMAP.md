@@ -345,7 +345,7 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 
 ### M1-P13 — Persistent rooms and playback queues
 
-Room creation now suggests a title-cased Ubumfa name and uses that suggestion for blank input; custom names remain editable. The reusable word generator is available for later work; guest passes and room codes are unchanged.
+Room creation now suggests a title-cased Ubumfa name and uses that suggestion for blank input; custom names remain editable. The reusable Ubumfa word generator also supports positive-length and multiword output via `generateName(3, 6, 3)`, while the six-letter room suggestion stays unchanged; guest passes and room codes are unchanged.
 
 Queue UI follow-up: portrait poster cards, a centered chronological List, separate Auto-play/Auto-queue controls, history removal, consistent Media view names and Browse media feedback are implemented locally. First additions select empty playback while honoring Auto-play. Browser and regression evidence is recorded in docs/testing.md. Room permission presets now use Host control, Play/Pause and Queue, save immediately in Settings, and keep participant management locked off. The timeline now tracks its centered selection, supports directional section navigation and neutral empty states, and provides explicit discard/stop or discard/advance controls for Now playing.
 

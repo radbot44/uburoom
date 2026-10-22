@@ -42,3 +42,17 @@ Discord commands are `/ubu` and `!ubu`; there are no previous-name aliases. Fixt
 uburoom's original source code is licensed under **GPL-3.0-only**: GNU General Public License version 3 only. See [LICENSE](LICENSE). It comes without warranty, as described in that license.
 
 Third-party code retains its own licenses and [bundled notices](web/vendor/THIRD_PARTY_NOTICES.txt); it is not relicensed by this declaration. See [attribution and remaining review](docs/third-party.md). Artwork and media provenance need final review before public distribution.
+
+## Ubumfa word generator
+
+The reusable display-word generator is available from `require('./web/ubumfa')` in Node or `window.uburoomUbumfa` in the browser:
+
+```js
+const {generateName, roomName} = require('./web/ubumfa');
+generateName();          // one uppercase six-letter word (existing default)
+generateName(9);         // one title-cased nine-letter word
+generateName(3, 6, 3);   // three title-cased words, e.g. "Obe Ubumfa Zaz"
+roomName();              // "Room " followed by one title-cased six-letter word
+```
+
+Each numeric argument to `generateName(...lengths)` is the positive integer letter count for one word; multiple words are separated by spaces. The original no-argument and seeded `generateName(random)` calls still return uppercase six-letter words. Adjacent vowels remain distinct and doubled consonants use the original Ubumfa consonant pairs. These display words are not unique identifiers or secrets.
