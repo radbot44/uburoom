@@ -77,6 +77,24 @@ async function main() {
 
       assert.equal((await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})')).status,'applied');
       await until('state?.mediaId==="demo"','Media load');
+      const hostViewerId = await run('viewerId'), hostPresence = app.watch.rooms.get(id).viewers.get(hostViewerId);
+      hostPresence.syncQuality={score:.94,mediaVersion:app.watch.rooms.get(id).mediaVersion,streamVersion:hostPresence.streamVersion,at:Date.now()};
+      await run('refreshState()');
+      await until('document.querySelector("#room-participants [data-quality=excellent]")','Room sync indicator');
+      assert.match(await run('document.querySelector("#room-participants [data-quality=excellent]").getAttribute("aria-label")'),/^Sync quality: Excellent \(0\.94\)$/);
+      assert.equal(await run('(()=>{const cells=[...document.querySelector("#room-participants .room-person").children];return cells.length===4 && cells[0].classList.contains("room-roster-role") && cells[1].classList.contains("room-roster-name") && cells[2].classList.contains("room-roster-sync-quality") && cells[3].classList.contains("room-roster-action-placeholder");})()'),true,'role, name, quality and reserved kick columns stay aligned');
+      const qualityUi = await run('(()=>{const person=state.participants[0],original=person.syncQuality,oldTheme=document.documentElement.dataset.theme,oldAccent=document.documentElement.dataset.accent,expected=[[1,"excellent",4],[.75,"good",3],[.5,"fair",2],[.49,"poor",1]],result=[],probe=document.createElement("span");document.body.append(probe);for(const [theme,accent] of [["dark","orange"],["dark","pink"],["light","orange"],["light","pink"]]){document.documentElement.dataset.theme=theme;document.documentElement.dataset.accent=accent;for(const [score,level,paths] of expected){person.syncQuality=score;roomUI.render();const icon=document.querySelector("#room-participants .room-roster-sync-quality"),token={excellent:"--success",good:"--good",fair:"--warning",poor:"--danger"}[level];probe.style.color="var("+token+")";result.push(icon.dataset.quality===level && icon.querySelectorAll("svg path").length===paths && getComputedStyle(icon).color===getComputedStyle(probe).color);}}probe.remove();if(oldTheme)document.documentElement.dataset.theme=oldTheme;else delete document.documentElement.dataset.theme;if(oldAccent)document.documentElement.dataset.accent=oldAccent;else delete document.documentElement.dataset.accent;person.syncQuality=original;roomUI.render();return result.every(Boolean);})()');
+      assert.equal(qualityUi,true,'all four levels and semantic colors work in Light/Dark × Orange/Pink');
+      await shot('sync-quality');
+      await run('roomUI.open(selected,"people")');
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Room people settings');
+      assert.equal(await run('document.querySelectorAll("#room-current-people .room-roster-sync-quality").length'),0,'quality stays out of Room Settings participant lists');
+      await run('$("room-settings-dismiss").click()');
+      hostPresence.syncQuality=undefined;await run('refreshState()');
+      if (process.argv.includes('--sync-quality-only')) {
+        console.log(name + ': Room sync quality roster, column alignment, four levels, theme combinations and settings exclusion passed');
+        continue;
+      }
       await run('execute({action:"media.pause"})');
       await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
       await until('state?.state.paused && Math.abs(state.state.position-17)<.1','Saved paused position');

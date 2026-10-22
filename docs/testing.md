@@ -12,6 +12,15 @@
 - Later/parallel Room and Media findings carry their own revision-scoped counts and exceptions. The archive preserves all superseded results, measured observations, failed attempts and owner commentary.
 - **Release claims are not certified** while required C real-provider/device or D human acceptance remains incomplete. Test consent, state transfers, deployments and publishing always require their own approval.
 - **Direct-delivery increment, 2026-10-22:** `npm run test:full` passed **374 tests, 0 failed, 0 skipped** on the uncommitted increment based on `dc31aa4`. Chrome/Firefox synthetic direct-file and recovery checks also passed; this is current-tree B evidence, with real Plex/Discord gates still open. [Scope and limits](#direct-plex-file-delivery-2026-10-22).
+- **Room sync-quality indicator, 2026-10-22:** Current working tree `npm run test:full` passed **384 tests, 0 failed, 0 skipped**. Focused Chrome/Firefox Room roster checks passed; real-provider and human readability gates remain open. [Scope and evidence](#room-synchronization-quality-indicator-2026-10-22).
+
+## Room synchronization quality indicator (2026-10-22)
+
+**A/B pass, current working tree:** The indicator samples actual presented-frame synchronization error at most once per second, combines rolling p95 absolute error with the existing 30-second RTT-range jitter and measured buffering seconds, and requires 10 valid sync samples plus 5 RTT samples. Scores refresh about every five seconds with smoothing. Missing/stale clock or playback data, pause, stream/clock discontinuity, and insufficient samples produce an unknown state. Absolute RTT is not part of the score. Socket updates are identity-, room-, media- and stream-fenced, clamped, rate-limited and ephemeral; active participant snapshots expire scores after 15 seconds.
+
+`npm run test:full`: **384 passed / 0 failed / 0 skipped**. Focused tracker, timing, viewer authorization, expiry and participant snapshot checks passed (**25/25**) with `node --test tests/sync-quality.test.js tests/watch-sync-quality.test.js tests/watch-socket.test.js tests/playback-timing.test.js`. The focused rendered roster smoke passed in both Chrome and Firefox using `node scripts/room-ui-smoke.js --browsers=chrome,firefox --sync-quality-only`: column order/reserved Kick alignment, accessible Excellent label, all four icon thresholds, Light/Dark × Orange/Pink semantic colors, and exclusion from Room Settings. Screenshots are ignored local artifacts at `artifacts/room-ui-chrome-sync-quality.png` and `artifacts/room-ui-firefox-sync-quality.png`.
+
+The broader Chrome Room smoke reached and passed the quality assertions but later timed out in its queue scenario, **Bulk excludes Specials**; that full flow did not pass. C real Plex/Activity/device verification and D owner readability/accessibility acceptance were not run. The score is an estimate from the existing playback clock and frame timing, not a physical display measurement; the indicator remains unknown while paused or when those local measurements are unavailable.
 
 ## Direct Plex HLS — 2026-10-22
 
@@ -164,7 +173,7 @@ These are **documented failures or incomplete observations**, not claims that ev
 | **M1-P9 Subtitles — B/C/D** | Local ASS/PGS/VobSub parser/render/fixture tests | Real Plex/Activity/fonts/readability, lifecycle, compatibility and licensing |
 | **M1-P10 Terminology — A/B/C** | Canonical contract and fixture actions | Real bot, Activity and installed extension interoperability |
 | **M1-P11 Architecture — A/B/C** | Local WebSocket/SQLite/worker/fault and backup fixtures | Real proxy, operator backup/restore/rollback, OS/hardware/resources |
-| **M1-P12 Telemetry — A/B/C, D readability** | Planned, no product result | Authorize implementation, then define and execute full test/clarity matrix |
+| **M1-P12 Telemetry — A/B/C, D readability** | Initial Room sync-quality indicator passes local A/B; broader M1-P12 scope remains in progress | Real Plex/Activity/device conditions and owner clarity/readability acceptance; timeline pips, viewer cards, buffering prompts, HUD and presence cues remain open |
 | **M1-P13 Rooms/queues — B/C, D UX** | Local persistence/queue/autoplay/concurrency and browser flows | Real multi-viewer Plex/Activity, writer/sync/load, operator state recovery, UX |
 | **M1-P14 Config/admin/access — A/B/C, D operator UX** | YAML/access/host-account fixtures and browser checks | Broader admin/security, real admission/revocation, sponsorship, Linux/macOS/container and operator recovery |
 

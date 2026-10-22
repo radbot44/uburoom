@@ -221,3 +221,11 @@ Direct credentials may be delegated from the viewer's own verified Plex access. 
 The owner subsequently approved showing **Direct from Plex** or **Through uburoom** in **Player settings → Media information → Technical details**. Add the current viewer's delivery route to the existing technical-details paragraph, retaining its styling and updating with playback state. Show the route only for active media; do not display playback URLs or credentials.
 
 The owner subsequently authorized direct Plex HLS implementation, with all video/audio segments going from Plex to the browser and no server anchor cache for direct output. The existing delivery label also describes this HLS media route; the small retained initial playlist remains control traffic. Keep the same controls, layout and labels. Proxy playback retains its cache, and Activity/local conversion retain their existing delivery. See [direct HLS implementation boundaries](plex-hls-delivery.md).
+
+## Approved Room synchronization quality indicator — 2026-10-22
+
+The owner authorized a passive, noninteractive synchronization-quality status in the main Room participant list only. Use the fixed column order **role icon → username → sync-quality icon → reserved kick column**. Keep the status column compact and aligned even when a participant has no Kick permission. Do not add the status to Room Settings or participant-selection interfaces. Preserve the existing role and Kick controls, username truncation, and narrow layouts.
+
+Render with the existing Tabler icon system. Map score boundaries exactly as `>= 0.90` Excellent (`wifi`, `--success`), `>= 0.75` Good (`wifi-2`, `--good`), `>= 0.50` Fair (`wifi-1`, `--warning`), otherwise Poor (`wifi-0`, existing `--danger`). Missing, pending, disconnected, stale, paused, or insufficient data uses muted `wifi-off` and an accessible **Sync quality: Unknown** label; it must not imply a score. Known states include the level and a two-decimal score in their tooltip/accessibility label. These semantic colors are independent of the Orange/Pink accent preference and have the owner-specified Light/Dark theme values.
+
+The indicator communicates measured playback synchronization reliability, not wireless signal strength. Keep measurement and authenticated ephemeral telemetry outside the UI renderer. No new interactive control type is introduced.

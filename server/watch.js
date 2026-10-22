@@ -22,6 +22,22 @@ const RECONNECT_GRACE_MS = 60000;
 // Late readiness retains a short delivery margin for a 300+ ms RTT.
 const INITIAL_START_LEAD_MS = 1750;
 const READY_START_MARGIN_MS = 400;
+function syncQualityParticipants(room,participants,now=Date.now()) {
+  for (const person of participants || []) {
+    delete person.syncQuality;
+    let latest;
+    for (const viewer of room.viewers.values()) {
+      if (viewer.userId !== person.id) continue;
+      const measurement = viewer.syncQuality;
+      if (measurement && (now-measurement.at > 15000 || measurement.mediaVersion !== room.mediaVersion || measurement.streamVersion !== viewer.streamVersion ||
+          !Number.isFinite(measurement.score) || viewer.watchSocket?.readyState !== 1)) viewer.syncQuality = undefined;
+      const current = viewer.syncQuality;
+      if (current && (!latest || current.at > latest.at)) latest = current;
+    }
+    if (latest) person.syncQuality = Math.max(0,Math.min(1,latest.score));
+  }
+  return participants;
+}
 
 class Watch {
   constructor(hub, plex, demoMedia, registry) {
@@ -374,6 +390,7 @@ class Watch {
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
     room.transportSequence=(room.transportSequence||0)+1;
+    const participants = room.saved ? syncQualityParticipants(room,this.roomState.participants(room.s.roomId),now) : undefined;
     return { id: room.s.roomId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
       startAt:room.startAt, pauseAt:room.pauseAt,
       title: room.media?.title || 'Choose something to watch…', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
@@ -402,7 +419,7 @@ class Watch {
         canStart:[...room.initialViewers].some(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; }) } : undefined,
       recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
       roomName:room.s.name, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
-      participants:room.saved ? this.roomState.participants(room.s.roomId) : undefined,
+      participants,
       allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
       capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions','manageHosts'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
@@ -929,4 +946,4 @@ class Watch {
     this.tracking.close(); return Promise.all([this.roomState?.close(), this.plex.close?.()]);
   }
 }
-module.exports = { Watch };
+module.exports = { Watch, syncQualityParticipants };

@@ -23,6 +23,8 @@ let directProbe, directStartupTimer, directStallTimer, directRecovery;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
+const syncQuality=uburoomSyncQuality.create();
+let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown';
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
@@ -34,6 +36,43 @@ let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
+function sendSyncQuality(status,score) {
+  if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
+  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,...(status==='known'?{score}:{})};
+  const sent=transport?.syncQuality(value) || false;
+  if(sent)publishedSyncQualityStatus=status;
+  return sent;
+}
+function resetSyncQuality() {
+  const clear=publishedSyncQualityStatus==='known';
+  syncQuality.reset(); syncQualityContext=syncQualityClockRevision=undefined; syncQualityBuffering=false; publishedSyncQualityStatus='unknown';
+  if(clear)sendSyncQuality('unknown');
+}
+function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
+  const shared=state?.state;
+  return !!(selected && state?.id===selected && state.mediaUrl && state.streamVersion && state.mediaVersion && mediaSource===state.mediaUrl &&
+    shared && !shared.paused && !state.waitingForReady && !video.paused && !video.seeking && (!playerWaiting || allowWaiting) &&
+    !probing && !playbackError && !video.error && !autoplayBlocked && readyVersion===state.mediaVersion && (forBuffer || video.readyState >= 3) &&
+    document.visibilityState==='visible' && timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=2500 &&
+    !(Number.isFinite(state.startAt) && timing.serverTime<state.startAt));
+}
+function observeSyncQuality(errorMs,timing) {
+  const context=selected+':'+viewerId+':'+state?.mediaVersion+':'+state?.streamVersion;
+  if(syncQualityContext!==context || syncQualityClockRevision!==timing.clockRevision) {
+    if(publishedSyncQualityStatus==='known')sendSyncQuality('unknown');
+    syncQuality.reset(context,timing.clockRevision);syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;publishedSyncQualityStatus='unknown';
+  }
+  const eligible=syncQualityEligible(timing) && performance.now()-lastPresentationBreak>=2000 && !sync?.timelinePending;
+  syncQuality.sample({at:performance.now(),errorMs,eligible,context,clockRevision:timing.clockRevision});
+}
+function refreshSyncQuality() {
+  const timing=playbackClock.read(), active=syncQualityBuffering || syncQualityEligible(timing,{allowWaiting:true,forBuffer:true});
+  const result=syncQuality.refresh({at:performance.now(),jitterMs:timing.networkJitterMs,rttSampleCount:timing.networkRttSampleCount,
+    clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,active});
+  if(result.status==='known') {
+    if(result.updated || publishedSyncQualityStatus!=='known')sendSyncQuality('known',result.score);
+  } else if(publishedSyncQualityStatus==='known')sendSyncQuality('unknown');
+}
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
@@ -572,8 +611,10 @@ function watchFrames() {
     try {
       const frame=presentationTiming.frame(now,metadata), timing=playbackClock.read(metadata.expectedDisplayTime);
       const target=uburoomTiming.target(state,timing.serverTime);
+      const presentationErrorMs=target===undefined?undefined:(metadata.mediaTime-target)*1000;
+      if(frame && Number.isFinite(presentationErrorMs))observeSyncQuality(presentationErrorMs,timing);
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
-        timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs:target===undefined?undefined:(metadata.mediaTime-target)*1000,
+        timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs,
         paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
         settling:performance.now()-lastPresentationBreak<2000,
         visibility:document.visibilityState,bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)});
@@ -600,6 +641,7 @@ function clearPlayer(reason) {
   toasts.dismiss('participant'); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
+  resetSyncQuality();
   diagnosticSample('player-clear',{reason});
   captions.reset(); trackActionError='';
   toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
@@ -763,7 +805,7 @@ function connectionLost(details={}) {
   if(transport?.ready)transport.interrupt(1000);
   if(reconnecting)return;
   reconnecting=true;stateRequestSequence++;stateTransportSequence=0;
-  playbackClock.reset();queueUI.rememberPosition();
+  playbackClock.reset();resetSyncQuality();queueUI.rememberPosition();
   toggleRemote(false);
   if(state)state={...state,enabled:false,reachable:false};
   renderRemote();renderTransport();renderBrowsing();renderVisibility();
@@ -1034,12 +1076,16 @@ async function reportObservation() {
 for (const event of ['playing','pause','waiting','seeking','seeked','ended','error']) video.addEventListener(event, () => {
   if (event === 'waiting') playerWaiting = true;
   if (event === 'playing' || event === 'seeked') playerWaiting = false;
+  if (event === 'waiting') syncQualityBuffering=syncQuality.startBuffer({at:performance.now(),eligible:syncQualityEligible(playbackClock.read(),{allowWaiting:true,forBuffer:true})});
+  if (event === 'playing' && syncQualityBuffering) { syncQuality.endBuffer({at:performance.now()}); syncQualityBuffering=false; }
+  if (['pause','seeking','seeked','ended','error'].includes(event)) resetSyncQuality();
   // Periodic samples include rate corrections; assigning playbackRate can
   // emit ratechange even when the rate is unchanged.
   if (event !== 'ended' && !(event === 'pause' && video.ended)) observationBreak++;
   void reportObservation();
 });
 setInterval(() => { void reportObservation(); },1000);
+setInterval(refreshSyncQuality,1000);
 async function reportReadiness() {
   if (readyPending || !selected || !state?.mediaUrl) return;
   const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
@@ -1072,6 +1118,8 @@ function applyState(next) {
   sync.transition(next);
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
+  const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
+  if(qualityContextChanged && !changed)resetSyncQuality();
   const previousTarget = state ? expected() : undefined;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();

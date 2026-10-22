@@ -146,6 +146,15 @@
         } else roleCell.append(root.uburoomIcons.icon(document,glyph));
         const username = node('span',row,person.name,'room-roster-name'); username.title = person.name;
         if (person.pending) { username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in'; username.setAttribute('aria-label',username.title); }
+        if (!inSettings) {
+          const level = Number.isFinite(person.syncQuality) && person.syncQuality >= 0 && person.syncQuality <= 1 ? root.uburoomSyncQuality.level(person.syncQuality) : undefined;
+          const details = level ? ({excellent:'Excellent',good:'Good',fair:'Fair',poor:'Poor'})[level] : 'Unknown';
+          const label = 'Sync quality: ' + details + (level ? ' (' + person.syncQuality.toFixed(2) + ')' : '');
+          const quality = node('span',row,undefined,'room-roster-sync-quality');
+          quality.dataset.quality = level || 'unknown'; quality.title = label; quality.setAttribute('role','img'); quality.setAttribute('aria-label',label);
+          const qualityIcon = root.uburoomIcons.icon(document,({excellent:'wifi',good:'wifi-2',fair:'wifi-1',poor:'wifi-0'})[level] || 'wifi-off');
+          qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
+        }
         const kickable = canKick && person.present && person.id !== self && person.role !== 'creator' && (person.role !== 'host' || canKickHosts);
         row.classList.toggle('has-kick',!!kickable);
         if (kickable) {
@@ -153,7 +162,7 @@
           const action = controls.button(document,{label:'Kick ' + person.name,icon:'karate',iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings,true)});
           action.classList.add('watch-header-control');
           action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id; cell.append(action);
-        }
+        } else if (!inSettings) node('span',row,undefined,'room-roster-action-placeholder');
       }
       if (focusId) document.getElementById(focusId)?.focus({preventScroll:true});
     }

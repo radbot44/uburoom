@@ -63,7 +63,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P9 | Render styled and bitmap subtitles in the browser | Implementation complete; verification and licensing pending | M1-P2/M1-P3 track delivery; existing player and shared conversion boundaries |
 | M1-P10 | Transition "session" terminology to "room" | Canonical room protocol verified locally across repositories; full live surface verification pending | M1-P7 UI/UX review and command engine consistency |
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
-| M1-P12 | Rich viewer telemetry, sync health and room presence | Planned; elevates room awareness and host diagnostics | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
+| M1-P12 | Rich viewer telemetry, sync health and room presence | In progress; per-participant playback sync-quality indicator implemented and locally verified; broader telemetry remains open | M1-P5 sync engine, M1-P7 UI review, and M1-P10 room terminology |
 | M1-P13 | Persistent rooms and playback queues | In progress; P13-1 durable core, P13-2 live integration/Admin mode, P13-3 manual queues, P13-4 bulk/generation/shuffle and P13-5 verified cancellable autoplay implemented; room lifetime/capacity and reboot recovery follow-up verified with fixtures and Chrome/Firefox; live gates remain | M1-P11 SQLite/WebSocket foundation, M1-P7 lobby/library UI, shared timeline and recorded lifecycle/role decisions |
 | M1-P14 | Configuration, administration and account authorization | YAML, entry/fallback/Activity/single-room, conversion policies and editable names/host discovery/All hosts implemented locally; admin UI, broader identity security and live verification pending | Existing accounts/SQLite, M1-P11 transport/auth foundation and M1-P13 durable roles; coordinates with M1-P4 reporting and M2-P3 guests |
 
@@ -358,6 +358,8 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 - **Subtle presence cues:** Display lightweight presence indicators in the roster, including local player mute status (to avoid asking if someone heard dialogue) and optional on-pause cursor/ping markers for pointing out on-screen details.
 
 **Success criteria:** Viewers and hosts can immediately observe room synchronization, delivery pipelines, and buffer health at a glance without verbal back-and-forth; server resource consumption is transparent to operators; social presence is deepened while preserving the cinema layout and independent playback boundaries.
+
+**Status:** Initial playback sync-quality indicator implemented for the main Room participant list only. It derives a rolling 30-second score from presented-frame synchronization error, existing RTT-range jitter and measured rebuffering, then publishes a compact ephemeral score through the authenticated viewer socket. Local tracker/socket tests and the focused Chrome/Firefox Room roster smoke pass. Broader P12 timeline indicators, viewer cards, buffering prompts, resource HUD and presence cues remain open; real Plex/Activity conditions and human readability acceptance remain unverified. See [current verification](docs/testing.md#room-synchronization-quality-indicator-2026-10-22).
 
 ### M1-P13 — Persistent rooms and playback queues
 

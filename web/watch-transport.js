@@ -73,6 +73,11 @@
       this.pending.set(id,{resolve:()=>{},reject:()=>{},timer,exchange,clock:true});
       this.socket.send(JSON.stringify({type:'clock',id}));
     }
+    syncQuality(value) {
+      if(!this.ready||this.socket?.readyState!==1)return false;
+      this.socket.send(JSON.stringify({type:'sync-quality',...value}));
+      return true;
+    }
     /** @param {string} path @param {Object|undefined} data @param {WatchRequestOptions} options */
     request(path,data,{timeoutMs=12000,signal}={}) {
       if(!this.ready||this.socket?.readyState!==1||this.pending.size>=8)return Promise.reject(new TypeError('Room connection unavailable; retry after reconnecting'));

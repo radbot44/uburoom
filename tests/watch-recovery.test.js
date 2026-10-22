@@ -219,7 +219,7 @@ test('fresh HLS media clears an exhausted delivery error and resumes synchroniza
 
 test('brief WebSocket disconnect does not tear down player, and extended disconnect plays from buffer with toast', async () => {
   const timers = [];
-  let cleared = 0, stoppedLoad = 0, failedMessage = '';
+  let cleared = 0, stoppedLoad = 0, failedMessage = '', qualityResets = 0;
   const icons = [];
   const client = { stopLoad() { stoppedLoad++; }, startLoad() {} };
   const toast = { hidden: true };
@@ -244,6 +244,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
     stateTransportSequence: 0,
     playbackClock: { reset() {} },
     queueUI: { rememberPosition() {} },
+    resetSyncQuality() { qualityResets++; },
     toggleRemote() {},
     renderRemote() {},
     renderTransport() {},
@@ -282,6 +283,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   // 1. connectionLost is called
   context.connectionLost({ code: 1006 });
   assert.equal(context.reconnecting, true);
+  assert.equal(qualityResets,1,'disconnect invalidates the local quality window');
   assert.equal(cleared, 0, 'player is not cleared immediately on disconnect');
   assert.equal(toast.hidden, true, 'toast is not shown during silent grace period');
   assert.equal(timers.length, 1, 'grace timer is armed');
@@ -296,6 +298,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   timers.length = 0;
   context.reconnecting = false;
   context.connectionLost({ code: 1006 });
+  assert.equal(qualityResets,2,'each new disconnect invalidates quality again');
   assert.equal(timers.length, 1);
   // Fire the 8s timer with 20s buffer ahead (end=30, currentTime=10)
   timers[0].fn();

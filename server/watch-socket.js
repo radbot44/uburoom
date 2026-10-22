@@ -25,6 +25,29 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     client.ws.send(raw);
   }
   const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws, remoteAddress: client.remoteAddress || client.socket?.remoteAddress }, path, data);
+  async function syncQuality(client,message) {
+    const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+    if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
+        !['known','unknown'].includes(message.status) || message.status === 'known' && !Number.isFinite(message.score) ||
+        message.status === 'unknown' && Object.hasOwn(message,'score')) return client.ws.close(4002,'Invalid sync quality message');
+    const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
+    if (!room || room.s.roomId !== message.roomId || !viewer || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
+    let subscription;
+    try { subscription = new URL(client.subscription,'https://room.invalid'); } catch { return; }
+    if (subscription.pathname !== '/api/watch/rooms/'+message.roomId || subscription.searchParams.get('viewer') !== message.viewerId ||
+        viewer.watchSocket !== client.ws || client.ws.readyState !== 1 || room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return;
+    const auth = await routes.authorized({headers:client.headers,controlSocket:client.ws},true);
+    if (!auth || auth.actor.userId !== viewer.userId || !await watch.canView(room,auth.actor) || room.viewers.get(message.viewerId) !== viewer || viewer.watchSocket !== client.ws ||
+        room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return client.ws.close(4003,'Sign in again');
+    const now = Date.now();
+    if (message.status === 'unknown') {
+      if (viewer.syncQuality) { viewer.syncQuality = undefined; client.lastSyncQualityAt = now; }
+      return;
+    }
+    if (client.lastSyncQualityAt !== undefined && now-client.lastSyncQualityAt < 4000) return;
+    viewer.syncQuality = {score:Math.max(0,Math.min(1,message.score)),mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,at:now};
+    client.lastSyncQualityAt = now;
+  }
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
     if(client.publishing){client.dirty=true;return;}
@@ -106,6 +129,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             for(const room of watch.rooms.values())for(const viewer of room.viewers.values())if(viewer.watchSocket===ws)viewer.at=Date.now();
             send(client, { type: 'clock', id: message.id, serverNow: Date.now(), timing: { serverReceivedAt, serverSentAt: Date.now(), serverProcessingMs: performance.now() - received, clockEpoch } }); return;
           }
+          if (message.type === 'sync-quality') { await syncQuality(client,message); return; }
           if (message.type !== 'request' || !Number.isSafeInteger(message.id) || message.id < 0 || client.inflight.has(message.id) || client.inflight.size >= 8 ||
             typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
           client.inflight.add(message.id);
@@ -124,7 +148,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         for (const room of watch.rooms.values()) {
-          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = Date.now() - 10001;
+          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) { viewer.at = Date.now() - 10001; viewer.syncQuality = undefined; }
           watch.refresh(room);
         }
         changed();

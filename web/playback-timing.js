@@ -69,7 +69,7 @@
       return {valid:!!valid,serverTime:valid?at+mapping:undefined,clockRevision:revision,clockAccepted:accepted,clockRejected:rejected,clockReason:reason,
         clockOffsetMs:valid?now+mapping-wall():undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
         clockUncertaintyMs:valid?best.rtt/2+2+Math.abs(desired-mapping)+(now-best.at)*.0001:undefined,
-        networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter};
+        networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter,networkRttSampleCount:rtts.length};
     }
     return {begin,add,read,reset};
   }
