@@ -32,9 +32,7 @@ ZB ZD ZG ZL ZM ZN ZR ZS ZT ZV`.split(/\s+/);
     return pattern;
   }
 
-  // generateName(random) remains supported for callers using a seeded RNG.
-  function generateName(length = 6, random = Math.random) {
-    if (typeof length === 'function') { random = length; length = 6; }
+  function generateWord(length, random) {
     if (!Number.isSafeInteger(length) || length < 1) {
       throw new RangeError('Word length must be a positive safe integer');
     }
@@ -57,19 +55,27 @@ ZB ZD ZG ZL ZM ZN ZR ZS ZT ZV`.split(/\s+/);
     return s.join('');
   }
 
-  // Each argument specifies the letter count of one title-cased word.
-  function ubumfa(...lengths) {
-    if (!lengths.length) lengths = [6];
+  // Preserve the original unparameterized and seeded six-letter results.
+  // Numeric arguments generate one title-cased word per requested length.
+  function generateName(...lengths) {
+    if (!lengths.length) return generateWord(6, Math.random);
+    if (lengths.length === 1 && typeof lengths[0] === 'function') {
+      return generateWord(6, lengths[0]);
+    }
+    if (lengths.length === 2 && typeof lengths[1] === 'function') {
+      return generateWord(lengths[0], lengths[1]);
+    }
     return lengths.map(length => {
-      const word = generateName(length);
+      const word = generateWord(length, Math.random);
       return word[0] + word.slice(1).toLowerCase();
     }).join(' ');
   }
 
   function roomName() {
-    return 'Room ' + ubumfa(6);
+    const word = generateName();
+    return 'Room ' + word[0] + word.slice(1).toLowerCase();
   }
-  const api = {generateName, ubumfa, roomName};
+  const api = {generateName, roomName};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.uburoomUbumfa = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
