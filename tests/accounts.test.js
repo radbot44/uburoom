@@ -118,16 +118,17 @@ test('direct original delivery isolates delegated credentials and fences private
 test('direct fallback requires verified non-ownership and never delegates configured owner credentials',async t=>{
   const {PlexDelivery}=require('../server/plex-delivery');
   const config={plexUrl:'http://plex.invalid:32400',plexToken:'owner',plexDelivery:{mode:'auto',clientUrl:'https://plex.example',fallback:true},plexFallback:{enabled:true,token:'dedicated'}};
-  let owned=false,requests=0,publicMachine='machine',live=true,revokeOnDelegate=false,holdIdentity;
+  let owned=false,requests=0,publicMachine='machine',live=true,revokeOnDelegate=false,holdIdentity,publicUnavailable=false,identityRequests=0;
+  let advertised=[],resourceMachine='machine';
   const plex=new Plex(config,async(input,options)=>{
     const url=new URL(input);
-    if(url.pathname==='/identity'){await holdIdentity;return Response.json({MediaContainer:{machineIdentifier:publicMachine}});}
+    if(url.pathname==='/identity'){identityRequests++;if(publicUnavailable)throw new Error('No NAT loopback');await holdIdentity;return Response.json({MediaContainer:{machineIdentifier:publicMachine}});}
     assert.equal(url.pathname,'/security/token');assert.equal(options.headers['X-Plex-Token'],'dedicated');requests++;
     if(revokeOnDelegate)live=false;
     return Response.json({MediaContainer:{token:'transient-fallback'}});
   });t.after(()=>plex.close());
   let scope=plex.scope('dedicated','configured-fallback');
-  const auth={machine:async()=> 'machine',request:async()=>[{clientIdentifier:'machine',provides:'server',owned}]};
+  const auth={machine:async()=> 'machine',request:async()=>[{clientIdentifier:resourceMachine,provides:'server',owned,connections:advertised}]};
   const context={identity:{},actor:{userId:'guest'}};
   const media=()=>({kind:'plex',format:'file',start:'http://plex.invalid:32400/library/parts/1/file.mp4',plexContext:scope});
   const delivery=()=>new PlexDelivery(config,plex,auth,async()=>scope);
@@ -144,10 +145,21 @@ test('direct fallback requires verified non-ownership and never delegates config
   const slow=delivery(),slowMedia=media();assert.equal(await slow.file(slowMedia,context,async()=>true),undefined);
   release();holdIdentity=undefined;await new Promise(resolve=>setImmediate(resolve));
   assert.equal(await slow.file(slowMedia,context,async()=>true),undefined,'late endpoint success cannot replace the selected proxy or mint a token');
+  publicUnavailable=true;
+  advertised=[{uri:'https://plex.example:443',protocol:'https',relay:false}];
+  const probes=identityRequests;
+  assert.match(await delivery().file(media(),context,async()=>true),/transient-fallback/,'authenticated discovery permits direct delivery without server NAT loopback');
+  assert.equal(identityRequests,probes,'a verified advertised origin does not need server-side public connectivity');
+  config.plexDelivery.clientUrl='https://plex.example.attacker.invalid';
+  assert.equal(await delivery().file(media(),context,async()=>true),undefined,'origin comparison is exact');
+  config.plexDelivery.clientUrl='https://plex.example';resourceMachine='other-machine';
+  assert.equal(await delivery().file(media(),context,async()=>true),undefined,'another server cannot attest the client endpoint');resourceMachine='machine';
+  advertised=[{uri:'https://plex.example',protocol:'https',relay:true}];
+  assert.equal(await delivery().file(media(),context,async()=>true),undefined,'relay metadata does not attest a direct endpoint');
   config.plexFallback.token='';assert.equal(await delivery().file(media(),context,async()=>true),undefined);
   config.plexFallback.token='owner';scope=plex.scope('owner','configured-fallback');assert.equal(await delivery().file(media(),context,async()=>true),undefined);
   scope=plex;assert.equal(await delivery().file(media(),context,async()=>true),undefined);
-  assert.equal(requests,2,'wrong endpoints and owner/ambiguous fallback accounts cannot request delegation; late revocation suppresses its result');
+  assert.equal(requests,3,'only verified endpoint/account combinations request delegation; late revocation suppresses its result');
 });
 
 test('logout checks CSRF, revokes only this browser login and its viewers, retains links, and works after access revocation',tls,async t=>{

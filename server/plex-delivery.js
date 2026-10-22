@@ -5,25 +5,36 @@
 class PlexDelivery {
   constructor(config, plex, plexAuth, resolve) {
     this.config = config; this.plex = plex; this.plexAuth = plexAuth; this.resolve = resolve;
-    this.files = new WeakMap(); this.fallbackChecks = new WeakMap();
+    this.files = new WeakMap(); this.resources = new WeakMap();
+  }
+  async resource(scope) {
+    const cached = this.resources.get(scope);
+    if (cached?.until > Date.now()) return cached.job;
+    const job = (async () => {
+      try {
+        const machine = await this.plexAuth.machine();
+        const resources = await this.plexAuth.request('/resources?includeHttps=1', { token:scope.token, clientId:scope.clientId });
+        return Array.isArray(resources) ? resources.find(value => value.clientIdentifier === machine && String(value.provides).split(',').includes('server')) : undefined;
+      } catch { return; }
+    })();
+    this.resources.set(scope, { job, until: Date.now() + 30000 });
+    return job;
   }
   async fallbackAllowed(scope) {
     const { plexFallback: sharing, plexDelivery: delivery } = this.config;
     if (!delivery?.fallback || !sharing?.enabled || !sharing.token || sharing.token === this.config.plexToken || scope.token !== sharing.token) return false;
-    const cached = this.fallbackChecks.get(scope);
-    if (cached?.until > Date.now()) return cached.job;
-    // A different string alone does not prove a non-owner account. Require
-    // plex.tv to identify the configured server as shared with this credential.
-    const job = (async () => {
+    // A different string alone does not prove a non-owner account.
+    return (await this.resource(scope))?.owned === false;
+  }
+  async advertised(scope, origin) {
+    const resource = await this.resource(scope);
+    return resource?.connections?.some(connection => {
+      if (connection.protocol !== 'https' || connection.relay !== false) return false;
       try {
-        const machine = await this.plexAuth.machine();
-        const resources = await this.plexAuth.request('/resources?includeHttps=1', { token: sharing.token });
-        const resource = Array.isArray(resources) && resources.find(value => value.clientIdentifier === machine && String(value.provides).split(',').includes('server'));
-        return resource?.owned === false;
+        const url = new URL(connection.uri);
+        return url.protocol === 'https:' && url.origin === origin && url.pathname === '/' && !url.username && !url.password && !url.search && !url.hash;
       } catch { return false; }
-    })();
-    this.fallbackChecks.set(scope, { job, until: Date.now() + 30000 });
-    return job;
+    }) === true;
   }
   async file(media, auth, valid) {
     if (this.config.plexDelivery?.mode !== 'auto' || !this.config.plexDelivery.clientUrl || auth.identity.activity ||
@@ -56,12 +67,17 @@ class PlexDelivery {
   async prepare(media, scope, valid, signal) {
     try {
       const origin = this.config.plexDelivery.clientUrl;
-      // Verify the public endpoint without sending a credential to it first.
-      const response = await this.plex.rawFetch(new URL('/identity', origin), { redirect: 'error',
-        headers: { Accept: 'application/json' }, signal });
-      if (!response.ok) return;
-      const identity = (await response.json()).MediaContainer;
-      if (!identity?.machineIdentifier || identity.machineIdentifier !== await this.plexAuth.machine() || !await valid()) return;
+      // Authenticated Plex discovery binds this exact HTTPS origin to the
+      // pinned server, even when the server cannot loop back to its public IP.
+      // Custom/unlisted origins still need a credential-free identity probe.
+      if (!await this.advertised(scope, origin)) {
+        const response = await this.plex.rawFetch(new URL('/identity', origin), { redirect: 'error',
+          headers: { Accept: 'application/json' }, signal });
+        if (!response.ok) return;
+        const identity = (await response.json()).MediaContainer;
+        if (!identity?.machineIdentifier || identity.machineIdentifier !== await this.plexAuth.machine()) return;
+      }
+      if (!await valid()) return;
       const source = scope.url(media.start);
       if (!/^\/library\/parts\/\d+\//.test(source.pathname)) return;
       const delegated = await scope.json('/security/token?type=delegation&scope=all', { method: 'POST', signal });
