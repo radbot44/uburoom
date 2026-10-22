@@ -30,7 +30,7 @@
     for (const [control,label,icon] of [[previous,'Back','left'],[next,'Forward','right'],[home,'Libraries home','home']]) {
       controls.content(control,{label,icon,iconOnly:true}); control.classList.add('watch-control-solid-disabled');
     }
-    const choices = node('div',navParent,undefined,'library-choices watch-segmented watch-segmented-view'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
+    const choices = node('div',historyGroup,undefined,'library-choices watch-control-group watch-header-actions'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
     const crumbs = node('nav',navParent,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
     const tools = node('div',host,undefined,'library-tools');
     const row = node('div',tools,undefined,'library-toolbar watch-toolbar');
@@ -212,7 +212,7 @@
     }
     function art(parent,item,landscape = false) {
       const box = node('div',parent,undefined,'library-art' + (landscape ? ' landscape' : ''));
-      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomIcons.icon(doc,['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
+      const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomIcons.icon(doc,item.type === 'collection' ? 'layout-grid' : ['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
       if (landscape ? item.hasLandscape : item.hasPoster) {
         const img = node('img',box); img.alt = ''; img.decoding = 'async'; img.dataset.item = item.id; img.dataset.kind = landscape ? 'landscape' : 'poster'; img.dataset.type = item.type;
         img.addEventListener('load',() => { box.classList.add('loaded'); });
@@ -313,9 +313,6 @@
       }
       const picture = art(card,item,episode), open = button(picture,'View ' + identity(item),'', 'library-open');
       open.addEventListener('click',() => {
-        if (view === 'posters' && !episode && matchMedia('(hover: none)').matches && !card.classList.contains('revealed')) {
-          results.querySelectorAll('.revealed').forEach(n => n.classList.remove('revealed')); card.classList.add('revealed'); return;
-        }
         void openItem(item);
       });
       const copy = node('div',card,undefined,'library-copy');
@@ -376,8 +373,13 @@
       home.title = home.disabled ? 'Already at Libraries home.' : 'Libraries home';
       const focusedSection = choices.contains(doc.activeElement) ? doc.activeElement.dataset.section : null;
       choices.replaceChildren(); choices.hidden = screen.kind === 'home';
-      sections.forEach(section => { const b = button(choices,section.title,undefined,'library-key library-choice group-button'); b.textContent = section.title; b.dataset.section = section.id; b.setAttribute('aria-pressed',String(section.id === screen.section)); b.onclick = () => void chooseLibrary(section.id,screen.tab); });
-      controls.segmented(choices);
+      sections.forEach(section => {
+        const b = button(choices,section.title,undefined,'library-key library-choice');
+        controls.content(b,{label:section.title,icon:section.mediaType === 'show' ? 'tv' : 'film'});
+        b.dataset.section = section.id;
+        if (section.id === screen.section) b.setAttribute('aria-current','page');
+        b.onclick = () => void chooseLibrary(section.id,screen.tab);
+      });
       if (focusedSection) [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
       crumbs.replaceChildren();
       const path = [{title:'Libraries',action:goHome}];
@@ -436,7 +438,7 @@
       landing.replaceChildren();
       for (const tab of ['library','collections']) for (const section of sections) {
         const title = tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
-        const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'libraryCards','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
+        const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'layout-grid','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
         b.append(node('span',null,title,'library-home-title')); b.onclick = () => void chooseLibrary(section.id,tab);
       }
       if (testVideo || isAdmin()) {

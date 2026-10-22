@@ -144,7 +144,8 @@ Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sectio
 
 ### Navigation and dropdowns
 
-- **Media library names** are subnavigation, not segmented choices. Mark the current library with `aria-current`. Hide this subnavigation in the existing narrow Media container layout (around **440px**), while leaving other navigation available.
+- **Media library names** are navigation buttons in the Back/Forward/Home group. Use the movie or TV icon with the library name and mark the current library with `aria-current`. At smaller Media widths, hide the text first, then hide the library buttons entirely in the narrow layout (around **440px**). Collections use Tabler `layout-grid`.
+- In Posters view, clicking or tapping anywhere on a poster opens its item immediately, except when activating Play or Add to queue. Caption and gradient layers must not intercept poster clicks. Hide the Play overlay completely for unavailable items; keep their details browsable.
 - Browse media, Home, library tabs and item navigation keep the current scroll position when any media card or item is visible, even partially. Do not pull a Media section that is already visible below the viewport’s top edge up to that edge. If Media is out of view, reveal its beginning with the sticky header and toolbar above the first content row, without covering the cards. Apply this to page and drawer scrolling.
 - Use native dropdowns for **long or dynamic** lists and for video settings on mobile; desktop video settings can keep nested menus.
 - Show known-but-unavailable fixed options as **disabled with a readable reason**. Don't invent unavailable audio/subtitle tracks that aren't present in the data.
