@@ -7,10 +7,17 @@
   function fallbackCodecs(allowed, attempted, supports) {
     return [...new Set(allowed)].filter(codec=>localFormat(codec) && !attempted.has(codec) && supports(LOCAL_CODECS[codec]));
   }
-  function hlsConfig(bitrateKbps) {
+  function hlsConfig(bitrateKbps,direct=false) {
     // Establish transport timestamps from the first segment before any seek.
-    return {enableWorker:true,startPosition:0,
+    const config={enableWorker:true,startPosition:0,
       maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024)};
+    if(direct) {
+      // A failed optional direct playlist should use the authorized proxy,
+      // rather than spend the normal HLS retry budget on an unreachable origin.
+      for(const policy of ['manifestLoadPolicy','playlistLoadPolicy'])config[policy]={default:{
+        maxTimeToFirstByteMs:5000,maxLoadTimeMs:8000,timeoutRetry:null,errorRetry:null}};
+    }
+    return config;
   }
   function directHlsUrl(value,plan) {
     const url=new URL(value),origin=new URL(plan.origin);

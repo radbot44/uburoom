@@ -1085,7 +1085,7 @@ function applyState(next) {
         catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
-        const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling);
+        const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling,!!next.directHls);
         if(next.directHls) {
           // FetchLoader rejects redirects and adds only this viewer's temporary
           // credential to resources under the pinned Plex output session.
