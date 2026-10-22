@@ -65,7 +65,7 @@ class Plex {
     if (!response.ok && response.status !== 206) {const error=new Error(`Plex server request failed (HTTP ${response.status}); check server access and playback support`);error.status=response.status;throw error;}
     return response;
   }
-  async json(resource) { return (await (await this.request(resource)).json()).MediaContainer || {}; }
+  async json(resource, options) { return (await (await this.request(resource, options)).json()).MediaContainer || {}; }
   // Small, short-lived in-process caches. Playback decisions never use these.
   cached(cache, key, limit, create, ttl = 60000) {
     const old = cache.get(key);

@@ -19,6 +19,7 @@ let theater = document.body.classList.contains('theater'), immersive = false, la
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
+let directProbe, directStartupTimer, directStallTimer, directRecovery;
 let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
@@ -524,6 +525,46 @@ async function compatibleFallback(reason, preferHLS = false) {
     fail(playbackError);
   } finally {fallbackPending=false;}
 }
+async function proxyDirectFile() {
+  if (!state?.directDelivery || directRecovery || !navigator.onLine) return;
+  const next = state, id = selected;
+  const recovery = (async () => {
+    try {
+      await api('/api/watch/rooms/' + id + '/delivery', { viewerId, mediaVersion:next.mediaVersion, streamVersion:next.streamVersion });
+      if (selected === id && state?.mediaVersion === next.mediaVersion) await refreshState();
+    } catch {
+      if (selected === id && state?.streamVersion === next.streamVersion) fail('Video delivery could not recover. Try joining the room again.');
+    }
+  })();
+  directRecovery = recovery;
+  try { await recovery; } finally { if (directRecovery === recovery) directRecovery = undefined; }
+}
+async function attachDirectFile(next) {
+  const controller = directProbe = new AbortController();
+  const current = () => !controller.signal.aborted && selected === next.id && state?.streamVersion === next.streamVersion && mediaSource === next.mediaUrl;
+  try {
+    // Prove CORS/range delivery before attaching native media. Do not follow a
+    // redirect or send uburoom cookies/credentials to the Plex origin.
+    const response = await fetch(next.mediaUrl, { headers:{Range:'bytes=0-0'}, mode:'cors', credentials:'omit', redirect:'error',
+      referrerPolicy:'no-referrer', signal:AbortSignal.any([controller.signal,AbortSignal.timeout(8000)]) });
+    await response.body?.cancel();
+    if (!current()) return;
+    if (!response.ok) { await proxyDirectFile(); return; }
+    video.crossOrigin = 'anonymous'; video.src = next.mediaUrl;
+    directStartupTimer = setTimeout(() => { if (current() && video.readyState < 2) void proxyDirectFile(); }, 10000);
+  } catch { if (current()) await proxyDirectFile(); }
+}
+video.addEventListener('waiting', () => {
+  clearTimeout(directStallTimer);
+  if (!state?.directDelivery) return;
+  const stream = state.streamVersion, position = video.currentTime;
+  directStallTimer = setTimeout(() => {
+    if (state?.directDelivery && state.streamVersion === stream && !video.paused && video.readyState < 3 && video.currentTime <= position + .1) void proxyDirectFile();
+  }, 8000);
+});
+window.addEventListener('online', () => {
+  if (state?.directDelivery && (video.error || video.readyState < 2)) void proxyDirectFile();
+});
 function watchFrames() {
   if (!video.requestVideoFrameCallback) return;
   frameCallback = video.requestVideoFrameCallback((now,metadata) => {
@@ -551,6 +592,9 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason) {
+  directProbe?.abort(); directProbe = undefined;
+  directRecovery = undefined;
+  clearTimeout(directStartupTimer); clearTimeout(directStallTimer);
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
   toasts.dismiss('participant'); lastFeedback = undefined;
@@ -566,7 +610,7 @@ function clearPlayer(reason) {
   frameCallback = undefined; frameStartedAt = undefined; videoFrames = 0;
   presentationTiming.reset();
   remote.stop(); dropVolume(); video.pause(); stopHls(reason);
-  video.removeAttribute('src'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
+  video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
   playbackError = ''; autoplayBlocked = false;
   $('join-playback').hidden = true; $('empty-stage').hidden = false; $('ready-status').textContent = '';
 }
@@ -1048,7 +1092,8 @@ function applyState(next) {
           if (hls === client) diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
         });
         client.loadSource(next.mediaUrl); client.attachMedia(video);
-      } else video.src = next.mediaUrl;
+      } else if (next.directDelivery) void attachDirectFile(next);
+      else video.src = next.mediaUrl;
     }
   }
   if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
@@ -1240,6 +1285,7 @@ video.addEventListener('canplay', () => { void sync.synchronize(); });
 video.addEventListener('error', () => {
   if (!video.getAttribute('src') || !state?.mediaUrl || !video.error || playbackError) return;
   const code = video.error?.code, message = video.error?.message || '';
+  if (state.directDelivery && code === 2) { void proxyDirectFile(); return; }
   if ([3,4].includes(code) && state.format === 'file') {
     void compatibleFallback('The original video could not be decoded.'); return;
   }
@@ -1434,7 +1480,7 @@ setInterval(() => {
 async function start() {
   await syncReady;
   config = pageBootstrap?.config||await api('/api/watch/config');
-  if (config.watchVersion !== 18) throw new Error('The player and server versions differ. Reload after the server update.');
+  if (config.watchVersion !== 19) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
   const discordButton=$('welcome').querySelector('.discord-button');
   discordButton.hidden=config.access?.discord===false;

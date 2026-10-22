@@ -1,13 +1,14 @@
 // @ts-check
 'use strict';
 const { UUID, hash } = require('./core');
+const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
 
 // Transport-neutral operations return values; HTTP resources and socket framing
 // belong to their respective transports. Epochs and authorization stay here.
-function watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch }) {
+function watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch, delivery, validGrant }) {
   const result = (status, value) => ({ status, value });
   /**
    * @param {{headers: Object, controlSocket?: {readyState: number}}} context Auth credentials and optional live connection.
@@ -98,7 +99,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|reopen|settings|queue|history|people))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
@@ -198,6 +199,17 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.leave(room, auth.actor, data.viewerId);
         return result(200, { ok: true });
       }
+      if (write && match[2] === 'delivery') {
+        const viewer = room.viewers.get(data.viewerId);
+        if (!viewer || viewer.userId !== auth.actor.userId || viewer.alive && !await viewer.alive() || !await watch.canView(room,auth.actor)) return result(403,{error:'Playback viewer unavailable'});
+        if (room.viewers.get(data.viewerId) !== viewer || data.mediaVersion !== room.mediaVersion || data.streamVersion !== viewer.streamVersion || !viewer.directDelivery || viewer.directDelivery !== viewer.media) return result(409,{error:'Playback delivery changed'});
+        // A per-viewer transport failure never converts media or changes room
+        // playback. Fence pending readiness/observations from the old transport.
+        watch.tracking.end(viewer,'delivery-changed');
+        viewer.directProxyVersion = room.mediaVersion; viewer.directDelivery = undefined;
+        viewer.streamVersion = randomUUID(); viewer.ready = false;
+        return result(200,{ok:true});
+      }
       if (write && match[2] === 'observe') {
         const viewer = room.viewers.get(data.viewerId);
         if (!viewer || viewer.userId !== auth.actor.userId || viewer.alive && !await viewer.alive() || !await watch.canView(room,auth.actor)) {
@@ -232,6 +244,13 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;
         const media=room.viewers.get(viewerId).media;
+        if (config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
+          const direct = await delivery?.file(media, auth, ()=>validGrant(grant));
+          if (!await validGrant(grant)) return result(409,{error:'Playback delivery changed'});
+          if (direct) {
+            state.mediaUrl = direct; state.directDelivery = true; viewer.directDelivery = media;
+          } else viewer.directDelivery = undefined;
+        }
         if (media.selection?.subtitle?.available && media.selection.subtitle.delivery==='text') state.subtitleUrl=`/api/watch/media/${grant}/captions-${media.captionVersion}`;
         else if(media.selection?.subtitle?.available && ['ass','pgs','vobsub'].includes(media.selection.subtitle.delivery))state.subtitleUrl=`/api/watch/media/${grant}/subtitle-${media.captionVersion}`;
       }

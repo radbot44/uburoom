@@ -13,6 +13,8 @@ YAML is the single authority: `.env` and application environment overrides are n
 | Setting | Purpose |
 | --- | --- |
 | `plex.url` / `plex.token` | Plex HTTP(S) origin and private configured server token. |
+| `plex.delivery` / `plex.client_url` | `proxy` (default) or `auto`; explicit HTTPS Plex origin for direct original-file browser delivery. |
+| `plex.direct_fallback_enabled` | Opt-in direct sharing through a dedicated verified non-owner fallback account; defaults false. |
 | `plex.machine_identifier` | Optional exact target; otherwise pinned after verification. |
 | `discord.bot_token` | Server-only bot token; blank disables its connection. |
 | `discord.client_id` / `discord.client_secret` | Your OAuth application. |
@@ -52,6 +54,18 @@ Set `server.public_web_app: false` for Activity-only viewing. This requires Disc
 `plex.fallback_enabled` defaults to **true**. This explicitly sponsors eligible viewers who have no attached Plex account, or whose authenticated Plex account is confirmed not to belong to this server when personal server access is not required. **They can access the fallback account's libraries and media, which may exceed their own account's permissions.** The example and startup warning make this sharing policy visible to the owner.
 
 Blank `plex.fallback_token` uses `plex.token`; set it to a different account's server-access token to use a dedicated fallback identity. Keep both tokens private. A personally authorized Plex account always uses its own scope. Expired/revoked credentials, outages, identity mismatches, empty/restricted libraries and item-level denials never silently switch to fallback. Requiring personal Plex server access prevents fallback from granting admission. Setting fallback false makes media require personal Plex server access even if another method grants entry. Fallback does not attach that account to the viewer or attribute personal Plex history; Plex watch-state reporting remains separate work.
+
+### Direct Plex file delivery
+
+`plex.delivery` defaults to `proxy`, preserving uburoom's existing media proxy. Set it to `auto` and configure `plex.client_url` as a viewer-reachable HTTPS Plex origin, for example `https://plex.example:32400`. It must have a trusted certificate and no path, query, embedded credentials or fragment. `plex.url` remains the server-side connection; it can remain a private LAN address. The client endpoint must also be reachable by uburoom for identity verification and identify the same pinned Plex server. Optional direct negotiation has a five-second budget before retaining the proxy. Only that explicit origin is added to the browser's connection/media security policy; arbitrary Plex resource URLs are not accepted.
+
+This increment attempts direct delivery only for original-file output in ordinary browsers. Plex HLS, Discord Activity, subtitle resources and uburoom AV1/VP9/VP8 output retain their existing proxy/delivery paths. `direct` (strict direct-only mode) is not yet accepted. Original quality does not guarantee an original-file output: selected tracks, subtitles and compatibility may require conversion.
+
+Direct playback uses a temporary Plex delegation token derived from the viewer's own verified server access. The account's permanent token stays on the server. Temporary tokens retain the source account's permissions; they are not restricted to a movie, room or uburoom grant, and Plex documents validity of up to 48 hours or until PMS restarts. Removing a viewer, unlinking an account or closing a room stops uburoom participation but cannot guarantee invalidation of an already issued Plex token. Tokens remain in memory and authorized viewer responses; they are never persisted or included in diagnostic exports. See [Plex's delegation API](https://developer.plex.tv/pms/).
+
+To permit direct delivery for eligible viewers without personal Plex access, explicitly set `plex.direct_fallback_enabled: true` and supply a dedicated `plex.fallback_token` with library access but no server ownership. Ordinary sharing must also be enabled. Startup rejects a blank dedicated token or one equal to `plex.token`; runtime additionally requires plex.tv to confirm non-ownership of this server. Use a dedicated account credential that plex.tv can verify: a token accepted only by PMS cannot establish non-ownership and will remain proxied. Missing/ambiguous verification never permits direct sharing. The configured owner token is never delegated as fallback. A signed-in owner may still directly play using their own verified personal login.
+
+The browser checks authenticated CORS/range delivery before attaching the file. Connection/CORS failures recover once to uburoom's authorized proxy for that viewer and media generation; subsequent updates do not repeatedly retry direct delivery. Startup and stalled delivery have bounded recovery. Decoder failures continue through the existing compatible-format selection, including configured local codecs. No transport setting overrides `transcoding.policy`, provider permissions, codec ordering, quality ceilings or job limits. Local conversion still downloads the source to uburoom and delivers its encoded output from there. Real Plex endpoint, delegated-token, browser and network combinations require installation-specific verification; local synthetic playback is not real Plex certification.
 
 ### Single shared room
 

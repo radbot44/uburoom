@@ -11,11 +11,13 @@ const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
+const { PlexDelivery } = require('./plex-delivery');
 
-function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins }) {
+function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins, plexAuth }) {
   const identities = new Map(), grants = new Map();
+  const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:18,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'] });
+  const publicConfig = () => ({ watchVersion:19,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'] });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
@@ -189,7 +191,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     finally { clearTimeout(timer); res.off('close', disconnect); }
   }
-  const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch });
+  const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch, delivery, validGrant: id=>validGrant(grants.get(id)) });
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
     if(config.accessPolicy && url.pathname==='/api/watch/entry' && req.method==='POST') {

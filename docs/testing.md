@@ -11,6 +11,14 @@
 - Latest **documented full TAP**: **461 passed, 0 failed, 0 skipped**, recorded for the combined Queue/OverlayScrollbars checkout on 2026-10-21 (no single final-tree commit identified). This is historical **B** evidence, not rerun for this dashboard ([source](archive/testing-2026-10-22.md#2026-10-21---shared-controls-queue-increment-m1-p7)).
 - Later/parallel Room and Media findings carry their own revision-scoped counts and exceptions. The archive preserves all superseded results, measured observations, failed attempts and owner commentary.
 - **Release claims are not certified** while required C real-provider/device or D human acceptance remains incomplete. Test consent, state transfers, deployments and publishing always require their own approval.
+- **Direct-delivery increment, 2026-10-22:** `npm run test:full` passed **374 tests, 0 failed, 0 skipped** on the uncommitted increment based on `dc31aa4`. Chrome/Firefox synthetic direct-file and recovery checks also passed; this is current-tree B evidence, with real Plex/Discord gates still open. [Scope and limits](#direct-plex-file-delivery-2026-10-22).
+
+## Direct Plex file delivery — 2026-10-22
+
+- **A/B pass:** Optional `plex.delivery: auto` with explicit HTTPS client origin; personal temporary delegation; dedicated non-owner fallback opt-in; rejection of configured-owner/ambiguous fallback credentials and mismatched endpoint identity; stale/foreign delivery requests and late revocation; five-second negotiation timeout with late-result fencing. Full suite: `npm run test:full`, **374 passed / 0 failed / 0 skipped**, uncommitted increment based on `dc31aa4`.
+- **Browser B pass:** Disposable Chrome **155.0.8059.84** and Firefox **158.0.1**, synthetic HTTPS Plex origin and dedicated fallback identity. Each decoded direct original-file video without proxy file requests, paused/seeks to 35 seconds and resumed; each recovered a missing-CORS/503 direct probe through the authorized proxy while retaining original-file output. Diagnostic exports excluded the temporary credential. Four scenarios passed. A test-harness close request was corrected to include the existing required room epoch before the successful final run.
+- **Conversion B pass:** Existing `scripts/playback-baseline.js`, cases `hls-hevc,av1-23976`, Chrome/Firefox: **4 passed / 0 failed**. Decoded video/audio, paused seeking and resume passed for Plex-style synthetic HLS and software AV1. This is not real PMS negotiation, hardware encoding or Activity evidence.
+- **C/D not run:** Real Plex delegation/ownership metadata, public TLS/CORS/range reachability, real subtitles, prolonged interruptions and actual Discord clients. No private configuration migration, production restart or deployment performed. Strict direct-only mode and direct HLS remain unimplemented. [Detailed evidence and boundaries](archive/testing-2026-10-22.md#direct-plex-file-delivery).
 
 ## Verification standard for new work
 

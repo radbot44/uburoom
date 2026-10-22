@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2d
+# Config schema v2e
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -18,6 +18,9 @@ plex:
   url: 'http://127.0.0.1:32400'
   token: ''
   machine_identifier: '' # Leave blank to detect and remember your Plex server.
+  # Original files in ordinary browsers only; HLS and Activity remain proxied.
+  delivery: 'proxy' # proxy | auto (prefer direct, recover through the proxy)
+  client_url: '' # Required for auto: viewer-reachable HTTPS Plex origin, no path.
 
   # SHARING: enabled by default. Viewers without a Plex account or confirmed
   # server membership can access the fallback account's libraries and media.
@@ -25,6 +28,9 @@ plex:
   # Expired/revoked credentials, outages and item denials NEVER use fallback.
   fallback_enabled: true
   fallback_token: '' # Blank uses token above; supply a dedicated server-access token.
+  # Direct sharing NEVER uses token above. Requires a dedicated Plex account
+  # with library access but no server ownership, verified against plex.tv.
+  direct_fallback_enabled: false
 
 discord:
   bot_token: ''

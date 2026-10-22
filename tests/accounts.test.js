@@ -50,10 +50,10 @@ test('account IDs persist, owner reservations resolve exact subjects, conflictin
   }finally{await accounts.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
 });
 
-async function fixture(t){
+async function fixture(t, deliveryFetch){
   const provider=accountFixture(),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
   const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:provider.subjects.host,clientId:'100000000000000010',clientSecret:'fixture-secret',guildId:'guild',channels:['commands'],demo:true,unifiedAccounts:true,demoSubjects:provider.subjects,plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'};
-  const app=createApp(config,{plexFetch:provider.fetch,plexDemo:provider,oauthFetch:provider.discordFetch});const members=new Set(Object.values(provider.subjects));
+  const app=createApp(config,{plexFetch:deliveryFetch ? (input,options)=>deliveryFetch(input,options,provider) : provider.fetch,plexDemo:provider,oauthFetch:provider.discordFetch});const members=new Set(Object.values(provider.subjects));
   app.hub.access={identity:async id=>Object.values(provider.subjects).includes(id)?{id,name:'Known Discord user'}:undefined,refresh:async id=>members.has(id),isMember:id=>members.has(id),voiceChannel:id=>members.has(id)?'call':undefined,validVoiceChannel:id=>id==='call',options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());config.publicUrl=`https://localhost:${app.server.address().port}`;
   function browser(){const jar=new Map();
@@ -73,6 +73,82 @@ async function fixture(t){
   return {app,provider,config,members,browser};
 }
 const tls={skip:!fs.existsSync(path.join(__dirname,'../certs/server-cert.pem'))};
+
+test('direct original delivery isolates delegated credentials and fences private transport recovery',tls,async t=>{
+  const delegated=[];
+  const f=await fixture(t,async(input,options,provider)=>{
+    const url=new URL(input);
+    if(url.pathname==='/identity') {
+      assert.equal(options.headers['X-Plex-Token'],undefined);
+      return Response.json({MediaContainer:{machineIdentifier:'fixture-machine'}});
+    }
+    if(url.pathname==='/security/token') {
+      assert.equal(options.method,'POST');delegated.push(options.headers['X-Plex-Token']);
+      return Response.json({MediaContainer:{token:'transient-fixture-'+delegated.length}});
+    }
+    return provider.fetch(input,options);
+  });
+  f.config.plexDelivery={mode:'auto',clientUrl:'https://plex-client.invalid:32400',fallback:false};
+  const alice=f.browser(),bob=f.browser(),guest=f.browser();await alice.plex('alice');await bob.plex('bob');await guest.discord('guest');
+  const roomId=(await alice.post('/api/watch/rooms',{})).body.id,viewerId=randomUUID(),other=randomUUID();
+  let state=(await alice.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}`)).body;
+  await alice.post(`/api/watch/rooms/${roomId}/command`,{epoch:state.epoch,expiresAt:Date.now()+2500,viewerId,command:{action:'media.load',args:{mediaId:'1',quality:'direct'}}});
+  state=(await alice.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}`)).body;
+  assert.equal(state.directDelivery,true);assert.equal(new URL(state.mediaUrl).origin,f.config.plexDelivery.clientUrl);
+  assert.equal(new URL(state.mediaUrl).searchParams.get('X-Plex-Token'),'transient-fixture-1');
+  assert.deepEqual(delegated,['fixture-server-101']);
+  assert.equal(JSON.stringify(state).includes('fixture-server-101'),false);assert.equal(JSON.stringify(state).includes('fixture-owner'),false);
+  const personal=(await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body;
+  assert.equal(personal.directDelivery,true);assert.notEqual(personal.mediaUrl,state.mediaUrl);
+  const sponsored=(await guest.request(`/api/watch/rooms/${roomId}?viewer=${randomUUID()}`)).body;
+  assert.match(sponsored.mediaUrl,/^\/api\/watch\/media\//);assert.equal(delegated.includes('fixture-owner'),false);
+  const recover={viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion};
+  assert.equal((await bob.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,403);
+  assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,{...recover,streamVersion:randomUUID()})).status,409);
+  assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,200);
+  const recovered=(await alice.request(`/api/watch/rooms/${roomId}?viewer=${viewerId}`)).body;
+  assert.match(recovered.mediaUrl,/^\/api\/watch\/media\//);assert.notEqual(recovered.streamVersion,state.streamVersion);
+  assert.equal(recovered.mediaVersion,state.mediaVersion);assert.equal(recovered.state.paused,state.state.paused);
+  assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,409);
+  assert.equal((await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).body.mediaUrl,personal.mediaUrl);
+  f.provider.revoked.add('102');f.app.plexAuth.clear();
+  assert.equal((await bob.request(`/api/watch/rooms/${roomId}?viewer=${other}`)).status,401);
+});
+
+test('direct fallback requires verified non-ownership and never delegates configured owner credentials',async t=>{
+  const {PlexDelivery}=require('../server/plex-delivery');
+  const config={plexUrl:'http://plex.invalid:32400',plexToken:'owner',plexDelivery:{mode:'auto',clientUrl:'https://plex.example',fallback:true},plexFallback:{enabled:true,token:'dedicated'}};
+  let owned=false,requests=0,publicMachine='machine',live=true,revokeOnDelegate=false,holdIdentity;
+  const plex=new Plex(config,async(input,options)=>{
+    const url=new URL(input);
+    if(url.pathname==='/identity'){await holdIdentity;return Response.json({MediaContainer:{machineIdentifier:publicMachine}});}
+    assert.equal(url.pathname,'/security/token');assert.equal(options.headers['X-Plex-Token'],'dedicated');requests++;
+    if(revokeOnDelegate)live=false;
+    return Response.json({MediaContainer:{token:'transient-fallback'}});
+  });t.after(()=>plex.close());
+  let scope=plex.scope('dedicated','configured-fallback');
+  const auth={machine:async()=> 'machine',request:async()=>[{clientIdentifier:'machine',provides:'server',owned}]};
+  const context={identity:{},actor:{userId:'guest'}};
+  const media=()=>({kind:'plex',format:'file',start:'http://plex.invalid:32400/library/parts/1/file.mp4',plexContext:scope});
+  const delivery=()=>new PlexDelivery(config,plex,auth,async()=>scope);
+  assert.match(await delivery().file(media(),context,async()=>true),/transient-fallback/);
+  publicMachine='another-server';assert.equal(await delivery().file(media(),context,async()=>true),undefined);publicMachine='machine';
+  revokeOnDelegate=true;assert.equal(await delivery().file(media(),context,async()=>live),undefined);revokeOnDelegate=false;
+  for(const ownership of [true,undefined,'false']) {
+    owned=ownership;assert.equal(await delivery().file(media(),context,async()=>true),undefined);
+  }
+  owned=false;assert.equal(await delivery().file(media(),{...context,identity:{activity:true}},async()=>true),undefined);
+  assert.equal(await delivery().file({...media(),format:'hls'},context,async()=>true),undefined);
+  assert.equal(await delivery().file(media(),context,async()=>false),undefined);
+  let release;holdIdentity=new Promise(resolve=>release=resolve);
+  const slow=delivery(),slowMedia=media();assert.equal(await slow.file(slowMedia,context,async()=>true),undefined);
+  release();holdIdentity=undefined;await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(await slow.file(slowMedia,context,async()=>true),undefined,'late endpoint success cannot replace the selected proxy or mint a token');
+  config.plexFallback.token='';assert.equal(await delivery().file(media(),context,async()=>true),undefined);
+  config.plexFallback.token='owner';scope=plex.scope('owner','configured-fallback');assert.equal(await delivery().file(media(),context,async()=>true),undefined);
+  scope=plex;assert.equal(await delivery().file(media(),context,async()=>true),undefined);
+  assert.equal(requests,2,'wrong endpoints and owner/ambiguous fallback accounts cannot request delegation; late revocation suppresses its result');
+});
 
 test('logout checks CSRF, revokes only this browser login and its viewers, retains links, and works after access revocation',tls,async t=>{
   const f=await fixture(t),host=f.browser(),other=f.browser(),bob=f.browser();await host.discord();await host.plex('alice',true);await other.plex('alice');await bob.plex('bob');

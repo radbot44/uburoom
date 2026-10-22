@@ -223,7 +223,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
   }
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
-  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins });
+  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins, plexAuth });
   async function discordStart(req,res,linkLogin,extension,ownerOnly=false) {
     if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly&&!extension)throw new Error('Discord authorization is disabled');
     const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,ownerOnly,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
@@ -266,7 +266,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
       const player = watchDocument || route === '/__diagnostics/codec';
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && config.plexDelivery.clientUrl
+        ? ' ' + new URL(config.plexDelivery.clientUrl).origin : '';
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
