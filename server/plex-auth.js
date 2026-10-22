@@ -57,11 +57,34 @@ class PlexAuth {
     if(!resource||typeof resource.accessToken!=='string'||!resource.accessToken)throw Object.assign(new PlexAccessError('This Plex account does not have access to this server',true),{noServerAccess:true});
     credential.serverToken=resource.accessToken;
     const scoped=this.plex.scope(resource.accessToken,credential.clientId);
+    scoped.discoveryToken=credential.token;
     let sections;try{sections=await scoped.json('/library/sections');}catch(error){const denied=[401,403,498].includes(error.status);throw new PlexAccessError(error.status?`Plex server library access check failed (HTTP ${error.status}); ${denied?'the server rejected this account token. Sign in or reconnect Plex again; check that this account has server access':'try again or check the Plex server'}`:'Plex server library access check could not reach the configured server; check PLEX_URL and connectivity',denied);}
     if(!Array.isArray(sections.Directory)||!sections.Directory.length)throw new PlexAccessError('This Plex account has no accessible libraries on this server',true);
     // A refreshed permission scope must not reuse data gathered before revalidation.
     for(const cache of [scoped.catalogCache,scoped.artSources,scoped.imageCache,scoped.randomCache,scoped.allowedItems])cache.clear();
     return scoped;
+  }
+  async fallback() {
+    const token=this.config.plexFallback?.token;
+    if(!token)return this.plex;
+    if(this.fallbackCache?.token===token && this.fallbackCache.until>Date.now())return this.fallbackCache.plex;
+    if(this.fallbackInflight?.token===token)return this.fallbackInflight.job;
+    const generation=this.generation;
+    const job=(async()=>{
+      let scoped=this.plex.scope(token,'configured-fallback'),sections;
+      try {sections=await scoped.json('/library/sections');}
+      catch(error) {
+        if(error.status!==401)throw error;
+        // Configured fallback may be an account token rather than a PMS
+        // token. Resolve access for that same account; never change identity.
+        scoped=await this.validate({token,clientId:'configured-fallback'});
+      }
+      if(sections && (!Array.isArray(sections.Directory)||!sections.Directory.length))throw new PlexAccessError('The configured fallback account has no accessible libraries');
+      if(generation!==this.generation)throw new PlexAccessError('Plex scope changed during validation');
+      this.fallbackCache={token,plex:scoped,until:Date.now()+30000};return scoped;
+    })();
+    this.fallbackInflight={token,job};
+    try{return await job;}finally{if(this.fallbackInflight?.job===job)this.fallbackInflight=undefined;}
   }
   async forUser(userId){
     const user=this.accounts.canonical(userId),identity=user&&this.accounts.identities(user.id).find(i=>i.provider==='plex');
@@ -77,6 +100,6 @@ class PlexAuth {
     this.inflight.set(identity.subject,job);try{return await job;}finally{if(this.inflight.get(identity.subject)===job)this.inflight.delete(identity.subject);}
   }
   fresh(userId){const identity=this.accounts.identities(userId).find(i=>i.provider==='plex');return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
-  clear(){this.generation++;this.cache.clear();this.inflight.clear();}
+  clear(){this.generation++;this.cache.clear();this.inflight.clear();this.fallbackCache=undefined;this.fallbackInflight=undefined;}
 }
 module.exports={PlexAuth,PlexAccessError};

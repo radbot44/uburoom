@@ -13,7 +13,7 @@ class PlexDelivery {
     const job = (async () => {
       try {
         const machine = await this.plexAuth.machine();
-        const resources = await this.plexAuth.request('/resources?includeHttps=1', { token:scope.token, clientId:scope.clientId });
+        const resources = await this.plexAuth.request('/resources?includeHttps=1', { token:scope.discoveryToken||scope.token, clientId:scope.clientId });
         return Array.isArray(resources) ? resources.find(value => value.clientIdentifier === machine && String(value.provides).split(',').includes('server')) : undefined;
       } catch { return; }
     })();
@@ -22,7 +22,7 @@ class PlexDelivery {
   }
   async fallbackAllowed(scope) {
     const { plexFallback: sharing, plexDelivery: delivery } = this.config;
-    if (!delivery?.fallback || !sharing?.enabled || !sharing.token || sharing.token === this.config.plexToken || scope.token !== sharing.token) return false;
+    if (!delivery?.fallback || !sharing?.enabled || !sharing.token || sharing.token === this.config.plexToken || (scope.discoveryToken||scope.token) !== sharing.token) return false;
     // A different string alone does not prove a non-owner account.
     return (await this.resource(scope))?.owned === false;
   }
@@ -82,7 +82,7 @@ class PlexDelivery {
       if (!/^\/library\/parts\/\d+\//.test(source.pathname)) return;
       const delegated = await scope.json('/security/token?type=delegation&scope=all', { method: 'POST', signal });
       if (typeof delegated.token !== 'string' || !delegated.token.startsWith('transient-') || delegated.token.length > 1024 ||
-        [scope.token, this.config.plexToken, this.config.plexFallback?.token].includes(delegated.token)) return;
+        [scope.token, scope.discoveryToken, this.config.plexToken, this.config.plexFallback?.token].includes(delegated.token)) return;
       const target = new URL(source.pathname, origin);
       // Never forward arbitrary upstream query parameters or credentials.
       if (source.searchParams.get('download') === '1') target.searchParams.set('download','1');

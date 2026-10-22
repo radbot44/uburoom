@@ -194,7 +194,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex');
       const fallback=()=>{
         if(config.plexFallback?.enabled===false)throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
-        return config.plexFallback?.token ? plex.scope(config.plexFallback.token,'configured-fallback') : plex;
+        return plexAuth.fallback();
       };
       if(!identity)return fallback();
       if(!registry.hasCredential(identity.subject))throw new Error('Connect your Plex account again');

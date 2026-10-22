@@ -33,6 +33,36 @@ test('previous JWT credentials still renew through their registered signing key'
   await auth.validate(verified.credential,'101');assert.ok(verified.credential.expires>Date.now());assert.ok(provider.requests.some(r=>r.path==='/api/v2/auth/token'));
 });
 
+test('configured account fallback resolves its own PMS token and keeps discovery credentials separate',async t=>{
+  const provider=accountFixture(),accounts=new Accounts(),config={plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',
+    plexFallback:{enabled:true,token:'fixture-user-102'},plexDelivery:{mode:'auto',clientUrl:'https://plex.example',fallback:true}};
+  let rawChecks=0,rawStatus=401;
+  const fetcher=async(input,options={})=>{
+    const url=new URL(input),token=options.headers?.['X-Plex-Token'];
+    if(url.hostname==='plex-fixture.invalid'&&token==='fixture-user-102'){rawChecks++;return new Response(null,{status:rawStatus});}
+    if(url.pathname==='/security/token'){
+      assert.equal(token,'fixture-server-102','only the resolved non-owner PMS credential delegates');
+      return Response.json({MediaContainer:{token:'transient-resolved-fallback'}});
+    }
+    if(url.pathname==='/api/v2/resources'){
+      assert.equal(token,'fixture-user-102','discovery uses the account credential');
+      const response=await provider.fetch(input,options);if(!response.ok)return response;
+      return Response.json((await response.json()).map(resource=>({...resource,owned:false,connections:[{uri:'https://plex.example',protocol:'https',relay:false}]})));
+    }
+    return provider.fetch(input,options);
+  };
+  const plex=new Plex(config,fetcher),auth=new PlexAuth(config,accounts,plex,fetcher);t.after(()=>{accounts.close();plex.close();});
+  const scopes=await Promise.all([auth.fallback(),auth.fallback()]);
+  assert.equal(rawChecks,1,'concurrent fallback discovery is collapsed');assert.equal(scopes[0],scopes[1]);
+  const scope=scopes[0];assert.equal(scope.token,'fixture-server-102');assert.equal(scope.discoveryToken,'fixture-user-102');
+  const {PlexDelivery}=require('../server/plex-delivery'),delivery=new PlexDelivery(config,plex,auth,async()=>auth.fallback());
+  const direct=await delivery.file({kind:'plex',format:'file',start:'http://plex-fixture.invalid:32400/library/parts/1/file.mp4',plexContext:scope},{identity:{},actor:{}},async()=>true);
+  assert.equal(new URL(direct).searchParams.get('X-Plex-Token'),'transient-resolved-fallback');
+  await assert.rejects(scope.json('/library/metadata/999'),error=>error.status===404,'item restrictions never switch to owner access');
+  provider.revoked.add('102');auth.clear();await assert.rejects(auth.fallback(),error=>error.revoked===true);
+  provider.revoked.clear();auth.clear();rawStatus=403;await assert.rejects(auth.fallback(),error=>error.status===403,'library denials do not trigger token resolution');
+});
+
 test('account IDs persist, owner reservations resolve exact subjects, conflicting merges roll back, and credentials are authenticated ciphertext',async()=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-accounts-')),vault=credentialVault(path.join(directory,'key')),file=path.join(directory,'accounts.sqlite');
   let accounts=new Accounts(file,vault);

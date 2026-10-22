@@ -107,8 +107,8 @@ test('fallback can be disabled or use a separate configured token without becomi
   const f=await fixture(t,{plexFallback:{enabled:false,token:''}}),browser=f.browser();await browser.discord();
   const me=(await browser.request('/api/watch/me')).body;
   await assert.rejects(f.app.hub.plexFor({userId:me.account.id}),/fallback is disabled/);
-  f.config.plexFallback={enabled:true,token:'dedicated-fixture-token'};
-  const scoped=await f.app.hub.plexFor({userId:me.account.id});assert.equal(scoped.token,'dedicated-fixture-token');
+  f.config.plexFallback={enabled:true,token:'fixture-server-102'};
+  const scoped=await f.app.hub.plexFor({userId:me.account.id});assert.equal(scoped.token,'fixture-server-102');
   assert.ok(!me.account.identities.some(identity=>identity.provider==='plex'));
 });
 
