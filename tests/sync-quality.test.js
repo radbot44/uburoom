@@ -2,14 +2,15 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const quality=require('../web/sync-quality');
 
-test('sync quality uses p95 presentation error, jitter range and measured buffering only',()=>{
-  const errors=Array.from({length:19},()=>30).concat(300);
-  assert.equal(quality.percentile95(errors),30);
-  const score=quality.calculate({errorsMs:errors,jitterMs:0,bufferSeconds:0});
-  assert.equal(score,Math.exp(-((30/150)**2)));
-  assert.equal(quality.calculate({errorsMs:errors,jitterMs:undefined,bufferSeconds:0}),undefined);
-  assert.equal(quality.calculate({errorsMs:errors,jitterMs:0,bufferSeconds:undefined}),undefined);
-  assert.equal(quality.calculate({errorsMs:errors,jitterMs:0,bufferSeconds:-1}),undefined);
+test('sync quality uses p95 excess presentation error and measured buffering, never jitter',()=>{
+  const errors=Array.from({length:19},()=>200).concat(300);
+  assert.equal(quality.percentile95(errors),200);
+  const score=quality.calculate({errorsMs:errors,bufferSeconds:0});
+  assert.equal(score,Math.exp(-(((200-100)/250)**2)));
+  assert.equal(quality.calculate({errorsMs:errors,jitterMs:100000,bufferSeconds:0}),score);
+  assert.equal(quality.calculate({errorsMs:Array(10).fill(100),bufferSeconds:0}),1);
+  assert.equal(quality.calculate({errorsMs:errors,bufferSeconds:undefined}),undefined);
+  assert.equal(quality.calculate({errorsMs:errors,bufferSeconds:-1}),undefined);
 });
 
 test('sync quality levels preserve the specified inclusive boundaries',()=>{
@@ -25,25 +26,28 @@ test('tracker samples at most once per second, waits for valid clock and RTT evi
     at=i*1000;assert.equal(tracker.sample({at,errorMs:10,eligible:true,context,clockRevision}),true);
     if(i===0)assert.equal(tracker.sample({at:at+10,errorMs:500,eligible:true,context,clockRevision}),false);
   }
-  const timing={jitterMs:0,rttSampleCount:4,clockValid:true,clockAgeMs:0,active:true};
+  const timing={rttSampleCount:4,clockValid:true,clockAgeMs:0,active:true};
   assert.deepEqual(tracker.refresh({at:9000,...timing}),{status:'unknown'});
   tracker.sample({at:10000,errorMs:10,eligible:true,context,clockRevision});
-  const first=tracker.refresh({at:10000,...timing,rttSampleCount:5});
-  assert.equal(first.status,'known');assert.equal(first.updated,true);assert.equal(first.score,Math.exp(-((10/150)**2)));
+  const first=tracker.refresh({at:10000,...timing,rttSampleCount:5,jitterMs:10000});
+  assert.equal(first.status,'known');assert.equal(first.updated,true);assert.equal(first.score,1);
   const held=tracker.refresh({at:12000,...timing,rttSampleCount:5});assert.equal(held.updated,false);assert.equal(held.score,first.score);
   const stale=tracker.refresh({at:14000,...timing,rttSampleCount:5,active:false});assert.deepEqual(stale,{status:'unknown'});
 });
 
-test('stable absolute RTT does not enter the score; jitter range and actual buffer duration do',()=>{
+test('RTT jitter does not affect score; actual buffer duration does',()=>{
   const context='room:viewer:media:stream',tracker=quality.create();
   for(let i=0;i<10;i++)tracker.sample({at:i*1000,errorMs:0,eligible:true,context,clockRevision:1});
-  const stable=tracker.refresh({at:10000,jitterMs:1,rttSampleCount:5,clockValid:true,clockAgeMs:0,active:true});
-  assert.equal(stable.score,Math.exp(-((1/100)**2)));
-  assert.equal(tracker.startBuffer({at:10001,eligible:true}),true);
-  assert.equal(tracker.endBuffer({at:13001}),true);
-  assert.equal(tracker.bufferedSeconds(13001),3);
-  tracker.sample({at:14000,errorMs:0,eligible:true,context,clockRevision:1});
-  const buffered=tracker.refresh({at:15000,jitterMs:1,rttSampleCount:5,clockValid:true,clockAgeMs:0,active:true});
+  tracker.sample({at:10000,errorMs:0,eligible:true,context,clockRevision:1});
+  const stable=tracker.refresh({at:10000,rttSampleCount:5,clockValid:true,clockAgeMs:0,active:true,jitterMs:1});
+  for(let i=11;i<=15;i++)tracker.sample({at:i*1000,errorMs:0,eligible:true,context,clockRevision:1});
+  const jittered=tracker.refresh({at:15000,rttSampleCount:5,clockValid:true,clockAgeMs:0,active:true,jitterMs:100000});
+  assert.equal(stable.score,1);assert.equal(jittered.score,stable.score);
+  assert.equal(tracker.startBuffer({at:15001,eligible:true}),true);
+  assert.equal(tracker.endBuffer({at:18001}),true);
+  assert.equal(tracker.bufferedSeconds(18001),3);
+  tracker.sample({at:19000,errorMs:0,eligible:true,context,clockRevision:1});
+  const buffered=tracker.refresh({at:20000,rttSampleCount:5,clockValid:true,clockAgeMs:0,active:true});
   assert.equal(buffered.status,'known');assert.ok(buffered.score<stable.score);
 });
 

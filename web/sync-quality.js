@@ -9,11 +9,12 @@
     const sorted = values.slice().sort((a,b) => a-b);
     return sorted[Math.max(0,Math.ceil(sorted.length*.95)-1)];
   }
-  function calculate({errorsMs,jitterMs,bufferSeconds}) {
+  function calculate({errorsMs,bufferSeconds}) {
     const error95Ms = percentile95(errorsMs);
-    if (error95Ms === undefined || !finite(jitterMs) || jitterMs < 0 || !finite(bufferSeconds) || bufferSeconds < 0) return undefined;
-    const score = Math.exp(-(((error95Ms/150)**2) + ((jitterMs/100)**2) + (bufferSeconds/3)));
-    return finite(score) ? Math.max(0,Math.min(1,score)) : undefined;
+    if (error95Ms === undefined || !finite(bufferSeconds) || bufferSeconds < 0) return undefined;
+    const excessSyncError = Math.max(0,error95Ms-100);
+    const quality = Math.exp(-(((excessSyncError/250)**2) + (bufferSeconds/3)));
+    return finite(quality) ? Math.max(0,Math.min(1,quality)) : undefined;
   }
   function level(score) {
     if (!finite(score) || score < 0 || score > 1) return undefined;
@@ -58,7 +59,7 @@
       return buffers.reduce((total,entry) => total+Math.max(0,Math.min(at,entry.end)-Math.max(start,entry.start))/1000,0) +
         (bufferStart === undefined ? 0 : Math.max(0,at-Math.max(start,bufferStart))/1000);
     }
-    function refresh({at = now(),jitterMs,rttSampleCount,clockValid,clockAgeMs,active = false} = {}) {
+    function refresh({at = now(),rttSampleCount,clockValid,clockAgeMs,active = false} = {}) {
       if (!finite(at)) return {status:'unknown'};
       errors = errors.filter(value => at-value.at <= WINDOW_MS);
       buffers = buffers.filter(value => at-value.end <= WINDOW_MS);
@@ -69,7 +70,7 @@
         return {status:'unknown'};
       }
       const raw = errors.length >= MIN_SYNC_SAMPLES && finite(rttSampleCount) && rttSampleCount >= MIN_RTT_SAMPLES ?
-        calculate({errorsMs:errors.map(value => value.error),jitterMs,bufferSeconds:bufferedSeconds(at)}) : undefined;
+        calculate({errorsMs:errors.map(value => value.error),bufferSeconds:bufferedSeconds(at)}) : undefined;
       if (raw === undefined) return {status:'unknown'};
       if (lastCalculatedAt !== undefined && at-lastCalculatedAt < REFRESH_INTERVAL_MS) return smoothed === undefined ? {status:'unknown'} : {status:'known',score:smoothed,updated:false};
       smoothed = smoothed === undefined ? raw : smoothed*.65+raw*.35;

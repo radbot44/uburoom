@@ -67,7 +67,7 @@ function observeSyncQuality(errorMs,timing) {
 }
 function refreshSyncQuality() {
   const timing=playbackClock.read(), active=syncQualityBuffering || syncQualityEligible(timing,{allowWaiting:true,forBuffer:true});
-  const result=syncQuality.refresh({at:performance.now(),jitterMs:timing.networkJitterMs,rttSampleCount:timing.networkRttSampleCount,
+  const result=syncQuality.refresh({at:performance.now(),rttSampleCount:timing.networkRttSampleCount,
     clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,active});
   if(result.status==='known') {
     if(result.updated || publishedSyncQualityStatus!=='known')sendSyncQuality('known',result.score);
