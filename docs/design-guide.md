@@ -145,6 +145,7 @@ Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sectio
 ### Navigation and dropdowns
 
 - **Media library names** are subnavigation, not segmented choices. Mark the current library with `aria-current`. Hide this subnavigation in the existing narrow Media container layout (around **440px**), while leaving other navigation available.
+- Browse media, Home, library tabs and item navigation keep the current scroll position when any media card or item is visible, even partially. Do not pull a Media section that is already visible below the viewport’s top edge up to that edge. If Media is out of view, reveal its beginning with the sticky header and toolbar above the first content row, without covering the cards. Apply this to page and drawer scrolling.
 - Use native dropdowns for **long or dynamic** lists and for video settings on mobile; desktop video settings can keep nested menus.
 - Show known-but-unavailable fixed options as **disabled with a readable reason**. Don't invent unavailable audio/subtitle tracks that aren't present in the data.
 - When no usable subtitle tracks exist, the subtitle toggle tooltip and disabled settings-menu entry say **No subtitles available**. When no usable audio tracks exist, the disabled audio settings-menu entry says **No audio available**. Keep the native track selectors disabled too, with a plain **Automatic** option. Omit subtitle **Off** when no subtitles are available. Never append an unavailable-track message to Automatic.

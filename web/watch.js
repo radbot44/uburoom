@@ -1385,7 +1385,7 @@ $('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved
 function browseMedia() {
   const panel = $('library-panel');
   if (immersive) { toggleDrawer(true); selectSection('media'); }
-  else { selectSection('media'); panel.scrollIntoView({behavior:'smooth'}); }
+  else { selectSection('media'); library.reveal('smooth'); }
   panel.classList.remove('media-glow');
   void panel.offsetWidth;
   panel.classList.add('media-glow');

@@ -155,7 +155,21 @@
       roomForScroll(desired); root.scrollTop = desired;
     }
     function restoreScroll(value) { const current = screen, version = generation; requestAnimationFrame(() => { if (room && screen === current && generation === version) scrollElement().scrollTop = value; }); }
-    function positionLibrary() { const root = scrollElement(), desired = Math.max(0,root.scrollTop + host.getBoundingClientRect().top - viewport(root).top); roomForScroll(desired); root.scrollTop = desired; }
+    function positionLibrary(behavior = 'instant') {
+      const root = scrollElement(), box = viewport(root), rect = host.getBoundingClientRect();
+      const contentTop = Math.max(box.top,header?.getBoundingClientRect().bottom || box.top,tools.hidden ? box.top : tools.getBoundingClientRect().bottom);
+      const visible = [...host.querySelectorAll('.library-tile,.library-home-card,.library-overview')].some(item => {
+        const bounds = item.getBoundingClientRect();
+        return bounds.width > 0 && bounds.height > 0 && bounds.bottom > contentTop && bounds.top < box.bottom;
+      });
+      if (visible || (rect.top >= box.top && rect.top < box.bottom)) return;
+      // The content host starts after the header. Aligning it to the viewport
+      // would put the first row underneath that sticky header.
+      const panel = host.closest('#library-panel') || host;
+      const desired = Math.max(0,root.scrollTop + panel.getBoundingClientRect().top - box.top);
+      roomForScroll(desired);
+      root.scrollTo({top:desired,behavior});
+    }
     const pageObserver = new IntersectionObserver(entries => {
       if (entries.some(x => x.isIntersecting) && room && screen?.kind !== 'details' && screen?.kind !== 'home' && screen?.nextOffset != null && !screen.loading && !screen.pageError) void loadPage(true);
     }, {rootMargin:'320px 0px'});
@@ -482,15 +496,17 @@
       screen = {...context(screen.section,screen.tab),title:item.title,kind:playable(item) ? 'details' : item.type,detail:item,sort:'default'};
       if (item.type === 'collection') screen.collection = item.id; else if (!playable(item)) screen.parent = item.id;
       pushVisit(); renderResults(); positionLibrary();
-      doc.getElementById('library-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       void getDetails(item,screen); if (!playable(item)) await loadPage();
     }
     function navigateCrumb(entry) {
       const index = trail.indexOf(entry); if (index < 0) return;
-      prepareNavigation(); screen = entry; trail = trail.slice(0,index); pushVisit(); restoreScreen();
+      prepareNavigation(); screen = entry; trail = trail.slice(0,index); pushVisit(); restoreScreen(true);
     }
-    function restoreScreen() {
-      reserveHeight(); screen.loading = false; renderResults(); if (screen.anchor?.id) restoreAnchor(screen.anchor); else { roomForScroll(screen.scroll); restoreScroll(screen.scroll); }
+    function restoreScreen(reveal = false) {
+      reserveHeight(); screen.loading = false; renderResults();
+      if (reveal) positionLibrary();
+      else if (screen.anchor?.id) restoreAnchor(screen.anchor);
+      else { roomForScroll(screen.scroll); restoreScroll(screen.scroll); }
       const current = screen; requestAnimationFrame(() => { if (screen === current && current.focusItem) [...results.querySelectorAll('.library-tile')].find(n => n.dataset.item === current.focusItem)?.querySelector('.library-open')?.focus({preventScroll:true}); });
       if (screen.detail && !screen.detailsLoaded) void getDetails(screen.detail,screen);
       if (!['details','home'].includes(screen.kind)) { if (screen.dirty) void query(); else if (!screen.items.length && screen.total == null) void loadPage(); }
@@ -513,7 +529,7 @@
       const section = id === 'demo' ? undefined : id;
       const saved = homes.get(id + ':' + tab);
       screen = saved || context(section,tab); pushVisit();
-      if (saved) restoreScreen(); else { renderResults(); positionLibrary(); void loadPage(); }
+      if (saved) restoreScreen(true); else { renderResults(); positionLibrary(); void loadPage(); }
       if (filterSection !== section) void fetchFacets(section);
     }
     async function query() { clearTimeout(timer); screen.dirty = false; screen.items = []; screen.nextOffset = null; reserveHeight(); const promise = loadPage(); positionLibrary(); await promise; }
@@ -544,7 +560,7 @@
       }
       await start();
     }
-    return {setRoom,setBusy,openItem,refreshAdmin:()=>{if(screen?.kind==='home')renderLanding();}};
+    return {setRoom,setBusy,openItem,reveal:positionLibrary,refreshAdmin:()=>{if(screen?.kind==='home')renderLanding();}};
   }
   global.uburoomLibrary = {mount};
 })(globalThis);

@@ -61,6 +61,10 @@ A/B: Chrome/Firefox rendered checks pass click/keyboard toast dismissal, fullscr
 
 A/B: Chrome/Firefox desktop and 390px mobile inspection passes empty/all-unavailable track lists, exact unavailable labels, disabled track menu rows/selectors, plain Automatic, omitted subtitle Off, and restoration when usable tracks return. Temporary procedure: `node artifacts/track-availability-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792683850084/`. No permanent tests added; full suite and real-provider checks not run. Human acceptance remains open.
 
+## Media navigation scrolling — 2026-10-22
+
+A/B: Chrome/Firefox fixture checks pass partially visible content preserving page position for Browse, Home and new/cached library tabs; out-of-view Browse and Home jumps leave first cards below the sticky header. Desktop, 390px mobile and fullscreen drawer checked and captures inspected. Procedure: `node artifacts/media-scroll-inspect.cjs`; ignored captures `artifacts/media-scroll-chrome/` and `artifacts/media-scroll-firefox/`. No permanent tests added; full suite, real-provider checks and human acceptance not run.
+
 ## Latest evidenced results (historical; not rerun)
 
 | Date / scope | Last recorded pass or observation | Limitation and evidence |
