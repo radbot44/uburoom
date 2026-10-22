@@ -72,8 +72,8 @@ select,input[type=search]{border:1px solid var(--border);background:var(--elevat
 .library-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px;height:48px;min-height:48px;box-sizing:border-box}
 #library-panel>.library-header{background:var(--card);border-radius:0}
 body:not(.immersive) :is(#app,.screen-column)>#library-panel>.library-header{position:sticky;top:0;z-index:6;isolation:isolate;background:var(--card)}
-#library-heading{font-size:18px;font-weight:700;letter-spacing:-.03em;margin:0;line-height:36px;white-space:nowrap;color:var(--text);display:flex;align-items:center;height:36px;min-height:36px;box-sizing:border-box}
-.library-header-left{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
+#library-heading{font-size:18px;font-weight:700;letter-spacing:-.03em;margin:0;line-height:40px;white-space:nowrap;color:var(--text);display:flex;align-items:center;height:40px;min-height:40px;box-sizing:border-box}
+.library-header-left{display:flex;align-items:center;gap:var(--watch-group-gap);min-width:0;flex:1}
 .library-header-right{display:flex;align-items:center;gap:8px;flex:none}
 #library-top{display:none;font-size:12px;padding:0 12px;height:36px;min-height:36px;white-space:nowrap;border-radius:10px;box-sizing:border-box}
 body.theater:not(.immersive) #library-top{display:inline-flex;align-items:center;flex:none}
@@ -107,7 +107,7 @@ body:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-
 .room-column{display:flex;flex-direction:column;gap:18px;min-width:0}
 .oomark-icon{display:inline-block;width:22px;height:20px;flex:none;fill:none;stroke:currentColor}
 #room-symbol,#media-symbol{color:var(--accent-text)}
-#media-symbol{display:flex;margin-right:9px}#media-symbol svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#media-symbol{display:flex;margin-right:0}#media-symbol svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #section-tabs{display:flex;align-items:center;gap:4px;background:var(--card);padding:5px;border-radius:15px;min-width:0}
 #section-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-width:0;min-height:44px;padding:8px;border-radius:11px;background:none;color:var(--muted);font-weight:600}
 #section-tabs button[aria-selected=true]{background:var(--primary);color:var(--on-primary)}
@@ -394,6 +394,7 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 
 /* Standard icon surfaces apply across headers; nonclickable controls are indicators. */
 :is(button:disabled,button[aria-disabled=true],.watch-control:disabled,#options-panel .watch-control:disabled,#room-dialog .watch-control:disabled,#room-settings-dialog .watch-control:disabled){background:transparent;cursor:default}
+:is(#queue-panel,#library-panel) .watch-control.watch-control-solid-disabled:disabled{background:var(--elevated);color:var(--muted);opacity:1}
 .watch-permission-pill:is(.is-readonly,.is-disabled){background:transparent}
 #room-settings-dialog .permission-view-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;min-height:40px}
 .room-permission-table th,.room-permission-table td{padding:2px 5px}

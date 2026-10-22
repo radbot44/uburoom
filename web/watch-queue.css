@@ -60,7 +60,6 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-check{display:flex!important;align-items:center;gap:var(--watch-control-gap);min-height:44px;font-size:12px}
 #queue-auto-open{color:var(--muted)}
 .queue-footer-actions{justify-content:flex-end;margin-left:auto}
-#queue-content .queue-footer-actions .watch-control:disabled{background:var(--elevated);color:var(--muted);opacity:1}
 
 /* One timeline, horizontal posters or vertically scrolling rows. */
 .queue-header{display:grid;grid-template-columns:1fr auto}

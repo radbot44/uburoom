@@ -11,37 +11,46 @@
     function option(select, value, label) { const n = node('option',select,label); n.value = value; }
     function select(parent, label) { const s = node('select',parent); s.setAttribute('aria-label',label); return s; }
     const header = doc.getElementById('library-header') || host.closest('#library-panel')?.querySelector('.library-header');
+    const controls = global.uburoomControls;
+    header?.classList.add('watch-panel-header');
+    header?.querySelector('h2')?.classList.add('watch-panel-heading');
     const headerLeft = doc.getElementById('library-header-left') || header?.querySelector('.library-header-left');
     const headerRight = doc.getElementById('library-header-right') || header?.querySelector('.library-header-right');
     const scopeActions = node('div',headerRight || host,undefined,'library-scope-actions');
     scopeActions.hidden = true;
     const topWrap = headerRight?.querySelector('.library-top');
     if (topWrap) headerRight.insertBefore(scopeActions,topWrap);
+    if (topWrap) controls.content(topWrap.querySelector('button'),{label:'Back to top'});
     const navParent = headerLeft || host;
-    const historyGroup = node('div',navParent,undefined,'icon-group library-navigation-history');
+    const historyGroup = node('div',navParent,undefined,'library-navigation-history watch-control-group watch-header-actions');
     historyGroup.setAttribute('role','group'); historyGroup.setAttribute('aria-label','Navigation');
     const previous = button(historyGroup,'Back','left','library-key'); previous.id = 'library-back';
     const next = button(historyGroup,'Forward','right','library-key'); next.id = 'library-forward';
     const home = button(historyGroup,'Libraries home','home','library-key'); home.id = 'library-home';
-    const choices = node('div',navParent,undefined,'library-choices pills'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
+    for (const [control,label,icon] of [[previous,'Back','left'],[next,'Forward','right'],[home,'Libraries home','home']]) {
+      controls.content(control,{label,icon,iconOnly:true}); control.classList.add('watch-control-solid-disabled');
+    }
+    const choices = node('div',navParent,undefined,'library-choices watch-segmented watch-segmented-view'); choices.setAttribute('role','group'); choices.setAttribute('aria-label','Libraries');
     const crumbs = node('nav',navParent,undefined,'library-crumbs'); crumbs.setAttribute('aria-label','Library location');
     const tools = node('div',host,undefined,'library-tools');
-    const row = node('div',tools,undefined,'library-toolbar');
+    const row = node('div',tools,undefined,'library-toolbar watch-toolbar');
     const searchField = node('label',row,undefined,'search-field');
     searchField.append(uburoomIcons.icon(doc,'search'));
     const search = node('input',searchField); search.type = 'search'; search.id = 'search'; search.placeholder = 'Search this library'; search.setAttribute('aria-label','Search this library'); search.maxLength = 200;
-    const toolControls = node('div',row,undefined,'tool-controls');
+    const toolControls = node('div',row,undefined,'tool-controls watch-control-group');
     const sortWrap = node('div',toolControls,undefined,'sort-wrap');
     const sort = select(sortWrap,'Sort library'); sort.id = 'library-sort';
     sortWrap.append(uburoomIcons.icon(doc,'chevron'));
     const direction = button(toolControls,'Ascending','sort','library-key library-direction'); direction.id = 'library-direction';
+    controls.content(direction,{label:'Ascending',icon:'sort',iconOnly:true}); direction.classList.add('watch-control-solid-disabled');
     const filterHolder = node('div',toolControls,undefined,'filter-holder');
-    const filterButton = button(filterHolder,'Filters','filter','library-key'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
-    const views = node('div',toolControls,undefined,'library-views view-switch'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
+    const filterButton = button(filterHolder,'Filters','filter','library-key watch-control watch-control-responsive watch-control-solid-disabled'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label watch-control-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
+    const views = node('div',toolControls,undefined,'library-views view-switch watch-segmented watch-segmented-view'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
     const viewButtons = ['cards','list','posters'].map(view => {
-      const b = button(views,view[0].toUpperCase() + view.slice(1),'library' + view[0].toUpperCase() + view.slice(1),'library-key'); b.dataset.view = view;
+      const b = button(views,view[0].toUpperCase() + view.slice(1),'library' + view[0].toUpperCase() + view.slice(1),'library-key group-button'); b.dataset.view = view;
       b.append(node('span',null,view[0].toUpperCase() + view.slice(1))); return b;
     });
+    controls.segmented(views);
     const filters = node('div',tools,undefined,'library-filters'); filters.id = 'library-filters'; filters.hidden = true;
     const genreLabel = node('label',filters,'Genre'); const genre = select(genreLabel,'Genre');
     const yearLabel = node('label',filters,'Year'); const year = select(yearLabel,'Year');
@@ -53,6 +62,7 @@
     const footer = node('div',host,undefined,'library-footer');
     const note = node('p',footer,'','hint'); note.id = 'library-note'; note.setAttribute('role','status'); note.setAttribute('aria-live','polite');
     const retry = button(footer,'Retry','refresh'); retry.append(node('span',null,'Retry')); retry.hidden = true;
+    controls.content(retry,{label:'Retry',icon:'refresh'});
     const sentinel = node('div',host,undefined,'library-sentinel'); sentinel.setAttribute('aria-hidden','true'); sentinel.hidden = true;
     const landing = node('div',host,undefined,'library-landing'); landing.hidden = true;
     overview.before(landing);
@@ -258,8 +268,9 @@
     }
     function autoButton(parent, scope, title) {
       const b = button(parent, 'Random auto-queue from ' + title, 'shuffle', 'queue-control');
+      if (parent === scopeActions) b.classList.add('watch-control','watch-control-responsive','watch-control-solid-disabled');
       b.dataset.autoQueue = scope.id;
-      node('span', b, 'Random auto-queue', 'queue-label');
+      node('span', b, 'Random auto-queue', 'queue-label watch-control-label');
       b.onclick = () => { if (!b.disabled) autoQueue({ scope, title }); };
       return b;
     }
@@ -339,8 +350,14 @@
       navigationControls.forEach(n => { n.disabled = false; });
       previous.disabled = visitIndex === 0; next.disabled = visitIndex >= visits.length - 1;
       home.disabled = screen.kind === 'home';
+      previous.title = previous.disabled ? 'No earlier Media page.' : 'Back';
+      next.title = next.disabled ? 'No later Media page.' : 'Forward';
+      home.title = home.disabled ? 'Already at Libraries home.' : 'Libraries home';
+      const focusedSection = choices.contains(doc.activeElement) ? doc.activeElement.dataset.section : null;
       choices.replaceChildren(); choices.hidden = screen.kind === 'home';
-      sections.forEach(section => { const b = button(choices,section.title,undefined,'library-key library-choice'); b.textContent = section.title; b.dataset.section = section.id; b.setAttribute('aria-pressed',String(section.id === screen.section)); b.onclick = () => void chooseLibrary(section.id,screen.tab); });
+      sections.forEach(section => { const b = button(choices,section.title,undefined,'library-key library-choice group-button'); b.textContent = section.title; b.dataset.section = section.id; b.setAttribute('aria-pressed',String(section.id === screen.section)); b.onclick = () => void chooseLibrary(section.id,screen.tab); });
+      controls.segmented(choices);
+      if (focusedSection) [...choices.querySelectorAll('button')].find(b => b.dataset.section === focusedSection)?.focus();
       crumbs.replaceChildren();
       const path = [{title:'Libraries',action:goHome}];
       if (screen.section) path.push({title:sections.find(x => x.id === screen.section)?.title || screen.title,action:() => void chooseLibrary(screen.section,screen.tab)});
@@ -377,6 +394,7 @@
       option(sort,'random','Random');
       sort.value = screen.sort; direction.disabled = screen.sort === 'default';
       direction.title = direction.ariaLabel = screen.sort === 'random' ? 'Shuffle again' : screen.order === 'asc' ? 'Ascending: switch to descending' : 'Descending: switch to ascending';
+      if (direction.disabled) direction.title = 'Plex order cannot be reversed.';
       direction.replaceChildren(uburoomIcons.icon(doc,screen.sort === 'random' ? 'refresh' : 'sort')); direction.dataset.order = screen.sort === 'random' ? '' : screen.order;
       genre.value = screen.genre; year.value = screen.year;
       chips.replaceChildren();
