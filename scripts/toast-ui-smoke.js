@@ -30,31 +30,31 @@ async function main() {
       await run('transport.onMessage=()=>{}');
       // Use the real state application path, including revision/age filtering.
       await run('globalThis.toastState=state;applyState({...state,transportSequence:stateTransportSequence+1,feedback:{revision:"toast-1",at:Date.now()+offset,action:"media.pause",sender:"Alice <fixture>"}})');
-      assert.equal(await run('$("badge").textContent'), 'Pause by Alice <fixture>');
+      assert.equal(await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'), 'Pause by Alice <fixture>');
       await run('showDisconnectToast();showDisconnectToast()');
-      assert.equal(await run('$("disconnect-toast").children.length'), 1, 'Reconnect updates in place');
-      assert.equal(await run('$("disconnect-toast").textContent'), 'Disconnected from roomReconnecting…');
-      assert.equal(await run('$("badge").querySelector(".watch-toast").classList.contains("loading")'), false, 'Participant icon stays still');
-      assert.equal(await run('$("disconnect-toast").querySelector(".watch-toast").classList.contains("loading")'), true, 'Reconnect icon spins');
+      assert.equal(await run('Number(!!document.querySelector("[data-toast=reconnect]"))'), 1, 'Reconnect updates in place');
+      assert.equal(await run('document.querySelector("[data-toast=reconnect]").textContent'), 'Disconnected from roomReconnecting…');
+      assert.equal(await run('document.querySelector("[data-toast=participant]").classList.contains("loading")'), false, 'Participant icon stays still');
+      assert.equal(await run('document.querySelector("[data-toast=reconnect]").classList.contains("loading")'), true, 'Reconnect icon spins');
       for (const width of [1280, 390]) {
         await browser.viewport(page, width, 900);
         for (const theme of ['dark', 'light']) for (const accent of ['orange', 'pink']) {
-          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.dataset.accent=${JSON.stringify(accent)};participantToasts.show('participant',{title:'Pause by Alice <fixture>',symbol:'pause',duration:2500})`);
+          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.dataset.accent=${JSON.stringify(accent)};toasts.show('participant',{title:'Pause by Alice <fixture>',symbol:'pause',duration:2500})`);
           assert.equal(await run('[...document.querySelectorAll(".watch-toast")].every(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})'), true, 'Toasts fit viewport');
           await browser.screenshot(page, path.join(output, `${name}-${width}-${theme}-${accent}.png`));
         }
       }
       await pause(2700);
-      assert.equal(await run('$("badge").children.length'), 0, 'Participant expires');
-      assert.equal(await run('$("disconnect-toast").children.length'), 1, 'Reconnect remains until cleared');
+      assert.equal(await run('Number(!!document.querySelector("[data-toast=participant]"))'), 0, 'Participant expires');
+      assert.equal(await run('Number(!!document.querySelector("[data-toast=reconnect]"))'), 1, 'Reconnect remains until cleared');
       await run('hideDisconnectToast();applyState({...toastState,transportSequence:stateTransportSequence+1,feedback:{revision:"toast-old",at:Date.now()+offset-4000,action:"media.pause",sender:"Old"}})');
       assert.equal(await run('document.querySelectorAll(".watch-toast").length'), 0, 'Stale feedback stays silent');
       // Superseded notification timers must not dismiss their replacement.
-      await run('participantToasts.show("participant",{title:"First",duration:100});participantToasts.show("participant",{title:"Second",duration:600})');
+      await run('toasts.show("participant",{title:"First",duration:100});toasts.show("participant",{title:"Second",duration:600})');
       await pause(200);
-      assert.equal(await run('$("badge").textContent'), 'Second');
-      await run('participantToasts.clear()');
-      assert.equal(await run('$("badge").children.length'), 0);
+      assert.equal(await run('(document.querySelector("[data-toast=participant]")?.textContent||"")'), 'Second');
+      await run('toasts.clear()');
+      assert.equal(await run('Number(!!document.querySelector("[data-toast=participant]"))'), 0);
       console.log(name + ': PASS toast wiring, replacement, expiry, stale filtering and desktop/mobile theme captures');
     } finally {
       await browser?.close();

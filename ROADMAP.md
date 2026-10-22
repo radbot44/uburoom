@@ -207,7 +207,7 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 ### M1-P7 — In-depth UI/UX review and restructure
 
-**Toast foundation (2026-10-22):** Reconnect and participant feedback now share a reusable toast renderer/lifetime API based on the reconnect card. Existing source positions and timing remain for the owner-requested first step; final design, stacking, close controls and lifetime policies are deferred. Chrome/Firefox fixture checks and the Node suite pass; see [verification](docs/testing.md#toast-foundation-2026-10-22).
+**Toasts:** Reconnect and participant feedback share a compact toast component and one bottom-left video stack. The stack stays visible while scrolling and moves above visible playback controls when space allows. Visibility takes priority over avoiding controls. Further appearance, queue and lifetime refinements remain open.
 
 **Shared controls — Media (2026-10-21):** The owner approved Queue and authorized Media. Media now opts into the shared heading, toolbar, segmented and control contracts, retaining its sticky header/tools, dynamic `--media-header-height`, page/drawer scrolling, catalog/detail actions and responsive layouts. Owner mobile corrections remove the always-visible corner Play affordance, compact the phone header and toolbar, and align the two filter selects; Media detail action buttons stay as they were after owner clarification. Focused Chrome/Firefox browser checks, Room/Queue regressions and the Node suite pass. Before/after captures and limitations are in [Media verification](docs/archive/testing-2026-10-22.md#2026-10-21---shared-controls-media-increment-m1-p7). Owner visual acceptance remains pending; no deployment is authorized.
 

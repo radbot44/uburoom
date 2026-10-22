@@ -133,8 +133,7 @@ function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, 
 for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
-const participantToasts = uburoomToasts.create($('badge'));
-const reconnectToasts = uburoomToasts.create($('disconnect-toast'));
+const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
@@ -546,7 +545,7 @@ function checkVideoFrames() {
 function clearPlayer(reason) {
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
-  participantToasts.clear(); lastFeedback = undefined;
+  toasts.dismiss('participant'); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
   diagnosticSample('player-clear',{reason});
@@ -723,10 +722,10 @@ function connectionLost(details={}) {
   },DISCONNECT_GRACE_MS);
 }
 function showDisconnectToast() {
-  reconnectToasts.show('reconnect', { title: 'Disconnected from room', hint: 'Reconnecting…', symbol: 'refresh', loading: true });
+  toasts.show('reconnect', { title: 'Disconnected from room', hint: 'Reconnecting…', symbol: 'refresh', loading: true });
 }
 function hideDisconnectToast() {
-  reconnectToasts.dismiss('reconnect');
+  toasts.dismiss('reconnect');
 }
 function fullPlayerClear() {
   clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
@@ -1059,7 +1058,7 @@ function applyState(next) {
     lastFeedback = next.feedback.revision;
     const details = uburoomUI.badgeDetails(next.feedback, next.state);
     if (details) {
-      participantToasts.show('participant', {
+      toasts.show('participant', {
         title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : '') + ' by ' + next.feedback.sender,
         symbol: details.symbol, seekSeconds: details.seekSeconds, duration: 2500
       });

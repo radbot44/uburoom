@@ -49,6 +49,10 @@
 
 Development TLS may be required: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/new-dev-cert.ps1`. A missing certificate can yield failures or skips. Browser tools can start isolated servers and write ignored `artifacts/`; they do not use production accounts. Preserve separate C/D verification for live PMS/Discord, hardware/physical playback, and owner review; no synthetic runner certifies those.
 
+## Toast positioning — 2026-10-22
+
+A/B: shared bottom-left stack inspected in Chrome and Firefox at 1280px and 390px, with hidden/visible controls, partial/full page scrolling, visibility taking priority over controls, theater and actual browser fullscreen entry/exit. Temporary procedure: `node artifacts/toast-position-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792647085379/`. Existing `node scripts/toast-ui-smoke.js` passes in both browsers; `node --test tests/watch-recovery.test.js`: 12 passed, 0 failed, 0 skipped. Checks used disposable accounts and synthetic notifications; layout states were held for inspection. No new permanent tests. Full suite and real-provider/device checks were not run; human visual acceptance remains open.
+
 ## Latest evidenced results (historical; not rerun)
 
 | Date / scope | Last recorded pass or observation | Limitation and evidence |

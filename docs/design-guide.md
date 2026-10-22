@@ -169,9 +169,11 @@ Use stable accessible names: **Admin mode** uses checked switch state; **Room pr
 
 ### General toasts
 
-**Owner-authorized first increment (2026-10-22):** Extract the existing reconnect notification into a shared Watch toast component and route participant action feedback through it, using the reconnect card appearance. Preserve the reconnect grace/recovery behavior and participant feedback eligibility, wording and 2.5-second lifetime. For this interim step, retain the existing player positions (participant top-left, reconnect bottom-left) and one replaceable notification per source. Final design, stacking/queue policy, close controls and lifetime refinements are deferred to the next owner-directed step; the general target below remains pending for this component.
+All Watch notifications use the shared toast component and the compact reconnect-card appearance. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
 
-Use general action-result toasts at **bottom-right on desktop** and **bottom-center on mobile**. Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
+All toasts share one stack at the **bottom-left of the video**, on desktop and mobile. Keep the stack inside the visible page: when scrolling would move it above the viewport, pin it to the **top edge of the page**. Move it above visible playback controls whenever there is room. **Visibility takes priority:** if avoiding the controls would push the stack offscreen, keep it visible even when it overlaps the controls. Keep the same positioning behavior in theater and fullscreen modes.
+
+Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
 
 | Toast | Duration |
 |---|---|

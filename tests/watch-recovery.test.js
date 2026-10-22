@@ -221,7 +221,7 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   const $ = id => elements[id];
   const context = {
     $: $,
-    reconnectToasts: {
+    toasts: {
       show(id, options) { toast.hidden = false; icons.push(options.symbol); },
       dismiss() { toast.hidden = true; }
     },
