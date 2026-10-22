@@ -147,6 +147,7 @@ Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sectio
 - **Media library names** are subnavigation, not segmented choices. Mark the current library with `aria-current`. Hide this subnavigation in the existing narrow Media container layout (around **440px**), while leaving other navigation available.
 - Use native dropdowns for **long or dynamic** lists and for video settings on mobile; desktop video settings can keep nested menus.
 - Show known-but-unavailable fixed options as **disabled with a readable reason**. Don't invent unavailable audio/subtitle tracks that aren't present in the data.
+- When no usable subtitle tracks exist, the subtitle toggle tooltip and disabled settings-menu entry say **No subtitles available**. When no usable audio tracks exist, the disabled audio settings-menu entry says **No audio available**. Keep the native track selectors disabled too, with a plain **Automatic** option. Omit subtitle **Off** when no subtitles are available. Never append an unavailable-track message to Automatic.
 - For leadership transfer: **2–3 eligible hosts → segmented selector; 4+ → labeled dropdown**. Choosing someone does not trigger the separate **Transfer** button.
 
 ## 6. Special icon controls

@@ -57,6 +57,10 @@ A/B: Chrome and Firefox checks at 1280px/390px pass 40px height, 24px icons, 14p
 
 A/B: Chrome/Firefox rendered checks pass click/keyboard toast dismissal, fullscreen dismissal without playback activation, bell on/off states, suppression without replay, subtitle on/off icons and white active color, and disabled subtitles when none are available. Toolbar fits at 1280/390/320px. Temporary procedure: `node artifacts/toast-toggle-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792682915764/`. Official Tabler outline SVGs vendored with the existing MIT notice retained. No permanent tests added; full suite and real-provider/device checks not run. Human visual acceptance remains open.
 
+## Unavailable media tracks — 2026-10-22
+
+A/B: Chrome/Firefox desktop and 390px mobile inspection passes empty/all-unavailable track lists, exact unavailable labels, disabled track menu rows/selectors, plain Automatic, omitted subtitle Off, and restoration when usable tracks return. Temporary procedure: `node artifacts/track-availability-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792683850084/`. No permanent tests added; full suite and real-provider checks not run. Human acceptance remains open.
+
 ## Latest evidenced results (historical; not rerun)
 
 | Date / scope | Last recorded pass or observation | Limitation and evidence |

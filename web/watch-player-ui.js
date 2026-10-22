@@ -62,6 +62,7 @@
       beforeSettings(); opened=true; menu.showPopover(); stage.classList.add('settings-open'); cog.setAttribute('aria-expanded','true'); render(); placeMenu(); menu.querySelector('button:not(:disabled)')?.focus(); showChrome();
     }
     function openChoices(id) {
+      if($(id).disabled)return;
       activeChoice=id; choiceSignature=undefined; submenu.hidden=false;
       submenu.setAttribute('aria-label',choices.find(choice=>choice[0]===id)[1]);
       rows.forEach(({id:other,row})=>row.setAttribute('aria-expanded',String(other===id)));
@@ -83,7 +84,7 @@
         if (select.value==='auto' && option.value===resolved) {
           const marker=document.createElement('span'); marker.className='settings-auto'; marker.textContent='Used by Automatic'; b.append(marker);
         }
-        if (option.value==='auto' && activeChoice==='subtitle-track' && !resolved) {
+        if (option.value==='auto' && activeChoice==='subtitle-track' && !resolved && trackRows.some(track=>track.available)) {
           const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent='Currently Off'; b.append(caption);
         }
         b.setAttribute('role','menuitemradio'); b.setAttribute('aria-checked',String(option.value===select.value));
@@ -98,16 +99,17 @@
       badge.hidden=!badge.textContent;
       const enabled=!!tracks?.subtitleId, available=tracks?.subtitles.some(t=>t.available);
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
-      cc.setAttribute('aria-pressed',String(enabled)); cc.title=cc.ariaLabel=enabled?'Disable subtitles':'Enable subtitles';
+      cc.setAttribute('aria-pressed',String(enabled)); cc.title=cc.ariaLabel=!available?'No subtitles available':enabled?'Disable subtitles':'Enable subtitles';
       const symbol=enabled?'subtitles':'subtitles-off';
       if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomIcons.icon(document,symbol));cc.dataset.symbol=symbol;}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {
         const select=$(id), audio=id==='audio-track';
         const track=id==='quality'?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
+        const hasTracks=id==='quality'||(audio?tracks?.audio:tracks?.subtitles)?.some(track=>track.available);
         row.disabled=select.disabled;
-        value.textContent=id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
-        if (track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
+        value.textContent=!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
+        if (hasTracks && track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
         value.title=value.textContent;
       }
       if(opened){renderChoices(); placeMenu();}

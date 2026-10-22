@@ -910,14 +910,20 @@ function renderTracks() {
     const options=[...choices,...(rows || []).map(row=>({id:row.id,label:[uburoomPlayerUI.trackLabel(row),row.title].filter(Boolean).join(' — '),disabled:!row.available}))];
     const element=$(id), signature=JSON.stringify(options);
     if(element.dataset.options!==signature){element.replaceChildren(...options.map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=row.label;option.disabled=!!row.disabled;return option;}));element.dataset.options=signature;}
-    element.value=value || 'auto'; element.disabled=!available || pending || qualityPending;
+    const hasTracks=rows?.some(row=>row.available);
+    element.value=value || 'auto';
+    if(element.selectedIndex<0)element.value='auto';
+    element.disabled=!available || !hasTracks || pending || qualityPending;
+    element.title=hasTracks?'':id==='audio-track'?'No audio available':'No subtitles available';
   };
-  render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic (Plex)'}],tracks?.audioChoice);
-  render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic (Plex)'},{id:'off',label:'Off'}],tracks?.subtitleChoice);
+  const audioAvailable=tracks?.audio.some(row=>row.available), subtitlesAvailable=tracks?.subtitles.some(row=>row.available);
+  render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic'}],tracks?.audioChoice);
+  render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic'},...(subtitlesAvailable?[{id:'off',label:'Off'}]:[])],tracks?.subtitleChoice);
   const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), delivery=tracks?.subtitleDelivery || subtitle?.delivery,burned=delivery==='burn';
   subtitleMode.value=tracks?.subtitleMode || 'auto';subtitleMode.disabled=!available || pending || qualityPending || !subtitle;
-  $('audio-track-status').textContent=audio ? [uburoomPlayerUI.trackLabel(audio),state.format!=='file' && audio.channels!==2 && 'Stereo playback'].filter(Boolean).join(' · ') : '';
+  $('audio-track-status').textContent=!audioAvailable?'No audio available':audio ? [uburoomPlayerUI.trackLabel(audio),state.format!=='file' && audio.channels!==2 && 'Stereo playback'].filter(Boolean).join(' · ') : '';
   for (const [id,track] of [['audio-track-name',audio],['subtitle-track-name',subtitle]]) { $(id).textContent=track?.title || ''; $(id).hidden=!track?.title; }
+  if(!subtitlesAvailable){$('subtitle-track-name').textContent='No subtitles available';$('subtitle-track-name').hidden=false;}
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
   $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
