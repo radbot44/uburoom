@@ -48,11 +48,11 @@ Third-party code retains its own licenses and [bundled notices](web/vendor/THIRD
 The reusable display-word generator is available from `require('./web/ubumfa')` in Node or `window.uburoomUbumfa` in the browser:
 
 ```js
-const {generateName, ubumfa, roomName} = require('./web/ubumfa');
-generateName();        // one uppercase six-letter word (existing default)
-generateName(9);       // one uppercase nine-letter word
-ubumfa(3, 6, 3);      // three title-cased words, e.g. "Obe Ubumfa Zaz"
-roomName();            // "Room " followed by one title-cased six-letter word
+const {generateName, roomName} = require('./web/ubumfa');
+generateName();          // one uppercase six-letter word (existing default)
+generateName(9);         // one title-cased nine-letter word
+generateName(3, 6, 3);   // three title-cased words, e.g. "Obe Ubumfa Zaz"
+roomName();              // "Room " followed by one title-cased six-letter word
 ```
 
-Each `ubumfa(...lengths)` argument is the positive integer letter count for one word; words are separated by spaces. Calling `ubumfa()` returns one six-letter word. Adjacent vowels remain distinct and doubled consonants use the approved Ubumfa consonant pairs. The seeded `generateName(random)` form remains supported for existing callers. These display words are not unique identifiers or secrets.
+Each numeric argument to `generateName(...lengths)` is the positive integer letter count for one word; multiple words are separated by spaces. The original no-argument and seeded `generateName(random)` calls still return uppercase six-letter words. Adjacent vowels remain distinct and doubled consonants use the original Ubumfa consonant pairs. These display words are not unique identifiers or secrets.
