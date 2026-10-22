@@ -164,19 +164,29 @@ test('direct HLS shares preparation without server video, keeps own credentials 
     if(url.pathname.endsWith('/stop')){stops.push(url.searchParams.get('session'));return json({});}
     return provider.fetch(input,options);
   });
-  f.config.plexDelivery={mode:'auto',clientUrl:'https://plex-client.invalid:32400',fallback:false};
+  f.config.plexDelivery={mode:'auto',clientUrl:'https://plex-client.invalid:32400',lanClientUrl:'https://plex-lan.invalid:32400',fallback:false};
+  f.app.watch.delivery.discoveredLanOrigin='https://plex-lan.invalid:32400';
   const alice=f.browser(),bob=f.browser();await alice.plex('alice');await bob.plex('bob');
   const roomId=(await alice.post('/api/watch/rooms',{})).body.id,a=randomUUID(),b=randomUUID();
-  const state=(browser,viewer)=>browser.request(`/api/watch/rooms/${roomId}?viewer=${viewer}&quality=720p4`);
+  const state=(browser,viewer,headers)=>browser.request(`/api/watch/rooms/${roomId}?viewer=${viewer}&quality=720p4`,undefined,headers);
   let initial=(await state(alice,a)).body;
   await alice.post(`/api/watch/rooms/${roomId}/command`,{epoch:initial.epoch,expiresAt:Date.now()+2500,viewerId:a,command:{action:'media.load',args:{mediaId:'1',quality:'720p4'}}});
-  const left=(await state(alice,a)).body,right=(await state(bob,b)).body;
+  const left=(await state(alice,a)).body,right=(await state(bob,b,{'cf-connecting-ip':'172.56.21.89'})).body;
   assert.equal(left.directDelivery,true);assert.equal(right.directDelivery,true);assert.equal(left.format,'hls');
+  assert.equal(left.directHls.origin,'https://plex-lan.invalid:32400');assert.equal(right.directHls.origin,'https://plex-client.invalid:32400');
   assert.equal(left.directHls.session,right.directHls.session);assert.deepEqual(delegated,['fixture-server-101','fixture-server-102']);
   assert.notEqual(left.directHls.token,right.directHls.token);assert.equal(starts.length,1);assert.equal(segments,0);assert.equal(f.app.watch.plex.hlsPool.bytes,0);
   const master=await alice.request(left.mediaUrl);assert.equal(master.status,200);
   const child=new URL(master.body.split('\n').find(line=>line.startsWith('https://')));
-  assert.equal(child.origin,f.config.plexDelivery.clientUrl);assert.equal(child.searchParams.get('X-Plex-Token'),left.directHls.token);
+  assert.equal(child.origin,'https://plex-lan.invalid:32400');assert.equal(child.searchParams.get('X-Plex-Token'),left.directHls.token);
+  const wanMaster=await bob.request(right.mediaUrl);assert.equal(wanMaster.status,200);
+  const wanChild=new URL(wanMaster.body.split('\n').find(line=>line.startsWith('https://')));
+  assert.equal(wanChild.origin,'https://plex-client.invalid:32400');assert.equal(wanChild.searchParams.get('X-Plex-Token'),right.directHls.token);
+  const lanCsp=(await alice.request('/watch')).headers['content-security-policy'];
+  assert.equal(lanCsp.includes('https://plex-lan.invalid:32400'),true);
+  const wanCsp=(await bob.request('/watch',undefined,{'cf-connecting-ip':'172.56.21.89'})).headers['content-security-policy'];
+  assert.equal(wanCsp.includes('https://plex-client.invalid:32400'),true);
+  assert.equal(wanCsp.includes('https://plex-lan.invalid:32400'),false,'WAN CSP must not expose the LAN origin');
   assert.equal(master.body.includes(right.directHls.token),false);assert.equal(master.body.includes('fixture-server-'),false);
   const recover={viewerId:a,mediaVersion:left.mediaVersion,streamVersion:left.streamVersion};
   assert.equal((await bob.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,403);
@@ -184,16 +194,16 @@ test('direct HLS shares preparation without server video, keeps own credentials 
   assert.equal((await alice.request(left.mediaUrl)).status,403);
   const proxy=(await state(alice,a)).body;assert.equal(proxy.directDelivery,undefined);assert.equal(proxy.format,'hls');assert.notEqual(proxy.streamVersion,left.streamVersion);
   assert.equal(starts.length,2);assert.ok(segments>0,'only the explicit proxy recovery may warm a video anchor');
-  assert.equal(stops.includes(right.directHls.session),false);assert.deepEqual((await state(bob,b)).body.directHls,right.directHls);
+  assert.equal(stops.includes(right.directHls.session),false);assert.deepEqual((await state(bob,b,{'cf-connecting-ip':'172.56.21.89'})).body.directHls,right.directHls);
   assert.equal((await alice.post(`/api/watch/rooms/${roomId}/delivery`,recover)).status,409);
   f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await state(bob,b)).status,401);
 });
 
 test('direct fallback requires verified non-ownership and never delegates configured owner credentials',async t=>{
-  const {PlexDelivery}=require('../server/plex-delivery');
+  const {PlexDelivery,clientAddress}=require('../server/plex-delivery');
   const config={plexUrl:'http://plex.invalid:32400',plexToken:'owner',plexDelivery:{mode:'auto',clientUrl:'https://plex.example',fallback:true},plexFallback:{enabled:true,token:'dedicated'}};
   let owned=false,requests=0,publicMachine='machine',live=true,revokeOnDelegate=false,holdIdentity,publicUnavailable=false,identityRequests=0;
-  let advertised=[],resourceMachine='machine';
+  let advertised=[],resourceMachine='machine',publicAddress='71.120.154.212';
   const plex=new Plex(config,async(input,options)=>{
     const url=new URL(input);
     if(url.pathname==='/identity'){identityRequests++;if(publicUnavailable)throw new Error('No NAT loopback');await holdIdentity;return Response.json({MediaContainer:{machineIdentifier:publicMachine}});}
@@ -202,7 +212,7 @@ test('direct fallback requires verified non-ownership and never delegates config
     return Response.json({MediaContainer:{token:'transient-fallback'}});
   });t.after(()=>plex.close());
   let scope=plex.scope('dedicated','configured-fallback');
-  const auth={machine:async()=> 'machine',request:async()=>[{clientIdentifier:resourceMachine,provides:'server',owned,connections:advertised}]};
+  const auth={machine:async()=> 'machine',request:async()=>[{clientIdentifier:resourceMachine,provides:'server',owned,publicAddress,connections:advertised}]};
   const context={identity:{},actor:{userId:'guest'}};
   const media=()=>({kind:'plex',format:'file',start:'http://plex.invalid:32400/library/parts/1/file.mp4',plexContext:scope});
   const delivery=()=>new PlexDelivery(config,plex,auth,async()=>scope);
@@ -240,11 +250,18 @@ test('direct fallback requires verified non-ownership and never delegates config
     {uri:'https://plex-lan.example:32400',protocol:'https',relay:false,local:true}
   ];
   const d=delivery();
+  assert.equal(clientAddress({socket:{remoteAddress:'127.0.0.1'},headers:{'cf-connecting-ip':'172.56.21.89'}}),'172.56.21.89');
+  assert.equal(clientAddress({socket:{remoteAddress:'::ffff:127.0.0.1'},headers:{'x-forwarded-for':'71.120.154.212, 10.0.0.1'}}),'71.120.154.212');
+  assert.equal(clientAddress({socket:{remoteAddress:'203.0.113.5'},headers:{'cf-connecting-ip':'192.168.1.50'}}),'203.0.113.5','public sockets cannot spoof proxy headers');
   const lanFile=await d.file(media(),context,async()=>true,'192.168.1.50');
   assert.equal(new URL(lanFile).origin,'https://plex-lan.example:32400');
-  const wanFile=await d.file(media(),context,async()=>true,'71.120.154.212');
+  const hairpinnedLanFile=await d.file(media(),context,async()=>true,'71.120.154.212');
+  assert.equal(new URL(hairpinnedLanFile).origin,'https://plex-lan.example:32400','LAN viewer behind tunnel matching Plex WAN IP gets LAN origin');
+  const wanFile=await d.file(media(),context,async()=>true,'172.56.21.89');
   assert.equal(new URL(wanFile).origin,'https://plex.example');
-  assert.deepEqual(await d.deliveryOrigins(),['https://plex.example','https://plex-lan.example:32400']);
+  assert.deepEqual(await d.deliveryOrigins('192.168.1.50'),['https://plex.example','https://plex-lan.example:32400']);
+  assert.deepEqual(await d.deliveryOrigins('71.120.154.212'),['https://plex.example','https://plex-lan.example:32400']);
+  assert.deepEqual(await d.deliveryOrigins('172.56.21.89'),['https://plex.example'],'external clients do not receive the local origin in CSP');
   assert.ok(requests >= 5,'only verified endpoint/account combinations request delegation; late revocation suppresses its result');
 });
 

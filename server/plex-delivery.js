@@ -1,9 +1,16 @@
 'use strict';
+const net = require('node:net');
 
-function isLocalAddress(raw) {
-  if (typeof raw !== 'string' || !raw) return false;
+function normalizeAddress(raw) {
+  if (typeof raw !== 'string' || !raw) return '';
   let ip = raw.trim();
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip;
+}
+
+function isLocalAddress(raw) {
+  const ip = normalizeAddress(raw);
+  if (!ip) return false;
   if (ip === '::1' || ip === 'localhost') return true;
   if (ip.startsWith('127.')) return true;
   if (ip.startsWith('10.')) return true;
@@ -16,6 +23,23 @@ function isLocalAddress(raw) {
   return false;
 }
 
+function clientAddress(req) {
+  const peer = normalizeAddress(req?.socket?.remoteAddress ?? req?.remoteAddress);
+  if (!isLocalAddress(peer)) return peer;
+  const headers = req?.headers;
+  if (!headers || typeof headers !== 'object') return peer;
+  const candidates = [
+    headers['cf-connecting-ip'],
+    typeof headers['x-forwarded-for'] === 'string' ? headers['x-forwarded-for'].split(',')[0] : undefined,
+    headers['x-real-ip']
+  ];
+  for (const raw of candidates) {
+    const ip = normalizeAddress(raw);
+    if (ip && net.isIP(ip) !== 0) return ip;
+  }
+  return peer;
+}
+
 // Direct credentials belong to one viewer, including consumers of shared HLS.
 // Credentials never enter shared room state, shared producers or persistent state.
 class PlexDelivery {
@@ -23,12 +47,34 @@ class PlexDelivery {
     this.config = config; this.plex = plex; this.plexAuth = plexAuth; this.resolve = resolve;
     this.files = new WeakMap(); this.resources = new WeakMap(); this.plans = new WeakMap();
     this.discoveredLanOrigin = this.config.plexDelivery?.lanClientUrl || undefined;
+    this.publicAddresses = new Set();
+    this.rememberConfiguredPublicOrigin();
     this.discoveryJob = undefined;
     if (this.config.plexDelivery?.mode === 'auto' && !this.discoveredLanOrigin && this.plexAuth) {
       queueMicrotask(() => { void this.discoverLanOrigin(); });
     }
   }
+  rememberPublicAddress(raw) {
+    const ip = normalizeAddress(raw);
+    if (ip && net.isIP(ip) !== 0 && !isLocalAddress(ip)) this.publicAddresses.add(ip);
+  }
+  rememberConfiguredPublicOrigin() {
+    const raw = this.config.plexDelivery?.clientUrl;
+    if (!raw) return;
+    try {
+      const host = new URL(raw).hostname.replace(/^\[|\]$/g, '');
+      this.rememberPublicAddress(host);
+      const match = /^(\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3})\.[0-9a-f]{32}\.plex\.direct$/i.exec(host);
+      if (match) this.rememberPublicAddress(match[1].replace(/-/g, '.'));
+    } catch {}
+  }
   rememberDiscoveredLan(resource) {
+    if (resource?.publicAddress) this.rememberPublicAddress(resource.publicAddress);
+    for (const conn of resource?.connections || []) {
+      if (conn?.local === false && conn?.relay === false && conn?.address) {
+        this.rememberPublicAddress(conn.address);
+      }
+    }
     if (this.config.plexDelivery?.lanClientUrl) {
       this.discoveredLanOrigin = this.config.plexDelivery.lanClientUrl;
       return;
@@ -43,6 +89,11 @@ class PlexDelivery {
     if (connection) {
       try { this.discoveredLanOrigin = new URL(connection.uri).origin; } catch {}
     }
+  }
+  isLocalViewer(remoteAddress) {
+    if (isLocalAddress(remoteAddress)) return true;
+    const ip = normalizeAddress(remoteAddress);
+    return !!ip && this.publicAddresses.has(ip);
   }
   async discoverLanOrigin() {
     if (this.discoveredLanOrigin) return this.discoveredLanOrigin;
@@ -82,16 +133,23 @@ class PlexDelivery {
     }
     return list;
   }
-  async deliveryOrigins() {
+  async deliveryOrigins(remoteAddress) {
     if (!this.discoveredLanOrigin && this.config.plexDelivery?.mode === 'auto') {
       await this.discoverLanOrigin();
+    }
+    if (remoteAddress !== undefined && !this.isLocalViewer(remoteAddress)) {
+      return this.config.plexDelivery?.clientUrl ? [this.config.plexDelivery.clientUrl] : [];
     }
     return this.origins();
   }
   async originFor(scope, remoteAddress) {
+    if (!remoteAddress) return this.config.plexDelivery?.clientUrl;
     if (isLocalAddress(remoteAddress)) {
       const lan = await this.lanOrigin(scope);
       if (lan) return lan;
+    } else if (this.config.plexDelivery?.mode === 'auto') {
+      const lan = await this.lanOrigin(scope);
+      if (lan && this.isLocalViewer(remoteAddress)) return lan;
     }
     return this.config.plexDelivery?.clientUrl;
   }
@@ -144,7 +202,7 @@ class PlexDelivery {
     if (this.config.plexDelivery?.mode !== 'auto' || !this.config.plexDelivery.clientUrl || viewer.activity !== false ||
       viewer.directProxyVersion === room.mediaVersion || !scope || scope === this.plex || !this.resolve || !this.plexAuth) return;
     const existing = this.plans.get(viewer);
-    if (existing?.scope === scope && existing.version === room.mediaVersion) {
+    if (existing?.scope === scope && existing.version === room.mediaVersion && existing.remoteAddress === viewer.remoteAddress) {
       const plan=await existing.job;
       return await valid() && await this.resolve(viewer.actor)===scope ? plan : undefined;
     }
@@ -161,7 +219,7 @@ class PlexDelivery {
         })().catch(()=>undefined)]);
       } finally {clearTimeout(timer);controller.abort();}
     })();
-    this.plans.set(viewer,{scope,version:room.mediaVersion,job});
+    this.plans.set(viewer,{scope,version:room.mediaVersion,remoteAddress:viewer.remoteAddress,job});
     return job;
   }
   async candidate(media, auth, valid, signal, remoteAddress) {
@@ -217,4 +275,4 @@ class PlexDelivery {
     } catch { return; }
   }
 }
-module.exports = { PlexDelivery, isLocalAddress };
+module.exports = { PlexDelivery, isLocalAddress, clientAddress };

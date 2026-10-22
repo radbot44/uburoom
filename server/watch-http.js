@@ -11,7 +11,7 @@ const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
-const { PlexDelivery } = require('./plex-delivery');
+const { PlexDelivery, clientAddress } = require('./plex-delivery');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins, plexAuth }) {
   const identities = new Map(), grants = new Map();
@@ -296,7 +296,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
       if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/availability', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
-        const reply = await operations.execute({ headers: req.headers, remoteAddress: req.socket.remoteAddress }, url.href);
+        const reply = await operations.execute({ headers: req.headers, remoteAddress: clientAddress(req) }, url.href);
         if (reply.resource) {
           const art = reply.resource;
           res.writeHead(reply.status, { 'Content-Type': art.type, 'Content-Length': art.bytes.length, 'Cache-Control': 'private, no-store' });
@@ -351,11 +351,11 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const query = new URL(req.url,config.publicUrl).searchParams;
     if(query.has('frame_id')||config.demo&&['host','guest','guest2'].includes(query.get('demo')))return initial;
     try {
-      initial.me=await operations.execute({headers:req.headers, remoteAddress: req.socket.remoteAddress},'/api/watch/me');
-      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers, remoteAddress: req.socket.remoteAddress},'/api/watch/rooms');
+      initial.me=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/me');
+      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/rooms');
     } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
     return initial;
   }
-  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest, deliveryOrigins: () => delivery.deliveryOrigins() };
+  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest, deliveryOrigins: req => delivery.deliveryOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)) };
 }
 module.exports = { watchHttp };

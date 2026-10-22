@@ -266,7 +266,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
       const player = watchDocument || route === '/__diagnostics/codec';
-      const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins() : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
+      const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins(req) : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
       const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' ? plexDeliveryOrigins.map(origin => ' ' + origin).join('') : '';
       if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);

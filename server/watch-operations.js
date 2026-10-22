@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
+const { clientAddress } = require('./plex-delivery');
 
 // Transport-neutral operations return values; HTTP resources and socket framing
 // belong to their respective transports. Epochs and authorization stay here.
@@ -238,7 +239,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
-      if (context.remoteAddress) viewer.remoteAddress = context.remoteAddress;
+      const remoteAddress = clientAddress(context);
+      if (remoteAddress) viewer.remoteAddress = remoteAddress;
       viewer.activity=!!auth.identity.activity;
       if(viewer.activity && viewer.media?.directHls) {
         watch.tracking.end(viewer,'delivery-changed');

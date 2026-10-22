@@ -1,6 +1,7 @@
 // @ts-check
 'use strict';
 const { WebSocketServer } = require('ws');
+const { clientAddress } = require('./plex-delivery');
 /**
  * @typedef {Object} ControlRequest
  * @property {'request'} type
@@ -23,7 +24,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
   }
-  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws, remoteAddress: client.socket?.remoteAddress }, path, data);
+  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws, remoteAddress: client.remoteAddress || client.socket?.remoteAddress }, path, data);
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
     if(client.publishing){client.dirty=true;return;}
@@ -55,7 +56,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (req.url !== '/watch-socket') return;
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + req.socket.remoteAddress, 30) || clients.size >= 128) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => {
-      const client = { ws, socket: req.socket, headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
+      const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
       clients.add(client);
       ws.watchKick = roomId => {
         if (client.subscription?.split('?')[0] === '/api/watch/rooms/' + roomId) client.subscription = undefined;

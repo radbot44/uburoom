@@ -22,7 +22,9 @@ function controlClient(t, config, cert) {
     let client = clients.get(key);
     if (!client || client.ws.readyState >= 2) {
       client = { pending: new Map(), sequence: 0 }; clients.set(key, client);
-      const ws = client.ws = new WebSocket(config.publicUrl.replace('https:', 'wss:') + '/watch-socket', { ca: cert, origin: headers.origin, headers: headers.cookie ? {Cookie:headers.cookie} : {} });
+      const wsHeaders = { ...(headers.cookie ? { Cookie: headers.cookie } : {}) };
+      for (const h of ['cf-connecting-ip', 'x-forwarded-for', 'x-real-ip']) if (headers[h]) wsHeaders[h] = headers[h];
+      const ws = client.ws = new WebSocket(config.publicUrl.replace('https:', 'wss:') + '/watch-socket', { ca: cert, origin: headers.origin, headers: wsHeaders });
       client.auth = new Promise(resolve => {
         const timer = setTimeout(() => { ws.terminate(); resolve(false); }, 5000);
         ws.on('open', () => ws.send(JSON.stringify({ type:'auth', token:headers.authorization?.replace(/^Bearer /,''), csrf:headers['x-csrf-token'] })));
