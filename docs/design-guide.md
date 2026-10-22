@@ -1,224 +1,192 @@
-# uburoom design guide
+# uburoom — UI Controls Design Guide
 
-Keep the established layout and behavior. The main site enters `/watch`; the standalone remote-only homepage is retired. The web-owned remote renderer is `web/remote-ui.js` (remote styles, controls/badges) and the icon pack is `web/icons.js`, with the watch shell in `web/watch*.css`. uburoom-remote owns its own renderer and popup; do not import another checkout's UI files. Inspect affected renders before UI changes and use safe-DOM components.
+Use this guide when creating or updating buttons, switches, checkboxes, and selection controls in **Watch**. Reuse the existing component styles instead of inventing a new look for each screen.
 
-## Design authority, change control and approval (mandatory)
+## 1. Pick the right control
 
-### Authorized shared controls — Room increment (2026-10-21)
+| You need to… | Use… | Example |
+|---|---|---|
+| Perform an action | **Button** | Create room, Cancel, Refresh |
+| Turn an existing setting on/off | **Switch** | Auto-play, Auto-queue |
+| Include an option in a form being submitted later | **Checkbox** | Include Specials, Keep room when empty while creating a room |
+| Choose one of 2–3 short values or layouts | **Segmented selector** | Cards / List, Public / Private, Off / Following / Random |
+| Move between actual panels | **Tabs** | Room / Queue / Media; Room Settings sections |
+| Choose from a long or dynamic list | **Dropdown** | Sort, genre, year, audio track |
+| Show a permission | **Thumb icon button** | Allowed / Denied |
+| Toggle a media viewing mode | **Pressed-state icon button** | Mute, Captions, Theater |
 
-**Queue increment authorization (2026-10-21):** The owner has now authorized Queue as the next migration target after Room. Queue adopts the existing opt-in `watch-control`, `watch-segmented`, `watch-switch`, toolbar, heading and focus contracts below for its header, layout choice, auto-play/auto-queue switches and Queue-owned Playback & queue editor. The Queue card timeline, its overlay navigation and card actions retain their specialized structure and behavior. Queue keeps its permission checks, saved drafts, command paths, pending guards and responsive label hiding. Room remains the visual reference and must be regression checked if a shared rule changes. Media remains deferred until explicit owner visual approval of Queue. This is the owner's Queue implementation handoff; the earlier audit brief remains supporting evidence only. Statements below saying Queue awaits adoption describe the earlier Room-phase boundary and are superseded by this authorization.
+**Do not make everything a switch.** A form choice, navigation tab, permission, and live setting should look different.
 
-**Queue owner review correction (2026-10-21):** Give the selected Cards/List view button enough space around its 24px icon at narrow widths; the unselected button was acceptable. Keep the 40px segmented-group height and selected accent fill. Queue footer actions use the same shared 40px elevated, borderless, 10px-radius control styling and 8px within-group spacing as Room footer actions, including the icon-only Shuffle action. Preserve Queue's status placement, confirmations, permissions and command behavior. This correction does not authorize Media work.
+## 2. Shared sizing and styling
 
-**Queue footer background correction (2026-10-21):** Clear history and Shuffle retain visible elevated button backgrounds even while disabled, as do the other Queue footer buttons. Disabled actions remain noninteractive with subdued text/icon and contextual explanation. This owner correction supersedes the older disabled-button transparency rule for Queue footer actions. Do not change Media or unrelated controls in this increment.
+| Item | Make it like this |
+|---|---|
+| Normal text button | **44px minimum height**, **12px radius** |
+| Prominent sign-in/entry button | **48px minimum height** |
+| Icon-only button | **44 × 44px minimum clickable area**, **10px radius** |
+| Standalone button icon | **24 × 24px** artwork |
+| Icon beside text | **20 × 20px** artwork |
+| Normal button label | **14px** |
+| Compact button label | **12px** |
+| Primary/destructive label | **600 (semibold)** |
+| Secondary label | **500 (medium)** |
+| Horizontal button padding | **16px** normal; **12px** compact |
+| Space between icon and label | **8px** normal; **6px** compact |
+| Space between adjacent icon buttons | **4px** |
+| Keyboard focus | Visible **2px outline, 2px offset** |
 
-**Media increment authorization (2026-10-21):** The owner approved Queue and authorized Media as the next shared-controls migration. Media's heading, Back to top, navigation icon group, library choice and Cards/List/Posters selections, search/sort/direction/filter toolbar, header auto-queue action and Retry button adopt the approved 40px shared control/segmented dimensions, 24px primary icons, 10px button/12px group radii, elevated backgrounds, focus treatment and accessible segmented keyboard contract. Native search/select fields retain their borders. Library choices navigate; arrow keys move focus only and Enter/Space activates. Responsive labels may hide on narrow widths while accessible names remain. Keep Media's catalog cards, detail actions, breadcrumbs and filter chips specialized. Preserve the existing sticky header/tools structure, `--media-header-height` measurement, page/drawer scrolling, panel rounding and normal/theater/mobile/drawer behavior. Verify Room and Queue if a shared foundation changes; no deployment follows from this authorization.
+Use theme-aware colors and existing design tokens. Check the result in **Light/Dark × Orange/Pink**. The visible artwork may be smaller than its clickable area.
 
-**Media owner visual corrections (2026-10-21):** On touch phones, do not keep the Cards poster Play button visible at the bottom-right; restore the intended centered reveal behavior while retaining a usable path to Play from item details. Give Back to top the official Tabler `arrow-bar-to-up` icon to the left of its label, reducing it to an accessible 40px icon button at small widths. At phone widths, hide the library switcher while retaining library navigation through Libraries home; fit Media, the navigation buttons, auto-queue and Back to top in one header row where the available width permits. Keep the Cards/List/Posters selector on the sort/direction/filter row where it fits, and put Genre and Year dropdowns on one line. Preserve the sticky Media structure and measured offsets. At widths too narrow for the approved 40px controls, allow wrapping rather than clipping or shrinking the controls below contract. The owner subsequently clarified that the Media detail action buttons shown in the fourth reference image can stay as they are; do not migrate them in this correction.
+## 3. Buttons
 
-The owner's Shared Controls Implementation Handoff established the order Room → Queue → Media. The owner has since approved Queue and authorized Media as recorded above. Its explicit contracts supersede conflicting older dimensions/button appearance rules for migrated controls. The audit is supporting evidence; its proposals and instructions are not additional authorization. Record any new contract before UI implementation. Historical increment boundaries below remain as records of their original scope.
+### Choose a button style
 
-- Shared foundation: small safe-DOM helpers in `web/watch-controls.js` and opt-in semantic classes in `web/watch.css`. Panel logic stays local. Adopt the foundation in Room only in this increment; Queue and Media adoption remains pending. Account, Player and remote UI are excluded.
-- `watch-control`: ordinary toolbar actions have 40px total height, borderless elevated backgrounds, consistent token-based hover, 10px radius, 24px primary icons and 8px internal gaps. `watch-control-icon` is 40×40px. Smaller secondary chevrons are allowed. Actual form-field borders remain intact. Responsive icon+text actions retain accessible names when labels are hidden in narrow containers.
-- `watch-control-group`: controls within a logical group have 8px gaps; `watch-toolbar` separates groups by 16px. `watch-segmented`: 40px total outer height including padding, 12px outer radius and 10px individual button radius. Toolbar view selection uses accent fill; settings/permission presets use subdued selected surfaces and accent text.
-- Single-choice segmented pressed-button groups use one Tab entry, arrows/Home/End to move focus only, and Enter/Space to select. Keep native button activation and `aria-pressed`. Preserve the separate approved Room Settings section navigation and permission-role tabs; they are navigation/tabpanel controls rather than pressed-choice groups.
-- `watch-panel-header` and `watch-panel-heading`: consistent alignment/typography, 17px headings, 8px icon-to-text gap. Keep panel-specific structure and collapse behavior. Adopt in Room now; do not modify the other panels to apply these classes yet.
-- Owner revision (2026-10-21): move the Room visibility icon and viewer count into the header immediately left of Settings. Keep visibility icon-only, retain the viewer count, and truncate the room name with an ellipsis to reserve space for those controls. Replace the after captures for visual review.
-- Owner revision (2026-10-21): header icon actions use a transparent, borderless shared variant, with no margins/gaps between adjacent header actions; retain 40px height and 24px icons, hover and visible keyboard focus. Room content uses two columns: existing participant controls on the left, the Settings-style participant roster on the right. Both rosters place the current user first, then room leader, hosts and viewers, alphabetically within each role. Preserve existing roster membership (leader, assigned hosts and current viewers) and Settings management actions; the Room list displays names and roles. Further participant-control changes await owner guidance.
-- Owner roster revision (2026-10-21): use approximately 40% controls / 60% participants. Remove the left role badge and Room's Participants heading. Known-user rows have role, username, host-action and kick-action columns without headings, wrapping or row separators; usernames ellipsize. Only leader/host roles have indicators, icon-only in Room and on small screens. Host actions use the existing host icon, kick uses logout; omit action columns without authority. Roster viewports reserve ten 40px rows, scroll when needed, and expose a bottom overlay expand action with a last-row gutter; expanded height is thirty rows. Collapsing Room resets expansion. Keep the same ordering in Settings.
-- Owner kick decisions (2026-10-21): confirmed removal only, with immediate manual rejoining allowed; banning is deferred. Protect the leader and self. Authorized hosts may kick viewers; leader/active admin may also kick hosts. Confirm each kick. New `kickParticipants` permission defaults on for hosts in both stored policies missing the new flag and new-room defaults; participant management remains restricted. Remove all of the target's viewing tabs and fence stale viewing requests without banning their account. No private configuration/database migration or deployment is authorized.
-- `watch-switch`: native checkbox with `role="switch"`, 36×22px visual track, associated clickable label and approximately 44px interactive target where practical. Room adopts this for its own switches; Queue switches, including the Queue-owned Playback & queue editor, await Queue's increment.
-- Owner switch-pill revision (2026-10-21): roster frames now reserve eight rows and expand to sixteen, superseding the earlier 10/30-row dimensions. Add an opt-in `watch-switch-pill` primitive: rounded pill, label first, native switch after it; the On state uses accent-colored border/text and an accent-tinted background. For viewers without editing authority, physically detach the switch and present the same On/Off pill as a noninteractive badge, preserving its accessible state. A split variant may append a separate right-hand settings/action button; detach that button too without editing authority. Use these pills for Room's left-column permission controls now. They do not replace all switches; the Room Settings Permissions matrix stays unchanged, and Queue adoption remains gated. Starting geometry is a 44px minimum interactive height with the existing 36×22px switch, token-based accent tint and pill radius; narrow labels may wrap within the pill.
-- Owner permission-pill revision (2026-10-21): switches represent on/off settings; permission pills use a label followed by Tabler `thumb-up` for allowed and `thumb-down` for denied. Editable pills show the matching `thumb-up-off` / `thumb-down-off` variant on hover and use a pointer cursor; read-only badges retain the state icon without hover substitution or a pointer. Preserve the pill's existing accent On styling, sizing, keyboard focus and processing safeguards. The shared helper supports both ordinary switch and permission variants, including permission-gated split actions. Editable permission pills use native checkbox semantics (not switch semantics); read-only badges physically omit interactive controls and expose their allowed/denied state. Apply to Room's three quick permissions now; Room Settings Permissions matrix is explicitly a later step, and Queue/Media remain gated.
-- Owner Permissions revision (2026-10-21, supersedes conflicting earlier rules): remove thumb `-off` hover substitutions everywhere. Room Settings Permissions now uses compact rows and background-backed thumb-up/down toggle buttons with pressed state; nonclickable controls have no background. Restore standard elevated backgrounds to header and other special icon buttons, retaining current dimensions, icons and compact header spacing. This shared appearance correction does not authorize Queue/Media migration or sticky/layout changes. Keep Custom always visible in the preset group as an automatically selected indicator; activating it does not write or change policy. Move All hosts into the final Room management row, rename it Everyone is host, and merge its Host/Participant cells; preserve existing leader-only authorization and policy effects. Add a top Condensed view on/off toggle: expanded by default with short explanatory captions under each permission title; condensed hides captions in focus/hover tooltips. This is local display state, retained while the editor is mounted, and never changes room policy. Preserve authorization, inheritance, immediate saves and feedback. Ordinary on/off switches remain switches. Verify desktop/phone, leader/host/viewer, preset no-op, row/cell geometry, keyboard and processing behavior in Chrome and Firefox before owner visual review.
-- Owner Room rows/mobile revision (2026-10-21): remove the mobile Host/Participant role tabs; display both matrix columns together on narrow screens as on desktop, retaining the existing Everyone is host mode's single effective host column. Replace Room's left quick-permission pills with eight equal-height rows: people icon + Participants, Play/pause, Seek, Add to queue, host icon + Hosts, Play/pause, Seek, Add to queue. Each permission uses the same thumb-button/state convention as Settings and writes its explicit role, preserving authority and host inheritance. Remove More/View permissions. On the right, add Roomies as its first row, match all Room column rows at the existing 40px height and add matching dividers. Roomies has natural content height, capped at eight total rows including its heading while collapsed and sixteen total rows expanded; retain the overflow-only overlay expander, protective gutter and collapse-reset behavior. Settings People keeps its existing roster sizing. Retain the approximately 40%/60% split and existing participant sort/actions. Shared permission helpers/styles prevent Room/Settings drift; no Queue/Media migration.
-- Owner roster action revision (2026-10-21): combine the leading role indicator and Add Host action into one 40px cell in both rosters, removing the separate host-action column. Preserve the leader crown/protection; hosts use the normal foreground (white in dark theme), without separate role badges. Viewers show the official Tabler `user` icon; with Add Host authority this is a button that shows `host` on hover, otherwise a noninteractive icon. Preserve existing authorized host-removal/self-demotion actions in the combined slot. Kick uses Tabler `karate`; omit its cell entirely without authority or an eligible target, with no empty action placeholders. Host promotion requires confirmation for an ordinary host, warning that they cannot remove the promoted host; leader/active admin retains immediate promotion. Apply the warning to roster and People-search additions, including pending assignments. Preserve server authorization, target restrictions, ordering, row dimensions, scroll/expansion and popup lifecycle.
-- Owner Room icon/spacing revision (2026-10-21): use official Tabler `door` for the Room panel and mobile Room section tab; put the canonical monochrome oomark beside Roomies instead. Every active oomark SVG must preserve the original eyes, mouth endpoints/width and flat mouth caps from `assets/branding/uburoom-oomark-white.svg`; never let the Tabler renderer's round caps alter the artwork. Remove horizontal row dividers within Room only. Shift Participants, Hosts and Roomies heading contents slightly downward within their unchanged 40px rows (starting inset: 8px top padding, moving their centers down 4px). Retain existing column layout, natural/expanded list sizing and all actions. Settings matrix/People borders, Queue and Media are unchanged.
-- Owner icon-spacing revision (2026-10-21): provide 4px separation between adjacent icon buttons throughout the interface, equivalent to 2px clearance per side, using layout gaps/padding rather than stacking margins on existing gaps. Preserve larger logical-group spacing and existing button/icon dimensions. Room control/roster rows now use shared 44px slots around 40px buttons, including 2px vertical padding; all headings match that row metric and retain the 4px downward content shift. Roster eight/sixteen-row caps scale with the shared row height. Room header and tighter Queue/Media/player icon groups adopt the shared 4px gap; this narrowly authorized spacing correction is not a Queue/Media migration and does not change sticky/measurement machinery. Permission matrix rows use 2px vertical cell padding for the same clearance.
-- Owner Room content-width/divider revision (2026-10-21): cap `.room-content-columns` at 500px total and center it inside the panel, retaining full available width below that cap and the 40/60 split. Add subtle 1px `--border` separators following the owner's sketch: one vertical line centered in the inter-column gap, and one horizontal line above Hosts spanning the left column to the vertical line. These are decorative section separators, not per-row dividers. Preserve row/button sizes, spacing, natural roster sizing, expansion/gutter and all behavior; header/footer stay full panel width. Verify medium 700–1100px layouts as well as desktop/phone.
-- Owner heading/gutter correction (2026-10-21): remove the section dividers again and horizontally center the combined icon/text groups for Participants, Hosts and Roomies within their columns; retain the 500px centered content cap, existing downward inset and row sizes. Do not reserve a built-in scrollbar gutter for `.room-roster`; native scrollbars use automatic space only when actually needed. The requested gutter is bottom clearance for the visible expand/collapse overlay. Tie that padding directly to the overlay button's visibility so short lists have no reserved bottom gutter, while both expanded and collapsed overflow views protect the last person from the button.
-- Migrated controls use a visible 2px accent `:focus-visible` outline with a small offset. Consequential disabled states have contextual explanations. Processing feedback is contextual, prevents duplicate affected submissions and leaves unrelated controls usable.
-- Preserve settings, permission policy, room actions, popup decisions and lifecycle. Focused Chrome and Firefox browser checks must assert geometry, accessible names/roles/states and keyboard behavior, alongside representative desktop/narrow before/after renders. Owner approval of visual references is still pending; captures are review artifacts, not accepted baselines.
-- Media is protected: preserve sticky header/toolbar, dynamic `--media-header-height`, scrolling, rounded panel appearance and desktop/mobile/theater/drawer behavior. Sticky machinery requires separate approval to refactor. No Media changes during Room. No stale browser-test repairs, merge, deployment or next-panel work is authorized.
+| Style | Existing class | Appearance | Use it for |
+|---|---|---|---|
+| **Primary** | `.primary` | Filled accent surface, semibold text | One main action in a context: **Create room**, **Save** |
+| **Secondary** | `.quiet` | Elevated, quieter surface, medium text | **Cancel**, **Browse**, routine actions |
+| **Icon-only** | `.icon-button` | Elevated square-ish surface, icon centered | **Refresh**, header and toolbar actions |
+| **Destructive** | `.danger-button` | Red filled surface, semibold text | Irreversible destructive actions |
+| **Player title-bar** | `.solid-button` | Solid, readable against video gradient | Player title-bar controls only |
 
-### Authorized popup consistency pass (2026-10-20)
+Keep the main video **Play** overlay circular. Use the project's Tabler outline icons; icon-only buttons need an accessible name and a helpful tooltip/title.
 
-The owner's implementation request and seven approved decisions supersede the per-detail approval workflow below **for this pass only**. Routine CSS dimensions, safe-DOM helpers, lifecycle wiring and targeted tests are delegated to the implementer. Material product/design trade-offs and work outside this scope still require owner approval. Final appearance remains subject to owner acceptance; implementation dimensions are not individually owner-approved.
+Example markup using the existing styles:
 
-1. Native dialogs share token-based surfaces, borders/radii, spacing, headers and action roles. Player menus, fullscreen drawers, remote controls, toasts, countdowns and readiness prompts retain their specialized layouts.
-2. Use small confirmations, medium forms/dialogs and large complex settings, with viewport constraints. Starting implementation widths are 420px / 560px / 920px; the room chooser may use 620px and the codec workspace retains its specialized size. These are tunable implementation values.
-3. Irreversible destructive confirmations use `.danger-button`; ordinary confirmations use `.primary`. Retain `.quiet`, `.icon-button` and title-bar-only `.solid-button` roles.
-4. Outside clicks dismiss ordinary dialogs and menus, except destructive confirmations and unsaved editors. Guard critical in-flight work across outside, Escape and explicit cancellation. Keep drafts across safe close/reopen; use native modal focus containment and restore a reachable trigger. Escape acts on the foremost surface.
-5. Room Settings keeps horizontally scrolling mobile navigation. Center a selected section gently only on selection/opening, respect reduced motion, preserve manual swipes and show subtle edge hints only where tabs are hidden.
-6. Room Settings gains modest usable height and little width, with desktop sidebar/header and independent panel scrolling. Constrain the permissions matrix to a readable width. Keep phone margins and viewport bounds; desktop should not default to nearly fullscreen.
-7. Dialogs opened during actual browser video fullscreen stay above the player without exiting fullscreen. Closing returns to that fullscreen view. Exercise the Fullscreen API in Chrome and Firefox separately from theater mode.
+```html
+<button class="primary">Create room</button>
+<button class="quiet">Cancel</button>
+<button class="icon-button" aria-label="Refresh" title="Refresh">
+  <!-- project Refresh icon -->
+</button>
+```
 
-Scope: `tracks`, `handoff`, `account`, `account-remove`, `room`, `room-settings`, `room-confirm`, `codec-test`, `privacy`, dynamic `queue-bulk`, and relevant player menu/drawer interactions. No permission, authorization, streaming or queue business-rule changes. The small shared dialog lifecycle helper is an implementation choice under this authorization, not a new UI framework. Required verification is focused automated coverage, full Node tests and isolated Chrome/Firefox desktop/phone/theme/fullscreen rendering; real mobile/Activity and human appearance acceptance remain separate gates.
+### Button states
 
-Browser-owned Escape remains available to exit actual fullscreen. Verified Firefox 158 behavior exits fullscreen before delivering Escape to a modal, leaving it open; explicit Close/Cancel preserves fullscreen. Chrome delivers Escape to the foremost modal. Keep this browser limitation visible in verification rather than overriding reserved browser controls.
+| State | What it should look like |
+|---|---|
+| **Hover** | Slight surface or text-color change; **no scaling or movement** |
+| **Pressed** | Temporarily deepen the background; **no scaling or movement** |
+| **Focused** | 2px visible outline, 2px offset |
+| **Disabled action** | Entire button at **40% opacity**; cannot activate |
+| **Unavailable action that also shows a status** | No button background; icon/text and status stay fully readable; focusable with `aria-disabled="true"` and a reason, but cannot activate |
+| **Available but ineffectual** | Normal button background; **only icon at 40% opacity**; no hover feedback or action (e.g., Back at first page) |
+| **Loading** | Original button at **40% opacity**, with centered, fully opaque **white Tabler `loader-2`** spinner over it; same size as before loading |
 
-The older registry/audit workflow below applies to future unapproved work, not to routine choices already delegated above.
+Keep disabled, unavailable, ineffectual, and loading distinct. A loading action must not be submitted twice.
 
-This is the canonical design reference for uburoom's web interface. `AGENTS.md` requires every future agent working on UI, CSS, layout, branding, menus, dialogs, accessibility, and interaction to read this guide **before** investigating, planning or editing. The current code is evidence of what exists, not automatic authorization to preserve an inconsistency as a new standard. Existing rules below remain in force unless the owner explicitly changes them. The separate `uburoom-remote` repository owns its own extension renderer and popup; do not silently impose web UI changes there.
+### Button layouts
 
-**The owner makes ALL design and implementation decisions.** Agents may inspect, measure, compare, diagnose, summarize, propose alternatives, and ask questions. They may not decide on the owner's behalf which component type, layout, dimension, wording, colors, spacing, border, icon, animation, dismissal behavior, keyboard behavior, technical abstraction, compatibility exception, test threshold, or implementation sequence to adopt. "Obviously better," "consistent," "cleanup," "best practice," and "minor" are not exceptions. Do not treat an agent's recommendation, a passing test, an existing implementation, a prior unapproved proposal, or silence as approval. If instructions conflict or an existing rule appears defective, identify the conflict and request an explicit ruling rather than silently revising it.
+- Normal text labels can wrap to **two lines**; compact labels stay on one line.
+- Use natural-width buttons on desktop. On narrow screens, major form/dialog actions may stack full-width when necessary.
+- Keep toolbar icon groups compact, with **4px** between adjacent icon actions.
+- Don't force the **44px button-height rule** onto **40px segmented selectors**.
 
-For design-standardization tasks, the default authorization is **read-only audit and owner-facing proposal only**. Follow this sequence:
+## 4. Switches and checkboxes
 
-1. Read this guide, `AGENTS.md`, relevant roadmap/specification/verification notes, and the actual HTML, CSS, JavaScript and browser test files. Inspect rendered surfaces when an isolated fixture is available; never claim to have seen a rendering from source inspection alone.
-2. Inventory every affected UI surface, the styling/behavior it actually uses, duplicated patterns, inconsistencies against approved standards, accessibility or lifecycle risks, and its exact file/selector/function location. Distinguish **verified issue**, **suspected issue**, **intentional documented exception**, and **decision needed**.
-3. Present an owner-readable audit, proposed canonical types and migration options, dependency and risk analysis, a staged implementation plan, and **explicit numbered questions covering every open choice**. State the status quo and alternatives, their trade-offs, your nonbinding recommendation, and the exact decision needed for each question. Do not begin implementation or edit design rules as if proposals were approved.
-4. **Stop for the owner's answers.** Record each explicit approval/exception in the canonical registry below before any separately authorized implementation. Unanswered, partly answered or ambiguous choices remain blocked; ask follow-ups. Approval of one choice does not approve related or downstream choices.
-5. After approval to implement, work only within its exact scope. Reuse canonical types, update this guide alongside approved component changes, run appropriate tests, inspect before/after browser renders, report actual evidence and unresolved questions, and pause again whenever a new decision is exposed. Never merge, deploy or publish without separate authorization.
+### Live switches
 
-### Already documented common primitives (do not invent alternatives)
+A standard setting row looks like this:
 
-- Appearance: use the named CSS tokens and dark/light plus orange/pink semantics under **Visual language**. Video chrome is a deliberate separate dark surface; this does not authorize unrelated hard-coded colors.
-- Actions: the **five existing named button classes** are `.primary`, `.quiet`, `.icon-button`, `.danger-button` and `.solid-button`, each with the roles defined below. Icon-only actions require shared SVGs, accessible names and titles. A variant is not approved merely because one CSS selector exists.
-- Existing modal foundation: `<dialog>` and `.privacy-dialog` are already used for web modal surfaces; size-specific selectors and locally constructed dialog bodies currently differ. These are *implementation facts*, not approved size/type categories.
-- Existing player menu: `web/watch-player-ui.js` constructs a desktop `popover="manual"` settings menu and nested choice surface; mobile settings use a native dialog. Its documented feature flow remains authoritative until the owner decides otherwise.
-- Existing room/fullscreen surfaces: the `#drawer` and `#remote` are distinct from ordinary modal dialogs. A readiness prompt, queue countdown, disconnect toast, inline login state and feedback badges also have distinct purposes. Do not homogenize their behavior or appearance just because they overlap content.
+```text
+Auto-play                                      [○──]
+Play the next item automatically
+```
 
-### Existing popup and overlay inventory (descriptive; NOT approved canonical types)
+Keep the **label and optional description on the left**, and the **switch on the right**. Align the switch with the text block. When the screen gets narrow, **wrap the text** and let the row grow; never move the switch under the label or shrink it.
 
-| Surface | Where to inspect | Currently observed mechanism |
-| --- | --- | --- |
-| Room discovery/create and Room settings | `web/watch.html`, `web/watch.js`, `web/watch-rooms-ui.js`, `web/watch.css` | Native dialogs, differing widths and content/navigation arrangements; fullscreen relocation in some open paths |
-| Room change/privacy confirmation | `web/watch.html`, `web/watch-rooms-ui.js`, `web/watch.js` | Native dialogs with separately assigned confirmation actions and button treatments |
-| Account, account removal, browser handoff | `web/watch.html`, `web/account.js`, `web/watch.js`, `web/watch.css` | Native dialogs with different action/header conventions and lifecycle handlers |
-| Personal player settings | `web/watch.html`, `web/watch-player-ui.js`, `web/watch-player.css` | Native full dialog on mobile and from More settings |
-| Desktop player settings and choice menu | `web/watch-player-ui.js`, `web/watch-player.css` | Manual popover with nested submenu, imperative positioning and focus/keyboard logic |
-| Bulk queue addition | `web/watch-queue-ui.js`, `web/watch.css` | Dynamically constructed native dialog |
-| Codec tester | `web/watch.html`, `web/watch.css`, `web/watch.js` | Specialized native dialog containing an iframe |
-| Fullscreen Menu/drawer and web remote | `web/watch.js`, `web/remote-ui.js`, `web/watch.css` | Non-dialog overlays with custom placement, scrolling, visibility and fullscreen handling |
-| Readiness/recovery, autoplay countdown, disconnect/quality notices and badges | `web/watch.html`, `web/watch.js`, `web/watch-queue-ui.js`, `web/watch.css` | Inline/positioned status or action surfaces, not automatically modals |
+| Switch piece | Size |
+|---|---|
+| Track | **36 × 22px** |
+| Track radius | **11px** (pill) |
+| Thumb | **16 × 16px** |
+| Thumb inset | **3px** from either end |
+| Thumb movement | **14px** |
+| Row height | **44px minimum** |
+| Click/touch target | Aim for **44 × 44px**, even though the track is smaller |
 
-The inventory is a starting map, **not a completeness claim**. Agents must find additional popups, pseudo-popups, nested menus, dropdowns, browser/native controls and states throughout the supported watch and Activity interfaces; do not assume all of them should share one component.
+- **Off:** thumb left, neutral track.
+- **On:** thumb right, accent-colored track (`--primary`).
+- **Disabled:** show the actual On/Off position, but subdued and clearly noninteractive.
+- **Focus:** 2px ring with 2px offset. **Motion:** about **150ms**, disabled when reduced motion is preferred.
+- **Header Theme and Accent controls:** use the same switch geometry, within their compact header positions.
 
-### Canonical popup/component type registry — owner approval required
+Use a stable control name and accurate checked state (`role="switch"` / `aria-checked`, or equivalent native semantics).
 
-The authorized pass above records the current small/medium/large conventions and specialized exceptions. It supersedes the prior pending registry status; dimensions and helper details are implementation choices. Use the following fields when proposing future material changes beyond that scope.
+### Form checkboxes
 
-For *each owner-approved* type, add a concise record with these fields:
+Use a **square native checkbox** for options chosen as part of a pending form, not a sliding switch. Place it next to its label and make checked/unchecked obvious.
 
-| Field | What to record after explicit approval |
-| --- | --- |
-| Canonical type ID and status | Stable name, purpose, scope and owner approval date/reference; clearly mark proposed vs approved vs deprecated |
-| Allowed usages / exceptions | Which exact surfaces use it, excluded surfaces and any owner-approved deviations |
-| Structural contract | Shared markup/DOM helper or CSS classes, header/title/close/footer/actions, content regions and semantics |
-| Visual contract | Approved token usage, size limits, spacing, padding, typography, radii, shadow, backdrop, icon and button-role rules across themes |
-| Interaction contract | Opening/closing triggers, Escape, outside click, focus entry/trap/restore, keyboard/screen reader semantics, busy state, nested confirmations, error handling |
-| Placement contract | Desktop, narrow/mobile, theater, actual browser fullscreen, fullscreen Menu, Activity and PIP where applicable; overflow, viewport and scroll rules |
-| Verification and exceptions | Approved tests, browser/viewport matrix, comparison baselines/tolerances, known exceptions and linked owner decisions |
+Examples: **Include Specials** in Add Episodes or Auto-queue setup; **Keep room when empty** during Create Room. That same Keep-empty setting in an **existing** room uses a switch.
 
-**Decision history:** the earlier 2026-10-20 documentation-only audit authorized no additional categories or dimensions. The subsequent owner implementation request authorized the seven decisions above, including delegated tuning, while retaining the existing named button roles and feature-specific exceptions.
+## 5. Segmented selectors, tabs, and dropdowns
 
-### Required popup audit questions for future unapproved changes
+### Segmented selectors — choose a value, not a page
 
-For each overlay, inspect and explicitly ask the owner to resolve all choices not already covered by a documented rule, including:
+Make the whole control **40px tall**. Use two visual strengths:
 
-- Scope and classification: ordinary confirmation, editor/settings, anchored menu, drawer, status notice, or an exception; whether surfaces should share a common type and which ones must remain distinct.
-- Hierarchy and copy: headings, close icons, labels, primary/secondary/destructive actions, button order and wording, confirmation language, loading/empty/error messages, contextual help.
-- Visual rules: widths/min-max limits, margins/padding/gaps, typography, radius, borders, shadow/backdrop/opacity, alignment, focus/hover/disabled/pressed states, icon set, token versus exception, light/dark and orange/pink behavior.
-- Modal and keyboard behavior: native dialog/popover versus nonmodal surface; focus target, trapping and restoration, Escape, outside pointer, Tab/arrow behavior, accessibility names/roles, nested dialogs and concurrent overlay handling.
-- Placement and responsiveness: position, collision and overflow, scroll ownership, long text/zoom, 320/390/700px and other relevant widths, viewport/onscreen keyboard effects, theater, actual fullscreen and fullscreen drawer relocation, simulated versus live Activity limits.
-- Async and safety: pending operations, disabled controls, cancellation, stale responses, room/permission changes, close/reopen during work, preservation of typed drafts, current media playback, privacy and consent boundaries.
-- Architecture and enforcement: approved shared constructors/components, CSS consolidation strategy, selector ownership, allowed exceptions, automated lint/static checks, screenshot baseline coverage, permitted dependency/test changes and migration order.
+- **Prominent selected state:** layout/view controls such as Queue **Cards / List** and Media **Cards / List / Posters**.
+- **Subtle selected state:** setting values such as **Public / Private**, permission presets, and **Off / Following / Random**.
 
-Each finding must cite file locations and, when observable, reproducible steps or evidence. Each proposed resolution must be mapped to a numbered owner question and dependency; do not hide decisions inside a broad "approve the plan" question. After explicit approvals, document the canonical type records here before implementing those decisions.
+Show icon **and** text when they fit. Hide the text based on the **control's available space**, not only the viewport width; icon-only choices must retain complete accessible names.
 
----
+**Keyboard:** Arrow keys and Home/End move **focus only**. **Enter/Space** selects the focused option. Focus and selection must look different.
 
-## Visual language
+For permission presets, show **only actionable named presets**—**no Custom tab**. If settings match none of them, it's fine for **none** to appear selected.
 
-Use Inter/system-ui/-apple-system/Segoe UI/sans-serif with existing fallbacks. Dark tokens: background #101217, card #1B1E26, elevated #292E38, border #393F4D, text #F8F7F4, muted #AAB0BC. Light tokens: background #F8F6F2, card #FFFEFC, elevated #F0ECE6, border #DDD7CF, text #242329, muted #706D77. Fixed brand references remain orange #FF9954 and pink #FF7197; semantic primary/secondary swap between them. Dark/orange is the explicit default, independent of system or browser appearance. Keep semantic green #158761 for enabled remote and semantic red for destructive/error states. Video stays black with dark chrome and light overlays; sibling menus/dialogs use the selected page palette. Accent-filled controls use dark text in either theme; light surfaces use a contrast-adjusted accent ink for text/icons.
+### Tabs — move between panels
 
-Two compact switches immediately precede the username: Light/Dark and Orange/Pink, using the Room options pill/thumb styling at a narrower width. The theme thumb has a sun/moon icon, while the accent thumb has no icon. Both switches use accessible names rather than visible labels. The accent track stays neutral while its thumb shows the selected brand color. Persist appearance locally and apply it before rendering on watch, sign-in and handoff pages. Wordmark and remote logo reuse the canonical artwork with theme-appropriate neutral ink and swapped primary/secondary colors; preserve the fixed-color source assets. Browser favicon links stay static through all appearance changes and Sunrise Mode.
+Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sections (**General, People, Permissions, Playback & Queue, Manage**).
 
-Accent changes interpolate primary/secondary colors and crossfade logos over 100 ms. Twenty accent clicks within five seconds reveal Sunrise Mode with a color burst, 100 ms fades and 50 ms holds. Continued clicks less than 250 ms apart keep it active; releasing leaves it running, and a click after a pause of at least 250 ms stops it and saves orange. The corresponding theme gesture produces a gray dud only. Keep effects local, transient and non-interactive, and suppress particle/button/logo motion for reduced-motion preferences.
+- A selected tab has a restrained surface treatment. Room Settings adds an **accent vertical rail** on desktop or **accent underline** on mobile.
+- **Arrow keys activate the new panel immediately** (unlike segmented selectors).
+- Room Settings uses **Up/Down** on desktop's vertical tabs; **Left/Right** on mobile's horizontal tabs.
+- Keep focus, selected tab, and visible panel in sync. Use `tablist`, `tab`, and `tabpanel` semantics.
 
-Reuse 24×24 shared SVG paths, currentColor strokes, rounded ends/joins and approximately 1.9px width. Preserve rounded surfaces, subtle borders, spacing, focus and accessible names. Do not substitute emoji/icon libraries.
+### Navigation and dropdowns
 
-## Approved branding
+- **Media library names** are subnavigation, not segmented choices. Mark the current library with `aria-current`. Hide this subnavigation in the existing narrow Media container layout (around **440px**), while leaving other navigation available.
+- Use native dropdowns for **long or dynamic** lists and for video settings on mobile; desktop video settings can keep nested menus.
+- Show known-but-unavailable fixed options as **disabled with a readable reason**. Don't invent unavailable audio/subtitle tracks that aren't present in the data.
+- For leadership transfer: **2–3 eligible hosts → segmented selector; 4+ → labeled dropdown**. Choosing someone does not trigger the separate **Transfer** button.
 
-The primary wordmark is `assets/branding/uburoom-wordmark-brand.svg` (944.16 × 293.5061): orange `ubu`, off-white `room`, pink underline. Runtime headers use its web-owned copy under `web/assets/` at its natural aspect ratio. `uburoom-wordmark-white.svg` is available for monochrome dark contexts.
+## 6. Special icon controls
 
-The primary standalone oomark is `assets/branding/uburoom-oomark-brand.svg` (298.99 × 249.1061): off-white eyes and a pink mouth. `uburoom-oomark-white.svg` is its monochrome variant. The extension uses a square framed copy and PNG exports at 16, 32, 48, 64, 96, 128, 256 and 512 pixels; the favicon ICO includes 16/32/48 sizes.
+| Control | Design |
+|---|---|
+| **Permissions** | Keep **thumbs-up = Allowed** (positive/active) and **thumbs-down = Denied** (neutral/inactive) in both quick controls and the settings matrix. Include a visible **Allowed / Denied** legend in the matrix. |
+| **Mute, Captions, Theater** | Icon buttons with a clear persistent pressed state; **not** sliding switches. |
+| **Admin Mode** | Compact icon-only control; **not** a sliding switch. |
+| **Room Privacy** | Compact globe/lock icon-only control; **not** a sliding switch. Clearly indicate Public vs Private; pressed = Private. |
 
-Use the full-color wordmark for site headers and the oomark for favicons and toolbar icons. Do not stretch the wordmark into a square icon.
+Use stable accessible names: **Admin mode** uses checked switch state; **Room privacy**, permission thumbs, **Mute**, **Captions**, and **Theater mode** use accurate pressed state. Don't rely on color alone. **Denied** and **read-only** are different: a permission can be allowed *and* read-only.
 
-Raster/source exports in `assets/branding` include the 1848 px wide transparent wordmark PNG, 512 px transparent square icon, and 1024 px background square wordmark/oomark PNGs with matching SVGs. The prior blue/green assets currently reside in `assets/branding/old/`; M1 release cleanup will replace the old wordmark dependency in demo-media generation and remove that archive from the active tree (Git history retains it).
+## 7. Saving and feedback
 
-Use the canonical uburoom artwork. The initial theme script includes the SVG sources; appearance changes recolor cached local data URLs for header/remote logos without network requests. Preserve the established typography and component layout rules above.
+- A choice made during **Create Room** stays in the form until **Create room**.
+- Editing **existing-room visibility or permission presets** is a draft until the user presses **Save**; provide Cancel/discard, pending, and error feedback. **Auto-queue mode/source** follows its existing **Save auto-queue** form.
+- Queue and Media view choices are remembered **independently**. Volume and mute are device/browser preferences; portable preferences such as theme and layouts can sync when account support exists, with local fallback.
+- Show clear pending/error states without claiming an unsuccessful save has applied.
 
-## Button hierarchy and interaction patterns
+### General toasts
 
-Five named button classes define the existing interactive action roles. Never mix their semantic roles; other specialized controls require explicit owner review rather than silently adding a new class.
+Use general action-result toasts at **bottom-right on desktop** and **bottom-center on mobile**. Show at most **three** at once, stacked with **newest at the bottom**; queue the rest.
 
-- **`.primary`** — Filled accent background (`--primary`), dark text. The single dominant action per context (Create room, Connect Plex, Approve, Add to queue). Never use for toggles, state indicators, or secondary actions.
-- **`.quiet`** — Elevated background (`--elevated`), normal text. Standard secondary and action buttons: navigation choices (Active rooms, Your rooms), action buttons with icon+text (Switch room, Browse media, Cancel), state-toggle buttons with text (visibility toggle). The default for most interactive buttons.
-- **`.icon-button`** — Elevated background (`--elevated`), muted icon color (`--muted`), and `--hover` treatment for clickable actions. Icon-only controls in panel headers and dialogs: settings cog, refresh, close, collapse. Nonclickable indicators lose their background; disabled Queue footer buttons retain theirs under the later owner correction above. This supersedes the earlier transparent header variant (owner revision 2026-10-21). Always include `aria-label` and `title`. Icon size 24×24.
-- **`.danger-button`** — Red filled. Destructive irreversible actions only (Delete room, Remove account). Always confirm before executing.
-- **`.solid-button`** — Reserved for player title-bar actions (Menu button) where contrast against the video gradient is needed. Do not use inside card panel bodies.
+| Toast | Duration |
+|---|---|
+| Loading | Until the operation finishes or the toast is dismissed |
+| Success | **4 seconds** of visible time |
+| Error | **10 seconds** of visible time |
 
-### Icon button rules
-- Owner regression repair (2026-10-21): restore the web remote/badge module's existing Tabler wiring after legacy paths, renderer and icon exports were accidentally reactivated. Keep the legacy archive inert and the shared icon provider authoritative; preserve volume-state glyph selection and true seek-distance feedback. This restores the documented migration and does not authorize a remote layout redesign.
-- Icon-only buttons must always have `aria-label` and `title`. No visible text label is needed when the icon is universally understood (⚙ settings, × close, ↻ refresh).
-- Use inline 24×24 SVGs from the shared, self-hosted `web/icons.js` Tabler **outline** icon pack (`currentColor` stroke, Tabler geometry and rounded caps/joins). The original monochrome Roomies `oomark` belongs to the same provider. No emoji/icon fonts or remote CDNs.
-- **To add an icon:** copy only the SVG's inner markup from its official `tabler/tabler-icons/icons/outline/<slug>.svg` source into the `glyphs` map in `web/icons.js`, keyed by the exact Tabler slug. Verify the markup and slug against upstream, retain the 24×24 Tabler geometry, and add an `aliases` mapping only when preserving an existing application-level name. Any future named Tabler icon can then be rendered by `uburoomIcons.icon(document, '<slug>')`. Update `tests/icons.test.js`, inspect both Chrome and Firefox, and retain the MIT attribution in `web/vendor/THIRD_PARTY_NOTICES.txt`. All glyph data ships locally in `/icons.js`, loaded in the page head, before `/remote-ui.js`; never fetch icons on demand or reactivate the archived SVG paths in `remote-ui.js`.
-- **Stateful controls:** use only `captions` (`badge-cc`) for both subtitle states, with `aria-pressed` and color indicating enabled. `uburoomIcons.volumeName(percent, muted)` maps mute/0 → `volume-off`, below 10 → `volume-4`, 10–50 → `volume-2`, and over 50 → `volume`. Use `uburoomIcons.icon(document, 'back' or 'forward', seconds)` for 15/30/60 second seek variants; other durations use a generic skip shape with the true interval written in feedback. Refresh animations must rotate counter-clockwise.
-- Panel-header secondary icon buttons (settings, refresh, close, collapse) use `.icon-button`. Content-area action icon buttons (queue move, remove, play) use `'icon-button quiet'` to add the elevated hover state.
+Show **a separate loading toast and then a separate result toast**. Every toast has an **X**. Hover/focus pauses a success/error countdown and then resumes it. A queued toast gets its full duration after becoming visible. Prioritize errors when the stack fills, without displacing a toast the user is hovering over or focusing. Dismissing a loading toast **does not cancel** the action. Keep the player’s existing reconnecting message separate.
 
-### Toggles
-- Binary room/permission toggles (Play/pause, Seek, Add to queue, Autoplay) use the custom CSS track/thumb toggle (`control-track` / `control-thumb` pattern in `remote-ui.js`), not native checkboxes. This applies in the Room panel, remote overlay, and queue settings.
-- `aria-pressed` or `aria-checked` must be set on every toggle to reflect the current state.
+## 8. Quick checks before shipping
 
-### Borders
-- Panel cards (`--card` background) do not need borders. Use background elevation (`--elevated` for buttons/controls) to create visual depth.
-- Borders (`1px solid var(--border)`) apply only to: form inputs and selects, provider rows in account settings, and dialog elements (`.privacy-dialog`).
-- Do not add borders to icon buttons, quiet buttons, or section panel outlines.
+- Is this the **right type** of control (button, switch, checkbox, selection, or tab)?
+- Are its **size, radius, padding, icon size, and label weight** from this guide?
+- Can you tell **selected, focused, disabled, loading, and read-only** states apart without relying on color?
+- Does it work by **keyboard**, with a clear name and visible focus?
+- Does it fit on **narrow screens and 200% zoom** without clipped labels or tiny targets?
+- Does it look right in **Light/Dark × Orange/Pink**?
 
-### Label economy
-- Avoid visible text labels for icon buttons with unambiguous universal icons. `title` and `aria-label` supply the accessible name.
-- Section headings (Room, Queue, Media) are not repeated in button text within the same section.
-- Avoid redundant captions below icons when the icon itself is self-explanatory; use `aria-label` for context instead.
-- Muted hint text (`color: var(--muted); font-size: 12px`) is appropriate for secondary status or instructions, not for primary actions.
-
-## Components
-
-- Playback queue defaults to horizontal cards: chronological history on the left, the current video centered initially and after media changes, and upcoming entries on the right. Allow native scrolling, previous/next browsing arrows and explicit recentering; ordinary snapshots preserve browsing position and focused controls. Remember Cards/List locally. List uses one chronological column with history above Now playing and upcoming entries below, a viewport about five rows tall and initial centering on Now playing. Keep Queue below Room in the right column in normal and theater modes. Reuse authenticated library artwork and existing icons; preserve replay, resume, queue editing, autoplay, generation settings and confirmed clearing through the shared command path.
-- Queued items show Play now/Skip to directly, with Move earlier/later at the top right (left/right in Cards, up/down in List). Follow a moved card with smooth scrolling and retain its active control. Vertical wheel input retains native page scrolling; cards keep their scrollbar, arrows and native horizontal gestures. Match history/upcoming row heights and muted uppercase header typography; upcoming ranks read `#1`, with `Up in 43:32` in the action footer, estimating from unfinished preceding playback. Use the queue-add icon for history requeueing, omit the Current video footer caption, and publish current/history/upcoming updates together when their revisions agree. Explicit replay consumes its selected room-history row with a fresh playback occurrence. Current Skip follows Play/Pause; history Go back to precedes Resume and restores newer history/current playback before the existing pending queue.
-- Section headings are Queue, Room and Media. Room uses Tabler `door`, and Roomies uses the web-owned monochrome oomark with canonical geometry; Media uses overlapping video cards with a play triangle; the fullscreen Menu button retains the drawer symbol. The fullscreen drawer button is Menu. Mobile sections use equal-width Room/Queue/Media tabs, one visible panel, roving keyboard focus and retained selection across Menu entry/exit; desktop sections collapse independently, including in fullscreen Menu. Fullscreen order is Room, Queue, Media. Section headers share Queue's 20px top inset and 44px action row; allow Media navigation to wrap while retaining that inset. Apply one shared panel margin rather than nested Room margins, and preserve page width between short and long tabs. The queue tab is unavailable without a durable room; Media remains browsable outside a room.
-- Sticky Media headers use opaque rectangular backing so catalog content cannot show through their corners; the surrounding panel keeps its rounded outline. Mobile section tabs scroll normally. Pin the full Media navbar at the top in both the page and fullscreen Menu: heading/navigation first, then the search/filter/view toolbar below the measured header. Update measurements synchronously during navigation rendering to preserve the visible item when switching views, and observe resizing for wrapping changes.
-
-- Compact/normal remotes use one renderer. Enable is master, Playback/Picture are independent, Queue disabled, On join a remembered preference. Consent itself is never restored.
-- Transport retains central double-height Play/Pause, ±15 seconds, icon-only actual-boundary Start/End, mute/volume. Slider drafts stay stable; web commands are throttled and unsent values dropped on disconnect/target change.
-- Picture retains separate Zoom/Width/Height rows: minus above reset at left, editable value/label in the middle, larger plus at right, beside the pad. Resets are independent; Reset all is quiet gray. Keep hold/Ctrl, profiles and phone layouts.
-- Applied-command badges use a 112px shared symbol, useful applied value and literal sender name; each command restarts the 2.5-second lifetime. Avoid verbose status.
-- Normal Watch places Media below the video, with Room and then Queue in a sticky right column that scrolls internally when taller than the viewport. The room bar belongs inside the collapsible Room content. Narrow screens stack the sections. Personal quality/audio are separate from shared playback/picture. The centered Play/Pause button appears on hover or keyboard focus; a plain video-surface click does not toggle play.
-- Normal content expands proportionally from a 1,750px cap at 1080p to 2,100px at 4K, with poster columns adapting to the available library width. Theater centers the landscape player on the normal page background; cap player height so portrait screens cannot make it taller than wide. At the page top, dim all content below the video, revealing it on hover/focus below the player or page scroll. Below the player, put Media on the left at approximately 70% width, and Room then Queue in the remaining right column. Keep that right column sticky with overflow scrolling when taller than the viewport; stack on narrow screens. Keep the logo/header on the normal background.
-- Mobile has no theater option and uses an edge-to-edge player with square corners. Desktop corners are subtly rounded; theater and fullscreen are square. The mobile transport has two rows: timestamps/progress, then Play, Beginning, End, CC, Settings, mute/visible volume slider and Fullscreen. Keep mute adjacent to its slider. Side double-taps seek 15 seconds; each extra tap adds 15 seconds in that direction. Touch controls hide after inactivity, including after slider use, while blocked playback and active menus remain reachable.
-- Player settings use a desktop drop-up ordered Quality, Audio track, Subtitle track, More settings, with choice menus opening left. Mobile opens the full dialog, including in fullscreen. The dialog groups playback/Sync correction, tracks and subtitle rendering/delay. CC is an outlined rounded rectangle when off and solid with cutout letters when on; it restores the previous/default available track and fades when no track is available. Quality badges on the cog show ORIG or HD for Original/1080p, with no badge below that. Native captions clear the actual control height and return down when touch controls hide; explicit cue positioning stays intact.
-- Quality choices include the resolution suffix (1080p/720p). Selected menu choices use the existing orange text/background without an edge stripe. The main audio/subtitle summary shows the resolved track even for Automatic; the choice menu keeps Automatic checked and marks its resolved track as Used by Automatic. Format track summaries from language, codec and channel layout, with custom names in a separate muted caption row.
-- Browser fullscreen uses actual fullscreen and provides a half-width drawer, nearly full width with an external close-button gutter on portrait phones. Exiting restores the prior normal/theater layout. Clicking Theater while fullscreen exits into theater. Use an orange Theater icon without an accent fill. Remember the browser normal/theater preference and apply it before parsing watch content; do not persist fullscreen or apply theater on mobile/Activity. Clicking outside the drawer closes it; keep its close button outside the upper-left edge, with a visible left gutter on portrait phones. Activity uses this viewport-filling layout with theater unavailable; PIP is video-only. Preserve private confirmation/revocation and room chooser behavior.
-- Media uses page scrolling in normal, theater and narrow layouts, with its heading and toolbar pinned together and the top padding fully covered. Fullscreen Menu uses the drawer scroll. Use the same card background for the library toolbar and elevated backgrounds for button groups. Omit the Library/Collections selector; collections remain reachable from Libraries home. Preserve poster/list views, explicit library/show/season/episode breadcrumbs, navigation/view selectors, paging and search/scroll restoration. Episodes use scene-only detail art; movie posters match grid sizing. Row details stay separate from enlarged Play controls. Artwork is authenticated. A quiet Back to top button returns to the player; accepted library Play selections do the same, closing the fullscreen/Activity drawer and moving keyboard focus to the player. Show Back to top only in theater, at the right of the sticky library navigation row; truncate breadcrumbs with ellipsis before the button.
-- Account/privacy/handoff dialogs use existing inputs, quiet/primary buttons and shared symbols. Account settings use matching provider rows with usernames, official Discord/Plex icons and connection state; IDs belong only to the collapsed owner matching tool. A remove icon opens confirmation; disconnected providers show a larger Connect button in the same right-hand position. Protect the last sign-in method. Discord sign-in uses official blurple. Browser logout retains bottom placement/spacing and is hidden for Activity bearer identity. Initial loading and sign-in choices live inside the lobby; keep the page usable, reveal provider choices only after an unauthenticated response and offer inline retry on errors.
-- Home and empty-room lobbies share the black player frame, centered empty-room layout and exact video dimensions in normal/theater/phone modes. Outside a room, use Join or create a room from the initial HTML onward; inside an empty room, offer choosing/browsing media. Keep sign-in inside that same frame, with compact phone copy and internal scrolling when necessary. Show active room rows with name, title, viewer count and Join, with Reopen room and New room immediately below. Hide inactive playback, remote controls and visibility badges while retaining Theater/Fullscreen; keep Media browsable. A room replaces the lobby with the player. During reconnect, retain room, library navigation and queue position, disable unavailable playback and clear temporary remote consent while obtaining a fresh authorized stream. Rooms separates Active rooms and Your rooms from a short New room form with explicit visibility, a single Create room action and a direct Reopen existing room alternative that retains the name draft. Reopen opens Your rooms directly. Library Play retains the selected title as creation context; joining follows current playback, while reopening restores saved video and position. Cancel preserves browsing. Hide single-page pagination.
-- The username opens account settings; do not add a separate account cog. Refresh rooms is a quiet discovery action.
-
-Test affected normal/theater/phone surfaces using isolated fixtures. Actual player/Activity results stay separate. Private design transcripts and historical screenshots are not public documentation.
-
-- Active Room leads with name and a settings icon, then visibility, a clickable people count and role. Participant Play/pause, Seek and Add to queue switches are independently editable only by the creator or active administrator; ordinary hosts see read-only policy. More permissions opens the full editor. Remote control is a separate expandable temporary-consent area, followed by Switch room and Leave room. Leave room always means leaving; Close room for everyone saves and ends live viewing. Delete room is separately confirmed in Manage.
-- Room settings use a compact room-name/refresh/close header and nearby save feedback, desktop side navigation and horizontally scrolling phone section tabs. General contains name/visibility; People is one roster with role badges and contextual host actions; Permissions shows a full-width preset button group that saves immediately, followed by grouped switches without a summary hint. Desktop retains Host/Participant columns; phones use Participants/Hosts tabs. Show host inheritance once with compact accessible indicators; Playback & queue shares controls with the Queue entry point; Manage contains transfer, saved-video clearing, Close and Delete. Preserve unfinished names across unrelated edits and refreshes. Use neutral lock styling for private visibility. Auto-queue has a source picker for accessible libraries, shows and collections, resolves actual source names, hides dependent fields while Off and hides Specials for movie sources. Save/Reset stays reachable while drafts scroll.
-- Queue puts Auto-play and Auto-queue beside its settings icon at the top. Empty queues and outside-room queues show a separate neutral Browse media screen with The queue is empty or Join a room to use the queue, independent of the saved Cards/List preference. Countdown seconds have fixed space separate from truncated titles. Applied-command feedback clears on leaving/switching rooms.
-- Creation offers Host control (no participant grants), Play/Pause (participant play/pause only), and Queue (all participant Playback and Queue controls). Each preset gives hosts all editable permissions except permanent deletion, and participants no continuity permission. Settings uses the same presets; Custom appears only while individual rules differ, as an indicator rather than a selectable preset. Creation and Permissions omit summary hints and the preset Apply button. Remove Adjust picture from the editable permissions. Participant Room management switches remain off and disabled, enforced server-side for saved policies and direct edits too. Private means creator and hosts only; invited participants require a later access-model feature.
-
-Queue Cards use portrait 2:3 poster surfaces with visible overlay metadata/actions, side navigation over the timeline and a centered Center Now Playing button beside the view switch. History and upcoming removals are the rightmost top actions. History and Upcoming count buttons flank Center Now Playing in the queue toolbar. They step toward older/newer entries, jumping from the opposite side directly to most recent history/first upcoming. Room and Queue footers have no top divider. Media view names and icon keys are Cards/Posters. Browse media is the sole trigger for the transient primary-accent Media glow; clear the animation class when it finishes and when the Menu changes. The first addition to an empty active timeline becomes Now playing and waits paused when Auto-play is off.
-
-The viewport-centered entry is the sole highlighted queue selection, with an exposed local occurrence ID and accessible current marker. Queue status lives left-aligned in the footer beside its actions. Now playing shows a disabled earlier arrow, a forward arrow that discards the current occurrence and prepares the next without adding history, and an X that discards current playback without advancing; both require choose-video and queue-edit authority. Playing/Paused appears at bottom left. Other history and pending entries remain intact. Switch room shows Cancel for the current room in both active and saved lists.
-
-- Account settings begin with an editable uburoom Display name independent of provider rows. People begins with an authorized two-line host-search combobox, then explicit/live members and pending assignments. Enter grants only a selected result. Permissions begins with leader-only All hosts; while enabled, show one host permission column and point room-panel quick switches at it. Preserve explicit assignments and label hosts granted through the mode. Self-demotion confirms whether the mode or private-room access will still apply.
-
-### Room name suggestion (owner request, 2026-10-21)
-
-New room uses a placeholder of Room plus a title-cased six-letter Ubumfa word from the owner-provided generator. Blank or whitespace-only input submits that displayed suggestion; explicit names remain supported. Preserve the suggestion with the draft and refresh it after successful creation. No layout or styling changes.
+**Scope note:** This guide describes the main Watch controls. The button styling can also inform web Remote actions, but the switch and selection redesign rules do not apply to the separate Remote interface.
