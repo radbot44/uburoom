@@ -70,7 +70,7 @@
     let room, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false;
-    const homes = new Map(), images = new Map();
+    const homes = new Map(), images = new Map(), availabilityReads = new Set();
     let view = 'cards'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['cards','list','posters'].includes(saved)) view = saved; } catch {}
     const demoItem = { id:'demo',type:'demo',title:'uburoom synchronization test',duration:60,summary:'A short picture and sound sample for checking shared playback.' };
     function context(section, tab = 'library') { return { section,tab,title:sections.find(x => x.id === section)?.title || 'Test video',kind:'library',q:'',genre:'',year:'',sort:'title',order:'asc',seed:newSeed(),items:[],total:null,nextOffset:null,scroll:0,minHeight:0 }; }
@@ -86,7 +86,8 @@
       history.replaceState(historyState(-1),''); history.pushState(historyState(0),''); saveVisit();
     }
     function pushVisit() { visits = visits.slice(0,visitIndex + 1); visitIndex++; saveVisit(); history.pushState(historyState(),''); }
-    function cancelReads() { clearTimeout(timer); controller?.abort(); detailController?.abort(); requestVersion++; resetStatus(); }
+    function cancelAvailability() { for (const read of availabilityReads) read.abort(); availabilityReads.clear(); }
+    function cancelReads() { cancelAvailability(); clearTimeout(timer); controller?.abort(); detailController?.abort(); requestVersion++; resetStatus(); }
     function saveHome() {
       const root = [...trail,screen].find(x => x?.kind === 'library');
       if (root?.section) homes.set(root.section + ':' + root.tab,root);
@@ -217,7 +218,8 @@
         img.addEventListener('load',() => { box.classList.add('loaded'); });
         const key = item.id + ':' + img.dataset.kind; if (images.has(key)) img.src = images.get(key); else imageObserver.observe(img);
       }
-      if (item.available === false) { box.classList.add('unavailable'); node('span',box,'Unavailable','library-unavailable'); }
+      box.classList.toggle('unavailable',item.available === false);
+      node('span',box,'Unavailable','library-unavailable').hidden = item.available !== false;
       return box;
     }
     function signalError(message, action) { note.textContent = message; note.classList.add('library-error'); retry.hidden = false; errorAction = action; }
@@ -292,9 +294,9 @@
       return b;
     }
     function extras(parent,item,full = false) {
-      if (item.available !== false && !item.contentRating && !item.genres?.length) return;
       const line = node('div',parent,undefined,'library-extras');
-      if (item.available === false) node('span',line,'Unavailable');
+      line.hidden = item.available !== false && !item.contentRating && !item.genres?.length;
+      node('span',line,'Unavailable','library-availability').hidden = item.available !== false;
       if (item.contentRating) node('span',line,item.contentRating,'library-rating');
       if (item.genres?.length) node('span',line,(full ? item.genres : item.genres.slice(0,2)).join(' · '));
     }
@@ -458,6 +460,41 @@
       }
       summary(screen.detail); watchNextPage(); setBusy(busy);
     }
+    function updateAvailability(root,item) {
+      const missing = item.available === false;
+      if (root.classList.contains('library-tile')) root.classList.toggle('unavailable',missing);
+      root.querySelector('.library-art')?.classList.toggle('unavailable',missing);
+      for (const label of root.querySelectorAll('.library-unavailable,.library-availability')) label.hidden = !missing;
+      const line = root.querySelector('.library-extras');
+      if (line) line.hidden = !missing && !item.contentRating && !item.genres?.length;
+      for (const b of root.querySelectorAll('[data-play],[data-queue]')) b.dataset.unavailable = String(missing);
+    }
+    async function checkAvailability(items,current) {
+      const ids = [...new Set(items.filter(item=>['movie','episode'].includes(item.type)).map(item=>item.id))];
+      if (!ids.length) return;
+      const read = new AbortController(), version = generation;
+      availabilityReads.add(read);
+      try {
+        // Keep batches within the control socket's path limit, including 20-digit IDs.
+        for (let offset=0; offset<ids.length; offset+=32) {
+          const data = await request(endpoint('/api/watch/library/availability',{items:ids.slice(offset,offset+32).join(',')}),read.signal);
+          if (version !== generation || screen !== current || read.signal.aborted) return;
+          const statuses = new Map(data.items.map(item=>[item.id,item.available]));
+          const cards = new Map([...results.children].map(card=>[card.dataset.item,card]));
+          for (const item of current.items) if (statuses.has(item.id)) {
+            item.available = statuses.get(item.id);
+            const card = cards.get(item.id);
+            if (card) updateAvailability(card,item);
+          }
+          if (current.detail && statuses.has(current.detail.id)) {
+            current.detail.available = statuses.get(current.detail.id); updateAvailability(overview,current.detail);
+          }
+          setBusy(busy);
+        }
+      } catch (error) {
+        if (version === generation && current === screen && error.name !== 'AbortError') signalError('Availability could not be checked. ' + error.message,()=>void checkAvailability(items,current));
+      } finally { availabilityReads.delete(read); }
+    }
     async function loadPage(append = false) {
       if (!room || !screen || ['details','home'].includes(screen.kind)) return;
       if (append && (screen.loading || screen.nextOffset == null)) return;
@@ -482,6 +519,7 @@
         current.items = append ? [...current.items,...added] : added; current.total = data.total; current.nextOffset = data.nextOffset;
         current.loading = false;
         if (append) { renderTools(); added.forEach(tile); watchNextPage(); setBusy(busy); } else renderResults();
+        void checkAvailability(added,current);
       } catch (error) {
         if (version !== requestVersion || roomVersion !== generation || error.name === 'AbortError') return;
         current.loading = false; current.pageError = true; renderTools(); signalError(error.message,() => void loadPage(append));
@@ -493,6 +531,7 @@
         const full = item.id === 'demo' ? demoItem : (await request(endpoint('/api/watch/library/item',{item:item.id,type:item.type}),detailController.signal)).item;
         if (version !== generation || screen !== current) return;
         current.detail = full; current.detailsLoaded = true; summary(full); setBusy(busy);
+        void checkAvailability([full],current);
       } catch (error) { if (version === generation && screen === current && error.name !== 'AbortError') signalError('Details could not load. ' + error.message,() => void getDetails(item,current)); }
     }
     async function openItem(item) {
@@ -514,6 +553,7 @@
       else { roomForScroll(screen.scroll); restoreScroll(screen.scroll); }
       const current = screen; requestAnimationFrame(() => { if (screen === current && current.focusItem) [...results.querySelectorAll('.library-tile')].find(n => n.dataset.item === current.focusItem)?.querySelector('.library-open')?.focus({preventScroll:true}); });
       if (screen.detail && !screen.detailsLoaded) void getDetails(screen.detail,screen);
+      else void checkAvailability(screen.detail ? [...screen.items,screen.detail] : screen.items,screen);
       if (!['details','home'].includes(screen.kind)) { if (screen.dirty) void query(); else if (!screen.items.length && screen.total == null) void loadPage(); }
     }
     async function fetchFacets(section) {
@@ -548,7 +588,7 @@
     retry.onclick = () => errorAction?.();
     async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
-      room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
+      cancelAvailability(); room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
       testVideo = false; screen = homeContext(); beginHistory();
       pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); scopeActions.replaceChildren(); scopeActions.hidden = true; resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
       navigationControls.forEach(n => { n.disabled = true; }); direction.disabled = true;

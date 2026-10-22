@@ -147,16 +147,16 @@ test('every room-scoped library route rejects guests and rechecks ownership befo
   const room = {s:{roomId:'room'}}, rooms = new Map([['room',room]]);
   const wait = () => { calls++; waiting?.(); return new Promise(resolve=>{finish=resolve;}); };
   const hub = {access:{isMember:()=>true},canManage:(s,actor)=>manage&&actor.userId==='host'};
-  const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms,canView:async()=>true,plex:{configured:true,browse:wait,details:wait,filters:wait,artwork:wait}},
+  const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms,canView:async()=>true,plex:{configured:true,browse:wait,details:wait,filters:wait,artwork:wait,availability:wait}},
     user:async req=>({userId:req.headers.cookie}),webActor:identity=>identity,throttle:()=>true,json:(res,status,data)=>{res.status=status;res.data=data;}});
-  for (const suffix of ['','/item','/filters','/art']) {
-    const res={}; await routes.route({method:'GET',headers:{cookie:'guest'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room')); assert.equal(res.status,403);
+  for (const suffix of ['','/item','/filters','/art','/availability']) {
+    const res={}; await routes.route({method:'GET',headers:{cookie:'guest'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room&items=1')); assert.equal(res.status,403);
   }
   assert.equal(calls,0);
-  for (const suffix of ['','/art']) {
+  for (const suffix of ['','/art','/availability']) {
     manage=true; const ready = new Promise(resolve=>{waiting=resolve;}); const res={};
-    const work=routes.route({method:'GET',headers:{cookie:'host'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room'));
-    await ready; manage=false; finish(suffix ? {type:'image/jpeg',bytes:Buffer.from('private image')} : {items:[{title:'private title'}]}); await work;
+    const work=routes.route({method:'GET',headers:{cookie:'host'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room&items=1'));
+    await ready; manage=false; finish(suffix==='/availability' ? new Map([['1',false]]) : suffix ? {type:'image/jpeg',bytes:Buffer.from('private image')} : {items:[{title:'private title'}]}); await work;
     assert.equal(res.status,403); assert.equal(JSON.stringify(res.data).includes('private title'),false);
   }
   routes.close();
@@ -165,16 +165,16 @@ test('every room-scoped library route rejects guests and rechecks ownership befo
 test('lobby catalog, details, filters and artwork recheck identity and Plex scope after awaited reads', async () => {
   let signedIn = true, principal = 'viewer', waiting, finish;
   const wait = () => { waiting(); return new Promise(resolve => { finish = resolve; }); };
-  const plex = {configured:true,principal:'viewer',browse:wait,details:wait,filters:wait,artwork:wait,visible:async()=>true};
+  const plex = {configured:true,principal:'viewer',browse:wait,details:wait,filters:wait,artwork:wait,availability:wait,visible:async()=>true};
   const hub = {access:{isMember:()=>true},plexFor:async()=>({...plex,principal})};
   const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms:new Map()},
     user:async()=>signedIn?{userId:'viewer'}:undefined,webActor:identity=>identity,throttle:()=>true,json:(res,status,data)=>{res.status=status;res.data=data;}});
   try {
-    for (const suffix of ['','/item','/filters','/art']) {
+    for (const suffix of ['','/item','/filters','/art','/availability']) {
       for (const revoke of [()=>{signedIn=false;},()=>{principal='changed';}]) {
         signedIn=true;principal='viewer';const ready=new Promise(resolve=>{waiting=resolve;}),res={};
-        const work=routes.route({method:'GET',headers:{},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix));
-        await ready;revoke();finish(suffix==='/art'?{type:'image/png',bytes:Buffer.from('private')}:{items:[{title:'private'}]});await work;
+        const work=routes.route({method:'GET',headers:{},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?items=1'));
+        await ready;revoke();finish(suffix==='/availability'?new Map([['1',false]]):suffix==='/art'?{type:'image/png',bytes:Buffer.from('private')}:{items:[{title:'private'}]});await work;
         assert.equal(res.status,403);assert.equal(JSON.stringify(res.data).includes('private'),false);
       }
     }
@@ -196,10 +196,36 @@ test('file checks mark missing library entries and reject playback before subtit
     return json({totalSize:rows.length,Metadata:rows});
   }); t.after(()=>plex.close());
   const result = await plex.browse({section:'1'});
-  assert.deepEqual(result.items.map(item=>item.available),[true,false]);
+  assert.deepEqual(result.items.map(item=>item.available),[true,true],'Listing renders before file checks');
+  assert.deepEqual([...await plex.availability(['1','2'])],[['1',true],['2',false]]);
+  assert.deepEqual((await plex.browse({section:'1'})).items.map(item=>item.available),[true,false],'Known per-item statuses are included immediately');
   assert.deepEqual((await plex.queueItems({type:'library',id:'1'})).map(item=>item.id),['1']);
   await assert.rejects(plex.playableItem('2'),{code:'MEDIA_UNAVAILABLE'});
   await assert.rejects(plex.prepare('2','direct',false,undefined,undefined,{subtitleId:'auto'}),{code:'MEDIA_UNAVAILABLE'});
   checked[1].Media.push({...checked[0].Media[0],id:3});
   assert.equal((await plex.prepare('2','direct',false,undefined,undefined,{sourceOnly:true})).sourceSelection.mediaId,'3');
+});
+
+
+test('slow file checks never hold catalog reads and overlapping requests reuse item checks within their Plex scope', async t=>{
+  let release,started,checks=0;
+  const ready=new Promise(resolve=>{started=resolve;}),hold=new Promise(resolve=>{release=resolve;});
+  const plex=fixture(async url=>{
+    if (url.searchParams.has('checkFiles')) {
+      checks++;started();await hold;
+      return json({Metadata:[movie(1,{Media:[{Part:[{exists:false,accessible:false}]}]}),movie(2)]});
+    }
+    return json({totalSize:2,Metadata:[movie(1),movie(2)]});
+  }); t.after(()=>plex.close());
+  const initial=await plex.browse({section:'1'}); assert.equal(initial.items.length,2);assert.equal(checks,0);
+  const first=plex.availability(['1','2']);await ready;
+  const overlap=plex.availability(['1']);
+  assert.equal((await plex.browse({section:'1'})).items.length,2,'Listing returns while file check remains held');
+  assert.equal(checks,1);release();
+  assert.equal((await first).get('1'),false);assert.equal((await overlap).get('1'),false);
+  assert.equal((await plex.availability(['2','1'])).get('1'),false);assert.equal(checks,1,'Changed batch order reuses item results');
+  assert.equal((await plex.browse({section:'1'})).items[0].available,false);
+  const personal=plex.scope('fixture-personal-token','fixture-personal');
+  assert.equal((await personal.browse({section:'1'})).items[0].available,true,'Private scopes do not reuse another scope status');
+  await personal.availability(['1']);assert.equal(checks,2);
 });

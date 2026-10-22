@@ -16,7 +16,7 @@ const {localFormat} = require('../web/playback-policy');
 class Plex {
   constructor(config, fetcher = fetch) {
     this.rawFetch = fetcher; this.fetch = resilientFetch(fetcher); this.token = config.plexToken; this.av1 = new AV1(this, config);
-    this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
+    this.fileCache = new Map(); this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
     this.hlsPool=new HLSPool(media=>(media.plexContext||this).stop(media));
@@ -32,7 +32,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,scopes:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,scopes:new Map(),fileCache:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
@@ -79,20 +79,41 @@ class Plex {
   }
   catalog(resource) { return this.cached(this.catalogCache, resource, 96, () => this.json(resource)); }
   async availability(ids, budget, fresh = false) {
-    const unique=[...new Set(ids.filter(id=>id!=='demo').map(id=>this.id(id)))].sort();
-    const result=new Map();
+    const unique=[...new Set(ids.filter(id=>id!=='demo').map(id=>this.id(id)))].sort(), result=new Map();
     for(let start=0;start<unique.length;start+=80) {
-      const batch=unique.slice(start,start+80), key='files:'+batch.join(',');
-      const load=async()=>{
-        if(budget && --budget.requests<0)throw new Error('Plex selection exceeds the supported 200-request expansion limit');
-        const data=await this.json('/library/metadata/'+batch.join(',')+'?checkFiles=1');
-        const rows=new Map((data.Metadata || []).map(item=>[String(item.ratingKey),item]));
-        return batch.map(id=>[id,rows.has(id) && Sources.available(rows.get(id))]);
-      };
-      const values=fresh?await load():await this.cached(this.catalogCache,key,96,load,15000);
+      const batch=unique.slice(start,start+80), records=new Map(), missing=[];
+      for (const id of batch) {
+        const cached=this.fileCache.get(id);
+        if (!fresh && cached?.until>Date.now()) records.set(id,cached);
+        else missing.push(id);
+      }
+      if (missing.length) {
+        const request=Promise.resolve().then(async()=>{
+          if(budget && --budget.requests<0)throw new Error('Plex selection exceeds the supported 200-request expansion limit');
+          const data=await this.json('/library/metadata/'+missing.join(',')+'?checkFiles=1');
+          return new Map((data.Metadata || []).map(item=>[String(item.ratingKey),item]));
+        });
+        for (const id of missing) {
+          /** @type {{until:number,value?:Promise<boolean>,available?:boolean}} */
+          const record={until:Infinity};
+          record.value=request.then(rows=>{
+            record.available=rows.has(id) && Sources.available(rows.get(id));
+            record.until=Date.now()+15000; return record.available;
+          }).catch(error=>{if(this.fileCache.get(id)===record)this.fileCache.delete(id);throw error;});
+          records.set(id,record); this.fileCache.delete(id); this.fileCache.set(id,record);
+          while(this.fileCache.size>2000)this.fileCache.delete(this.fileCache.keys().next().value);
+        }
+      }
+      const values=await Promise.all(batch.map(async id=>[id,await records.get(id).value]));
       for(const [id,value] of values)result.set(id,value);
     }
     return result;
+  }
+  cachedAvailability(items) {
+    return items.map(item=>{
+      const record=this.fileCache.get(item.id);
+      return record?.until>Date.now() && typeof record.available==='boolean' ? {...item,available:record.available} : item;
+    });
   }
   async checkedItems(items,budget,fresh = false) {
     const playable=items.filter(item=>['movie','episode'].includes(item.type));
@@ -213,7 +234,7 @@ class Plex {
           (a[{added:'addedAt',year:'year',runtime:'duration'}[sort]] || 0) - (b[{added:'addedAt',year:'year',runtime:'duration'}[sort]] || 0);
         return (order === 'desc' ? -comparison : comparison);
       });
-      return { items:await this.checkedItems(items.slice(offset,offset + limit)), total:items.length, offset, nextOffset:offset + limit < items.length ? offset + limit : null };
+      return { items:this.cachedAvailability(items.slice(offset,offset + limit)), total:items.length, offset, nextOffset:offset + limit < items.length ? offset + limit : null };
     }
     const query = new URLSearchParams({ 'X-Plex-Container-Start':String(offset), 'X-Plex-Container-Size':String(limit) });
     if (q) query.set('title',q);
@@ -226,13 +247,13 @@ class Plex {
       query.delete('X-Plex-Container-Start'); query.delete('X-Plex-Container-Size'); query.set('sort','titleSort:asc');
       const key = resource + '?' + query + ':' + seed;
       const items = await this.cached(this.randomCache,key,8,async () => this.shuffle(await this.allItems(resource + '?' + query,500),seed),15 * 60000);
-      return {items:await this.checkedItems(items.slice(offset,offset + limit)),total:items.length,offset,nextOffset:offset + limit < items.length ? offset + limit : null};
+      return {items:this.cachedAvailability(items.slice(offset,offset + limit)),total:items.length,offset,nextOffset:offset + limit < items.length ? offset + limit : null};
     }
     if (sort && sort !== 'default') query.set('sort',sorts[sort] + ':' + order);
     else if (!childPath) query.set('sort','titleSort:asc');
     const data = await this.catalog(resource + '?' + query), rows = data.Metadata || [];
     const total = data.totalSize == null ? null : Number(data.totalSize), end = offset + rows.length;
-    return { items:await this.checkedItems(this.items(rows)), total:Number.isFinite(total) ? total : null, offset,
+    return { items:this.cachedAvailability(this.items(rows)), total:Number.isFinite(total) ? total : null, offset,
       nextOffset:rows.length && (total == null ? rows.length >= limit : end < total) ? end : null };
   }
   async filters(section) {
@@ -246,7 +267,7 @@ class Plex {
   }
   async details(id, type) {
     if (type && !['movie','show','season','episode','collection'].includes(type)) throw new Error('Invalid item type');
-    const data = await this.catalog(`/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.id(id)}?checkFiles=1`), item = this.items(data.Metadata)[0];
+    const data = await this.catalog(`/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.id(id)}`), item = this.cachedAvailability(this.items(data.Metadata))[0];
     if (!item) throw new Error('Title unavailable');
     const source = data.Metadata[0], tags = name => (source[name] || []).map(x => String(x.tag || '').slice(0,120)).filter(Boolean).slice(0, name === 'Role' ? 8 : 12);
     const ratings = [];
@@ -496,6 +517,6 @@ class Plex {
   async ping(media) {
     if (media?.transcodeId) await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: media.transcodeId })).catch(() => {});
   }
-  close() { this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
+  close() { this.fileCache.clear(); this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
 }
 module.exports = { Plex };

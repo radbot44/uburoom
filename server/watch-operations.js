@@ -55,7 +55,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if (!hub.canAdmin(auth.actor) || typeof data.enabled !== 'boolean') {return result(403,{error:'Only an authorized administrator can change Admin mode'});}
         hub.setAdminMode(auth.actor, data.enabled); return result(200,{adminMode:hub.isAdmin(auth.actor)});
       }
-      if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
+      if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/availability', '/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
         const room = watch.rooms.get(url.searchParams.get('room'));
         const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
         const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && (room.saved ? hub.canRoom(room.s,auth.actor,'chooseMedia') : hub.canManage(room.s, auth.actor)) &&
@@ -69,6 +69,10 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
           const art = await plex.artwork(url.searchParams.get('item'), url.searchParams.get('kind') || 'poster', url.searchParams.get('type'));
           if (!await eligible()||!await scopeCurrent()||!await itemVisible()) { return result(403, {error:'Library access was revoked'}); }
           return { status: 200, resource: art };
+        } else if (url.pathname.endsWith('/availability')) {
+          const ids=(url.searchParams.get('items') || '').split(',');
+          if (ids.length>80 || ids.some(id=>!/^\d{1,20}$/.test(id))) return result(400,{error:'Select between 1 and 80 Plex items'});
+          data={items:[...await plex.availability(ids)].map(([id,available])=>({id,available}))};
         } else if (url.pathname.endsWith('/item')) data = { item:await plex.details(url.searchParams.get('item'),url.searchParams.get('type')) };
         else if (url.pathname.endsWith('/filters')) data = await plex.filters(url.searchParams.get('section'));
         else {

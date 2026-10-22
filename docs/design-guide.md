@@ -173,6 +173,8 @@ Subtitles use Tabler `subtitles` when on and `subtitles-off` when off. The activ
 
 ### Unavailable media
 
+Render the library listing before checking file availability. Update unavailable labels and action states in a second pass without rebuilding cards, moving scroll position or losing focus. Availability checks run on the server and reuse cached item results within the same Plex access scope. Play and queue actions still check availability on the server before proceeding.
+
 Show unavailable movies at **40% opacity** in Media, with the poster slightly darkened. In Cards and Posters views, overlay **Unavailable** on the poster. In List view, put **Unavailable** first in `.library-extras`. Keep details browsable, but disable Play and Add to queue. Check availability on the server too, including bulk and automatic queue additions.
 
 If an unavailable movie remains in the active queue, show a persistent red error toast naming it. It has no countdown, bypasses the notification toggle, and clears when the entry is removed or becomes available. Clicking it still dismisses it. A missing movie must not be reported as a subtitle failure.

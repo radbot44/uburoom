@@ -279,7 +279,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         if(previous?.activity&&previous.userId===login.userId&&previous.entryAuthorized)login.entryAuthorized=true;
         json(res, 200, { ...issue(login), accessToken: tokens.access_token, name: login.name, owner: hub.isOwner(webActor(login)) }); return true;
       }
-      if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
+      if (req.method === 'GET' && ['/api/watch/me', '/api/watch/playback', '/api/watch/library', '/api/watch/library/item', '/api/watch/library/availability', '/api/watch/library/filters', '/api/watch/library/art'].includes(url.pathname)) {
         const reply = await operations.execute({ headers: req.headers }, url.href);
         if (reply.resource) {
           const art = reply.resource;
