@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const V = 'AEIOU';
-  const C = 'BCDFGHJKLMNPRSTVWXYZ';
+  const C = 'BCDFGHJKLMNPQRSTVWXYZ';
   const PAIRS = `BL BR CL CR DR DW FL FR GL GR KL KR PL PR SK SL SM SN SP ST SW TR TW
 MB MD MF MG MH MK ML MN MP MR MS MT MV MZ
 NB ND NF NG NH NJ NK NL NM NP NR NS NT NV NZ
@@ -26,9 +26,11 @@ CX LX MX NX RX SX TX
 XC XD XF XL XM XN XP XS XT
 BY CY DY FY GY HY JY KY LY MY NY PY RY SY TY VY WY ZY
 YB YC YD YF YG YH YJ YK YL YM YN YP YR YS YT YV YW YZ YY
-XY YX`.split(/\s+/);
-  // The original 20 ordered unlike-vowel pairs, plus AA, EE, and OO.
-  const VOWEL_PAIRS = 'AA AE AI AO AU EA EE EI EO EU IA IE IO IU OA OE OI OO OU UA UE UI UO'.split(' ');
+XY YX
+QL QM QN QR QS QT QW QY
+LQ MQ NQ RQ SQ TQ`.split(/\s+/);
+  // Every ordered pair of ordinary vowels is allowed, including doubles.
+  const VOWEL_PAIRS = [...V].flatMap(a => [...V].map(b => a + b));
   const PATTERNS = ['CVCVCV', 'CVCVVC', 'CVVCCV', 'CVVCVC', 'VCCVCV', 'VCCVVC', 'VCVCCV', 'VCVCVC'];
   function patternForLength(length, rand) {
     // Every two letters contain one vowel and one consonant. The eight
@@ -60,8 +62,8 @@ XY YX`.split(/\s+/);
     const rand = n => Math.floor(random() * n);
     const p = patternForLength(length, rand), s = Array(length);
 
-    // Fill vowels first. Distinct pairs and AA/EE/OO are supported; Y is
-    // reserved for eligible single-vowel slots rather than vowel pairs.
+    // Fill vowels first. All AEIOU pairs are supported; Y remains
+    // restricted to eligible single-vowel slots rather than vowel pairs.
     for (let vv = p.indexOf('VV'); vv !== -1; vv = p.indexOf('VV', vv + 2)) {
       const pair = VOWEL_PAIRS[rand(VOWEL_PAIRS.length)];
       s[vv] = pair[0]; s[vv + 1] = pair[1];
