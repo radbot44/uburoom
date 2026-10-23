@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Player settings dialog organization — 2026-10-23
+
+A/B on local changes based on `fc21ab9`; not deployed. The dialog uses two columns for Playback/Audio and Subtitles, keeping subtitle selection, rendering and delay together. Media information comes last with source and technical details side by side; narrow layouts stack the groups.
+
+- **Rendered verification:** Private disposable fixture runner reused actual dialog markup, player styles and the existing playback browser helper. Chrome 155.0.8059.84 and Firefox 158.0.1 passed two-column desktop and single-column narrow checks, no horizontal overflow with technical details collapsed/expanded, Tab from Close to Quality and native Escape dismissal. Screenshots inspected in dark and light themes, at 390×844, and at a 450×400 CSS viewport representing a 900×800 display at 200% browser zoom. An initial CSS `zoom` simulation enlarged the dialog beyond the viewport; that simulation was replaced by the reduced layout viewport used by browser zoom, not treated as a real browser-zoom pass.
+- **Template checks:** `node --test --test-reporter=tap tests/watch-page.test.js`: 3 passed, 0 failed, 0 skipped. `git diff --check` passed. No new permanent tests; private screenshots and runner remain ignored.
+- **Limits:** Presentation-only changes; no playback logic changes. Full suite, live provider/device integration (C), actual browser zoom and owner acceptance (D) not run.
+
 ### Player settings flow — 2026-10-23
 
 A/B on local changes based on `6a89046`; not deployed. Removed the top quality fallback banner and quality command notification. Original quality labels include the selected source bitrate rounded to whole Mbps when known. Desktop choices slide within one menu, final choices close it, and Back stays outside the scrolling list. Mobile retains its existing dialog.

@@ -13,11 +13,20 @@
 .stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}
 .stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open) .player-chrome,.stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open) .center-play{opacity:0;pointer-events:none}
 
-#tracks-dialog .settings-group{margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
+#tracks-dialog{width:min(800px,calc(100vw - 32px))}
+.player-settings-grid,.player-media-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));column-gap:28px}
+.player-settings-column{min-width:0}
+#tracks-dialog .settings-group{margin-top:20px;padding-top:18px;border-top:1px solid var(--border);min-width:0}
+#tracks-dialog .player-settings-column>.settings-group:first-child{margin-top:8px}
 #tracks-dialog h3{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px}
+#tracks-dialog h4{font-size:13px;font-weight:600;margin:0}
+#tracks-dialog .player-media-columns>div,#tracks-dialog details{min-width:0;overflow-wrap:anywhere}
+#tracks-dialog .player-media-columns summary{font-size:13px;font-weight:600;cursor:pointer}
+#tracks-dialog :is(#quality-notice,#audio-track-status):empty{display:none}
 #tracks-dialog label{font-size:13px;font-weight:600;margin-top:12px}#tracks-dialog select{width:100%;max-width:100%;font-size:14px;padding:10px}
 #tracks-dialog .personal-sync{display:block;margin:16px 0 0}#tracks-dialog .personal-sync label{margin-bottom:6px}#tracks-dialog .personal-sync .hint{margin-top:8px}
 #tracks-dialog #subtitle-offset{width:100%}#tracks-dialog #track-status:empty{display:none}
+@media(max-width:640px){.player-settings-grid,.player-media-columns{grid-template-columns:minmax(0,1fr);row-gap:0}#tracks-dialog .player-settings-column+.player-settings-column>.settings-group:first-child{margin-top:20px}#tracks-dialog .player-media-columns{row-gap:12px}}
 .player-settings-menu{position:fixed;inset:auto;margin:0;width:280px;max-width:calc(100vw - 16px);border:1px solid var(--border);border-radius:12px;padding:6px;background:var(--card);color:var(--text);box-shadow:0 8px 30px #0008;font-size:13px;z-index:25;overflow:hidden}
 .settings-main,.settings-submenu{position:absolute;inset:6px;transition:transform .18s ease,visibility 0s;min-height:0}
 .settings-main{bottom:auto;max-height:calc(100% - 12px);overflow:auto;transform:translateX(0)}
