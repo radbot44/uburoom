@@ -86,6 +86,7 @@
  * @property {string} userId - Account UUID of the viewer.
  * @property {Actor} actor - Actor context for this viewer.
  * @property {number} at - Timestamp (ms) of last viewer poll/heartbeat.
+ * @property {string} [preferredQuality] - Explicit quality preference, retained independently of effective output.
  * @property {string} quality - Selected quality preset ID (e.g. 'direct', '1080p8', '720p4').
  * @property {boolean} ready - Whether the viewer's player is buffered and ready.
  * @property {boolean} compatible - Whether the viewer supports direct/compatible playback.

@@ -35,6 +35,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if(!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
         const query=new URLSearchParams({viewer:data.viewerId,quality:data.quality||'720p4'});
         if(data.subtitles==='browser')query.set('subtitles','browser');
+        if(data.volume!==undefined)query.set('volume',String(data.volume));
+        if(data.muted!==undefined)query.set('muted',String(data.muted));
         const subscription='/api/watch/rooms/'+id+'?'+query;
         const joined=await execute(context,subscription);
         return joined.status===200?{status:200,value:{id,state:joined.value},subscription}:joined;
@@ -235,7 +237,13 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
       const headers = { cookie: context.headers.cookie, authorization: context.headers.authorization };
       const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login({ headers }))?.userId === auth.actor.userId;
-      watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'));
+      const preferences={};
+      if(url.searchParams.has('volume'))preferences.volume=require('../shared/engine').validate({action:'media.volume.set',args:{percent:Number(url.searchParams.get('volume'))}}).args.percent;
+      if(url.searchParams.has('muted')) {
+        if(!['true','false'].includes(url.searchParams.get('muted')))throw new Error('Invalid mute preference');
+        preferences.muted=url.searchParams.get('muted')==='true';
+      }
+      watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'),preferences);
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
       const remoteAddress = clientAddress(context);

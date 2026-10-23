@@ -349,6 +349,36 @@ test('episode metadata uses the same subtitle and cross-season ordering for libr
   assert.equal(plex.subtitle({ type: 'movie', year: 2024 }), '2024');
 });
 
+test('viewer quality ceilings include fitting Original and survive lower outputs without raising or replacing the preference', async t=>{
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={isMember:()=>true,refresh:async()=>true};
+  const catalog=new Plex({plexUrl:'http://fixture.invalid',plexToken:'fixture'});
+  const attempted=[];
+  const plex={qualities:media=>catalog.qualities(media),stop:async()=>{},prepare:async(id,quality)=>{attempted.push(quality);return {id,quality,kind:'plex',duration:60,format:'file',resources:new Map()};}};
+  const watch=new Watch(hub,plex);t.after(()=>watch.rooms.clear());
+  const actor={userId:'host',guildId:'guild',channelId:'commands',surface:'web'},id=watch.create(actor),room=watch.rooms.get(id),tab=randomUUID();
+  const source=(height,bitrate)=>({id:'1',kind:'plex',duration:60,source:{duration:60000,Media:[{height,width:height*16/9,bitrate,Part:[{key:'/library/parts/1/file.mp4'}]}]}});
+  watch.snapshot(room,actor,tab,undefined,'1080p8',{volume:0,muted:true});
+  assert.equal(watch.snapshot(room,actor,tab).state.volume,0);
+  assert.equal(watch.snapshot(room,actor,tab).state.muted,true);
+  const viewer=room.viewers.get(tab);
+  room.media=source(360,1000);await watch.prepareViewer(room,actor,tab);
+  assert.equal(viewer.quality,'direct');assert.equal(viewer.preferredQuality,'1080p8');
+  watch.dropMedia(room);room.mediaVersion=randomUUID();room.media=source(1080,16000);
+  await watch.prepareViewer(room,actor,tab);
+  assert.equal(viewer.quality,'1080p8');assert.equal(viewer.preferredQuality,'1080p8');
+  assert.equal((await watch.prepareQuality(room,viewer,plex,source(2160,3000),'720p4')).quality,'direct','Original qualifies by bitrate even above the selected resolution');
+  const below=await watch.prepareQuality(room,viewer,plex,room.media,'1080p6');
+  assert.equal(below.quality,'720p4');
+  attempted.length=0;
+  plex.prepare=async(id,quality)=>{attempted.push(quality);throw Object.assign(new Error('Capacity'),{conversionCapacity:true});};
+  await assert.rejects(watch.prepareQuality(room,viewer,plex,room.media,'720p4'),/Capacity/);
+  assert.deepEqual(attempted,['720p4','720p2'],'never fall upward or to an oversized Original');
+  attempted.length=0;
+  await assert.rejects(watch.prepareQuality(room,viewer,plex,room.media,'direct'),/Capacity/);
+  assert.deepEqual(attempted,['direct'],'Original never falls back to another quality');
+});
+
 test('watch quality and audio belong to an authenticated viewer; shared playback and picture still use permissions', async () => {
   const hub = new Hub({ ownerId:'host', guildId:'guild', channels:['commands'] }, []);
   hub.access = { refresh:async()=>true, isMember:()=>true, voiceChannel:()=>'call', validVoiceChannel:()=>true, options:()=>({available:true}) };
@@ -366,7 +396,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal((await command(guest,b,'media.volume.set',{percent:25})).status,'applied');
   await command(guest,b,'media.mute');
   assert.equal(watch.snapshot(room,guest,b).state.volume,25); assert.equal(watch.snapshot(room,guest,b).state.muted,true);
-  assert.equal(watch.snapshot(room,host,a).state.volume,50); assert.equal(room.s.state.muted,false);
+  assert.equal(watch.snapshot(room,host,a).state.volume,30); assert.equal(room.s.state.muted,false);
   assert.equal((await command(guest,b,'media.quality.set',{quality:'1080p',compatible:true})).status,'applied');
   assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p8');
   assert.ok(stopped.includes(guestOld));

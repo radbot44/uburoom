@@ -235,3 +235,11 @@ The indicator communicates measured playback synchronization reliability, not wi
 The owner requested that Media remain visible to every admitted viewer, independently of playback selection authority. Replace the visible Choose video permission with **Skip / replay**, described as **Skip to another video in the queue or replay a video from history.** Preserve the stored `chooseMedia` policy key to retain existing room/configuration choices and command compatibility. Browsing grants no playback or queue mutation authority.
 
 Remove Condensed view and always show permission captions. Host and Participant columns have equal widths and centered headings; Permission stays left-aligned. Split the main Room controls and Roomies columns equally. Omit the main roster kick column entirely without Kick participants permission; reserve it for every row when that permission is available, including protected targets. Participant role icons use the regular theme text color; hosts retain white and the leader retains the accent. These explicit owner requests supersede conflicting earlier layout rules.
+
+## Approved browser player preferences - 2026-10-22
+
+The owner requested browser persistence for video settings and volume between page loads, with a 30% default volume. Keep existing controls and layouts. Save explicit quality choices independently of effective playback quality: Original always selects Original; a fixed quality is a ceiling in resolution and bitrate, choosing the highest offered quality at or below it, including Original when its source bitrate fits, regardless of source resolution. Automatic fallback must never replace the saved preference. Volume/mute remain browser-local and personal.
+
+The owner clarified: remember subtitle language across videos, but do not remember audio language or subtitle timing. Subtitle Automatic/Off and rendering mode are also browser preferences. Match the saved language only to available subtitles on each video, retaining it when that language is absent. No shared playback timeline or remote consent is stored.
+
+Volume-slider updates use their own in-flight state and do not disable unrelated controls. Keep existing volume throttling, command authorization and control appearance.

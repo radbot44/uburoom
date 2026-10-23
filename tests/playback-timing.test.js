@@ -69,7 +69,7 @@ test('player uses the mapped server target and tolerates clock loss without drif
 });
 test('late room polls and failures cannot overwrite a newer authorized state',async()=>{
   const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8'),pending=[],applied=[];
-  const ctx={selected:'room',stateRequestSequence:0,stateTransportSequence:0,Date,performance,viewerId:'viewer',preferredQuality:'direct',
+  const ctx={selected:'room',stateRequestSequence:0,stateTransportSequence:0,Date,performance,viewerId:'viewer',preferredQuality:'direct',URLSearchParams,viewerPreferences:()=>({viewer:'viewer',quality:'direct'}),
     playbackClock:{begin:()=>({sent:performance.now()}),add(){},read:()=>({})},diagnostics:{record(){}},
     api:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),observationClock:{update:()=>0},observationClockRevision:0,
     playbackError:'',applyState:v=>applied.push(v.marker),fail(){},reportReadiness(){},unavailable(){throw new Error('Old failure must not clear new state');}};
@@ -90,6 +90,16 @@ test('command deadlines use fresh mapped time and never queue controls without a
   await ctx.execute({action:'media.pause'});assert.equal(sent[0].data.expiresAt,102500);assert.equal(sent[0].data.epoch,'current');
   valid=false;await assert.rejects(ctx.execute({action:'media.pause'}),/timing is refreshing/);assert.equal(sent.length,1);assert.equal(ctx.pending,false);
   valid=true;ctx.reconnecting=true;await assert.rejects(ctx.execute({action:'media.pause'}),/Reconnecting/);assert.equal(sent.length,1,'controls are not queued during reconnect');
+  ctx.reconnecting=false;ctx.volumePending=false;ctx.savePlayerPreferences=()=>{};
+  const releases=[];ctx.api=()=>new Promise(resolve=>releases.push(resolve));
+  const volume=ctx.execute({action:'media.volume.set',args:{percent:17}});
+  assert.equal(ctx.pending,false,'personal volume does not lock unrelated controls');
+  const shared=ctx.execute({action:'media.pause'});
+  assert.equal(ctx.pending,true);
+  releases[0]({status:'applied'});await volume;
+  assert.equal(ctx.pending,true,'volume completion cannot unlock a concurrent shared command');
+  releases[1]({status:'applied'});await shared;assert.equal(ctx.pending,false);
+
 });
 
 test('ordinary unlocked resume does not play a probe before its shared deadline',async()=>{

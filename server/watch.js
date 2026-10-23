@@ -92,7 +92,7 @@ class Watch {
     const socket = { readyState: 1 }, id = saved?.id || randomUUID();
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
       ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
-      controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false, profileSlots: [] } };
+      controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 30, seekable: false, profileSlots: [] } };
     const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
     s.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
@@ -153,17 +153,18 @@ class Watch {
   }
   async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized) {
     if (source.unavailable) source = await plex.prepare(source.id,'direct',false,undefined,undefined,{sourceOnly:true});
-    const {alternatives}=require('./quality-options');
+    const {candidates}=require('./quality-options');
     const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
     if(!choices.length)throw new PlaybackError('No configured quality is available for this video. Ask the owner to offer a lower quality or Original.');
-    const quality=choices.some(q=>q.id===Engine.qualityId(requested))?Engine.qualityId(requested):alternatives(choices,requested)[0]?.id;
+    const options=candidates(choices,requested,source), quality=options[0]?.id;
+    if(!quality)throw new PlaybackError('No available quality is at or below your preferred setting. Your preference has been kept.');
     const prepare=(value,sharedOnly=false)=>this.prepareOutput(room,viewer,plex,source,value,compatible,fallback,
       {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,authorized,sharedOnly});
     let media;
     try {media=await prepare(quality);}
     catch(error) {
       if(!error.conversionCapacity)throw error;
-      for(const option of alternatives(choices,quality)) {
+      for(const option of options.slice(1)) {
         try {media=await prepare(option.id,true);break;}
         catch(next) {if(!next.conversionCapacity)throw next;}
       }
@@ -203,7 +204,7 @@ class Watch {
     if (viewer.preparing) { await viewer.preparing; return this.prepareViewer(room, actor, viewerId); }
     const prepare = async () => {
       await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
-        this.prepareQuality(room,viewer,plex,source,viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
+        this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
       if(viewer.media?.quality)viewer.quality=viewer.media.quality;
     };
     viewer.preparing = prepare();
@@ -259,7 +260,7 @@ class Watch {
         // reconnect. A fresh stream and observation epoch are always required.
         room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
           trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
-          quality:viewer.quality, compatible:viewer.compatible, fallback:viewer.fallback,
+          quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
@@ -396,7 +397,7 @@ class Watch {
       if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion) room.initialGate = true;
     } finally { room.starting = false; }
   }
-  snapshot(room, actor, viewerId, alive, quality = '720p') {
+  snapshot(room, actor, viewerId, alive, quality = '720p', preferences = {}) {
     if ((room.kickedViewers?.get(viewerId) || 0) > Date.now()) throw Object.assign(new Error('You were removed from this room. You may rejoin.'),{status:403});
     room.kickedViewers?.delete(viewerId);
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
@@ -418,7 +419,9 @@ class Watch {
     }
     if (controller && !oldViewer) { room.hostViewerId = viewerId; room.s.hostId = actor.userId; room.s.hostName = actor.name; room.waitingForHost = false; }
     room.hadViewers = true;
-    const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'), volume: saved?.volume ?? 50, muted: saved?.muted ?? false,
+    const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
+      preferredQuality:saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
+      volume:saved?.volume ?? preferences.volume ?? 30, muted:saved?.muted ?? preferences.muted ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
       syncQuality:saved?.syncQuality,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
@@ -439,7 +442,7 @@ class Watch {
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
       mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [],
-      qualityNotice:viewer.media?.qualityNotice,
+      qualityNotice:viewer.media?.qualityNotice, preferredQuality:viewer.preferredQuality,
       deliveryInfo:viewer.media?{format:viewer.media.format,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
         width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
         encoder:viewer.media.av1Lease?.group.encoder,cpuFallback:!!viewer.media.av1Lease?.group.cpuFallback}:undefined,
@@ -807,13 +810,15 @@ class Watch {
         if (!room.media || room.media.kind === 'demo') return { status: 'unsupported', message: 'Quality is unavailable for this video.' };
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
         const version = room.mediaVersion;
+        if(!args.compatible && !args.fallback)viewer.preferredQuality=Engine.qualityId(args.quality);
         const fallback = args.fallback || viewer.fallback;
         viewer.updating = true;
         try {
           const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
             this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,args.quality,args.compatible===true || !!viewer.compatible,fallback,authorized),{permitted});
           if(result.status!=='applied')return result;
-          viewer.quality=viewer.media.quality;viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
+          viewer.quality=viewer.media.quality;
+          viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
         } catch(error) {
           if(error instanceof PlaybackError)return {status:'failed',message:error.message};
           throw error;

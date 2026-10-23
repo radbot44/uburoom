@@ -13,7 +13,56 @@ if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
 let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
-let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false;
+let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
+const playerPreferenceKey='uburoom.player';
+let playerPreferences={volume:30,muted:false,quality:'720p4'};
+try {
+  const saved=JSON.parse(localStorage.getItem(playerPreferenceKey)||'null');
+  if(saved && typeof saved==='object') {
+    if(Number.isFinite(saved.volume) && saved.volume>=0 && saved.volume<=100)playerPreferences.volume=saved.volume;
+    if(typeof saved.muted==='boolean')playerPreferences.muted=saved.muted;
+    if(uburoom.validQuality(saved.quality))playerPreferences.quality=uburoom.qualityId(saved.quality);
+    if(['auto','burn'].includes(saved.subtitleMode))playerPreferences.subtitleMode=saved.subtitleMode;
+    if(['auto','off'].includes(saved.subtitles?.choice))playerPreferences.subtitles={choice:saved.subtitles.choice};
+    else if(saved.subtitles?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.subtitles.language || ''))playerPreferences.subtitles={choice:'language',language:saved.subtitles.language};
+  }
+} catch {}
+preferredQuality=playerPreferences.quality;
+let restoredPlayerSubtitles;
+function rememberPlayerSubtitles(args) {
+  if(args.subtitleMode)savePlayerPreferences({subtitleMode:args.subtitleMode});
+  if(args.subtitleId===undefined)return;
+  if(['auto','off'].includes(args.subtitleId))savePlayerPreferences({subtitles:{choice:args.subtitleId}});
+  else {
+    const track=state?.tracks?.subtitles.find(row=>row.id===args.subtitleId);
+    if(track?.language && !['und','unknown'].includes(track.language))savePlayerPreferences({subtitles:{choice:'language',language:track.language}});
+  }
+}
+async function restorePlayerSubtitles(next) {
+  const key=next.id+':'+next.mediaVersion;
+  if(restoredPlayerSubtitles===key || !next.tracks || !next.mediaUrl || pending || qualityPending || !playbackClock.read().valid)return;
+  const saved=playerPreferences.subtitles, tracks=next.tracks, args={};
+  const matches=tracks.subtitles.filter(row=>row.available && row.language===saved?.language);
+  const match=matches.find(row=>row.id===tracks.subtitleId) || matches[0];
+  const choice=saved?.choice==='language'?match?.id:saved?.choice;
+  if(choice && choice!==tracks.subtitleChoice)args.subtitleId=choice;
+  const mode=playerPreferences.subtitleMode;
+  if(['auto','burn'].includes(mode) && mode!==tracks.subtitleMode)args.subtitleMode=mode;
+  restoredPlayerSubtitles=key;
+  if(!Object.keys(args).length)return;
+  try {await execute({action:'media.tracks.set',args:{mediaVersion:next.mediaVersion,streamVersion:next.streamVersion,...args}});}
+  catch(error){fail(error.message);}
+}
+
+function savePlayerPreferences(change) {
+  Object.assign(playerPreferences,change);
+  try {localStorage.setItem(playerPreferenceKey,JSON.stringify(playerPreferences));} catch {}
+}
+function viewerPreferences() {
+  return {viewer:viewerId,quality:preferredQuality,volume:String(playerPreferences.volume),muted:String(playerPreferences.muted),
+    ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})};
+}
+
 const activity = params.has('frame_id');
 let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
@@ -218,7 +267,8 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
 }
 const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
 const subtitleMode=$('subtitle-mode');
-video.volume = .5;
+video.volume = playerPreferences.volume / 100;
+video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
@@ -235,7 +285,7 @@ renderNotifications();
 const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
 const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
-  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>({viewerId,quality:preferredQuality,...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})}),
+  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};},
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
   createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = roomVisibilityDraft = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset; } });
 async function fetchArtwork(path, signal) {
@@ -916,12 +966,13 @@ async function execute(command) {
   if(reconnecting||!transport?.ready)throw new Error('Reconnecting. Wait for the room connection.');
   if(switchingRoom)throw new Error('Wait for the room to open.');
   if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
-  const qualityChange=command.action==='media.quality.set';
+  const qualityChange=command.action==='media.quality.set', volumeChange=command.action==='media.volume.set';
+  if(volumeChange && volumePending)throw new Error('Wait for your volume update to finish.');
   if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
   if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused &&
       (autoplayBlocked || readyVersion !== state.mediaVersion) && expected() < state.state.duration - .1) await unlockLocal();
   const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
-  if(qualityChange)qualityPending=qualityRequest;else pending=true;
+  if(qualityChange)qualityPending=qualityRequest;else if(volumeChange)volumePending=true;else pending=true;
   fail('');renderTransport();
   diagnosticSample('command-start',{action:command.action});
   try {
@@ -932,6 +983,8 @@ async function execute(command) {
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
     diagnostics.record('command-ok',{action:command.action});
+    if(command.action==='media.volume.set')savePlayerPreferences({volume:command.args.percent,muted:false});
+    if(['media.mute','media.unmute'].includes(command.action))savePlayerPreferences({muted:command.action==='media.mute'});
     await refreshState(); if (command.action === 'room.visibility') await refreshRooms(); return result;
   } catch(error) {
     diagnostics.record('command-failed',{action:command.action});
@@ -939,7 +992,7 @@ async function execute(command) {
     throw error;
   }
   finally {
-    if(qualityChange){if(qualityPending===qualityRequest)qualityPending=false;}else pending=false;
+    if(qualityChange){if(qualityPending===qualityRequest)qualityPending=false;}else if(volumeChange)volumePending=false;else pending=false;
     if(qualityChange&&selected===id&&state?.mediaUrl)$('quality').value=uburoom.qualityId(state.quality);
     renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume();
   }
@@ -1049,7 +1102,7 @@ function renderTransport() {
   $('ready-start').disabled = pending || !state?.readiness?.canStart;
   $('ready-wait').disabled = $('ready-cancel').disabled = pending;
   if (state?.readiness?.timedOut) $('player-play').disabled = true;
-  if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? 50;
+  if (!volumeDragging) $('player-volume').value = volumeDraft ?? state?.state.volume ?? playerPreferences.volume;
   renderTracks();
 }
 function renderTracks() {
@@ -1090,7 +1143,7 @@ function renderTracks() {
 async function changeTrack(args,context=trackContext) {
   if(!state || pending || qualityPending || !context || context.mediaVersion!==state.mediaVersion || context.streamVersion!==state.streamVersion)return;
   trackActionError='';
-  try { await execute({action:'media.tracks.set',args:{...context,...args}}); }
+  try { const result=await execute({action:'media.tracks.set',args:{...context,...args}}); if(result.status==='applied')rememberPlayerSubtitles(args); }
   catch(error){trackActionError=error.message;fail(error.message);}
   finally{renderTracks();}
 }
@@ -1232,6 +1285,7 @@ function applyState(next) {
     hls.startLoad(expected());
   }
   captions.update(next);
+  queueMicrotask(()=>{if(state===next)void restorePlayerSubtitles(next);});
   if(next.mediaError)playbackError=next.mediaError;
   const picture = next.state.picture;
   video.style.scale = picture.zoom * picture.stretchX + ' ' + picture.zoom * picture.stretchY;
@@ -1276,7 +1330,7 @@ async function refreshState() {
   if (!selected) return;
   const id = selected, before = Date.now(), sent=performance.now(), exchange=playbackClock.begin(), sequence=++stateRequestSequence;
   try {
-    const next = await api('/api/watch/rooms/' + id + '?viewer=' + viewerId + '&quality=' + preferredQuality+(globalThis.uburoomSubtitleRenderers?.supported()?'&subtitles=browser':'')); if (id !== selected || sequence!==stateRequestSequence || next.transportSequence<=stateTransportSequence) return;
+    const next = await api('/api/watch/rooms/' + id + '?'+new URLSearchParams(viewerPreferences())); if (id !== selected || sequence!==stateRequestSequence || next.transportSequence<=stateTransportSequence) return;
     playbackClock.add(exchange,next.timing);
     diagnostics.record('clock-sample',{...playbackClock.read(),requestRttMs:performance.now()-exchange.sent,serverProcessingMs:next.timing?.serverProcessingMs});
     const revision=observationClock.update(next.observationEpoch,next.serverNow,sent,performance.now());
@@ -1296,7 +1350,7 @@ async function selectRoom(id,initial) {
   const previous=selected;
   try {
     const exchange=playbackClock.begin();
-    const next=initial||await api('/api/watch/rooms/'+id+'?'+new URLSearchParams({viewer:viewerId,quality:preferredQuality,...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})}));
+    const next=initial||await api('/api/watch/rooms/'+id+'?'+new URLSearchParams(viewerPreferences()));
     if(next.id!==id)throw new Error('Room changed while opening. Try again.');
     qualityPending=false;
     stateTransportSequence=0;
@@ -1379,15 +1433,15 @@ function pumpVolume() {
   clearTimeout(volumeTimer);
   if (volumeWanted === undefined || !selected || !state) return;
   const wait = Math.max(0, 500 - (Date.now() - lastVolumeAt));
-  if (pending || wait) { volumeTimer = setTimeout(pumpVolume, Math.max(100, wait)); return; }
+  if (pending || volumePending || wait) { volumeTimer = setTimeout(pumpVolume, Math.max(100, wait)); return; }
   const percent = volumeWanted; volumeWanted = undefined; lastVolumeAt = Date.now();
   execute({ action: 'media.volume.set', args: { percent } }).then(() => {
     if (volumeWanted === undefined && volumeDraft === percent) volumeDraft = undefined; renderTransport();
   }).catch(error => { dropVolume(); fail(error.message); });
 }
 $('player-volume').addEventListener('pointerdown', () => { volumeDragging = true; });
-$('player-volume').addEventListener('input', () => { volumeWanted = volumeDraft = Number($('player-volume').value); renderVolumeIcon(); pumpVolume(); });
-$('player-volume').addEventListener('change', () => { volumeDragging = false; volumeWanted = volumeDraft = Number($('player-volume').value); renderVolumeIcon(); pumpVolume(); });
+$('player-volume').addEventListener('input', () => { volumeWanted = volumeDraft = Number($('player-volume').value); savePlayerPreferences({volume:volumeDraft,muted:false}); renderVolumeIcon(); pumpVolume(); });
+$('player-volume').addEventListener('change', () => { volumeDragging = false; volumeWanted = volumeDraft = Number($('player-volume').value); savePlayerPreferences({volume:volumeDraft,muted:false}); renderVolumeIcon(); pumpVolume(); });
 $('player-volume').addEventListener('pointercancel', () => { volumeDragging = false; });
 for (const [id, command] of [['previous',{action:'media.previous'}],['seek-back',{action:'media.seek.relative',args:{seconds:-15}}],
   ['seek-forward',{action:'media.seek.relative',args:{seconds:15}}],['next',{action:'media.next'}]]) $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
@@ -1402,6 +1456,7 @@ $('join-playback').addEventListener('click', async () => {
 });
 $('quality').addEventListener('change', () => {
   preferredQuality = $('quality').value;
+  savePlayerPreferences({quality:preferredQuality});
   if (state?.mediaId && state.mediaId !== 'demo') execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
 });
 $('timeline').addEventListener('pointerdown', () => { seekDragging = true; });

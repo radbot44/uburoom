@@ -4,6 +4,14 @@
 >
 > **M1 release status: OPEN.** [Entire historical record](archive/testing-2026-10-22.md) · [M1 release requirements](../ROADMAP.md#m1--verified-self-hosted-release)
 
+## Browser player preferences - 2026-10-22
+
+- Volume defaults to 30%; browser storage retains volume, mute, explicit quality and subtitle rendering, with subtitle language remembered across titles. Audio language and subtitle timing are not persisted. Unavailable subtitle languages do not replace the saved choice. Effective output quality remains separate from the saved ceiling across media changes and reconnects. Original never falls back to a different preset; fixed preferences admit only available resolution/bitrate combinations at or below the ceiling, including Original when source bitrate fits regardless of resolution.
+- B pass: `node --test --test-reporter=dot tests/watch.test.js tests/media-tracks.test.js tests/local-codecs.test.js` and polling/command timing checks; full `npm test`: 403 passed, 0 failed, 0 skipped. One retained Watch scenario checks Original/source fitting, lower preset selection, preference retention across titles, no upward capacity fallback and Original-only behavior. Updated isolated polling context for the new viewer-preference query helper.
+- B browser pass: disposable Chrome/Firefox accounts and demo media verify the 30% initial default, saved 17%/mute/quality in a new page and zero-volume/unmute retention after reload. These checks exercise real storage and authenticated room operations. Both browsers also pass isolated client restoration checks for matching language across different track IDs, preserving absent-language preferences, and excluding audio/timing from storage. No new decoded track/browser sweep or real-provider certification. No deployment.
+
+- Slider follow-up: volume has separate in-flight state, preserving the 500ms throttle without toggling page-wide pending state. `node --test --test-reporter=dot tests/playback-timing.test.js`: 13 passed. Chrome/Firefox disposable-browser checks observed no unrelated button disables during repeated slider input and reconfirmed persistence after reload. A volume response also cannot clear a concurrent shared command lock.
+
 ## Room permissions and privacy follow-up - 2026-10-22
 
 - Implemented owner-requested always-visible Media, Skip / replay wording, expanded permission captions, equal centered role columns, equal Room columns and conditional kick-column space. Private-room cleanup now uses explicit assignments, matching admission even with Everyone is host enabled; reconnect reservations and readiness waiters are removed. Visibility is persisted before changing live state. Outstanding stream preparation cannot recreate a removed viewer.
