@@ -96,23 +96,24 @@
     return s.join('');
   }
 
-  // Seeded names use a reproducible hash and PRNG, not Math.random.
-  // Keep this algorithm unchanged once canonical names have been assigned.
+  // FNV-1a 64-bit seed hash and SplitMix64 pseudorandom stream.
+  // Once canonical names are assigned, retain this algorithm or store names.
   function randomForSeed(seed) {
     if (typeof seed !== 'string' && !Number.isSafeInteger(seed)) {
       throw new TypeError('Seed must be a string or safe integer');
     }
     const value = (typeof seed === 'string' ? 's:' : 'n:') + seed;
-    let state = 0x811c9dc5;
+    const mask = 0xffffffffffffffffn;
+    let state = 0xcbf29ce484222325n;
     for (let i = 0; i < value.length; i++) {
-      state = Math.imul(state ^ value.charCodeAt(i), 0x01000193);
+      state = ((state ^ BigInt(value.charCodeAt(i))) * 0x100000001b3n) & mask;
     }
     return function() {
-      state = (state + 0x6d2b79f5) | 0;
+      state = (state + 0x9e3779b97f4a7c15n) & mask;
       let n = state;
-      n = Math.imul(n ^ (n >>> 15), n | 1);
-      n ^= n + Math.imul(n ^ (n >>> 7), n | 61);
-      return ((n ^ (n >>> 14)) >>> 0) / 4294967296;
+      n = ((n ^ (n >> 30n)) * 0xbf58476d1ce4e5b9n) & mask;
+      n = ((n ^ (n >> 27n)) * 0x94d049bb133111ebn) & mask;
+      return Number((n ^ (n >> 31n)) >> 11n) / 9007199254740992;
     };
   }
 
@@ -151,7 +152,7 @@
     return 'Room ' + word[0] + word.slice(1).toLowerCase();
   }
   // A 12-letter Ubunym has a six-letter nomen and six letters of
-  // praenomen/cognomen, split 2-6 and its remainder on opposite sides.
+  // praenomen/cognomen, split 2+4, 3+3, 4+2, or 6+0.
   // The same seed always yields the same nomen as generateName(6, {seed}).
   function ubunym(seed) {
     const random = arguments.length === 0 ? Math.random :
@@ -163,7 +164,8 @@
       return generated[0] + generated.slice(1).toLowerCase();
     };
     const nomen = word(6);
-    const extraLength = 2 + Math.floor(random() * 5);
+    const extraLengths = [2, 3, 4, 6];
+    const extraLength = extraLengths[Math.floor(random() * extraLengths.length)];
     const extra = word(extraLength);
     const extraBefore = random() < 0.5;
     const remainingLength = 6 - extraLength;
