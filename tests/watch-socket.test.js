@@ -112,7 +112,7 @@ test('watch socket accepts only a viewer\'s current ephemeral synchronization te
   assert.equal((await guestClosed)[0],4003,'a viewer cannot claim another viewer identity');
   assert.equal(hostPresence.syncQuality.score,1,'the foreign update did not change the owner score');
   await new Promise(resolve=>setTimeout(resolve,550));
-  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'paused',reason:'paused'}));
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'paused',reason:'paused',measurementFreshnessMs:0}));
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal(hostPresence.syncQuality.status,'paused');assert.equal(hostPresence.syncQuality.score,1);
   assert.equal(hostPresence.syncQuality.lastKnownScore,1,'temporary unavailability preserves the last score');

@@ -65,7 +65,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     // Receiving a retained score is not a new playback measurement.
     const reportedAt=Number.isFinite(message.measurementFreshnessMs)&&confidence!=='provisional'
       ?now-message.measurementFreshnessMs:undefined;
-    const measuredAt=Number.isFinite(reportedAt)&&['playing','buffering','paused','seeking'].includes(message.status)
+    // A pause/seek may report an old score, but cannot manufacture a new
+    // measurement. Its first report can still carry the original evidence age.
+    const mayAdvance=['playing','buffering'].includes(message.status)||!Number.isFinite(previous.measuredAt);
+    const measuredAt=Number.isFinite(reportedAt)&&mayAdvance
       ?Math.max(previous.measuredAt??-Infinity,reportedAt):previous.measuredAt;
     const advanced=Number.isFinite(measuredAt)&&(!Number.isFinite(previous.measuredAt)||measuredAt-previous.measuredAt>=500);
     const measurementFreshnessMs=Number.isFinite(measuredAt)?Math.max(0,now-measuredAt):undefined;
