@@ -13,7 +13,19 @@
 
 Record date/revision, scope/environment, command/procedure, actual outcome and failures/skips, remaining methods and sanitized evidence. Label each required method pass/fail/blocked/not run. API success, capability hints and advancing clocks are not decoded playback, persisted history or physical synchronization. Unexpected skips invalidate a full-suite pass. C and production/history changes require explicit authorization.
 
-## Latest scoped evidence — 2026-10-22
+## Latest scoped evidence
+
+### Repository audit — 2026-10-23
+
+A/B on `fb349f428d538f4297a8bd53754d758a095d94a4`: two independent audits each ran the full Node suite with **387 pass, zero failures/cancellations/skips** on Node v22.22.2 (`node --test tests/*.test.js`, one with `--test-reporter=tap`). The advisory query reported zero known npm vulnerabilities. Isolated probes reproduced a streaming body deadline abort, account assignment after login/Admin revocation during body reading, direct-HLS adoption of a disposed group, disabled-provider unlink acceptance and missing unknown-upgrade socket disposal. Startup-failure cleanup and synchronous asset I/O were source-reviewed; production performance impact was not measured.
+
+The follow-up UI pass used isolated Chrome 155.0.8059.84 and Firefox 158.0.1 fixtures at desktop/narrow sizes. Both reproduced a late account-match preview restoring assignment for earlier IDs after editing; actual assignment was verified in memory-only fixture state. Rendered inspection also found an unusable sole-provider reconnect instruction, undersized player/queue targets, faint light-theme host/filter colors and missing Mute pressed state. Segmented keyboard selection, focus return, 680×500 dialog reflow and error toasts with ordinary notifications muted passed. Three private investigation scripts completed in both browsers after correcting probe assumptions; details, screenshots and limitations are retained with the consolidated private audit and pending queue (14 distinct tasks). They are not permanent smoke runners.
+
+Application code remains unchanged. Library fixtures did not cover populated content/facets; CSS zoom stress is not browser-zoom evidence, and emulated coarse pointer is not a physical device. No C/D, real-provider, screen-reader or physical-device checks were performed. No decoded-playback qualification is claimed. Passing baseline tests and fixture UI checks do not close reported defects or existing release gates. The duplicate standalone audit was consolidated into the private audit record; proposals remain pending owner review.
+
+A subsequent bounded source-only synchronization review identified two improvement candidates: uncertainty gating in default drift correction and clock-sample reacquisition versus connection liveness. Neither was execution-validated; no tests or browser checks were run for that follow-up. Detailed proposals remain in the private audit.
+
+### Earlier scoped results — 2026-10-22
 
 | Area | Recorded evidence | Open / limitation |
 | --- | --- | --- |
