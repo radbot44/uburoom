@@ -31,32 +31,56 @@ async function showAccount(){
   try{
     const value=activity?{account:me.account}:await api('/api/account');if(!value.account)throw new Error('Restart the server to enable accounts');
     const known=value.admin&&!activity?await api('/api/account/admin'):undefined;
+    const isOwner=!!(value.owner??me?.owner);
     if(load!==accountLoad||!$('account-dialog').open)return;
     for(const provider of ['discord','plex']){
       const identity=value.account.identities.find(i=>i.provider===provider),label=provider==='discord'?'Discord':'Plex';
       const connected=identity?.authenticated&&(provider!=='plex'||identity.credentialStored);
       const name=identity&&identity.name!==identity.subject?identity.name:'';
-      $(provider+'-identity').textContent=identity?(connected?(name?'Connected as '+name:'Connected'):'Sign-in needed'+(name?' · '+name:'')):'Not connected';
+      const disabledServer=config.access?.[provider]===false||(provider==='plex'&&!config.plexConfigured);
       const button=$('connect-'+provider);
-      button.disabled=provider==='plex'&&!config.plexConfigured||config.access?.[provider]===false;
-      if(button.disabled)$(provider+'-identity').textContent='Unavailable on this server'+(name?' · '+name:'');
-      const otherEnabled=value.account.identities.some(i=>i.provider!==provider&&i.authenticated&&(i.provider!=='plex'||i.credentialStored)&&config.access?.[i.provider]!==false&&(i.provider!=='plex'||config.plexConfigured));
-      const remove=$('remove-'+provider);remove.hidden=!identity;
-      remove.disabled=!activity&&!otherEnabled;
-      remove.title=remove.disabled?'Connect another sign-in method before removing '+label:'Remove '+label;
-      if(!identity){
+      button.disabled=disabledServer;
+      button.removeAttribute('title');
+      if(identity){
+        if(connected){
+          const note=disabledServer?(provider==='discord'&&isOwner?' · owner sign-in':' · sign-in disabled'):'';
+          $(provider+'-identity').textContent=(name?'Connected as '+name:'Connected')+note;
+          button.textContent='Reconnect';
+          button.className='provider-connect quiet';
+          button.hidden=false;
+          if(disabledServer&&provider==='discord'){
+            button.disabled=true;
+            button.title=isOwner?'Ordinary Discord sign-in is disabled; sign in via /auth/owner':'Discord sign-in is disabled on this server';
+          }
+        }else{
+          $(provider+'-identity').textContent='Sign-in needed'+(name?' · '+name:'');
+          button.textContent='Sign in to '+label;
+          button.className='provider-connect '+(provider==='discord'?'discord-button':'primary');
+          button.hidden=false;
+          if(disabledServer&&provider==='discord'&&isOwner){
+            button.disabled=true;
+            button.title='Ordinary Discord sign-in is disabled; sign in via /auth/owner';
+          }
+        }
+      }else{
+        $(provider+'-identity').textContent=disabledServer?'Unavailable on this server':'Not connected';
         button.textContent='Connect '+label;
         button.className='provider-connect '+(provider==='discord'?'discord-button':'primary');
         button.hidden=false;
-      }else if(!connected){
-        button.textContent='Sign in to '+label;
-        button.className='provider-connect '+(provider==='discord'?'discord-button':'primary');
-        button.hidden=false;
-      }else{
-        button.textContent='Reconnect';
-        button.className='provider-connect quiet';
-        button.hidden=false;
+        if(disabledServer&&provider==='discord'){
+          button.title=isOwner?'Ordinary Discord sign-in is disabled; sign in via /auth/owner':'Discord sign-in is disabled on this server';
+        }
       }
+      function isSurvivingProvider(i){
+        if(!i||!i.authenticated)return false;
+        if(i.provider==='plex')return config.access?.plex!==false&&config.plexConfigured!==false&&!!i.credentialStored;
+        if(i.provider==='discord')return config.access?.discord!==false||isOwner;
+        return false;
+      }
+      const otherEnabled=value.account.identities.some(i=>i.provider!==provider&&isSurvivingProvider(i));
+      const remove=$('remove-'+provider);remove.hidden=!identity;
+      remove.disabled=!activity&&!otherEnabled;
+      remove.title=remove.disabled?'Connect another sign-in method before removing '+label:'Remove '+label;
     }
     $('account-browser-hint').hidden=!activity;
     $('account-connect-hint').hidden=activity;
