@@ -142,12 +142,12 @@ test('collection expansion bounds upstream work even when every nested show is e
   assert.equal(requests, 200);
 });
 
-test('every room-scoped library route rejects guests and rechecks ownership before returning awaited private data or artwork', async () => {
+test('every room-scoped library route rejects inaccessible viewers and rechecks access before returning awaited private data or artwork', async () => {
   let manage = true, waiting, finish, calls = 0;
   const room = {s:{roomId:'room'}}, rooms = new Map([['room',room]]);
   const wait = () => { calls++; waiting?.(); return new Promise(resolve=>{finish=resolve;}); };
   const hub = {access:{isMember:()=>true},canManage:(s,actor)=>manage&&actor.userId==='host'};
-  const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms,canView:async()=>true,plex:{configured:true,browse:wait,details:wait,filters:wait,artwork:wait,availability:wait}},
+  const routes = watchHttp({config:{publicUrl:'https://localhost'},hub,watch:{rooms,canView:async(room,actor)=>manage&&actor.userId==='host',plex:{configured:true,browse:wait,details:wait,filters:wait,artwork:wait,availability:wait}},
     user:async req=>({userId:req.headers.cookie}),webActor:identity=>identity,throttle:()=>true,json:(res,status,data)=>{res.status=status;res.data=data;}});
   for (const suffix of ['','/item','/filters','/art','/availability']) {
     const res={}; await routes.route({method:'GET',headers:{cookie:'guest'},socket:{}},res,new URL('https://localhost/api/watch/library'+suffix+'?room=room&items=1')); assert.equal(res.status,403);

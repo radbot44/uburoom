@@ -350,7 +350,7 @@ body.idle-player #video{visibility:hidden}
 .room-header-actions #room-people-open{padding-inline:8px;font-size:12px}
 .watch-header-actions{gap:var(--watch-icon-gap)}
 :is(.watch-header-control,#options-panel .watch-header-control){background:var(--elevated);color:var(--muted);margin:0}
-.room-content-columns{position:relative;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:var(--watch-group-gap);width:100%;max-width:500px;margin-inline:auto}
+.room-content-columns{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--watch-group-gap);width:100%;max-width:500px;margin-inline:auto}
 .room-controls-column,.room-participant-column{min-width:0}
 .room-roster-frame{position:relative;min-width:0;--room-row-height:var(--watch-row-height)}
 .room-roster{--role-column:40px;height:calc(8 * var(--room-row-height,40px));overflow:auto;overscroll-behavior:contain;min-width:0;padding-bottom:0}
@@ -358,7 +358,8 @@ body.idle-player #video{visibility:hidden}
 .room-roster-frame:has(>.room-roster-expand:not([hidden]))>.room-roster{padding-bottom:var(--watch-control-height)}
 .room-roster .room-person{display:grid;grid-template-columns:var(--role-column) minmax(0,1fr);align-items:center;gap:var(--watch-icon-gap);height:var(--room-row-height,44px);min-height:var(--room-row-height,44px);padding:2px;border:0;white-space:nowrap}
 .room-roster .room-person.has-kick{grid-template-columns:var(--role-column) minmax(0,1fr) 40px}
-#room-participants .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 24px 40px}
+#room-participants .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 24px}
+#room-participants.can-kick .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 24px 40px}
 #room-participants .room-roster-sync-quality{display:grid;place-items:center;width:24px;height:24px;color:var(--muted)}
 #room-participants .room-roster-sync-quality svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #room-participants .room-roster-sync-quality[data-quality=excellent]{color:var(--success)}
@@ -369,6 +370,7 @@ body.idle-player #video{visibility:hidden}
 .room-roster .room-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .room-roster-role{display:flex;align-items:center;justify-content:center;min-width:0;color:var(--text)}
 .room-roster-role>svg{width:24px;height:24px;fill:none;stroke:currentColor;flex:none}
+.room-roster-role[aria-label="Host"]{color:#F8F7F4}
 .room-roster-role[aria-label="Room Leader"]{color:var(--accent-text)}
 :is(#options-panel,#room-settings-dialog) .room-roster-expand{position:absolute;bottom:0;left:50%;transform:translateX(-50%);background:var(--elevated);z-index:1}
 .room-roster-frame.expanded .room-roster-expand svg{rotate:180deg}
@@ -407,16 +409,16 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 :is(button:disabled,button[aria-disabled=true],.watch-control:disabled,#options-panel .watch-control:disabled,#room-dialog .watch-control:disabled,#room-settings-dialog .watch-control:disabled){background:transparent;cursor:default}
 :is(#queue-panel,#library-panel) .watch-control.watch-control-solid-disabled:disabled{background:var(--elevated);color:var(--muted);opacity:1}
 .watch-permission-pill:is(.is-readonly,.is-disabled){background:transparent}
-#room-settings-dialog .permission-view-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;min-height:40px}
 .room-permission-table th,.room-permission-table td{padding:2px 5px}
+.room-permission-table{table-layout:fixed}
 .room-permission-table th[scope=row]{width:64%;position:relative}
+.room-permission-table th[scope=col]:first-child{width:64%}
+.room-permission-table th[scope=col][data-permission-role]{width:18%;text-align:center}
 .permission-name{display:inline-block;border-radius:4px}
 .permission-name:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .permission-caption{display:block;font-weight:400;font-size:11px;line-height:1.35;color:var(--muted);margin-top:2px;white-space:normal}
 #room-settings-dialog .permission-button{margin:0}
-.condensed .permission-caption{display:none;position:absolute;top:calc(100% - 2px);left:0;width:min(270px,calc(100vw - 64px));box-sizing:border-box;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--elevated);color:var(--text);box-shadow:0 4px 12px #0004;z-index:3}
-.condensed .permission-name:hover+.permission-caption,.condensed .permission-name:focus+.permission-caption{display:block}
-@media(max-width:620px){.room-permission-table th[scope=row]{width:56%}.room-permission-table th,.room-permission-table td{padding-inline:2px}.room-permission-table th[scope=col]{font-size:11px}}
+@media(max-width:620px){.room-permission-table th[scope=row],.room-permission-table th[scope=col]:first-child{width:56%}.room-permission-table th[scope=col][data-permission-role]{width:22%}.room-permission-table th,.room-permission-table td{padding-inline:2px}.room-permission-table th[scope=col]{font-size:11px}}
 
 /* Room columns share one row metric; the roster shrinks to its actual content. */
 .room-content-columns{--room-row-height:var(--watch-row-height)}
@@ -432,7 +434,7 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 #room-participants .room-person{box-sizing:border-box;border:0}
 
 /* One shared role/host slot; kick cells exist only for actionable targets. */
-:is(#options-panel,#room-settings-dialog) .room-host-action{color:var(--text)}
+:is(#options-panel,#room-settings-dialog) .room-host-action{color:inherit}
 .room-host-action .room-host-hover{display:none}
 .room-host-promote:not(:disabled):hover>svg:first-child{display:none}
 .room-host-promote:not(:disabled):hover>.room-host-hover{display:block}

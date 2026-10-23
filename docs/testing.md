@@ -4,6 +4,13 @@
 >
 > **M1 release status: OPEN.** [Entire historical record](archive/testing-2026-10-22.md) · [M1 release requirements](../ROADMAP.md#m1--verified-self-hosted-release)
 
+## Room permissions and privacy follow-up - 2026-10-22
+
+- Implemented owner-requested always-visible Media, Skip / replay wording, expanded permission captions, equal centered role columns, equal Room columns and conditional kick-column space. Private-room cleanup now uses explicit assignments, matching admission even with Everyone is host enabled; reconnect reservations and readiness waiters are removed. Visibility is persisted before changing live state. Outstanding stream preparation cannot recreate a removed viewer.
+- B pass: focused durable-room, library access, socket and policy tests; full `npm test`: 402 passed, 0 failed, 0 skipped. Existing durable-room coverage now checks header and Settings privacy changes, counts, roster membership, reconnect reservations and denied re-entry.
+- B visual pass: disposable Chrome and Firefox with synthetic accounts/catalog; desktop and 390px phone permission screenshots, light/pink and dark/orange, equal role/Room columns, viewer Media browsing without selection permission, three/four roster tracks according to kick authority, theme text color and private removal/count updates. Temporary focused driver and captures remain in ignored artifacts.
+- Limitation: `node scripts/room-ui-smoke.js` stopped in Chrome at **Bulk excludes Specials** before reaching later permission flows. The focused browser checks above passed independently. No real-provider or deployment checks ran; owner visual acceptance remains open.
+
 ## Current status and provenance
 
 - **This dashboard owns** current commands, verification methods, last evidenced results, known failures and unfinished M1 gates. [ROADMAP](../ROADMAP.md) owns scope and priorities; [development](development.md) owns procedures; the [dated archive](archive/testing-2026-10-22.md) retains detailed prior findings.

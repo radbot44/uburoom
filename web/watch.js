@@ -1037,13 +1037,13 @@ function renderTransport() {
   $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
     state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
   if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
-  if (state?.readiness?.timedOut) $('ready-status').textContent = state.canBrowse ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
+  if (state?.readiness?.timedOut) $('ready-status').textContent = (state.durable ? state.capabilities?.chooseMedia : state.canManage) ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
   if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a room leader or host joins.';
   $('room-recovery').hidden = !state?.recovery;
   if (state?.recovery) $('room-recovery-message').textContent = 'Waiting for ' + state.recovery.missing + ' people / ' + Math.max(0,Math.ceil((state.recovery.until - (Date.now() + offset))/1000)) + ' seconds remaining. Playback is paused.';
   $('room-recovery-start').hidden = !state?.canPlayback;
   $('room-recovery-start').disabled = pending || !state?.mediaUrl;
-  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !state.canBrowse;
+  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !(state.durable ? state.capabilities?.chooseMedia : state.canManage);
   $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
   $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
   $('ready-start').disabled = pending || !state?.readiness?.canStart;

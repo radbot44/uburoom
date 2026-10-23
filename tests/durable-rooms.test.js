@@ -42,6 +42,32 @@ test('kick permission protects leader/self/hosts, removes every target tab, fenc
   assert.equal((await creator.call('/api/command',{roomId:id,command:{action:'room.kick',args:{userId:'invalid'}}})).body.status,'unsupported');
 });
 
+test('privacy changes remove viewers, reconnect reservations and readiness waiters even in Everyone is host mode',tls,async t=>{
+  const f=await fixture(t),creator=await f.login('host'),guest=await f.login('guest');
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
+  const a=randomUUID(),b=randomUUID();
+  await creator.call(root+'?viewer='+a);await guest.call(root+'?viewer='+b);
+  const edit=async change=>{const current=await creator.call(root+'/settings');return creator.call(root+'/settings',{revision:current.body.revision,change});};
+  await edit({action:'allHosts',enabled:true});
+  const room=f.app.watch.rooms.get(id),guestId=(await guest.call('/api/watch/me')).body.account.id;
+  room.initialViewers.add(b);
+  room.disconnectedViewers.set(randomUUID(),{userId:guestId,expires:Date.now()+60000,mediaVersion:room.mediaVersion});
+  // The header uses the shared Engine command; settings uses the durable edit.
+  for(const header of [true,false]) {
+    const result=header?await command(creator,id,a,'room.visibility',{visibility:'private'}):await edit({action:'visibility',visibility:'private'});
+    assert.equal(result.status,200);
+    assert.equal(room.s.visibility,'private');
+    assert.equal([...room.viewers.values()].some(v=>v.userId===guestId),false);
+    assert.equal(room.initialViewers.has(b),false);
+    assert.equal([...room.disconnectedViewers.values()].some(v=>v.userId===guestId),false);
+    assert.equal((await creator.call(root+'?viewer='+a)).body.viewers,1);
+    assert.deepEqual((await guest.call('/api/watch/rooms')).body.rooms,[]);
+    assert.equal((await guest.call(root+'?viewer='+b)).status,403);
+    await edit({action:'visibility',visibility:'public'});
+    assert.equal((await guest.call(root+'?viewer='+b)).status,200);
+  }
+});
+
 test('room-scoped People search and pending hosts recheck authority and activate only on provider sign-in',tls,async t=>{
   const f=await fixture(t),creator=await f.login('host');
   const id=(await creator.call('/api/watch/rooms',{name:'Host directory',keepEmpty:true})).body.id;

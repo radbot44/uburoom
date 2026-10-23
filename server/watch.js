@@ -250,11 +250,11 @@ class Watch {
     room.s.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false, hostTimedOut = false, lastPresence = 0;
-    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion) room.disconnectedViewers.delete(id);
+    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion || room.saved && room.s.visibility === 'private' && !RoomPolicy.assigned(room.saved,saved.userId) && !this.hub.isAdmin({userId:saved.userId})) room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) this.tracking.expire(viewer);
-    for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !isHost(room.s, viewer.actor) && !this.hub.isAdmin(viewer.actor)) {
+    for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !(room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) && !this.hub.isAdmin(viewer.actor)) {
       lastPresence = Math.max(lastPresence, viewer.at);
-      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || isHost(room.s, viewer.actor) || this.hub.isAdmin(viewer.actor))) {
+      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || (room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) || this.hub.isAdmin(viewer.actor))) {
         // Preserve only personal playback settings for the same tab's short
         // reconnect. A fresh stream and observation epoch are always required.
         room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
@@ -464,7 +464,7 @@ class Watch {
       allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
       capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions','manageHosts'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
-      hostName: room.s.hostName, canBrowse:room.saved ? this.hub.canRoom(room.s,actor,'chooseMedia') : owner, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
+      hostName: room.s.hostName, canBrowse:true, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
       state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, enabled: room.s.enabled, mode: room.s.mode, controls: { ...room.s.controls },
       visibility: room.s.visibility,
       sharingAvailable: !!this.hub.access?.options?.().available,
@@ -871,12 +871,12 @@ class Watch {
       case 'room.disable': s.enabled = false; break;
       case 'room.sharing': s.mode = args.mode; break;
       case 'room.visibility':
-        s.visibility = args.visibility;
+        if (room.saved) {
+          const record = await this.roomState.store.edit(s.roomId,actor.userId,room.saved.revision,{action:'visibility',visibility:args.visibility});
+          this.roomState.apply(room,record);
+        } else s.visibility = args.visibility;
         room.disconnectedViewers.clear();
-        if (s.visibility === 'private') for (const [id, viewer] of room.viewers) {
-          if (isHost(s, viewer.actor) || this.hub.isAdmin(viewer.actor)) continue;
-          this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id);
-        }
+        this.refresh(room);
         break;
       case 'room.controls': s.controls[args.control] = args.allowed; break;
       case 'room.autojoin': return { status: 'unsupported', message: 'On join applies to Firefox player devices.' };
@@ -898,10 +898,6 @@ class Watch {
     if (action.startsWith('room.')) { s.epoch = randomUUID(); this.hub.cancel(s.roomId); }
     s.state.profileSlots = Object.keys(room.profiles).map(Number); room.revision++; room.lastActivity = now; this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
-    if (room.saved && action === 'room.visibility') {
-      const record = await this.roomState.store.edit(s.roomId,actor.userId,room.saved.revision,{action:'visibility',visibility:s.visibility});
-      this.roomState.apply(room,record);
-    }
     if (room.saved && (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) await this.roomState.save(room);
     if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
     return { status: 'applied', message: 'Viewing room updated.', ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}) };

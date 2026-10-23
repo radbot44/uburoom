@@ -60,9 +60,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/availability', '/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
         const room = watch.rooms.get(url.searchParams.get('room'));
         const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
-        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && (room.saved ? hub.canRoom(room.s,auth.actor,'chooseMedia') : hub.canManage(room.s, auth.actor)) &&
-         await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
-        if (!await eligible()) { return result(403, { error: 'Library access requires the current host or active Admin mode' }); }
+        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
+        if (!await eligible()) { return result(403, { error: 'Library access requires room access' }); }
         const plex=hub.plexFor?await hub.plexFor(auth.actor):watch.plex;
         const scopeCurrent=async()=>!hub.plexFor||(await hub.plexFor(auth.actor)).principal===plex.principal;
         const itemVisible=async()=>plex.principal==='discord-shared'||!hub.plexFor||await plex.visible(url.searchParams.get('item'),url.searchParams.get('type'));
@@ -252,7 +251,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
       room.viewers.get(viewerId).browserLoginHash=context.headers.authorization?undefined:cookies(context).uburoom&&hash(cookies(context).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);
-      if (!await watch.canView(room, auth.actor) || !await alive()) { return result(403, { error: 'Viewing access was revoked' }); }
+      if (!await watch.canView(room, auth.actor) || !await alive() || room.viewers.get(viewerId) !== viewer) { return result(403, { error: 'Viewing access was revoked' }); }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);
       const grant = mediaGrant(room, auth, context, viewerId);
       if (grant) {

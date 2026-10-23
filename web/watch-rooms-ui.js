@@ -1,12 +1,12 @@
 /* Saved rooms and role settings; safe DOM, no player or transport ownership. */
 (function(root) {
   'use strict';
-  const labels = { playPause:'Play / pause', seek:'Seek', chooseMedia:'Choose video', addQueue:'Add to queue',
+  const labels = { playPause:'Play / pause', seek:'Seek', chooseMedia:'Skip / replay', addQueue:'Add to queue',
     editQueue:'Edit queue', autoplay:'Manage auto-play', roomSettings:'Room settings',
     closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts', addHosts:'Add hosts', kickParticipants:'Kick participants' };
   const descriptions = {
     playPause:'Start or pause playback for the room.', seek:'Change the playback position for everyone.',
-    chooseMedia:'Choose or replace the room’s current video.', addQueue:'Add videos to the room queue.',
+    chooseMedia:'Skip to another video in the queue or replay a video from history.', addQueue:'Add videos to the room queue.',
     editQueue:'Reorder or remove queued videos.', autoplay:'Change automatic playback and queue generation.',
     roomSettings:'Edit the room’s name, visibility and capacity.', closeRoom:'End live viewing and save playback progress.',
     deleteRoom:'Permanently delete this room and its saved history.', addHosts:'Appoint additional hosts; cannot remove other hosts.',
@@ -438,7 +438,6 @@
           }
         }
       }
-      renderPermissionDensity();
       $('room-settings-close-live').hidden = !value.hasLiveRoom;
       if(value.singleRoom)$('room-settings-close-live').hidden=true;
       $('room-settings-close-live').previousElementSibling.textContent=value.singleRoom?'Reset clears playback, the queue and room history, and restores configured room defaults. The shared room and its fixed leader remain.':'Ends live viewing and saves playback progress.';
@@ -527,15 +526,6 @@
     });
     $('room-member-limit').addEventListener('input', event => { capacityDraft = event.target.value; });
     $('room-settings-section').addEventListener('change',event => selectSection(event.target.value));
-    function renderPermissionDensity() {
-      const condensed = $('room-permissions-condensed').checked;
-      $('room-permission-custom').classList.toggle('condensed',condensed);
-      for (const title of $('room-permissions').querySelectorAll('.permission-name')) {
-        title.tabIndex = condensed ? 0 : -1;
-        title.nextElementSibling.setAttribute('role',condensed ? 'tooltip' : 'note');
-      }
-    }
-    $('room-permissions-condensed').addEventListener('change',renderPermissionDensity);
     $('room-keep-empty').addEventListener('change',async () => {
       const enabled = $('room-keep-empty').checked;
       if (!enabled && !await confirm('When everyone leaves and there is no unfinished video, upcoming queue or auto-queue source, this room and its hosts, permissions and history will be deleted. Allow this?',{destructive:true})) { $('room-keep-empty').checked = true; return; }
