@@ -8,7 +8,7 @@ Self-hosting means running uburoom on a computer you control, using your own Ple
 
 You will need:
 
-- A computer or server to run uburoom, with **Node.js 22.13.0 or newer** and npm installed.
+- A computer or server to run uburoom, with [**Node.js 22.13.0 or newer**](https://nodejs.org/en/download) and npm installed.
 - A Plex server you are allowed to access, including a Plex token for uburoom's connection. A *token* is a secret that lets software access an account; protect it like a password.
 - An **HTTPS address** people can reach and a matching TLS certificate and private key. HTTPS encrypts the connection. uburoom needs these files even when another web server handles the public connection.
 - Your own Discord application **only if** you want Discord sign-in or Discord Activity.
@@ -112,53 +112,43 @@ Discord bot commands have been removed; rooms are controlled through the web int
 
 ## Video conversion
 
-Some videos play directly in the viewer's browser. Others need *conversion* (also called transcoding) to a format the browser supports. Plex and uburoom can both do this, depending on your settings and available tools.
+Some videos cannot play in a browser as they are. *Conversion* (or transcoding) changes them into a compatible format. Plex or uburoom can do this, depending on what your server supports. **Most people can leave the defaults alone.**
 
-You can leave the defaults alone to start. Advanced options are in the `transcoding` section of the [example configuration](../config.example.yaml):
+The options are under `transcoding` in [`config.example.yaml`](../config.example.yaml):
 
-| Setting | In plain English |
+| Setting | What it controls |
 | --- | --- |
-| `policy: follow_plex` | Default. Respect Plex's rules about whether video may be converted; unknown or unavailable permission blocks conversion, but may still allow Original playback. |
-| `policy: disabled` / `override` | Disable conversion, or deliberately allow uburoom conversion despite a Plex preference. Override cannot bypass restrictions that Plex itself enforces. |
-| `plex` / `uburoom` | Turn the two conversion options on or off separately. |
-| `max_jobs` | Maximum simultaneous conversion jobs (default 5, allowed 1–32). Viewers using the same suitable output can share a job. |
-| `allow_original` / `qualities` | Choose whether to offer the original file and which converted quality options to show. |
-| `formats` / `encoder` / `cpu_fallback` | Choose output formats, hardware or software encoding, and whether software may take over when hardware setup fails. |
+| `policy` | `follow_plex` (default) respects Plex's rules. `disabled` turns conversion off. `override` permits local conversion despite a Plex preference, but cannot bypass a restriction Plex itself enforces. |
+| `plex` / `uburoom` | Whether each service can perform conversion. |
+| `max_jobs` | How many conversions can run at once (5 by default, 1–32 allowed). People watching the same compatible output may share one. |
+| `allow_original` / `qualities` | Whether viewers can choose the original file and which converted resolutions/bitrates are offered. |
+| `formats` / `encoder` / `cpu_fallback` | Video formats, hardware/software encoding and fallback when hardware setup fails. |
 
-FFmpeg and FFprobe are separate tools used for subtitle extraction and optional conversion. Set `tools.ffmpeg` and `tools.ffprobe` to their executable paths, or leave them blank so uburoom looks in the server's normal executable search paths. Missing tools disable dependent features, not the whole server. Installing a video encoder does not guarantee it works until tested.
+**FFmpeg and FFprobe** are optional programs used for subtitle extraction and local conversion. Set `tools.ffmpeg` and `tools.ffprobe` to their paths, or leave them blank to search the server's normal program paths. Missing tools disable dependent features, not the whole server.
 
-More advanced details: local formats default to `[av1]` (VP9/VP8 are optional), audio uses Opus, and an empty formats list disables local output. Automatic encoding tries supported Intel QSV/NVIDIA NVENC before software where applicable. Software encoding needs the matching FFmpeg codec libraries. Quality pairs are `[video height, Mbps]`: height must be even (144–4320), bitrate 0.1–200, up to 32 distinct pairs. Original is controlled separately, and at least one quality option must remain. Conversion never upscales or silently removes required burned-in subtitles.
-
-When the server is busy, new conversion can wait up to eight seconds; uburoom may reuse a compatible output instead. It does not eject an active viewer or exceed its configured job count. Other applications' Plex jobs are not included. See [Discord codec compatibility](discord-codec-compatibility.md).
+For manual tuning: local conversion defaults to AV1 video with Opus audio; VP9/VP8 are alternatives. Automatic encoding tries supported hardware first, then software when allowed. Quality options are height/bitrate pairs. Converted video is not upscaled, and required burned-in captions are not silently dropped. Jobs above the limit can wait briefly or share an existing compatible output; active viewers are not displaced. See [configuration defaults](../config.example.yaml) and [Discord codec compatibility](discord-codec-compatibility.md) for formats and restrictions.
 
 ## Rooms and directory
 
-The defaults allow **5 open rooms**, **50 saved rooms**, **20 members per room**, and **100 connected people** across rooms and the lobby. Each room can hold 50 upcoming queue items and 150 history items. A reconnect has a 60-second recovery window. If a limit is reached, uburoom rejects new additions rather than removing current members. You can change these limits under `rooms`.
+The defaults allow **5 open rooms**, **50 saved rooms**, **20 people per room** and **100 connected people** in total, including the lobby. Each room can keep 50 upcoming items and 150 history entries. People have a 60-second window to reconnect. These limits are editable under `rooms`; reaching one does not remove somebody already connected.
 
-Saved rooms can reopen after a restart, but playback returns paused. Automatic resuming is only considered when the room was playing, the expected people return in time, playback is ready and an authorized controller is present. Otherwise, someone with permission must start playback.
+Saved rooms reopen paused after a restart. They resume automatically only if the room was previously playing, the expected people return in time, playback is ready and someone authorized is present. Otherwise, an authorized person starts playback.
 
-Closed rooms can be cleaned up after 180 days of inactivity when more than 10 are retained; `rooms.inactive_days: 0` turns off inactivity cleanup. Empty disposable rooms may be removed sooner. A room is kept when configured to stay open, when there is an unfinished bookmark below 90%, upcoming items or automatic queueing. A bookmark percentage is **not** evidence that Plex marked something watched. Queue/history trimming preserves generation progress; the explicit reset action clears that progress.
+Old closed rooms may be cleared after 180 days of inactivity when more than 10 rooms are retained. `rooms.inactive_days: 0` disables inactivity cleanup. Empty disposable rooms can disappear sooner; rooms with a keep-when-empty choice, unfinished bookmarks, queued items or auto-queueing are retained. Bookmarks do **not** prove that Plex marked a video watched. See [room and queue rules](rooms-and-queues.md) for the full behavior.
 
-Set `rooms.single_room: true` if you want one shared room instead of letting people create their own. It is always named **Room** and cannot be renamed, deleted, transferred or ordinarily closed. Its leader comes from the configured Plex leader ID, or the appropriate configured Discord/Plex owner identity; failed account lookup never grants leadership. Reset clears playback, queue and history while keeping the room, accounts and keys. Server administrators must explicitly enable Admin mode before using those privileges.
+Want everyone in one shared space? Set `rooms.single_room: true`. The room is named **Room** and cannot be renamed, deleted or transferred. Its leader comes from the configured owner/leader identity, not from whoever arrives first; a failed lookup grants no leadership. Reset clears playback and queues but keeps the room, accounts and keys. Administrator powers require explicitly enabled Admin mode.
 
-Host/viewer controls, room limits, administrator IDs and directory settings are all in [`config.example.yaml`](../config.example.yaml). The member directory shows eligible search results; by default Discord member discovery is on and Plex member discovery is off. Being listed does not grant room or media access. See [room rules](rooms-and-queues.md) and [host search](account-names-and-host-directory.md).
+The optional host directory helps authorized users find people to assign as hosts. Discord member discovery is on by default; Plex discovery is off. Being found does **not** grant access. Settings are in the [configuration example](../config.example.yaml); details are in the [host directory guide](account-names-and-host-directory.md).
 
 ## Direct Plex delivery (advanced)
 
-You can skip this section if your videos work well with the default settings.
+You can skip this section if the default playback works for you. With `plex.delivery: proxy` (the default), video travels through uburoom. Setting `plex.delivery: auto` lets supported browsers try a direct connection to Plex and return to the authorized proxy if needed. This does not fix unsupported video formats, and there is no direct-only mode.
 
-By default, `plex.delivery: proxy` means uburoom sends Plex media to the browser. Setting `plex.delivery: auto` lets supported browsers try to fetch Original files or HLS video directly from Plex, falling back to uburoom's authorized proxy when needed. There is no direct-only setting, and direct access will not fix a codec the browser cannot decode.
+Direct delivery needs `plex.client_url`: a trusted, viewer-reachable **HTTPS origin** for the same Plex server, without a path or query. Local-network viewers can use Plex's authenticated address discovery or `plex.lan_client_url`. Actual browser reachability and permissions still matter. Discord Activity, captions and some other playback paths continue through uburoom.
 
-- `plex.client_url` must be a trusted HTTPS address that viewers can reach for the selected Plex server. Use only the origin (no page path, query, login details or fragment).
-- Local-network viewers can use Plex's authenticated address discovery or an explicit `plex.lan_client_url`. Browsers still need to be able to reach the address and pass cross-origin/range checks.
-- Direct HLS sends the initial small playlist through uburoom but sends video and audio segments from Plex to the browser. Eligible viewers can share a conversion output while holding separate temporary credentials.
-- Discord Activity, browsers needing native HLS, captions and local conversions can still use other delivery paths. Original quality can require conversion.
-- Sharing **directly** from a fallback Plex account requires `plex.direct_fallback_enabled: true`, regular fallback enabled, and a separate `plex.fallback_token` verified by plex.tv as belonging to a **non-owner** account. A blank, owner or unverified token is not allowed.
-- Temporary direct-access tokens carry the Plex source account's permissions; they are **not limited to one room or movie**. Plex documents a lifetime of up to 48 hours or until its server restarts. Removing uburoom access cannot guarantee that an already issued token immediately stops working.
+**Direct fallback sharing is a separate opt-in.** It requires `plex.direct_fallback_enabled: true`, normal fallback enabled and a dedicated `plex.fallback_token` verified as belonging to a **non-owner** Plex account. Owner, blank or unverified credentials are not accepted. Temporary direct-access tokens can expose that Plex account's broader library permissions, not just one movie or room. They can last up to 48 hours or until Plex restarts; revoking uburoom access may not end them immediately. Never log tokens.
 
-Keep permanent and temporary credentials out of logs. Direct connection negotiation has a five-second budget; HLS playlist requests use five seconds to first byte and eight seconds total, with no internal retry. Any later proxy setup or conversion wait is separate.
-
-For protocol details and security boundaries, see the [Plex delivery contract](plex-hls-delivery.md) and [Plex's developer documentation](https://developer.plex.tv/pms/).
+See the [direct-delivery technical contract](plex-hls-delivery.md) and [Plex developer reference](https://developer.plex.tv/pms/) for URL validation, segment routing, token lifetime and timeout behavior.
 
 ## Backups and deployment
 
