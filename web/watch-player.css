@@ -18,14 +18,22 @@
 #tracks-dialog label{font-size:13px;font-weight:600;margin-top:12px}#tracks-dialog select{width:100%;max-width:100%;font-size:14px;padding:10px}
 #tracks-dialog .personal-sync{display:block;margin:16px 0 0}#tracks-dialog .personal-sync label{margin-bottom:6px}#tracks-dialog .personal-sync .hint{margin-top:8px}
 #tracks-dialog #subtitle-offset{width:100%}#tracks-dialog #track-status:empty{display:none}
-.player-settings-menu,.settings-submenu{position:fixed;inset:auto;margin:0;width:280px;border:1px solid var(--border);border-radius:12px;padding:6px;background:var(--card);color:var(--text);box-shadow:0 8px 30px #0008;font-size:13px;z-index:25}
-.player-settings-menu{overflow:visible}.settings-submenu{width:240px;max-height:min(340px,calc(100dvh - 24px));overflow:auto}
+.player-settings-menu{position:fixed;inset:auto;margin:0;width:280px;max-width:calc(100vw - 16px);border:1px solid var(--border);border-radius:12px;padding:6px;background:var(--card);color:var(--text);box-shadow:0 8px 30px #0008;font-size:13px;z-index:25;overflow:hidden}
+.settings-main,.settings-submenu{position:absolute;inset:6px;transition:transform .18s ease,visibility 0s;min-height:0}
+.settings-main{bottom:auto;max-height:calc(100% - 12px);overflow:auto;transform:translateX(0)}
+.settings-submenu{display:flex;flex-direction:column;transform:translateX(calc(100% + 12px));visibility:hidden;transition-delay:0s,.18s}
+.show-choices .settings-main{transform:translateX(calc(-100% - 12px));visibility:hidden;transition-delay:0s,.18s}
+.show-choices .settings-submenu{transform:translateX(0);visibility:visible;transition-delay:0s}
+.settings-options{min-height:0;overflow-y:auto;overscroll-behavior:contain;flex:0 1 auto}
+.player-settings-menu #settings-back{flex:none;margin-top:auto;border-top:1px solid var(--border);border-radius:0 0 7px 7px}
+.player-settings-menu #settings-back>svg{margin-left:0}
 .player-settings-menu button{width:100%;display:flex;align-items:center;gap:10px;text-align:left;background:transparent;color:var(--text);border-radius:7px;padding:10px;min-height:40px}
-.player-settings-menu>button{white-space:nowrap}
+.settings-main>button{white-space:nowrap}
 .player-settings-menu button:hover,.player-settings-menu button:focus-visible{background:var(--elevated)}
+.player-settings-menu button:focus-visible{outline-offset:-2px}
 .player-settings-menu button>svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;margin-left:auto}
 .settings-value{display:block;flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;font-size:11px;color:var(--muted);margin-left:auto;text-align:right}
-.settings-submenu button{display:block}.settings-caption{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:3px;white-space:normal;overflow-wrap:anywhere}.settings-auto{display:block;color:var(--accent-text);font-size:11px;margin-top:4px}
+.settings-options button{display:block}.settings-caption{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:3px;white-space:normal;overflow-wrap:anywhere}.settings-auto{display:block;color:var(--accent-text);font-size:11px;margin-top:4px}
 .settings-submenu button[aria-checked=true]{background:var(--elevated);color:var(--accent-text)}
 #settings-more{border-top:1px solid var(--border);border-radius:0 0 7px 7px;margin-top:4px}
 #seek-feedback{position:absolute;top:40%;z-index:4;padding:10px 14px;margin:0;background:#101217d9;border-radius:20px;font-size:15px;color:var(--text);pointer-events:none}
@@ -43,4 +51,4 @@ body.mobile-player .center-play{width:48px;height:48px;top:45%}body.mobile-playe
 body.mobile-player #ready-status{top:calc(45% + 24px);font-size:10px}
 body.mobile-player .title-bar{padding:8px 10px 20px}body.mobile-player .media-heading h1{font-size:14px}
 body.mobile-player #empty-stage{max-height:calc(100% - 136px)}
-@media(prefers-reduced-motion:reduce){.center-play{transition:none}}
+@media(prefers-reduced-motion:reduce){.center-play,.settings-main,.settings-submenu{transition:none}}

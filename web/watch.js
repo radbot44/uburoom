@@ -1283,12 +1283,12 @@ function applyState(next) {
   $('close-room').hidden = !!config?.singleRoom;
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
   $('quality-notice').textContent=next.qualityNotice || '';
-  $('quality-fallback-notice').textContent=next.qualityNotice || '';
-  $('quality-fallback-notice').hidden=!next.qualityNotice;
   renderMediaInformation(next);
   const choices = next.qualities || uburoom.QUALITIES;
-  if ([...$('quality').options].map(o => o.value).join() !== choices.map(q => q.id).join()) {
+  if (JSON.stringify([...$('quality').options].map(o => [o.value,o.textContent])) !== JSON.stringify(choices.map(q => [q.id,q.label]))) {
+    const previous=$('quality').value;
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));
+    if(choices.some(q=>q.id===previous))$('quality').value=previous;
   }
   if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
   renderBrowsing();

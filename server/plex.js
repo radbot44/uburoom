@@ -333,7 +333,8 @@ class Plex {
   qualities(media) {
     const original = !media?.unavailable && media?.source && Sources.select(media.source,media.sourceSelection).media;
     return this.qualityOptions.filter(q => !q.bitrate || (!original?.bitrate || q.bitrate <= original.bitrate) &&
-      (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)));
+      (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)))
+      .map(q => q.id === 'direct' && original?.bitrate > 0 ? {...q,label:'Original · '+Math.round(original.bitrate / 1000)+' Mbps'} : q);
   }
   async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     quality=qualityId(quality);

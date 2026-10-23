@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Player settings flow — 2026-10-23
+
+A/B on local changes based on `6a89046`; not deployed. Removed the top quality fallback banner and quality command notification. Original quality labels include the selected source bitrate rounded to whole Mbps when known. Desktop choices slide within one menu, final choices close it, and Back stays outside the scrolling list. Mobile retains its existing dialog.
+
+- **Focused tests:** `node --test --test-reporter=tap tests/watch.test.js tests/watch-page.test.js tests/plex-library.test.js`: 35 passed, 0 failed, 0 skipped. Syntax checks passed for the changed player UI, watch client and Plex modules; `git diff --check` passed.
+- **Isolated rendered checks:** Disposable Chrome 155.0.8059.84 and Firefox 158.0.1, using the actual player UI module/styles with fixture selects. Navigation, final selection dismissal for quality/audio/subtitles, selection dispatch before settings context cleanup, Escape/arrow/Enter handling, restored focus, and fixed Back placement while scrolling 45 choices passed. Dark/orange, light/pink and narrow 200% CSS zoom screenshots were inspected. An initial zoom-position assertion failed; placement was corrected and both browsers passed. Source-label fixture checks covered rounding, changed bitrate with the same quality IDs, unknown bitrate and preservation of shared preset labels.
+- **Limits:** No new permanent test suite; private disposable review runner and screenshots remain ignored. Full suite, live Plex track switching/playback (C), physical mobile/Activity and owner acceptance (D) were not run.
+
 ### Endpoint completion fix — 2026-10-23
 
 A/B on local changes based on `5cfb4a25ddbea92a94c07a399db0bb0a69111eb8`; not deployed. Owner selected explicit completion when seeking fully right and reported Play restarting the stuck occurrence. Endpoint commands now use the existing queue completion/countdown flow without decoded readiness or watched-time credit. Play at a finished occurrence selects the queued successor with video-selection authorization; stale readiness cannot restart it. Empty-queue completion fences the durable writer before unloading.

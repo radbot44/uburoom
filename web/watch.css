@@ -314,7 +314,6 @@ body.idle-player #video{visibility:hidden}
 
 .codec-test-dialog{width:min(1060px,96vw);max-width:96vw;height:90dvh;padding:12px;overflow:hidden}.codec-test-dialog[open]{display:flex;flex-direction:column;gap:10px}.codec-test-dialog iframe{width:100%;flex:1;min-height:0;border:0;border-radius:12px;background:var(--background)}
 
-.quality-fallback-notice{position:absolute;top:68px;left:16px;right:16px;margin:0;padding:10px 14px;border-radius:10px;background:#1b1e26e8;color:#f8f7f4;font-size:13px;z-index:4}
 
 /* Account names and two-line host discovery reuse the room controls. */
 #room-person-search { width:100%; }

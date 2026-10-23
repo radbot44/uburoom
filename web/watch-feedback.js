@@ -1,7 +1,7 @@
 /* Feedback labels for watch-room commands. */
 (function (root) {
   'use strict';
-  const icons = root.uburoomIcons, global = root;
+  const icons = root.uburoomIcons;
   function badgeDetails(command, state = {}) {
     const { action, args = {} } = command, picture = state.picture || {};
     const percent = n => Number(((n ?? 1) * 100).toFixed(2)) + '%';
@@ -26,7 +26,7 @@
       case 'media.load': symbol = 'play'; label = 'Video selected'; break;
       case 'media.previous': symbol = 'start'; label = 'Previous / restart'; break;
       case 'media.next': symbol = 'end'; label = 'Next video'; break;
-      case 'media.quality.set': symbol = 'settings'; value = global.uburoom?.QUALITIES?.find(q => q.id === global.uburoom.qualityId(args.quality))?.label || (args.quality === 'direct' ? 'Original' : args.quality); label = 'Quality'; break;
+      case 'media.quality.set': return;
       case 'media.seek.start': symbol = 'start'; label = 'Back to start'; break;
       case 'media.seek.end': symbol = 'end'; label = 'Go to end / live'; break;
       case 'zoom.set': case 'zoom.adjust': case 'reset.zoom':

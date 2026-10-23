@@ -15,7 +15,9 @@
     const $ = id => document.getElementById(id), stage=$('stage'), cog=$('tracks-open'), dialog=$('tracks-dialog');
     const mobile=()=>document.body.classList.contains('mobile-player');
     const menu=document.createElement('div'); menu.id='player-settings-menu'; menu.className='player-settings-menu'; menu.popover='manual'; menu.setAttribute('role','menu'); menu.setAttribute('aria-label','Player settings'); stage.append(menu);
-    const submenu=document.createElement('div'); submenu.id='player-settings-choices'; submenu.className='settings-submenu'; submenu.setAttribute('role','menu'); submenu.hidden=true; menu.append(submenu);
+    const mainMenu=document.createElement('div'); mainMenu.className='settings-main'; menu.append(mainMenu);
+    const submenu=document.createElement('div'); submenu.id='player-settings-choices'; submenu.className='settings-submenu'; submenu.setAttribute('role','menu'); submenu.inert=true; submenu.setAttribute('aria-hidden','true'); menu.append(submenu);
+    const options=document.createElement('div'); options.className='settings-options'; submenu.append(options);
     const badge=document.createElement('span'); badge.id='quality-badge'; badge.setAttribute('aria-hidden','true'); cog.append(badge);
     const choices=[['quality','Quality'],['audio-track','Audio track'],['subtitle-track','Subtitle track']];
     const rows=[]; let opened=false, activeChoice, choiceSignature, chromeTimer, tapTimer, feedbackTimer, press, taps, lastSubtitle, touching=false;
@@ -27,25 +29,22 @@
     for(const event of ['pointerenter','pointerleave','focusin','focusout'])stage.addEventListener(event,()=>requestAnimationFrame(layoutCaptions));
     function button(parent,label) { const b=document.createElement('button'); b.type='button'; b.textContent=label; parent.append(b); return b; }
     for(const [id,label] of choices) {
-      const row=button(menu,label); row.id='settings-'+id; row.setAttribute('role','menuitem'); row.setAttribute('aria-haspopup','menu'); row.setAttribute('aria-expanded','false'); row.setAttribute('aria-controls',submenu.id);
-      const value=document.createElement('span'); value.className='settings-value'; row.append(value,uburoomIcons.icon(document,'left')); row.onclick=()=>openChoices(id); rows.push({id,row,value});
+      const row=button(mainMenu,label); row.id='settings-'+id; row.setAttribute('role','menuitem'); row.setAttribute('aria-haspopup','menu'); row.setAttribute('aria-expanded','false'); row.setAttribute('aria-controls',submenu.id);
+      const value=document.createElement('span'); value.className='settings-value'; row.append(value,uburoomIcons.icon(document,'right')); row.onclick=()=>openChoices(id); rows.push({id,row,value});
     }
-    const more=button(menu,'More settings'); more.id='settings-more'; more.setAttribute('role','menuitem'); more.setAttribute('aria-haspopup','dialog'); more.setAttribute('aria-controls',dialog.id); more.append(uburoomIcons.icon(document,'settings')); more.onclick=openDialog;
-    // Keep the submenu last in reading order, after the four main choices.
-    menu.append(submenu);
+    const more=button(mainMenu,'More settings'); more.id='settings-more'; more.setAttribute('role','menuitem'); more.setAttribute('aria-haspopup','dialog'); more.setAttribute('aria-controls',dialog.id); more.append(uburoomIcons.icon(document,'settings')); more.onclick=openDialog;
+    const back=button(submenu,'Back'); back.id='settings-back'; back.setAttribute('role','menuitem'); back.prepend(uburoomIcons.icon(document,'left')); back.onclick=backToSettings;
     function placeMenu() {
       if(!opened)return;
-      const anchor=cog.getBoundingClientRect(), width=menu.offsetWidth;
+      const anchor=cog.getBoundingClientRect(), width=menu.getBoundingClientRect().width, scale=width/menu.offsetWidth;
+      const height=Math.min(activeChoice?options.scrollHeight+back.offsetHeight:mainMenu.scrollHeight,340,Math.max(40,anchor.top/scale-28))+14;
+      menu.style.height=height+'px';
       const left=Math.max(8,Math.min(innerWidth-width-8,anchor.right-width));
-      menu.style.left=left+'px'; menu.style.top=Math.max(8,anchor.top-menu.offsetHeight-8)+'px';
-      if(!submenu.hidden) {
-        const box=menu.getBoundingClientRect();
-        submenu.style.left=Math.max(8,box.left-submenu.offsetWidth-8)+'px';
-        submenu.style.top=Math.max(8,Math.min(innerHeight-submenu.offsetHeight-8,box.bottom-submenu.offsetHeight))+'px';
-      }
+      menu.style.left=left/scale+'px'; menu.style.top=Math.max(8,anchor.top-menu.offsetHeight*scale-8)/scale+'px';
     }
     function closeSettings(focus=false) {
-      if(opened)menu.hidePopover(); opened=false; submenu.hidden=true; activeChoice=undefined; choiceSignature=undefined;
+      if(opened)menu.hidePopover(); opened=false; activeChoice=undefined; choiceSignature=undefined;
+      menu.classList.remove('show-choices'); mainMenu.inert=false; mainMenu.removeAttribute('aria-hidden'); submenu.inert=true; submenu.setAttribute('aria-hidden','true');
       rows.forEach(({row})=>row.setAttribute('aria-expanded','false'));
       cog.setAttribute('aria-expanded','false'); stage.classList.remove('settings-open');
       if(!dialog.open)afterSettings();
@@ -63,10 +62,17 @@
     }
     function openChoices(id) {
       if($(id).disabled)return;
-      activeChoice=id; choiceSignature=undefined; submenu.hidden=false;
+      activeChoice=id; choiceSignature=undefined;
+      mainMenu.inert=true; mainMenu.setAttribute('aria-hidden','true'); submenu.inert=false; submenu.removeAttribute('aria-hidden'); menu.classList.add('show-choices');
       submenu.setAttribute('aria-label',choices.find(choice=>choice[0]===id)[1]);
       rows.forEach(({id:other,row})=>row.setAttribute('aria-expanded',String(other===id)));
       renderChoices(); placeMenu(); submenu.querySelector('[aria-checked=true]:not(:disabled),button:not(:disabled)')?.focus();
+    }
+    function backToSettings() {
+      const previous=activeChoice; activeChoice=undefined; choiceSignature=undefined;
+      menu.classList.remove('show-choices'); mainMenu.inert=false; mainMenu.removeAttribute('aria-hidden'); submenu.inert=true; submenu.setAttribute('aria-hidden','true');
+      rows.forEach(({row})=>row.setAttribute('aria-expanded','false'));
+      placeMenu(); rows.find(r=>r.id===previous)?.row.focus();
     }
     function renderChoices() {
       if(!activeChoice)return;
@@ -75,11 +81,11 @@
       const resolved=audio?tracks?.audioId:tracks?.subtitleId;
       const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
       if(signature===choiceSignature)return; choiceSignature=signature;
-      const focused=submenu.contains(document.activeElement), previous=document.activeElement?.dataset.value;
-      submenu.replaceChildren();
+      const focused=options.contains(document.activeElement), previous=document.activeElement?.dataset.value, scrollTop=options.scrollTop;
+      options.replaceChildren();
       for(const option of select.options) {
         const track=trackRows.find(row=>row.id===option.value);
-        const b=button(submenu,track?trackLabel(track):option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
+        const b=button(options,track?trackLabel(track):option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
         if (track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; b.append(caption); }
         if (select.value==='auto' && option.value===resolved) {
           const marker=document.createElement('span'); marker.className='settings-auto'; marker.textContent='Used by Automatic'; b.append(marker);
@@ -88,9 +94,11 @@
           const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent='Currently Off'; b.append(caption);
         }
         b.setAttribute('role','menuitemradio'); b.setAttribute('aria-checked',String(option.value===select.value));
-        b.onclick=()=>{select.value=option.value; select.dispatchEvent(new Event('change',{bubbles:true}));};
+        b.onclick=()=>{select.value=option.value; select.dispatchEvent(new Event('change',{bubbles:true})); closeSettings(true);};
         if(focused&&option.value===previous)b.focus();
       }
+      options.scrollTop=scrollTop;
+      if(focused&&!options.contains(document.activeElement))back.focus();
     }
     function render() {
       const state=getState(), tracks=state?.tracks;
@@ -130,16 +138,16 @@
     menu.addEventListener('focusout',event=>{if(opened&&event.relatedTarget&&!menu.contains(event.relatedTarget)&&event.relatedTarget!==cog)closeSettings();});
     document.addEventListener('focusin',event=>{if(opened&&!menu.contains(event.target)&&event.target!==cog)closeSettings();});
     menu.addEventListener('keydown',event=>{
-      const group=submenu.contains(event.target)?submenu:menu;
-      const buttons=[...group.children].filter(n=>n.tagName==='BUTTON'&&!n.disabled), index=buttons.indexOf(document.activeElement);
+      const group=activeChoice?submenu:mainMenu;
+      const buttons=[...group.querySelectorAll('button:not(:disabled)')], index=buttons.indexOf(document.activeElement);
       if(['ArrowUp','ArrowDown','Home','End'].includes(event.key)) {
         event.preventDefault(); const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length; buttons[next]?.focus();
-      } else if((event.key==='ArrowRight'||event.key==='Escape')&&!submenu.hidden) {
-        event.preventDefault(); event.stopPropagation(); submenu.hidden=true; rows.find(r=>r.id===activeChoice)?.row.focus(); activeChoice=undefined; rows.forEach(({row})=>row.setAttribute('aria-expanded','false'));
-      } else if(event.key==='ArrowLeft'&&group===menu) {event.preventDefault();rows.find(r=>r.row===document.activeElement)?.row.click();}
+      } else if(event.key==='ArrowLeft'&&activeChoice) {
+        event.preventDefault(); backToSettings();
+      } else if(event.key==='ArrowRight'&&!activeChoice) {event.preventDefault();rows.find(r=>r.row===document.activeElement)?.row.click();}
     });
     document.addEventListener('keydown',event=>{
-      if(event.key==='Escape'&&opened){event.preventDefault();event.stopImmediatePropagation(); if(!submenu.hidden){submenu.hidden=true;rows.find(r=>r.id===activeChoice)?.row.focus();activeChoice=undefined;rows.forEach(({row})=>row.setAttribute('aria-expanded','false'));}else closeSettings(true);}
+      if(event.key==='Escape'&&opened){event.preventDefault();event.stopImmediatePropagation(); if(activeChoice)backToSettings();else closeSettings(true);}
       if(event.key==='Tab')stage.classList.remove('touch-controls');
     },true);
     function showChrome() {
