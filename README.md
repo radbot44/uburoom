@@ -1,56 +1,33 @@
 # uburoom
 
-Self-hosted Plex watch parties with a web interface and Discord integration.
+Self-hosted Plex watch parties in a browser or Discord Activity. No managed hosting service is included.
 
+**Pre-release:** Real Plex, Discord, browser/device and distribution verification is still open. See the [testing status](docs/testing.md) and [roadmap](ROADMAP.md) for evidence and release gates.
 
-This source is undergoing release preparation. The approved wordmark and oo icons are integrated; the remaining asset-provenance and integration checks are pending. No managed room-hosting service is included.
+## Local demo
 
-## Local demonstration
-
-Requires Node **22.13.0+** and npm. The demo uses synthetic media and simulated providers without Plex or Discord credentials.
+Requires Node **22.13.0+** and npm. In PowerShell:
 
 ```powershell
 npm ci
 .\scripts\new-dev-cert.ps1 -DnsNames @('localhost')
-npm test
 node scripts/watch-demo.js --accounts
 ```
 
-Open `https://localhost:6768/watch?demo=host`. Inspect/accept the localhost certificate exception, create a room and choose Libraries → Other → Synchronization video. Open `https://localhost:6768/watch?demo=guest` in a second browser/profile to join. Check shared play/pause/seek, private-room revocation and logout. Ctrl+C stops this demo; accounts are temporary. Keep production configuration out of the demo checkout.
+Open `https://localhost:6768/watch?demo=host` and `https://localhost:6768/watch?demo=guest` in separate browsers or profiles. Accept the local development certificate exception, create or join a room, and try shared playback controls. The demo uses disposable accounts and synthetic media, with no Plex or Discord credentials. See [development](docs/development.md) for test commands.
 
-See [self-hosting](docs/self-hosting.md) for your own server and [development](docs/development.md) for isolated checks.
+## Capabilities and limits
 
-Server settings live in private `config.yaml`; copy the annotated `config.example.yaml` and supply your installation settings. **Never share your config file:** it contains secrets and API tokens. Use `node server/index.js --config /private/config.yaml` for external/container configuration. Keep persistent data and the original encryption key when replacing an installation.
+- Shared playback, late-join synchronization, public/private rooms, host permissions and persistent rooms/queues.
+- Plex browsing and media-access checks, linked Plex/Discord accounts, browser/Activity handoff and personal volume, quality and track choices.
+- Native per-viewer playback observations and history. Plex activity, resume and watched-state reporting are **not enabled**.
 
-## Features and limits
+## Self-hosting
 
-- Shared playback, readiness/late-join synchronization, host succession, public/private rooms and configurable room permissions.
-- Plex browsing and linked Plex/Discord accounts; personal volume, quality and media-access checks.
-- Discord Activity and browser handoff, with all room commands routed through the shared validated command engine.
-- Native per-viewer observations and persisted playback history, retained for planned Plex resume/watched-state updates across clients and servers; Plex reporting is not enabled yet. Queueing and durable room restoration are later work.
+Follow the [self-hosting guide](docs/self-hosting.md) to configure Plex, HTTPS and optional Discord integration. Copy [`config.example.yaml`](config.example.yaml) to a **private** `config.yaml`, supply your settings, then run `npm start` or `node server/index.js --config /path/to/config.yaml`.
 
-See the [roadmap](ROADMAP.md) for priorities, milestones and release gates. Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage; the [playback reliability plan](docs/playback-reliability.md) contains the detailed requirements.
+Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring existing state; see [upgrading](docs/upgrading.md). Shared Plex fallback is enabled by default and can expand eligible viewers' media access; review its [access implications](docs/self-hosting.md#shared-plex-fallback).
 
-The player includes personal audio/subtitle selection, external SRT/WebVTT captions and Plex burn-in requests for styled or embedded subtitles. Live Plex and Discord coverage remains under verification; see [testing status](docs/testing.md).
+## License
 
-Fixtures do not establish compatibility with every Plex server or Discord client. See [remaining verification](docs/testing.md). Preserve account data and the original encryption key when retaining existing state; private pre-release migration support will be removed before the first public release. See [upgrading](docs/upgrading.md).
-
-## License and attribution
-
-uburoom's original source code is licensed under **GPL-3.0-only**: GNU General Public License version 3 only. See [LICENSE](LICENSE). It comes without warranty, as described in that license.
-
-Third-party code retains its own licenses and [bundled notices](web/vendor/THIRD_PARTY_NOTICES.txt); it is not relicensed by this declaration. See [attribution and remaining review](docs/third-party.md). Artwork and media provenance need final review before public distribution.
-
-## Ubumfa word generator
-
-The reusable display-word generator is available from `require('./web/ubumfa')` in Node or `window.uburoomUbumfa` in the browser:
-
-```js
-const {generateName, roomName} = require('./web/ubumfa');
-generateName();          // one uppercase six-letter word (existing default)
-generateName(9);         // one title-cased nine-letter word
-generateName(3, 6, 3);   // three title-cased words, e.g. "Obe Ubumfa Zaz"
-roomName();              // "Room " followed by one title-cased six-letter word
-```
-
-Each numeric argument to `generateName(...lengths)` is the positive integer letter count for one word; multiple words are separated by spaces. The original no-argument and seeded `generateName(random)` calls still return uppercase six-letter words. Adjacent vowels remain distinct and doubled consonants use the original Ubumfa consonant pairs. These display words are not unique identifiers or secrets.
+Original source code is **GPL-3.0-only**; see [LICENSE](LICENSE). Third-party components retain their own licenses and [notices](web/vendor/THIRD_PARTY_NOTICES.txt). [Asset and license review](docs/third-party.md) remains open before public distribution.
