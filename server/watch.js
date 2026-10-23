@@ -45,18 +45,23 @@ function syncQualityParticipants(room,participants,now=Date.now()) {
       const score=Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):lastKnownScore;
       const rememberedLevel=measurement?.lastKnownLevel||SyncQuality.level(lastKnownScore);
       let confidence=['confident','reduced','provisional'].includes(measurement?.confidence)?measurement.confidence:'provisional';
-      if(disconnected||status==='disconnected'||status==='stale'||age>5000||measurement?.measurementFreshnessMs>5000||
-        ['paused','seeking','starting','error','unknown'].includes(status))confidence=confidence==='provisional'?'provisional':'reduced';
+      const evidenceAge=Number.isFinite(measurement?.measuredAt)?Math.max(0,now-measurement.measuredAt):
+        Number.isFinite(measurement?.measurementFreshnessMs)?age+measurement.measurementFreshnessMs:Infinity;
+      const allowedAge=status==='paused'?SyncQuality.PAUSED_EVIDENCE_MS:SyncQuality.RECENT_EVIDENCE_MS;
+      if(disconnected||status==='disconnected'||status==='stale'||age>15000||evidenceAge>allowedAge||
+        ['starting','error','unknown'].includes(status))confidence=confidence==='provisional'?'provisional':'reduced';
       return {status,score,level:SyncQuality.level(score,rememberedLevel),confidence,
         lastKnownScore,lastKnownLevel:rememberedLevel,lastKnownAt:measurement?.lastKnownAt,
-        updatedAt:measurement?.updatedAt,measurementFreshnessMs:measurement?.measurementFreshnessMs,
+        updatedAt:measurement?.updatedAt,measurementFreshnessMs:evidenceAge,
         reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason,
         current:!disconnected&&contextMatches&&age<=15000&&['playing','buffering','paused','seeking','starting','error'].includes(status)};
     });
+    // Inactive tabs remain in the tooltip but cannot override a playing tab.
+    const playing=visible.filter(session=>session.current&&['playing','buffering'].includes(session.status)).sort((a,b)=>a.score-b.score);
     const current=visible.filter(session=>session.current).sort((a,b)=>a.score-b.score);
     const connected=visible.filter(session=>session.status!=='disconnected'&&session.status!=='stale'&&Number.isFinite(session.score));
     const remembered=visible.filter(session=>Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt);
-    const selected=current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
+    const selected=playing[0]||current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
     const score=selected&&Number.isFinite(selected.score)?selected.score:1;
     const confidence=selected?.confidence||'provisional';
     const reason=visible.length===0?'no-sessions':selected?.reason||

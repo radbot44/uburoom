@@ -2,7 +2,8 @@
 (function(root) {
   'use strict';
   const WINDOW_MS=60000, SAMPLE_INTERVAL_MS=1000, MAX_POINTS=72, MAX_INTERVALS=72, MAX_CORRECTIONS=128;
-  const MAX_CLOCK_AGE_MS=2500, MAX_CLOCK_UNCERTAINTY_MS=800, CONFIDENT_RTT_SAMPLES=5;
+  const MAX_CLOCK_AGE_MS=5000, MAX_CLOCK_UNCERTAINTY_MS=1000;
+   const RECENT_EVIDENCE_MS=12000, PAUSED_EVIDENCE_MS=120000;
   const REFRESH_INTERVAL_MS=5000, STALE_AFTER_MS=15000;
   const finite=Number.isFinite;
   function clamp(value,min,max) { return Math.max(min,Math.min(max,value)); }
@@ -53,7 +54,7 @@
       if(!finite(at))return false;
       if(clockRevision!==nextRevision) {
         clockRevision=nextRevision;points=[];intervals=[];buffers=[];corrections=[];
-        bufferStart=previousPoint=lastCalculatedAt=lastActivityAt=lastRawScore=undefined;
+        bufferStart=previousPoint=lastCalculatedAt=lastRawScore=undefined;
       }
       if(!eligible||!finite(errorMs)||!finite(playbackRate)||playbackRate<=0) { previousPoint=undefined;trim(at);return false; }
       if(previousPoint&&at<previousPoint.at){previousPoint=undefined;return false;}
@@ -100,7 +101,8 @@
         automaticCorrectionCount:corrections.length,automaticCorrectionMagnitudeMs:corrections.reduce((total,event)=>total+event.magnitudeMs,0),
         rateAdjustedSeconds:rateAdjustedMs/1000,correctionDutyCycle:measuredMs?rateAdjustedMs/measuredMs:undefined,
         rateAdjustmentSeconds:rateAdjustmentMs/1000,bufferingSeconds:bufferMs/1000,
-        measurementFreshnessMs:previousPoint?Math.max(0,at-previousPoint.at):undefined,sampleCount:points.length};
+        measurementFreshnessMs:lastActivityAt===undefined?undefined:Math.max(0,at-lastActivityAt),
+         latestSource:points.at(-1)?.source,sampleCount:points.length};
     }
     function report(status,reason,metrics,rawScore,updated=false,confidence) {
       return {status,reason,score:smoothedScore,level:smoothedLevel,lastScore:smoothedScore,lastLevel:smoothedLevel,confidence:confidence||
@@ -110,18 +112,25 @@
       if(!finite(at))return report(playbackStatus,'invalid-measurement-time',undefined,undefined);
       const metrics=metricsAt(at);
       const reduced=reason=>report(playbackStatus,reason,metrics,undefined,false,hasMeasuredScore?'reduced':'provisional');
+      const evidenceAge=lastActivityAt===undefined?Infinity:Math.max(0,at-lastActivityAt);
+      // Recent measured playback remains useful during a brief clock/frame gap
+      // or pause. Retaining it never creates new samples or refreshes its age.
+      const retained=(reason,longPause=false)=>hasMeasuredScore&&evidenceAge<=(longPause?PAUSED_EVIDENCE_MS:RECENT_EVIDENCE_MS)
+        ?report(playbackStatus,reason,metrics,undefined,false,'confident'):reduced(reason);
       if(playbackStatus==='error')return reduced(unknownReason||'playback-error');
-      if(playbackStatus==='paused'||playbackStatus==='seeking'||playbackStatus==='starting')return reduced(unknownReason||playbackStatus);
-      if(!clockValid)return reduced(unknownReason||'clock-unavailable');
-      if(!finite(clockAgeMs)||clockAgeMs>MAX_CLOCK_AGE_MS)return reduced(unknownReason||'clock-stale');
+      if(playbackStatus==='paused')return retained(unknownReason||'paused',true);
+      if(playbackStatus==='seeking')return retained(unknownReason||'seeking');
+      if(playbackStatus==='starting')return reduced(unknownReason||'starting');
+      if(!clockValid)return retained(unknownReason||'clock-unavailable');
+      if(!finite(clockAgeMs)||clockAgeMs>MAX_CLOCK_AGE_MS)return retained(unknownReason||'clock-stale');
       if(!finite(clockUncertaintyMs)||clockUncertaintyMs>MAX_CLOCK_UNCERTAINTY_MS)
-        return reduced(unknownReason||'clock-low-confidence');
+        return retained(unknownReason||'clock-low-confidence');
       const buffering=playbackStatus==='buffering'&&bufferStart!==undefined;
       const freshPoint=previousPoint!==undefined&&at-previousPoint.at<=2500;
-      if(!(freshPoint||buffering))return reduced(unknownReason||'measurement-stale');
-      if(metrics.measuredSeconds<=0&&!buffering)return reduced('awaiting-sync-interval');
+      if(!(freshPoint||buffering))return retained(unknownReason||'measurement-stale');
+      if(metrics.measuredSeconds<=0&&!buffering)return retained('awaiting-sync-interval');
       const rawScore=calculate({...metrics,bufferingSeconds:metrics.bufferingSeconds});
-      if(rawScore===undefined)return reduced('invalid-measurements');
+      if(rawScore===undefined)return retained('invalid-measurements');
       if(lastCalculatedAt===undefined||at-lastCalculatedAt>=REFRESH_INTERVAL_MS) {
         if(!hasMeasuredScore)smoothedScore=rawScore;
         else if(lastRawScore!==undefined&&rawScore>lastRawScore)smoothedScore=clamp(smoothedScore+(rawScore-lastRawScore)*.25,0,1);
@@ -129,16 +138,12 @@
         else smoothedScore=smoothedScore*.75+rawScore*.25;
         lastRawScore=rawScore;
         hasMeasuredScore=true;smoothedLevel=level(smoothedScore,smoothedLevel);lastCalculatedAt=at;lastValidAt=at;
-        const confident=metrics.positionMeasuredSeconds===0&&finite(rttSampleCount)&&rttSampleCount>=CONFIDENT_RTT_SAMPLES;
-        return report(playbackStatus,confident?undefined:metrics.positionMeasuredSeconds>0?'position-timing-estimate':'clock-warmup',metrics,rawScore,true,
-          confident?'confident':'reduced');
+        return report(playbackStatus,metrics.latestSource==='position'?'position-timing-estimate':undefined,metrics,rawScore,true,'confident');
       }
-      const confident=metrics.positionMeasuredSeconds===0&&finite(rttSampleCount)&&rttSampleCount>=CONFIDENT_RTT_SAMPLES;
-      return report(playbackStatus,confident?undefined:metrics.positionMeasuredSeconds>0?'position-timing-estimate':'clock-warmup',metrics,rawScore,false,
-        confident?'confident':'reduced');
+      return report(playbackStatus,metrics.latestSource==='position'?'position-timing-estimate':undefined,metrics,rawScore,false,'confident');
     }
     return {sample,breakSample,startBuffer,endBuffer,recordCorrection,refresh,reset,metricsAt};
   }
-  const api={WINDOW_MS,REFRESH_INTERVAL_MS,MAX_CLOCK_AGE_MS,MAX_CLOCK_UNCERTAINTY_MS,calculate,level,create};
+  const api={WINDOW_MS,REFRESH_INTERVAL_MS,MAX_CLOCK_AGE_MS,MAX_CLOCK_UNCERTAINTY_MS,RECENT_EVIDENCE_MS,PAUSED_EVIDENCE_MS,calculate,level,create};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomSyncQuality=api;
 })(typeof globalThis==='object'?globalThis:this);

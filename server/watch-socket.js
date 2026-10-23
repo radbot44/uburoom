@@ -51,7 +51,8 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return client.ws.close(4003,'Sign in again');
     const now = Date.now();
     const statusChanged=client.lastSyncQualityStatus!==message.status;
-    const minimumInterval=statusChanged?500:4000;
+    const confidenceChanged=client.lastSyncQualityConfidence!==message.confidence;
+    const minimumInterval=statusChanged||confidenceChanged?500:4000;
     if(client.lastSyncQualityAt!==undefined&&now-client.lastSyncQualityAt<minimumInterval)return;
     const previous=viewer.syncQuality||{};
     const hasScore=Number.isFinite(message.score);
@@ -61,14 +62,20 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     const lastKnownLevel=hasScore?SyncQuality.level(score,previous.lastKnownLevel):previous.lastKnownLevel;
     const confidence=message.confidence||(['playing','buffering'].includes(message.status)?previous.confidence||'reduced':
       previous.confidence==='provisional'?'provisional':'reduced');
-    const measurementFreshnessMs=Number.isFinite(message.measurementFreshnessMs)?message.measurementFreshnessMs:previous.measurementFreshnessMs;
+    // Receiving a retained score is not a new playback measurement.
+    const reportedAt=Number.isFinite(message.measurementFreshnessMs)&&confidence!=='provisional'
+      ?now-message.measurementFreshnessMs:undefined;
+    const measuredAt=Number.isFinite(reportedAt)&&['playing','buffering','paused','seeking'].includes(message.status)
+      ?Math.max(previous.measuredAt??-Infinity,reportedAt):previous.measuredAt;
+    const advanced=Number.isFinite(measuredAt)&&(!Number.isFinite(previous.measuredAt)||measuredAt-previous.measuredAt>=500);
+    const measurementFreshnessMs=Number.isFinite(measuredAt)?Math.max(0,now-measuredAt):undefined;
     const next={status:message.status,score,lastKnownScore,lastKnownLevel,confidence,measurementFreshnessMs,
-      lastKnownAt:hasScore?now:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
+      measuredAt,lastKnownAt:advanced?measuredAt:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
       reason:message.reason};
     const displayChanged=!previous || Math.round(previous.score*100)!==Math.round(score*100)||
       SyncQuality.level(previous.score,previous.lastKnownLevel)!==SyncQuality.level(score,lastKnownLevel)||previous.confidence!==confidence;
     viewer.syncQuality=next;
-    client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;
+    client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;client.lastSyncQualityConfidence=message.confidence;
     if(displayChanged)changed();
   }
   async function publish(client) {
