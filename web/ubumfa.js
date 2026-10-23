@@ -30,7 +30,8 @@ XY YX
 QL QM QN QR QS QT QW QY
 LQ MQ NQ RQ SQ TQ
 QB QD QF QJ QP QV
-CQ DQ FQ GQ HQ JQ PQ VQ WQ YQ ZQ`.split(/\s+/);
+CQ DQ FQ GQ HQ JQ PQ VQ WQ YQ ZQ
+BN BV DV GV HR HS HZ JL JM JN JR JS WL WN WS WT CW JC JF JW`.split(/\s+/);
   // A Y in the first position of a consonant pair cannot follow VV.
   const PAIRS_AFTER_VV = PAIRS.filter(pair => pair[0] !== 'Y');
   const C_AFTER_VV = C.replace('Y', '');
