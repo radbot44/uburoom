@@ -3,38 +3,13 @@
   'use strict';
   const V = 'AEIOU';
   const C = 'BCDFGHJKLMNPQRSTVWXYZ';
-  const PAIRS = `BL BR CL CR DR DW FL FR GL GR KL KR PL PR SK SL SM SN SP ST SW TR TW
-MB MD MF MG MH MK ML MN MP MR MS MT MV MZ
-NB ND NF NG NH NJ NK NL NM NP NR NS NT NV NZ
-LB LD LF LG LK LM LN LP LR LS LT LV LW LZ
-RB RD RF RG RK RL RM RN RP RS RT RV RW RZ
-BD BG BP BS BT DB DG DK DP DS DT
-FB FD FK FM FN FP FS FT GB GD GN GP GS GT
-KB KD KF KG KM KN KP KS KT
-PB PD PF PG PK PM PN PS PT
-SB SD SF SG SR SV
-TB TD TF TG TK TL TM TN TP TS
-VB VD VG VL VN VR VS VT
-ZB ZD ZG ZL ZM ZN ZR ZS ZT ZV
-CH SH TH PH CK CT NC RC LC SC
-BH DH GH KH LH RH WH WR ZH
-BJ DJ FJ LJ MJ RJ
-BW GW KW MW NW PW
-DZ TZ DL DM DN GM
-BB CC DD FF GG JJ KK LL MM NN PP RR SS TT VV ZZ
-CX LX MX NX RX SX TX
-XC XD XF XL XM XN XP XS XT
-BY CY DY FY GY HY JY KY LY MY NY PY RY SY TY VY WY ZY
-YB YC YD YF YG YH YJ YK YL YM YN YP YR YS YT YV YW YZ YY
-XY YX
-QL QM QN QR QS QT QW QY
-LQ MQ NQ RQ SQ TQ
-QB QD QF QJ QP QV
-CQ DQ FQ GQ HQ JQ PQ VQ WQ YQ ZQ
-BN BV DV GV HR HS HZ JL JM JN JR JS WL WN WS WT CW JC JF JW`.split(/\s+/);
-  // A Y in the first position of a consonant pair cannot follow VV.
-  const PAIRS_AFTER_VV = PAIRS.filter(pair => pair[0] !== 'Y');
+  // Only these consonants may immediately precede X in a CC pair.
+  const BEFORE_X = 'HLNRSWYXZ';
+  const C_NO_X = C.replace('X', '');
+  // A standalone consonant Y still cannot appear immediately after VV.
   const C_AFTER_VV = C.replace('Y', '');
+  // A CC pair directly after VV cannot begin with H, W, or Y.
+  const C_PAIR_AFTER_VV = C.replace(/[HWY]/g, '');
   // Every ordered pair of ordinary vowels is allowed, including doubles.
   const VOWEL_PAIRS = [...V].flatMap(a => [...V].map(b => a + b));
   const PATTERNS = ['CVCVCV', 'CVCVVC', 'CVVCCV', 'CVVCVC', 'VCCVCV', 'VCCVVC', 'VCVCCV', 'VCVCVC'];
@@ -65,6 +40,23 @@ BN BV DV GV HR HS HZ JL JM JN JR JS WL WN WS WT CW JC JF JW`.split(/\s+/);
     return index >= 2 && pattern[index - 2] === 'V' && pattern[index - 1] === 'V';
   }
 
+  function consonantPair(rand, afterVV) {
+    const starters = afterVV ? C_PAIR_AFTER_VV : C;
+    // Select uniformly from allowed pairs without maintaining a pair list
+    // or retrying invalid random draws.
+    let count = 0;
+    for (const first of starters) {
+      count += BEFORE_X.includes(first) ? C.length : C_NO_X.length;
+    }
+    let n = rand(count);
+    for (const first of starters) {
+      const seconds = BEFORE_X.includes(first) ? C : C_NO_X;
+      if (n < seconds.length) return first + seconds[n];
+      n -= seconds.length;
+    }
+    throw new RangeError('Random draw out of range');
+  }
+
   function generateWord(length, random) {
     if (!Number.isSafeInteger(length) || length < 1) {
       throw new RangeError('Word length must be a positive safe integer');
@@ -89,11 +81,9 @@ BN BV DV GV HR HS HZ JL JM JN JR JS WL WN WS WT CW JC JF JW`.split(/\s+/);
       }
     }
 
-    // Y in an explicitly approved consonant pair (including YY) is a
-    // separate exception to the vowel-Y placement rules.
+    // All CC pairs are possible except for the two contextual restrictions.
     for (let cc = p.indexOf('CC'); cc !== -1; cc = p.indexOf('CC', cc + 2)) {
-      const allowed = followsVowelPair(p, cc) ? PAIRS_AFTER_VV : PAIRS;
-      const pair = allowed[rand(allowed.length)];
+      const pair = consonantPair(rand, followsVowelPair(p, cc));
       s[cc] = pair[0]; s[cc + 1] = pair[1];
     }
     for (let i = 0; i < length; i++) {
