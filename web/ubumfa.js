@@ -96,7 +96,29 @@
     return s.join('');
   }
 
+  // Seeded names use a reproducible hash and PRNG, not Math.random.
+  // Keep this algorithm unchanged once canonical names have been assigned.
+  function randomForSeed(seed) {
+    if (typeof seed !== 'string' && !Number.isSafeInteger(seed)) {
+      throw new TypeError('Seed must be a string or safe integer');
+    }
+    const value = (typeof seed === 'string' ? 's:' : 'n:') + seed;
+    let state = 0x811c9dc5;
+    for (let i = 0; i < value.length; i++) {
+      state = Math.imul(state ^ value.charCodeAt(i), 0x01000193);
+    }
+    return function() {
+      state = (state + 0x6d2b79f5) | 0;
+      let n = state;
+      n = Math.imul(n ^ (n >>> 15), n | 1);
+      n ^= n + Math.imul(n ^ (n >>> 7), n | 61);
+      return ((n ^ (n >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   // Numeric arguments generate one title-cased word per requested length.
+  // Optional final {seed} or string seed deterministically generates a name:
+  // generateName({seed: userId}) or generateName(6, {seed: userId}).
   function generateName(...lengths) {
     if (!lengths.length) return generateWord(6, Math.random);
     if (lengths.length === 1 && typeof lengths[0] === 'function') {
@@ -105,14 +127,27 @@
     if (lengths.length === 2 && typeof lengths[1] === 'function') {
       return generateWord(lengths[0], lengths[1]);
     }
+
+    let random = Math.random;
+    const last = lengths[lengths.length - 1];
+    if (typeof last === 'string' ||
+        (last !== null && typeof last === 'object' &&
+          Object.prototype.hasOwnProperty.call(last, 'seed'))) {
+      const seed = typeof last === 'string' ? last : last.seed;
+      random = randomForSeed(seed);
+      lengths.pop();
+    }
+    if (!lengths.length) return generateWord(6, random);
     return lengths.map(length => {
-      const word = generateWord(length, Math.random);
+      const word = generateWord(length, random);
       return word[0] + word.slice(1).toLowerCase();
     }).join(' ');
   }
 
-  function roomName() {
-    const word = generateName();
+  function roomName(seed) {
+    const word = arguments.length
+      ? generateName(seed !== null && typeof seed === 'object' ? seed : {seed})
+      : generateName();
     return 'Room ' + word[0] + word.slice(1).toLowerCase();
   }
   const api = {generateName, roomName};
