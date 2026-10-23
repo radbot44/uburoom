@@ -37,7 +37,7 @@ body.mobile-player #viewing-section>#room-bar{margin:12px 12px 0;width:calc(100%
 body.mobile-player:not(.immersive) #app :is(#queue-panel,#options-panel,#library-panel){margin-inline:12px;width:calc(100% - 24px)}body.mobile-player:not(.immersive) #section-tabs{margin-inline:12px}body.mobile-player main>:is(#status,#error,#diagnostic-actions,#acceleration-help){margin-inline:12px}
 body.mobile-player :is(#theater,#seek-back,#seek-forward){display:none!important}
 body.mobile-player .transport{padding:20px 6px 6px;gap:0}body.mobile-player :is(.transport-row,.playback-buttons,.player-tools){gap:var(--watch-icon-gap)}
-body.mobile-player .player-button{width:30px;height:30px}body.mobile-player .player-button svg{width:21px;height:21px}
+body.mobile-player .player-button{min-width:36px;min-height:40px;width:36px;height:40px}body.mobile-player .player-button svg{width:21px;height:21px}
 body.mobile-player .volume-control #player-volume{width:clamp(40px,14vw,72px);margin:0 2px 0 0}
 body.mobile-player .center-play{width:48px;height:48px;top:45%}body.mobile-player .center-play svg{width:28px;height:28px}
 body.mobile-player #ready-status{top:calc(45% + 24px);font-size:10px}

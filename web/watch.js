@@ -1062,8 +1062,10 @@ function renderTransport() {
   const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
   $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
-  renderVolumeIcon(); $('player-mute').setAttribute('aria-label', state?.state.muted ? 'Unmute' : 'Mute');
-  $('player-mute').title = state?.state.muted ? 'Unmute' : 'Mute';
+  const isMuted = !!state?.state?.muted;
+  renderVolumeIcon(); $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
+  $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
+  $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
   $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut;
   $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
   const centerLabel=autoplayBlocked?'Join playback':paused?'Play':'Pause';

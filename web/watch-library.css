@@ -38,7 +38,7 @@
 .filter-holder{position:relative}
 #library-filters-toggle{cursor:pointer;white-space:nowrap}
 #library-filters-toggle:hover:not(:disabled){background:var(--hover)}
-#library-filters-toggle.filter-active{background:color-mix(in srgb,var(--primary) 18%,var(--elevated));border-color:color-mix(in srgb,var(--primary) 60%,var(--border));color:var(--primary);font-weight:600}
+#library-filters-toggle.filter-active{background:color-mix(in srgb,var(--primary) 18%,var(--elevated));border-color:color-mix(in srgb,var(--primary) 60%,var(--border));color:var(--accent-text);font-weight:600}
 .library-views{flex:none}
 .library-views .group-button{white-space:nowrap;padding-inline:8px}
 .library-key{display:flex;align-items:center;justify-content:center;gap:7px;border-radius:9px;background:var(--elevated);color:var(--text);padding:8px 11px;min-height:36px}
