@@ -52,7 +52,9 @@ Use a bounded flat list of concrete playable occurrences, each with its own UUID
 
 Auto-queue chooses future items; autoplay starts them. Following generates a sequential successor; random draws without replacement from show/library/collection, persists its cycle and repeats after exhaustion excluding active occurrences. Existing pending order wins. Shuffle affects pending items only. A proposed continuation-priority override is not implemented.
 
-Autoplay defaults on with a ten-second cancellable countdown. Pause/seek, queue edits, cancellation, role/epoch change, close or an empty room invalidate it. Ending requires current-generation decoded sequential progress (two seconds, or half-duration for clips under four seconds), a fresh near-end sample and ended evidence. Clock-at-duration, seeking or a stale ended event alone is insufficient.
+Autoplay defaults on with a ten-second cancellable countdown. Pause/seek, queue edits, cancellation, role/epoch change, close or an empty room invalidate it. Natural ending requires current-generation decoded sequential progress (two seconds, or half-duration for clips under four seconds), a fresh near-end sample and ended evidence. Clock-at-duration or a stale ended event alone is insufficient.
+
+An authorized seek to or beyond the endpoint explicitly finishes the current occurrence through the same completion/autoplay flow, without requiring decoder readiness at the endpoint or adding watched-time credit. With no successor it archives the completed occurrence and releases playback; with autoplay disabled and a successor it stays at the completed endpoint until an explicit selection. Play at that completed endpoint selects the successor only with video-selection permission; it does not restart the completed occurrence. Use Restart or history replay to watch it again.
 
 Prepare the successor under current authority, recheck fences, then atomically commit old outcome, next occurrence, bookmark and generated successor. Live state adopts the committed generation. Preparation/storage failure reports an error without consuming entries, skipping media or retry loops.
 

@@ -228,20 +228,85 @@ test('pause, Cancel and closing while the next item is preparing release it with
   });
 });
 
-test('seeking to the end and reaching duration on the room clock do not start countdowns or archive completion', async t => {
-  for (const mode of ['seek', 'clock']) await t.test(mode, async sub => {
+test('authorized endpoint seeks finish without readiness or watch credit, while the room clock cannot prove completion', async t => {
+  for (const mode of ['seek', 'absolute', 'relative', 'clock']) await t.test(mode, async sub => {
     const f = await fixture(sub), current = f.queue.current(f.id).id;
-    if (mode === 'seek') {
+    if (mode !== 'clock') {
       await f.observe(96); await f.observe(97); await f.observe(98); await f.observe(99);
-      assert.equal((await f.command('media.seek.end')).status, 'applied');
-      await f.observe(100, 'ended', { discontinuity: 1 });
+      const viewer = f.room.viewers.get(f.creator.watchViewerId), watched = viewer.tracking.record.watchedSeconds;
+      const version = f.room.mediaVersion, readiness = f.room.readinessVersion;
+      f.room.initialGate = true; f.room.readinessTimedOut = true;
+      const action = mode === 'seek' ? 'media.seek.end' : 'media.seek.' + mode;
+      const args = mode === 'absolute' ? {seconds:100} : mode === 'relative' ? {seconds:15} : undefined;
+      assert.equal((await f.command(action,args)).status, 'applied');
+      assert.equal(f.room.initialGate, false);
+      assert.equal(f.room.readinessTimedOut, false);
+      assert.ok(f.room.autoplayCountdown);
+      const countdown = f.room.autoplayCountdown;
+      assert.equal((await f.command(action,args)).status, 'applied');
+      assert.equal(f.room.autoplayCountdown,countdown,'repeated endpoint intent cannot schedule another completion');
+      assert.equal(viewer.tracking.record.watchedSeconds, watched);
+      await assert.rejects(f.watch.ready(f.room,f.creator,f.creator.watchViewerId,version,true,readiness),/Invalid readiness/);
+      await waitFor(() => f.queue.current(f.id).id === f.upcoming[0].id && !f.room.mediaTransition);
+      assert.equal(f.queue.history(f.id).items[0].id, current);
+      assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
     } else {
       f.room.position = 100; f.watch.refresh(f.room);
+      await delay(60);
+      assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.queue.current(f.id).id, current);
+      assert.equal(f.queue.history(f.id).total, 0); assert.equal(f.room.endedVersion, undefined);
     }
-    await delay(60);
-    assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.queue.current(f.id).id, current);
-    assert.equal(f.queue.history(f.id).total, 0); assert.equal(f.room.endedVersion, undefined);
   });
+});
+
+test('Play at the broken endpoint finishes instead of replaying, and finished Play advances only with video authority', async t => {
+  const f = await fixture(t);
+  await f.command('media.autoplay.set', {enabled:false});
+  f.room.position = 99.95; f.room.initialGate = true; f.room.readinessTimedOut = true;
+  f.room.s.state.paused = true;
+  assert.equal((await f.command('media.play')).status, 'applied');
+  assert.equal(f.room.position, 100);
+  assert.equal(f.room.initialGate, false);
+  assert.equal(f.room.endedVersion, f.room.mediaVersion);
+  const record = f.store.get(f.id);
+  f.watch.roomState.apply(f.room, await f.store.edit(f.id,f.creator.userId,record.revision,{action:'permissions',role:'viewer',permissions:{playPause:true,chooseMedia:false}}));
+  f.watch.snapshot(f.room, f.guest, f.guest.watchViewerId, async () => true, 'direct');
+  assert.equal((await f.command('media.seek.end',undefined,f.guest)).status, 'forbidden');
+  assert.equal((await f.command('media.play',undefined,f.guest)).status, 'forbidden');
+  assert.equal(f.room.position, 100);
+  assert.equal((await f.command('media.play')).status, 'applied');
+  assert.equal(f.room.media.id, '101');
+  assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
+});
+
+test('endpoint completion with no successor releases media and invalidates old readiness', async t => {
+  const f = await fixture(t), version = f.room.mediaVersion, readiness = f.room.readinessVersion;
+  await f.command('queue.clear');
+  f.room.initialGate = true;
+  assert.equal((await f.command('media.seek.absolute',{seconds:100})).status, 'applied');
+  assert.equal(f.room.media, undefined);
+  assert.equal(f.queue.current(f.id), null);
+  assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
+  assert.ok(f.stopped.some(media => media.id === '100'));
+  await assert.rejects(f.watch.ready(f.room,f.creator,f.creator.watchViewerId,version,true,readiness),/Invalid readiness/);
+});
+
+test('endpoint completion holds conflicting controls and shutdown until its durable commit', async t => {
+  const f = await fixture(t), held = gate(), flush = f.registry.flush.bind(f.registry);
+  await f.command('queue.clear');
+  f.registry.flush = async () => { held.enter(); await held.held; return flush(); };
+  t.after(() => held.release());
+  const completion = f.command('media.seek.end');
+  await waitFor(() => held.started && f.room.transitionCommit);
+  assert.equal((await f.command('media.play')).status, 'unavailable');
+  let closed = false;
+  const closing = f.watch.close().then(() => { closed = true; });
+  await delay(10); assert.equal(closed, false);
+  held.release();
+  assert.equal((await completion).status, 'applied');
+  await closing;
+  assert.equal(f.queue.current(f.id), null);
+  assert.equal(f.store.get(f.id).bookmark, null);
 });
 
 for (const enabled of [false, true]) test('first queue addition selects current media and respects auto-play ' + enabled, async t => {

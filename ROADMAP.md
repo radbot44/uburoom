@@ -46,7 +46,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P10 | Room terminology | Canonical room names/protocol and removal of legacy aliases | Final current web/Activity terminology review; retain “session” for technical connections/auth/media contexts |
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries and bounded tools | Real proxy/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
-| M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, generation, shuffle and cancellable autoplay | Real Plex/Activity continuity, retained-state recovery, writer/load measurements and remaining UX acceptance |
+| M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, generation, shuffle, cancellable autoplay and explicit endpoint completion | Real Plex/Activity continuity, accelerated-client endpoint retest, retained-state recovery, writer/load measurements and remaining UX acceptance |
 | M1-P14 | Configuration and accounts | YAML policy, configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Administration panel contract/implementation, recent-auth and sensitive-account security, operator recovery and real policy verification |
 
 ### M1-P4 — Plex viewing experience

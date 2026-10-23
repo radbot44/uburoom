@@ -603,17 +603,34 @@ class Watch {
     } finally { if (room) room.queueEditing = false; }
   }
   async observeEnd(room, viewer, data, observed) {
-    if (!room.saved || !observePlaybackEnd(room,viewer,data,observed) || room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
+    if (!room.saved || !observePlaybackEnd(room,viewer,data,observed)) return;
+    await this.finishQueueMedia(room,data);
+  }
+  async finishQueueMedia(room, data) {
+    if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
     const intent = room.playbackIntent || 0;
     room.endedVersion = room.mediaVersion;
+    room.initialGate = false; room.readinessTimedOut = false; room.readinessVersion = randomUUID();
+    room.readinessStartAt = room.pauseAt = room.startAt = undefined;
     room.position = room.media.duration; room.changedAt = Date.now(); room.s.state.paused = true; room.revision++;
     const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id), next = this.roomState.queue.peekNext(record.id);
     if (!current || !next) {
-      if (current) await this.roomState.queue.completeCurrent(record.id);
-      this.unloadQueueMedia(room);
-      await this.roomState.save(room);
-      this.roomState.apply(room, this.roomState.store.get(record.id));
-      room.revision++;
+      room.mediaTransition = true;
+      try {
+        // A checkpoint or another control must not restore the completed item
+        // while its durable completion is waiting for the writer.
+        const completing = (async () => {
+          await room.saving;
+          if (current) await this.roomState.queue.completeCurrent(record.id);
+          this.unloadQueueMedia(room);
+        })();
+        room.transitionCommit = completing;
+        await completing;
+        room.transitionCommit = undefined;
+        await this.roomState.save(room);
+        this.roomState.apply(room, this.roomState.store.get(record.id));
+        room.revision++;
+      } finally { room.transitionCommit = undefined; room.mediaTransition = false; }
       return;
     }
     const controller = [...room.viewers.entries()].find(([,person]) => this.hub.canRoom(room.s,person.actor,'chooseMedia') && this.hub.canRoom(room.s,person.actor,'autoplay'));
@@ -764,6 +781,28 @@ class Watch {
     }
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
     if (room.transitionCommit) return {status:'unavailable',message:'Wait for the current queue transition to finish.'};
+    const endpointSeek = room.saved && room.media && (action === 'media.seek.end' ||
+      action === 'media.seek.absolute' && args.seconds >= room.media.duration ||
+      action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration);
+    const endpointPlay = room.saved && room.media && ['media.play','media.toggle'].includes(action) &&
+      (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - .1);
+    if (endpointSeek || endpointPlay) {
+      if (!room.viewers.size || room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for an available viewing room.'};
+      if (endpointPlay && room.endedVersion === room.mediaVersion && this.roomState.queue.peekNext(s.roomId)) {
+        if (!this.hub.canRoom(s,actor,'chooseMedia')) return {status:'forbidden',message:'Choosing the next video requires video-selection permission.'};
+        this.cancelAutoplay(room); clearPlaybackEnd(room);
+        return this.changeQueueMedia(room,{action:'media.next',args:{}},actor,permitted);
+      }
+      // Endpoint intent is an authorized command, not decoded watch evidence.
+      // Never ask a decoder to become ready beyond its last presented frame.
+      if (room.endedVersion !== room.mediaVersion || !this.roomState.queue.peekNext(s.roomId)) {
+        this.cancelAutoplay(room); clearPlaybackEnd(room);
+        if (room.recovery) this.roomState.finishRecovery(room);
+        room.manualPaused = false; room.endedVersion = undefined;
+        await this.finishQueueMedia(room,{mediaVersion:room.mediaVersion,epoch:s.epoch});
+      }
+      return {status:'applied',message:'Current video finished.'};
+    }
     if (action.startsWith('queue.')) return this.queueCommand(s.roomId,command,actor,permitted);
     if (action.startsWith('media.autoplay.')) {
       if (!room.saved) return {status:'unsupported',message:'Autoplay requires a saved room.'};
