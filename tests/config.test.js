@@ -170,7 +170,7 @@ test('real entry point serves health from external YAML with isolated persistent
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.equal(status,200,output);
-  assert.match(output,/Remote off by default/,'startup finishes logging and reaches normal initialization');
+  assert.match(output,/Watch rooms are available in the browser/,'startup finishes logging and reaches normal initialization');
   assert.ok(fs.existsSync(path.join(dir,'state/accounts.sqlite')));
   assert.equal(fs.readFileSync(path.join(dir,'original.key')).length,32);
   assert.doesNotMatch(output,/ignored-inherited-token/);

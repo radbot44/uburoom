@@ -17,7 +17,6 @@ function discordAccess(client, guildId) {
   client.on(Events.ShardDisconnect, invalidate);
   client.on(Events.ShardReconnecting, invalidate);
   client.on(Events.GuildUnavailable, g => { if (g.id === guildId) invalidate(); });
-  function validVoiceChannel(id) { return !!guild()?.channels.cache.get(id)?.isVoiceBased(); }
   async function lookup(userId) {
       const g = guild(), epoch = generation;
       if (!g) return false;
@@ -80,8 +79,6 @@ function discordAccess(client, guildId) {
     },
     isMember(userId) { const at = members.get(userId)?.at; return !!guild() && !!at && Date.now() - at < COMMAND_MS; },
     hasRole(userId, roleId) { const member = members.get(userId); return !!guild() && !!member?.at && Date.now() - member.at < COMMAND_MS && member.roles.has(roleId); },
-    voiceChannel(userId) { return guild()?.voiceStates.cache.get(userId)?.channelId; },
-    validVoiceChannel,
     options() {
       const g = guild();
       return { available: !!g, guildName: g?.name || '' };

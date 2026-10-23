@@ -18,7 +18,7 @@ app.hub.access = { refresh: async id => members.includes(id), isMember: id => me
 app.server.listen(port, '127.0.0.1', () => {
   console.log(`[uburoom demo] Host: ${config.publicUrl}/watch?demo=host`);
   console.log(`[uburoom demo] Guest: ${config.publicUrl}/watch?demo=guest`);
-  console.log('Isolated local demo identities; no Discord account or extension needed. Ctrl+C stops the demo.');
+  console.log('Isolated local demo identities; no Discord account needed. Ctrl+C stops the demo.');
   if(fixture)console.log(`[uburoom accounts demo] Plex-only: ${config.publicUrl}/auth/plex (simulated provider; identities reset at shutdown).`);
 });
 app.server.on('error', error => { console.error('[uburoom demo] ' + error.code); process.exitCode = 1; });

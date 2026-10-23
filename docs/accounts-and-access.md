@@ -26,7 +26,7 @@ Support an operator identity/recovery path for installations using Plex, Discord
 | Sign-in | Plex, Discord or both offered as alternatives; this does not imply both memberships are required. |
 | Admission | Personal Plex access, Discord guild/role eligibility, both, or an explicit invitation according to operator policy. |
 | Media | Personal Plex entitlement by default, or an explicit sponsored grant constrained by authorized source, library/item and room. |
-| Roles | Viewer, host, creator and server administrator are separate from media entitlement and remote consent. |
+| Roles | Viewer, host, creator and server administrator are separate from media entitlement and room permissions. |
 | Reporting | Personal Plex attribution requires the viewer's authorized Plex identity; sponsored source access does not create one. |
 
 Canonical-account suspension/denial takes precedence over alternate provider routes and pass redemption. Recheck current permissions around awaited work. Apply policy to browser, Activity, handoff, bot, sockets, catalog, metadata, artwork, captions, queues, direct media, HLS and AV1. Define bounded provider-cache revocation and invalidate live access on local policy changes.

@@ -125,7 +125,7 @@ class RoomStore {
     userId = this.account(userId);
     if (this.isAdmin(userId) !== true && !Policy.assigned(room, userId)) throw error('Only a room creator, assigned host or active administrator can reopen it', 403);
     // The caller must obtain fresh media/command authority. A stored position
-    // never includes elapsed downtime, remote consent or an autoplay intent.
+    // never includes elapsed downtime or an autoplay intent.
     return { ...room, paused: true };
   }
   async edit(id, userId, revision, change) {

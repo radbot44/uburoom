@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Events, Status } = require('discord.js');
-const { startBot, connectBot, slashInput, helpText, watchVoice } = require('../server/discord');
+const { startBot, connectBot, slashInput, helpText } = require('../server/discord');
 const { discordAccess } = require('../server/sharing');
 const Engine = require('../shared/engine');
 
@@ -16,7 +16,7 @@ test('optional host-directory intents follow application flags without breaking 
     client.rest={setToken(){},async get(route){assert.equal(route,'/oauth2/applications/@me');return {flags};}};
     client.guilds={cache:new Map()};client.users={fetch:async()=>({username:'Owner'})};client.isReady=()=>true;
     client.application={commands:{set:async()=>{}}};
-    const hub={publishVoice(){},dispatch:async()=>({status:'ok'})};
+    const hub={dispatch:async()=>({status:'ok'})};
     await startBot({botToken:'fixture',ownerId:'owner',guildId:'guild',channels:['commands']},hub,{createClient:()=>client});
     assert.equal(client.options.intents.has(GatewayIntentBits.GuildMembers),!!flags);
     assert.equal(client.options.intents.has(GatewayIntentBits.GuildPresences),!!flags);
@@ -55,7 +55,7 @@ test('bot replaces its guild command set with ubu and routes only ubu through ch
   client.users = { fetch: async () => ({ username: 'Owner' }) };
   const registrations = [], dispatched = [], replies = [];
   client.application = { commands: { set: async (...args) => { registrations.push(args); } } };
-  const hub = { publishVoice() {}, dispatch: async (actor, input) => {
+  const hub = { dispatch: async (actor, input) => {
     dispatched.push({ actor, input }); return { status: 'ok', message: 'paused' };
   } };
   await startBot({ botToken: 'fixture', ownerId: 'owner', guildId: 'guild', channels: ['commands'] }, hub, { createClient: () => client });
@@ -141,22 +141,6 @@ test('Discord membership is fetched per request and voice permissions fail close
   assert.equal(access.hasRole('friend', 'moderator'), false);
 });
 
-test('call automation listens only to owner joins/moves in the configured guild; shard recovery sends a baseline', () => {
-  const client = new EventEmitter(), messages=[];
-  watchVoice({guildId:'guild',ownerId:'owner'},client,{publishVoice:(...args)=>messages.push(args)});
-  const state=(channelId,id='owner',guildId='guild')=>({id,guild:{id:guildId},channelId});
-  client.emit(Events.VoiceStateUpdate,state(null),state('voice'));
-  assert.deepEqual(messages.pop(),[true]);
-  client.emit(Events.VoiceStateUpdate,state('voice'),state('voice'));
-  client.emit(Events.VoiceStateUpdate,state(null,'friend'),state('voice','friend'));
-  client.emit(Events.VoiceStateUpdate,state(null,'owner','other'),state('voice','owner','other'));
-  assert.equal(messages.length,0,'mute changes, friends and other guilds cannot trigger On join');
-  client.emit(Events.VoiceStateUpdate,state('voice'),state('other-call'));
-  assert.deepEqual(messages.pop(),[true]);
-  client.emit(Events.VoiceStateUpdate,state('voice'),state(null));assert.deepEqual(messages.pop(),[false]);
-  client.emit(Events.ShardDisconnect);assert.deepEqual(messages.pop(),[false,true]);
-  client.emit(Events.ShardResume);assert.deepEqual(messages.pop(),[],'recovery does not manufacture a join');
-});
 test('a stalled Discord login times out, destroys the client and cannot later become ready', async () => {
   const client = fakeClient(() => new Promise(() => {}));
   await assert.rejects(connectBot(client, 'private-token', 20), /login timed out/);

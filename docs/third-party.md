@@ -25,7 +25,6 @@ Optional FFmpeg/FFprobe are supplied by the installation operator, not bundled h
 
 ### Subtitle bundles and outstanding notices
 
-`scripts/build-subtitle-vendor.js` builds the pinned subtitle packages into `web/vendor/subtitles/` and inventories their actual JavaScript bundle inputs. `THIRD_PARTY_NOTICES.txt` in that directory retains the available package notices and declared license metadata. Workers, WASM and the package's fallback font are served locally; automatic local/remote font discovery is disabled. Movie font attachments are private viewer-authorized resources, not bundled application assets.
 
 The build applies documented integration changes: libbitsub asset URLs/layout measurements fit the host picture transform; its initialization completion and forced manual repaint are exposed for paused startup/delay updates; and JASSUB worker disposal is bounded if initialization or IPC hangs. JASSUB uses its transparent Canvas2D compositor with synchronized presentation instead of a second GPU surface over decoded video. This preserves libass layout/fonts but may cost more CPU for complex animated subtitles. Upstream licenses remain unchanged. Generated files are rebuilt from the locked npm artifacts; no personal checkout paths or runtime data are inputs.
 
@@ -35,7 +34,6 @@ The published abslink 1.3.1, lfa-ponyfill 1.1.1 and throughput 1.0.2 packages an
 
 ## Project branding
 
-The supplied Slate vector assets are `assets/branding/uburoom-wordmark-brand.svg`, `uburoom-wordmark-white.svg`, `uburoom-oomark-brand.svg`, and `uburoom-oomark-white.svg`. Web runtime branding and favicon are owned under `web/assets/`; the favicon derives from the brand oomark. The independent remote repository owns its extension icons and branding copies. Earlier blue/green branding sources and exports are archived in `assets/branding/old/`; the diagnostic demo media still use that wordmark. UI typography remains system-based; the subtitle renderer's bundled fallback font is separately reviewed above. No external image or icon libraries are used.
 
 ## Tabler interface icons
 

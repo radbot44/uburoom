@@ -11,7 +11,6 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
     for (const id of ids) if (hub.adminUsers.delete(id)) hub.adminEpoch++;
     if(ownerChanged||ids.includes(registry.identity('discord',config.ownerId)?.userId)){hub.adminMode=false;hub.adminEpoch++;}
     for(const [token,login] of logins)if(ids.includes(login.userId))logins.delete(token);
-    for(const [id,pending]of hub.pending)if(ids.includes(pending.actor.userId))hub.finish(id,{status:'unavailable',message:'Account identities changed'});
     loginStore.save();plexAuth.clear();
   }
   function session(res,account,name){const token=secret();logins.set(hash(token),{userId:account.id,accountRevision:account.revision,name,csrf:secret(),expires:null});loginStore.save();res.setHeader('Set-Cookie',cookie('uburoom',token,31536000));}

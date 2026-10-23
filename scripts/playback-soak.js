@@ -72,7 +72,7 @@ async function main(){
       `execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state&&!pending','Available tracks');return evaluate(page,
       `execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
-    const snapshot=page=>evaluate(page,'(()=>{const s=globalThis.playbackMeter?.sample()||{};return JSON.stringify({position:video.currentTime,target:expected(),frames:video.getVideoPlaybackQuality().totalVideoFrames,ready:video.readyState,paused:video.paused,waiting:playerWaiting,error:playbackError,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),audioHz:s.audioHz,audioDb:s.audioDb,mediaVersion:state?.mediaVersion,streamVersion:state?.streamVersion,tracks:state?.tracks,remote:state?.enabled,mediaUrl:state?.mediaUrl,identityGeneration});})()').then(JSON.parse);
+    const snapshot=page=>evaluate(page,'(()=>{const s=globalThis.playbackMeter?.sample()||{};return JSON.stringify({position:video.currentTime,target:expected(),frames:video.getVideoPlaybackQuality().totalVideoFrames,ready:video.readyState,paused:video.paused,waiting:playerWaiting,error:playbackError,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),audioHz:s.audioHz,audioDb:s.audioDb,mediaVersion:state?.mediaVersion,streamVersion:state?.streamVersion,tracks:state?.tracks,mediaUrl:state?.mediaUrl,identityGeneration});})()').then(JSON.parse);
     const record=async(kind,action)=>{
       const incident={kind,atSeconds:(Date.now()-started)/1000,status:'failed'};report.incidents.push(incident);
       try{Object.assign(incident,await action());incident.status='passed';}
@@ -104,7 +104,7 @@ async function main(){
           await until(host,`state.streamVersion!==${JSON.stringify(before.streamVersion)}&&video.readyState>=2&&!video.seeking`,'Expired session replacement',30000);
           const after=await snapshot(host),guestAfter=await snapshot(guest);
           assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
-          assert.equal(guestAfter.streamVersion,guestBefore.streamVersion);assert.equal(after.remote,false);
+          assert.equal(guestAfter.streamVersion,guestBefore.streamVersion);
           assert.ok(control.events.some(e=>e.event==='start'&&e.session!==old&&e.audioId==='1042'&&e.subtitleId==='1044'));
           settleUntil=Date.now()+10000;lastPosition=undefined;
           return {detail:'New selected stream in '+(Date.now()-at)+' ms; guest unchanged.',recoveryMs:Date.now()-at};
@@ -127,7 +127,7 @@ async function main(){
           await evaluate(host,'(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__soakControlFailed=true;unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()');
           await until(host,'window.__soakControlFailed&&state===undefined&&mediaSource===undefined','Control loss unloads player',6000);
           await until(host,`state?.streamVersion===${JSON.stringify(before.streamVersion)}&&video.readyState>=3&&!video.paused`,'Control reconnect playback',20000);
-          const after=await snapshot(host);assert.equal(after.mediaUrl,before.mediaUrl);assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');assert.equal(after.remote,false);
+          const after=await snapshot(host);assert.equal(after.mediaUrl,before.mediaUrl);assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
           settleUntil=Date.now()+10000;lastPosition=undefined;
           return {detail:'Player unloaded and resumed the same captured audio and subtitle stream.'};
         });controlDone=true;
@@ -136,7 +136,6 @@ async function main(){
       assert.equal(state.error,'','Player reported a playback error');
       assert.equal(state.tracks?.audioId,'1042','French audio selection changed');
       assert.equal(state.tracks?.subtitleId,'1044','ASS subtitle selection changed');
-      assert.equal(state.remote,false,'Remote consent changed');
       if(previousFrames!==undefined&&state.frames>=previousFrames)decodedFrames+=state.frames-previousFrames;
       previousFrames=state.frames;
       if(state.position>duration-25){

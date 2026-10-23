@@ -2,13 +2,9 @@
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomBytes, createHash } = require('node:crypto');
-const { WebSocketServer } = require('ws');
+const { randomBytes } = require('node:crypto');
 const { Hub, hash, UUID } = require('./core');
-const { DeviceLogin, FIREFOX_REDIRECT, isAllowedExtensionRedirect } = require('./login');
-const { deviceStore, loginStore } = require('./storage');
-const RemoteUI = require('../web/remote-ui');
-const Engine = require('../shared/engine');
+const { loginStore } = require('./storage');
 const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
@@ -29,25 +25,23 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   try {
   oauthFetch=resilientFetch(oauthFetch,{timeoutMs:10000});
   if(config.accountFile&&!config.credentialKeyFile)throw new Error('Configure a private uburoom credential key file outside the project');
-  if(config.accountFile&&!fs.existsSync(config.accountFile)&&['devices.json','logins.json'].some(name=>fs.existsSync(path.join(path.dirname(config.accountFile),name))))throw new Error('Legacy private state found without a baseline database; review a backup and manual transfer or reset before starting');
+  if(config.accountFile&&!fs.existsSync(config.accountFile)&&fs.existsSync(path.join(path.dirname(config.accountFile),'logins.json')))throw new Error('Legacy private state found without a baseline database; review a backup and manual transfer or reset before starting');
   if(config.accountFile&&fs.existsSync(config.accountFile)&&!fs.existsSync(config.credentialKeyFile))throw new Error('The uburoom credential key is missing; restore the original key before starting');
   const vault=config.accountFile||config.unifiedAccounts?credentialVault(config.credentialKeyFile):undefined;
   registry=vault?new Accounts(config.accountFile,vault):undefined;
-  const store = deviceStore(registry);
   // Persist policy identity without leaving an offline verifier of the shared
   // password in SQLite. Password grants are process-local and reset on restart.
   const accounts = loginStore(JSON.stringify([config.publicUrl, config.ownerId, config.guildId, config.clientId,...(config.accessPolicy?[hash(JSON.stringify({...config.accessPolicy,password:!!config.accessPolicy.password}))]:[])]),vault,registry);
   // Browsers require a finite cookie lifetime; renew it on each account visit.
   // Server logins have no fixed lifetime; Discord renewal/revocation governs them.
   const loginSeconds = 365 * 24 * 60 * 60, renewals = new Map(), cookieRenewedAt = new Map();
-  const hub = new Hub(config, store.devices), deviceLogin = new DeviceLogin();
+  const hub = new Hub(config);
   hub.ownerName = accounts.ownerName;
   hub.setOwnerName = name => {
     const owner = registry?.identity('discord',config.ownerId);
     if (owner) name = registry.canonical(owner.userId)?.name || name;
     if (typeof name !== 'string' || !name || name === accounts.ownerName) return;
     hub.ownerName = accounts.ownerName = name.slice(0, 100);
-    for (const s of hub.rooms.values()) if (s.kind !== 'watch') s.ownerName = hub.ownerName;
     accounts.save();
   };
   const logins = accounts.logins, oauthStates = new Map(), limits = new Map();
@@ -124,9 +118,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     if (req.headers.origin !== config.publicUrl) return;
     const login = await user(req);
     return login && req.headers.origin === config.publicUrl && req.headers['x-csrf-token'] === login.csrf ? login : undefined;
-  }
-  function extensionRequest(req) {
-    return !req.headers.origin || /^moz-extension:\/\/[0-9a-f-]+$/i.test(req.headers.origin) || /^chrome-extension:\/\/[a-p]{32}$/i.test(req.headers.origin);
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
@@ -224,9 +215,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
   const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins, plexAuth });
-  async function discordStart(req,res,linkLogin,extension,ownerOnly=false) {
-    if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly&&!extension)throw new Error('Discord authorization is disabled');
-    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,loginId:extension,ownerOnly,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
+  async function discordStart(req,res,linkLogin,ownerOnly=false) {
+    if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly)throw new Error('Discord authorization is disabled');
+    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,ownerOnly,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
     const query=new URLSearchParams({client_id:config.clientId,redirect_uri:config.publicUrl+'/auth/callback',response_type:'code',scope:'identify',state});
     res.setHeader('Set-Cookie',cookie('uburoom_oauth',state,300));
     const destination=config.demo&&plexAuth?.demo?config.publicUrl+'/demo-discord?state='+state:authorizeUrl+'?'+query;
@@ -241,9 +232,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    const styleHash = createHash('sha256').update(RemoteUI.CSS).digest('base64');
-    const badgeHash = createHash('sha256').update(RemoteUI.BADGE_CSS).digest('base64');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self' 'sha256-${styleHash}'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     (async () => {
       const url = new URL(req.url, config.publicUrl), route = url.pathname;
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -268,7 +257,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const player = watchDocument || route === '/__diagnostics/codec';
       const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins(req) : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
       const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' ? plexDeliveryOrigins.map(origin => ' ' + origin).join('') : '';
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-${styleHash}' 'sha256-${badgeHash}'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
@@ -329,7 +318,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});
         return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+fs.readFileSync(path.join(publicDir,'theme.js'),'utf8'));
       }
-      const assets = { '/remote-ui.js': ['remote-ui.js', 'text/javascript'],
+      const assets = {
         '/icons.js': ['icons.js', 'text/javascript'],
         '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
         '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
@@ -347,6 +336,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
         '/watch-controls.js':['watch-controls.js','text/javascript'],
         '/watch-toasts.js':['watch-toasts.js','text/javascript'],
+        '/watch-feedback.js':['watch-feedback.js','text/javascript'],
         '/ubumfa.js':['ubumfa.js','text/javascript'],
         '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
         '/watch-queue.css':['watch-queue.css','text/css'],
@@ -354,7 +344,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/sync-quality.js':['sync-quality.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
-      if (req.method === 'GET' && ['/room-protocol.js', '/viewport.js', '/engine.js'].includes(route)) {
+      if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../shared', route.slice(1))));
       }
       const diagnosticAssets = { '/__diagnostics/codec': ['codec.html', 'text/html'], '/__diagnostics/codec.js': ['codec.js', 'text/javascript'], '/__diagnostics/codec.css': ['codec.css', 'text/css'] };
@@ -378,8 +368,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && route === '/api/me') {
         const login = await user(req);
         renewCookie(req, res, login, true);
-        return json(res, 200, { oauthReady, loggedIn: !!login, csrf: login?.csrf, owner:!!login&&hub.isOwner(webActor(login)), name: login?.name, adminMode:!!login && hub.isAdmin(webActor(login)),
-          devices: login && hub.isOwner(webActor(login)) && hub.isAdmin(webActor(login)) ? store.devices.filter(d => d.ownerId === config.ownerId).map(d => ({ id: d.id, pairedAt: d.pairedAt })) : [] });
+        return json(res, 200, { oauthReady, loggedIn: !!login, csrf: login?.csrf, owner:!!login&&hub.isOwner(webActor(login)), name: login?.name, adminMode:!!login && hub.isAdmin(webActor(login)) });
       }
       if (req.method === 'POST' && route === '/api/admin-mode') {
         const login = await protectedPost(req), data = await body(req);
@@ -389,16 +378,12 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
-        const loginId = url.searchParams.get('extension');
-        const loginRequest = loginId ? deviceLogin.get(loginId) : undefined;
-        if (loginId && (!loginRequest || url.searchParams.get('redirect_uri') !== loginRequest.redirectUri)) return json(res, 400, { error: 'Invalid or expired login; start from the extension again' });
-        return discordStart(req,res,undefined,loginId,route==='/auth/owner');
+        return discordStart(req,res,undefined,route==='/auth/owner');
       }
       if (req.method === 'GET' && route === '/auth/callback') {
         const state = url.searchParams.get('state'), code = url.searchParams.get('code');
         const attempt = oauthStates.get(state); oauthStates.delete(state);
         if (!oauthReady || !state || cookies(req).uburoom_oauth !== state || !attempt || attempt.expires <= Date.now() || !code || code.length > 512) return json(res, 403, { error: 'Invalid or expired login; start again' });
-        if (attempt.loginId && !deviceLogin.get(attempt.loginId)) return json(res, 403, { error: 'Login expired; start from the extension again' });
         const linking=attempt.linkUserId?await user(req):undefined;
         if(attempt.linkUserId&&(!linking||linking.userId!==attempt.linkUserId||hash(cookies(req).uburoom||'')!==attempt.sourceHash||linking.accountRevision!==attempt.revision))return json(res,403,{error:'Account changed during linking; start again'});
         const token = await discordFetch('https://discord.com/api/oauth2/token', { method: 'POST',
@@ -412,11 +397,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           accountRoutes.verifiedLink(req,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
           res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':cookie('uburoom_oauth','',0)});return res.end();
         }
-        if (identity.id !== config.ownerId && attempt.loginId) {
-          const request = deviceLogin.get(attempt.loginId); deviceLogin.requests.delete(attempt.loginId);
-          const returnUrl = request?.redirectUri || FIREFOX_REDIRECT;
-          res.writeHead(302, { Location: returnUrl + '#' + new URLSearchParams({ state: request.state, error: 'owner_only' }) }); return res.end();
-        }
         if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
         const name = String(identity.username || identity.global_name || 'Discord user').slice(0, 100);
@@ -426,11 +406,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
             oauth: { refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000 }
           } : {}) });
         accounts.save();
-        // The completion code goes only to an authorized extension return URL,
-        // never to an arbitrary caller-selected destination or a polling endpoint.
-        const loginRequest = attempt.loginId ? deviceLogin.get(attempt.loginId) : undefined;
-        const returnUrl = loginRequest?.redirectUri || FIREFOX_REDIRECT;
-        const destination = attempt.loginId ? returnUrl + '#' + new URLSearchParams(deviceLogin.approve(attempt.loginId, identity.id)) : '/';
+        const destination = '/watch';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {
@@ -443,73 +419,15 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         await watchRoutes.logout(id);
         res.setHeader('Set-Cookie', cookie('uburoom', '', 0)); return json(res, 200, { ok: true });
       }
-      if (req.method === 'POST' && (route === '/api/login/start' || route === '/api/login/finish')) {
-        if (!extensionRequest(req) || !throttle('login:' + req.socket.remoteAddress, 30)) return json(res, 403, { error: 'Login unavailable' });
-        if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
-        const data = await body(req);
-        if (route.endsWith('/start')) {
-          const redirectUri = typeof data.redirectUri === 'string' ? data.redirectUri : FIREFOX_REDIRECT;
-          if (!isAllowedExtensionRedirect(redirectUri)) return json(res, 400, { error: 'Unsupported extension login return URL' });
-          const id = deviceLogin.start(data.deviceId, data.challenge, data.state, redirectUri);
-          const query = new URLSearchParams({ extension: id, redirect_uri: redirectUri });
-          return json(res, 200, { id, url: config.publicUrl + '/auth/discord?' + query });
-        }
-        const result = deviceLogin.finish(data.id, data.verifier, data.code);
-        const old = store.devices.findIndex(d => d.id === result.deviceId);
-        if (old >= 0) { hub.revoke(result.deviceId); store.devices.splice(old, 1); }
-        store.devices.push({ id: result.deviceId, ownerId: result.ownerId, credentialHash: hash(result.credential), pairedAt: new Date().toISOString() });
-        store.save(); return json(res, 200, { deviceId: result.deviceId, credential: result.credential });
-      }
-      if (req.method === 'POST' && route === '/api/devices/revoke') {
-        const login = await protectedPost(req); if (!login || !hub.isAdmin(webActor(login))) return json(res, 403, { error: 'Enable Admin mode to manage devices' });
-        const data = await body(req), index = store.devices.findIndex(d => d.id === data.id && d.ownerId === config.ownerId);
-        if (index < 0) return json(res, 404, { error: 'Device unavailable' });
-        hub.revoke(data.id); store.devices.splice(index, 1); store.save(); return json(res, 200, { ok: true });
-      }
       return json(res, 404, { error: 'Not found' });
     })().catch(error => { if (!res.headersSent) json(res, error.status === 503 ? 503 : 400, {
-      error: error.status === 503 ? 'Discord login renewal temporarily unavailable; try again shortly' : 'Request failed; check configuration or use a fresh pairing code'
+      error: error.status === 503 ? 'Discord login renewal temporarily unavailable; try again shortly' : 'Request failed; check configuration or try again'
     }); else res.end(); });
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;
   const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle,flush:()=>registry?.flush()});
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
-  server.on('upgrade', (req, socket, head) => {
-    if(req.url==='/watch-socket')return;
-    if (req.url !== '/ws' || !extensionRequest(req) || !throttle('ws:' + req.socket.remoteAddress, 30)) return socket.destroy();
-    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws));
-  });
-  wss.on('connection', ws => {
-    const authTimer = setTimeout(() => ws.close(4003, 'Authentication required'), 5000);
-    let windowAt = Date.now(), count = 0;
-    ws.on('error', () => {});
-    ws.on('message', raw => {
-      try {
-        if (Date.now() - windowAt > 1000) { windowAt = Date.now(); count = 0; }
-        if (++count > 40) return ws.close(4008, 'Rate limit');
-        const m = JSON.parse(raw.toString());
-        if (!ws.device) {
-          if (m.type !== 'auth' || !UUID.test(m.deviceId) || typeof m.credential !== 'string' || m.credential.length !== 64) return ws.close(4003, 'Authentication failed');
-          if (!Engine.protocolCompatible(m.protocol)) return ws.close(4006, 'Incompatible remote protocol');
-          if (!hub.authenticate(ws, m.deviceId, m.credential)) return ws.close(4003, 'Authentication failed');
-          clearTimeout(authTimer); ws.send(JSON.stringify({ type: 'auth-ok', protocol: Engine.PROTOCOL })); return;
-        }
-        ws.lastSeen = Date.now();
-        if (m.type === 'room') hub.update(ws, m);
-        else if (m.type === 'sharing-options') {
-          ws.send(JSON.stringify({ type: 'sharing-options', ownerName: hub.ownerName, ...(hub.access?.options() || { available: false }) }));
-          ws.send(JSON.stringify(hub.voiceMessage()));
-        }
-        else if (m.type === 'remove') hub.remove(ws, m.roomId);
-        else if (m.type === 'ack') hub.ack(ws, m);
-        else if (m.type === 'heartbeat') ws.send(JSON.stringify({ type: 'heartbeat-ack' }));
-        else ws.close(4002, 'Invalid message');
-      } catch { ws.close(4002, 'Invalid message'); }
-    });
-    ws.on('close', () => { clearTimeout(authTimer); hub.drop(ws); });
-  });
   const sweep = setInterval(() => {
-    watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();hub.sweep(); deviceLogin.sweep();
+    watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();
     let expired = false;
     for (const [id, s] of logins) if (s.expires !== null && s.expires <= Date.now()) { logins.delete(id); expired = true; }
     if (expired) Promise.resolve(accounts.save()).catch(()=>console.error('[uburoom] Login storage unavailable'));
@@ -520,10 +438,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   sweep.unref();
   function close() {
     clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close();
-    for (const ws of wss.clients) ws.terminate();
-    wss.close(); return Promise.all([mediaClosed, new Promise(resolve => server.close(resolve))]).then(() => registry?.close());
+    return Promise.all([mediaClosed, new Promise(resolve => server.close(resolve))]).then(() => registry?.close());
   }
-  return { server, hub, store, watch, close, registry, plexAuth };
+  return { server, hub, watch, close, registry, plexAuth };
   } catch(error) { Promise.resolve(registry?.persistence.abort()).catch(()=>{});throw error; }
 }
 module.exports = { createApp };

@@ -146,7 +146,7 @@
       clearTimeout(chromeTimer); stage.classList.add('controls-visible');
       layoutCaptions();
       chromeTimer=setTimeout(()=>{
-        if(touching||opened||dialog.open||stage.classList.contains('drawer-open')||stage.classList.contains('remote-open'))return showChrome();
+        if(touching||opened||dialog.open||stage.classList.contains('drawer-open'))return showChrome();
         stage.classList.remove('controls-visible');
         layoutCaptions();
       },2500);

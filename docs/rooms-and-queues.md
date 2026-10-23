@@ -47,7 +47,6 @@ Next integration contract: build policy/configuration at startup; construct the 
 | Acknowledgements | Socket responses already await storage flush; Discord can dispatch directly through the Engine. New durable domain actions must await commit themselves so all permitted callers receive the same guarantee. |
 | Identity/history | Accounts have stable UUIDs and canonical merges. `server/playback-tracking.js` retains per-viewer decoded observations for 90 days/up to 5,000 records. Room bookmarks/history need separate durable records unaffected by that pruning. |
 | Catalog | `server/plex.js` already browses shows/seasons, paginates children and resolves cross-season neighbors. Persist Plex server identity with item ID and revalidate access when used. |
-| UI | The lobby already offers creation/joining from library Play. Library movies/episodes have Play; shows/seasons have browsing. `web/remote-ui.js` has a disabled Queue permission placeholder, not a queue implementation. |
 | Shutdown | `server/app.js` closes sockets/rooms before storage. Capture progress before teardown changes pause state or removes the last viewer, and await the final checkpoint. |
 
 ## Proposed room lifecycle
@@ -58,7 +57,6 @@ A saved room contains its identity, name, owner, explicit hosts, policy, queue a
 2. **Reopen:** List rooms the account created/explicitly hosts; active server Admin mode permits all rooms. Recheck current account, installation eligibility and current authority. One active opening per room: concurrent reopen requests converge on it, and an already open room offers Join. Room/Admin authority never grants Plex access.
 3. **Restore:** Keep the stable room UUID but allocate fresh live epochs, media/stream generations and viewers. Re-resolve media with current Plex access, restore a clamped position and start paused. Time spent closed does not advance it. Resume follows normal per-viewer preparation/readiness after explicit Play.
 4. **Leave:** Remove only that viewer; remaining viewers can continue under the agreed live-host policy. Label it separately from Close for everyone. The existing `close-room` button actually sends Leave.
-5. **Close:** A creator, active administrator or participant with Close permission ends live viewing for everyone, commits the bookmark and retains the saved room. Revoke consent, invalidate commands/countdowns and release streams. Closed rooms are not remote command targets.
 6. **Empty:** Recommended: freeze playback when the last viewer disappears, retain bounded reconnect grace, then save/close. Intentional last-viewer Leave can save/close immediately. Never consume a queue or extrapolate progress through empty-room grace.
 7. **Restart/crash:** Closed rooms remain closed. Previously open rooms now use the bounded paused restart recovery described below. Streams, scheduled starts and countdowns never resume automatically. Graceful shutdown saves final state; crash recovery restores the last committed checkpoint with possible loss of the uncommitted tail.
 8. **Delete:** A separate, confirmed action in room settings removes the saved room and its queue/history. Creator always has this authority; other roles require the explicit deletion capability, and active administrators have creator rights. Ordinary cleanup and Close must not delete records. Automatic retention follows the owner-approved inactivity and disposable-room policy below.
@@ -82,7 +80,6 @@ Distinguish **creator**, **explicit hosts** and **current live controller**. Dis
 | Grant/revoke hosts, transfer creatorship, change role permissions | Creator or active administrator; transfer target must already be an explicit host |
 | Join/watch | Existing public/private policy; cohosts can join their private room, still subject to eligibility and Plex access |
 | Participant queue edits | Separate Add to queue/Edit queue capabilities; default off for viewers, included in full participant permissions |
-| Shared playback/picture | Existing separately shared permissions and remote-consent rules |
 | Administration | Operator-configured Discord/Plex accounts or Discord roles can opt into top-bar Admin mode for creator rights in any room; no automatic mode activation, durable membership or implicit ownership transfer |
 
 Prefer present explicit hosts for live succession. Without a creator/host present, pause unless viewers have Continue without host permission. A viewer with that permission remains a viewer: it does not grant reopen/host-management authority; queue/deletion actions still follow individual capabilities. Keep one live controller for readiness/voice-channel targeting; multiple cohosts' voice channels cannot all define the room's channel.
@@ -131,7 +128,6 @@ Implemented room tables and the later queue table:
 
 Use ordinary ordering integers/array moves and transactional reindexing of the bounded pending list. Avoid fractional ranks, event sourcing and linked lists without measured need. Enforce one current entry and no dangling reference.
 
-Never persist viewers, sockets, access grants, stream/transcode URLs/leases, credentials, readiness acknowledgements, live clocks, pending commands, remote enablement or timers. Persist room settings through an allowlist. Restored sharing preferences still start with consent off.
 
 Checkpoint authoritative shared position periodically and on pause/seek, item change, close and graceful shutdown. Proposed periodic target: five seconds, coalescing dirty rooms outside the sync tick; measure before promising it. Crash loss includes delayed writes as well as the checkpoint interval. Explicit name/role/queue edits and Close acknowledge success only after commit. Disk failure reports saving failure and prevents destructive advancement.
 
@@ -141,13 +137,11 @@ Extend socket allowlists/validation deliberately. Mutation bodies currently allo
 
 Storage rollout is a separate gate. Current pre-release policy rejects changed layouts and implicit upgrades. Define the revised first-release baseline plus reviewed matched backup/manual transfer or explicitly approved reset for retained state. If a published baseline exists by implementation time, use an explicit forward migration. Preserve UUIDs, native history, ciphertext and exact original key; test older-code refusal and matched-state rollback. This proposal authorizes no migration/deployment.
 
-`shared/engine.js` negotiates exact room/viewport revisions with the independent remote extension. Review [remote compatibility](remote-protocol.md) and matching fixtures before changing its command contract. Queue work does not authorize YouTube TV queue execution or a second queue engine in the remote repository.
 
 ## Interface flow
 
 The follow-up room control pass (2026-10-19) puts active Join rows and Reopen/New directly in the video lobby, retains display modes independently of playback, and adds creator/admin-only Play/pause, Seek and Add to queue policy switches. Ordinary hosts retain read-only policy. Permissions is a compact grouped editor with mobile role tabs; People is one roster. Queue exposes autoplay and settings at the top, and auto-queue uses an authenticated source picker with actual titles. Empty playback, countdown timing and room-change feedback have explicit states; no room access model or persistence schema changed.
 
-The 2026-10-19 room redesign uses Active rooms and Your rooms with a distinct New room form. Creation and Settings offer Host control (no participant permissions), Play/Pause (only participant play/pause) and Queue (all Playback and Queue permissions). Presets grant hosts everything except permanent deletion; participant continuity remains off. Settings saves preset clicks immediately and shows Custom only for nonmatching policies. Participant Room management permissions are always off, including for old saved policies and direct API edits. The retired picture flag is ignored when reading saved/configured policies and is absent from editable capabilities; picture commands retain fixed creator/host authority and existing remote-consent gates. No schema change or destructive data migration is required. Settings has General, People, Permissions, Playback & queue and Manage sections. Queue settings opens the same Playback & queue controls. Private remains creator/hosts only; invited viewers are a later feature. All rooms remain saved normally.
 
 - Lobby: Create, Reopen and accessible active rooms to Join. Reopen cards show name, last activity, resume title/position and pending count, with a clear empty state and private listings.
 - Room: name, live controller, authorized Hosts/permission management, distinct Leave/Close and separately confirmed permission-checked Delete. Preserve visibility and existing design assets.
@@ -170,10 +164,8 @@ Apply the [A/B/C/D verification standard](testing.md#verification-standard-for-n
 | P13-3 | Manual movie/episode queue, occurrence history/bookmarks, shared Next/Previous, and Queue UI slice; room-queue/watch/watch-operations/watch-socket/watch-rooms/watch-queue-ui | P13-2 | Backend and UI slice complete: add/move/remove/clear/playNow/next/previous/replay/history-clear survive restart; Up Next, History, and library Add to queue UI verified in Chrome/Firefox smoke and full test suite (292 tests total) |
 | P13-4 | Bulk show/season and following/random generation; Plex/queue module | Implemented | Paging/season/Specials corpus, overlap/rewatch policy, revocation/cancellation/limits/atomicity, persisted random cycle and manual priority |
 | P13-5 | Natural-end evidence, countdown and durable single consumption; observation/readiness/queue paths | Implemented | Duplicate/stale endings, seek/buffering/pause/cancel, revoked role, empty room, restart during commit/preparation, disk failure; no double consumption |
-| P13-6 | Lobby/room/queue/catalog UI; watch.js, proposed native queue UI module, watch-library, HTML/styles/affected remote renderer | P13-2 onward; deliver alongside usable backend slices | Chrome/Firefox flows, keyboard and rendered normal/theater/fullscreen/mobile; actual Activity evidence tracked separately |
 | P13-7 | Full continuity/regression and operator docs; SPEC/AGENTS/upgrading/self-hosting/testing/protocol docs | Prior increments | Full suite without unexpected skips, isolated real Plex multi-viewer resume/advance, browsers/Activity, writer/sync/resource bounds, reviewed state-transfer procedure |
 
-Regression anchors: `tests/watch.test.js`, `tests/watch-socket.test.js`, `tests/storage-worker.test.js`, `tests/accounts.test.js`, `tests/plex-library.test.js`, playback observation tests and `tests/remote-protocol.test.js`. Use Node's existing runner and isolated fixtures before authorized real-account checks. Record actual evidence and unfinished gates in [testing status](testing.md).
 
 ## Recorded owner decisions (2026-10-18)
 

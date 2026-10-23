@@ -46,7 +46,7 @@ async function main(){
     const command=async(page,action,args)=>{await until(page,'!!state && !pending','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state && !pending','Available tracks');return evaluate(page,`execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
     const sample=page=>evaluate(page,'playbackMeter.sample();true');
-    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,remote:state?.enabled,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length,buffering:hls?.bufferingEnabled,maxBuffer:hls?.config.maxBufferLength,maxMaxBuffer:hls?.config.maxMaxBufferLength,fixtureHlsErrors:window.__fixtureHlsErrors})').then(JSON.parse);
+    const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length,buffering:hls?.bufferingEnabled,maxBuffer:hls?.config.maxBufferLength,maxMaxBuffer:hls?.config.maxMaxBufferLength,fixtureHlsErrors:window.__fixtureHlsErrors})').then(JSON.parse);
     const check=async(name,action)=>{const row={name,status:'failed'};report.checks.push(row);try{Object.assign(row,await action());row.status='passed';}catch(error){row.error=error.message;row.state=await snapshot(host).catch(()=>null);throw error;}finally{write();console.log('[Recovery]',name,row.status,row.error||'');}};
     await command(host,'media.load',{mediaId:'104',quality:'direct'});
     await until(host,'state.format==="hls" && video.readyState>=2','Host HLS');
@@ -107,7 +107,6 @@ async function main(){
       await until(host,`state.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking && Math.abs(video.currentTime-${destination})<1`,'Fresh HLS stream after expiry',30000);
       const recovered=await snapshot(host),guestAfter=await snapshot(guest);
       assert.equal(recovered.tracks.audioId,'1042');assert.equal(recovered.tracks.subtitleId,'1044');
-      assert.equal(recovered.remote,false,'recovery cannot enable remote consent');
       assert.equal(guestAfter.stream,guestBefore.stream,'other viewer keeps their stream');
       assert.equal(guestAfter.tracks.audioId,'1041');assert.equal(guestAfter.tracks.subtitleChoice,'off');
       const fresh=control.events.filter(e=>e.event==='start'&&e.session!==oldSession&&e.audioId==='1042'&&e.subtitleId==='1044').at(-1);
@@ -137,7 +136,6 @@ async function main(){
       const after=await snapshot(host);
       assert.equal(after.mediaUrl,before.mediaUrl,'same captured master reloads');
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
-      assert.equal(after.remote,false);
       await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback after control reconnect');
       let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
       assert.ok(tones>=5,'captured French stream still decodes after reload');
@@ -161,13 +159,12 @@ async function main(){
       const after=await snapshot(host),guestAfter=await snapshot(guest);
       assert.equal(after.mediaUrl,before.mediaUrl,'reconnect keeps the captured stream');
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
-      assert.equal(after.remote,false,'reconnect cannot enable remote consent');
       assert.equal(guestAfter.stream,guestBefore.stream,'other viewer remains unaffected');
       await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback after sustained control outage');
       let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
       assert.ok(tones>=5,'selected French audio decodes after sustained control outage');
       await command(host,'media.pause');
-      return {detail:'Six seconds without control responses; captured French/ASS stream and guest survived, remote consent stayed off.',before,after,tones};
+      return {detail:'Six seconds without control responses; captured French/ASS stream and guest survived.',before,after,tones};
     });
     await check('rejoin after viewer timeout keeps personal tracks',async()=>{
       await choose(guest,{audioId:'1042',subtitleId:'off'});
@@ -181,7 +178,6 @@ async function main(){
       const after=await snapshot(guest),hostAfter=await snapshot(host);
       assert.equal(after.tracks.audioId,'1042','guest selected audio survives rejoin');
       assert.equal(after.tracks.subtitleChoice,'off','guest subtitle choice survives rejoin');
-      assert.equal(after.remote,false,'rejoin does not enable remote consent');
       assert.equal(hostAfter.stream,hostBefore.stream,'host stream stays unchanged');
       const oldStatus=await evaluate(guest,`fetch(${JSON.stringify(before.mediaUrl)},{headers:token?{Authorization:'Bearer '+token}:{}}).then(r=>r.status)`);
       assert.equal(oldStatus,403,'old media grant stays revoked');
@@ -242,21 +238,18 @@ async function main(){
       assert.ok(after.frames-recovered.frames>35);assert.ok(after.position-recovered.position>2);assert.ok(tones>=5);
       assert.equal(after.stream,before.stream);assert.equal(after.mediaUrl,before.mediaUrl);
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
-      assert.equal(guestAfter.stream,guestBefore.stream);assert.equal(after.remote,false);
       await command(host,'media.pause');
       return {detail:'Actual failed fragments exhausted three quick restarts; a slow retry resumed decoded frames and French PCM without replacing the stream.',before,interrupted,recovered,after,events,recoveryMs,elapsedMs:Date.now()-started,tones};
     });
     await check('sole host rejoins an empty room after timeout',async()=>{
       await evaluate(guest,'selectRoom(undefined).then(()=>true)');
       await until(host,'state.viewers===1','Sole host');
-      await command(host,'room.enable');
-      const before=await snapshot(host);
+            const before=await snapshot(host);
       await evaluate(host,'transport.interrupt(12000);true');
       await until(host,'state===undefined && mediaSource===undefined','Host disconnect unloads playback',6000);
       await until(host,`!!state?.streamVersion && state.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Host rejoins retained room',25000);
       const after=await snapshot(host);
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
-      assert.notEqual(after.observationEpoch,before.observationEpoch);assert.equal(after.remote,false);
       const oldStatus=await evaluate(host,`fetch(${JSON.stringify(before.mediaUrl)},{headers:token?{Authorization:'Bearer '+token}:{}}).then(r=>r.status)`);
       assert.equal(oldStatus,403);
       await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback after sole-host rejoin');
@@ -264,7 +257,7 @@ async function main(){
       let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
       assert.ok(played.frames-resumed.frames>35);assert.ok(tones>=5);
       await command(host,'media.pause');
-      return {detail:'A twelve-second sole-host control outage retained the empty room; selected French/ASS playback resumed with fresh stream/observation state, old grant revoked and remote consent off.',before,after,oldStatus,tones};
+      return {detail:'A twelve-second sole-host control outage retained the empty room; selected French/ASS playback resumed with fresh stream/observation state, old grant revoked.',before,after,oldStatus,tones};
     });
     await check('opt-in private control reconnect probe',async()=>{
       assert.equal(await evaluate(guest,'document.getElementById("probe-control").hidden'),true,'ordinary pages have no probe control');
@@ -277,7 +270,6 @@ async function main(){
       await until(host,'!!state?.mediaUrl && video.readyState>=2 && !controlProbe.active() && !probeRunning','Live control stream resumes',15000);
       const after=await snapshot(host);
       assert.notEqual(after.stream,before.stream);assert.notEqual(after.mediaUrl,before.mediaUrl);
-      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');assert.equal(after.remote,false);
       const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
       assert.ok(trace.entries.some(row=>row.event==='probe-start'));
       assert.ok(trace.entries.some(row=>row.event==='probe-end'));

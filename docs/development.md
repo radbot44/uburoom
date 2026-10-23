@@ -58,7 +58,6 @@ The baseline checks displayed pixels, decoded PCM tone, cadence, buffering, play
 
 **Any UI/design decisions belong to the owner.** Read the entire [design guide](design-guide.md) before UI investigation or edits. Obtain explicit decisions for unresolved design choices before implementing them, and verify approved visual changes in the actual rendered surfaces. Screenshots and automated smokes are not visual sign-off.
 
-The independent `uburoom-remote` repository owns the extension. For explicit cross-repository validation, `node scripts/remote-compatibility.js --extension=<remote-build-directory> --fixtures=<remote-repository>/tests/fixtures/remote-protocol-v1.json` uses a separately supplied artifact. No sibling checkout path is assumed.
 
 Room control uses the validated shared engine, socket operations and explicit room IDs. Never bypass room permission checks or treat stored room state as active playback authority. See [rooms and queues](rooms-and-queues.md) and the [verification dashboard](testing.md) for current gates. Do not restart live services, load private providers or deploy without separate authorization.
 

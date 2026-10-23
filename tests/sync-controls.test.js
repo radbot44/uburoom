@@ -134,7 +134,7 @@ test('expired viewers release coordination delays; leaving during readiness reta
 });
 
 test('timeout names blockers, latches despite late readiness, and only the host may force a generation', async t => {
-  const f = fixture(t); await f.dispatch('room.enable'); await f.load(); await f.ready(f.h);
+  const f = fixture(t); await f.load(); await f.ready(f.h);
   f.advance(3000); assert.deepEqual(f.watch.snapshot(f.room,f.host,f.h).readiness.blockers,['Guest']);
   f.advance(7000); const id = f.room.readinessId;
   assert.equal(f.room.readinessTimedOut,true);

@@ -54,7 +54,7 @@ test('lobby browsing needs no room; private creation never exposes the room to a
   assert.equal(f.app.watch.rooms.size,0);
   const roomId=(await host.call('/api/watch/rooms',{visibility:'private'})).value.id;
   assert.equal(f.app.watch.rooms.get(roomId).s.visibility,'private');
-  assert.equal(f.app.watch.rooms.get(roomId).s.enabled,false);
+  assert.equal(Object.hasOwn(f.app.watch.rooms.get(roomId).s,'enabled'),false);
   assert.deepEqual((await guest.call('/api/watch/rooms')).value.rooms,[]);
   assert.equal((await guest.call('/api/watch/rooms/'+roomId+'?viewer='+randomUUID())).status,403);
   assert.equal((await guest.call('/api/watch/library?room='+roomId)).status,403);
@@ -63,7 +63,7 @@ test('lobby browsing needs no room; private creation never exposes the room to a
   assert.equal((await guest.call('/api/watch/library')).status,200,'lobby reads do not grant room control');
   host.ws.close();guest.ws.close();
 });
-test('watch socket pushes shared Engine commands, rejects stale/foreign viewers, hides private rooms and revokes consent on disconnect',tls,async t=>{
+test('watch socket pushes shared Engine commands, rejects stale/foreign viewers, hides private rooms and preserves reconnect security',tls,async t=>{
   const f=await fixture(t),host=await f.connect(await f.login('host'));let guest=await f.connect(await f.login('guest'));
   const roomId=(await host.call('/api/watch/rooms',{})).value.id,viewer=randomUUID(),guestId=randomUUID();
   const target='/api/watch/rooms/'+roomId;
@@ -71,19 +71,19 @@ test('watch socket pushes shared Engine commands, rejects stale/foreign viewers,
   await guest.call(target+'?viewer='+guestId);
   const command=(client,command,extra={})=>client.call(target+'/command',{epoch:state.epoch,expiresAt:Date.now()+2500,viewerId:viewer,command,...extra});
   assert.equal((await command(guest,{action:'media.pause'})).status,400,'a different account cannot claim the host viewer');
-  assert.equal((await command(host,{action:'room.enable',args:{enabled:true}},{expiresAt:Date.now()-1})).status,409);
+  assert.equal((await command(host,{action:'room.visibility',args:{visibility:'public'}},{expiresAt:Date.now()-1})).status,409);
   const before=guest.events.length;
-  assert.equal((await command(host,{action:'room.enable',args:{enabled:true}})).value.status,'applied');
+  assert.equal((await command(host,{action:'room.visibility',args:{visibility:'public'}})).value.status,'applied');
   await new Promise(resolve=>setTimeout(resolve,100));
-  assert.ok(guest.events.slice(before).some(message=>message.type==='state'&&message.value.enabled),'other viewer receives a pushed state without requesting it');
+  assert.ok(guest.events.slice(before).some(message=>message.type==='state'&&message.value.visibility==='public'),'other viewer receives a pushed state without requesting it');
   state=(await host.call(target+'?viewer='+viewer)).value;
-  assert.equal(state.enabled,true);
+  assert.equal(state.visibility,'public');
   const guestClosed=once(guest.ws,'close');guest.ws.close();await guestClosed;await new Promise(resolve=>setTimeout(resolve,30));
   const closed=once(host.ws,'close');host.ws.close();await closed;
   await new Promise(resolve=>setTimeout(resolve,30));
-  const room=f.app.watch.rooms.get(roomId);assert.equal(room.s.enabled,false);assert.ok(room.disconnectedViewers.has(viewer));
+  const room=f.app.watch.rooms.get(roomId);assert.equal(Object.hasOwn(room.s,'enabled'),false);assert.ok(room.disconnectedViewers.has(viewer));
   const rejoined=await f.connect(await f.login('host'));
-  state=(await rejoined.call(target+'?viewer='+viewer)).value;assert.equal(state.enabled,false,'same tab rejoin cannot restore consent');
+  state=(await rejoined.call(target+'?viewer='+viewer)).value;assert.equal(Object.hasOwn(state,'enabled'),false,'rejoined watch state has no obsolete consent field');
   guest=await f.connect(await f.login('guest'));await guest.call(target+'?viewer='+guestId);
   assert.equal((await command(rejoined,{action:'room.visibility',args:{visibility:'private'}})).value.status,'applied');
   assert.deepEqual((await guest.call('/api/watch/rooms')).value.rooms,[]);
@@ -174,15 +174,15 @@ test('retired HTTP room controls and legacy library room queries cannot mutate r
       let raw='';res.on('data',bytes=>raw+=bytes);res.on('end',()=>resolve({status:res.statusCode,raw}));
     });req.on('error',reject);req.end(data===undefined?undefined:JSON.stringify(data));
   });
-  for (const [path,data] of [['/api/sessions'],['/api/rooms'],['/api/command',{roomId,command:{action:'room.enable'}}],['/api/watch/rooms'],['/api/watch/rooms',{}],['/api/watch/admin-mode',{enabled:true}],['/api/watch/rooms/'+roomId+'?viewer='+randomUUID()],['/api/watch/rooms/'+roomId+'/close',{}],['/api/watch/rooms/'+roomId+'/ready',{}],['/api/watch/rooms/'+roomId+'/observe',{}],['/api/watch/rooms/'+roomId+'/leave',{}],['/api/watch/rooms/'+roomId+'/command',{}]]) {
+  for (const [path,data] of [['/api/sessions'],['/api/rooms'],['/api/command',{roomId,command:{action:'room.visibility',args:{visibility:'public'}}}],['/api/watch/rooms'],['/api/watch/rooms',{}],['/api/watch/admin-mode',{enabled:true}],['/api/watch/rooms/'+roomId+'?viewer='+randomUUID()],['/api/watch/rooms/'+roomId+'/close',{}],['/api/watch/rooms/'+roomId+'/ready',{}],['/api/watch/rooms/'+roomId+'/observe',{}],['/api/watch/rooms/'+roomId+'/leave',{}],['/api/watch/rooms/'+roomId+'/command',{}]]) {
     assert.equal((await http(path,data)).status,404,path+' was retired');
   }
   assert.equal(f.app.watch.rooms.size,1);assert.equal(f.app.watch.rooms.get(roomId).viewers.size,0);assert.equal(f.app.hub.adminMode,false);
   assert.equal((await http('/api/watch/config')).status,200);assert.equal((await http('/api/watch/me')).status,200);
   assert.equal((await http('/api/watch/library?session='+roomId)).status,403);
   assert.equal((await http('/api/watch/library?room='+roomId)).status,200);
-  assert.equal((await host.call('/api/command',{sessionId:roomId,command:{action:'room.enable'}})).status,400);
+  assert.equal((await host.call('/api/command',{sessionId:roomId,command:{action:'room.visibility',args:{visibility:'public'}}})).status,400);
   const state=(await host.call('/api/watch/rooms/'+roomId+'?viewer='+randomUUID())).value;
   assert.equal((await host.call('/api/watch/rooms/'+roomId+'/command',{epoch:state.epoch,expiresAt:Date.now()+2500,command:{action:'session.enable'}})).value.status,'unsupported');
-  assert.equal(f.app.watch.rooms.get(roomId).s.enabled,false);
+  assert.equal(Object.hasOwn(f.app.watch.rooms.get(roomId).s,'enabled'),false);
 });

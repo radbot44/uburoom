@@ -187,7 +187,7 @@ let soak;
 $('soak-start').hidden=!soakMode;
 $('soak-status').hidden=!soakMode;
 $('soak-start').onclick=()=>{
-  if(soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||video.paused||video.readyState<3)return;
+  if(soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||video.paused||video.readyState<3)return;
   soak={room:selected,media:state.mediaVersion,startedAt:performance.now(),finishing:false,done:false};
   diagnosticSample('soak-start');$('soak-status').textContent='Two-hour soak recording locally. Keep this tab open.';
 };
@@ -213,7 +213,7 @@ const controlProbe=params.get('playbackProbe')==='1'?uburoomDiagnostics.controlP
 let probeRunning=false;
 $('probe-control').hidden=!controlProbe;
 $('probe-control').onclick=()=>{
-  if(!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!controlProbe?.start(selected))return;
+  if(!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||!controlProbe?.start(selected))return;
   probeRunning=true;diagnosticSample('probe-start',{delayMs:6000});
   transport?.interrupt(6000);
 };
@@ -233,7 +233,7 @@ function diagnosticSample(event='sample',fields={}) {
       callbackFrames:videoFrames,width:video.videoWidth,height:video.videoHeight,mediaError:video.error?.code,
       online:navigator.onLine,visibility:document.visibilityState,inViewport:rect.width>0&&rect.height>0&&rect.bottom>0&&rect.top<innerHeight&&rect.right>0&&rect.left<innerWidth,
       viewportFraction:rect.width>0&&rect.height>0?Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top))/(rect.width*rect.height):0,
-      format:state?.format,enabled:!!state?.enabled,
+      format:state?.format,
       audio:tracks?.audio.findIndex(row=>row.id===tracks.audioId),subtitle:tracks?.subtitles.findIndex(row=>row.id===tracks.subtitleId),
       delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',...fields});
   } catch { /* A missing diagnostic sample must not change player behavior. */ }
@@ -251,8 +251,8 @@ for(const event of ['online','offline','pagehide'])window.addEventListener(event
 document.addEventListener('visibilitychange',()=>{sync?.event('visibilitychange');diagnosticSample('visibilitychange');});
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
-  $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||!!controlProbe?.active();
-  $('soak-start').disabled=!!soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||state.enabled||pending||video.paused||video.readyState<3;
+  $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||!!controlProbe?.active();
+  $('soak-start').disabled=!!soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||video.paused||video.readyState<3;
   if(selected || state || mediaSource)diagnosticSample();
   if(soak&&!soak.finishing&&!soak.done){
     if(selected!==soak.room||state&&state.mediaVersion!==soak.media)void finishSoak('source-changed');
@@ -270,9 +270,9 @@ const subtitleMode=$('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
 video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['open-remote','remote'],['fullscreen','fullscreen'],
+for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['remote-consent-icon','remote'],['remote-consent-chevron','chevron']]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
@@ -282,8 +282,6 @@ function renderNotifications() {
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
-const remote = uburoomUI.mount($('remote'), { showAutoJoin: false, volumeInterval: 600, execute: command => execute(command), close: () => toggleRemote(false) });
-const settings = $('remote-settings') ? uburoomUI.mount($('remote-settings'), { settingsOnly: true, showAutoJoin: false, execute: command => execute(command) }) : { render() {}, stop() {} };
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
   join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};},
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
@@ -470,7 +468,6 @@ function toggleDrawer(show = drawer.hidden) {
   $('drawer-close').hidden = !show;
   drawer.hidden = !show; $('stage').classList.toggle('drawer-open', show);
   $('drawer-open').setAttribute('aria-expanded', String(show));
-  if (!show) toggleRemote(false);
 }
 function returnToVideo() {
   toggleDrawer(false);
@@ -500,12 +497,11 @@ viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('vi
 window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');
-  const drawerOpen = !drawer.hidden, remoteOpen = !$('remote').hidden;
+  const drawerOpen = !drawer.hidden;
   document.body.classList.toggle('immersive', immersive);
   for (const { element, marker } of shells) immersive ? drawer.append(element) : marker.after(element);
   $('drawer-open').hidden = $('drawer-close').hidden = !immersive;
   toggleDrawer(drawerOpen);
-  toggleRemote(remoteOpen);
   placeRoomBar();
   updateSectionTabs();
   updateViewingLayout();
@@ -537,7 +533,6 @@ function setSyncPreference(value) {
 $('sync-correction').addEventListener('change',event=>setSyncPreference(event.target.value));
 function renderAccount() {
   loadSyncPreference();
-  if ($('open-remote')) $('open-remote').hidden = false;
   $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
   $('admin-mode').hidden = !(me.adminEligible ?? me.owner); $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
@@ -609,7 +604,7 @@ function updateActivityLayout(event) {
   if (event) layoutMode = event.layout_mode;
   const pip = activity && (layoutMode === 1 || layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300);
   document.body.classList.toggle('activity-pip', pip);
-  if (pip) { toggleDrawer(false); toggleRemote(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); }
+  if (pip) { toggleDrawer(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); }
   if(pip&&$('account-dialog').open)$('account-dialog').close();
   if(pip){playerUI?.reset();if($('tracks-dialog').open)$('tracks-dialog').close();}
 }
@@ -753,7 +748,7 @@ function clearPlayer(reason) {
   if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
   frameCallback = undefined; frameStartedAt = undefined; videoFrames = 0;
   presentationTiming.reset();
-  remote.stop(); dropVolume(); video.pause(); stopHls(reason);
+  dropVolume(); video.pause(); stopHls(reason);
   video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
   playbackError = ''; autoplayBlocked = false;
   $('join-playback').hidden = true; $('empty-stage').hidden = false; $('ready-status').textContent = '';
@@ -898,9 +893,9 @@ function unavailable(message,reason='room-unavailable') {
   qualityPending=false;
   playbackClock.reset();
   if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-  clearPlayer(reason); state = undefined; toggleRemote(false);
+  clearPlayer(reason); state = undefined; 
   browseRoom = undefined; renderBrowsing();
-  renderRemote(); renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
+  renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
 }
 function connectionLost(details={}) {
   diagnostics.record('control-disconnected',{socketCloseCode:details.code});
@@ -908,9 +903,9 @@ function connectionLost(details={}) {
   if(reconnecting)return;
   reconnecting=true;stateRequestSequence++;stateTransportSequence=0;
   playbackClock.reset();resetSyncQuality();queueUI.rememberPosition();
-  toggleRemote(false);
+  
   if(state)state={...state,enabled:false,reachable:false};
-  renderRemote();renderTransport();renderBrowsing();renderVisibility();
+  renderTransport();renderBrowsing();renderVisibility();
   document.title=document.title.replace(/^🟢 /,'');
   clearTimeout(disconnectGraceTimer);
   disconnectGraceTimer=setTimeout(()=>{
@@ -936,7 +931,7 @@ function hideDisconnectToast() {
 function fullPlayerClear() {
   clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
   disconnectExtended=false;hideDisconnectToast();
-  clearPlayer('control-disconnected');toggleRemote(false);
+  clearPlayer('control-disconnected');
   if(selected){$('empty-title').textContent='Reconnecting to your room…';$('empty-hint').textContent='Your library and queue position are kept.';}
   fail('Disconnected. Reconnecting…');
 }
@@ -994,7 +989,7 @@ async function execute(command) {
   finally {
     if(qualityChange){if(qualityPending===qualityRequest)qualityPending=false;}else if(volumeChange)volumePending=false;else pending=false;
     if(qualityChange&&selected===id&&state?.mediaUrl)$('quality').value=uburoom.qualityId(state.quality);
-    renderLibrary(); renderRemote(); renderVisibility(); renderTransport(); pumpVolume();
+    renderLibrary(); renderVisibility(); renderTransport(); pumpVolume();
   }
 }
 function renderMediaInformation(next) {
@@ -1003,13 +998,6 @@ function renderMediaInformation(next) {
   const mediaWidth=video.videoWidth || info?.width,mediaHeight=video.videoHeight || info?.height;
   $('media-information').textContent=info?[mediaWidth&&mediaHeight?mediaWidth+' x '+mediaHeight:null,info.videoCodec?.toUpperCase(),info.audioCodec?.toUpperCase(),info.bitrate?Number(info.bitrate/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'Choose a video to see media information.';
   $('delivery-information').textContent=info?[info.format==='file'?'Original file':info.format==='hls'?'Plex streaming':uburoomPlayback.localFormat(info.format)?'uburoom conversion':info.format,next.mediaUrl?(next.directDelivery?'Direct from Plex':'Through uburoom'):null,info.encoder?'Encoder: '+info.encoder:null,info.cpuFallback?'Using CPU fallback':null,info.bitrateCeiling?'Requested limit: '+Number(info.bitrateCeiling/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'No playback delivery yet.';
-}
-function renderRemote() {
-  const options = { available: !reconnecting && !!state, canSave: !reconnecting && !!state?.canManage,
-    canPlayback: !reconnecting && !!state?.canPlayback, canAudio: !reconnecting && !!state?.mediaUrl, canTransform: !reconnecting && !!state?.canTransform,
-    room: state?.canManage ? { ...state, connected: !reconnecting, paired: true, reachable: !reconnecting, live: state.enabled } : null };
-  remote.render(state?.state, options);
-  settings.render(state?.state, state ? options : {...options,room:{canManage:true,enabled:false,reachable:false,controls:uburoom.CONTROLS}});
 }
 function renderVisibility() {
   $('empty-hint').hidden=!me;
@@ -1023,7 +1011,6 @@ function renderVisibility() {
   $('create').hidden = !!state||!!config?.singleRoom;
   if(config?.singleRoom)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
   if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
-  if ($('remote-consent-text')) $('remote-consent-text').textContent = 'Remote control: ' + (state?.enabled ? 'On' : 'Off');
   if (state) {
     if ($('current-room-name')) $('current-room-name').textContent = state.roomName || 'Room';
     uburoomControls.content($('room-visibility'),{icon:state.visibility === 'private' ? 'lock' : 'website',label:state.visibility === 'private' ? 'Private · Hosts only' : 'Public',iconOnly:true});
@@ -1059,11 +1046,6 @@ async function changeVisibility() {
   } else await execute({action:'room.visibility',args:{visibility:'public'}});
 }
 $('room-visibility')?.addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
-$('remote-consent-summary')?.addEventListener('click', () => {
-  const expanded = $('remote-consent-summary').getAttribute('aria-expanded') === 'true';
-  $('remote-consent-summary').setAttribute('aria-expanded', String(!expanded));
-  $('watch-settings-content').hidden = expanded;
-});
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;
@@ -1309,12 +1291,12 @@ function applyState(next) {
   if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
   renderBrowsing();
   const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
-  document.title = (next.enabled && video.readyState >= 1 && !playbackError ? '🟢 ' : '') + (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
-  renderRemote(); renderVisibility(); renderTransport();
+  document.title = (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
+  renderVisibility(); renderTransport();
   if(resumed){queueUI.restorePosition();diagnostics.record('control-reconnected');}
   if (next.feedback && next.feedback.revision !== lastFeedback && Date.now() + offset - next.feedback.at < 3000) {
     lastFeedback = next.feedback.revision;
-    const details = uburoomUI.badgeDetails(next.feedback, next.state);
+    const details = uburoomWatchFeedback.badgeDetails(next.feedback, next.state);
     if (details) {
       toasts.show('participant', {
         title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : ''),
@@ -1359,7 +1341,7 @@ async function selectRoom(id,initial) {
     const now=performance.now(),revision=observationClock.update(next.observationEpoch,playbackClock.read().serverTime??next.serverNow,now,now);
     if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}
     if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-    clearPlayer('room-select'); toggleRemote(false); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
+    clearPlayer('room-select'); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
     applyState(next);placeRoomBar();fail(playbackError);void reportReadiness();
     if(previous)void api('/api/watch/rooms/'+previous+'/leave',{viewerId}).catch(()=>{});
     if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
@@ -1419,12 +1401,6 @@ function renderLibrary() {
 function clock(value = 0) {
   const seconds = Math.floor(value || 0), minutes = Math.floor(seconds / 60);
   return (seconds >= 3600 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') : minutes) + ':' + String(seconds % 60).padStart(2,'0');
-}
-function toggleRemote(show = $('remote').hidden) {
-  const parent = document.fullscreenElement === $('stage') ? $('stage') : document.body;
-  if ($('remote').parentElement !== parent) parent.append($('remote'));
-  $('remote').hidden = !show; $('stage').classList.toggle('remote-open', show); $('open-remote')?.setAttribute('aria-expanded', String(show));
-  if (!show) remote.stop();
 }
 function renderVolumeIcon() {
   glyph('player-mute',uburoomIcons.volumeName(volumeDraft ?? state?.state?.volume ?? Number($('player-volume').value),!!state?.state?.muted));
@@ -1487,22 +1463,18 @@ $('enable-acceleration').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', event => {
   if (event.defaultPrevented || document.body.classList.contains('activity-pip') || document.querySelector('dialog:modal')) return;
-  if (event.code === 'Escape' && !$('remote').hidden) { toggleRemote(false); $('open-remote')?.focus(); return; }
   if (event.code === 'Escape' && !drawer.hidden) { toggleDrawer(false); $('drawer-open').focus(); return; }
-  if (event.code === 'F8' || event.code === 'KeyC' && event.altKey && event.shiftKey) { event.preventDefault(); if (!event.repeat) toggleRemote(); return; }
   if (!state || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button,input,select,textarea,[contenteditable=true]')) return;
   const command = event.code === 'Space' ? {action:state.pauseAt || state.state.paused && !state.waitingForReady?'media.play':'media.pause'} : ['ArrowLeft','ArrowRight'].includes(event.code) ?
     {action:'media.seek.relative',args:{seconds:event.code==='ArrowLeft'?-15:15}} : event.code==='KeyM' ? {action:state.state.muted?'media.unmute':'media.mute'} : undefined;
   if (command) { event.preventDefault(); execute(command).catch(error => fail(error.message)); }
 });
-$('open-remote')?.addEventListener('click', () => toggleRemote());
 document.addEventListener('pointerdown', event => {
   if (!drawer.hidden && !event.composedPath().some(node => ['drawer','drawer-open','drawer-close'].includes(node.id)) && !event.composedPath().some(node => node instanceof HTMLDialogElement || node.classList?.contains('player-settings-menu'))) {
     toggleDrawer(false);
     $('stage').focus({preventScroll:true});
   }
 });
-document.addEventListener('pointerdown', event => { if (!document.querySelector('dialog:modal') && !$('remote').hidden && !event.composedPath().some(node => ['remote','open-remote'].includes(node.id))) toggleRemote(false); });
 $('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
 document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
 async function loadLibraryItem(item) {
@@ -1741,7 +1713,7 @@ async function start() {
       }
     }
   });
-  $('create').hidden = false; renderBrowsing(); renderVisibility(); renderRemote(); renderTransport();
+  $('create').hidden = false; renderBrowsing(); renderVisibility(); renderTransport();
   setInterval(async () => {
     try { await renewIdentity(); }
     catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); }
@@ -1764,7 +1736,7 @@ $('entry-recheck').addEventListener('click',()=>{pageBootstrap=undefined;void st
 $('entry-plex-activity').addEventListener('click',()=>void openInBrowser());
 $('room-recovery-start').addEventListener('click',() => void execute({action:'media.play'}).catch(error=>fail(error.message)));
 $('auth-retry').addEventListener('click', () => location.reload());
-renderVisibility();renderRemote();renderTransport();
+renderVisibility();renderTransport();
 start().catch(error => {
   if (!$('auth-loading').hidden) {
     $('auth-title').hidden = false;

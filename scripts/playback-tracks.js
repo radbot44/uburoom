@@ -120,8 +120,8 @@ async function main() {
         await check('personal-audio-language',async()=>{
           await choose(host,{audioId:'1042'});await until(host,'video.readyState>=2 && Math.abs(video.currentTime-2)<.1 && video.paused','Audio replacement keeps paused position');
           const french=await tone(host,880);await position(2);const english=await tone(guest,440);
-          assert.equal(await evaluate(guest,'state.tracks.audioId'),'1041');assert.equal(await evaluate(host,'state.enabled'),false);
-          return {detail:'French 880 Hz / guest English 440 Hz, independent with remote consent off.',frenchSamples:french,englishSamples:english};
+          assert.equal(await evaluate(guest,'state.tracks.audioId'),'1041');
+          return {detail:'French 880 Hz / guest English 440 Hz, independently.',frenchSamples:french,englishSamples:english};
         });
         await check('ASS-style-and-sign-position',async()=>{
           await position(2);await choose(host,{subtitleId:'1044',subtitleMode:'burn'});

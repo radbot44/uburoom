@@ -7,11 +7,11 @@
  */
 
 /**
- * An entity interacting with the system (from web browser, Discord, or extension).
+ * An entity interacting with the system (from web browser or Discord).
  * @typedef {Object} Actor
  * @property {string} userId - Stable internal account or visitor UUID.
  * @property {string} name - Sanitized display name.
- * @property {'web'|'discord'|'extension'} surface - Surface origin.
+ * @property {'web'|'discord'} surface - Surface origin.
  * @property {string} [guildId] - Discord guild snowflake if origin is linked to Discord.
  * @property {string} [channelId] - Discord command or text channel snowflake.
  * @property {string} [discordId] - Raw Discord user ID if available.
@@ -19,7 +19,7 @@
  */
 
 /**
- * Viewport picture transformation parameters (zoom, stretch, and pan).
+ * Picture transformation parameters (zoom, stretch, and pan).
  * @typedef {Object} PictureState
  * @property {number} zoom - Zoom factor (0.1 to 16, default 1).
  * @property {number} stretchX - Horizontal stretch multiplier (0.1 to 16, default 1).
@@ -29,7 +29,7 @@
  */
 
 /**
- * Control permission flags for a room or remote.
+ * Control permission flags for a watch room.
  * @typedef {Object} Controls
  * @property {boolean} playback - Whether media transport controls (play, pause, seek) are enabled.
  * @property {boolean} transform - Whether picture adjustments (zoom, stretch, pan) are enabled.
@@ -55,14 +55,12 @@
  * @property {string} roomId - Unique room UUID.
  * @property {string} epoch - Epoch UUID rotated on consent revocation or host changes.
  * @property {string} alias - User-facing or generated room alias (e.g. 'plex', 'plex.ab12cd34').
- * @property {'watch'|'remote'} kind - Room type ('watch' for watch rooms, 'remote' for extension).
+ * @property {'watch'} kind - Room type for watch rooms.
  * @property {string} ownerId - Account UUID of the room creator.
  * @property {string} ownerName - Display name of the room creator.
  * @property {string} hostId - Account UUID of the current room host.
  * @property {string} hostName - Display name of the current room host.
  * @property {'public'|'private'} visibility - Room visibility gate.
- * @property {'owner'|'voice'|'guild'} mode - Authorization mode.
- * @property {boolean} enabled - Whether remote control consent is currently granted.
  * @property {boolean} reachable - Whether the room is actively connected and reachable.
  * @property {number} lastSeen - Timestamp (ms) of last presence ping or activity.
  * @property {Controls} controls - Current allowed control categories.

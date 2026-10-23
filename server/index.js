@@ -9,10 +9,10 @@ async function main() {
   config.key = fs.readFileSync(config.tlsKey);
   const app = createApp(config);
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(config.port, config.host, resolve); });
-  console.log(`[uburoom] Setup / connected devices: ${config.publicUrl}`);
+  console.log(`[uburoom] Server address: ${config.publicUrl}`);
   if(config.plexFallback?.enabled&&config.plexUrl&&config.plexToken)console.warn('[uburoom] Shared Plex fallback is enabled: eligible viewers without personal server access can use the fallback account’s media permissions. Set plex.fallback_token for a dedicated account, or disable fallback.');
   console.log(`[uburoom] Private credential key: ${path.resolve(config.credentialKeyFile)} (preserve and back up separately)`);
-  console.log('[uburoom] Remote off by default. On disconnect, re-enable in Firefox or the host website. Ctrl+C stops the server.');
+  console.log('[uburoom] Watch rooms are available in the browser. Ctrl+C stops the server.');
   let bot, retry, stopped=false;
   async function stop() { stopped=true;clearTimeout(retry);await bot?.destroy(); await app.close(); process.exit(0); }
   process.once('SIGINT', stop); process.once('SIGTERM', stop);

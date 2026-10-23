@@ -1,15 +1,15 @@
-# uburoom — UI Controls Design Guide
+# uburoom â€” UI Controls Design Guide
 
 Use this guide when creating or updating buttons, switches, checkboxes, and selection controls in **Watch**. Reuse the existing component styles instead of inventing a new look for each screen.
 
 ## 1. Pick the right control
 
-| You need to… | Use… | Example |
+| You need toâ€¦ | Useâ€¦ | Example |
 |---|---|---|
 | Perform an action | **Button** | Create room, Cancel, Refresh |
 | Turn an existing setting on/off | **Switch** | Auto-play, Auto-queue |
 | Include an option in a form being submitted later | **Checkbox** | Include Specials, Keep room when empty while creating a room |
-| Choose one of 2–3 short values or layouts | **Segmented selector** | Cards / List, Public / Private, Off / Following / Random |
+| Choose one of 2â€“3 short values or layouts | **Segmented selector** | Cards / List, Public / Private, Off / Following / Random |
 | Move between actual panels | **Tabs** | Room / Queue / Media; Room Settings sections |
 | Choose from a long or dynamic list | **Dropdown** | Sort, genre, year, audio track |
 | Show a permission | **Thumb icon button** | Allowed / Denied |
@@ -23,9 +23,9 @@ Use this guide when creating or updating buttons, switches, checkboxes, and sele
 |---|---|
 | Normal text button | **40px minimum height**, **12px radius** |
 | Prominent sign-in/entry button | **44px minimum height** |
-| Icon-only button | **40 × 40px minimum clickable area**, **10px radius** |
-| Standalone button icon | **24 × 24px** artwork |
-| Icon beside text | **20 × 20px** artwork |
+| Icon-only button | **40 Ã— 40px minimum clickable area**, **10px radius** |
+| Standalone button icon | **24 Ã— 24px** artwork |
+| Icon beside text | **20 Ã— 20px** artwork |
 | Normal button label | **14px** |
 | Compact button label | **12px** |
 | Primary/destructive label | **600 (semibold)** |
@@ -35,7 +35,7 @@ Use this guide when creating or updating buttons, switches, checkboxes, and sele
 | Space between adjacent icon buttons | **4px** |
 | Keyboard focus | Visible **2px outline, 2px offset** |
 
-Use theme-aware colors and existing design tokens. Check the result in **Light/Dark × Orange/Pink**. The visible artwork may be smaller than its clickable area.
+Use theme-aware colors and existing design tokens. Check the result in **Light/Dark Ã— Orange/Pink**. The visible artwork may be smaller than its clickable area.
 
 ## 3. Buttons
 
@@ -88,7 +88,7 @@ Keep disabled, unavailable, ineffectual, and loading distinct. A loading action 
 A standard setting row looks like this:
 
 ```text
-Auto-play                                      [○──]
+Auto-play                                      [â—‹â”€â”€]
 Play the next item automatically
 ```
 
@@ -96,13 +96,13 @@ Keep the **label and optional description on the left**, and the **switch on the
 
 | Switch piece | Size |
 |---|---|
-| Track | **36 × 22px** |
+| Track | **36 Ã— 22px** |
 | Track radius | **11px** (pill) |
-| Thumb | **16 × 16px** |
+| Thumb | **16 Ã— 16px** |
 | Thumb inset | **3px** from either end |
 | Thumb movement | **14px** |
 | Row height | **44px minimum** |
-| Click/touch target | Aim for **44 × 44px**, even though the track is smaller |
+| Click/touch target | Aim for **44 Ã— 44px**, even though the track is smaller |
 
 - **Off:** thumb left, neutral track.
 - **On:** thumb right, accent-colored track (`--primary`).
@@ -120,7 +120,7 @@ Examples: **Include Specials** in Add Episodes or Auto-queue setup; **Keep room 
 
 ## 5. Segmented selectors, tabs, and dropdowns
 
-### Segmented selectors — choose a value, not a page
+### Segmented selectors â€” choose a value, not a page
 
 Make the whole control **40px tall**. Use two visual strengths:
 
@@ -131,9 +131,9 @@ Show icon **and** text when they fit. Hide the text based on the **control's ava
 
 **Keyboard:** Arrow keys and Home/End move **focus only**. **Enter/Space** selects the focused option. Focus and selection must look different.
 
-For permission presets, show **only actionable named presets**—**no Custom tab**. If settings match none of them, it's fine for **none** to appear selected.
+For permission presets, show **only actionable named presets**â€”**no Custom tab**. If settings match none of them, it's fine for **none** to appear selected.
 
-### Tabs — move between panels
+### Tabs â€” move between panels
 
 Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sections (**General, People, Permissions, Playback & Queue, Manage**).
 
@@ -146,11 +146,11 @@ Use actual tabs for mobile **Room / Queue / Media** and the Room Settings sectio
 
 - **Media library names** are navigation buttons in the Back/Forward/Home group. Use the movie or TV icon with the library name and mark the current library with `aria-current`. At smaller Media widths, hide the text first, then hide the library buttons entirely in the narrow layout (around **440px**). Collections use Tabler `layout-grid`.
 - In Posters view, clicking or tapping anywhere on a poster opens its item immediately, except when activating Play or Add to queue. Caption and gradient layers must not intercept poster clicks. Hide the Play overlay completely for unavailable items; keep their details browsable.
-- Browse media, Home, library tabs and item navigation keep the current scroll position when any media card or item is visible, even partially. Do not pull a Media section that is already visible below the viewport’s top edge up to that edge. If Media is out of view, reveal its beginning with the sticky header and toolbar above the first content row, without covering the cards. Apply this to page and drawer scrolling.
+- Browse media, Home, library tabs and item navigation keep the current scroll position when any media card or item is visible, even partially. Do not pull a Media section that is already visible below the viewportâ€™s top edge up to that edge. If Media is out of view, reveal its beginning with the sticky header and toolbar above the first content row, without covering the cards. Apply this to page and drawer scrolling.
 - Use native dropdowns for **long or dynamic** lists and for video settings on mobile; desktop video settings can keep nested menus.
 - Show known-but-unavailable fixed options as **disabled with a readable reason**. Don't invent unavailable audio/subtitle tracks that aren't present in the data.
 - When no usable subtitle tracks exist, the subtitle toggle tooltip and disabled settings-menu entry say **No subtitles available**. When no usable audio tracks exist, the disabled audio settings-menu entry says **No audio available**. Keep the native track selectors disabled too, with a plain **Automatic** option. Omit subtitle **Off** when no subtitles are available. Never append an unavailable-track message to Automatic.
-- For leadership transfer: **2–3 eligible hosts → segmented selector; 4+ → labeled dropdown**. Choosing someone does not trigger the separate **Transfer** button.
+- For leadership transfer: **2â€“3 eligible hosts â†’ segmented selector; 4+ â†’ labeled dropdown**. Choosing someone does not trigger the separate **Transfer** button.
 
 ## 6. Special icon controls
 
@@ -182,9 +182,9 @@ If an unavailable movie remains in the active queue, show a persistent red error
 
 ### General toasts
 
-All Watch notifications use the shared toast component. Toasts are **40px tall**, with **12px corner radii**, no border or outline, and a **24 × 24px icon**. Use the standard dark player card, white text, muted grey text and accent color tokens. Media actions appear in the main row at **14px in white**; the username appears below at **12px in grey**. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
+All Watch notifications use the shared toast component. Toasts are **40px tall**, with **12px corner radii**, no border or outline, and a **24 Ã— 24px icon**. Use the standard dark player card, white text, muted grey text and accent color tokens. Media actions appear in the main row at **14px in white**; the username appears below at **12px in grey**. Participant feedback lasts 2.5 seconds. Reconnect notifications remain until the connection recovers or the player is cleared.
 
-All toasts share one stack at the **bottom-left of the video**, on desktop and mobile. Keep the stack inside the visible page: when scrolling would move it above the viewport, pin it to the **top edge of the page**. Move it just above the visible media-control content whenever there is room, ignoring the control container’s gradient padding. Theater and fullscreen buttons alone do not count as media controls; in the lobby, keep the stack at the bottom-left of the black video area. **Visibility takes priority:** if avoiding the controls would push the stack offscreen, keep it visible even when it overlaps the controls. Keep the same positioning behavior in theater and fullscreen modes.
+All toasts share one stack at the **bottom-left of the video**, on desktop and mobile. Keep the stack inside the visible page: when scrolling would move it above the viewport, pin it to the **top edge of the page**. Move it just above the visible media-control content whenever there is room, ignoring the control containerâ€™s gradient padding. Theater and fullscreen buttons alone do not count as media controls; in the lobby, keep the stack at the bottom-left of the black video area. **Visibility takes priority:** if avoiding the controls would push the stack offscreen, keep it visible even when it overlaps the controls. Keep the same positioning behavior in theater and fullscreen modes.
 
 Fade each toast in while it rises slightly, and reverse that motion when it leaves. Use a brief **180ms** animation with **6px** of travel. Smoothly animate stack movement when media controls appear or disappear. Scrolling keeps the stack anchored immediately. Respect reduced-motion preferences.
 
@@ -208,29 +208,28 @@ Click or tap anywhere on a toast to dismiss it; there is no separate X button. T
 - Can you tell **selected, focused, disabled, loading, and read-only** states apart without relying on color?
 - Does it work by **keyboard**, with a clear name and visible focus?
 - Does it fit on **narrow screens and 200% zoom** without clipped labels or tiny targets?
-- Does it look right in **Light/Dark × Orange/Pink**?
+- Does it look right in **Light/Dark Ã— Orange/Pink**?
 
-**Scope note:** This guide describes the main Watch controls. The button styling can also inform web Remote actions, but the switch and selection redesign rules do not apply to the separate Remote interface.
 
-## Approved playback delivery increment — 2026-10-22
+## Approved playback delivery increment â€” 2026-10-22
 
 The owner approved configuration-only Plex delivery (`proxy` by default, optional `auto`) and an explicit HTTPS client origin. The first increment covers original-file playback in ordinary browsers; Plex HLS and Discord Activity retain their existing delivery. Local AV1/VP9/VP8 conversion remains governed independently by transcoding settings. No new controls, visual types or layout changes are authorized by this increment.
 
 Direct credentials may be delegated from the viewer's own verified Plex access. The owner additionally approved an explicit opt-in for a dedicated fallback account without server-owner authority, including viewers without Plex accounts. Never delegate configured owner credentials as fallback, including when the dedicated fallback token is blank. Temporary Plex tokens retain the source account's permissions and cannot enforce uburoom room revocation. Strict direct-only mode and direct HLS are later increments requiring their remaining decisions and verification.
 
-The owner subsequently approved showing **Direct from Plex** or **Through uburoom** in **Player settings → Media information → Technical details**. Add the current viewer's delivery route to the existing technical-details paragraph, retaining its styling and updating with playback state. Show the route only for active media; do not display playback URLs or credentials.
+The owner subsequently approved showing **Direct from Plex** or **Through uburoom** in **Player settings â†’ Media information â†’ Technical details**. Add the current viewer's delivery route to the existing technical-details paragraph, retaining its styling and updating with playback state. Show the route only for active media; do not display playback URLs or credentials.
 
 The owner subsequently authorized direct Plex HLS implementation, with all video/audio segments going from Plex to the browser and no server anchor cache for direct output. The existing delivery label also describes this HLS media route; the small retained initial playlist remains control traffic. Keep the same controls, layout and labels. Proxy playback retains its cache, and Activity/local conversion retain their existing delivery. See [direct HLS implementation boundaries](plex-hls-delivery.md).
 
-## Approved Room synchronization quality indicator — 2026-10-22
+## Approved Room synchronization quality indicator â€” 2026-10-22
 
-The owner authorized a passive, noninteractive synchronization-quality status in the main Room participant list only. Use the fixed column order **role icon → username → sync-quality icon → reserved kick column**. Keep the status column compact and aligned even when a participant has no Kick permission. Do not add the status to Room Settings or participant-selection interfaces. Preserve the existing role and Kick controls, username truncation, and narrow layouts.
+The owner authorized a passive, noninteractive synchronization-quality status in the main Room participant list only. Use the fixed column order **role icon â†’ username â†’ sync-quality icon â†’ reserved kick column**. Keep the status column compact and aligned even when a participant has no Kick permission. Do not add the status to Room Settings or participant-selection interfaces. Preserve the existing role and Kick controls, username truncation, and narrow layouts.
 
 Render with the existing Tabler icon system. Map score boundaries exactly as `>= 0.90` Excellent (`wifi`, `--success`), `>= 0.75` Good (`wifi-2`, `--good`), `>= 0.50` Fair (`wifi-1`, `--warning`), otherwise Poor (`wifi-0`, existing `--danger`). Keep the latest score visible independently from measurement confidence. A new viewer starts at provisional 100%; provisional or temporarily reduced-confidence estimates use the last score's icon in muted grey, defaulting to muted `wifi` before measurements. Never use `wifi-off` for this indicator. Recent real measurements can retain their color during brief clock/frame gaps (up to 12 seconds) and ordinary pauses (up to 2 minutes after the last actual sample); the retained score is not treated as a new measurement. A grey icon means the score is provisional or no longer trustworthy, not necessarily poor. Keep this semantic color state independent of the Orange/Pink accent preference and use the owner-specified Light/Dark theme values.
 
 The indicator communicates measured playback synchronization reliability, not wireless signal strength. Keep measurement and authenticated ephemeral telemetry outside the UI renderer. Tooltip and accessible label use whole percentages only: `Sync quality: 93% (Excellent)`. For multiple playback sessions, show one identically formatted line per session without device names or session identifiers. No new interactive control type is introduced.
 
-## Approved Room permissions and roster revision � 2026-10-22
+## Approved Room permissions and roster revision — 2026-10-22
 
 The owner requested that Media remain visible to every admitted viewer, independently of playback selection authority. Replace the visible Choose video permission with **Skip / replay**, described as **Skip to another video in the queue or replay a video from history.** Preserve the stored `chooseMedia` policy key to retain existing room/configuration choices and command compatibility. Browsing grants no playback or queue mutation authority.
 
@@ -240,6 +239,6 @@ Remove Condensed view and always show permission captions. Host and Participant 
 
 The owner requested browser persistence for video settings and volume between page loads, with a 30% default volume. Keep existing controls and layouts. Save explicit quality choices independently of effective playback quality: Original always selects Original; a fixed quality is a ceiling in resolution and bitrate, choosing the highest offered quality at or below it, including Original when its source bitrate fits, regardless of source resolution. Automatic fallback must never replace the saved preference. Volume/mute remain browser-local and personal.
 
-The owner clarified: remember subtitle language across videos, but do not remember audio language or subtitle timing. Subtitle Automatic/Off and rendering mode are also browser preferences. Match the saved language only to available subtitles on each video, retaining it when that language is absent. No shared playback timeline or remote consent is stored.
+The owner clarified: remember subtitle language across videos, but do not remember audio language or subtitle timing. Subtitle Automatic/Off and rendering mode are also browser preferences. Match the saved language only to available subtitles on each video, retaining it when that language is absent. No shared playback timeline or room authorization settings are stored.
 
 Volume-slider updates use their own in-flight state and do not disable unrelated controls. Keep existing volume throttling, command authorization and control appearance.

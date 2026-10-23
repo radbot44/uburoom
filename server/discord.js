@@ -4,7 +4,7 @@ const Engine = require('../shared/engine');
 const { discordAccess } = require('./sharing');
 
 const slashCommand = { name: 'ubu', description: 'Control an enabled uburoom player', options: [
-  { name: 'command', description: 'For example: pause, volume 50, zoom 150%, reset all, or off', type: ApplicationCommandOptionType.String, required: true, max_length: 140 },
+  { name: 'command', description: 'For example: pause, volume 50, zoom 150%, reset all, or status', type: ApplicationCommandOptionType.String, required: true, max_length: 140 },
   { name: 'target', description: 'Player name (for example bob #1); only needed with several available players', type: ApplicationCommandOptionType.String, max_length: 104 }
 ] };
 function slashInput(options) {
@@ -37,16 +37,14 @@ function helpText(website) {
     '• `profile load 1` — load a saved profile (slots 1–9)',
     '• `profile save 1` — save the current picture (host only)',
     '',
-    '**Remote**',
     '• `status` — check the player responds',
-    '• `off` — disable remote access (host only)',
     '• `help` — show this list',
     '',
     'Blank player names use the host’s Discord username: `bob`, or `bob #1` / `bob #2` with multiple players.',
     'Examples: `!ubu.livingroom volume 50`, `!ubu.bob#1 pause`',
     'Slash commands: `/ubu command:volume 50 target:livingroom` (target optional with one player).',
-    'Enable and permissions: Firefox controls or the host’s website. Guests must share the host’s current voice channel or be actively watching that room. The owner can opt into Admin mode on the website.',
-    `**Web remote:** ${website}`
+    'Room permissions are managed on the watch page. The owner can opt into Admin mode there.',
+    `**Watch room:** ${website}/watch`
   ].join('\n');
 }
 
@@ -78,21 +76,10 @@ async function connectBot(client, token, timeoutMs = 30000) {
   }
 }
 
-function watchVoice(config, client, hub) {
-  client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-    if (newState.guild.id === config.guildId && newState.id === config.ownerId && oldState.channelId !== newState.channelId) {
-      hub.publishVoice(!!newState.channelId);
-    }
-  });
-  for (const event of [Events.ClientReady, Events.ShardReady, Events.ShardResume]) client.on(event, () => hub.publishVoice());
-  for (const event of [Events.ShardDisconnect, Events.ShardReconnecting]) client.on(event, () => hub.publishVoice(false, true));
-  client.on(Events.GuildUnavailable, guild => { if (guild.id === config.guildId) hub.publishVoice(false, true); });
-  client.on(Events.GuildAvailable, guild => { if (guild.id === config.guildId) hub.publishVoice(); });
-}
 async function startBot(config, hub, { createClient = options => new Client(options) } = {}) {
-  if (!config.botToken) { console.log('[Discord] Not configured. Local picture controls and HTTPS setup are available.'); return; }
+  if (!config.botToken) { console.log('[Discord] Not configured. Browser playback and HTTPS setup are available.'); return; }
   if (!config.ownerId || !config.guildId || !config.channels.length) throw new Error('Configure Discord owner, guild and command channels');
-  const client = createClient({ rest: { timeout:10000,retries:0,rejectOnRateLimit:()=>true }, intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
+  const client = createClient({ rest: { timeout:10000,retries:0,rejectOnRateLimit:()=>true }, intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
   if (client.rest?.setToken && client.options?.intents?.add) {
     try {
       client.rest.setToken(config.botToken);
@@ -107,7 +94,6 @@ async function startBot(config, hub, { createClient = options => new Client(opti
     } catch { console.warn('[Discord] Could not check optional directory intents. Known uburoom account search remains available.'); }
   }
   hub.access = discordAccess(client, config.guildId);
-  watchVoice(config, client, hub);
   const buckets = new Map();
   function rateLimited(userId) {
     const now = Date.now(); let bucket = buckets.get(userId);
@@ -116,7 +102,7 @@ async function startBot(config, hub, { createClient = options => new Client(opti
     for (const [id, b] of buckets) if (now - b.at > 10000) buckets.delete(id);
     return ++bucket.count > 5;
   }
-  client.on(Events.ClientReady, () => console.log('[Discord] Connected. Commands follow each tab\'s local sharing settings in configured command channels.'));
+  client.on(Events.ClientReady, () => console.log('[Discord] Connected. Commands follow room permissions in configured command channels.'));
   client.on(Events.Error, error => console.error('[Discord] ' + loginFailure(error).message));
   client.on(Events.ShardError, error => console.error('[Discord] ' + loginFailure(error).message));
   client.on(Events.ShardDisconnect, event => console.warn('[Discord] Gateway disconnected' + (Number.isInteger(event.code) ? ` (code ${event.code})` : '') + '. Commands unavailable until reconnected.'));
@@ -169,4 +155,4 @@ async function startBot(config, hub, { createClient = options => new Client(opti
   } catch { console.warn('[Discord] Could not register /ubu. Check the bot installation includes applications.commands. Text commands remain available.'); }
   return client;
 }
-module.exports = { startBot, connectBot, slashInput, helpText, watchVoice };
+module.exports = { startBot, connectBot, slashInput, helpText };

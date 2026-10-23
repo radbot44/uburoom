@@ -39,7 +39,7 @@ video{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}#empty
 video::cue{font-size:clamp(14px,2.4vw,32px)}
 .subtitle-layer{position:absolute;inset:0;pointer-events:none;z-index:1;transform-origin:center}.subtitle-canvas{position:absolute;pointer-events:none}
 .player-chrome{position:absolute;left:0;right:0;z-index:2;opacity:0;pointer-events:none;transition:opacity .18s}
-.stage:focus-within .player-chrome,.stage.paused .player-chrome,.stage.blocked .player-chrome,.stage.remote-open .player-chrome{opacity:1;pointer-events:auto}
+.stage:focus-within .player-chrome,.stage.paused .player-chrome,.stage.blocked .player-chrome{opacity:1;pointer-events:auto}
 .title-bar{top:0;padding:18px 20px 34px;background:linear-gradient(#000c,transparent);display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.media-heading{min-width:0;pointer-events:none}.media-heading h1{font-size:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.media-heading p{font-size:13px;color:var(--muted);margin:4px 0 0}.media-heading p:empty{display:none}.player-actions{display:flex;gap:6px;margin-left:auto}
 .player-button{display:grid;place-items:center;width:36px;height:36px;border-radius:9px;background:transparent;color:var(--text);flex-shrink:0}.player-button:hover{background:color-mix(in srgb,var(--elevated) 85%,transparent)}
 .solid-button{display:flex;align-items:center;justify-content:center;gap:7px;background:var(--primary);color:var(--on-primary);border-radius:10px;padding:9px 12px;min-height:36px;white-space:nowrap;font-weight:600}.solid-button:hover{background:var(--primary-hover)}.solid-button.private{background:var(--elevated);color:var(--text)}.solid-button.private:hover{background:var(--hover)}.solid-button:disabled{opacity:1;cursor:default}.solid-button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block}.player-actions{flex-shrink:0}.media-heading{flex:1}#options-panel{margin-top:0}#watch-settings h3{font-size:14px;margin:18px 0 4px}
@@ -59,8 +59,6 @@ video::cue{font-size:clamp(14px,2.4vw,32px)}
 input[type=range]{accent-color:var(--accent-text);cursor:pointer;min-width:0}#timeline{flex:1;min-width:80px}#player-volume{width:86px;flex-shrink:0}
 #timeline{appearance:none;background:transparent;height:24px;padding:0;margin:0 2px}#timeline::-webkit-slider-runnable-track{height:5px;border-radius:4px;background:var(--timeline-fill,var(--border))}#timeline::-moz-range-track{height:5px;border-radius:4px;background:var(--timeline-fill,var(--border))}#timeline::-moz-range-progress{background:transparent}#timeline::-webkit-slider-thumb{appearance:none;width:13px;height:13px;border:0;border-radius:50%;background:var(--primary);margin-top:-4px}#timeline::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--primary)}
 select,input[type=search]{border:1px solid var(--border);background:var(--elevated);color:var(--text);border-radius:10px;padding:9px}#quality{max-width:110px;font-size:13px}
-#remote{position:fixed;top:72px;right:24px;width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 88px);overflow:auto;border-radius:28px;box-shadow:0 12px 50px #0009;z-index:20}
-.stage:fullscreen #remote{position:absolute;top:62px;right:12px;width:min(420px,calc(100% - 24px));max-height:calc(100% - 76px)}
 .watch-toast-region{--toast-inset:16px;width:max-content;position:fixed;z-index:30;pointer-events:none;display:flex;flex-direction:column;align-items:flex-start;gap:10px;max-width:calc(100% - 32px)}
 .watch-toast-region:empty{display:none}
 .watch-toast{pointer-events:auto;text-align:left;max-width:100%;height:40px;flex:none;display:flex;align-items:center;gap:10px;background:color-mix(in srgb,var(--card) 90%,transparent);border:0;outline:0;border-radius:12px;padding:4px 12px;color:var(--text);line-height:1;box-shadow:0 4px 16px rgba(0,0,0,0.5);backdrop-filter:blur(8px)}
@@ -92,7 +90,6 @@ body:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-
 @media(max-width:1000px){main{padding:0 12px}.transport{gap:6px}#player-volume{width:64px}}
 @media(max-width:700px){main{margin:12px auto;padding:0 8px}.account{margin-bottom:14px}.brand{width:130px;height:auto}.account-actions{gap:6px}.stage{border-radius:0}.title-bar{padding:10px 12px 24px}.media-heading h1{font-size:15px}.media-heading p{font-size:11px}.player-button{width:30px;height:30px}.player-button svg{width:21px;height:21px}
 .center-play{top:39%;width:56px;height:56px}.center-play svg{width:32px;height:32px}#ready-status{top:calc(39% + 20px);font-size:10px;margin-top:8px}.watch-toast-region{--toast-inset:10px}
-.stage:not(:fullscreen) #remote{position:fixed;top:70px;right:8px;width:min(420px,calc(100vw - 16px));max-height:calc(100dvh - 86px)}
 }
 
 @media(max-width:700px){#identity{max-width:90px;font-size:12px}}
@@ -140,7 +137,6 @@ body.immersive{overflow:hidden;background:black}
 .mobile-player #drawer #library-panel>.library-header{position:sticky;top:0;z-index:6;isolation:isolate}
 #drawer #library-panel .library-tools{top:var(--media-header-height,80px)}
 #drawer #options-panel,#drawer #queue-panel{padding:0;margin-top:24px}
-.immersive #remote{top:64px;z-index:40}
 .immersive .stage.drawer-open .media-heading{max-width:calc(50vw - 30px)}
 .immersive .stage.drawer-open #drawer-open{visibility:hidden}
 .player-button[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
@@ -157,7 +153,7 @@ body.immersive{overflow:hidden;background:black}
 #account-logout{margin-top:24px}
 .activity-pip main{margin:0;padding:0;max-width:none}
 .activity-pip .stage{position:fixed;inset:0;width:100%;height:100dvh;aspect-ratio:auto;border-radius:0;background:black}
-.activity-pip .stage>:not(video):not(.subtitle-layer),.activity-pip #drawer,.activity-pip #remote,
+.activity-pip .stage>:not(video):not(.subtitle-layer),.activity-pip #drawer,
 .activity-pip #account,.activity-pip #welcome,.activity-pip #room-bar,.activity-pip #room-column,.activity-pip #options-panel,.activity-pip #queue-panel,.activity-pip #library-panel,.activity-pip #status,.activity-pip #error,.activity-pip #acceleration-help{display:none!important}
 @media(max-width:700px){.title-bar{gap:8px;flex-wrap:wrap}.player-actions{margin-left:auto}.solid-button{font-size:12px;padding:8px;gap:5px}.media-heading{min-width:85px}.media-heading h1{max-width:100%}}
 #diagnostic-actions{display:flex;flex-wrap:wrap;gap:10px}
@@ -191,7 +187,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .mobile-player:not(.immersive) :is(#app,.screen-column)>#library-panel{grid-row:auto}
 
 /* Room tasks: discovery, current room and persistent management. */
-.outside-room #open-remote,.outside-room #join-playback,.outside-room .timeline-row,.outside-room .playback-buttons,.outside-room .volume-control,.outside-room #captions-toggle,.outside-room #tracks-open{display:none!important}
+.outside-room .outside-room #join-playback,.outside-room .timeline-row,.outside-room .playback-buttons,.outside-room .volume-control,.outside-room #captions-toggle,.outside-room #tracks-open{display:none!important}
 .outside-room .transport{opacity:1;pointer-events:auto}.outside-room .transport-row{justify-content:flex-end}.outside-room .player-tools{margin-left:auto}.outside-room .title-bar{display:none!important}
 .outside-room #empty-stage{width:min(580px,calc(100% - 32px));box-sizing:border-box;max-height:calc(100% - 70px);overflow:auto;padding:14px}
 .outside-room #empty-stage h1{display:block!important;margin:0 0 12px;font-size:18px}.outside-room #empty-hint:empty{display:none}
@@ -208,7 +204,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #room-role:empty{display:none}
 
 #room-bar{align-items:center}#options-content>#room-bar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:16px 0 0;width:100%}
-.remote-toggle{color:var(--muted);font-size:14px}#watch-settings-content{margin-top:10px}
+#watch-settings-content{margin-top:10px}
 
 #room-dialog{width:min(620px,calc(100vw - 32px));box-sizing:border-box}#room-dialog header h2{margin-right:auto}
 #room-dialog label{display:block;margin:14px 0 6px}#room-dialog select{width:100%}

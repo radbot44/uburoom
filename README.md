@@ -2,7 +2,6 @@
 
 Self-hosted Plex watch parties with a web interface and Discord integration.
 
-Run your own server, connect your own Plex and Discord applications, and watch together in a browser or Discord Activity. The main site enters `/watch`. The optional YouTube TV remote is maintained separately in uburoom-remote and connects through the versioned authenticated protocol. Remaining verification is tracked in [Milestone 1](ROADMAP.md#m1--verified-self-hosted-release); native-player integration remains future work.
 
 This source is undergoing release preparation. The approved wordmark and oo icons are integrated; the remaining asset-provenance and integration checks are pending. No managed room-hosting service is included.
 
@@ -25,10 +24,9 @@ Server settings live in private `config.yaml`; copy the annotated `config.exampl
 
 ## Features and limits
 
-- Shared playback, readiness/late-join synchronization, host succession, public/private rooms and independent remote permissions.
+- Shared playback, readiness/late-join synchronization, host succession, public/private rooms and configurable room permissions.
 - Plex browsing and linked Plex/Discord accounts; personal volume, quality and media-access checks.
 - Discord Activity and browser handoff, plus bot commands through the shared validated command engine.
-- Integration with the separate Firefox YouTube TV remote for local zoom/stretch/pan and profiles, with optional explicitly enabled remote control.
 - Native per-viewer observations and persisted playback history, retained for planned Plex resume/watched-state updates across clients and servers; Plex reporting is not enabled yet. Queueing and durable room restoration are later work.
 
 See the [roadmap](ROADMAP.md) for priorities, milestones and release gates. Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage; the [playback reliability plan](docs/playback-reliability.md) contains the detailed requirements.

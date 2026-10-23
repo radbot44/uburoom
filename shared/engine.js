@@ -2,15 +2,11 @@
 (function (root) {
   'use strict';
   const Room = typeof module !== 'undefined' && module.exports ? require('./room-protocol') : root.uburoomRoomProtocol;
-  const Viewport = typeof module !== 'undefined' && module.exports ? require('./viewport') : root.uburoomViewport;
-  const { DEFAULT, PAN_MAX, picture, factor } = Viewport;
-  const { CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible, senderName } = Room;
-  const PROTOCOL = Object.freeze({ room: Room.VERSION, viewport: Viewport.VERSION });
-  function protocolCompatible(value) {
-    return !!value && value.room === PROTOCOL.room && value.viewport === PROTOCOL.viewport;
-  }
+  const Picture = typeof module !== 'undefined' && module.exports ? require('./picture') : root.uburoomPicture;
+  const { DEFAULT, PAN_MAX, picture, factor } = Picture;
+  const { CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, senderName } = Room;
   function validate(command) {
-    return Viewport.isCommand(command?.action) ? Viewport.validate(command) : Room.validate(command);
+    return Picture.isCommand(command?.action) ? Picture.validate(command) : Room.validate(command);
   }
   const numeric = (n, min, max) => {
     if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Value outside supported range');
@@ -25,7 +21,6 @@
     if (['pause', 'play', 'mute', 'unmute', 'toggle'].includes(verb) && words.length === 0) command = { action: 'media.' + verb };
     else if (verb === 'status' && !words.length) command = { action: 'status.get' };
     else if (verb === 'help' && !words.length) command = { action: 'help.get' };
-    else if (verb === 'off' && !words.length) command = { action: 'room.disable' };
     else if (['start', 'end', 'live'].includes(verb) && !words.length) command = { action: 'media.seek.' + (verb === 'start' ? 'start' : 'end') };
     else if (verb === 'seek' && words.length === 1 && /^[+-]?\d+(?:\.\d+)?$/.test(words[0])) command = { action: 'media.seek.relative', args: { seconds: Number(words[0]) } };
     else if (verb === 'zoom' && words.length === 1) {
@@ -35,7 +30,7 @@
     } else if (verb === 'volume' && words.length === 1 && /^\d+(?:\.\d+)?%?$/.test(words[0])) command = { action: 'media.volume.set', args: { percent: Number(words[0].replace('%', '')) } };
     else if (verb === 'reset' && words.length === 1 && ['all', 'pan', 'zoom', 'stretch'].includes(words[0])) command = { action: 'reset.' + words[0] };
     else if (verb === 'profile' && words.length === 2 && ['load', 'save'].includes(words[0]) && /^[1-9]$/.test(words[1])) command = { action: 'profile.' + words[0], args: { slot: Number(words[1]) } };
-    else throw new Error('Use pause, play, mute, unmute, volume 50, zoom 150%, reset all, profile load 1, status, or off');
+    else throw new Error('Use pause, play, mute, unmute, volume 50, zoom 150%, reset all, profile load 1, or status');
     return { target: m[1]?.toLowerCase(), ...validate(command) };
   }
   function snapshot(value) {
@@ -69,8 +64,8 @@
     if (!valid.length) return;
     return edge === 'start' ? Math.min(...valid.map(r => r[0])) : Math.max(...valid.map(([start, end]) => Math.max(start, end - .01)));
   }
-  const api = { DEFAULT, PAN_MAX, CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible,
-    PROTOCOL, protocolCompatible, validate, picture, parse, factor, snapshot, seekTarget, seekBoundary, senderName };
+  const api = { DEFAULT, PAN_MAX, CONTROLS, QUALITIES, qualityId, validQuality, MANAGEMENT, controls, controlFor, controlAllowed,
+    validate, picture, parse, factor, snapshot, seekTarget, seekBoundary, senderName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoom = api;
 })(globalThis);

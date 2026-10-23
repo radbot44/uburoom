@@ -1,7 +1,6 @@
-/* Version 1 room/playback command contract. Authorization remains server-owned. */
+/* Room and playback command validation. Authorization remains server-owned. */
 (function (root) {
   'use strict';
-  const VERSION = 1;
   const CONTROLS = Object.freeze({ playback: true, transform: true });
   const QUALITIES = Object.freeze([
     { id:'direct', label:'Original' },
@@ -22,7 +21,7 @@
     return {id,label:height+'p · '+mbps+' Mbps',width:Math.round(height*16/9/2)*2,height,bitrate:Math.round(mbps*1000)};
   }
   const validQuality = id => !!qualityDefinition(id);
-  const MANAGEMENT = Object.freeze(['room.enable', 'room.sharing', 'room.visibility', 'room.controls', 'room.autojoin', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh','media.ready.start','media.ready.wait','media.ready.cancel']);
+  const MANAGEMENT = Object.freeze(['room.visibility', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh','media.ready.start','media.ready.wait','media.ready.cancel']);
   function controls(value = CONTROLS) {
     if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
     return { playback: value.playback, transform: value.transform };
@@ -34,13 +33,6 @@
   function controlAllowed(value, command) {
     const category = controlFor(command);
     return !category || controls(value)[category];
-  }
-  function joinEligible(room, event, now, offset = 0) {
-    return room.autoJoin === true && !room.enabled && room.reachable &&
-      now - room.lastAck < 8000 && event.joined === true && event.available === true &&
-      typeof event.channelId === 'string' && !!event.channelId && Number.isFinite(event.serverNow) &&
-      Number.isFinite(event.expiresAt) && now + offset < event.expiresAt &&
-      event.serverNow >= room.autoArmedAt + offset;
   }
   const numeric = (n, min, max) => {
     if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Value outside supported range');
@@ -62,7 +54,7 @@
         args.userId = a.userId; break;
       case 'media.pause': case 'media.play': case 'media.mute': case 'media.unmute': case 'media.toggle':
       case 'media.seek.start': case 'media.seek.end':
-      case 'status.get': case 'help.get': case 'room.disable': case 'room.enable': break;
+      case 'status.get': case 'help.get': break;
       case 'media.previous': case 'media.next': break;
       case 'media.autoplay.cancel': break;
       case 'media.autoplay.set':
@@ -138,15 +130,6 @@
           args.fallback = a.fallback;
         }
         break;
-      case 'room.controls':
-        if (!['playback', 'transform'].includes(a.control) || typeof a.allowed !== 'boolean') throw new Error('Choose a control permission');
-        args = { control: a.control, allowed: a.allowed }; break;
-      case 'room.autojoin':
-        if (typeof a.enabled !== 'boolean') throw new Error('Choose on or off');
-        args.enabled = a.enabled; break;
-      case 'room.sharing':
-        if (!['owner', 'voice', 'guild'].includes(a.mode)) throw new Error('Choose a sharing mode');
-        args.mode = a.mode; break;
       case 'room.visibility':
         if (!['public', 'private'].includes(a.visibility)) throw new Error('Choose Public or Private');
         args.visibility = a.visibility; break;
@@ -165,7 +148,7 @@
     }
     return { action, args };
   }
-  const api = { VERSION, CONTROLS, QUALITIES, qualityId, qualityDefinition, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, joinEligible, senderName, validate };
+  const api = { CONTROLS, QUALITIES, qualityId, qualityDefinition, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, senderName, validate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomRoomProtocol = api;
 })(globalThis);

@@ -70,7 +70,7 @@ test('HTTPS handoff creates only a bounded cookie login, preserves room context 
   const cookie=done.headers['set-cookie'][0];assert.match(cookie,/HttpOnly; Secure; SameSite=Lax/);assert.ok(Number(/Max-Age=(\d+)/.exec(cookie)[1])<=3600);
   assert.equal((await f.redeem(claimed)).status,410);
   const me=await f.request('/api/watch/me',undefined,{Cookie:cookie.split(';')[0]});assert.equal(me.body.name,'Demo host');assert.equal(me.body.adminMode,false);
-  assert.equal(f.app.watch.rooms.get(id).s.enabled,false,'handoff does not enable remote or issue playback commands');
+  assert.equal(f.app.watch.rooms.get(id).s.state.paused,true,'handoff does not issue playback commands');
   assert.equal(f.app.watch.rooms.get(id).viewers.size,1,'redemption itself does not create a viewer');
   const state=await f.request(`/api/watch/rooms/${id}?viewer=${randomUUID()}`,undefined,{Cookie:cookie.split(';')[0]});assert.equal(state.status,200);
   const logout=await f.request('/api/logout',{}, {Cookie:cookie.split(';')[0],'X-CSRF-Token':me.body.csrf});assert.equal(logout.status,200);

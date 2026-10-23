@@ -7,7 +7,7 @@ $releaseDirectory = Join-Path $projectPath 'releases'
 [void][IO.Directory]::CreateDirectory($releaseDirectory)
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $version = (Get-Content -LiteralPath (Join-Path $projectPath 'package.json') -Raw | ConvertFrom-Json).version
-# Explicit whitelist: extension builds belong to the independent remote repository.
+# Explicit application source whitelist.
 $trackedFiles = @(& git -C $projectPath ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Source packaging requires an audited Git checkout.' }
 $sourceFiles = @($trackedFiles | Where-Object {

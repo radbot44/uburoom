@@ -105,24 +105,11 @@ For an Activity, enable Activities and map its root to the installation's origin
 
 Configure your Plex server token privately. Linked viewers use their verified access to the pinned server; account matching alone grants no credentials/media permission. Verify restricted accounts, revocation and Original/HLS/AV1 delivery before inviting users.
 
-## Optional Firefox remote
-
-The optional extension is maintained and packaged in the independent uburoom-remote repository. From that checkout, prepare an isolated build for your server (the unconfigured source permits localhost only):
-
-```powershell
-node scripts/configure-remote.js --server=https://watch.example --out=releases/remote
-.\scripts\package.ps1 -ExtensionDirectory releases/remote
-```
-
-Repeat `--server=` for additional explicitly permitted origins, including an existing profile's stored origin when upgrading. The first origin is the default for unpaired profiles; paired profiles keep their selection/device credential. The generator never overwrites an existing build and does not install/sign/publish it. Host permissions cover only those hosts and YouTube TV; CSP/runtime checks constrain exact origins and ports. IPv6 origins are currently unsupported.
-
-Temporary test: use a separate Firefox profile, about:debugging → This Firefox → Load Temporary Add-on → select the generated manifest.json. The retained Gecko ID matches existing installs, so protect paired production profiles. Permanent normal Firefox distribution requires a separate signing step.
-
 ## Backups and upgrades
 
 Devices, browser logins, account links, encrypted credentials and playback history live in `accounts.sqlite`. The current pre-release build may import old JSON files once; that import is being removed before the first public release, so private pre-release data requires an intentional owner-only backup and reset or manual transfer, not an automatic migration guarantee. Back up SQLite through its online backup mechanism or an approved maintenance stop, plus private configuration/TLS and the original external key. Until the cleanup is implemented, retain any old JSON with the matched private rollback backup, not as current runtime state. Verify integrity/authenticated decryption offline. Raw live SQLite copying is insufficient. Use an approved final stop/copy at cutover; see [upgrading](upgrading.md).
 
-Forward WebSocket upgrades at `/watch-socket` for the watch client and `/ws` for the Firefox remote. The watch connection uses the HTTPS origin's cookie plus CSRF, or an Activity bearer sent inside the encrypted socket, never in the URL. Heartbeats detect dead connections; consent stays off after reconnect. Verify the actual Discord Activity proxy mapping separately. Discord startup/network failure is logged and retried every 30 seconds without shutting down HTTPS; current authorization still fails closed when provider access cannot be established.
+Forward WebSocket upgrades at `/watch-socket` for the watch client. The watch connection uses the HTTPS origin's cookie plus CSRF, or an Activity bearer sent inside the encrypted socket, never in the URL. Heartbeats detect dead connections; consent stays off after reconnect. Verify the actual Discord Activity proxy mapping separately. Discord startup/network failure is logged and retried every 30 seconds without shutting down HTTPS; current authorization still fails closed when provider access cannot be established.
 
 Select a tested revision in a separate local code directory; install/test before attaching production state. Set an absolute `storage.data_directory` and preserve the original `storage.credential_key_file` to keep state independent of releases. Keep prior working code and matched backups. Restart only after operator approval. Compatible code rollback should retain current user data; schema/encryption changes need an explicit matched restore strategy.
 
@@ -143,7 +130,6 @@ New rooms default to **Keep room when empty** off. When the last person leaves, 
 
 Previously open rooms reserve a recovery period of `rooms.recovery_seconds` (60) after the server begins listening. Returning clients authenticate again, obtain fresh media access and streams, and restore the last committed shared position paused. An ordinary returning participant can reconnect without reopen authority. Private-room access and current permissions still apply.
 
-A previously playing room resumes automatically only when every expected account returns within the deadline, all returned viewing tabs are ready, and a present member has both playback and the required host-continuity authority. A previously paused room stays paused. Authorized members may choose **Start now** to end recovery early, using the normal readiness checks for present viewers. Missing people at expiry leave the room paused; rooms with nobody returning close and follow the normal retention rules. Closed rooms stay closed across reboot. No downtime is added to position. Remote consent, stream grants, command epochs and autoplay countdowns are never restored. A crash can lose the uncommitted checkpoint tail.
 
 ### Account names and host discovery
 

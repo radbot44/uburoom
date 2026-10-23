@@ -3,28 +3,27 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {DatabaseSync}=require('node:sqlite');
 const {Accounts,credentialVault}=require('../server/accounts');
-const {deviceStore,loginStore}=require('../server/storage');
+const {loginStore}=require('../server/storage');
 
 function fixture(t) {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'uburoom-storage-'));
   t.after(()=>{assert.equal(path.dirname(directory),path.resolve(os.tmpdir()));fs.rmSync(directory,{recursive:true,force:true});});
   return {directory,file:path.join(directory,'accounts.sqlite'),vault:credentialVault()};
 }
-test('SQLite alone preserves devices, contexts and encrypted logins across restart',async t=>{
-  const {directory,file,vault}=fixture(t),deviceFile=path.join(directory,'devices.json'),loginFile=path.join(directory,'logins.json');
-  const device={id:'device',credentialHash:'c'.repeat(64)},id='a'.repeat(64),value={userId:'user',name:'Alice',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-test-token',expires:9999999999999}};
-  fs.writeFileSync(deviceFile,'invalid legacy data');fs.writeFileSync(loginFile,'invalid legacy data');
+test('SQLite alone preserves contexts and encrypted logins across restart',async t=>{
+  const {directory,file,vault}=fixture(t),loginFile=path.join(directory,'logins.json');
+  const id='a'.repeat(64),value={userId:'user',name:'Alice',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-test-token',expires:9999999999999}};
+fs.writeFileSync(loginFile,'invalid legacy data');
   let accounts=new Accounts(file,vault);
-  const devices=deviceStore(accounts),logins=loginStore('one',vault,accounts);
-  assert.deepEqual(devices.devices,[]);assert.equal(logins.logins.size,0);
-  devices.devices.push(device);logins.logins.set(id,value);await devices.save();await logins.save();
-  assert.deepEqual(devices.devices,[device]);assert.equal(logins.logins.get(id).oauth.refreshToken,value.oauth.refreshToken);
+  const logins=loginStore('one',vault,accounts);
+  assert.equal(logins.logins.size,0);
+  logins.logins.set(id,value);await logins.save();
+  assert.equal(logins.logins.get(id).oauth.refreshToken,value.oauth.refreshToken);
   await accounts.flush();
   const read=new DatabaseSync(file);assert.ok(!read.prepare('SELECT record FROM browser_logins').get().record.includes('private-test-token'));read.close();
-  logins.logins.delete(id);await logins.save();devices.devices.length=0;await devices.save();await accounts.close();
+  logins.logins.delete(id);await logins.save();await accounts.close();
   accounts=new Accounts(file,vault);
   try {
-    assert.equal(deviceStore(accounts).devices.length,0);
     assert.equal(loginStore('one',vault,accounts).logins.size,0,'legacy login is not reimported after logout');
     const next=loginStore('two',vault,accounts);next.logins.set(id,value);await next.save();
     assert.equal(loginStore('two',vault,accounts).logins.size,1,'new sign-in survives an authorization context change');
@@ -76,10 +75,10 @@ test('worker-backed playback writes keep the local event-loop p95 below the sync
 });
 
 test('unsupported pre-release schema fails startup without leaving a live storage worker',async t=>{
-  const {directory}=fixture(t),keyFile=path.join(directory,'key'),deviceFile=path.join(directory,'devices.json');
+  const {directory}=fixture(t),keyFile=path.join(directory,'key');
   fs.writeFileSync(keyFile,Buffer.alloc(32,7));
   const old=new DatabaseSync(path.join(directory,'accounts.sqlite'));old.exec('CREATE TABLE users(id TEXT); PRAGMA user_version=1;');old.close();
-  const config={publicUrl:'https://localhost',accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:keyFile,deviceFile};
+  const config={publicUrl:'https://localhost',accountFile:path.join(directory,'accounts.sqlite'),credentialKeyFile:keyFile};
   const source=`try { require(${JSON.stringify(path.join(__dirname,'../server/app'))}).createApp(${JSON.stringify(config)}); process.exitCode=1; } catch(error) { console.log(error.message); }`;
   const output=await new Promise((resolve,reject)=>require('node:child_process').execFile(process.execPath,['-e',source],{windowsHide:true,timeout:5000,maxBuffer:4096},(error,stdout)=>error?reject(error):resolve(stdout)));
   assert.match(output,/Unsupported pre-release database/);
@@ -106,12 +105,11 @@ test('unsupported schemas fail without changing existing data or installing miss
   previous.close();
 });
 
-test('matched offline SQLite and original-key backup restores UUIDs, credentials, logins, devices and playback history',async t=>{
+test('matched offline SQLite and original-key backup restores UUIDs, credentials, logins and playback history',async t=>{
   const {directory,file}=fixture(t),key=path.join(directory,'original.key');
   fs.writeFileSync(key,Buffer.alloc(32,19));const vault=credentialVault(key);
   const accounts=new Accounts(file,vault),user=accounts.resolve('plex','101','Alice');
   accounts.credential('101',{token:'private-restore-fixture'});
-  const devices=deviceStore(accounts);devices.devices.push({id:'device',credentialHash:'a'.repeat(64)});await devices.save();
   const logins=loginStore('baseline',vault,accounts);logins.logins.set('b'.repeat(64),{userId:user.id,name:'Alice',csrf:'c'.repeat(64),expires:null,oauth:{refreshToken:'private-login-fixture',expires:9999999999999}});await logins.save();
   accounts.db.prepare('INSERT INTO playback_history VALUES(?,?,?,?)').run('viewing',user.id,1,JSON.stringify({roomId:'room',watchedSeconds:12}));
   await accounts.close();
@@ -121,10 +119,25 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   try {
     assert.equal(restored.identity('plex','101').userId,user.id);
     assert.equal(restored.credential('101').token,'private-restore-fixture');
-    assert.deepEqual(deviceStore(restored).devices,devices.devices);
     assert.equal(loginStore('baseline',restored.vault,restored).logins.get('b'.repeat(64)).oauth.refreshToken,'private-login-fixture');
     assert.equal(restored.db.prepare('SELECT userId FROM playback_history').get().userId,user.id);
     assert.equal(restored.db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
     assert.deepEqual(fs.readFileSync(copyKey),fs.readFileSync(key));
   } finally {await restored.close();}
+});
+
+// A prior installation's paired credentials must not survive the new baseline.
+test('upgrades a matched version-6 database by dropping stored device credentials',async t=>{
+  const {file,vault}=fixture(t);
+  let accounts=new Accounts(file,vault);
+  await accounts.close();
+  const old=new DatabaseSync(file);
+  old.exec("CREATE TABLE devices(id TEXT PRIMARY KEY,record TEXT NOT NULL)");
+  old.prepare('INSERT INTO devices VALUES(?,?)').run('legacy-device','{\"credentialHash\":\"secret\"}');
+  old.exec('PRAGMA user_version=6');old.close();
+  accounts=new Accounts(file,vault);
+  try{
+    assert.equal(accounts.db.prepare('PRAGMA user_version').get().user_version,7);
+    assert.equal(accounts.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'").get(),undefined);
+  }finally{await accounts.close();}
 });

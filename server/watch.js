@@ -91,7 +91,7 @@ class Watch {
     if (this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen && !this.roomState?.recoveries.has(saved?.id)) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = saved?.id || randomUUID();
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
-      ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, mode: 'guild', enabled: false, reachable: true, lastSeen: Date.now(),
+      ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, reachable: true, lastSeen: Date.now(),
       controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 30, seekable: false, profileSlots: [] } };
     const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
@@ -135,9 +135,9 @@ class Watch {
       room.readinessTimedOut = true; room.readinessStartAt = undefined; room.revision++;
     }
   }
-  revokeConsent(room) {
+  invalidateControls(room) {
     this.cancelAutoplay(room);
-    room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.roomId);
+    room.s.epoch = randomUUID(); room.revision++;
   }
   dropMedia(room, reason = 'media-changed') {
     this.cancelAutoplay(room); clearPlaybackEnd(room);
@@ -268,7 +268,7 @@ class Watch {
       if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
-    if (hostTimedOut) this.revokeConsent(room);
+    if (hostTimedOut) this.invalidateControls(room);
     if (pruned) this.settle(room, now);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
@@ -342,7 +342,7 @@ class Watch {
         if ([...room.viewers.values()].some(v => v.userId === oldHost)) return;
         if (!member || room.s.visibility !== 'public' || room.viewers.get(viewerId) !== candidate || Date.now() - candidate.at >= 10000) continue;
         room.s.hostId = candidate.userId; room.s.hostName = candidate.name; room.hostViewerId = viewerId;
-        room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.roomId);
+        room.s.epoch = randomUUID(); room.revision++;
         await this.maybeStart(room);
         return;
       }
@@ -365,8 +365,8 @@ class Watch {
     if (hostLeft) {
       if (reason === 'left') {
         // An intentional handoff retains room settings, but never old commands.
-        room.s.epoch = randomUUID(); this.hub.cancel(room.s.roomId);
-      } else this.revokeConsent(room);
+        room.s.epoch = randomUUID();
+      } else this.invalidateControls(room);
     }
     if (![...room.viewers.values()].some(v => v.userId === room.s.hostId)) await this.transfer(room);
     await this.maybeStart(room);
@@ -402,8 +402,7 @@ class Watch {
     room.kickedViewers?.delete(viewerId);
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
     if (this.rooms.get(room.s.roomId) !== room) throw new Error('Room unavailable');
-    // A new host page never silently inherits remote consent from a previous
-    // host tab. Existing viewers can keep the room alive in between.
+    // Existing viewers can keep the room alive between host tabs.
     if (room.saved) this.roomState.checkCapacity(room,actor.userId);
     const oldViewer = room.viewers.get(viewerId);
     if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
@@ -415,7 +414,7 @@ class Watch {
     const controller = !room.saved ? isHost(room.s, actor) : actor.userId === room.s.hostId ||
       (isHost(room.s, actor) || this.hub.isAdmin(actor)) && !room.viewers.has(room.hostViewerId);
     if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
-      room.s.enabled = false; room.s.mode = 'owner'; room.s.epoch = randomUUID(); room.revision++; this.hub.cancel(room.s.roomId);
+      room.s.epoch = randomUUID(); room.revision++;
     }
     if (controller && !oldViewer) { room.hostViewerId = viewerId; room.s.hostId = actor.userId; room.s.hostName = actor.name; room.waitingForHost = false; }
     room.hadViewers = true;
@@ -468,9 +467,8 @@ class Watch {
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
       capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions','manageHosts'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
       hostName: room.s.hostName, canBrowse:true, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
-      state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, enabled: room.s.enabled, mode: room.s.mode, controls: { ...room.s.controls },
+      state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, controls: { ...room.s.controls },
       visibility: room.s.visibility,
-      sharingAvailable: !!this.hub.access?.options?.().available,
       canPlayback:room.saved ? this.hub.roomCommandAllowed(room.s,actor,{action:'media.play'}) : owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback,
       canTransform:room.saved ? this.hub.canRoom(room.s,actor,'picture') : owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.transform, viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
       feedback: room.feedback };
@@ -872,9 +870,6 @@ class Watch {
       case 'media.seek.absolute': room.position = Math.max(0, Math.min(room.media.duration - .05, args.seconds)); break;
       case 'media.seek.start': room.position = 0; break;
       case 'media.seek.end': room.position = Math.max(0, room.media.duration - .05); break;
-      case 'room.enable': s.enabled = true; break;
-      case 'room.disable': s.enabled = false; break;
-      case 'room.sharing': s.mode = args.mode; break;
       case 'room.visibility':
         if (room.saved) {
           const record = await this.roomState.store.edit(s.roomId,actor.userId,room.saved.revision,{action:'visibility',visibility:args.visibility});
@@ -883,8 +878,6 @@ class Watch {
         room.disconnectedViewers.clear();
         this.refresh(room);
         break;
-      case 'room.controls': s.controls[args.control] = args.allowed; break;
-      case 'room.autojoin': return { status: 'unsupported', message: 'On join applies to Firefox player devices.' };
       case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
       case 'profile.load': if (!room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' }; s.state.picture = { ...room.profiles[args.slot] }; break;
       case 'status.get': case 'help.get': break;
@@ -900,7 +893,7 @@ class Watch {
         for (const viewer of room.viewers.values()) viewer.ready = false;
       }
     }
-    if (action.startsWith('room.')) { s.epoch = randomUUID(); this.hub.cancel(s.roomId); }
+    if (action.startsWith('room.')) s.epoch = randomUUID();
     s.state.profileSlots = Object.keys(room.profiles).map(Number); room.revision++; room.lastActivity = now; this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
     if (room.saved && (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) await this.roomState.save(room);
@@ -976,9 +969,9 @@ class Watch {
       this.roomState.closing.set(id,saved);
       saved.then(() => this.roomState.closing.delete(id), () => this.roomState.closing.delete(id));
     }
-    room.s.enabled = false; room.s.state.paused = true; room.s.epoch = randomUUID();
+    room.s.state.paused = true; room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
-    this.hub.cancel(id); this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
+    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
     return saved;
   }
   sweep() { for (const room of this.rooms.values()) this.refresh(room); }

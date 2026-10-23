@@ -57,8 +57,7 @@
     "website": "world",
     "creator": "crown",
     "host": "chair-director",
-    "remote": "device-remote",
-    "settings": "settings"
+      "settings": "settings"
 });
   const glyphs = Object.freeze({
     "bookmark": "<path d=\"M18 7v14l-6 -4l-6 4v-14a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4\" />",
@@ -92,7 +91,7 @@
     "chevron-down": "<path d=\"M6 9l6 6l6 -6\" />",
     "columns-2": "<path d=\"M3 4a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1v-16\" /><path d=\"M12 3v18\" />",
     "crown": "<path d=\"M12 6l4 6l5 -4l-2 10h-14l-2 -10l5 4l4 -6\" />",
-    "device-remote": "<path d=\"M10 10a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\" /><path d=\"M7 5a2 2 0 0 1 2 -2h6a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-6a2 2 0 0 1 -2 -2l0 -14\" /><path d=\"M12 3v2\" /><path d=\"M10 15v.01\" /><path d=\"M10 18v.01\" /><path d=\"M14 18v.01\" /><path d=\"M14 15v.01\" />",
+
     "device-tv": "<path d=\"M3 9a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -9\" /><path d=\"M16 3l-4 4l-4 -4\" />",
     "door": "<path d=\"M14 12v.01\" /><path d=\"M3 21h18\" /><path d=\"M6 21v-16a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v16\" />",
     "external-link": "<path d=\"M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6\" /><path d=\"M11 13l9 -9\" /><path d=\"M15 4h5v5\" />",

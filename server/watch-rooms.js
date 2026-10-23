@@ -325,7 +325,7 @@ class WatchRooms {
       this.apply(room, record); room.revision++;
       if (change.action === 'autoplay') this.watch.cancelAutoplay(room);
       else if (!['rename','keepEmpty','maxMembers','auto.reset'].includes(change.action)) {
-        this.watch.revokeConsent(room); this.watch.refresh(room); await this.elect(room);
+        this.watch.invalidateControls(room); this.watch.refresh(room); await this.elect(room);
       }
     }
     return this.summary(id, actor);
@@ -405,7 +405,7 @@ class WatchRooms {
     if(room&&(room.mediaTransition||room.queueEditing))throw failure('Wait for the current queue or media operation before resetting');
     if(room)room.mediaTransition=true;
     try{
-    if(room){this.freeze(room);this.watch.revokeConsent(room);await room.saving;}
+    if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving;}
     this.registry.transaction(()=>{
       this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
@@ -430,7 +430,7 @@ class WatchRooms {
     if (room.waitingForHost && !candidates.some(([,viewer]) => isHost(room.s,viewer.actor) || this.watch.hub.isAdmin(viewer.actor) ||
         this.watch.hub.canRoom(room.s,viewer.actor,'continueWithoutHost'))) return;
     // Freeze immediately; permission refresh/media authorization can take time.
-    const wasPlaying = !room.s.state.paused; this.freeze(room); this.watch.revokeConsent(room);
+    const wasPlaying = !room.s.state.paused; this.freeze(room); this.watch.invalidateControls(room);
     room.electing = true;
     try {
       for (const [viewerId, viewer] of candidates) {

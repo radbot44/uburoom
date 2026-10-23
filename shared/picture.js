@@ -1,7 +1,6 @@
-/* Version 1 viewport/transform contract. No room timeline, DOM or network dependencies. */
+/* Picture transforms for the watch player. No DOM or network dependencies. */
 (function (root) {
   'use strict';
-  const VERSION = 1;
   const DEFAULT = Object.freeze({ zoom: 1, stretchX: 1, stretchY: 1, x: 0, y: 0 });
   const PAN_MAX = 129;
   const numeric = (n, min, max) => {
@@ -72,7 +71,7 @@
     for (const k of Object.keys(DEFAULT)) numeric(s[k], k === 'x' || k === 'y' ? -PAN_MAX : .1, k === 'x' || k === 'y' ? PAN_MAX : 16);
     return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, round(v)]));
   }
-  const api = { VERSION, DEFAULT, PAN_MAX, isCommand, validate, picture, factor };
+  const api = { DEFAULT, PAN_MAX, isCommand, validate, picture, factor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.uburoomViewport = api;
+  else root.uburoomPicture = api;
 })(globalThis);

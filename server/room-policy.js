@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 
-// These are room capabilities, independent of remote consent and Plex access.
+// These are room capabilities, independent of Plex access.
 const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
   'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants'

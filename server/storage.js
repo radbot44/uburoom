@@ -3,11 +3,11 @@
 // Never repair or upgrade an unpublished layout implicitly.
 function initializeSchema(db) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 6) throw new Error('Account database requires a newer uburoom version');
+  if (version > 7) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-  if (version === 6) {
+  if (version === 6 || version === 7) {
     const columns = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
-      credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'], devices:['id','record'],
+      credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'], ...(version === 6 ? {devices:['id','record']} : {}),
       browser_logins:['id','record'], playback_history:['id','userId','at','record'],
       watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState'],
       watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
@@ -18,6 +18,7 @@ function initializeSchema(db) {
       const actual = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name);
       if (actual.length !== expected.length || actual.some((name, i) => name !== expected[i])) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
     }
+    if (version === 6) db.exec('BEGIN IMMEDIATE; DROP TABLE devices; PRAGMA user_version=7; COMMIT;');
     return;
   }
   if (version !== 0 || tables.length) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
@@ -27,7 +28,6 @@ function initializeSchema(db) {
     CREATE TABLE credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,detail TEXT NOT NULL);
-    CREATE TABLE devices(id TEXT PRIMARY KEY,record TEXT NOT NULL);
     CREATE TABLE browser_logins(id TEXT PRIMARY KEY,record TEXT NOT NULL);
     CREATE TABLE playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL);
     CREATE INDEX playback_history_user ON playback_history(userId,at);
@@ -42,22 +42,10 @@ function initializeSchema(db) {
     CREATE INDEX watch_queue_room_state_rank ON watch_queue_entries(roomId, state, rank);
     CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
-    PRAGMA user_version=6;
+    PRAGMA user_version=7;
     COMMIT;`);
 }
 // Fixtures without a database stay ephemeral; production always supplies Accounts.
-function deviceStore(registry) {
-  const db = registry?.db;
-  const devices = db ? db.prepare('SELECT record FROM devices ORDER BY rowid').all().map(row => JSON.parse(row.record)) : [];
-  return { devices, save() {
-    if (!db) return;
-    registry.transaction(() => {
-      db.exec('DELETE FROM devices');
-      for (const device of devices) db.prepare('INSERT INTO devices VALUES(?,?)').run(device.id, JSON.stringify(device));
-    });
-    return registry.flush();
-  } };
-}
 function loginStore(context, vault, registry) {
   if (!registry) return { logins: new Map(), ownerName: '', save() {} };
   const db = registry.db;
@@ -83,4 +71,4 @@ function loginStore(context, vault, registry) {
   if (!matching) { db.exec('DELETE FROM browser_logins'); registry.meta('loginContext', context); }
   return store;
 }
-module.exports = { deviceStore, loginStore, initializeSchema };
+module.exports = { loginStore, initializeSchema };

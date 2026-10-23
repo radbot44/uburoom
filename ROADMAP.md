@@ -2,13 +2,12 @@
 
 Updated: 2026-10-20.
 
-uburoom is a self-hosted Plex watch-together app for browsers and Discord Activity. The YouTube TV remote is maintained in the independent uburoom-remote repository, with versioned integration and remaining live verification tracked in M1. The goal is simple: choose a title and watch together, with the intended picture, audio and subtitles surviving ordinary failures.
 
 This is a working map for one maintainer and their agents. Milestones define broad outcomes; phases are the smaller bodies of work within each milestone. Plan in small, useful increments within these phases. The order can change with the owner's priorities; there are no sprint commitments or promised release dates. This document consolidates existing plans, not new feature approvals or permission to deploy them.
 
 ## Where we are
 
-The shared player, room timeline, linked accounts, per-user Plex access, command engine and remote consent model are implemented. Personal tracks, buffered rewind, bounded recovery, private HLS session refresh and short same-tab reconnect are also present. Synthetic browser tests include two-hour playback runs and decoded picture/audio/caption checks.
+The shared player, room timeline, linked accounts, per-user Plex access and command engine are implemented. Personal tracks, buffered rewind, bounded recovery, private HLS session refresh and short same-tab reconnect are also present. Synthetic browser tests include two-hour playback runs and decoded picture/audio/caption checks.
 
 The main gap is evidence and completeness across real Plex sessions, Discord surfaces, content combinations and devices. A first two-hour real Plex HLS browser baseline is recorded, with one observed automatic unload/recovery and unresolved process memory growth. Passing a fixture or receiving a command acknowledgement does not establish live playback support. See the [current verification dashboard](docs/testing.md); detailed dated results belong in the [testing archive](docs/archive/testing-2026-10-22.md), not in this roadmap.
 
@@ -20,10 +19,8 @@ The main gap is evidence and completeness across real Plex sessions, Discord sur
 | --- | --- |
 | Service and state | Keep one Node process, ordinary JavaScript, built-in SQLite and minimal dependencies. Develop on local disk; keep runtime state and credentials private. Keep device, login and playback-history persistence in SQLite, while removing private pre-release migration paths before the first public release. Protect the single event loop from synchronous disk/crypto spikes during playback synchronization. |
 | Room and viewer | The server owns the shared item timeline and playback intent. Each viewer owns their quality, audio, subtitles, volume and authorized media stream. M1-P13 durable records, live-room integration, queues, generation and cancellable autoplay use the existing SQLite writer; real Plex/Activity continuity checks remain. Current viewing rooms are still process-local. Preserve native playback history for future per-viewer Plex watch-state reporting. |
-| Commands and access | Every control surface uses the shared validated engine. Recheck current access around awaited operations, reject stale work, and keep remote consent off after disconnect/restart. |
 | Identity and authorization | Keep one canonical account UUID independent of display names and login provider. Separate sign-in, admission, media entitlement, room roles and server administration. Replace implicit owner-token fallback with explicit media grants; sponsored viewers must not be attributed to another person's Plex watch history. M1-P14 defines the policy/configuration foundation; M1-P4 owns Plex reporting. |
 | Media delivery | Grow the existing direct, Plex HLS and optional AV1 paths into measured source/track/capability negotiation. Share output only when content and authorization boundaries allow it. Make authenticated WebSockets the native room-control transport; retain HTTP where appropriate for auth/bootstrap, catalog, artwork, media and health. |
-| Interfaces | Preserve the existing design, safe DOM components and shared remote styles/icons. Chrome and Firefox are equal required web test targets, alongside real Discord Activity coverage. Keep a single primary `/watch` entry point after the remote split, and keep diagnostics/experimental tools outside normal viewer navigation. Maintain native ES modularity in the browser without bundlers or frameworks. |
 
 The [product specification](SPEC.md) and [project instructions](AGENTS.md) define the enduring rules. These milestones do not call for a service split, a framework rewrite or a new dependency stack.
 
@@ -34,9 +31,7 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 - Verify a clean installation on an unrelated host/origin with separate provider applications and fresh profiles. Test backup/restore, stable account UUIDs and exact original encryption-key preservation for retained state, code/state separation and rollback. The sole pre-release installation may be reset or manually transferred with an explicit backup; do not add compatibility migrations solely for it or silently discard its data.
 - Verify restricted/revoked Plex access, linked accounts, `/ubu` and `!ubu`, real Activity setup and the claimed browser/transport combinations without owner-token fallback.
 - Close the confirmed media-access expansion when a restricted Plex identity is removed from a Discord-eligible account. Require an explicit authorization policy for viewers without personal Plex entitlement; verify admission, media grants and reporting attribution independently. Complete the M1-P14 configuration/security foundation before exposing expanded sharing controls.
-- Complete real Firefox/YouTube TV lifecycle, consent, latency and configured-origin checks. The known full extension smoke failure remains deferred; preserve that exception explicitly and do not weaken permissions or throttling to conceal it.
 - Finish branding/artwork/media provenance, dependency notices and GPL-3.0-only distribution review. Switch `scripts/build-demo-media.js` to approved current branding and remove `assets/branding/old/` from the active source before packaging; retain prior artwork in Git history. Audit source, full publication history, assets and ZIP contents for private material; include LICENSE and required notices.
-- **Final M1 pre-release cleanup gate:** Remove obsolete `session.*`/`/api/sessions` compatibility, private pre-release JSON imports/schema upgrade paths and legacy HTTP room-control compatibility routes after their callers/tests are switched to the canonical room/WebSocket contract. Keep post-release database schema versioning and future migration capability; this is not permission to discard a public release user’s data. Complete the remote split and production-vs-diagnostic entry-point cleanup before the first public source/package cut.
 - Source packaging now includes ROADMAP.md; local ZIP inventory verification confirms it is present alongside the existing private-file exclusions. Retain that coverage in later package reviews.
 - Keep signing, publication, public push, provider registration and production configuration/restarts behind their existing explicit approval requirements. Public repository creation remains deferred until the brand transition is complete.
 
@@ -59,7 +54,6 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P5 | Real-time playback synchronization | In progress; timing instrumentation and clock estimation implemented, live targets unverified | M1-P1 diagnostics and multi-client measurements; M1-P6 frame-pacing constraints |
 | M1-P6 | Frame-pacing preservation during synchronization | In progress; experimental candidates gated, disposition/production cleanup and joint live verification pending | Presentation-interval diagnostics and coordinated design with M1-P5 |
 | M1-P7 | In-depth UI/UX review and restructure | In progress; normal/theater/fullscreen layout split implemented, broader UI review remains | Existing design guide, rendered surfaces and playback/permission behavior |
-| M1-P8 | Separate remote extension repository and uburoom compatibility | Source, UI/assets and packaging cutover complete; local compatibility verified, full lifecycle/release verification pending | Stable command/protocol contract and cross-repository compatibility checks |
 | M1-P9 | Render styled and bitmap subtitles in the browser | Implementation complete; verification and licensing pending | M1-P2/M1-P3 track delivery; existing player and shared conversion boundaries |
 | M1-P10 | Transition "session" terminology to "room" | Canonical room protocol verified locally across repositories; full live surface verification pending | M1-P7 UI/UX review and command engine consistency |
 | M1-P11 | Architecture hardening: persistence unification, event-loop protection and fault isolation | Local hardening and compatibility removal complete; live checks pending | M1-P1 and M1-P5 real-world measurements |
@@ -80,9 +74,7 @@ Details: [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [
 | M1-P5 — Synchronization | B: skew/clock and buffering isolation; C: physical/WAN/client presentation timing; D: the joint viewing check with P6 |
 | M1-P6 — Frame pacing | B: correction/cadence comparisons; C: physical display/refresh/transport measurements; D: smooth-motion acceptance with P5 |
 | M1-P7 — UI/UX | A: flow/accessibility review; B: browser/layout/keyboard automation; C: installed mobile/Activity interaction; D: task clarity/usability acceptance |
-| M1-P8 — Remote integration | B: extension/protocol/build/consent regression; C: installed YouTube TV, Firefox/Chromium and physical lifecycle checks |
 | M1-P9 — Styled/bitmap subtitles | B: parser/renderer/pixel/font/cleanup coverage; C: live Plex/Activity/device/resource evidence; D: readability and authored-fidelity acceptance |
-| M1-P10 — Room terminology | A: source/contract audit; B: legacy-route/command checks; C: real bot/Activity/extension compatibility |
 | M1-P11 — Architecture hardening | A: failure/upgrade boundary review; B: fault, worker, latency and restore fixtures; C: operator backup/restore and live resource/proxy checks |
 | M1-P12 — Viewer telemetry | A/B design and regression when implemented; C for actual observer/platform claims; D for clarity of new status UI |
 | M1-P13 — Durable rooms/queues | B: queue, concurrent edit, crash/reopen and autoplay fixtures; C: live Plex multi-viewer/Activity and retained-state evidence; D: queue/room UX acceptance when claimed |
@@ -229,7 +221,6 @@ uburoom must prioritize consistent native frame pacing alongside low inter-viewe
 
 **Shared controls — Room (2026-10-21):** Owner-approved toolbar dimensions, segmented keyboard behavior, switch visuals and panel-heading foundations are documented and implemented with opt-in shared helpers/styles. Room is the only migrated panel. Focused Chrome/Firefox checks, existing Room/popup regressions and all 447 Node tests pass; see [verification](docs/archive/testing-2026-10-22.md#2026-10-21---shared-controls-room-increment-m1-p7). Owner visual approval is pending before Queue; Media and its sticky machinery remain untouched. No merge or deployment is authorized.
 
-Room quick permissions now use the owner's Tabler thumb permission-pill variant, retaining ordinary switches for on/off settings. Chrome/Firefox checks pass; current full-suite failures and the unrelated pre-existing remote edit are recorded in [permission-pill verification](docs/archive/testing-2026-10-22.md#2026-10-21---room-permission-thumb-pills-m1-p7). The Settings Permissions tab is the next owner-directed step, not part of this increment.
 
 The subsequent owner-directed Room Settings Permissions increment adds compact thumb rows, captions/condensed tooltips, an always-visible cosmetic Custom preset, and the merged Everyone is host row. Thumb hover substitutions are removed and standard icon backgrounds restored. See [current verification](docs/archive/testing-2026-10-22.md#2026-10-21---room-settings-permissions-matrix-m1-p7); Queue/Media migration and owner visual acceptance remain pending.
 
@@ -257,7 +248,6 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 
 **Shared lobbies and room entry speed (2026-10-19):** Home and empty-room lobbies now use the same video-sized frame and presentation. Initial browser identity/active rooms are served with the page; reopen returns its joined state in one response and commits the room/dialog transition together. Redundant chooser/entry reads and one-second saved-list reloads are removed. Local Chrome/Firefox entry checks and all 366 tests pass; real Plex preparation/network timing remains open. See [verification](docs/archive/testing-2026-10-22.md#shared-lobby-layout-and-room-entry-latency-2026-10-19).
 
-**Lobby and reconnect continuity (2026-10-19):** Startup now renders the lobby directly with a stable Join or create a room heading and inline sign-in/loading/retry. Native WebSocket pongs preserve presence when page timers are throttled; reconnect keeps library navigation and queue selection while replacing the player stream and clearing remote consent. Chrome/Firefox fixture checks and all 363 tests pass; actual network/provider continuity remains open. See [verification](docs/archive/testing-2026-10-22.md#lobby-startup-and-connection-continuity-2026-10-19).
 
 **Room control refinement (2026-10-19):** The video lobby now exposes Join/Reopen/New directly while display modes remain available without playback. Compact permissions, creator/admin-only participant shortcuts, a single People roster, Queue-header autoplay, an auto-queue source picker and smaller mobile settings are implemented. Empty queue and countdown/badge states are cleaned up. See [verification](docs/archive/testing-2026-10-22.md#room-control-refinement-2026-10-19).
 
@@ -273,7 +263,6 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 
 **Login/account increment (2026-10-18):** Sign-in checking overlays an inactive watch layout. Discord and Plex have official provider icons, username-only summaries and matching remove/confirm/Connect flows; Connect stays at the right of its provider row. Removal preserves the account UUID, protects the last sign-in and invalidates prior credentials/logins. Owner matching is collapsed. See [verification](docs/archive/testing-2026-10-22.md#login-and-account-experience-2026-10-18).
 
-**Appearance increment (2026-10-18):** Compact Light/Dark and Orange/Pink header switches apply explicit, persistent palettes across page, dialog, menu and remote surfaces. Canonical SVG branding adapts its neutral ink and accent portions; video retains black/dark chrome. Appearance changes recolor cached local SVG data URLs without network requests. Accents fade over 100 ms; rapid toggle clicks reveal the local Sunrise/dud easter eggs. Sunrise tolerates continued rapid clicking and exits on a separate click after a pause. See [appearance verification](docs/archive/testing-2026-10-22.md#appearance-themes-and-accents-2026-10-18).
 
 **Track-menu refinement (2026-10-18):** Quality labels include 1080p/720p; automatic audio/subtitle summaries show resolved tracks, with separate track-name captions and an indication of which track Automatic uses. Selected choices retain orange text without an edge stripe. See [verification](docs/archive/testing-2026-10-22.md#player-track-menu-labels-2026-10-18).
 
@@ -281,8 +270,6 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 
 **Goal:** Review the interface and complete user experience in depth, then restructure navigation, information hierarchy and interactions so common tasks are clear, consistent and easy to complete.
 
-- Map and inspect end-to-end journeys: sign-in and account linking, library browsing, room creation/joining, playback and personal tracks/quality, remote permissions, browser/Discord handoff and recovery from failures.
-- Identify confusing navigation, duplicated controls, hidden state, unnecessary steps, inconsistent terminology and unclear loading, empty, error or recovery feedback. Evaluate desktop, mobile and real Discord Activity layouts, including keyboard and assistive-technology use. M1-P8 now routes `/` into `/watch` and retires the standalone remote homepage; retain the watch page’s authenticated remote drawer.
 - Develop a coherent information architecture and reviewable flow/layout proposals, then implement the restructure in bounded increments. Use the [design guide](docs/design-guide.md) and shared styles/SVGs as the visual foundation; preserve safe DOM creation, accessibility and clear separation of shared room actions from personal settings.
 - **Completed technical increment (2026-10-17):** Codec diagnostics moved to `diagnostics/` behind an explicit local developer launcher; the normal server and library expose no diagnostic page, assets or sample routes. Capability checks, reproducible samples and automated decoded playback remain available.
 - **Completed first modularization increment (2026-10-17):** `web/watch-sync.mjs` owns local synchronization lifecycle, scheduled alarms, alignment/refill state and correction resets, using existing timing/buffering primitives. Synchronization tests import the module directly. Chrome/Firefox checks cover startup, quality replacement, shared seek and media recovery without changing correction policies or consent. See [verification and remaining limits](docs/archive/testing-2026-10-22.md#p7-technical-foundation).
@@ -295,21 +282,6 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 - **Lobby library increment (2026-10-18):** Room options remain faded and disabled outside a room while the authenticated library stays accessible. Library Play opens a public/private room creator and accessible active-room chooser; joining preserves existing playback. Chrome/Firefox fixture flows and layout checks pass; real Activity/provider checks remain open. See [lobby verification](docs/archive/testing-2026-10-22.md#lobby-library-and-room-chooser-2026-10-18).
 - Validate discoverability and task completion with representative user journeys. Inspect rendered surfaces across supported layouts and verify that focus, menus, dialogs and player controls remain usable without disrupting playback.
 
-**Success criteria:** Common journeys have clear entry points, understandable state and recovery, consistent controls and fewer unnecessary steps. Normal installs have one watch entry point and no fixture-dependent codec-test navigation; development can still run capability checks. The restructured interface works across its declared surfaces without regressions in playback, account scopes, privacy or remote consent. Record findings, before/after evidence and unfinished checks in [testing status](docs/archive/testing-2026-10-22.md#uiux-review-and-restructure).
-
-### M1-P8 — Separate remote extension repository and uburoom compatibility
-
-**Goal:** Move the Firefox remote extension into a separate repository while keeping it fully interoperable with uburoom and preserving its existing YouTube TV functionality.
-
-**Current increment:** The extension, assets, notices, configuration, packaging and standalone tests now live in uburoom-remote. uburoom owns its command modules under `shared/`, web renderer/branding under `web/`, and the fixed authenticated remote integration contract; its original extension directory and standalone remote homepage are removed. `/` enters `/watch` while preserving the query, and application packaging produces source ZIPs only. Matching fixtures, TLS command/revocation checks, Chrome/Firefox decoded playback and remote-drawer checks, and installed Firefox startup pass. Full Firefox smoke testing (`scripts/firefox-smoke.js`) passes cleanly end-to-end with compact popup height (503px, well under the 600px browser limit) and verified management dispatch. Chromium Manifest V3 extension support (service worker execution, `storage.session` tab state, server-side OAuth redirect and origin validation) is implemented and verified across both repositories. See [contract](docs/remote-protocol.md) and [evidence](docs/archive/testing-2026-10-22.md#remote-extension-repository-separation).
-
-- Maintain the distinct Room/Playback and Viewport/Transform protocols, so YouTube TV presentation controls do not intertwine with room synchronization. Keep ownership and distribution of command validation, remote styles/icons and protocol fixtures explicit so both repositories build and test independently without incompatible copies drifting apart.
-- Define and document the extension/server integration contract, supported version combinations, configured HTTPS origins, authentication, connection lifecycle and failure behavior. M1 supports the **canonical `room.*` protocol only**, not old pre-release `session.*` aliases; coordinate both repositories before removal. Preserve shared command validation, per-user scopes, private-room visibility and stale-command rejection.
-- Extract the extension with its required source, licenses and notices; update uburoom imports, asset serving, setup documentation and packaging so neither repository depends on the other's checkout layout. Retire the standalone remote-only site (`web/index.html`, `web/setup.js`, `web/style.css` where no longer shared); make `/` enter `/watch` while retaining the remote drawer and authenticated remote protocol. Ensure the new extension repository owns its own UI/assets without importing uburoom filesystem paths.
-- Verify real Firefox installation, connection and permitted controls against uburoom, alongside isolated protocol/integration tests. Cover reconnect, tab/browser/server restart, revoked access, incompatible versions and configured-origin builds. Remote consent must remain off after disconnect/restart, with narrow permissions and matching CSP.
-- Preserve existing remote capabilities and shared web/Discord controls through the split. Keep the known full extension smoke exception explicit until resolved; do not weaken permissions or throttling to obtain a pass. Audit both histories and ZIP contents for private material and preserve GPL-3.0-only source and third-party notices before release.
-
-**Success criteria:** The extension builds and installs from its own repository, uburoom builds and runs independently with `/watch` as its main interface, and the documented current-protocol extension/server combinations pass integration and real lifecycle checks with the existing authorization and consent safeguards. Keep both checkouts independently buildable/testable; do not restore cross-repository filesystem imports. Repository publication and signing retain their existing approval requirements. Record the compatibility matrix, evidence and unfinished checks in [testing status](docs/archive/testing-2026-10-22.md#remote-extension-repository-separation).
 
 ### M1-P9 — Browser rendering for styled and bitmap subtitles
 
@@ -327,20 +299,16 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 
 ### M1-P10 — Transition "session" terminology to "room"
 
-**Outcome so far:** Canonical room terminology and protocol are implemented locally on 2026-10-17. Legacy management actions, HTTP routes, room-ID/response aliases, shared UI options and extension wire translations are removed. The independent extension uses `room.*`, `roomId` and `room`/`room-ack`; authentication, browser automation and Plex transcode sessions retain their technical names. The host-handoff behavior remains covered. Unit/integration and full Firefox watch smoke checks pass; the separately built extension passes TLS compatibility and installed startup/sign-in checks, while its full fixture run remains incomplete. Detailed extension coverage belongs to M1-P8. See [verification and limitations](docs/archive/testing-2026-10-22.md#room-terminology-m1-p10).
 
 - Inventory and rename all user-facing instances of "session" in the web UI, dialogs, status toasts, Discord bot command options/descriptions (`/ubu`, `!ubu`), and Discord Activity lobby views to "room" (e.g. "Room Lobby", "Create Room", "Room Settings").
 - Reserve the technical term "session" strictly for low-level connection and auth contexts: HTTP cookie sessions, WebSocket connection sessions, and Plex transcode sessions.
-- Remove all watch-room `session.*` action aliases (including `session.enable`, `session.visibility` and `session.controls`), `/api/sessions`, legacy ID/response shapes and extension wire translations after all in-repo callers and the M1-P8 extension use canonical `room.*`/`rooms`. Keep actual HTTP cookie, WebSocket connection and Plex transcode **sessions** as technical concepts; do not mass-rename them.
 - Update user documentation, developer docs, protocol fixtures and tests to use only canonical room terminology. Replace alias-acceptance tests with rejection/no-reintroduction coverage; this is an intentional breaking change to private pre-release clients.
 
-**Success criteria:** All UI, bot and Activity touchpoints consistently present "room"; developer docs distinguish rooms from technical sessions; server, web client, bot and separately built extension speak the canonical room protocol without compatibility aliases. Confirm endpoint/action removal and real extension interoperability before M1 publication.
 
 ### M1-P11 — Architecture hardening: persistence unification, event-loop protection and fault isolation
 
 **Goal:** Consolidate server persistence, protect the single Node.js event loop from synchronization-blocking latency spikes, and isolate component failures.
 
-- **Storage unification and first-release pruning:** Keep devices, browser logins, linked accounts, credentials and native playback history in the single built-in SQLite database (`data/accounts.sqlite`), with atomic writes/backups. The runtime no longer imports JSON, tracks import markers or upgrades private pre-release layouts implicitly. The current explicit baseline is schema version 2, extended with room records/hosts in M1-P13; unsupported layouts fail without adding missing tables. Tests and operator transfer/restore instructions cover this boundary. There are no external users to support yet; make a reviewed backup/manual reset or transfer plan for the owner’s existing state. Preserve stable UUIDs and the original key for any retained encrypted data. Keep an intentional schema baseline/version and add forward migrations once public releases exist. Live rooms are currently ephemeral; M1-P13's durable core awaits Watch integration. Remote consent must remain ephemeral after that work too.
 - **Event-loop latency protection:** Keep the high-frequency playback/tick loop free from synchronous disk I/O and CPU-bound cryptography. Audit `DatabaseSync` calls and `AES-256-GCM` token encryption/decryption (`credentialVault`) to ensure they only execute during infrequent operations (auth/linking) or offload via asynchronous task batching, safeguarding the ≤50ms p95 sync target in M1-P5.
 - **WebSocket-native room operations:** Keep authenticated room negotiation, viewer preparation, state changes, commands, readiness and observations on WebSockets. The dispatcher in `server/watch-socket.js` calls transport-neutral operations directly. Obsolete authenticated HTTP **room-control** endpoints and compatibility routing are retired; the setup client and integration tooling use sockets. Retain HTTP for login/account bootstrap, library/catalog requests as needed, media/artwork/health and other genuinely request-response resources; do not duplicate business logic or weaken authentication, revocation, epochs or acknowledgements.
 - **Stream fault isolation:** Rejected periodic media access checks in direct Plex and local demo streaming paths now end only the affected stream. Regression checks cover rejected login renewal, timer cleanup and a subsequent authorized resource request.
@@ -387,7 +355,6 @@ Queue UI follow-up: portrait poster cards, a centered chronological List, separa
 - **P13-6 room setup and queue presentation:** Prospective settings remain local until creation; closed rooms edit playback configuration before reopening. Creation/footer actions, explained presets and always-visible cosmetic Custom accompany compact counted queue arrows, styled List rows, mobile tab/scroll continuity and equal intermediate panel widths. Evidence is recorded in [testing](docs/testing.md).
 - Keep auto-queue generation separate from automatic playback. Continue P13-6/P13-7 real Plex multi-viewer and Activity continuity checks, including provider failures and writer/sync/resource measurements.
 - Verification covers Chrome/Firefox normal/theater/fullscreen/mobile surfaces; real Activity evidence tracked separately.
-- Define the storage baseline/retained-state procedure before schema changes; preserve UUIDs, native history and original credentials/key. Checkpoint outside the sync tick, await durable edit/close acknowledgements and final shutdown saves, page bounded queue responses, and review shared protocol compatibility with the independent remote.
 
 **Implementation sequence:** P13-0 decisions recorded; P13-1 record/permission core implemented for review; P13-2 live lifecycle/Admin-mode/checkpoint integration; P13-3 manual queue/history/navigation and Queue UI slice; P13-4 bulk/generation/shuffle; P13-5 cancellable/off-switch autoplay; P13-6 remaining UI alongside usable backend slices; P13-7 continuity/regression/operator documentation. The detailed plan defines handoff boundaries and unfinished checks. No deployment or retained-state transfer has occurred.
 
@@ -435,7 +402,6 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 | M2-P7 | Self-hosting installation validator (`--doctor` CLI check) | Planned | M1-P11 configuration and storage unification |
 | M2-P8 | Official containerization (Docker & Docker Compose) | Planned | M2-P7 configuration validation |
 | M2-P9 | Discord voice channel presence and room invite embeds | Planned | M1-P10 room terminology and Discord bot integration |
-| M2-P10 | Chromium remote extension support | Completed & verified | M1-P8 independent remote repository and versioned protocol |
 
 ### M2-P1 — High Dynamic Range (HDR) support
 
@@ -514,33 +480,12 @@ These phases expand uburoom's feature set after the M1 release gates are satisfi
 - Update bot status and rich presence dynamically with current watching activity.
 - Automatically update or clean up the active embed when the room session ends or media changes.
 
-### M2-P10 — Chromium remote extension support
-
-**Goal:** Support the remote extension in Chrome and other explicitly tested Chromium browsers alongside Firefox.
-
-- Add Chromium Manifest V3 service-worker builds and browser API handling without weakening configured-origin permissions, CSP or off-by-default consent.
-- Define stable extension identity and proof-bound sign-in return URLs; retain per-tab metadata and safe behavior across worker suspension, reconnect and browser restart.
-- Verify installation, local/remote controls, authentication, revoked access and lifecycle behavior in both Chrome and Firefox. Test other claimed Chromium browsers explicitly.
-
-Chromium Manifest V3 extension support is implemented and verified. `uburoom-remote` provides multi-target build and packaging (`npm run build:all`, `npm run package:all`, `scripts/package-all.ps1`), a Manifest V3 background service worker, and `chrome.storage.session` for active tab state. `uburoom` validates Chrome extension origin headers (`chrome-extension://[a-p]{32}`) and proof-bound Chromium OAuth redirect URLs (`https://<id>.chromiumapp.org/`), with full automated regression testing.
-
-### M2-P11 — Reworked player remote control
-
-**Goal:** Revisit and modernize the remote control experience across browser, mobile and TV surfaces.
-
-- Re-examine the remote control interaction model, touch gestures, volume/scrubbing interactions and consent presentation.
-- Re-integrate the remote control surface into the updated room architecture with clean entry points.
-- Verify end-to-end control latency and consent lifecycle against YouTube TV and web player targets.
-
-Admin-mode access to the synthetic codec tester is available in Other, including an embedded Activity path; the owner will rerun the acceleration-off compatibility matrix. See [verification evidence](docs/archive/testing-2026-10-22.md#2026-10-20---admin-codec-tester-access-m1-p2p3).
-
 ## Future direction and decisions still open
 
 These are already identified directions or placeholders, outside the current delivery sequence. Define a small scope when the owner selects one.
 
 | Direction | Current boundary |
 | --- | --- |
-| Reworked player remote control | Future milestone phase (M2-P11). Revisit remote control interface, consent presentation and control surfaces after web room redesign. Entry points deprecated in M1-P7 while command engine integration remains wired in. |
 | Native-player integration | Future milestone. Establish the integration and control contract while preserving the shared engine, account scopes and consent lifecycle. |
 | Project-hosted rooms and managed room URLs | Future work in the specification. Self-hosting remains the current product; hosting and account/isolation responsibilities need a separate scope. |
 | Live TV/DVR | Separate feasibility work for live manifests, moving seek windows, tuning and authorization. On-demand video coverage does not imply live support. |
