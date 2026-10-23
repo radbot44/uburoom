@@ -102,7 +102,8 @@ test('watch socket accepts only a viewer\'s current ephemeral synchronization te
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal(hostPresence.syncQuality.score,1,'valid scores are clamped');assert.equal(hostPresence.syncQuality.lastKnownScore,1);
   assert.equal(hostPresence.syncQuality.lastKnownLevel,'excellent');
-  assert.equal(hostPresence.syncQuality.confidence,'confident');assert.equal(hostPresence.syncQuality.measurementFreshnessMs,300);
+  assert.equal(hostPresence.syncQuality.confidence,'confident');assert.ok(hostPresence.syncQuality.measurementFreshnessMs>=300);
+  const firstMeasuredAt=hostPresence.syncQuality.measuredAt,firstKnownAt=hostPresence.syncQuality.lastKnownAt;
   await host.call(path+'?viewer='+hostViewer);
   assert.equal(hostPresence.syncQuality.score,1,'the current viewer retains its ephemeral score');
   assert.equal(Object.hasOwn(room.s,'syncQuality'),false,'the score is separate from durable room state');
@@ -111,11 +112,13 @@ test('watch socket accepts only a viewer\'s current ephemeral synchronization te
   assert.equal((await guestClosed)[0],4003,'a viewer cannot claim another viewer identity');
   assert.equal(hostPresence.syncQuality.score,1,'the foreign update did not change the owner score');
   await new Promise(resolve=>setTimeout(resolve,550));
-  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'paused',reason:'paused'}));
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'paused',reason:'paused',measurementFreshnessMs:0}));
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal(hostPresence.syncQuality.status,'paused');assert.equal(hostPresence.syncQuality.score,1);
   assert.equal(hostPresence.syncQuality.lastKnownScore,1,'temporary unavailability preserves the last score');
   assert.equal(hostPresence.syncQuality.lastKnownLevel,'excellent');assert.equal(hostPresence.syncQuality.confidence,'reduced');
+  assert.equal(hostPresence.syncQuality.measuredAt,firstMeasuredAt);
+  assert.equal(hostPresence.syncQuality.lastKnownAt,firstKnownAt,'reporting a retained score must not refresh evidence time');
 });
 
 test('watch socket rejects cross-origin upgrades, missing CSRF/cookies and invalid credentials',tls,async t=>{

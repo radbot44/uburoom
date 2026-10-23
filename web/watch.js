@@ -55,13 +55,16 @@ function resetSyncQuality() {
   syncQualitySettleUntil=performance.now()+2000;
   if(wasActive)sendSyncQuality('stale',syncQuality.refresh({playbackStatus:'starting'}).score,'reduced','stream-changed');
 }
+function syncQualityClockUsable(timing) {
+  return !!(timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=uburoomSyncQuality.MAX_CLOCK_AGE_MS &&
+    Number.isFinite(timing.clockUncertaintyMs) && timing.clockUncertaintyMs<=uburoomSyncQuality.MAX_CLOCK_UNCERTAINTY_MS);
+}
 function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
   const shared=state?.state;
   return !!(selected && state?.id===selected && state.mediaUrl && state.streamVersion && state.mediaVersion && mediaSource===state.mediaUrl &&
     shared && !shared.paused && !state.waitingForReady && !video.paused && !video.seeking && (!playerWaiting || allowWaiting) &&
     !probing && !playbackError && !video.error && !autoplayBlocked && readyVersion===state.mediaVersion && (forBuffer || video.readyState >= 3) &&
-    document.visibilityState==='visible' && timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=2500 &&
-    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800&&
+    document.visibilityState==='visible' && syncQualityClockUsable(timing)&&
     !(Number.isFinite(state.startAt) && timing.serverTime<state.startAt));
 }
 function syncQualityBufferEligible(timing,at=performance.now()) {
@@ -87,8 +90,7 @@ function observeSyncQuality(errorMs,timing,source='presentation') {
 }
 function refreshSyncQuality() {
   const timing=playbackClock.read(),at=performance.now();
-  const clockReliable=timing.valid&&Number.isFinite(timing.clockAgeMs)&&timing.clockAgeMs<=2500&&
-    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800;
+  const clockReliable=syncQualityClockUsable(timing);
   if(!clockReliable)syncQuality.breakSample(at);
   const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
     state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':syncQualityBuffering||playerWaiting||video.readyState<3?'buffering':'playing';
@@ -110,6 +112,7 @@ function refreshSyncQuality() {
   if(result.updated||changed||Date.now()-lastQualityDiagnosticAt>=10000) {
     diagnostics.record('sync-quality',{qualityStatus:result.status,qualityConfidence:result.confidence,qualityReason:result.reason,rawQualityScore:result.rawScore,
       smoothedQualityScore:result.lastScore,lastKnownQualityLevel:result.lastLevel,qualityMeasurementFreshnessMs:result.metrics?.measurementFreshnessMs,
+      qualityMeasurementSource:result.metrics?.latestSource,qualitySampleCount:result.metrics?.sampleCount,
       measuredPlaybackSeconds:result.metrics?.measuredSeconds,outOfSync250Seconds:result.metrics?.outOfSync250Seconds,
       outOfSync500Seconds:result.metrics?.outOfSync500Seconds,automaticCorrectionCount:result.metrics?.automaticCorrectionCount,
       automaticCorrectionMagnitudeMs:result.metrics?.automaticCorrectionMagnitudeMs,correctionDutyCycle:result.metrics?.correctionDutyCycle,
