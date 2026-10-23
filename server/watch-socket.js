@@ -21,8 +21,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   const qualityStatuses=new Set(['playing','buffering','paused','seeking','starting','stale','unknown','error']);
   const qualityReasons=new Set(['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples',
     'measurement-stale','measurement-expired','invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting',
-    'stream-changed','media-changed','room-changed','no-sessions']);
-  const qualityDevice=/^(Chrome|Firefox|Edge|Safari|Chromium|Opera|Other) · (Android|iOS|Windows|macOS|Linux|ChromeOS|Other)$/;
+    'stream-changed','media-changed','room-changed','no-sessions','awaiting-sync-interval','awaiting-measurements',
+    'position-timing-estimate','clock-warmup','measurement-interrupted']);
+  const qualityConfidences=new Set(['confident','reduced','provisional']);
   function send(client, message) {
     if (client.ws.readyState !== 1) return;
     if (client.ws.bufferedAmount > 1024 * 1024) { client.ws.terminate(); return; }
@@ -34,10 +35,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   async function syncQuality(client,message) {
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
     if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
-        !qualityStatuses.has(message.status) || ['playing','buffering'].includes(message.status) && !Number.isFinite(message.score) ||
-        !['playing','buffering'].includes(message.status) && Object.hasOwn(message,'score') ||
-        message.reason!==undefined&&!qualityReasons.has(message.reason) ||
-        message.deviceLabel!==undefined&&(typeof message.deviceLabel!=='string'||!qualityDevice.test(message.deviceLabel)))
+        !qualityStatuses.has(message.status) || Object.hasOwn(message,'score')&&!Number.isFinite(message.score) ||
+        message.confidence!==undefined&&!qualityConfidences.has(message.confidence) ||
+        message.measurementFreshnessMs!==undefined&&(!Number.isFinite(message.measurementFreshnessMs)||message.measurementFreshnessMs<0||message.measurementFreshnessMs>300000) ||
+        message.reason!==undefined&&!qualityReasons.has(message.reason))
       return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
     if (!room || room.s.roomId !== message.roomId || !viewer || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
@@ -54,13 +55,21 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(client.lastSyncQualityAt!==undefined&&now-client.lastSyncQualityAt<minimumInterval)return;
     const previous=viewer.syncQuality||{};
     const hasScore=Number.isFinite(message.score);
-    const score=hasScore?Math.max(0,Math.min(1,message.score)):undefined;
-    const lastKnownScore=hasScore?score:previous.lastKnownScore;
+    const score=hasScore?Math.max(0,Math.min(1,message.score)):
+      Number.isFinite(previous.score)?previous.score:Number.isFinite(previous.lastKnownScore)?previous.lastKnownScore:1;
+    const lastKnownScore=hasScore?score:previous.lastKnownScore??score;
     const lastKnownLevel=hasScore?SyncQuality.level(score,previous.lastKnownLevel):previous.lastKnownLevel;
-    viewer.syncQuality={status:message.status,score,lastKnownScore,lastKnownLevel,
+    const confidence=message.confidence||(['playing','buffering'].includes(message.status)?previous.confidence||'reduced':
+      previous.confidence==='provisional'?'provisional':'reduced');
+    const measurementFreshnessMs=Number.isFinite(message.measurementFreshnessMs)?message.measurementFreshnessMs:previous.measurementFreshnessMs;
+    const next={status:message.status,score,lastKnownScore,lastKnownLevel,confidence,measurementFreshnessMs,
       lastKnownAt:hasScore?now:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
-      deviceLabel:message.deviceLabel||previous.deviceLabel||'Other · Other',reason:message.reason};
+      reason:message.reason};
+    const displayChanged=!previous || Math.round(previous.score*100)!==Math.round(score*100)||
+      SyncQuality.level(previous.score,previous.lastKnownLevel)!==SyncQuality.level(score,lastKnownLevel)||previous.confidence!==confidence;
+    viewer.syncQuality=next;
     client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;
+    if(displayChanged)changed();
   }
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;

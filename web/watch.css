@@ -365,6 +365,7 @@ body.idle-player #video{visibility:hidden}
 #room-participants .room-roster-sync-quality[data-quality=good]{color:var(--good)}
 #room-participants .room-roster-sync-quality[data-quality=fair]{color:var(--warning)}
 #room-participants .room-roster-sync-quality[data-quality=poor]{color:var(--danger)}
+#room-participants .room-roster-sync-quality[data-confidence]:not([data-confidence=confident]){color:var(--muted)}
 .room-roster .room-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .room-roster-role{display:flex;align-items:center;justify-content:center;min-width:0;color:var(--text)}
 .room-roster-role>svg{width:24px;height:24px;fill:none;stroke:currentColor;flex:none}

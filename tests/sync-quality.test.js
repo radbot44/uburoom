@@ -45,15 +45,18 @@ test('actual rebuffering lowers the score while healthy prebuffered playback doe
   assert.ok(stalled<.6&&stalled>.4,'a genuine 15-second stall causes a prompt rating drop');
 });
 
-test('initial score requires 10 sync samples, 8 measured seconds, 5 RTT samples and a reliable fresh clock',()=>{
+test('viewers start at provisional 100% and the first valid interval begins refining the score',()=>{
   let at=0;const tracker=quality.create({now:()=>at}),context='room:viewer:media:stream';
-  for(let i=0;i<9;i++){at=i*1000;tracker.sample({at,errorMs:0,eligible:true,context,clockRevision:1});}
-  assert.equal(refresh(tracker,8000).status,'unknown');
-  at=9000;tracker.sample({at,errorMs:0,eligible:true,context,clockRevision:1});
-  assert.equal(refresh(tracker,9000,{rttSampleCount:4}).reason,'insufficient-clock-samples');
-  assert.equal(refresh(tracker,9000,{clockValid:false}).reason,'clock-unavailable');
-  assert.equal(refresh(tracker,9000,{clockUncertaintyMs:900}).reason,'clock-low-confidence');
-  const first=refresh(tracker,9000);assert.equal(first.status,'playing');assert.equal(first.updated,true);assert.equal(first.score,1);
+  const initial=refresh(tracker,0,{clockValid:false});
+  assert.equal(initial.score,1);assert.equal(initial.level,'excellent');assert.equal(initial.confidence,'provisional');
+  at=0;tracker.sample({at,errorMs:800,eligible:true,context,clockRevision:1});
+  at=1000;tracker.sample({at,errorMs:800,eligible:true,context,clockRevision:1});
+  const first=refresh(tracker,1000,{rttSampleCount:1});
+  assert.equal(first.status,'playing');assert.equal(first.updated,true);assert.ok(first.score<.5,'first valid interval can lower the provisional estimate');
+  assert.equal(first.confidence,'reduced','clock warmup affects confidence rather than hiding the score');
+  assert.equal(refresh(tracker,2000,{clockValid:false}).score,first.score,'clock interruptions retain the estimate');
+  assert.equal(refresh(tracker,2000,{clockValid:false}).confidence,'reduced');
+  assert.equal(refresh(tracker,2000,{clockUncertaintyMs:900}).score,first.score,'uncertain clocks do not erase the score');
 });
 
 test('sampling is capped near one observation per second and scores refresh every five seconds',()=>{
@@ -66,17 +69,41 @@ test('sampling is capped near one observation per second and scores refresh ever
   const due=refresh(tracker,15000);assert.equal(due.updated,true);assert.ok(due.rawScore<first.rawScore);
 });
 
-test('pause, normal seek, temporary clock loss and clock revision preserve the last valid rating',()=>{
+test('pause, seek, temporary clock loss and clock revision preserve the latest score and reduce confidence',()=>{
   const tracker=quality.create(),context='room:viewer:media:stream';ready(tracker,0,12000,context);
   const first=refresh(tracker,12000),level=first.lastLevel;
   const paused=refresh(tracker,13000,{playbackStatus:'paused'});
-  assert.equal(paused.status,'paused');assert.equal(paused.lastScore,first.score);assert.equal(paused.lastLevel,level);
+  assert.equal(paused.status,'paused');assert.equal(paused.score,first.score);assert.equal(paused.lastLevel,level);assert.equal(paused.confidence,'reduced');
+  const seeking=refresh(tracker,13500,{playbackStatus:'seeking'});
+  assert.equal(seeking.status,'seeking');assert.equal(seeking.score,first.score);assert.equal(seeking.confidence,'reduced');
   tracker.breakSample(14000);
   const stale=refresh(tracker,14000,{clockValid:false});
-  assert.equal(stale.status,'stale');assert.equal(stale.lastScore,first.score);
+  assert.equal(stale.status,'playing');assert.equal(stale.score,first.score);assert.equal(stale.confidence,'reduced');
   tracker.sample({at:15000,errorMs:1,eligible:true,context,clockRevision:2});
   const resumed=refresh(tracker,15000);
   assert.equal(resumed.status,'playing');assert.equal(resumed.lastLevel,level);
+  assert.equal(resumed.score,first.score);assert.equal(resumed.confidence,'reduced');assert.equal(resumed.metrics.measuredSeconds,0,'clock resets invalidate the old evidence window');
+});
+
+test('position fallback is scored but remains visibly lower-confidence than presented-frame evidence',()=>{
+  const tracker=quality.create(),context='room:viewer:media:stream';
+  tracker.sample({at:0,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
+  tracker.sample({at:1000,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
+  const result=refresh(tracker,1000,{rttSampleCount:10});
+  assert.equal(result.updated,true);assert.equal(result.score,1);assert.equal(result.confidence,'reduced');
+  assert.equal(result.reason,'position-timing-estimate');assert.equal(result.metrics.positionMeasuredSeconds,1);
+  assert.equal(result.metrics.presentationMeasuredSeconds,0);
+});
+
+test('recovery is gradual after a real playback problem while routine pauses do not degrade the estimate',()=>{
+  const tracker=quality.create(),context='room:viewer:media:stream';
+  for(let at=0;at<=10000;at+=1000)tracker.sample({at,errorMs:20,eligible:true,context,clockRevision:1});
+  const clean=refresh(tracker,10000);assert.equal(clean.score,1);
+  const paused=refresh(tracker,11000,{playbackStatus:'paused'});assert.equal(paused.score,1);
+  for(let at=11000;at<=15000;at+=1000)tracker.sample({at,errorMs:900,eligible:true,context,clockRevision:1});
+  const degraded=refresh(tracker,15000);assert.ok(degraded.score<clean.score);
+  for(let at=16000;at<=20000;at+=1000)tracker.sample({at,errorMs:20,eligible:true,context,clockRevision:1});
+  const recovering=refresh(tracker,20000);assert.ok(recovering.score>degraded.score&&recovering.score<1);
 });
 
 test('rolling metrics expire outside 60 seconds and active buffering records exact duration',()=>{

@@ -26,6 +26,7 @@ const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.pres
 const syncQuality=uburoomSyncQuality.create();
 let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown',
   publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
+let lastPresentationSyncQualitySampleAt=0,lastPositionSyncQualitySampleAt=0;
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
@@ -37,18 +38,12 @@ let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
-function syncQualityDeviceLabel() {
-  const ua=navigator.userAgent||'',browser=/Firefox\/|FxiOS\//.test(ua)?'Firefox':/Edg\/|EdgiOS\//.test(ua)?'Edge':/OPR\//.test(ua)?'Opera':
-    /Chrome\/|CriOS\//.test(ua)?'Chrome':/Safari\//.test(ua)?'Safari':'Other';
-  const platform=navigator.userAgentData?.platform||navigator.platform||'',device=/Android/i.test(ua+' '+platform)?'Android':
-    /iPhone|iPad|iPod/i.test(ua)?'iOS':/Windows/i.test(platform)?'Windows':/Mac/i.test(platform)?'macOS':
-      /CrOS/i.test(ua)?'ChromeOS':/Linux/i.test(platform)?'Linux':'Other';
-  return browser+' · '+device;
-}
-function sendSyncQuality(status,score,reason) {
+function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
-  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,deviceLabel:syncQualityDeviceLabel(),
-    ...(status==='playing'||status==='buffering'?{score}:{}),...(reason?{reason}:{})};
+  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,
+    score:Number.isFinite(score)?Math.max(0,Math.min(1,score)):1,
+    confidence:['confident','reduced','provisional'].includes(confidence)?confidence:'reduced',
+    ...(Number.isFinite(measurementFreshnessMs)?{measurementFreshnessMs:Math.max(0,measurementFreshnessMs)}:{}),...(reason?{reason}:{})};
   const sent=transport?.syncQuality(value) || false;
   if(sent){publishedSyncQualityStatus=status;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
   return sent;
@@ -56,8 +51,9 @@ function sendSyncQuality(status,score,reason) {
 function resetSyncQuality() {
   const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
   syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
+  lastPresentationSyncQualitySampleAt=lastPositionSyncQualitySampleAt=0;
   syncQualitySettleUntil=performance.now()+2000;
-  if(wasActive)sendSyncQuality('stale',undefined,'stream-changed');
+  if(wasActive)sendSyncQuality('stale',syncQuality.refresh({playbackStatus:'starting'}).score,'reduced','stream-changed');
 }
 function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
   const shared=state?.state;
@@ -65,10 +61,16 @@ function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
     shared && !shared.paused && !state.waitingForReady && !video.paused && !video.seeking && (!playerWaiting || allowWaiting) &&
     !probing && !playbackError && !video.error && !autoplayBlocked && readyVersion===state.mediaVersion && (forBuffer || video.readyState >= 3) &&
     document.visibilityState==='visible' && timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=2500 &&
-    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800&&Number.isFinite(timing.networkRttSampleCount)&&timing.networkRttSampleCount>=5&&
+    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800&&
     !(Number.isFinite(state.startAt) && timing.serverTime<state.startAt));
 }
-function observeSyncQuality(errorMs,timing) {
+function syncQualityBufferEligible(timing,at=performance.now()) {
+  return !!(state?.mediaUrl&&state.state&&!state.state.paused&&!state.waitingForReady&&!video.paused&&!video.ended&&!video.seeking&&
+    !probing&&!playbackError&&!video.error&&!autoplayBlocked&&readyVersion===state.mediaVersion&&document.visibilityState==='visible'&&
+    at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending&&
+    (!Number.isFinite(state.startAt)||timing?.valid&&timing.serverTime>=state.startAt));
+}
+function observeSyncQuality(errorMs,timing,source='presentation') {
   const context=selected+':'+viewerId+':'+state?.mediaVersion+':'+state?.streamVersion;
   if(syncQualityContext!==context) {
     syncQuality.reset(context,{preserveLast:true});syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;
@@ -77,36 +79,48 @@ function observeSyncQuality(errorMs,timing) {
     syncQuality.breakSample();syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=performance.now()+2000;
   }
   const at=performance.now(),eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
-  syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,context,clockRevision:timing.clockRevision});
+  const sampled=syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,source,context,clockRevision:timing.clockRevision});
+  if(sampled) {
+    if(source==='position')lastPositionSyncQualitySampleAt=at;
+    else lastPresentationSyncQualitySampleAt=at;
+  }
 }
 function refreshSyncQuality() {
   const timing=playbackClock.read(),at=performance.now();
   const clockReliable=timing.valid&&Number.isFinite(timing.clockAgeMs)&&timing.clockAgeMs<=2500&&
     Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800;
-  if(!clockReliable) {
-    syncQuality.breakSample(at);
-    if(syncQualityBuffering){syncQuality.endBuffer({at});syncQualityBuffering=false;}
-  } else if(playerWaiting&&!syncQualityBuffering) {
-    syncQualityBuffering=syncQuality.startBuffer({at,eligible:syncQualityEligible(timing,{allowWaiting:true,forBuffer:true})});
-  }
+  if(!clockReliable)syncQuality.breakSample(at);
   const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
     state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':syncQualityBuffering||playerWaiting||video.readyState<3?'buffering':'playing';
+  const shouldCountBuffer=(playerWaiting||!video.paused&&video.readyState<3)&&syncQualityBufferEligible(timing,at);
+  if(shouldCountBuffer&&!syncQualityBuffering)
+    syncQualityBuffering=syncQuality.startBuffer({at,eligible:true});
+  else if(!shouldCountBuffer&&syncQualityBuffering){syncQuality.endBuffer({at});syncQualityBuffering=false;}
+  // Some browsers do not expose frame-presentation callbacks. Sample the
+  // existing shared playback target and currentTime at one-second cadence as a
+  // lower-confidence fallback, without feeding it to the correction engine.
+  const fallbackDue=playbackStatus==='playing'&&at-lastPresentationSyncQualitySampleAt>2500&&at-lastPositionSyncQualitySampleAt>=1000;
+  if(fallbackDue&&syncQualityEligible(timing)) {
+    const target=uburoomTiming.target(state,timing.serverTime),errorMs=Number.isFinite(target)?(video.currentTime-target)*1000:undefined;
+    if(Number.isFinite(errorMs))observeSyncQuality(errorMs,timing,'position');
+  }
   const result=syncQuality.refresh({at,rttSampleCount:timing.networkRttSampleCount,
     clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,clockUncertaintyMs:timing.clockUncertaintyMs,playbackStatus});
   const changed=result.status!==publishedSyncQualityStatus||result.reason!==publishedSyncQualityReason;
   if(result.updated||changed||Date.now()-lastQualityDiagnosticAt>=10000) {
-    diagnostics.record('sync-quality',{qualityStatus:result.status,qualityReason:result.reason,rawQualityScore:result.rawScore,
+    diagnostics.record('sync-quality',{qualityStatus:result.status,qualityConfidence:result.confidence,qualityReason:result.reason,rawQualityScore:result.rawScore,
       smoothedQualityScore:result.lastScore,lastKnownQualityLevel:result.lastLevel,qualityMeasurementFreshnessMs:result.metrics?.measurementFreshnessMs,
       measuredPlaybackSeconds:result.metrics?.measuredSeconds,outOfSync250Seconds:result.metrics?.outOfSync250Seconds,
       outOfSync500Seconds:result.metrics?.outOfSync500Seconds,automaticCorrectionCount:result.metrics?.automaticCorrectionCount,
       automaticCorrectionMagnitudeMs:result.metrics?.automaticCorrectionMagnitudeMs,correctionDutyCycle:result.metrics?.correctionDutyCycle,
       rateAdjustedSeconds:result.metrics?.rateAdjustedSeconds,rateAdjustmentSeconds:result.metrics?.rateAdjustmentSeconds,
+      presentationMeasuredSeconds:result.metrics?.presentationMeasuredSeconds,positionMeasuredSeconds:result.metrics?.positionMeasuredSeconds,
       bufferingSeconds:result.metrics?.bufferingSeconds,clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,
       clockUncertaintyMs:timing.clockUncertaintyMs});
     lastQualityDiagnosticAt=Date.now();
   }
   if(result.updated||changed||Date.now()-lastSyncQualityPublishAt>=5000)
-    sendSyncQuality(result.status,result.score,result.reason);
+    sendSyncQuality(result.status,result.score,result.confidence,result.reason,result.metrics?.measurementFreshnessMs);
 }
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
@@ -649,7 +663,7 @@ function watchFrames() {
       const frame=presentationTiming.frame(now,metadata), timing=playbackClock.read(metadata.expectedDisplayTime);
       const target=uburoomTiming.target(state,timing.serverTime);
       const presentationErrorMs=target===undefined?undefined:(metadata.mediaTime-target)*1000;
-      if(frame && Number.isFinite(presentationErrorMs))observeSyncQuality(presentationErrorMs,timing);
+      if(frame && Number.isFinite(presentationErrorMs))observeSyncQuality(presentationErrorMs,timing,'presentation');
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
         timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs,
         paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
@@ -1113,10 +1127,12 @@ async function reportObservation() {
 for (const event of ['playing','pause','waiting','seeking','seeked','ended','error']) video.addEventListener(event, () => {
   if (event === 'waiting') playerWaiting = true;
   if (event === 'playing' || event === 'seeked') playerWaiting = false;
-  if (event === 'waiting') syncQualityBuffering=syncQuality.startBuffer({at:performance.now(),eligible:syncQualityEligible(playbackClock.read(),{allowWaiting:true,forBuffer:true})});
+  if (event === 'waiting') syncQualityBuffering=syncQuality.startBuffer({at:performance.now(),eligible:syncQualityBufferEligible(playbackClock.read())});
   if (event === 'playing' && syncQualityBuffering) { syncQuality.endBuffer({at:performance.now()}); syncQualityBuffering=false; }
   if(['pause','seeking','seeked','ended','error'].includes(event)) {
     if(syncQualityBuffering){syncQuality.endBuffer({at:performance.now()});syncQualityBuffering=false;}
+  }
+  if(['pause','waiting','seeking','seeked','ended','error'].includes(event)) {
     syncQuality.breakSample();
   }
   // Periodic samples include rate corrections; assigning playbackRate can

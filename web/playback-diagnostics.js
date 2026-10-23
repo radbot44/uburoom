@@ -15,8 +15,10 @@
     creditReason:['baseline','not-playing','discontinuity','frames-not-advancing','sample-gap','receive-gap','delivery-jitter','clock-discontinuity','position-discontinuity','interval-limit','clock-unavailable','credited'],
     clockReason:['startup','disconnect','discontinuity','server-change','invalid','delay','jitter','outlier','accepted'],
     qualityStatus:['playing','buffering','paused','seeking','starting','stale','unknown','error'],
+    qualityConfidence:['confident','reduced','provisional'],
     qualityReason:['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples','measurement-stale',
-      'invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting','stream-changed','media-changed','room-changed'],
+      'invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting','stream-changed','media-changed','room-changed',
+      'awaiting-sync-interval','awaiting-measurements','position-timing-estimate','clock-warmup','measurement-interrupted','no-sessions'],
     lastKnownQualityLevel:['excellent','good','fair','poor']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
@@ -31,7 +33,8 @@
     'frameMediaTime','frameDisplayMonoMs','framePresentationMonoMs','frameCallbackLatenessMs','frameProcessingMs','presentedFrames',
     'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode',
     'measuredPlaybackSeconds','outOfSync250Seconds','outOfSync500Seconds','automaticCorrectionCount','automaticCorrectionMagnitudeMs',
-    'correctionDutyCycle','rateAdjustedSeconds','rateAdjustmentSeconds','bufferingSeconds','rawQualityScore','smoothedQualityScore','qualityMeasurementFreshnessMs']);
+    'correctionDutyCycle','rateAdjustedSeconds','rateAdjustmentSeconds','bufferingSeconds','rawQualityScore','smoothedQualityScore','qualityMeasurementFreshnessMs',
+    'presentationMeasuredSeconds','positionMeasuredSeconds']);
   const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling']);
   function requestKind(path) {
     const route = String(path).split('?')[0];

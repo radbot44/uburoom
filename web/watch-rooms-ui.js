@@ -150,32 +150,19 @@
           const sync=person.syncQuality&&typeof person.syncQuality==='object'?person.syncQuality:{status:'unknown',reason:'measurements-unavailable',sessions:[]};
           const levels={excellent:'Excellent',good:'Good',fair:'Fair',poor:'Poor'};
           const icons={excellent:'wifi',good:'wifi-2',fair:'wifi-1',poor:'wifi-0'};
-          const score=Number.isFinite(sync.score)&&sync.score>=0&&sync.score<=1?sync.score:undefined;
-          const level=sync.status==='known'?(sync.level||root.uburoomSyncQuality.level(score)):undefined;
-          const percent=value=>Number.isFinite(value)&&value>=0&&value<=1?Math.round(value*100)+'%':undefined;
-          const reasonLabel={paused:'paused',disconnected:'device disconnected',stale:'stale measurement',seeking:'seeking',starting:'starting playback',
-            buffering:'buffering while collecting measurements',
-            'clock-unavailable':'clock timing unavailable','clock-stale':'clock timing is stale','clock-low-confidence':'clock timing is unreliable',
-            'insufficient-clock-samples':'waiting for clock samples','insufficient-sync-samples':'collecting sync measurements',
-            'measurement-stale':'stale measurement','stream-changed':'stream changed; collecting new measurements','playback-error':'playback error',
-            'no-sessions':'no playback sessions','measurements-unavailable':'waiting for reliable measurements'};
-          const sessions=Array.isArray(sync.sessions)?sync.sessions:[];
-          const sessionDetails=sessions.map(session=>{
-            const device=(session.device||'Playback')+' · Session '+(session.sessionNumber||1);
-            const activePercent=percent(session.score),lastPercent=percent(session.lastKnownScore);
-            if(activePercent&&['playing','buffering'].includes(session.status))
-              return device+': '+levels[session.level||root.uburoomSyncQuality.level(session.score)]+' ('+activePercent+')'+(session.status==='buffering'?' · Buffering':'');
-            const status={playing:'Playing · measuring',buffering:'Buffering · measuring',paused:'Paused',seeking:'Seeking',starting:'Starting',stale:'Stale',
-              disconnected:'Disconnected',error:'Playback error',unknown:'Unknown'}[session.status]||'Unknown';
-            const prior=lastPercent?' · last known '+(levels[session.lastKnownLevel]||'quality')+' ('+lastPercent+')':'';
-            return device+': '+status+prior;
+          const score=Number.isFinite(sync.score)&&sync.score>=0&&sync.score<=1?sync.score:1;
+          const level=sync.level||root.uburoomSyncQuality.level(score,sync.lastKnownLevel)||'excellent';
+          const sessions=Array.isArray(sync.sessions)?sync.sessions.filter(session=>session&&Number.isFinite(session.score)&&session.status!=='disconnected'):[];
+          const scoreLines=(sessions.length?sessions:[{score}]).map(session=>{
+            const value=Math.max(0,Math.min(1,session.score));
+            const sessionLevel=root.uburoomSyncQuality.level(value,session.level||session.lastKnownLevel)||'excellent';
+            return 'Sync quality: '+Math.round(value*100)+'% ('+levels[sessionLevel]+')';
           });
-          const label=level&&percent(score)?'Sync quality: '+levels[level]+' ('+percent(score)+')':
-            'Sync quality: Unknown ('+(reasonLabel[sync.reason]||'measurement unavailable')+')';
-          const tooltip=[label,...sessionDetails].join('\n');
+          const tooltip=scoreLines.join('\n');
           const quality = node('span',row,undefined,'room-roster-sync-quality');
-          quality.dataset.quality = level || 'unknown'; quality.title = tooltip; quality.setAttribute('role','img'); quality.setAttribute('aria-label',tooltip);
-          const qualityIcon = root.uburoomIcons.icon(document,icons[level||sync.lastKnownLevel]||'wifi');
+          quality.dataset.quality = level; quality.dataset.confidence=sync.confidence==='confident'?'confident':sync.confidence==='provisional'?'provisional':'reduced';
+          quality.title = tooltip; quality.setAttribute('role','img'); quality.setAttribute('aria-label',tooltip);
+          const qualityIcon = root.uburoomIcons.icon(document,icons[level]||'wifi');
           qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
         }
         const kickable = canKick && person.present && person.id !== self && person.role !== 'creator' && (person.role !== 'host' || canKickHosts);

@@ -33,34 +33,37 @@ function syncQualityParticipants(room,participants,now=Date.now()) {
       sessions.push({viewerId,viewer,disconnected:true,joinedAt:viewer.joinedAt||0});
     }
     sessions.sort((a,b)=>a.joinedAt-b.joinedAt||a.viewerId.localeCompare(b.viewerId));
-    const deviceCounts=new Map();
     const visible=sessions.map(({viewerId,viewer,disconnected})=>{
       const measurement=viewer.syncQuality;
-      const device=typeof measurement?.deviceLabel==='string'?measurement.deviceLabel:'Playback';
-      const deviceNumber=(deviceCounts.get(device)||0)+1;deviceCounts.set(device,deviceNumber);
       const age=measurement&&Number.isFinite(measurement.updatedAt)?Math.max(0,now-measurement.updatedAt):Infinity;
       const contextMatches=measurement?.mediaVersion===room.mediaVersion&&measurement?.streamVersion===viewer.streamVersion;
       let status=disconnected?'disconnected':!measurement?'unknown':measurement.status;
       if(!disconnected&&viewer.watchSocket&&viewer.watchSocket.readyState!==1)status='disconnected';
       else if(!disconnected&&measurement&&(!contextMatches||age>15000)&&status!=='error')status='stale';
-      const current=contextMatches&&(status==='playing'||status==='buffering')&&age<=15000&&Number.isFinite(measurement?.score);
-      const score=current?Math.max(0,Math.min(1,measurement.score)):undefined;
       const lastKnownScore=Number.isFinite(measurement?.lastKnownScore)?Math.max(0,Math.min(1,measurement.lastKnownScore)):
-        Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):undefined;
-      const rememberedLevel=measurement?.lastKnownLevel|| (Number.isFinite(lastKnownScore)?SyncQuality.level(lastKnownScore):undefined);
-      return {device,sessionNumber:deviceNumber,status,score,level:score===undefined?undefined:rememberedLevel,
+        Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):1;
+      const score=Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):lastKnownScore;
+      const rememberedLevel=measurement?.lastKnownLevel||SyncQuality.level(lastKnownScore);
+      let confidence=['confident','reduced','provisional'].includes(measurement?.confidence)?measurement.confidence:'provisional';
+      if(disconnected||status==='disconnected'||status==='stale'||age>5000||measurement?.measurementFreshnessMs>5000||
+        ['paused','seeking','starting','error','unknown'].includes(status))confidence=confidence==='provisional'?'provisional':'reduced';
+      return {status,score,level:SyncQuality.level(score,rememberedLevel),confidence,
         lastKnownScore,lastKnownLevel:rememberedLevel,lastKnownAt:measurement?.lastKnownAt,
-        reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason};
+        updatedAt:measurement?.updatedAt,measurementFreshnessMs:measurement?.measurementFreshnessMs,
+        reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason,
+        current:!disconnected&&contextMatches&&age<=15000&&['playing','buffering','paused','seeking','starting','error'].includes(status)};
     });
-    const current=visible.filter(session=>Number.isFinite(session.score)).sort((a,b)=>a.score-b.score);
-    const lastKnown=visible.filter(session=>session.lastKnownLevel&&Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt)[0];
-    const reason=visible.length===0?'no-sessions':visible.every(session=>session.status==='paused')?'paused':
-      visible.every(session=>session.status==='disconnected')?'disconnected':visible.some(session=>session.status==='stale')?'stale':
-        visible.some(session=>session.status==='error')?'playback-error':visible.some(session=>session.status==='seeking')?'seeking':
-          visible.some(session=>session.status==='starting')?'starting':visible.some(session=>session.status==='buffering')?'buffering':'measurements-unavailable';
-    person.syncQuality=current.length?{status:'known',score:current[0].score,level:current[0].level,
-      lastKnownLevel:current[0].level,sessions:visible}:
-      {status:'unknown',reason,lastKnownLevel:lastKnown?.lastKnownLevel,lastKnownScore:lastKnown?.lastKnownScore,sessions:visible};
+    const current=visible.filter(session=>session.current).sort((a,b)=>a.score-b.score);
+    const connected=visible.filter(session=>session.status!=='disconnected'&&session.status!=='stale'&&Number.isFinite(session.score));
+    const remembered=visible.filter(session=>Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt);
+    const selected=current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
+    const score=selected&&Number.isFinite(selected.score)?selected.score:1;
+    const confidence=selected?.confidence||'provisional';
+    const reason=visible.length===0?'no-sessions':selected?.reason||
+      (confidence==='provisional'?'awaiting-measurements':confidence==='reduced'?'measurement-interrupted':undefined);
+    person.syncQuality={status:confidence==='confident'?'known':'unknown',score,level:SyncQuality.level(score,selected?.level||selected?.lastKnownLevel||'excellent'),
+      confidence,reason,lastKnownScore:score,lastKnownLevel:SyncQuality.level(score,selected?.level||selected?.lastKnownLevel||'excellent'),
+      measurementFreshnessMs:selected?.measurementFreshnessMs,sessions:visible};
   }
   return participants;
 }
@@ -248,7 +251,7 @@ class Watch {
           trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
           quality:viewer.quality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
-          syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',score:undefined,updatedAt:now}:undefined });
+          syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
       if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;

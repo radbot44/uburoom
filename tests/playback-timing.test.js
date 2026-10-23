@@ -117,13 +117,15 @@ test('frame diagnostics have their own bounded sanitized ring',()=>{
   assert.equal(log.entries.filter(r=>r.event==='frame')[0].frameMediaTime,100);assert.ok(!JSON.stringify(log).includes('secret'));
 });
 test('sync-quality diagnostics retain bounded scoring contributors and sanitize device identity',()=>{
-  const d=create();d.record('sync-quality',{qualityStatus:'stale',qualityReason:'clock-stale',rawQualityScore:.3,smoothedQualityScore:.8,
+  const d=create();d.record('sync-quality',{qualityStatus:'playing',qualityConfidence:'reduced',qualityReason:'position-timing-estimate',rawQualityScore:.3,smoothedQualityScore:.8,
     measuredPlaybackSeconds:50,outOfSync250Seconds:12,outOfSync500Seconds:4,automaticCorrectionCount:3,
     automaticCorrectionMagnitudeMs:1900,correctionDutyCycle:.2,rateAdjustedSeconds:10,rateAdjustmentSeconds:.4,
-    bufferingSeconds:2,qualityMeasurementFreshnessMs:2800,lastKnownQualityLevel:'good',deviceLabel:'Firefox · Android'});
+    bufferingSeconds:2,qualityMeasurementFreshnessMs:2800,presentationMeasuredSeconds:40,positionMeasuredSeconds:10,
+    lastKnownQualityLevel:'good',deviceLabel:'Firefox · Android'});
   const row=d.snapshot().entries.find(entry=>entry.event==='sync-quality');
-  assert.equal(row.qualityStatus,'stale');assert.equal(row.qualityReason,'clock-stale');assert.equal(row.rawQualityScore,.3);
+  assert.equal(row.qualityStatus,'playing');assert.equal(row.qualityConfidence,'reduced');assert.equal(row.qualityReason,'position-timing-estimate');assert.equal(row.rawQualityScore,.3);
   assert.equal(row.automaticCorrectionCount,3);assert.equal(row.bufferingSeconds,2);assert.equal(row.lastKnownQualityLevel,'good');
+  assert.equal(row.presentationMeasuredSeconds,40);assert.equal(row.positionMeasuredSeconds,10);
   assert.equal(Object.hasOwn(row,'deviceLabel'),false);
 });
 function trace(delay=0,changes={}) {
