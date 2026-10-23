@@ -28,7 +28,12 @@ BY CY DY FY GY HY JY KY LY MY NY PY RY SY TY VY WY ZY
 YB YC YD YF YG YH YJ YK YL YM YN YP YR YS YT YV YW YZ YY
 XY YX
 QL QM QN QR QS QT QW QY
-LQ MQ NQ RQ SQ TQ`.split(/\s+/);
+LQ MQ NQ RQ SQ TQ
+QB QD QF QJ QP QV
+CQ DQ FQ GQ HQ JQ PQ VQ WQ YQ ZQ`.split(/\s+/);
+  // A Y in the first position of a consonant pair cannot follow VV.
+  const PAIRS_AFTER_VV = PAIRS.filter(pair => pair[0] !== 'Y');
+  const C_AFTER_VV = C.replace('Y', '');
   // Every ordered pair of ordinary vowels is allowed, including doubles.
   const VOWEL_PAIRS = [...V].flatMap(a => [...V].map(b => a + b));
   const PATTERNS = ['CVCVCV', 'CVCVVC', 'CVVCCV', 'CVVCVC', 'VCCVCV', 'VCCVVC', 'VCVCCV', 'VCVCVC'];
@@ -53,6 +58,10 @@ LQ MQ NQ RQ SQ TQ`.split(/\s+/);
     // beside a double-consonant run (CCYC or CYCC).
     return pattern[index - 1] === 'C' && pattern[index + 1] === 'C' &&
       pattern[index - 2] !== 'C' && pattern[index + 2] !== 'C';
+  }
+
+  function followsVowelPair(pattern, index) {
+    return index >= 2 && pattern[index - 2] === 'V' && pattern[index - 1] === 'V';
   }
 
   function generateWord(length, random) {
@@ -82,12 +91,16 @@ LQ MQ NQ RQ SQ TQ`.split(/\s+/);
     // Y in an explicitly approved consonant pair (including YY) is a
     // separate exception to the vowel-Y placement rules.
     for (let cc = p.indexOf('CC'); cc !== -1; cc = p.indexOf('CC', cc + 2)) {
-      const pair = PAIRS[rand(PAIRS.length)];
+      const allowed = followsVowelPair(p, cc) ? PAIRS_AFTER_VV : PAIRS;
+      const pair = allowed[rand(allowed.length)];
       s[cc] = pair[0]; s[cc + 1] = pair[1];
     }
     for (let i = 0; i < length; i++) {
-      // Remaining single consonants can be Y at word edges or between vowels.
-      if (s[i] === undefined) s[i] = C[rand(C.length)];
+      // A standalone consonant Y is also forbidden immediately after VV.
+      if (s[i] === undefined) {
+        const allowed = followsVowelPair(p, i) ? C_AFTER_VV : C;
+        s[i] = allowed[rand(allowed.length)];
+      }
     }
     return s.join('');
   }
