@@ -71,6 +71,7 @@
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
     let visits = [], visitIndex = 0, historyEpoch, historyMoving = false;
     const homes = new Map(), images = new Map(), availabilityReads = new Set();
+    let reusableImages;
     let view = 'cards'; try { const saved = localStorage.getItem('uburoom-library-view'); if (['cards','list','posters'].includes(saved)) view = saved; } catch {}
     const demoItem = { id:'demo',type:'demo',title:'uburoom synchronization test',duration:60,summary:'A short picture and sound sample for checking shared playback.' };
     function context(section, tab = 'library') { return { section,tab,title:sections.find(x => x.id === section)?.title || 'Test video',kind:'library',q:'',genre:'',year:'',sort:'title',order:'asc',seed:newSeed(),items:[],total:null,nextOffset:null,scroll:0,minHeight:0 }; }
@@ -214,9 +215,13 @@
       const box = node('div',parent,undefined,'library-art' + (landscape ? ' landscape' : ''));
       const fallback = node('span',box,undefined,'library-art-fallback'); fallback.append(uburoomIcons.icon(doc,item.type === 'collection' ? 'layout-grid' : ['show','season','episode'].includes(item.type) ? 'tv' : 'film')); node('span',fallback,item.title);
       if (landscape ? item.hasLandscape : item.hasPoster) {
-        const img = node('img',box); img.alt = ''; img.decoding = 'async'; img.dataset.item = item.id; img.dataset.kind = landscape ? 'landscape' : 'poster'; img.dataset.type = item.type;
-        img.addEventListener('load',() => { box.classList.add('loaded'); });
-        const key = item.id + ':' + img.dataset.kind; if (images.has(key)) img.src = images.get(key); else imageObserver.observe(img);
+        const kind = landscape ? 'landscape' : 'poster', key = item.id + ':' + kind;
+        const img = reusableImages?.get(key) || doc.createElement('img'); reusableImages?.delete(key);
+        box.append(img); img.alt = ''; img.decoding = 'async'; img.dataset.item = item.id; img.dataset.kind = kind; img.dataset.type = item.type;
+        img.onload = () => { img.parentElement?.classList.add('loaded'); };
+        if (img.src) box.classList.toggle('loaded',img.complete && img.naturalWidth > 0);
+        else if (images.has(key)) img.src = images.get(key);
+        else imageObserver.observe(img);
       }
       box.classList.toggle('unavailable',item.available === false);
       node('span',box,'Unavailable','library-unavailable').hidden = item.available !== false;
@@ -452,7 +457,8 @@
         }
       }
     }
-    function renderResults() {
+    function renderResults(reuseImages = false) {
+      reusableImages = reuseImages ? new Map([...host.querySelectorAll('.library-art img')].map(img => [img.dataset.item + ':' + img.dataset.kind,img])) : undefined;
       renderTools(); clearResults();
       if (screen.kind === 'home') renderLanding();
       else if (screen.kind !== 'details') {
@@ -460,7 +466,7 @@
         if (!screen.items.length && screen.loading) for (let i = 0; i < 3; i++) { const placeholder = node('div',results,undefined,'library-skeleton'); placeholder.setAttribute('aria-hidden','true'); }
         if (!screen.items.length && !screen.loading) node('p',results,screen.q || screen.genre || screen.year ? 'No matches. Try another search or clear the filters.' : screen.tab === 'collections' ? 'No collections in this library.' : 'No titles here yet.','library-empty');
       }
-      summary(screen.detail); watchNextPage(); setBusy(busy);
+      summary(screen.detail); reusableImages = undefined; watchNextPage(); setBusy(busy);
     }
     function updateAvailability(root,item) {
       const missing = item.available === false;
@@ -586,7 +592,7 @@
     direction.onclick = () => { if (screen.sort === 'random') screen.seed = newSeed(); else screen.order = screen.order === 'asc' ? 'desc' : 'asc'; void query(); };
     genre.onchange = () => { screen.genre = genre.value; void query(); }; year.onchange = () => { screen.year = year.value; void query(); };
     filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); filterButton.classList.toggle('filter-active',!filters.hidden || !!(screen.genre || screen.year)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
-    viewButtons.forEach(b => b.onclick = () => { const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(); restoreAnchor(anchor); });
+    viewButtons.forEach(b => b.onclick = () => { if (view === b.dataset.view) return; const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(true); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
     async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
