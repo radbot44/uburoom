@@ -113,3 +113,14 @@ test('a provisional active device cannot override another actively measured devi
   assert.equal(people[0].syncQuality.confidence,'confident');
   assert.equal(people[0].syncQuality.sessions.length,2,'the provisional device remains in the per-session tooltip');
 });
+
+test('selection compares current connected sessions before remembered disconnected measurements',()=>{
+  const now=200000,room={mediaVersion:'media-current',viewers:new Map([
+    ['paused',viewer('person',measurement({status:'paused',score:.46,lastKnownScore:.46,confidence:'confident',updatedAt:now}),1)],
+    ['offline',viewer('person',measurement({status:'disconnected',score:undefined,lastKnownScore:.12,lastKnownAt:now}),2,3)]
+  ])},people=[{id:'person'}];
+  syncQualityParticipants(room,people,now);
+  assert.equal(people[0].syncQuality.score,.46,'a current connected session has priority over a newer remembered measurement');
+  assert.equal(people[0].syncQuality.confidence,'confident');
+  assert.equal(people[0].syncQuality.sessions.length,2,'remembered sessions remain available to the tooltip');
+});

@@ -87,9 +87,9 @@ test('pause, seek, temporary clock loss and clock revision preserve the latest s
 
 test('position fallback is usable measured evidence while diagnostics keep its precision distinction',()=>{
   const tracker=quality.create(),context='room:viewer:media:stream';
-  tracker.sample({at:0,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
-  tracker.sample({at:1000,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
-  const result=refresh(tracker,1000,{rttSampleCount:10});
+  tracker.sample({at:1250,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
+  tracker.sample({at:2250,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
+  const result=refresh(tracker,2250,{rttSampleCount:10});
   assert.equal(result.updated,true);assert.equal(result.score,1);assert.equal(result.confidence,'confident');
   assert.equal(result.reason,'position-timing-estimate');assert.equal(result.metrics.positionMeasuredSeconds,1);
   assert.equal(result.metrics.presentationMeasuredSeconds,0);
@@ -106,7 +106,7 @@ test('recovery is gradual after a real playback problem while routine pauses do 
   const recovering=refresh(tracker,20000);assert.ok(recovering.score>degraded.score&&recovering.score<1);
 });
 
-test('rolling metrics expire outside 60 seconds and active buffering records exact duration',()=>{
+test('the 60-second metric window expires and active buffering records exact duration',()=>{
   const tracker=quality.create(),context='room:viewer:media:stream';ready(tracker,0,19000,context);
   assert.equal(tracker.startBuffer({at:19500,eligible:true}),true);
   assert.equal(tracker.endBuffer({at:29500}),true);
@@ -115,7 +115,7 @@ test('rolling metrics expire outside 60 seconds and active buffering records exa
   assert.equal(afterBuffer.metrics.bufferingSeconds,10);
   assert.ok(afterBuffer.score<1);
   const old=tracker.metricsAt(95000);
-  assert.equal(old.measuredSeconds,0);assert.equal(old.bufferingSeconds,0);
+  assert.equal(old.measuredSeconds,0);assert.equal(old.bufferingSeconds,0);assert.equal(old.sampleCount,0);
 });
 
 test('four quality bands use the existing inclusive boundaries with hysteresis',()=>{

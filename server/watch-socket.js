@@ -75,8 +75,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     const next={status:message.status,score,lastKnownScore,lastKnownLevel,confidence,measurementFreshnessMs,
       measuredAt,lastKnownAt:advanced?measuredAt:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
       reason:message.reason};
-    const displayChanged=!previous || Math.round(previous.score*100)!==Math.round(score*100)||
-      SyncQuality.level(previous.score,previous.lastKnownLevel)!==SyncQuality.level(score,lastKnownLevel)||previous.confidence!==confidence;
+    const displayChanged=SyncQuality.level(previous.score,previous.lastKnownLevel)!==SyncQuality.level(score,lastKnownLevel)||previous.confidence!==confidence;
     viewer.syncQuality=next;
     client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;client.lastSyncQualityConfidence=message.confidence;
     if(displayChanged)changed();

@@ -56,15 +56,17 @@ function syncQualityParticipants(room,participants,now=Date.now()) {
         reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason,
         current:!disconnected&&contextMatches&&age<=15000&&['playing','buffering','paused','seeking','starting','error'].includes(status)};
     });
-    // Inactive tabs remain in the tooltip but cannot override a playing tab.
-    const playing=visible.filter(session=>session.current&&['playing','buffering'].includes(session.status)).sort((a,b)=>a.score-b.score);
-    const current=visible.filter(session=>session.current).sort((a,b)=>a.score-b.score);
-    const connected=visible.filter(session=>session.status!=='disconnected'&&session.status!=='stale'&&Number.isFinite(session.score));
-    const remembered=visible.filter(session=>Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt);
-    // An unqualified active tab should not turn a separately measured active
-    // tab grey. Among trustworthy active sessions, the lowest score still wins.
-    const measuredPlaying=playing.filter(session=>session.confidence==='confident');
-    const selected=measuredPlaying[0]||playing[0]||current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
+    // Scan once and compare the displayed-session priority in place. Sessions
+    // stay in `visible` for the participant tooltip regardless of selection.
+    let selected,selectedPriority=Infinity;
+    for(const session of visible) {
+      const active=session.current&&['playing','buffering'].includes(session.status);
+      const connected=session.current&&session.status!=='disconnected'&&session.status!=='stale';
+      const priority=active?(session.confidence==='confident'?0:1):connected?2:Number.isFinite(session.lastKnownAt)?3:4;
+      const better=priority<selectedPriority||priority===selectedPriority&&(
+        priority<3&&session.score<selected.score||priority===3&&session.lastKnownAt>selected.lastKnownAt);
+      if(!selected||better){selected=session;selectedPriority=priority;}
+    }
     const score=selected&&Number.isFinite(selected.score)?selected.score:1;
     const confidence=selected?.confidence||'provisional';
     const reason=visible.length===0?'no-sessions':selected?.reason||

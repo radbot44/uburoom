@@ -25,8 +25,8 @@ const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
 const syncQuality=uburoomSyncQuality.create();
 let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown',
-  publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
-let lastPresentationSyncQualitySampleAt=0,lastPositionSyncQualitySampleAt=0;
+  publishedSyncQualityConfidence, publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
+let lastPresentationSampleAt=0,lastPresentationErrorMs;
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
@@ -45,13 +45,13 @@ function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) 
     confidence:['confident','reduced','provisional'].includes(confidence)?confidence:'reduced',
     ...(Number.isFinite(measurementFreshnessMs)?{measurementFreshnessMs:Math.max(0,measurementFreshnessMs)}:{}),...(reason?{reason}:{})};
   const sent=transport?.syncQuality(value) || false;
-  if(sent){publishedSyncQualityStatus=status;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
+  if(sent){publishedSyncQualityStatus=status;publishedSyncQualityConfidence=value.confidence;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
   return sent;
 }
 function resetSyncQuality() {
   const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
   syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
-  lastPresentationSyncQualitySampleAt=lastPositionSyncQualitySampleAt=0;
+  lastPresentationSampleAt=0;lastPresentationErrorMs=undefined;
   syncQualitySettleUntil=performance.now()+2000;
   if(wasActive)sendSyncQuality('stale',syncQuality.refresh({playbackStatus:'starting'}).score,'reduced','stream-changed');
 }
@@ -73,42 +73,38 @@ function syncQualityBufferEligible(timing,at=performance.now()) {
     at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending&&
     (!Number.isFinite(state.startAt)||timing?.valid&&timing.serverTime>=state.startAt));
 }
-function observeSyncQuality(errorMs,timing,source='presentation') {
+function sampleSyncQuality(timing,at) {
   const context=selected+':'+viewerId+':'+state?.mediaVersion+':'+state?.streamVersion;
   if(syncQualityContext!==context) {
     syncQuality.reset(context,{preserveLast:true});syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;
-    syncQualitySettleUntil=performance.now()+2000;
+    syncQualitySettleUntil=at+2000;
   } else if(syncQualityClockRevision!==timing.clockRevision) {
-    syncQuality.breakSample();syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=performance.now()+2000;
+    syncQuality.breakSample(at);syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=at+2000;
   }
-  const at=performance.now(),eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
-  const sampled=syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,source,context,clockRevision:timing.clockRevision});
-  if(sampled) {
-    if(source==='position')lastPositionSyncQualitySampleAt=at;
-    else lastPresentationSyncQualitySampleAt=at;
+  const eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
+  const presentationFresh=Number.isFinite(lastPresentationErrorMs)&&at-lastPresentationSampleAt<=2500;
+  let errorMs,source='position';
+  if(presentationFresh){errorMs=lastPresentationErrorMs;source='presentation';}
+  else if(eligible) {
+    const target=uburoomTiming.target(state,timing.serverTime);
+    if(Number.isFinite(target))errorMs=(video.currentTime-target)*1000;
   }
+  syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,source,context,clockRevision:timing.clockRevision});
 }
 function refreshSyncQuality() {
   const timing=playbackClock.read(),at=performance.now();
   const clockReliable=syncQualityClockUsable(timing);
   if(!clockReliable)syncQuality.breakSample(at);
-  const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
-    state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':syncQualityBuffering||playerWaiting||video.readyState<3?'buffering':'playing';
-  const shouldCountBuffer=(playerWaiting||!video.paused&&video.readyState<3)&&syncQualityBufferEligible(timing,at);
-  if(shouldCountBuffer&&!syncQualityBuffering)
-    syncQualityBuffering=syncQuality.startBuffer({at,eligible:true});
+  const isBuffering=playerWaiting||!video.paused&&video.readyState<3;
+  const shouldCountBuffer=isBuffering&&syncQualityBufferEligible(timing,at);
+  if(shouldCountBuffer&&!syncQualityBuffering)syncQualityBuffering=syncQuality.startBuffer({at,eligible:true});
   else if(!shouldCountBuffer&&syncQualityBuffering){syncQuality.endBuffer({at});syncQualityBuffering=false;}
-  // Some browsers do not expose frame-presentation callbacks. Sample the
-  // existing shared playback target and currentTime at one-second cadence as a
-  // lower-confidence fallback, without feeding it to the correction engine.
-  const fallbackDue=playbackStatus==='playing'&&at-lastPresentationSyncQualitySampleAt>2500&&at-lastPositionSyncQualitySampleAt>=1000;
-  if(fallbackDue&&syncQualityEligible(timing)) {
-    const target=uburoomTiming.target(state,timing.serverTime),errorMs=Number.isFinite(target)?(video.currentTime-target)*1000:undefined;
-    if(Number.isFinite(errorMs))observeSyncQuality(errorMs,timing,'position');
-  }
-  const result=syncQuality.refresh({at,rttSampleCount:timing.networkRttSampleCount,
+  const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
+    state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':isBuffering?'buffering':'playing';
+  sampleSyncQuality(timing,at);
+  const result=syncQuality.refresh({at,
     clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,clockUncertaintyMs:timing.clockUncertaintyMs,playbackStatus});
-  const changed=result.status!==publishedSyncQualityStatus||result.reason!==publishedSyncQualityReason;
+  const changed=result.status!==publishedSyncQualityStatus||result.confidence!==publishedSyncQualityConfidence||result.reason!==publishedSyncQualityReason;
   if(result.updated||changed||Date.now()-lastQualityDiagnosticAt>=10000) {
     diagnostics.record('sync-quality',{qualityStatus:result.status,qualityConfidence:result.confidence,qualityReason:result.reason,rawQualityScore:result.rawScore,
       smoothedQualityScore:result.lastScore,lastKnownQualityLevel:result.lastLevel,qualityMeasurementFreshnessMs:result.metrics?.measurementFreshnessMs,
@@ -666,7 +662,9 @@ function watchFrames() {
       const frame=presentationTiming.frame(now,metadata), timing=playbackClock.read(metadata.expectedDisplayTime);
       const target=uburoomTiming.target(state,timing.serverTime);
       const presentationErrorMs=target===undefined?undefined:(metadata.mediaTime-target)*1000;
-      if(frame && Number.isFinite(presentationErrorMs))observeSyncQuality(presentationErrorMs,timing,'presentation');
+      if(frame && Number.isFinite(presentationErrorMs)) {
+        lastPresentationSampleAt=now;lastPresentationErrorMs=presentationErrorMs;
+      }
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
         timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs,
         paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
@@ -1130,11 +1128,6 @@ async function reportObservation() {
 for (const event of ['playing','pause','waiting','seeking','seeked','ended','error']) video.addEventListener(event, () => {
   if (event === 'waiting') playerWaiting = true;
   if (event === 'playing' || event === 'seeked') playerWaiting = false;
-  if (event === 'waiting') syncQualityBuffering=syncQuality.startBuffer({at:performance.now(),eligible:syncQualityBufferEligible(playbackClock.read())});
-  if (event === 'playing' && syncQualityBuffering) { syncQuality.endBuffer({at:performance.now()}); syncQualityBuffering=false; }
-  if(['pause','seeking','seeked','ended','error'].includes(event)) {
-    if(syncQualityBuffering){syncQuality.endBuffer({at:performance.now()});syncQualityBuffering=false;}
-  }
   if(['pause','waiting','seeking','seeked','ended','error'].includes(event)) {
     syncQuality.breakSample();
   }
