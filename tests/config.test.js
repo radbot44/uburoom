@@ -176,6 +176,38 @@ test('real entry point serves health from external YAML with isolated persistent
   assert.doesNotMatch(output,/ignored-inherited-token/);
 });
 
+test('real entry point cleans up application resources and exits nonzero on listen failure', { timeout: 10000 }, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-config-fail-')), file = path.join(dir, 'config.yaml');
+  const net = require('node:net');
+  const blocker = net.createServer();
+  await new Promise(resolve => blocker.listen(0, '127.0.0.1', resolve));
+  const port = blocker.address().port;
+  t.after(async () => {
+    await new Promise(resolve => blocker.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  const YAML = require('yaml');
+  fs.writeFileSync(file, YAML.stringify({
+    server: { port, host: '127.0.0.1', public_url: `https://localhost:${port}`,
+      tls_cert: path.join(ROOT,'certs/server-cert.pem'), tls_key: path.join(ROOT,'certs/server-key.pem') },
+    storage: { data_directory: './state', credential_key_file: './original.key' }
+  }));
+  const child = spawn(process.execPath, [path.join(ROOT,'server/index.js'),'--config',file], {
+    cwd: dir, windowsHide: true,
+    stdio: ['ignore','pipe','pipe']
+  });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  const exitPromise = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  const timer = setTimeout(() => child.kill(), 8000);
+  t.after(() => clearTimeout(timer));
+  const { code } = await exitPromise;
+  clearTimeout(timer);
+  assert.equal(code, 1);
+  assert.match(output, /EADDRINUSE/);
+});
+
 
 test('Activity Plex requirement defaults on and accepts only YAML booleans',()=>{
   assert.equal(normalizeConfig({}).accessPolicy.requirePlexInActivity,true);

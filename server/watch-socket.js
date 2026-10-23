@@ -108,7 +108,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   const dispatch = hub.dispatch.bind(hub);
   hub.dispatch = async (...args) => { try { return await dispatch(...args); } finally { changed(); } };
   server.on('upgrade', (req, socket, head) => {
-    if (req.url !== '/watch-socket') return;
+    if (req.url !== '/watch-socket') return socket.destroy();
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + req.socket.remoteAddress, 30) || clients.size >= 128) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => {
       const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };

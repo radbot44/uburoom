@@ -1,6 +1,7 @@
 'use strict';
 const https = require('node:https');
 const fs = require('node:fs');
+const fsp = fs.promises;
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { Hub, hash, UUID } = require('./core');
@@ -52,6 +53,15 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   function validIdentity(identity) {if(!registry)return true;const account=registry.canonical(identity.userId);return !!account&&account.id===identity.userId&&account.revision===identity.accountRevision;}
   const publicDir = path.join(__dirname, '../web');
+  const assetCache = new Map();
+  async function readAsset(filePath, encoding) {
+    const key = filePath + (encoding ? ':' + encoding : '');
+    const hit = assetCache.get(key);
+    if (hit !== undefined) return hit;
+    const data = await fsp.readFile(filePath, encoding);
+    if (assetCache.size < 128) assetCache.set(key, data);
+    return data;
+  }
   const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
   const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
   function cookies(req) {
@@ -262,7 +272,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
         if(name.endsWith('.js'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:");
-        res.writeHead(200,{'Content-Type':type});return res.end(fs.readFileSync(path.join(__dirname,'../web/vendor/subtitles',name)));
+        const content = await readAsset(path.join(__dirname,'../web/vendor/subtitles',name));
+        res.writeHead(200,{'Content-Type':type});return res.end(content);
       }
       // Synthetic samples only. Production requires current admission and active
       // Admin mode, including when requested with an Activity bearer identity.
@@ -275,8 +286,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           if (!auth || !hub.isAdmin(auth.actor)) return json(res,403,{error:'Turn on Admin mode to use the codec tester.'});
         }
         const sampleFile = path.join(__dirname, '../assets/demo', testSamples[sampleName]);
-        if (!fs.existsSync(sampleFile)) return json(res, 404, { error:'Test sample is missing' });
-        const size = fs.statSync(sampleFile).size, range = req.headers.range;
+        let stat;
+        try { stat = await fsp.stat(sampleFile); } catch { return json(res, 404, { error:'Test sample is missing' }); }
+        const size = stat.size, range = req.headers.range;
         let start = 0, end = size - 1;
         if (range) {
           const match = /^bytes=(\d*)-(\d*)$/.exec(range);
@@ -295,9 +307,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && route === '/health') return json(res, registry?.persistence.error?503:200, { ok: !registry?.persistence.error, version });
       if(req.method==='GET'&&['/demo-plex','/demo-discord'].includes(route)&&!config.demo)return json(res,404,{error:'Not found'});
       if (req.method === 'GET' && route === '/auth/handoff') {
+        const content = await readAsset(path.join(publicDir, 'handoff.html'));
         res.setHeader('Set-Cookie', cookie('uburoom_handoff', randomBytes(32).toString('hex'), 60));
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end(fs.readFileSync(path.join(publicDir, 'handoff.html')));
+        return res.end(content);
       }
       const branding = {
         '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
@@ -307,16 +320,22 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       };
       if (req.method === 'GET' && branding[route]) {
         const [file, type] = branding[route];
+        const content = await readAsset(path.join(publicDir, 'assets', file));
         res.writeHead(200, { 'Content-Type': type });
-        return res.end(fs.readFileSync(path.join(publicDir, 'assets', file)));
+        return res.end(content);
       }
       if (req.method === 'GET' && route === '/theme.js') {
-        const sources={};
-        for(const asset of ['/assets/branding/uburoom-wordmark-brand.svg','/favicon.svg']) {
-          sources[asset]=fs.readFileSync(path.join(publicDir,'assets',branding[asset][0]),'utf8');
-        }
+        const [wordmark, favicon, themeScript] = await Promise.all([
+          readAsset(path.join(publicDir,'assets',branding['/assets/branding/uburoom-wordmark-brand.svg'][0]),'utf8'),
+          readAsset(path.join(publicDir,'assets',branding['/favicon.svg'][0]),'utf8'),
+          readAsset(path.join(publicDir,'theme.js'),'utf8')
+        ]);
+        const sources={
+          '/assets/branding/uburoom-wordmark-brand.svg': wordmark,
+          '/favicon.svg': favicon
+        };
         res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});
-        return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+fs.readFileSync(path.join(publicDir,'theme.js'),'utf8'));
+        return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+themeScript);
       }
       const assets = {
         '/icons.js': ['icons.js', 'text/javascript'],
@@ -345,25 +364,32 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/sync-quality.js':['sync-quality.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../shared', route.slice(1))));
+        const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)));
+        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
       }
       const diagnosticAssets = { '/__diagnostics/codec': ['codec.html', 'text/html'], '/__diagnostics/codec.js': ['codec.js', 'text/javascript'], '/__diagnostics/codec.css': ['codec.css', 'text/css'] };
       if (req.method === 'GET' && diagnosticAssets[route]) {
         const [file, type] = diagnosticAssets[route];
+        const content = await readAsset(path.join(__dirname, '../diagnostics', file));
         res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' });
-        return res.end(fs.readFileSync(path.join(__dirname, '../diagnostics', file)));
+        return res.end(content);
       }
       if (req.method === 'GET' && route === '/vendor/hls.js') {
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fs.readFileSync(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js')));
+        const content = await readAsset(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js'));
+        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
       }
       if (req.method === 'GET' && assets[route]) {
         const [file, type] = assets[route];
         if(file==='watch.html'){
-          const initial=await watchRoutes.bootstrap(req);
-          const html=watchPage(fs.readFileSync(path.join(publicDir,file),'utf8'),initial,scrollbarStyleNonce);
+          const [initial, template] = await Promise.all([
+            watchRoutes.bootstrap(req),
+            readAsset(path.join(publicDir,file),'utf8')
+          ]);
+          const html=watchPage(template,initial,scrollbarStyleNonce);
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
         }
-        res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(fs.readFileSync(path.join(publicDir, file)));
+        const content = await readAsset(path.join(publicDir, file));
+        res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(content);
       }
       if (req.method === 'GET' && route === '/api/me') {
         const login = await user(req);
@@ -437,8 +463,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }, 1000);
   sweep.unref();
   function close() {
-    clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close();
-    return Promise.all([mediaClosed, new Promise(resolve => server.close(resolve))]).then(() => registry?.close());
+    clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close(); assetCache.clear();
+    return Promise.all([mediaClosed, new Promise(resolve => server.listening ? server.close(resolve) : resolve())]).then(() => registry?.close());
   }
   return { server, hub, watch, close, registry, plexAuth };
   } catch(error) { Promise.resolve(registry?.persistence.abort()).catch(()=>{});throw error; }

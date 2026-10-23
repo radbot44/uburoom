@@ -8,7 +8,12 @@ async function main() {
   config.cert = fs.readFileSync(config.tlsCert);
   config.key = fs.readFileSync(config.tlsKey);
   const app = createApp(config);
-  await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(config.port, config.host, resolve); });
+  try {
+    await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(config.port, config.host, resolve); });
+  } catch (error) {
+    try { await app.close(); } catch (cleanupError) { console.error('[uburoom] Cleanup failed after listen error: ' + cleanupError.message); }
+    throw error;
+  }
   console.log(`[uburoom] Server address: ${config.publicUrl}`);
   if(config.plexFallback?.enabled&&config.plexUrl&&config.plexToken)console.warn('[uburoom] Shared Plex fallback is enabled: eligible viewers without personal server access can use the fallback account’s media permissions. Set plex.fallback_token for a dedicated account, or disable fallback.');
   console.log(`[uburoom] Private credential key: ${path.resolve(config.credentialKeyFile)} (preserve and back up separately)`);

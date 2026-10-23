@@ -137,6 +137,24 @@ test('watch socket rejects cross-origin upgrades, missing CSRF/cookies and inval
   }
 });
 
+test('watch socket destroys unsupported upgrade paths and query variants promptly',tls,async t=>{
+  const f=await fixture(t);
+  const baseWss=f.config.publicUrl.replace('https:','wss:');
+  for(const target of ['/wrong-path','/watch-socket?variant=1','/watch-socket/extra','/']){
+    const ws=new WebSocket(baseWss+target,{ca:f.cert,origin:f.config.publicUrl});
+    t.after(()=>{try{ws.terminate();}catch{}});
+    ws.on('error',()=>{});
+    const closed=await Promise.race([
+      new Promise(resolve=>ws.once('close',()=>resolve(true))),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error('Upgrade socket hung on '+target)),1500))
+    ]);
+    assert.equal(closed,true);
+  }
+  const valid=await f.connect(await f.login('host'));
+  t.after(()=>valid.ws.close());
+  assert.equal(valid.ws.readyState,1);
+});
+
 test('cookie socket authentication requires CSRF and logout invalidates the active connection',tls,async t=>{
   const f=await fixture(t);
   const http=(route,headers={},data)=>new Promise((resolve,reject)=>{
