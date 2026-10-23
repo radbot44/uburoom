@@ -75,11 +75,23 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),admin:hub.isOwner(webActor(login))&&hub.isAdmin(webActor(login))});return true;}
       if(req.method==='POST'&&route==='/api/account/plex/connect'){if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');json(res,200,{url:await startPlex(req,res,login)});return true;}
       if(req.method==='POST'&&route==='/api/account/discord/connect'){await discordStart(req,res,login);return true;}
+      function providerEnabled(identity){
+        if(!identity)return false;
+        if(identity.provider==='plex')return config.accessPolicy?.plex!==false&&plexAuth?.plex?.configured!==false;
+        if(identity.provider==='discord'){
+          const oauthReady=!!(config.clientId&&config.clientSecret&&config.ownerId);
+          if(!oauthReady)return false;
+          if(config.accessPolicy?.discord===false)return identity.subject===config.ownerId;
+          return true;
+        }
+        return false;
+      }
       const remove=/^\/api\/account\/(discord|plex)\/remove$/.exec(route);
       if(req.method==='POST'&&remove){
         const provider=remove[1],data=await body(req),identities=registry.identities(login.userId);
         const remaining=identities.find(i=>i.provider!==provider&&i.verified&&(i.provider!=='plex'||registry.hasCredential(i.subject)));
         if(!remaining)throw new Error('Connect another sign-in method before removing this account');
+        if(!providerEnabled(remaining))throw new Error((remaining.provider==='plex'?'Plex':'Discord')+' sign-in is disabled on this server; keep your connected account');
         const ownerChanged=hub.isOwner(webActor(login));
         if(remaining.provider==='plex'){if(!await plexAuth.forUser(login.userId))throw new Error('Sign in to Plex before removing Discord');}
         else if(!hub.access.isMember(login.userId)&&!await hub.access.refresh(login.userId))throw new Error('Discord access is unavailable; keep Plex connected');

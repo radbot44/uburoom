@@ -37,12 +37,26 @@ async function showAccount(){
       const connected=identity?.authenticated&&(provider!=='plex'||identity.credentialStored);
       const name=identity&&identity.name!==identity.subject?identity.name:'';
       $(provider+'-identity').textContent=identity?(connected?(name?'Connected as '+name:'Connected'):'Sign-in needed'+(name?' · '+name:'')):'Not connected';
-      const button=$('connect-'+provider);button.textContent='Connect '+label;button.hidden=!!identity;
+      const button=$('connect-'+provider);
       button.disabled=provider==='plex'&&!config.plexConfigured||config.access?.[provider]===false;
       if(button.disabled)$(provider+'-identity').textContent='Unavailable on this server'+(name?' · '+name:'');
+      const otherEnabled=value.account.identities.some(i=>i.provider!==provider&&i.authenticated&&(i.provider!=='plex'||i.credentialStored)&&config.access?.[i.provider]!==false&&(i.provider!=='plex'||config.plexConfigured));
       const remove=$('remove-'+provider);remove.hidden=!identity;
-      remove.disabled=!activity&&!value.account.identities.some(i=>i.provider!==provider&&i.authenticated&&(i.provider!=='plex'||i.credentialStored));
+      remove.disabled=!activity&&!otherEnabled;
       remove.title=remove.disabled?'Connect another sign-in method before removing '+label:'Remove '+label;
+      if(!identity){
+        button.textContent='Connect '+label;
+        button.className='provider-connect '+(provider==='discord'?'discord-button':'primary');
+        button.hidden=false;
+      }else if(!connected){
+        button.textContent='Sign in to '+label;
+        button.className='provider-connect '+(provider==='discord'?'discord-button':'primary');
+        button.hidden=false;
+      }else{
+        button.textContent='Reconnect';
+        button.className='provider-connect quiet';
+        button.hidden=false;
+      }
     }
     $('account-browser-hint').hidden=!activity;
     $('account-connect-hint').hidden=activity;

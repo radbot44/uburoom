@@ -347,3 +347,33 @@ test('explicit single-room Plex leader overrides discovery; failed discovery nev
   const id=f.app.registry.meta('singleRoomId');
   assert.equal(f.app.watch.roomState.store.get(id).creatorId,f.app.registry.identity('plex','102').userId);
 });
+
+test('provider removal rejects leaving only a disabled login provider; owner exception preserves Discord',async t=>{
+  const fPlexOff=await fixture(t,{accessPolicy:{discord:true,plex:false,requirePlex:false,password:'',publicWeb:true}});
+  const b1=fPlexOff.browser();await b1.discord('guest');
+  const u1=(await b1.request('/api/account')).body.account;
+  fPlexOff.app.registry.link(u1.id,'plex','101','Alice');
+  fPlexOff.app.registry.credential('101',{token:'fixture-server-101',authType:'traditional'});
+  assert.equal(fPlexOff.app.registry.identities(u1.id).length,2);
+  const resPlexOff=await b1.post('/api/account/discord/remove',{subject:fPlexOff.provider.subjects.guest});
+  assert.equal(resPlexOff.status,400,'cannot remove Discord when Plex is disabled');
+  assert.equal(fPlexOff.app.registry.identities(u1.id).length,2,'identities preserved');
+
+  const fDiscordOff=await fixture(t,{accessPolicy:{discord:false,plex:true,requirePlex:false,password:'',publicWeb:true}});
+  const bGuest=fDiscordOff.browser();await bGuest.plex('alice');
+  const uGuest=(await bGuest.request('/api/account')).body.account;
+  fDiscordOff.app.registry.link(uGuest.id,'discord',fDiscordOff.provider.subjects.guest,'Guest');
+  assert.equal(fDiscordOff.app.registry.identities(uGuest.id).length,2);
+  const resGuest=await bGuest.post('/api/account/plex/remove',{subject:'101'});
+  assert.equal(resGuest.status,400,'regular user cannot remove Plex when Discord is disabled');
+  assert.equal(fDiscordOff.app.registry.identities(uGuest.id).length,2,'identities preserved');
+
+  const bOwner=fDiscordOff.browser();await bOwner.plex('bob');
+  const uOwner=(await bOwner.request('/api/account')).body.account;
+  fDiscordOff.app.registry.link(uOwner.id,'discord',fDiscordOff.config.ownerId,'Host');
+  assert.equal(fDiscordOff.app.registry.identities(uOwner.id).length,2);
+  const resOwner=await bOwner.post('/api/account/plex/remove',{subject:'102'});
+  assert.equal(resOwner.status,200,'owner can remove Plex when Discord auth is available via /auth/owner');
+  assert.equal(fDiscordOff.app.registry.identities(uOwner.id).length,1);
+  assert.equal(fDiscordOff.app.registry.identities(uOwner.id)[0].provider,'discord');
+});
