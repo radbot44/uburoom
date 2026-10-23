@@ -53,9 +53,9 @@ test('viewers start at provisional 100% and the first valid interval begins refi
   at=1000;tracker.sample({at,errorMs:800,eligible:true,context,clockRevision:1});
   const first=refresh(tracker,1000,{rttSampleCount:1});
   assert.equal(first.status,'playing');assert.equal(first.updated,true);assert.ok(first.score<.5,'first valid interval can lower the provisional estimate');
-  assert.equal(first.confidence,'reduced','clock warmup affects confidence rather than hiding the score');
+  assert.equal(first.confidence,'confident','the first usable interval qualifies playback without five RTT exchanges');
   assert.equal(refresh(tracker,2000,{clockValid:false}).score,first.score,'clock interruptions retain the estimate');
-  assert.equal(refresh(tracker,2000,{clockValid:false}).confidence,'reduced');
+  assert.equal(refresh(tracker,2000,{clockValid:false}).confidence,'confident','brief clock loss retains recent evidence');
   assert.equal(refresh(tracker,2000,{clockUncertaintyMs:900}).score,first.score,'uncertain clocks do not erase the score');
 });
 
@@ -73,24 +73,24 @@ test('pause, seek, temporary clock loss and clock revision preserve the latest s
   const tracker=quality.create(),context='room:viewer:media:stream';ready(tracker,0,12000,context);
   const first=refresh(tracker,12000),level=first.lastLevel;
   const paused=refresh(tracker,13000,{playbackStatus:'paused'});
-  assert.equal(paused.status,'paused');assert.equal(paused.score,first.score);assert.equal(paused.lastLevel,level);assert.equal(paused.confidence,'reduced');
+  assert.equal(paused.status,'paused');assert.equal(paused.score,first.score);assert.equal(paused.lastLevel,level);assert.equal(paused.confidence,'confident');
   const seeking=refresh(tracker,13500,{playbackStatus:'seeking'});
-  assert.equal(seeking.status,'seeking');assert.equal(seeking.score,first.score);assert.equal(seeking.confidence,'reduced');
+  assert.equal(seeking.status,'seeking');assert.equal(seeking.score,first.score);assert.equal(seeking.confidence,'confident');
   tracker.breakSample(14000);
   const stale=refresh(tracker,14000,{clockValid:false});
-  assert.equal(stale.status,'playing');assert.equal(stale.score,first.score);assert.equal(stale.confidence,'reduced');
+  assert.equal(stale.status,'playing');assert.equal(stale.score,first.score);assert.equal(stale.confidence,'confident');
   tracker.sample({at:15000,errorMs:1,eligible:true,context,clockRevision:2});
   const resumed=refresh(tracker,15000);
   assert.equal(resumed.status,'playing');assert.equal(resumed.lastLevel,level);
-  assert.equal(resumed.score,first.score);assert.equal(resumed.confidence,'reduced');assert.equal(resumed.metrics.measuredSeconds,0,'clock resets invalidate the old evidence window');
+  assert.equal(resumed.score,first.score);assert.equal(resumed.confidence,'confident');assert.equal(resumed.metrics.measuredSeconds,0,'clock resets invalidate the old evidence window');
 });
 
-test('position fallback is scored but remains visibly lower-confidence than presented-frame evidence',()=>{
+test('position fallback is usable measured evidence while diagnostics keep its precision distinction',()=>{
   const tracker=quality.create(),context='room:viewer:media:stream';
   tracker.sample({at:0,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
   tracker.sample({at:1000,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
   const result=refresh(tracker,1000,{rttSampleCount:10});
-  assert.equal(result.updated,true);assert.equal(result.score,1);assert.equal(result.confidence,'reduced');
+  assert.equal(result.updated,true);assert.equal(result.score,1);assert.equal(result.confidence,'confident');
   assert.equal(result.reason,'position-timing-estimate');assert.equal(result.metrics.positionMeasuredSeconds,1);
   assert.equal(result.metrics.presentationMeasuredSeconds,0);
 });
@@ -125,4 +125,44 @@ test('four quality bands use the existing inclusive boundaries with hysteresis',
   assert.equal(quality.level(.4999),'poor');assert.equal(quality.level(undefined),undefined);
   assert.equal(quality.level(.88,'excellent'),'excellent');assert.equal(quality.level(.86,'excellent'),'good');
   assert.equal(quality.level(.77,'fair'),'fair');assert.equal(quality.level(.78,'fair'),'good');
+});
+
+test('Chrome-style startup and imperfect mixed sampling color promptly without perfect history',()=>{
+  const tracker=quality.create(),context='chrome';
+  assert.equal(refresh(tracker,0,{clockValid:false}).confidence,'provisional');
+  tracker.sample({at:2500,errorMs:35,source:'position',eligible:true,context,clockRevision:1});
+  tracker.sample({at:3500,errorMs:30,source:'presentation',eligible:true,context,clockRevision:1});
+  assert.equal(refresh(tracker,3500,{rttSampleCount:2,clockAgeMs:1200}).confidence,'confident');
+  for(let at=4500;at<=70000;at+=1000) {
+    tracker.sample({at,errorMs:40,source:at===24000?'position':'presentation',eligible:true,context,clockRevision:1});
+    const result=refresh(tracker,at,{clockAgeMs:1800,clockUncertaintyMs:150,rttSampleCount:2});
+    assert.equal(result.confidence,'confident','an isolated fallback does not poison a 60-second window');
+  }
+});
+
+test('Android-style clock variability and missed probes do not flicker, but prolonged loss greys',()=>{
+  const tracker=quality.create(),context='android';
+  tracker.sample({at:0,errorMs:45,source:'position',eligible:true,context,clockRevision:1});
+  tracker.sample({at:1000,errorMs:65,source:'position',eligible:true,context,clockRevision:1});
+  assert.equal(refresh(tracker,1000,{rttSampleCount:1,clockAgeMs:4300,clockUncertaintyMs:900}).confidence,'confident');
+  tracker.breakSample(2000);
+  assert.equal(refresh(tracker,9500,{clockValid:false}).confidence,'confident');
+  assert.equal(refresh(tracker,9500,{clockValid:false}).metrics.measurementFreshnessMs,8500);
+  assert.equal(refresh(tracker,15000,{clockValid:false}).confidence,'reduced');
+  assert.equal(refresh(tracker,15000,{clockValid:false}).score,1);
+  tracker.sample({at:16000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
+  tracker.sample({at:17000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
+  assert.equal(refresh(tracker,17000,{rttSampleCount:1}).confidence,'confident');
+});
+
+test('pauses retain measured ratings, then expire, without a long resume warmup',()=>{
+  const tracker=quality.create(),context='paused';
+  tracker.sample({at:0,errorMs:10,eligible:true,context,clockRevision:1});
+  tracker.sample({at:1000,errorMs:10,eligible:true,context,clockRevision:1});
+  refresh(tracker,1000);
+  assert.equal(refresh(tracker,50000,{playbackStatus:'paused',clockValid:false}).confidence,'confident');
+  assert.equal(refresh(tracker,122000,{playbackStatus:'paused',clockValid:false}).confidence,'reduced');
+  tracker.sample({at:123000,errorMs:15,eligible:true,context,clockRevision:1});
+  tracker.sample({at:124000,errorMs:15,eligible:true,context,clockRevision:1});
+  assert.equal(refresh(tracker,124000).confidence,'confident');
 });

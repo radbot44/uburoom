@@ -20,7 +20,7 @@ test('participant aggregate selects the worst active device and exposes every se
   ])};
   const people=[{id:'account'}];syncQualityParticipants(room,people,now);
   const aggregate=people[0].syncQuality;
-  assert.equal(aggregate.status,'unknown');assert.equal(aggregate.score,.60);assert.equal(aggregate.level,'fair');assert.equal(aggregate.confidence,'reduced');
+  assert.equal(aggregate.status,'known');assert.equal(aggregate.score,.72);assert.equal(aggregate.level,'fair');assert.equal(aggregate.confidence,'confident');
   assert.equal(aggregate.sessions.length,3);
   assert.deepEqual(aggregate.sessions.map(row=>row.score),[.96,.72,.60]);
   assert.equal(aggregate.sessions[2].status,'paused');assert.equal(aggregate.sessions[2].lastKnownLevel,'fair');assert.equal(aggregate.sessions[2].confidence,'reduced');
@@ -89,4 +89,16 @@ test('automatic hard corrections are observed, while startup and intentional sha
   const regular=await scenario();assert.equal(regular.currentTime,10);assert.equal(regular.corrections.length,1);assert.equal(regular.corrections[0].magnitudeMs,10000);
   assert.equal((await scenario({eligible:false})).corrections.length,0,'startup settling is not counted');
   assert.equal((await scenario({suppress:true})).corrections.length,0,'intentional shared seek is not counted');
+});
+
+test('stale playback evidence stays reduced even when socket updates are recent',()=>{
+  const now=200000,room={mediaVersion:'media-current',viewers:new Map([
+    ['recent',viewer('recent',measurement({score:.82,updatedAt:now,measurementFreshnessMs:3000,lastKnownAt:now-3000}),1)],
+    ['old',viewer('old',measurement({score:.98,updatedAt:now,measurementFreshnessMs:30000,lastKnownAt:now-30000}),2)],
+    ['paused',viewer('paused',measurement({status:'paused',score:.75,confidence:'confident',measurementFreshnessMs:30000,updatedAt:now}),3)]
+  ])};
+  const people=[{id:'recent'},{id:'old'},{id:'paused'}];syncQualityParticipants(room,people,now);
+  assert.equal(people[0].syncQuality.confidence,'confident');
+  assert.equal(people[1].syncQuality.confidence,'reduced','new socket messages are not new evidence');
+  assert.equal(people[2].syncQuality.confidence,'confident','a measured pause retains its color during normal inactivity');
 });
