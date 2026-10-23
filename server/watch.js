@@ -61,7 +61,10 @@ function syncQualityParticipants(room,participants,now=Date.now()) {
     const current=visible.filter(session=>session.current).sort((a,b)=>a.score-b.score);
     const connected=visible.filter(session=>session.status!=='disconnected'&&session.status!=='stale'&&Number.isFinite(session.score));
     const remembered=visible.filter(session=>Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt);
-    const selected=playing[0]||current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
+    // An unqualified active tab should not turn a separately measured active
+    // tab grey. Among trustworthy active sessions, the lowest score still wins.
+    const measuredPlaying=playing.filter(session=>session.confidence==='confident');
+    const selected=measuredPlaying[0]||playing[0]||current[0]||connected.sort((a,b)=>a.score-b.score)[0]||remembered[0]||visible[0];
     const score=selected&&Number.isFinite(selected.score)?selected.score:1;
     const confidence=selected?.confidence||'provisional';
     const reason=visible.length===0?'no-sessions':selected?.reason||

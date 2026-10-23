@@ -102,3 +102,14 @@ test('stale playback evidence stays reduced even when socket updates are recent'
   assert.equal(people[1].syncQuality.confidence,'reduced','new socket messages are not new evidence');
   assert.equal(people[2].syncQuality.confidence,'confident','a measured pause retains its color during normal inactivity');
 });
+
+test('a provisional active device cannot override another actively measured device',()=>{
+  const now=100000,room={mediaVersion:'media-current',viewers:new Map([
+    ['measured',viewer('person',measurement({score:.84,confidence:'confident'}),1)],
+    ['unqualified',viewer('person',measurement({score:.20,confidence:'provisional'}),2)]
+  ])},people=[{id:'person'}];
+  syncQualityParticipants(room,people,now);
+  assert.equal(people[0].syncQuality.score,.84);
+  assert.equal(people[0].syncQuality.confidence,'confident');
+  assert.equal(people[0].syncQuality.sessions.length,2,'the provisional device remains in the per-session tooltip');
+});
