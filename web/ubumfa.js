@@ -150,7 +150,29 @@
       : generateName();
     return 'Room ' + word[0] + word.slice(1).toLowerCase();
   }
-  const api = {generateName, roomName};
+  // A 12-letter Ubunym has a six-letter nomen and six letters of
+  // praenomen/cognomen, split 2-6 and its remainder on opposite sides.
+  // The same seed always yields the same nomen as generateName(6, {seed}).
+  function ubunym(seed) {
+    const random = arguments.length === 0 ? Math.random :
+      typeof seed === 'function' ? seed : randomForSeed(
+        seed !== null && typeof seed === 'object' &&
+          Object.prototype.hasOwnProperty.call(seed, 'seed') ? seed.seed : seed);
+    const word = length => {
+      const generated = generateWord(length, random);
+      return generated[0] + generated.slice(1).toLowerCase();
+    };
+    const nomen = word(6);
+    const extraLength = 2 + Math.floor(random() * 5);
+    const extra = word(extraLength);
+    const extraBefore = random() < 0.5;
+    const remainingLength = 6 - extraLength;
+    const opposite = remainingLength ? word(remainingLength) : '';
+    return (extraBefore ? [extra, nomen, opposite] : [opposite, nomen, extra])
+      .filter(Boolean).join(' ');
+  }
+
+  const api = {generateName, roomName, ubunym};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.uburoomUbumfa = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
