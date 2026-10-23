@@ -165,6 +165,56 @@ test('aggregate anchor memory and pooled group counts are bounded without preven
   }
 });
 
+test('direct-HLS joining protects the group across delayed liveness, prevents adopting disposed output, and handles pool close and denial',async()=>{
+  let stops=0,finishAlive;
+  const pool=new HLSPool(async()=>{stops++;});
+  const first=await pool.acquire('same',async()=>({fixture:1}),async()=>true,undefined,1,false,true);
+  pool.alive=()=>new Promise(resolve=>{finishAlive=resolve;});
+  const joining=pool.acquire('same',async()=>({replacement:1}),async()=>true,undefined,1,false,true);
+  await first.lease.release();
+  assert.equal(stops,0,'group was not stopped while joiner is awaiting liveness');
+  finishAlive(true);
+  const joined=await joining;
+  assert.equal(joined.lease.group.disposed,false,'joined group is not disposed');
+  assert.equal(joined.media,first.media,'joined survivor continues with existing media');
+  await joined.lease.release();
+  assert.equal(stops,1,'stop occurs exactly once after the actual last consumer leaves');
+
+  const original=await pool.acquire('renew',async()=>({fixture:2}),async()=>true,undefined,1,false,true);
+  pool.alive=()=>new Promise(resolve=>{finishAlive=resolve;});
+  const renewing=pool.acquire('renew',async()=>({replacement:2}),async()=>true,undefined,1,false,true);
+  await original.lease.release();
+  assert.equal(stops,1);
+  finishAlive(false);
+  const renewed=await renewing;
+  assert.equal(renewed.lease.group.disposed,false);
+  assert.equal(renewed.media.replacement,2,'cleanly reacquires replacement when liveness fails');
+  assert.equal(stops,2,'dead group stopped when liveness failed');
+  await renewed.lease.release();
+  assert.equal(stops,3);
+
+  const closingGroup=await pool.acquire('closing',async()=>({fixture:3}),async()=>true,undefined,1,false,true);
+  pool.alive=()=>new Promise(resolve=>{finishAlive=resolve;});
+  const closingJoin=pool.acquire('closing',async()=>({replacement:3}),async()=>true,undefined,1,false,true);
+  const closePromise=pool.close();
+  finishAlive(true);
+  await assert.rejects(closingJoin,/Server is shutting down/);
+  await closePromise;
+  assert.equal(pool.live.size,0,'no leaked group references on close');
+
+  const pool2=new HLSPool(async()=>{stops++;});
+  let allowed=true;
+  const survivor=await pool2.acquire('auth',async()=>({fixture:4}),async()=>true,undefined,1,false,true);
+  pool2.alive=()=>new Promise(resolve=>{finishAlive=resolve;});
+  const deniedJoin=pool2.acquire('auth',async()=>({replacement:4}),async()=>allowed,undefined,1,false,true);
+  allowed=false;
+  finishAlive(true);
+  await assert.rejects(deniedJoin,/Viewing access/);
+  assert.equal(survivor.lease.group.users.size,1,'failed join does not leave leaked user reference');
+  await survivor.lease.release();
+  await pool2.close();
+});
+
 test('AV1 preparation pools by room across accounts, preserves independent text captions and rejects burn-in',async()=>{
   const f=fixture();f.plex.av1.ffmpeg='fixture';
   const prepare=(scope,choices={})=>scope.prepare('1','720p4',false,undefined,'av1',{shareKey:['room','generation'],subtitleId:'off',...choices});

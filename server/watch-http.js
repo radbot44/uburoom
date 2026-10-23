@@ -182,7 +182,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const disconnect = () => { if (!res.writableEnded) abort.abort(); }; res.on('close', disconnect);
     try {
       // The grant's own source access is checked before cached or producer bytes.
-      response = (media.plexContext||watch.plex).hlsPool?.response(media.hlsLease,target,req.method,req.headers.range) || await (media.hlsContext||media.plexContext||watch.plex).request(target, { method: req.method, signal: abort.signal, headers: { Accept: '*/*',
+      response = (media.plexContext||watch.plex).hlsPool?.response(media.hlsLease,target,req.method,req.headers.range) || await (media.hlsContext||media.plexContext||watch.plex).request(target, { method: req.method, signal: abort.signal, streaming: true, headers: { Accept: '*/*',
         ...(media.transcodeId ? { 'X-Plex-Client-Identifier': media.transcodeId } : {}), ...(req.headers.range ? { Range: req.headers.range } : {}) } });
       clearTimeout(timer);
       if (!await validGrant(grant)) { abort.abort(); return json(res, 403, { error: 'Viewing access was revoked' }); }

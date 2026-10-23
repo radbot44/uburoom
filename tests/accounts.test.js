@@ -98,7 +98,7 @@ async function fixture(t, deliveryFetch){
     const post=async(route,data)=>request(route,data,{'X-CSRF-Token':await csrf()||''});
     const discord=async(persona='host',link=false)=>{const start=link?await post('/api/account/discord/connect',{}):await request('/auth/discord');const url=new URL(link?start.body.url:start.headers.location,config.publicUrl);return request('/auth/callback?'+new URLSearchParams({state:url.searchParams.get('state'),code:persona}));};
     const plex=async(persona='alice',link=false)=>{const start=link?await post('/api/account/plex/connect',{}):await request('/auth/plex');const url=new URL(link?start.body.url:start.headers.location,config.publicUrl);const selected=await request('/auth/plex/demo?'+new URLSearchParams({state:url.searchParams.get('state'),persona}));if(selected.status!==302)return selected;return request(selected.headers.location);};
-    return {request,post,discord,plex,jar};
+    return {request,post,discord,plex,jar,csrf};
   }
   return {app,provider,config,members,browser};
 }
@@ -415,4 +415,88 @@ test('only owner Admin mode assigns previewed ID matches; pending matches create
   assert.equal((await owner.request('/api/account/admin')).body.accounts.some(account=>JSON.stringify(account).includes('fixture-server-')),false);
   const separate=f.browser();await separate.plex('alice');await owner.plex('alice',true);const ownerMerge=(await owner.request('/api/account')).body.merge;
   assert.equal((await owner.post('/api/account/merge',{id:ownerMerge.id})).status,200);assert.equal((await owner.request('/api/watch/me')).body.adminMode,false,'owner merging accounts does not preserve active Admin consent');
+});
+
+test('account assignment and merge revalidate active Admin mode and current login after reading request bodies',tls,async t=>{
+  const f=await fixture(t),owner=f.browser(),guest=f.browser();
+  await owner.discord();await owner.post('/api/watch/admin-mode',{enabled:true});
+  await guest.discord('guest');
+  const preview=await owner.post('/api/account/admin/preview',{discordId:f.provider.subjects.guest,plexId:'102'});
+  assert.equal(preview.status,200);
+
+  const ownerCsrf=await owner.csrf(),ownerCookie=[...owner.jar].map(([k,v])=>k+'='+v).join('; ');
+  const sendDelayed=async(path,bodyObj,midFlight)=>{
+    return new Promise((resolve,reject)=>{
+      const data=JSON.stringify(bodyObj);
+      const req=https.request({
+        hostname:'localhost',port:f.app.server.address().port,path,method:'POST',ca:f.config.cert,
+        headers:{Origin:f.config.publicUrl,'Content-Type':'application/json','X-CSRF-Token':ownerCsrf,Cookie:ownerCookie}
+      },res=>{
+        const chunks=[];res.on('data',c=>chunks.push(c));
+        res.on('end',()=>{
+          const raw=Buffer.concat(chunks).toString();
+          resolve({status:res.statusCode,body:res.headers['content-type']?.includes('json')?JSON.parse(raw):raw});
+        });
+      });
+      req.on('error',reject);
+      req.write(data.slice(0, 5));
+      setTimeout(async()=>{
+        try {
+          await midFlight();
+          req.write(data.slice(5));
+          req.end();
+        } catch(err) {
+          req.destroy(err);
+          reject(err);
+        }
+      }, 25);
+    });
+  };
+
+  const exitedAdmin=await sendDelayed('/api/account/admin/assign',{id:preview.body.id},async()=>{
+    await owner.post('/api/watch/admin-mode',{enabled:false});
+  });
+  assert.equal(exitedAdmin.status,403);
+  assert.equal(f.app.registry.identity('plex','102'),undefined,'identity was not assigned when Admin mode was revoked');
+
+  await owner.post('/api/watch/admin-mode',{enabled:true});
+  const preview2=await owner.post('/api/account/admin/preview',{discordId:f.provider.subjects.guest,plexId:'102'});
+  assert.equal(preview2.status,200);
+
+  const revokedLogin=await sendDelayed('/api/account/admin/assign',{id:preview2.body.id},async()=>{
+    await owner.post('/api/logout',{});
+  });
+  assert.equal(revokedLogin.status,403);
+  assert.equal(f.app.registry.identity('plex','102'),undefined,'identity was not assigned when login was revoked');
+
+  await owner.discord();
+  await owner.post('/api/watch/admin-mode',{enabled:true});
+  const plexUser=f.browser();await plexUser.plex('bob');
+  await owner.plex('bob',true);
+  const mergePreview=(await owner.request('/api/account')).body.merge;
+  assert.ok(mergePreview);
+
+  const newOwnerCsrf=await owner.csrf(),newOwnerCookie=[...owner.jar].map(([k,v])=>k+'='+v).join('; ');
+  const revokedMerge=await new Promise((resolve,reject)=>{
+    const data=JSON.stringify({id:mergePreview.id});
+    const req=https.request({
+      hostname:'localhost',port:f.app.server.address().port,path:'/api/account/merge',method:'POST',ca:f.config.cert,
+      headers:{Origin:f.config.publicUrl,'Content-Type':'application/json','X-CSRF-Token':newOwnerCsrf,Cookie:newOwnerCookie}
+    },res=>{
+      const chunks=[];res.on('data',c=>chunks.push(c));
+      res.on('end',()=>{
+        const raw=Buffer.concat(chunks).toString();
+        resolve({status:res.statusCode,body:res.headers['content-type']?.includes('json')?JSON.parse(raw):raw});
+      });
+    });
+    req.on('error',reject);
+    req.write(data.slice(0, 5));
+    setTimeout(async()=>{
+      await owner.post('/api/logout',{});
+      req.write(data.slice(5));
+      req.end();
+    }, 25);
+  });
+  assert.equal(revokedMerge.status,400);
+  assert.match(revokedMerge.body.error,/Account sign-in changed/);
 });

@@ -96,6 +96,8 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         const a=registry.canonical(merge.sourceId),b=registry.canonical(merge.otherId);
         if(JSON.stringify([a.revision,b.revision])!==merge.version)throw new Error('Accounts changed; connect again');
         if(busy([a.id,b.id]))throw new Error('Leave all watch rooms for both accounts before merging');
+        const current=await user(req);
+        if(!current||current!==login)throw new Error('Account sign-in changed; connect again');
         registry.merge(a.id,b.id,a.id);if(merge.credential)registry.credential(merge.subject,merge.credential);
         invalidate([a.id,b.id]);merges.delete(sourceHash(req));session(res,registry.canonical(a.id),a.name);json(res,200,{merged:true});return true;
       }
@@ -106,7 +108,8 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         if(typeof data.discordId!=='string'||typeof data.plexId!=='string'||!/^\d{17,20}$/.test(data.discordId)||!/^\d{1,20}$/.test(data.plexId))throw new Error('Use Discord and Plex account IDs, not names or email addresses');
         if(data.discordId===config.ownerId)throw new Error('Connect the owner account through verified self-service linking');
         const profile=await hub.access.identity(data.discordId);if(!profile)throw new Error('Discord identity unavailable; check the ID and bot connection');
-        if(!hub.isOwner(webActor(login))||!hub.isAdmin(webActor(login))||(await user(req))!==login){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
+        const current=await user(req);
+        if(!current||current!==login||!hub.isOwner(webActor(current))||!hub.isAdmin(webActor(current))){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
         const preview=registry.preview(data.discordId,data.plexId),id=secret();
         const discordName=profile.name,plexName=registry.identity('plex',data.plexId)?.name||'Awaiting Plex sign-in';
         previews.set(id,{...preview,discordName,sourceHash:sourceHash(req),expires:Date.now()+300000});json(res,200,{id,discordId:data.discordId,discordName,plexId:data.plexId,plexName,accounts:preview.users});return true;
@@ -115,7 +118,9 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
         const data=await body(req),preview=previews.get(data.id);previews.delete(data.id);
         if(!preview||preview.sourceHash!==sourceHash(req)||preview.expires<=Date.now())throw new Error('Match preview expired; preview again');
         if(busy(preview.users.map(u=>u.id)))throw new Error('Both accounts must leave their watch rooms before matching');
-        const id=registry.assign(preview,login.userId);invalidate(preview.users.map(u=>u.id));json(res,200,{account:registry.summary(id)});return true;
+        const current=await user(req);
+        if(!current||current!==login||!hub.isOwner(webActor(current))||!hub.isAdmin(webActor(current))){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
+        const id=registry.assign(preview,current.userId);invalidate(preview.users.map(u=>u.id));json(res,200,{account:registry.summary(id)});return true;
       }
       json(res,404,{error:'Account action unavailable'});return true;
     }catch(error){

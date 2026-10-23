@@ -57,7 +57,7 @@ class Plex {
   async request(resource, options = {}) {
     const url = this.url(resource);
     const response = await this.fetch(url, { ...options, redirect: 'manual',
-      signal: options.signal || AbortSignal.timeout(12000), headers: {
+      signal: options.signal || (options.streaming ? undefined : AbortSignal.timeout(12000)), headers: {
         Accept: 'application/json', 'X-Plex-Token': this.token, 'X-Plex-Product': 'uburoom',
         'X-Plex-Client-Identifier': url.searchParams.get('X-Plex-Client-Identifier') || url.searchParams.get('session') || this.clientId || 'uburoom-watch',
         'X-Plex-Platform': 'Firefox', ...options.headers

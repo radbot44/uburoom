@@ -25,7 +25,7 @@ class HLSPool {
       if(!/#EXTINF:/.test(text)){url=target;text=undefined;continue;}
       const sequence=/#EXT-X-MEDIA-SEQUENCE:([^\r\n]+)/.exec(text);
       if(sequence&&Number(sequence[1])!==0)return;
-      const response=await wait(plex.request(target,options)),reader=response.body.getReader();
+      const response=await wait(plex.request(target,{...options,streaming:true})),reader=response.body.getReader();
       const chunks=[];let size=0;
       try {
         for(;;){const {done,value}=await wait(reader.read());if(done)break;
@@ -65,15 +65,29 @@ class HLSPool {
     this.invalidate(exclude);
     if(this.closed)throw new PlaybackError('Server is shutting down.');
     if(!key||!this.groups.has(key)&&this.live.size>=this.maxGroups)return {media:await create(authorized)};
-    let group=this.groups.get(key),producer=false;
-    if(group&&direct&&group.settled&&group.media&&!await this.alive(group.media)) {
-      if(this.groups.get(key)===group)this.groups.delete(key);
-      if(existingOnly)return unavailable();
-      if(this.closed)throw new PlaybackError('Server is shutting down.');
-      group=this.groups.get(key);
+    let group=this.groups.get(key),producer=false,reservedUser;
+    if(group&&direct&&group.settled&&group.media) {
+      reservedUser={authorized};
+      group.users.add(reservedUser);
+      let isAlive=false;
+      try {
+        isAlive=!this.closed&&!group.disposed&&await this.alive(group.media);
+      } finally {
+        if(!isAlive||this.closed||group.disposed) {
+          group.users.delete(reservedUser);
+          void this.dispose(group).catch(()=>{});
+        }
+      }
+      if(!isAlive||this.closed||group.disposed) {
+        if(this.groups.get(key)===group)this.groups.delete(key);
+        if(existingOnly)return unavailable();
+        if(this.closed)throw new PlaybackError('Server is shutting down.');
+        group=this.groups.get(key);
+        reservedUser=undefined;
+      }
     }
     if(!group){
-      producer=true;group={key,users:new Set(),settled:false,direct};this.groups.set(key,group);this.live.add(group);
+      producer=true;group={key,users:new Set(),settled:false,direct,disposed:false};this.groups.set(key,group);this.live.add(group);
       group.promise=Promise.resolve().then(async()=>{
         try {
           // Source preparation always uses its producer's own authorization.
@@ -87,7 +101,7 @@ class HLSPool {
         } finally {group.settled=true;void this.dispose(group).catch(()=>{});}
       });
     }
-    const user={authorized};group.users.add(user);let retained=false;
+    const user=reservedUser||{authorized};if(!reservedUser)group.users.add(user);let retained=false;
     try {
       let media;
       try{media=await group.promise;}
@@ -96,7 +110,7 @@ class HLSPool {
         throw error;
       }
       const live=!authorized||await authorized();
-      if(this.closed||!live)throw new PlaybackError('Viewing access or stream selection expired.');
+      if(this.closed||!live||group.disposed)throw new PlaybackError('Viewing access or stream selection expired.');
       if(!direct&&!group.anchor) {
         // No anchor cache means a future join could restart the encoder at zero.
         // Transfer the first private output once; other callers prepare their own.

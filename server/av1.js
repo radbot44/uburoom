@@ -210,14 +210,15 @@ class AV1 {
         res.on('close', cancel); entry.signal.addEventListener('abort', cancel, {once:true});
         const timer = setTimeout(cancel, 30000);
         try {
-          const response = await (entry.source.plexContext||this.plex).request(entry.source.start, { method:req.method, signal:abort.signal,
+          const response = await (entry.source.plexContext||this.plex).request(entry.source.start, { method:req.method, signal:abort.signal, streaming: true,
             headers:{Accept:'*/*', ...(req.headers.range ? {Range:req.headers.range} : {})} });
+          clearTimeout(timer);
           const headers = {};
           for (const key of ['content-type','content-length','content-range','accept-ranges']) if (response.headers.has(key)) headers[key] = response.headers.get(key);
           res.writeHead(response.status, headers);
           if (req.method === 'HEAD') res.end(); else await pipeline(Readable.fromWeb(response.body), res);
         } catch { res.destroy(); }
-        finally { clearTimeout(timer); entry.signal.removeEventListener('abort', cancel); }
+        finally { clearTimeout(timer); res.off('close', cancel); entry.signal.removeEventListener('abort', cancel); }
       });
       server.requestTimeout = 30000;
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });

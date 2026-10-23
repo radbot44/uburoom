@@ -32,6 +32,94 @@ test('integration requests retain a hard deadline with a caller signal',async()=
   const timer=setTimeout(()=>{},1000);
   try{await assert.rejects(request('https://fixture.invalid',{signal:new AbortController().signal}),{name:'TimeoutError'});}finally{clearTimeout(timer);}
 });
+test('streaming responses allow continuous slow bodies beyond header deadline but bound idle stalls',async()=>{
+  const slowFetcher=async(url,{signal})=>{
+    const stream=new ReadableStream({
+      async start(controller){
+        for(let i=0;i<4;i++){
+          await new Promise(r=>setTimeout(r,15));
+          if(signal.aborted)return;
+          controller.enqueue(new Uint8Array([i]));
+        }
+        controller.close();
+      }
+    });
+    return new Response(stream);
+  };
+  const streamingRequest=resilientFetch(slowFetcher,{timeoutMs:25,idleTimeoutMs:30});
+  const res=await streamingRequest('https://stream.invalid',{streaming:true});
+  const reader=res.body.getReader();
+  const chunks=[];
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    chunks.push(...value);
+  }
+  assert.deepEqual(chunks,[0,1,2,3],'continuous slow body completes past the header deadline');
+
+  const stalledFetcher=async(url,{signal})=>{
+    const stream=new ReadableStream({
+      async start(controller){
+        controller.enqueue(new Uint8Array([1]));
+        await new Promise(r=>{signal.addEventListener('abort',r,{once:true});});
+      }
+    });
+    return new Response(stream);
+  };
+  const stalledRequest=resilientFetch(stalledFetcher,{timeoutMs:30,idleTimeoutMs:25});
+  const stalledRes=await stalledRequest('https://stalled.invalid',{streaming:true});
+  const stalledReader=stalledRes.body.getReader();
+  const first=await stalledReader.read();
+  assert.equal(first.value[0],1);
+  await assert.rejects(stalledReader.read(),error=>error.name==='TimeoutError'||error.message.includes('idle'));
+
+  const backpressureFetcher=async()=>{
+    const stream=new ReadableStream({
+      async start(controller){
+        controller.enqueue(new Uint8Array([10]));
+        controller.enqueue(new Uint8Array([20]));
+        controller.close();
+      }
+    });
+    return new Response(stream);
+  };
+  const backpressureRequest=resilientFetch(backpressureFetcher,{timeoutMs:30,idleTimeoutMs:25});
+  const backpressureRes=await backpressureRequest('https://backpressure.invalid',{streaming:true});
+  const bpReader=backpressureRes.body.getReader();
+  const bpFirst=await bpReader.read();
+  assert.equal(bpFirst.value[0],10);
+  // Consumer pauses reading longer than idleTimeoutMs (50ms > 25ms)
+  await new Promise(r=>setTimeout(r,50));
+  const bpSecond=await bpReader.read();
+  assert.equal(bpSecond.value[0],20);
+  const bpThird=await bpReader.read();
+  assert.equal(bpThird.done,true);
+});
+
+test('streaming response promptly cancels on caller disconnect or abort',async()=>{
+  let upstreamCancelled=false;
+  const abort=new AbortController();
+  const fetcher=async(url,{signal})=>{
+    const stream=new ReadableStream({
+      start(controller){
+        controller.enqueue(new Uint8Array([42]));
+      },
+      cancel(){
+        upstreamCancelled=true;
+      }
+    });
+    signal.addEventListener('abort',()=>{upstreamCancelled=true;},{once:true});
+    return new Response(stream);
+  };
+  const req=resilientFetch(fetcher,{timeoutMs:50,idleTimeoutMs:50});
+  const res=await req('https://stream.invalid',{streaming:true,signal:abort.signal});
+  const reader=res.body.getReader();
+  await reader.read();
+  abort.abort();
+  await new Promise(r=>setTimeout(r,10));
+  assert.equal(upstreamCancelled,true,'caller abort promptly cancels streaming body');
+});
+
 test('tool runner drains stderr, bounds output and kills timed-out or over-budget processes',async()=>{
   const binary=process.execPath;
   assert.equal((await run(binary,['-e','process.stderr.write("x".repeat(200000));process.stdout.write("ok")'],undefined,2000)).toString(),'ok');

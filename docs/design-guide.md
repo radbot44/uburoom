@@ -44,6 +44,7 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 - Unavailable actions carrying status: no background, readable reason, focusable `aria-disabled`, inert.
 - Available but ineffectual: normal background, icon at 40%, no hover/action.
 - Loading: preserve geometry, dim original control, use the shared white spinner and prevent duplicate action.
+- Asynchronous preview actions (such as account match preview) track request generation and normalized input snapshots. Responses for superseded inputs or closed contexts are discarded without clearing draft inputs, duplicate requests while in flight are prevented, and confirmation actions validate against the accepted input snapshot.
 - Keep selected, focused, disabled and read-only distinct; do not rely on color alone. Pending work must not disable unrelated controls.
 - Switch labels stay left and switches right; wrap text without shrinking or moving the switch. Show the actual checked state even when disabled.
 - Segmented arrows/Home/End move focus; Enter/Space selects. Tab arrows activate immediately. Selection alone must not trigger a separate destructive or transfer action.

@@ -54,6 +54,21 @@ function provider() {
       return new Response(body,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
     }
     if(url.pathname==='/library/streams/21.srt')return new Response('1\n00:00:01,000 --> 00:00:04,000\nBonjour\n');
+    if(url.pathname.endsWith('/segment.ts')) {
+      if(state.slowSegment) {
+        return new Response(new ReadableStream({
+          async start(controller){
+            for(let i=0;i<4;i++){
+              await new Promise(r=>setTimeout(r,15));
+              if(options.signal?.aborted)return;
+              controller.enqueue(new Uint8Array([0x47, i]));
+            }
+            controller.close();
+          }
+        }),{headers:{'Content-Type':'video/mp2t'}});
+      }
+      return new Response(Buffer.from([0x47]),{headers:{'Content-Type':'video/mp2t'}});
+    }
     return json({});
   };
   const plex=new Plex({plexUrl:'http://fixture.invalid:32400',plexToken:'fixture',ffmpegPath:'fixture'},fetch);
@@ -340,4 +355,53 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
   const stale=await fetching;assert.notEqual(stale.status,200);assert.equal(stale.body.cues,undefined,'late old captions cannot escape a selection change');
   await command('media.tracks.set',{subtitleId:'21'});const revoked=await snapshot();member=false;
   assert.equal((await request(revoked.subtitleUrl)).status,403,'media grant rechecks current membership');
+});
+
+test('streaming media bodies complete with progressing chunks beyond header deadline and cancel on disconnect',async t=>{
+  const fixture=provider(), cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
+  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture'};
+  let upstreamAborted=false;
+  const app=createApp(config,{plexFetch:async(input,options)=>{
+    if(new URL(input).pathname.endsWith('/segment.ts')&&options.signal){
+      options.signal.addEventListener('abort',()=>{upstreamAborted=true;},{once:true});
+    }
+    return fixture.plex.fetch(input,options);
+  }});
+  app.hub.access={isMember:()=>true,refresh:async()=>true,options:()=>({available:true})};
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
+  const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
+  const control=require('./helpers/control-client').controlClient(t,config,cert);
+  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
+    const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
+      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
+    });req.on('error',reject);req.end(data && JSON.stringify(data));
+  });
+  const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token;
+  const room=(await request('/api/watch/rooms','POST',{},token)).body.id, viewerId=randomUUID();
+  const snapshot=async()=> (await request('/api/watch/rooms/'+room+'?viewer='+viewerId,'GET',undefined,token)).body;
+  await snapshot();
+  await request('/api/watch/rooms/'+room+'/command','POST',{viewerId,epoch:(await snapshot()).epoch,expiresAt:Date.now()+2500,command:{action:'media.load',args:{mediaId:'1',quality:'direct'}}},token);
+  const first=await snapshot();
+  const master=await request(first.mediaUrl);
+  const childUrl=master.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
+  const childPlaylist=await request(childUrl);
+  const segmentUrl=childPlaylist.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
+  assert.ok(segmentUrl);
+
+  fixture.state.slowSegment=true;
+  const segmentRes=await request(segmentUrl);
+  assert.equal(segmentRes.status,200);
+  assert.ok(segmentRes.body.length>=4,'progressing slow body completes successfully');
+
+  await new Promise(resolve=>{
+    const req=https.request({hostname:'localhost',port,path:segmentUrl,method:'GET',ca:cert,headers:{Origin:config.publicUrl}});
+    req.on('response',res=>{
+      res.once('data',()=>{
+        req.destroy();
+        setTimeout(resolve,50);
+      });
+    });
+    req.end();
+  });
+  assert.equal(upstreamAborted,true,'disconnect terminates streaming body upstream promptly');
 });

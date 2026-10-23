@@ -1,7 +1,9 @@
 'use strict';
 // Uses the watch page's existing authenticated API and shared safe-DOM controls.
-let accountPreview, accountMerge, accountValue, removeProvider, accountLoad=0, accountNameDraft;
+let accountPreview, accountMerge, accountValue, removeProvider, accountLoad=0, accountNameDraft, previewLoad=0, previewSnapshot;
 const accountDialog=$('account-dialog'), accountPopups=uburoomDialogs;
+function invalidatePreview(){previewLoad++;accountPreview=undefined;previewSnapshot=undefined;$('match-confirm').hidden=true;$('match-summary').textContent='';const b=$('match-preview');if(b)b.disabled=false;}
+accountDialog.addEventListener('close',invalidatePreview);
 accountPopups.register(accountDialog,{dirty:()=>!!accountValue &&
   ($('account-display-name').value!==accountValue.name || !!$('match-discord').value || !!$('match-plex').value)});
 $('account-display-name').addEventListener('input',()=>{accountNameDraft={id:accountValue?.id,name:$('account-display-name').value};});
@@ -21,7 +23,7 @@ function identityRows(host,account){
 }
 async function showAccount(){
   const load=++accountLoad;
-  accountError();accountPreview=undefined;$('match-confirm').hidden=true;
+  accountError();invalidatePreview();
   $('account-content').hidden=true;$('account-loading').hidden=false;$('account-retry').hidden=true;
   $('account-admin').open=false;
   logoutButton.hidden=activity||!!token;
@@ -109,16 +111,38 @@ $('account-merge-confirm').addEventListener('click',async()=>{
   const button=$('account-merge-confirm');button.disabled=true;accountError();
   try{await api('/api/account/merge',{id:accountMerge.id});location.replace('/watch?account=1');}catch(error){accountError(error.message);button.disabled=false;}finally{release();}
 });
-for(const provider of ['discord','plex'])$('match-'+provider).addEventListener('input',()=>{accountPreview=undefined;$('match-confirm').hidden=true;$('match-summary').textContent='';});
+for(const provider of ['discord','plex'])$('match-'+provider).addEventListener('input',invalidatePreview);
 $('match-preview').addEventListener('click',async()=>{
-  accountError();accountPreview=undefined;$('match-confirm').hidden=true;
-  try{accountPreview=await api('/api/account/admin/preview',{discordId:$('match-discord').value.trim(),plexId:$('match-plex').value.trim()});
+  const discordId=$('match-discord').value.trim(),plexId=$('match-plex').value.trim();
+  const generation=++previewLoad;
+  accountError();accountPreview=undefined;previewSnapshot=undefined;$('match-confirm').hidden=true;$('match-summary').textContent='';
+  const previewButton=$('match-preview');
+  previewButton.disabled=true;
+  try{
+    const result=await api('/api/account/admin/preview',{discordId,plexId});
+    if(generation!==previewLoad||!accountDialog.open||$('match-discord').value.trim()!==discordId||$('match-plex').value.trim()!==plexId)return;
+    accountPreview=result;
+    previewSnapshot={discordId,plexId};
     $('match-summary').textContent='Discord '+accountPreview.discordName+' ('+accountPreview.discordId+') ↔ Plex '+accountPreview.plexName+' ('+accountPreview.plexId+'). '+(accountPreview.accounts.length>1?'Merge '+accountPreview.accounts.map(a=>a.name).join(' and ')+'. Both must leave their watch rooms and sign in again.':accountPreview.accounts.length?'Attach to '+accountPreview.accounts[0].name+'.':'Reserve one account before either identity signs in.');
     $('match-confirm').hidden=false;
-  }catch(error){accountError(error.message);}
+  }catch(error){
+    if(generation===previewLoad&&accountDialog.open&&$('match-discord').value.trim()===discordId&&$('match-plex').value.trim()===plexId)accountError(error.message);
+  }finally{
+    if(generation===previewLoad)previewButton.disabled=false;
+  }
 });
 $('match-confirm').addEventListener('click',async()=>{
-  if(!accountPreview)return;const release=accountPopups.hold(accountDialog);const button=$('match-confirm');button.disabled=true;accountError();
-  try{await api('/api/account/admin/assign',{id:accountPreview.id});accountPreview=undefined;await showAccount();$('match-summary').textContent='Match assigned.';}catch(error){accountError(error.message);}
-  finally{button.disabled=false;release();}
+  if(!accountPreview||!previewSnapshot)return;
+  if($('match-discord').value.trim()!==previewSnapshot.discordId||$('match-plex').value.trim()!==previewSnapshot.plexId)return;
+  const release=accountPopups.hold(accountDialog);const button=$('match-confirm');button.disabled=true;accountError();
+  try{
+    await api('/api/account/admin/assign',{id:accountPreview.id});
+    accountPreview=undefined;previewSnapshot=undefined;
+    await showAccount();
+    $('match-summary').textContent='Match assigned.';
+  }catch(error){
+    accountError(error.message);
+  }finally{
+    button.disabled=false;release();
+  }
 });
