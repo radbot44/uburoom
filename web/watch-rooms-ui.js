@@ -147,12 +147,35 @@
         const username = node('span',row,person.name,'room-roster-name'); username.title = person.name;
         if (person.pending) { username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in'; username.setAttribute('aria-label',username.title); }
         if (!inSettings) {
-          const level = Number.isFinite(person.syncQuality) && person.syncQuality >= 0 && person.syncQuality <= 1 ? root.uburoomSyncQuality.level(person.syncQuality) : undefined;
-          const details = level ? ({excellent:'Excellent',good:'Good',fair:'Fair',poor:'Poor'})[level] : 'Unknown';
-          const label = 'Sync quality: ' + details + (level ? ' (' + person.syncQuality.toFixed(2) + ')' : '');
+          const sync=person.syncQuality&&typeof person.syncQuality==='object'?person.syncQuality:{status:'unknown',reason:'measurements-unavailable',sessions:[]};
+          const levels={excellent:'Excellent',good:'Good',fair:'Fair',poor:'Poor'};
+          const icons={excellent:'wifi',good:'wifi-2',fair:'wifi-1',poor:'wifi-0'};
+          const score=Number.isFinite(sync.score)&&sync.score>=0&&sync.score<=1?sync.score:undefined;
+          const level=sync.status==='known'?(sync.level||root.uburoomSyncQuality.level(score)):undefined;
+          const percent=value=>Number.isFinite(value)&&value>=0&&value<=1?Math.round(value*100)+'%':undefined;
+          const reasonLabel={paused:'paused',disconnected:'device disconnected',stale:'stale measurement',seeking:'seeking',starting:'starting playback',
+            buffering:'buffering while collecting measurements',
+            'clock-unavailable':'clock timing unavailable','clock-stale':'clock timing is stale','clock-low-confidence':'clock timing is unreliable',
+            'insufficient-clock-samples':'waiting for clock samples','insufficient-sync-samples':'collecting sync measurements',
+            'measurement-stale':'stale measurement','stream-changed':'stream changed; collecting new measurements','playback-error':'playback error',
+            'no-sessions':'no playback sessions','measurements-unavailable':'waiting for reliable measurements'};
+          const sessions=Array.isArray(sync.sessions)?sync.sessions:[];
+          const sessionDetails=sessions.map(session=>{
+            const device=(session.device||'Playback')+' · Session '+(session.sessionNumber||1);
+            const activePercent=percent(session.score),lastPercent=percent(session.lastKnownScore);
+            if(activePercent&&['playing','buffering'].includes(session.status))
+              return device+': '+levels[session.level||root.uburoomSyncQuality.level(session.score)]+' ('+activePercent+')'+(session.status==='buffering'?' · Buffering':'');
+            const status={playing:'Playing · measuring',buffering:'Buffering · measuring',paused:'Paused',seeking:'Seeking',starting:'Starting',stale:'Stale',
+              disconnected:'Disconnected',error:'Playback error',unknown:'Unknown'}[session.status]||'Unknown';
+            const prior=lastPercent?' · last known '+(levels[session.lastKnownLevel]||'quality')+' ('+lastPercent+')':'';
+            return device+': '+status+prior;
+          });
+          const label=level&&percent(score)?'Sync quality: '+levels[level]+' ('+percent(score)+')':
+            'Sync quality: Unknown ('+(reasonLabel[sync.reason]||'measurement unavailable')+')';
+          const tooltip=[label,...sessionDetails].join('\n');
           const quality = node('span',row,undefined,'room-roster-sync-quality');
-          quality.dataset.quality = level || 'unknown'; quality.title = label; quality.setAttribute('role','img'); quality.setAttribute('aria-label',label);
-          const qualityIcon = root.uburoomIcons.icon(document,({excellent:'wifi',good:'wifi-2',fair:'wifi-1',poor:'wifi-0'})[level] || 'wifi-off');
+          quality.dataset.quality = level || 'unknown'; quality.title = tooltip; quality.setAttribute('role','img'); quality.setAttribute('aria-label',tooltip);
+          const qualityIcon = root.uburoomIcons.icon(document,icons[level||sync.lastKnownLevel]||'wifi');
           qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
         }
         const kickable = canKick && person.present && person.id !== self && person.role !== 'creator' && (person.role !== 'host' || canKickHosts);
@@ -162,7 +185,7 @@
           const action = controls.button(document,{label:'Kick ' + person.name,icon:'karate',iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings,true)});
           action.classList.add('watch-header-control');
           action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id; cell.append(action);
-        } else if (!inSettings) node('span',row,undefined,'room-roster-action-placeholder');
+        }
       }
       if (focusId) document.getElementById(focusId)?.focus({preventScroll:true});
     }

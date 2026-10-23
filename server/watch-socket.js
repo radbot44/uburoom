@@ -2,6 +2,7 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./plex-delivery');
+const SyncQuality = require('../web/sync-quality');
 /**
  * @typedef {Object} ControlRequest
  * @property {'request'} type
@@ -17,6 +18,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   const clockEpoch = routes.clockEpoch;
   const allowed = origin => origin === config.publicUrl || /^\d{17,20}$/.test(config.clientId || '') && origin === `https://${config.clientId}.discordsays.com`;
   const clients = new Set();
+  const qualityStatuses=new Set(['playing','buffering','paused','seeking','starting','stale','unknown','error']);
+  const qualityReasons=new Set(['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples',
+    'measurement-stale','measurement-expired','invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting',
+    'stream-changed','media-changed','room-changed','no-sessions']);
+  const qualityDevice=/^(Chrome|Firefox|Edge|Safari|Chromium|Opera|Other) · (Android|iOS|Windows|macOS|Linux|ChromeOS|Other)$/;
   function send(client, message) {
     if (client.ws.readyState !== 1) return;
     if (client.ws.bufferedAmount > 1024 * 1024) { client.ws.terminate(); return; }
@@ -28,8 +34,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   async function syncQuality(client,message) {
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
     if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
-        !['known','unknown'].includes(message.status) || message.status === 'known' && !Number.isFinite(message.score) ||
-        message.status === 'unknown' && Object.hasOwn(message,'score')) return client.ws.close(4002,'Invalid sync quality message');
+        !qualityStatuses.has(message.status) || ['playing','buffering'].includes(message.status) && !Number.isFinite(message.score) ||
+        !['playing','buffering'].includes(message.status) && Object.hasOwn(message,'score') ||
+        message.reason!==undefined&&!qualityReasons.has(message.reason) ||
+        message.deviceLabel!==undefined&&(typeof message.deviceLabel!=='string'||!qualityDevice.test(message.deviceLabel)))
+      return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
     if (!room || room.s.roomId !== message.roomId || !viewer || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
     let subscription;
@@ -40,13 +49,18 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (!auth || auth.actor.userId !== viewer.userId || !await watch.canView(room,auth.actor) || room.viewers.get(message.viewerId) !== viewer || viewer.watchSocket !== client.ws ||
         room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return client.ws.close(4003,'Sign in again');
     const now = Date.now();
-    if (message.status === 'unknown') {
-      if (viewer.syncQuality) { viewer.syncQuality = undefined; client.lastSyncQualityAt = now; }
-      return;
-    }
-    if (client.lastSyncQualityAt !== undefined && now-client.lastSyncQualityAt < 4000) return;
-    viewer.syncQuality = {score:Math.max(0,Math.min(1,message.score)),mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,at:now};
-    client.lastSyncQualityAt = now;
+    const statusChanged=client.lastSyncQualityStatus!==message.status;
+    const minimumInterval=statusChanged?500:4000;
+    if(client.lastSyncQualityAt!==undefined&&now-client.lastSyncQualityAt<minimumInterval)return;
+    const previous=viewer.syncQuality||{};
+    const hasScore=Number.isFinite(message.score);
+    const score=hasScore?Math.max(0,Math.min(1,message.score)):undefined;
+    const lastKnownScore=hasScore?score:previous.lastKnownScore;
+    const lastKnownLevel=hasScore?SyncQuality.level(score,previous.lastKnownLevel):previous.lastKnownLevel;
+    viewer.syncQuality={status:message.status,score,lastKnownScore,lastKnownLevel,
+      lastKnownAt:hasScore?now:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
+      deviceLabel:message.deviceLabel||previous.deviceLabel||'Other · Other',reason:message.reason};
+    client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;
   }
   async function publish(client) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
@@ -148,7 +162,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         for (const room of watch.rooms.values()) {
-          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) { viewer.at = Date.now() - 10001; viewer.syncQuality = undefined; }
+          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = Date.now() - 10001;
           watch.refresh(room);
         }
         changed();

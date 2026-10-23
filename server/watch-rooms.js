@@ -277,7 +277,9 @@ class WatchRooms {
   }
   participants(id) {
     const record = this.store.get(id), room = this.watch.rooms.get(id);
-    return [...new Set([record.creatorId,...record.hosts,...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])]
+    const now=Date.now();
+    const activeAndRecovering=[...(room?.viewers.values() || []),...[...(room?.disconnectedViewers.values() || [])].filter(viewer=>viewer.expires>now)];
+    return [...new Set([record.creatorId,...record.hosts,...activeAndRecovering.map(viewer => viewer.userId)])]
       .map(userId => ({id:userId,name:this.registry.canonical(userId)?.name || 'Room member',role:Policy.role(record,userId),
         explicitHost:record.hosts.includes(userId),present:[...(room?.viewers.values() || [])].some(viewer => viewer.userId === userId)}));
   }

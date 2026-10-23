@@ -24,7 +24,8 @@ let observationPending = false, observationSequence = 0, observationBreak = 0, o
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
 const syncQuality=uburoomSyncQuality.create();
-let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown';
+let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown',
+  publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let precisionCorrectionEnabled=false;
@@ -36,17 +37,27 @@ let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
-function sendSyncQuality(status,score) {
+function syncQualityDeviceLabel() {
+  const ua=navigator.userAgent||'',browser=/Firefox\/|FxiOS\//.test(ua)?'Firefox':/Edg\/|EdgiOS\//.test(ua)?'Edge':/OPR\//.test(ua)?'Opera':
+    /Chrome\/|CriOS\//.test(ua)?'Chrome':/Safari\//.test(ua)?'Safari':'Other';
+  const platform=navigator.userAgentData?.platform||navigator.platform||'',device=/Android/i.test(ua+' '+platform)?'Android':
+    /iPhone|iPad|iPod/i.test(ua)?'iOS':/Windows/i.test(platform)?'Windows':/Mac/i.test(platform)?'macOS':
+      /CrOS/i.test(ua)?'ChromeOS':/Linux/i.test(platform)?'Linux':'Other';
+  return browser+' · '+device;
+}
+function sendSyncQuality(status,score,reason) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
-  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,...(status==='known'?{score}:{})};
+  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,deviceLabel:syncQualityDeviceLabel(),
+    ...(status==='playing'||status==='buffering'?{score}:{}),...(reason?{reason}:{})};
   const sent=transport?.syncQuality(value) || false;
-  if(sent)publishedSyncQualityStatus=status;
+  if(sent){publishedSyncQualityStatus=status;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
   return sent;
 }
 function resetSyncQuality() {
-  const clear=publishedSyncQualityStatus==='known';
-  syncQuality.reset(); syncQualityContext=syncQualityClockRevision=undefined; syncQualityBuffering=false; publishedSyncQualityStatus='unknown';
-  if(clear)sendSyncQuality('unknown');
+  const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
+  syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
+  syncQualitySettleUntil=performance.now()+2000;
+  if(wasActive)sendSyncQuality('stale',undefined,'stream-changed');
 }
 function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
   const shared=state?.state;
@@ -54,30 +65,56 @@ function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
     shared && !shared.paused && !state.waitingForReady && !video.paused && !video.seeking && (!playerWaiting || allowWaiting) &&
     !probing && !playbackError && !video.error && !autoplayBlocked && readyVersion===state.mediaVersion && (forBuffer || video.readyState >= 3) &&
     document.visibilityState==='visible' && timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=2500 &&
+    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800&&Number.isFinite(timing.networkRttSampleCount)&&timing.networkRttSampleCount>=5&&
     !(Number.isFinite(state.startAt) && timing.serverTime<state.startAt));
 }
 function observeSyncQuality(errorMs,timing) {
   const context=selected+':'+viewerId+':'+state?.mediaVersion+':'+state?.streamVersion;
-  if(syncQualityContext!==context || syncQualityClockRevision!==timing.clockRevision) {
-    if(publishedSyncQualityStatus==='known')sendSyncQuality('unknown');
-    syncQuality.reset(context,timing.clockRevision);syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;publishedSyncQualityStatus='unknown';
+  if(syncQualityContext!==context) {
+    syncQuality.reset(context,{preserveLast:true});syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;
+    syncQualitySettleUntil=performance.now()+2000;
+  } else if(syncQualityClockRevision!==timing.clockRevision) {
+    syncQuality.breakSample();syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=performance.now()+2000;
   }
-  const eligible=syncQualityEligible(timing) && performance.now()-lastPresentationBreak>=2000 && !sync?.timelinePending;
-  syncQuality.sample({at:performance.now(),errorMs,eligible,context,clockRevision:timing.clockRevision});
+  const at=performance.now(),eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
+  syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,context,clockRevision:timing.clockRevision});
 }
 function refreshSyncQuality() {
-  const timing=playbackClock.read(), active=syncQualityBuffering || syncQualityEligible(timing,{allowWaiting:true,forBuffer:true});
-  const result=syncQuality.refresh({at:performance.now(),rttSampleCount:timing.networkRttSampleCount,
-    clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,active});
-  if(result.status==='known') {
-    if(result.updated || publishedSyncQualityStatus!=='known')sendSyncQuality('known',result.score);
-  } else if(publishedSyncQualityStatus==='known')sendSyncQuality('unknown');
+  const timing=playbackClock.read(),at=performance.now();
+  const clockReliable=timing.valid&&Number.isFinite(timing.clockAgeMs)&&timing.clockAgeMs<=2500&&
+    Number.isFinite(timing.clockUncertaintyMs)&&timing.clockUncertaintyMs<=800;
+  if(!clockReliable) {
+    syncQuality.breakSample(at);
+    if(syncQualityBuffering){syncQuality.endBuffer({at});syncQualityBuffering=false;}
+  } else if(playerWaiting&&!syncQualityBuffering) {
+    syncQualityBuffering=syncQuality.startBuffer({at,eligible:syncQualityEligible(timing,{allowWaiting:true,forBuffer:true})});
+  }
+  const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
+    state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':syncQualityBuffering||playerWaiting||video.readyState<3?'buffering':'playing';
+  const result=syncQuality.refresh({at,rttSampleCount:timing.networkRttSampleCount,
+    clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,clockUncertaintyMs:timing.clockUncertaintyMs,playbackStatus});
+  const changed=result.status!==publishedSyncQualityStatus||result.reason!==publishedSyncQualityReason;
+  if(result.updated||changed||Date.now()-lastQualityDiagnosticAt>=10000) {
+    diagnostics.record('sync-quality',{qualityStatus:result.status,qualityReason:result.reason,rawQualityScore:result.rawScore,
+      smoothedQualityScore:result.lastScore,lastKnownQualityLevel:result.lastLevel,qualityMeasurementFreshnessMs:result.metrics?.measurementFreshnessMs,
+      measuredPlaybackSeconds:result.metrics?.measuredSeconds,outOfSync250Seconds:result.metrics?.outOfSync250Seconds,
+      outOfSync500Seconds:result.metrics?.outOfSync500Seconds,automaticCorrectionCount:result.metrics?.automaticCorrectionCount,
+      automaticCorrectionMagnitudeMs:result.metrics?.automaticCorrectionMagnitudeMs,correctionDutyCycle:result.metrics?.correctionDutyCycle,
+      rateAdjustedSeconds:result.metrics?.rateAdjustedSeconds,rateAdjustmentSeconds:result.metrics?.rateAdjustmentSeconds,
+      bufferingSeconds:result.metrics?.bufferingSeconds,clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,
+      clockUncertaintyMs:timing.clockUncertaintyMs});
+    lastQualityDiagnosticAt=Date.now();
+  }
+  if(result.updated||changed||Date.now()-lastSyncQualityPublishAt>=5000)
+    sendSyncQuality(result.status,result.score,result.reason);
 }
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
       autoplayBlocked,readyVersion,syncCorrectionMode,precisionCorrectionEnabled,gentleCorrectionEnabled}),
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
+    correction:event=>syncQuality.recordCorrection({at:performance.now(),magnitudeMs:event.magnitudeMs,kind:event.kind}),
+    correctionEligible:()=>performance.now()-lastPresentationBreak>=2000&&performance.now()>=syncQualitySettleUntil&&!sync?.timelinePending,
     error:message=>{playbackError=message;fail(message);},
     playing:(version,blocked)=>{if(version!==undefined)readyVersion=version;autoplayBlocked=blocked;},
     visibility:()=>document.visibilityState,online:()=>navigator.onLine,
@@ -1078,7 +1115,10 @@ for (const event of ['playing','pause','waiting','seeking','seeked','ended','err
   if (event === 'playing' || event === 'seeked') playerWaiting = false;
   if (event === 'waiting') syncQualityBuffering=syncQuality.startBuffer({at:performance.now(),eligible:syncQualityEligible(playbackClock.read(),{allowWaiting:true,forBuffer:true})});
   if (event === 'playing' && syncQualityBuffering) { syncQuality.endBuffer({at:performance.now()}); syncQualityBuffering=false; }
-  if (['pause','seeking','seeked','ended','error'].includes(event)) resetSyncQuality();
+  if(['pause','seeking','seeked','ended','error'].includes(event)) {
+    if(syncQualityBuffering){syncQuality.endBuffer({at:performance.now()});syncQualityBuffering=false;}
+    syncQuality.breakSample();
+  }
   // Periodic samples include rate corrections; assigning playbackRate can
   // emit ratechange even when the rate is unchanged.
   if (event !== 'ended' && !(event === 'pause' && video.ended)) observationBreak++;
@@ -1120,7 +1160,7 @@ function applyState(next) {
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   if(qualityContextChanged && !changed)resetSyncQuality();
-  const previousTarget = state ? expected() : undefined;
+  const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
@@ -1169,7 +1209,10 @@ function applyState(next) {
       else video.src = next.mediaUrl;
     }
   }
-  if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(expected()-previousTarget) > 1.5) {
+  const nextTarget=expected();
+  if(!changed&&previousRevision!==undefined&&previousRevision!==next.revision&&previousTarget!==undefined&&nextTarget!==undefined&&Math.abs(nextTarget-previousTarget)>.05)
+    sync.suppressCorrectionTelemetry(5000);
+  if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(nextTarget-previousTarget) > 1.5) {
     sync.sharedSeek();
     if(sync.preparationUntil&&hls){hls.startLoad(expected());}
     else restartHlsForSeek(expected());

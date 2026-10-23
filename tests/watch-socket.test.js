@@ -91,25 +91,30 @@ test('watch socket pushes shared Engine commands, rejects stale/foreign viewers,
   f.revoke();const denied=once(rejoined.ws,'close');rejoined.ws.send(JSON.stringify({type:'clock',id:999}));assert.equal((await denied)[0],4003);
 });
 
-test('watch socket accepts only a viewer\'s current ephemeral synchronization score and clears it on unknown',tls,async t=>{
+test('watch socket accepts only a viewer\'s current ephemeral synchronization telemetry and preserves its last rating',tls,async t=>{
   const f=await fixture(t),host=await f.connect(await f.login('host')),guest=await f.connect(await f.login('guest'));
   t.after(()=>{host.ws.close();guest.ws.close();});
   const roomId=(await host.call('/api/watch/rooms',{})).value.id,hostViewer=randomUUID(),guestViewer=randomUUID(),path='/api/watch/rooms/'+roomId;
   await host.call(path+'?viewer='+hostViewer);await guest.call(path+'?viewer='+guestViewer);
   const room=f.app.watch.rooms.get(roomId),hostPresence=room.viewers.get(hostViewer);
   const mediaVersion=room.mediaVersion,streamVersion=randomUUID();hostPresence.streamVersion=streamVersion;
-  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'known',score:1.5}));
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'playing',score:1.5,deviceLabel:'Chrome · Windows'}));
   await new Promise(resolve=>setTimeout(resolve,30));
-  assert.equal(hostPresence.syncQuality.score,1,'valid scores are clamped');
+  assert.equal(hostPresence.syncQuality.score,1,'valid scores are clamped');assert.equal(hostPresence.syncQuality.lastKnownScore,1);
+  assert.equal(hostPresence.syncQuality.lastKnownLevel,'excellent');assert.equal(hostPresence.syncQuality.deviceLabel,'Chrome · Windows');
   await host.call(path+'?viewer='+hostViewer);
   assert.equal(hostPresence.syncQuality.score,1,'the current viewer retains its ephemeral score');
   assert.equal(Object.hasOwn(room.s,'syncQuality'),false,'the score is separate from durable room state');
   const guestClosed=once(guest.ws,'close');
-  guest.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'known',score:.1}));
+  guest.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'playing',score:.1,deviceLabel:'Firefox · Linux'}));
   assert.equal((await guestClosed)[0],4003,'a viewer cannot claim another viewer identity');
   assert.equal(hostPresence.syncQuality.score,1,'the foreign update did not change the owner score');
-  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'unknown'}));
-  await new Promise(resolve=>setTimeout(resolve,30));assert.equal(hostPresence.syncQuality,undefined,'unknown clears the ephemeral value');
+  await new Promise(resolve=>setTimeout(resolve,550));
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'paused',deviceLabel:'Chrome · Windows',reason:'paused'}));
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(hostPresence.syncQuality.status,'paused');assert.equal(hostPresence.syncQuality.score,undefined);
+  assert.equal(hostPresence.syncQuality.lastKnownScore,1,'temporary unavailability preserves the last score');
+  assert.equal(hostPresence.syncQuality.lastKnownLevel,'excellent');
 });
 
 test('watch socket rejects cross-origin upgrades, missing CSRF/cookies and invalid credentials',tls,async t=>{

@@ -103,7 +103,8 @@
  * @property {any} [media] - Resolved personal media/stream descriptor from Plex.
  * @property {string} [mediaVersion] - Version token matching room media generation.
  * @property {string} [streamVersion] - Unique generation token for current personal stream.
- * @property {{score:number,mediaVersion:string,streamVersion:string,at:number}} [syncQuality] - Ephemeral current-stream synchronization score from this viewer's authenticated socket.
+ * @property {{status:string,score:number,lastKnownScore?:number,lastKnownLevel?:string,lastKnownAt?:number,updatedAt:number,
+ *   mediaVersion:string,streamVersion:string,deviceLabel?:string,reason?:string}} [syncQuality] - Ephemeral per-tab playback quality from the viewer's authenticated socket.
  * @property {Promise<any>} [preparing] - In-flight media resolution promise if polling.
  * @property {Function} [alive] - Optional liveness check callback.
  * @property {{watchRtts?: Array<{at:number,ms:number}>,watchKick?: (roomId: string) => void}} [watchSocket] - Active socket's bounded round trips and subscription-removal notification.

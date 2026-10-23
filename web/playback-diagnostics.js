@@ -13,19 +13,25 @@
     rejection:['media-unavailable','media-changed','stream-changed','epoch-changed','invalid-discontinuity','invalid-state','invalid-sequence','sequence-replayed',
       'invalid-sample','sample-replayed','invalid-clock','sample-stale','sample-future','invalid-position','invalid-rate','invalid-frames','observation-timeout','storage-failure'],
     creditReason:['baseline','not-playing','discontinuity','frames-not-advancing','sample-gap','receive-gap','delivery-jitter','clock-discontinuity','position-discontinuity','interval-limit','clock-unavailable','credited'],
-    clockReason:['startup','disconnect','discontinuity','server-change','invalid','delay','jitter','outlier','accepted']
+    clockReason:['startup','disconnect','discontinuity','server-change','invalid','delay','jitter','outlier','accepted'],
+    qualityStatus:['playing','buffering','paused','seeking','starting','stale','unknown','error'],
+    qualityReason:['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples','measurement-stale',
+      'invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting','stream-changed','media-changed','room-changed'],
+    lastKnownQualityLevel:['excellent','good','fair','poor']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered','control-disconnected','control-reconnected',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
-    'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','start-prepare','start-timer','hls-anchor','hls-buffer-flushing']);
+    'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','sync-quality','start-prepare','start-timer','hls-anchor','hls-buffer-flushing']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
     'clockUncertaintyMs','networkRttMs','networkMinRttMs','networkJitterMs','requestRttMs','serverProcessingMs','timelineRevision','sharedTarget','positionErrorMs',
     'frameMediaTime','frameDisplayMonoMs','framePresentationMonoMs','frameCallbackLatenessMs','frameProcessingMs','presentedFrames',
-    'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode']);
+    'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode',
+    'measuredPlaybackSeconds','outOfSync250Seconds','outOfSync500Seconds','automaticCorrectionCount','automaticCorrectionMagnitudeMs',
+    'correctionDutyCycle','rateAdjustedSeconds','rateAdjustmentSeconds','bufferingSeconds','rawQualityScore','smoothedQualityScore','qualityMeasurementFreshnessMs']);
   const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling']);
   function requestKind(path) {
     const route = String(path).split('?')[0];

@@ -41,6 +41,7 @@
  * expected:()=>number, decodedFrames:()=>number, unlockLocal:()=>Promise<unknown>, reportReadiness:()=>Promise<unknown>,
  * render:()=>void, checkFrames:()=>void, sample:(event:string,fields?:object)=>void,
  * error:(message:string)=>void, playing:(version:string|undefined,blocked:boolean)=>void,
+ * correction?:(event:{magnitudeMs:number,kind:'seek'|'jump'})=>void, correctionEligible?:()=>boolean,
  * visibility:()=>string, online:()=>boolean, repeat:(callback:()=>void,delay:number)=>number, cancelRepeat:(timer:number)=>void,
  * now?:()=>number, driftCorrection?:ReturnType<typeof import('./playback-timing.js').correction>,
  * precisionDriftCorrection?:ReturnType<typeof import('./playback-timing.js').precisionCorrection>, jumpDriftCorrection?:ReturnType<typeof import('./playback-timing.js').jumpCorrection>,
@@ -56,6 +57,7 @@ export function createSync(host) {
   const startAlarm=host.startAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
   const pauseAlarm=host.pauseAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
   let preparedStartKey, syncSeekPending=false, hlsPreparationUntil=0, hlsTimelinePending=false;
+  let correctionSuppressionUntil=0;
   function resetDriftCorrection(full=false) {
     if(full)jumpDriftCorrection.reset();
     driftCorrection.reset();precisionDriftCorrection.reset();jumpDriftCorrection.interrupt();
@@ -131,12 +133,16 @@ export function createSync(host) {
     const jumpContext=syncCorrectionMode==='jumps'?[selected,state.mediaVersion,state.streamVersion,state.epoch,state.readinessVersion].join(':'):undefined;
     const align = (event='sync-seek') => {
       const destination=Math.max(0,Math.min(target,(Number.isFinite(video.duration)?video.duration:state.state.duration)-.05));
+      const automaticCorrection=(event==='sync-seek'||event==='sync-jump')&&now()>=correctionSuppressionUntil&&clockValid&&!paused&&
+        !state.waitingForReady&&readyVersion===state.mediaVersion&&!playerWaiting&&!video.paused&&!video.seeking&&video.readyState>=3&&decodedFrames()>0&&
+        host.correctionEligible?.()!==false;
       try {
         const seekDeltaMs=(destination-video.currentTime)*1000;
         const frames=syncCorrectionMode==='jumps'?decodedFrames():undefined;
         video.currentTime=destination;syncSeekPending=true;
         if(syncCorrectionMode==='jumps')jumpDriftCorrection.committed({frames,target:destination,context:jumpContext});
         diagnosticSample(event,{seekDeltaMs});
+        if(automaticCorrection)host.correction?.({magnitudeMs:Math.abs(seekDeltaMs),kind:event==='sync-jump'?'jump':'seek'});
       } catch { return false; }
       return true;
     };
@@ -184,10 +190,11 @@ export function createSync(host) {
     hlsTimelinePending=false;hlsPreparationUntil=now()+10000;
     if(target>.65){try{diagnosticSample('hls-anchor');video.currentTime=target;syncSeekPending=true;}catch{}}
   }
-  function sharedSeek() {syncSeekPending=false;if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
+  function sharedSeek() {syncSeekPending=false;correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+5000);if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
+  function suppressCorrectionTelemetry(durationMs=5000) {correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+Math.max(0,durationMs));}
   function transition(next) {if(startKey()!==startKey(next)){startAlarm.cancel();pauseAlarm.cancel();}}
   const interval=host.repeat(()=>{if(host.read().state)void synchronize();},500);
   function close() {host.cancelRepeat(interval);reset();}
-  return {synchronize,reset,resetCorrection:resetDriftCorrection,event,prepare,anchor,sharedSeek,transition,close,
+  return {synchronize,reset,resetCorrection:resetDriftCorrection,event,prepare,anchor,sharedSeek,suppressCorrectionTelemetry,transition,close,
     get seekPending(){return syncSeekPending;},get preparationUntil(){return hlsPreparationUntil;},get timelinePending(){return hlsTimelinePending;}};
 }

@@ -16,6 +16,7 @@ const SubtitleResources = require('./subtitle-resources');
 const { WatchRooms } = require('./watch-rooms');
 const RoomPolicy = require('./room-policy');
 const { observePlaybackEnd, clearPlaybackEnd } = require('./playback-end');
+const SyncQuality = require('../web/sync-quality');
 const RECONNECT_GRACE_MS = 60000;
 // Multiple viewing tabs share a startup/seek lead alongside buffering.
 // A sole tab retains readiness and clock tracking without coordination delays.
@@ -24,17 +25,42 @@ const INITIAL_START_LEAD_MS = 1750;
 const READY_START_MARGIN_MS = 400;
 function syncQualityParticipants(room,participants,now=Date.now()) {
   for (const person of participants || []) {
-    delete person.syncQuality;
-    let latest;
-    for (const viewer of room.viewers.values()) {
-      if (viewer.userId !== person.id) continue;
-      const measurement = viewer.syncQuality;
-      if (measurement && (now-measurement.at > 15000 || measurement.mediaVersion !== room.mediaVersion || measurement.streamVersion !== viewer.streamVersion ||
-          !Number.isFinite(measurement.score) || viewer.watchSocket?.readyState !== 1)) viewer.syncQuality = undefined;
-      const current = viewer.syncQuality;
-      if (current && (!latest || current.at > latest.at)) latest = current;
+    const sessions=[];
+    for (const [viewerId,viewer] of room.viewers) if(viewer.userId===person.id) {
+      sessions.push({viewerId,viewer,disconnected:false,joinedAt:viewer.joinedAt||0});
     }
-    if (latest) person.syncQuality = Math.max(0,Math.min(1,latest.score));
+    for (const [viewerId,viewer] of room.disconnectedViewers||[]) if(viewer.userId===person.id&&viewer.mediaVersion===room.mediaVersion&&viewer.expires>now) {
+      sessions.push({viewerId,viewer,disconnected:true,joinedAt:viewer.joinedAt||0});
+    }
+    sessions.sort((a,b)=>a.joinedAt-b.joinedAt||a.viewerId.localeCompare(b.viewerId));
+    const deviceCounts=new Map();
+    const visible=sessions.map(({viewerId,viewer,disconnected})=>{
+      const measurement=viewer.syncQuality;
+      const device=typeof measurement?.deviceLabel==='string'?measurement.deviceLabel:'Playback';
+      const deviceNumber=(deviceCounts.get(device)||0)+1;deviceCounts.set(device,deviceNumber);
+      const age=measurement&&Number.isFinite(measurement.updatedAt)?Math.max(0,now-measurement.updatedAt):Infinity;
+      const contextMatches=measurement?.mediaVersion===room.mediaVersion&&measurement?.streamVersion===viewer.streamVersion;
+      let status=disconnected?'disconnected':!measurement?'unknown':measurement.status;
+      if(!disconnected&&viewer.watchSocket&&viewer.watchSocket.readyState!==1)status='disconnected';
+      else if(!disconnected&&measurement&&(!contextMatches||age>15000)&&status!=='error')status='stale';
+      const current=contextMatches&&(status==='playing'||status==='buffering')&&age<=15000&&Number.isFinite(measurement?.score);
+      const score=current?Math.max(0,Math.min(1,measurement.score)):undefined;
+      const lastKnownScore=Number.isFinite(measurement?.lastKnownScore)?Math.max(0,Math.min(1,measurement.lastKnownScore)):
+        Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):undefined;
+      const rememberedLevel=measurement?.lastKnownLevel|| (Number.isFinite(lastKnownScore)?SyncQuality.level(lastKnownScore):undefined);
+      return {device,sessionNumber:deviceNumber,status,score,level:score===undefined?undefined:rememberedLevel,
+        lastKnownScore,lastKnownLevel:rememberedLevel,lastKnownAt:measurement?.lastKnownAt,
+        reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason};
+    });
+    const current=visible.filter(session=>Number.isFinite(session.score)).sort((a,b)=>a.score-b.score);
+    const lastKnown=visible.filter(session=>session.lastKnownLevel&&Number.isFinite(session.lastKnownAt)).sort((a,b)=>b.lastKnownAt-a.lastKnownAt)[0];
+    const reason=visible.length===0?'no-sessions':visible.every(session=>session.status==='paused')?'paused':
+      visible.every(session=>session.status==='disconnected')?'disconnected':visible.some(session=>session.status==='stale')?'stale':
+        visible.some(session=>session.status==='error')?'playback-error':visible.some(session=>session.status==='seeking')?'seeking':
+          visible.some(session=>session.status==='starting')?'starting':visible.some(session=>session.status==='buffering')?'buffering':'measurements-unavailable';
+    person.syncQuality=current.length?{status:'known',score:current[0].score,level:current[0].level,
+      lastKnownLevel:current[0].level,sessions:visible}:
+      {status:'unknown',reason,lastKnownLevel:lastKnown?.lastKnownLevel,lastKnownScore:lastKnown?.lastKnownScore,sessions:visible};
   }
   return participants;
 }
@@ -218,10 +244,11 @@ class Watch {
       if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || isHost(room.s, viewer.actor) || this.hub.isAdmin(viewer.actor))) {
         // Preserve only personal playback settings for the same tab's short
         // reconnect. A fresh stream and observation epoch are always required.
-        room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, expires:now+RECONNECT_GRACE_MS,
+        room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
           trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
           quality:viewer.quality, compatible:viewer.compatible, fallback:viewer.fallback,
-          volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt });
+          volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
+          syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',score:undefined,updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
       if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
@@ -380,6 +407,7 @@ class Watch {
     room.hadViewers = true;
     const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'), volume: saved?.volume ?? 50, muted: saved?.muted ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
+      syncQuality:saved?.syncQuality,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
