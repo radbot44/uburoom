@@ -161,17 +161,52 @@
     if (value <= 50) return 'volume-2';
     return 'volume';
   }
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const parsedGlyphs = new Map();
+  function getGlyphSpecs(asset) {
+    let specs = parsedGlyphs.get(asset);
+    if (!specs) {
+      specs = [];
+      const fragment = glyphs[asset];
+      const tagRegex = /<([a-z0-9-]+)([^>]*?)\/?>/gi;
+      let match;
+      while ((match = tagRegex.exec(fragment)) !== null) {
+        const tag = match[1];
+        if (tag.startsWith('/')) continue;
+        const attrs = {};
+        const attrRegex = /([a-z0-9-]+)="([^"]*)"/gi;
+        let attrMatch;
+        while ((attrMatch = attrRegex.exec(match[2])) !== null) {
+          if (attrMatch[1] !== 'xmlns') attrs[attrMatch[1]] = attrMatch[2];
+        }
+        specs.push({ tag, attrs });
+      }
+      parsedGlyphs.set(asset, specs);
+    }
+    return specs;
+  }
+  function appendGlyphNodes(doc, svg, asset) {
+    const specs = getGlyphSpecs(asset);
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i];
+      const el = doc.createElementNS(SVG_NS, spec.tag);
+      for (const [name, val] of Object.entries(spec.attrs)) {
+        el.setAttribute(name, val);
+      }
+      svg.append(el);
+    }
+  }
   function icon(doc, name, seekSeconds = 15) {
     const asset = resolveName(name, seekSeconds);
     if (!asset || !own(glyphs, asset)) throw new Error('Unknown uburoom icon: ' + name);
-    const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svg = doc.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', asset === 'oomark' ? '528.41 544.4 298.99 249.1061' : '0 0 24 24');
     svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
     svg.setAttribute('stroke-width', '2'); svg.setAttribute('stroke-linecap', asset === 'oomark' ? 'butt' : 'round'); svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('data-tabler-icon', asset === 'oomark' ? 'oomark' : asset);
     if (asset === 'oomark') svg.setAttribute('class', 'oomark-icon');
-    svg.innerHTML = glyphs[asset]; // Trusted, self-hosted, static SVG fragments only.
+    appendGlyphNodes(doc, svg, asset);
     return svg;
   }
   const api = Object.freeze({icon, resolveName, volumeName, aliases, glyphs});

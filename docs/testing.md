@@ -15,6 +15,21 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Implementation verification — 2026-10-23
+
+A/B on `a15b698` working tree: all 14 corrective tasks from the 2026-10-23 audit (F1–F9, U1–U5) implemented and verified.
+- **Node test suite:** `npm test` (`node --test tests/*.test.js`): **393 passed, 0 failed, 0 skipped** on Node v22.22.2 (retired 2 redundant source-spelling assertions from `tests/removed-client.test.js`; endpoint rejection remains verified in `tests/web.test.js`).
+- **Playback decoding baseline:** `npm run test:playback` (`node scripts/playback-baseline.js`): **33 passed, 0 failed** across Firefox, Chrome, and Edge, verifying decoded direct streams, HLS HEVC, AV1 23.976/60, and VP8/VP9.
+- **Dual-browser rendered verification:** Chrome and Firefox verified for account-match preview generation fencing, reconnect without unlinking, theme-aware host and active filter contrast, 40×40px player/queue targets, Mute toggle `aria-pressed` state, and safe `createElementNS` icon DOM construction.
+- **Risky boundary checks:**
+  - Streaming idle progress timeout and response header deadlines (`tests/resilience.test.js`, 6 passes).
+  - Direct-HLS preparation pool cancellation and group lifecycle (`tests/hls-pool.test.js`, 4 passes).
+  - Account assignment authority fencing, revocation race, and last-login unlink protection (`tests/accounts.test.js`, 34 passes).
+  - Unsupported WebSocket upgrade rejection with prompt socket destruction (`tests/watch-socket.test.js`, 8 passes).
+  - Listen failure server cleanup and storage worker release (`tests/config.test.js`, 12 passes).
+  - Asynchronous static asset serving with bounded cache (`tests/web.test.js`, `tests/watch-page.test.js`, 17 passes).
+- **Limitations:** Fixtures and synthetic responses only; no live external Plex provider, multi-viewer WAN soak, or physical mobile hardware certification performed. Release gates remain open.
+
 ### Repository audit — 2026-10-23
 
 A/B on `fb349f428d538f4297a8bd53754d758a095d94a4`: two independent audits each ran the full Node suite with **387 pass, zero failures/cancellations/skips** on Node v22.22.2 (`node --test tests/*.test.js`, one with `--test-reporter=tap`). The advisory query reported zero known npm vulnerabilities. Isolated probes reproduced a streaming body deadline abort, account assignment after login/Admin revocation during body reading, direct-HLS adoption of a disposed group, disabled-provider unlink acceptance and missing unknown-upgrade socket disposal. Startup-failure cleanup and synchronous asset I/O were source-reviewed; production performance impact was not measured.

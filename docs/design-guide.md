@@ -34,7 +34,7 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 | Switch | Existing 36×22px component; 44px minimum row/target |
 | Segmented selector | 40px high |
 
-Use local Tabler assets with accessible names. Preserve the circular main Play overlay. Text labels may wrap to two lines; compact labels stay single-line. Respect reduced motion; hover/press changes color or surface, not scale or position.
+Use local Tabler assets with accessible names. Preserve the circular main Play overlay. SVG icons are constructed safely using `createElementNS` with static attribute dictionaries and appended without `innerHTML`, preserving the public icon API, local asset set and accessible attributes. Text labels may wrap to two lines; compact labels stay single-line. Respect reduced motion; hover/press changes color or surface, not scale or position.
 
 Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` for icon actions, `.danger-button` for destructive, `.solid-button` for player title-bar controls only.
 
