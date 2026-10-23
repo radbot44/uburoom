@@ -1,54 +1,48 @@
 # Licensing and attribution
 
-uburoom's original source is **GPL-3.0-only**, GNU General Public License version 3 only. The complete unmodified GNU text is in [LICENSE](../LICENSE); this project chooses version 3 only, regardless of the illustrative "or later" notice in the license appendix. Identifier: [SPDX GPL-3.0-only](https://spdx.org/licenses/GPL-3.0-only.html).
+First-party source is **GPL-3.0-only**; preserve [LICENSE](../LICENSE). Third-party components retain their own licenses. This inventory does not close publication/provenance gates.
 
 ## Dependency inventory
 
-The version 0.5.3 lockfile contains 71 dependency entries, including optional platform packages. In addition to MIT, Apache-2.0, Unlicense and 0BSD declarations, JASSUB declares the native/font component terms listed below. These declarations are an inventory, not a substitute for the upstream notices or a completed provenance review.
+Recorded lockfile versions; review against the selected release and actual bundle inputs.
 
-| Direct dependency | Locked version | Declared license | Distribution/use |
-| --- | --- | --- | --- |
-| @discord/embedded-app-sdk | 2.5.0 | MIT | Bundled browser SDK |
-| discord.js | 14.27.0 | Apache-2.0 | Installed server dependency |
-| hls.js | 1.7.3 | Apache-2.0 | Installed dependency served to browsers |
-| jassub | 2.5.21 | LGPL-2.1-or-later AND (FTL OR GPL-2.0-or-later) AND MIT AND MIT-Modern-Variant AND ISC AND NTP AND Zlib AND BSL-1.0 | Browser ASS/SSA renderer, worker and WASM |
-| libbitsub | 1.13.0 | MIT | Browser PGS/VobSub renderer and WASM |
-| ws | 8.22.0 | MIT | Installed server/test dependency |
-| yaml | 2.9.1 | ISC | Installed server configuration parser; supports YAML without a custom parser |
-| esbuild | 0.28.2 | MIT | Development bundler |
+| Dependency | Version | Declared license |
+| --- | --- | --- |
+| @discord/embedded-app-sdk | 2.5.0 | MIT |
+| discord.js | 14.27.0 | Apache-2.0 |
+| hls.js | 1.7.3 | Apache-2.0 |
+| jassub | 2.5.21 | LGPL-2.1-or-later AND (FTL OR GPL-2.0-or-later) AND MIT AND MIT-Modern-Variant AND ISC AND NTP AND Zlib AND BSL-1.0 |
+| libbitsub | 1.13.0 | MIT |
+| ws | 8.22.0 | MIT |
+| yaml | 2.9.1 | ISC |
+| esbuild (development) | 0.28.2 | MIT |
 
-The SDK's published modules also embed eventemitter3, zod, big-integer, uuid, decimal.js-light, lodash.transform and tslib below their own `output/lib` directory. These are identified from actual bundle inputs, even though the outer package path is the SDK. Published embedded versions are not consistently specified: notice headings distinguish the embedded copy from the locked package whose upstream license text is reproduced.
+The SDK also embeds eventemitter3, zod, big-integer, uuid, decimal.js-light, lodash.transform and tslib. Embedded versions are not always specified; preserve their actual source notices separately from similarly named installed packages.
 
-`web/vendor/THIRD_PARTY_NOTICES.txt` preserves SDK/library license texts, copyright/license comments present in embedded sources, and hls.js's upstream notice including Dailymotion/Brightcove attribution. The full Apache-2.0 text is retained in `web/vendor/licenses/Apache-2.0.txt`. Rebuilding fails if a discovered component has no upstream license file. Installed dependencies retain their own notices; do not remove them when redistributing dependencies.
+[Vendor notices](../web/vendor/THIRD_PARTY_NOTICES.txt) include embedded-source comments and hls.js Dailymotion/Brightcove attribution; [Apache-2.0](../web/vendor/licenses/Apache-2.0.txt) is retained in full. The build rejects unrecognized missing licenses. Preserve installed dependency notices when distributing them.
 
-Optional FFmpeg/FFprobe are supplied by the installation operator, not bundled here. Their build options and codec licensing need review if a future distribution includes binaries. Node, Firefox, Discord and Plex are external products, not relicensed by uburoom.
+FFmpeg/FFprobe are operator-supplied, not bundled; review their build/codec obligations before distributing binaries. External products are not relicensed by uburoom.
 
-### Subtitle bundles and outstanding notices
+## Subtitle bundles and outstanding notices
 
+Integration patches adapt libbitsub asset URLs/transforms/initialization/manual repaint and bound JASSUB worker disposal. JASSUB uses transparent Canvas2D composition. Rebuild from locked npm artifacts; upstream licenses remain unchanged.
 
-The build applies documented integration changes: libbitsub asset URLs/layout measurements fit the host picture transform; its initialization completion and forced manual repaint are exposed for paused startup/delay updates; and JASSUB worker disposal is bounded if initialization or IPC hangs. JASSUB uses its transparent Canvas2D compositor with synchronized presentation instead of a second GPU surface over decoded video. This preserves libass layout/fonts but may cost more CPU for complex animated subtitles. Upstream licenses remain unchanged. Generated files are rebuilt from the locked npm artifacts; no personal checkout paths or runtime data are inputs.
+Reference JASSUB source: [816f1dc536e9bface9bef82f7c214690b81aaee3](https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3). [Component texts](../web/vendor/licenses/JASSUB-components.txt) cover libass, FriBidi, FreeType, HarfBuzz and Brotli, but are not complete binary provenance.
 
-The JASSUB source/build reference is [revision 816f1dc](https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3). Its native dependencies include libass, FriBidi, FreeType, HarfBuzz and Brotli. `web/vendor/licenses/JASSUB-components.txt` preserves that revision's standard component license texts; it is not a complete binary provenance or copyright inventory. Before publication, verify the npm WASM's exact matching native source/build revisions, collect complete component copyright notices and corresponding source/build materials, and resolve the bundled fallback font's provenance and applicable license.
+**Before publication:** establish exact WASM native-source/build revisions, full copyright notices, corresponding source/build materials and fallback-font provenance/license.
 
-The published abslink 1.3.1, lfa-ponyfill 1.1.1 and throughput 1.0.2 packages and their inspected repositories omit dedicated license files. Their Apache-2.0/MIT declarations, public author metadata where present, and standard license texts are recorded explicitly without inventing copyright notices. Upstream attribution clarification remains a publication gate. New unrecognized missing notices still fail the build; these recorded exceptions do not authorize release.
+Inspected abslink 1.3.1, lfa-ponyfill 1.1.1 and throughput 1.0.2 lacked dedicated license files. Recorded Apache/MIT declarations, available author metadata and standard texts do not invent copyright notices; upstream clarification remains open. These exceptions do not authorize release.
 
-## Project branding
+## Artwork and media
 
+| Asset | Source / terms |
+| --- | --- |
+| Tabler outline icons in web/icons.js | [Tabler](https://github.com/tabler/tabler-icons), MIT, copyright 2020–2026 Paweł Kuna; notice retained locally |
+| Custom oomark | uburoom branding, not Tabler; confirm project artwork authorship/terms and retain vector source |
+| Discord symbol | Unmodified [official asset](https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/66e3d7f4ef6498ac018f2c55_Symbol.svg), retrieved 2026-10-18; [brand guidelines](https://discord.com/branding), not GPL artwork |
+| Plex icon | Unmodified 600×600 favicon from [official portal](https://brand.plex.tv/), retrieved 2026-10-18; [trademark terms](https://www.plex.tv/about/privacy-legal/plex-trademarks-and-guidelines/), not GPL artwork |
+| Synthetic media | Procedural patterns, sine tone and branding; [source/regeneration](../assets/demo/README.md); no third-party footage/music/fonts recorded |
 
-## Tabler interface icons
+Plex source identifier: `frontify/accounts/9a/58813/favicons/ce/58857/be5042f43a60cad2dc92024389bd5720-1571820507.png`.
 
-`web/icons.js` contains a self-hosted, curated set of outline SVGs from [Tabler Icons](https://github.com/tabler/tabler-icons), licensed under MIT (copyright 2020–2026 Paweł Kuna). These are third-party artwork, not relicensed as project GPL code. The full Tabler MIT copyright and permission notice is retained in `web/vendor/THIRD_PARTY_NOTICES.txt`. The custom monochrome `oomark` in the same registry is an uburoom brand asset, not part of Tabler. All glyphs ship locally; the browser does not fetch artwork from Tabler at runtime.
-
-## Provider account icons
-
-`web/assets/discord-symbol-white.svg` is the unmodified white Discord symbol from [Discord's official brand assets](https://discord.com/branding), retrieved 2026-10-18 ([original SVG](https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/66e3d7f4ef6498ac018f2c55_Symbol.svg)). It appears with the Discord name on the sign-in button and linked-account row, using Discord's #5865F2 blurple background. Discord's logo and other marks belong to Discord Inc. and remain subject to its brand guidelines; they are not first-party GPL artwork.
-
-`web/assets/plex-icon.png` is the Plex application icon served as the favicon by [Plex's official brand portal](https://brand.plex.tv/), retrieved 2026-10-18 without editing the artwork. The portal's Frontify-hosted source is `frontify/accounts/9a/58813/favicons/ce/58857/be5042f43a60cad2dc92024389bd5720-1571820507.png` (600 × 600). It identifies Plex account/sign-in controls. Plex and the Plex Play logo are trademarks of Plex, Inc.; see [Plex's trademark guidelines](https://www.plex.tv/about/privacy-legal/plex-trademarks-and-guidelines/). This third-party artwork is not relicensed as first-party GPL source.
-
-## Remaining asset review
-
-- Confirm branding authorship and any separate asset terms as part of final release review; retain the supplied vector master and any applicable source notices.
-- Seven synthetic media fixtures are now generated from procedural patterns, a sine tone and project branding, using `scripts/build-demo-media.js`. `assets/demo/README.md` documents their source and regeneration; no third-party footage/music/fonts are included. Review metadata/codec distribution requirements if the build or distribution changes.
-- Preserve any upstream source notices for copied code or artwork found during review; do not label third-party material as newly GPL-licensed.
-
-The project's GPL declaration does not clear these asset questions or authorize publication. Source/history/privacy, packaging and live/upgrade checks remain separate release gates.
+Resolve branding/font terms, preserve copied-source notices and review fixture codec/metadata distribution if changed. GPL declaration alone clears none of these questions. Privacy/history/ZIP and operator verification remain separate [release gates](../ROADMAP.md#m1--verified-self-hosted-release).

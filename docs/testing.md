@@ -1,227 +1,81 @@
 # Verification dashboard — M1
 
-> **Historical evidence cutoff: 2026-10-21; test-suite pruning: 2026-10-22.** No runtime tests or integrations were executed for the pruning PR. Historical results belong to their original revisions, environments and scopes; dated follow-up entries record later scoped verification.
->
-> **M1 release status: OPEN.** [Entire historical record](archive/testing-2026-10-22.md) · [M1 release requirements](../ROADMAP.md#m1--verified-self-hosted-release)
-
-## Browser player preferences - 2026-10-22
-
-- Volume defaults to 30%; browser storage retains volume, mute, explicit quality and subtitle rendering, with subtitle language remembered across titles. Audio language and subtitle timing are not persisted. Unavailable subtitle languages do not replace the saved choice. Effective output quality remains separate from the saved ceiling across media changes and reconnects. Original never falls back to a different preset; fixed preferences admit only available resolution/bitrate combinations at or below the ceiling, including Original when source bitrate fits regardless of resolution.
-- B pass: `node --test --test-reporter=dot tests/watch.test.js tests/media-tracks.test.js tests/local-codecs.test.js` and polling/command timing checks; full `npm test`: 403 passed, 0 failed, 0 skipped. One retained Watch scenario checks Original/source fitting, lower preset selection, preference retention across titles, no upward capacity fallback and Original-only behavior. Updated isolated polling context for the new viewer-preference query helper.
-- B browser pass: disposable Chrome/Firefox accounts and demo media verify the 30% initial default, saved 17%/mute/quality in a new page and zero-volume/unmute retention after reload. These checks exercise real storage and authenticated room operations. Both browsers also pass isolated client restoration checks for matching language across different track IDs, preserving absent-language preferences, and excluding audio/timing from storage. No new decoded track/browser sweep or real-provider certification. No deployment.
-
-- Slider follow-up: volume has separate in-flight state, preserving the 500ms throttle without toggling page-wide pending state. `node --test --test-reporter=dot tests/playback-timing.test.js`: 13 passed. Chrome/Firefox disposable-browser checks observed no unrelated button disables during repeated slider input and reconfirmed persistence after reload. A volume response also cannot clear a concurrent shared command lock.
-
-## Room permissions and privacy follow-up - 2026-10-22
-
-- Implemented owner-requested always-visible Media, Skip / replay wording, expanded permission captions, equal centered role columns, equal Room columns and conditional kick-column space. Private-room cleanup now uses explicit assignments, matching admission even with Everyone is host enabled; reconnect reservations and readiness waiters are removed. Visibility is persisted before changing live state. Outstanding stream preparation cannot recreate a removed viewer.
-- B pass: focused durable-room, library access, socket and policy tests; full `npm test`: 402 passed, 0 failed, 0 skipped. Existing durable-room coverage now checks header and Settings privacy changes, counts, roster membership, reconnect reservations and denied re-entry.
-- B visual pass: disposable Chrome and Firefox with synthetic accounts/catalog; desktop and 390px phone permission screenshots, light/pink and dark/orange, equal role/Room columns, viewer Media browsing without selection permission, three/four roster tracks according to kick authority, theme text color and private removal/count updates. Temporary focused driver and captures remain in ignored artifacts.
-- Limitation: `node scripts/room-ui-smoke.js` stopped in Chrome at **Bulk excludes Specials** before reaching later permission flows. The focused browser checks above passed independently. No real-provider or deployment checks ran; owner visual acceptance remains open.
-
-## Current status and provenance
-
-- **This dashboard owns** current commands, verification methods, last evidenced results, known failures and unfinished M1 gates. [ROADMAP](../ROADMAP.md) owns scope and priorities; [development](development.md) owns procedures; the [dated archive](archive/testing-2026-10-22.md) retains detailed prior findings.
-- Different archived passes concern distinct commits or uncommitted trees. **No combined green current HEAD is established** by comparing old full-suite counts or narrower smokes.
-- Latest **documented full TAP**: **461 passed, 0 failed, 0 skipped**, recorded for the combined Queue/OverlayScrollbars checkout on 2026-10-21 (no single final-tree commit identified). This is historical **B** evidence, not rerun for this dashboard ([source](archive/testing-2026-10-22.md#2026-10-21---shared-controls-queue-increment-m1-p7)).
-- Later/parallel Room and Media findings carry their own revision-scoped counts and exceptions. The archive preserves all superseded results, measured observations, failed attempts and owner commentary.
-- **Release claims are not certified** while required C real-provider/device or D human acceptance remains incomplete. Test consent, state transfers, deployments and publishing always require their own approval.
-- **Direct-delivery increment, 2026-10-22:** `npm run test:full` passed **374 tests, 0 failed, 0 skipped** on the uncommitted increment based on `dc31aa4`. Chrome/Firefox synthetic direct-file and recovery checks also passed; this is current-tree B evidence, with real Plex/Discord gates still open. [Scope and limits](#direct-plex-file-delivery-2026-10-22).
-- **Room sync-quality availability follow-up, 2026-10-22:** An earlier working-tree `npm run test:full` run passed **395 tests, 0 failed, 0 skipped**, before the final removal of browser/platform identity labels. After those final changes, the focused tracker/diagnostics/socket/aggregation run passed **36/36**, and Chrome/Firefox roster smoke passed retained-confidence icons, exact tooltip lines, themes, alignment and settings exclusion. The full suite was not rerun at the owner's request. Repeat owner-device verification remains open. [Scope and evidence](#room-playback-synchronization-quality-2026-10-22).
-- **Sync-quality scoring simplification, 2026-10-22:** Focused local B run on the current working tree passed **42 tests, 0 failed, 0 skipped** with `node --test tests/sync-quality.test.js tests/watch-sync-quality.test.js tests/watch-socket.test.js tests/playback-timing.test.js`; JavaScript syntax and `git diff --check` passed. The change uses preallocated fixed-size metric rings, 1 Hz client sampling, and discrete-band/confidence server broadcasts. Full-suite and owner-device checks remain open.
-
-## Room playback synchronization quality (2026-10-22)
-
-**B pass, focused tracker/socket/aggregation checks, 2026-10-22 working tree:** Each playback tab stores the latest presentation error in the frame callback and samples once per second into preallocated fixed-size rings covering 60 seconds. If presentation-frame timing is unavailable or older than 2.5 seconds, `video.currentTime` against the existing room target provides a less precise estimate that can still qualify for a measured rating. Let `f250` and `f500` be the measured fractions of playback time more than 250 ms and 500 ms from the shared timeline, `N` automatic corrective seeks, `M` their total absolute magnitude in milliseconds, `D` the playback-rate-adjusted fraction of measured time, `R` the integrated absolute playback-rate deviation in seconds, and `B` actual buffering seconds. The score is `Q = exp(-(1.0*f250 + 2.0*f500 + 0.03*N + 0.00004*M + 1.4*D + 0.15*R + 2.5*B/60))`. Both sustained drift without corrections and frequent/severe corrections lower the score; clean playback with no stalls remains Excellent even with high or variable network RTT.
-
-The display begins at a provisional 100% in muted grey, then qualifies after the first valid one-second synchronization interval. A valid room clock up to 5 seconds old and at most 1000 ms uncertain can support the indicator, independently from playback correction eligibility; no minimum count of heartbeat RTT samples is needed. Presentation and position evidence both qualify while their sources remain distinct in diagnostics. Short clock/frame gaps retain measured confidence for up to 12 seconds and ordinary pauses for up to 2 minutes after the last actual sample. New streams/startups remain provisional until independently measured, errors remain reduced-confidence, and extended losses grey the retained icon without inventing a score. Actual buffering counts while shared playback should advance; pauses, seeks, initial loading, shared timeline changes and startup settling are excluded from drift and buffering evidence. No new clock or network probe was added, and the playback correction policy is unchanged.
-
-The score refreshes every five seconds with faster downward smoothing, gradual recovery and level hysteresis. Each authenticated viewer session sends a compact, rate-limited score/confidence; the server immediately broadcasts discrete level or confidence changes and publishes smaller percentage changes on its existing 1 Hz tick. It keeps actual measurement time separate from report receipt time, stores telemetry in memory only, expires freshness after 15 seconds, and preserves the score through pauses and brief clock interruptions. A context or clock-revision change clears the evidence window while preserving the smoothed score and band. Room aggregation scans once to select the worst confident active session, then other active, current connected, most recently measured and first visible sessions in order; all non-expired sessions, including reconnect-grace sessions, remain in the tooltip. Tooltips show only whole-percent lines such as `Sync quality: 93% (Excellent)`, one per playback session, without device or session labels. The score's icon is grey whenever the estimate is provisional or reduced-confidence, preserving its level shape; a new viewer defaults to grey four-bar `wifi`, never `wifi-off`.
-
-Local diagnostic exports include time beyond each drift threshold, correction count/magnitude, rate-adjustment duty/severity, actual buffering, raw/smoothed scores, measurement freshness, confidence and interruption reason. Browser/platform identity labels are not collected. Focused scoring, correction-observer, timing, socket authorization and multi-session aggregation checks cover early provisional-to-measured transitions, pause/stale retention, position fallback, worst-session selection and gradual recovery. Synthetic scenarios cover a high-RTT/variable mobile network with clean playback, repeated hard corrections, persistent uncorrected drift and actual buffering. Chrome/Firefox roster smoke checks the four icon levels, grey last-known/provisional shapes, exact percentage tooltip lines, Light/Dark × Orange/Pink colors, grid alignment without placeholders, and no quality column in Room Settings. Owner-device repeat testing and readability acceptance remain open. Scores estimate synchronization from the existing room clock and presentation/playback position; they do not measure a physical display.
-
-**Remaining verification:** `npm run test:full` was not run for this focused change. In owner Chrome, Firefox and Android Chrome playback, inspect diagnostic `sync-quality` events for `qualityConfidence`, `qualityReason`, `qualityMeasurementSource`, `qualitySampleCount`, `clockAgeMs`, `clockUncertaintyMs` and `qualityMeasurementFreshnessMs`. Confirm colored transition after a valid interval, retention through brief gaps/pause, and eventual grey when evidence expires. These live-device behaviors have not been observed in this change; prior browser smokes do not establish the new implementation's acceptance.
-
-## Direct Plex HLS — 2026-10-22
-
-- **Owner-reported C/D external browser pass:** On cellular, a personally linked Plex viewer played 720p / 4 Mbps HLS with **Direct from Plex**. A second external phone using browser Discord sign-in without a linked Plex account also played with that route. Its Safari screenshot shows Plex streaming, H.264/AAC, 1280 × 720 and a 4 Mbps requested limit. This verifies the reported browser/fallback paths; it does not certify embedded Discord Activity or prove both viewers reused one transcode. Local Firefox and Chrome instead reported failure reaching the public Plex endpoint (Chrome: connection refused), then recovered through uburoom after a reported long delay. Those local failures cannot establish rejection of a different Plex account; LAN public-address reachability and recovery delay are separate follow-ups.
-- **LAN direct origin resolution follow-up, B pass based on `38a1ab4`:** In response to local browser ECONNREFUSED from missing router NAT loopback, uburoom now automatically discovers the server's local HTTPS direct origin from authenticated Plex discovery (with optional `plex.lan_client_url` override) and adds both public and LAN origins to Content-Security-Policy. Direct preparation serves the LAN origin to private/loopback viewer IPs and the public origin to external viewers, while sharing the same underlying transcode session. `npm run test:full`: **377 passed / 0 failed / 0 skipped**. Synthetic Chrome and Firefox direct and CORS-recovery checks passed. `git diff --check` passed.
-- **Direct playlist recovery follow-up, B pass based on `1da23a8`:** Direct-only master/child playlist loads now have no internal retry, a 5-second first-byte limit and an 8-second total limit; normal proxy HLS recovery retains its policy. Isolated refused/hung endpoints recovered proxy media in Chrome in **417 / 5273 ms** and Firefox in **5269 / 5254 ms**, compared with **3345 / 12253 ms** and **12207 / 12182 ms** before the change. These are local fixture media-ready times, not production startup guarantees; the owner's reported minute-long delay was not reproduced. The existing Chrome/Firefox direct/shared late-join, decoded 440 Hz PCM, paused picture/seek/resume, missing-CORS recovery and token-redaction checks also passed after the change. `npm run test:full`: **377 passed / 0 failed / 0 skipped**; JavaScript syntax and `git diff --check` passed. No router/DNS configuration or deployment was performed.
-- **A/B pass, local candidate based on `161ff1e`:** `npm run test:full`: **377 passed / 0 failed / 0 skipped**. Focused account/pool tests cover selecting direct before segment cache warm-up, matching output sharing with separate viewer tokens, no delegated credential on the shared producer, independent proxy pooling/recovery, session/origin/query credential fencing and revoked/stale/foreign viewers. Existing track and conversion-policy regressions remain green. No configuration keys or migration are added.
-- **Browser B pass:** Disposable Chrome **155.0.8059.84** and Firefox **158.0.1**, synthetic HTTPS Plex origin, actual watch player and dedicated fixture fallback account. Each decoded direct HLS, admitted a mid-playback second viewer into the same output with a distinct temporary token, decoded expected 440 Hz PCM, compared paused picture pixels after a seek to 35 seconds and resumed. Direct cases made zero proxy video requests. Missing-CORS/503 cases recovered through the proxy with HLS output and seek/resume retained. Diagnostic exports excluded temporary credentials. The private fixture used a fresh app per browser; no new permanent smoke runner was added.
-- **C partial pass:** Two distinct temporary tokens from one real dedicated non-owner account read the same prepared Plex HLS session: both child playlists, first/later segments, a late-client segment-zero request and a subsequent first-client later-segment request returned HTTP 200. Anchor/later bytes matched across those reads. Instrumented uburoom preparation made **zero video requests**; standalone probe clients read the media. The owned test session's stop returned HTTP 200 and its disappearance from Plex's transcode listing was verified. TLS used the verified public hostname with the socket routed to the known LAN address to avoid absent NAT loopback; this does **not** verify external reachability or browser playback. No production restart, configuration write or watch-history reporting occurred.
-- **Open C/D gates:** Different real Plex accounts sharing one output; external-browser synchronization and broader picture/audio coverage beyond the reported phone passes; prolonged late joins and seeks; selected audio/burned captions on direct output; expiry/revocation and cleanup under real load. Native-HLS-only browsers and Activity retain proxy HLS. Initial playlist text remains in uburoom; every direct video/audio segment, including the timestamp anchor, is fetched by the browser. [Architecture](plex-hls-delivery.md) · [Detailed record](archive/testing-2026-10-22.md#direct-plex-hls-follow-up).
-
-## Direct Plex file delivery — 2026-10-22
-
-- **Delivery label, B pass:** The working-tree UI follow-up based on `4e1f848` shows **Direct from Plex** or **Through uburoom** in Player settings → Media information → Technical details. A disposable synthetic browser check passed direct playback and failed-direct-probe proxy recovery in Chrome 155.0.8059.84 and Firefox 158.0.1, including decoded video, paused seek/resume and the corresponding label. Desktop/narrow screenshots were captured across Light/Dark × Orange/Pink, with no text overflow; representative before/after renders were visually inspected. `node --check web/watch.js` and `git diff --check` passed. This check used no live Plex/Discord credentials.
-- **Owner-reported C/D follow-up:** Normal Plex linking subsequently succeeded. On a phone over 4G, playback succeeded with `format: hls`, `quality: 720p4`, `direct: false`; selecting Original then played with `format: file`, `quality: direct`, `direct: true`. This establishes the reported external original-file path, not universal device support or direct HLS.
-- **Credential-resolution follow-up, A/B pass:** Configured account fallback tokens rejected by PMS now resolve the same account's server-specific token; discovery retains the account credential. Resolution is coalesced/cached per configured credential and does not retry item denials or change identity. `npm run test:full`: **375 passed / 0 failed / 0 skipped**, uncommitted follow-up based on `e1856c6`. Consolidated tests cover direct delegation with resolved tokens, discovery/account isolation, revoked credentials, item restrictions, concurrent resolution and non-401 denials.
-- **C partial / linking issue open:** Read-only real PMS checks reproduced raw fallback-token HTTP 401 and confirmed its resolved server token reads libraries with non-owner access; candidate direct metadata checks also passed without owner substitution. A separately authorized fresh owner PIN login passed library validation, but the owner still reported the normal account-link callback failing on the installed version. That separate callback failure is not claimed fixed or explained by the fallback change. No production configuration/token replacement was performed by these diagnostic checks.
-
-- **NAT loopback follow-up, A/B pass:** Uncommitted fix based on `94a5b67` accepts exact authenticated Plex-advertised HTTPS non-relay origins for the pinned server, while preserving probes for unlisted origins. `npm run test:full`: **374 passed / 0 failed / 0 skipped**. Chrome 155.0.8059.84 and Firefox 158.0.1 passed four direct-file/failed-CORS recovery scenarios with server-side public probes disabled; direct playback, paused seek/resume and diagnostic token exclusion passed. Consolidated account checks reject lookalike origins, other-server metadata and relay entries.
-- **C partial:** Read-only real Plex discovery confirmed the configured non-owner fallback account and its exact public HTTPS origin; no temporary credential was minted. The owner confirmed the HTTPS identity endpoint opens on a phone over cellular. Real browser CORS/range/media decoding over that external route remains unverified. The follow-up fix is local; production activation was not performed by this check.
-
-- **A/B pass:** Optional `plex.delivery: auto` with explicit HTTPS client origin; personal temporary delegation; dedicated non-owner fallback opt-in; rejection of configured-owner/ambiguous fallback credentials and mismatched endpoint identity; stale/foreign delivery requests and late revocation; five-second negotiation timeout with late-result fencing. Full suite: `npm run test:full`, **374 passed / 0 failed / 0 skipped**, uncommitted increment based on `dc31aa4`.
-- **Browser B pass:** Disposable Chrome **155.0.8059.84** and Firefox **158.0.1**, synthetic HTTPS Plex origin and dedicated fallback identity. Each decoded direct original-file video without proxy file requests, paused/seeks to 35 seconds and resumed; each recovered a missing-CORS/503 direct probe through the authorized proxy while retaining original-file output. Diagnostic exports excluded the temporary credential. Four scenarios passed. A test-harness close request was corrected to include the existing required room epoch before the successful final run.
-- **Conversion B pass:** Existing `scripts/playback-baseline.js`, cases `hls-hevc,av1-23976`, Chrome/Firefox: **4 passed / 0 failed**. Decoded video/audio, paused seeking and resume passed for Plex-style synthetic HLS and software AV1. This is not real PMS negotiation, hardware encoding or Activity evidence.
-- **C/D not run:** Real Plex delegation/ownership metadata, public TLS/CORS/range reachability, real subtitles, prolonged interruptions and actual Discord clients. No private configuration migration, production restart or deployment performed. Strict direct-only mode and direct HLS remain unimplemented. [Detailed evidence and boundaries](archive/testing-2026-10-22.md#direct-plex-file-delivery).
+**Release status: open.** Results below belong to their recorded revisions/scenarios; they do not combine into a current-HEAD pass. This documentation cleanup ran no runtime tests. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Historical evidence digest](archive/testing-2026-10-22.md) · [Commands](development.md#tests).
 
 ## Verification standard for new work
 
-| Method | Qualifying evidence | Does not prove alone |
+| Method | Evidence | Limit |
 | --- | --- | --- |
-| **A — Review** | Source, contract, specification, rendered/static evidence inspection | New runtime or provider success |
-| **B — Automated** | Executed fixtures, disposable accounts, local faults, browser DOM, decoded frames/PCM | Real Plex/Discord/physical device or human acceptance |
-| **C — Integration** | Observed real provider, installed client, physical device/network/hardware | Other platforms, versions, media or account combinations |
-| **D — Human** | Recorded picture, sound, UX, accessibility observation or owner acceptance | Numeric sync, performance, authentication or universal compatibility |
+| A — Review | Source/contracts/rendered inspection | Not execution |
+| B — Automated | Isolated fixtures, browser pixels/PCM, fault tests | Not real provider/device acceptance |
+| C — Integration | Actual named provider/device/network/hardware | Only the measured configuration |
+| D — Human | Recorded perceptual/usability acceptance | Not numerical/security proof |
 
-- Report each **required** method as **pass / fail / blocked / not run** and label partial scenarios explicitly. A is not an executed B result; B fixtures cannot replace C; D cannot replace numeric engineering proof.
-- Record gate, evidence date, commit/worktree, relevant OS/browser/provider/device version, real or simulated identity, command/procedure, expected and actual outcome, pass/fail/skip counts when available, sanitized evidence and remaining levels.
-- API 200, command acknowledgement, advertised codec support, advancing media time, screenshots or agent assertions do not alone establish actual decoded picture/sound, Plex watch state or presentation-time skew.
-- No unexpected skips for a full-suite pass. Generate development TLS first: missing certificates can cause skips and failures. `npm test` dot output does not report skips; use `npm run test:full`.
-- C may be agent-executed with separately authorized, isolated/consenting real accounts. C or D classification does not itself grant permission to restart, migrate, write production state, deploy or publish.
-- Protect keys, personal host paths, private screenshots, user identities and media; link only sanitized evidence from tracked files.
+Record date/revision, scope/environment, command/procedure, actual outcome and failures/skips, remaining methods and sanitized evidence. Label each required method pass/fail/blocked/not run. API success, capability hints and advancing clocks are not decoded playback, persisted history or physical synchronization. Unexpected skips invalidate a full-suite pass. C and production/history changes require explicit authorization.
 
-## Test commands and verification procedures
+## Latest scoped evidence — 2026-10-22
 
-**Current runnable checks only.** A 2026-10-22 cleanup retired 27 test files and 27 one-off smoke scripts; older logs, run counts and failure descriptions below are *historical evidence*, not commands to resurrect. Choose only checks relevant to the code being changed.
-
-| Check | Command | Scope |
+| Area | Recorded evidence | Open / limitation |
 | --- | --- | --- |
-| Focused Node regression | `node --test tests/<relevant-file>.test.js` | Prefer one affected, retained test file |
-| Remaining Node suite | `npm test` | 34 suites; dot output omits skip counts |
-| Full TAP details | `npm run test:full` | Pass/fail/skip counts; release or broader verification |
-| Durable rooms and queue | `node --test tests/durable-rooms.test.js` | High-value isolated state/lifecycle boundary |
-| Room browser boundary | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` | Disposable cross-browser accounts |
-| Media controls | `node scripts/media-controls-smoke.js` | Two browsers, synthetic media |
-| Queue controls | `node scripts/queue-controls-smoke.js` | Two browsers, synthetic queue |
-| Library browser | `node scripts/plex-library-smoke.js` | Disposable Plex fixture (Firefox) |
-| Scheduled sync controls | `node scripts/sync-controls-smoke.js --browser=chrome` | Repeat Firefox when relevant |
-| Local WebM decode | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` | Repeat other codec/browser when relevant |
-| Decoded media baseline | `npm run test:playback` | Actual pixels/PCM from isolated generated media |
+| Browser preferences | B: 403/0/0 full Node; Chrome/Firefox storage, 30% default, quality/subtitle preference behavior. Slider follow-up: 13 focused passes and independent pending-state checks | No new decoded-track sweep or provider certification |
+| Room permissions/privacy | B: 402/0/0 full Node; focused Chrome/Firefox browsing, columns and private-member removal | Broad Room smoke stopped at **Bulk excludes Specials**; owner acceptance open |
+| Sync-quality scoring | B: final ring-buffer/1Hz change passed 42 focused tests; earlier confidence UI passed 36 focused and dual-browser roster checks | Earlier 395 full-suite pass predates final changes; final full-suite and real-device repeat not run |
+| Missing media | B: 370/0/0 full suite and dual-browser unavailable/queue feedback; C read-only PMS metadata exposed missing files with checkFiles=1 | Ordinary listing omitted flags; no live queue mutation |
+| Background availability | B: 371/0/0; Chrome/Firefox held-provider checks preserved catalog rendering, focus and scroll | No real-server performance claim |
+| Toasts/tracks/navigation | A/B Chrome/Firefox focused rendered checks across desktop/phone, themes, dismissal/errors, disabled tracks, poster clicks and scrolling | No full-suite rerun or human/live-device acceptance; touch was emulated |
 
-Development TLS may be required: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/new-dev-cert.ps1`. A missing certificate can yield failures or skips. Browser tools can start isolated servers and write ignored `artifacts/`; they do not use production accounts. Preserve separate C/D verification for live PMS/Discord, hardware/physical playback, and owner review; no synthetic runner certifies those.
+Counts are historical pass/fail/skip, not test quotas. The [design guide](design-guide.md) owns UI behavior; code owns the sync-score formula.
 
-## Toast positioning — 2026-10-22
+## Direct Plex HLS — 2026-10-22
 
-A/B: Chrome and Firefox checks at 1280px/390px pass 40px height, 24px icons, 14px/12px text, no border, action/username rows, entrance/exit and control-avoidance animation, lobby bottom placement, actual media-control spacing, scroll visibility priority, theater and fullscreen entry/exit. Temporary procedure: `node artifacts/toast-position-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792648132726/`. Existing `node scripts/toast-ui-smoke.js` passes in both browsers across light/dark and orange/pink. Desktop/mobile renders inspected. Layout states and synthetic notifications used disposable accounts; no new permanent tests. Full-suite and real-provider/device checks were not run for this styling change; human acceptance remains open. Previous positioning work also passed the retained 12 recovery tests.
+- **B:** Candidate based on `161ff1e`, recovery on `1da23a8`, LAN discovery on `38a1ab4`: recorded full suites **377/0/0**. Chrome 155.0.8059.84 / Firefox 158.0.1 synthetic direct/shared late join, 440Hz PCM, paused picture/seek/resume, CORS recovery and token exclusion passed. Successful direct cases made zero server video requests.
+- **C partial:** Two temporary tokens from one non-owner account read matching initial/later segments from one real output; server preparation fetched zero video bytes. Owned session stop/disappearance verified. This was not different-account browser playback.
+- **Owner C/D:** External personal and Discord-only fallback phone viewers reported direct HLS; Safari screenshot showed H.264/AAC 720p/4Mbps. Shared producer reuse was not proven.
+- **Recovery:** Refused/hung fixtures improved from Chrome 3345/12253ms to 417/5273ms, Firefox 12207/12182ms to 5269/5254ms. Installed minute-long delay was not reproduced. LAN/public-origin refusal is not proof of account rejection.
+- **Open:** Different real accounts, long-run external synchronization, selected tracks, expiry/revocation and cleanup. Native-HLS-only/Activity remain separate proxy paths.
 
-## Toast and subtitle controls — 2026-10-22
+## Direct Plex file delivery — 2026-10-22
 
-A/B: Chrome/Firefox rendered checks pass click/keyboard toast dismissal, fullscreen dismissal without playback activation, bell on/off states, suppression without replay, subtitle on/off icons and white active color, and disabled subtitles when none are available. Toolbar fits at 1280/390/320px. Temporary procedure: `node artifacts/toast-toggle-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792682915764/`. Official Tabler outline SVGs vendored with the existing MIT notice retained. No permanent tests added; full suite and real-provider/device checks not run. Human visual acceptance remains open.
+B candidate based on `dc31aa4`: **374/0/0**, Chrome/Firefox direct decode and failed-CORS proxy recovery; conversion baseline HLS/AV1 **4/0**. NAT-loopback follow-up on `94a5b67` passed **374/0/0**; same-account fallback token resolution on `e1856c6` passed **375/0/0**, plus read-only real metadata/library checks.
 
-## Unavailable media tracks — 2026-10-22
-
-A/B: Chrome/Firefox desktop and 390px mobile inspection passes empty/all-unavailable track lists, exact unavailable labels, disabled track menu rows/selectors, plain Automatic, omitted subtitle Off, and restoration when usable tracks return. Temporary procedure: `node artifacts/track-availability-inspect.cjs`; captures in ignored `artifacts/toast-ui-1792683850084/`. No permanent tests added; full suite and real-provider checks not run. Human acceptance remains open.
-
-## Media navigation scrolling — 2026-10-22
-
-A/B: Chrome/Firefox fixture checks pass partially visible content preserving page position for Browse, Home and new/cached library tabs; out-of-view Browse and Home jumps leave first cards below the sticky header. Desktop, 390px mobile and fullscreen drawer checked and captures inspected. Procedure: `node artifacts/media-scroll-inspect.cjs`; ignored captures `artifacts/media-scroll-chrome/` and `artifacts/media-scroll-firefox/`. No permanent tests added; full suite, real-provider checks and human acceptance not run.
-
-## Error toasts — 2026-10-22
-
-A/B: Chrome/Firefox fixture checks pass subtitle preparation and renderer errors using red error toasts, normal suppression while errors bypass the toggle, preserving visible errors when muted, foreground 10-second lifetime without render resets, dismissal without reappearing, later failure notification, and retained settings/retry feedback. Dark/light desktop/390px captures inspected. Procedure: `node artifacts/subtitle-error-toast-inspect.cjs`; ignored captures `artifacts/toast-ui-1792685399659/`. No permanent tests added; full suite, actual subtitle-provider failure and human acceptance not run.
-
-## Media navigation and poster clicks — 2026-10-22
-
-A/B: Chrome/Firefox disposable browser fixtures pass Collections `layout-grid`, library buttons inside the history group with movie/TV icons and `aria-current`, text/icon/hidden responsive stages, and no header overflow across 390–1800px viewports. Rendered unavailable Cards/Posters Play overlays are fully hidden. Hit tests across poster and caption regions resolve to item-opening controls; clicks open available and unavailable details. Chrome touch emulation verifies that the first tap opens details. Procedure: `node artifacts/media-poster-navigation-ui.cjs`; log and captures are ignored under `artifacts/`. Syntax and diff checks pass. No permanent tests added or full-suite rerun for these UI changes; live deployment and human acceptance not performed.
-
-## Library availability second pass — 2026-10-22
-
-A/B: Current uncommitted worktree passes **371 Node tests, 0 failed, 0 skipped** (`npm run test:full`, ignored `artifacts/availability-second-pass-full.log`). Library and detail reads return without file checks; a separate authenticated operation checks the displayed items. Server checks reuse pending/completed per-item results within a Plex scope, while playback and queue additions retain fresh validation. Retained tests cover a held scan with catalog reads still completing, overlapping requests, scope isolation and access revocation. Chrome/Firefox fixtures hold the Plex response, verify the full listing is already rendered, then release it and confirm card identity, focus, scroll, and Cards/Posters/List unavailable states. Temporary procedure: `node artifacts/availability-second-pass-ui.cjs`; captures are ignored. No live deployment or real-server performance measurement performed.
-
-## Missing Plex media — 2026-10-22
-
-A/B: Current uncommitted worktree passes the full Node suite: **370 passed, 0 failed, 0 skipped** (`npm run test:full`, ignored `artifacts/unavailable-final-full.log`). Retained Plex/room tests cover checked file flags, unavailable queue filtering, rejection before subtitle preparation, a usable alternate version, raw queue rejection, missing-current restoration without a media grant, close/reopen and removal. Chrome/Firefox disposable fixtures pass Cards/Posters/List opacity and labels, disabled play/add controls, a persistent error surviving 10 seconds while muted, click dismissal without replay, removal and file recovery clearing the warning. Temporary procedure: `node artifacts/unavailable-ui.cjs`; captures are ignored. No deployment performed; human acceptance and live UI verification of this implementation remain open.
-
-C (read-only): The owner-authorized missing-title example on the real Plex server returns `exists:false` and `accessible:false` only when its metadata is requested with `checkFiles=1`. The ordinary library listing omits these flags even with that parameter; batched metadata checks return them. No live queue or playback state was changed.
-
-## Latest evidenced results (historical; not rerun)
-
-| Date / scope | Last recorded pass or observation | Limitation and evidence |
-| --- | --- | --- |
-| **2026-10-21 Queue/OverlayScrollbars** | B complete TAP **461/0/0**; focused Queue controls and navigation pass Chrome/Firefox | Broad Queue smoke failure; C/D open ([Queue](archive/testing-2026-10-22.md#2026-10-21---shared-controls-queue-increment-m1-p7)) |
-| **2026-10-21 Media controls** | B Chrome/Firefox Media, library, Room regressions; `npm test` reportedly passed; Chrome touch emulated | No new full TAP/skip count; Firefox narrow drawer resize and real touch unproven; D open ([Media](archive/testing-2026-10-22.md#2026-10-21---shared-controls-media-increment-m1-p7)) |
-| **2026-10-21 Room UI** | A/B Chrome/Firefox roster, permissions and layout; heading/gutter checkout **456/0/0** TAP | Separate Room revisions and Player timeout; C physical Activity/mobile and D owner visual acceptance open ([Room](archive/testing-2026-10-22.md#2026-10-21---centered-room-subheadings-and-overlay-only-gutter-m1-p7)) |
-| **2026-10-21 Vigrid fixture repair** | A/B 12 focused recovery passes and local full TAP **455/0/0** | C deployed restart/health not run ([record](archive/testing-2026-10-22.md#2026-10-21---vigrid-recovery-test-fixture-repair)) |
-| **2026-10-20 owner Discord Activity codec run** | C native VP8/VP9/AV1 picture+sound; H.264 decoder failures and HEVC sound-only; D owner observation | Windows acceleration Off, one native sample client, 640×360/12fps; streamed VP8/VP9 MSE not certified ([matrix](discord-codec-compatibility.md)) |
-| **2026-10-19/20 Plex provider research** | C real Original/HLS/AV1 activity, opt-out read-backs and isolated truthful HLS transcode association | Reporter unimplemented; pooled producer and external AV1 attribution open ([association](archive/testing-2026-10-22.md#plex-delivery-association-and-direct-play-classification-2026-10-20)) |
-| **2026-10-17–20 sync/pacing** | B simulated skew, decoding and readiness; selected Plex Chrome observations and experimental cadence measurements | Physical inter-viewer percentiles unproven, owner D pending, Chrome correction-candidate drops ([sync](archive/testing-2026-10-22.md#real-time-playback-synchronization), [pacing](archive/testing-2026-10-22.md#frame-pacing-preservation-during-synchronization)) |
+Owner reported external 4G Original with direct-file state and later successful normal Plex linking. The earlier callback failure's cause remains unestablished. Label checks based on `4e1f848` passed both browsers. Broad real delegation/revocation, captions, interruptions and device coverage remain open; strict direct-only is unimplemented.
 
 ## Known failures and evidence limitations
 
-**Archive note:** Several runners named in the table below were deliberately retired in the lean-test cleanup. Their observed failures remain real historical evidence; the commands are no longer part of the supported developer workflow.
+| Issue | Disposition |
+| --- | --- |
+| Current Room smoke: Bulk excludes Specials | Stopped before later flows; focused checks do not close it |
+| Retired layout/queue smokes | Old normal-view and oomark assertions failed; not rerun, not a mandate to restore scripts |
+| Retired Player smoke | Firefox and Chrome creation timeouts; playback assertions not reached |
+| Retired room-redesign smoke | Expected old empty-state text; reproduced on unchanged baseline |
+| Sync experiments | Slower convergence/Chrome drops; disabled, disposition pending |
+| AV1 ending | Live ~42ms final-buffer gap; automated end-of-stream fix exists, C retest open |
+| Real soak | First run unloaded/recovered; repeat run clean, original trigger unresolved |
+| Resource/timing fixtures | A locked-disk timer assertion failed under contention then passed alone/full rerun; no assertion weakened |
+| Browser limits | Firefox Escape exits fullscreen, narrow drawer resize timeout, sparse high-rate frame callbacks; emulated touch is not real-device evidence |
 
-These are **documented failures or incomplete observations**, not claims that every issue still reproduces on today's HEAD. Preserve any narrower passes separately.
-
-| Check / issue | Last observed outcome | Verification disposition |
-| --- | --- | --- |
-| `watch-layout-smoke.js` | 2026-10-21 Media work still stopped on old `normal` library-view assertion at line 102 | **Fail documented / not re-executed** ([Media](archive/testing-2026-10-22.md#2026-10-21---shared-controls-media-increment-m1-p7)) |
-| Broad `queue-ui-smoke.js` | Chrome stopped at old Room oomark mask assertion, line 266; navigation-only and controls pass both browsers | **Broad fail remains unclosed** ([Queue](archive/testing-2026-10-22.md#2026-10-21---shared-controls-queue-increment-m1-p7)) |
-| `player-ui-smoke.js` | Firefox room-create timed out, then Chrome retry timed out before playback/icon assertions | **Incomplete**, cause not established ([Room icons](archive/testing-2026-10-22.md#2026-10-21---room-door-canonical-oomark-and-subheading-spacing-m1-p7)) |
-| `room-redesign-smoke.js` | Earlier popup-era expected “No active rooms” vs “Join or create a room”; reproduced on untouched baseline | **Historical fail**, current broader run not established ([popup](archive/testing-2026-10-22.md#2026-10-20---popup-consistency-m1-p7)) |
-| P5/P6 correction candidates | Slower convergence and concerning Chrome native drops in local comparisons | **Disabled/gated**, investigate/dispose before release ([pacing](archive/testing-2026-10-22.md#frame-pacing-preservation-during-synchronization)) |
-| Real Plex AV1 natural ending | Historic AV1 stopped ~42ms before declared duration, later fix only B-tested; PMS ignored external AV1 telemetry | **C retest open** ([Plex](archive/testing-2026-10-22.md#plex-hlsav1-activity-only-follow-up-2026-10-20)) |
-| Browser/fixture exceptions | Firefox Escape leaves fullscreen; Firefox narrow Media fullscreen resize timeout; Chrome synthesized tap not a real phone; one timing-sensitive storage-worker failure passed alone/full rerun | Scope limits, not broad product certification; original observations archived |
-
-### Historical failures with recorded repairs
-
-- The three Tabler icon regression tests were later repaired on the recorded local worktree; the earlier failed run remains a real historical failure.
-- Missing TLS certificates historically caused test skips/failures; only complete zero-unexpected-skip runs are suitable B full-suite evidence.
-- Prior initial encoding, synthetic-provider, startup, playback and browser errors are retained **verbatim** rather than erased or rewritten as successful first attempts.
+Detailed measurements and repaired historical failures are retained in the [digest](archive/testing-2026-10-22.md).
 
 ## Outstanding M1 verification register
 
-**Open gates** below use the required methods for each claim. Past success is valid only for the described subcase, not the entire required matrix.
-
-| Gate / required methods | Existing scoped evidence | Still open |
+| Gate | Required methods | Remaining |
 | --- | --- | --- |
-| **Overall M1 — A/B/C, D for UX** | Local ZIP/source and limited installation observations | Independent host/origin/providers, exact key/SQLite backup/restore/rollback, complete source/history/ZIP/privacy/brand/license audit, owner release acceptance |
-| **M1-P1 Endurance — B/C, D fidelity** | Real two-hour Plex Chrome and synthetic browser soaks/recovery | Real Firefox/Activity multi-hour, network/hardware/resources, unload root cause and physical picture/audio |
-| **M1-P2 Delivery — A/B/C** | Local codec/quality/encoder/fallback and partial real PMS checks | Real Plex/device codec/quality and resource/capacity matrix |
-| **M1-P3 Audio/subtitles — B/C/D** | Fixture PCM/pixels and selected Plex stream tracks | Real language/layout/downmix/audio, styled/bitmap captions, switching and owner fidelity acceptance |
-| **M1-P4 Reporting — A/B/C** | Real Plex activity-only research and isolated HLS association | Product **not implemented**; history/resume/completion, shared producer, external AV1 telemetry, sponsorship/owner-token fallback and revoked identity |
-| **M1-P5 Sync — B/C/D** | Synthetic clock/readiness/controls and selected Plex observations | Actual presentation **≤50ms p95 / ≤100ms p99 unverified**, real WAN/physical display and joint owner check |
-| **M1-P6 Pacing — B/C/D** | Local cadence comparisons and opt-in occasional jumps | Chrome candidate drops, disabled-policy disposition/removal, physical smoothness and P5/P6 D |
-| **M1-P7 UI/UX — A/B/C/D** | Owner-approved design iterations and Chrome/Firefox fixture layouts | Broader journeys, physical mobile/Activity, screen readers, owner final visual/usability acceptance |
-| **M1-P9 Subtitles — B/C/D** | Local ASS/PGS/VobSub parser/render/fixture tests | Real Plex/Activity/fonts/readability, lifecycle, compatibility and licensing |
-| **M1-P11 Architecture — A/B/C** | Local WebSocket/SQLite/worker/fault and backup fixtures | Real proxy, operator backup/restore/rollback, OS/hardware/resources |
-| **M1-P12 Telemetry — A/B/C, D readability** | Initial Room sync-quality indicator passes local A/B; broader M1-P12 scope remains in progress | Real Plex/Activity/device conditions and owner clarity/readability acceptance; timeline pips, viewer cards, buffering prompts, HUD and presence cues remain open |
-| **M1-P13 Rooms/queues — B/C, D UX** | Local persistence/queue/autoplay/concurrency and browser flows | Real multi-viewer Plex/Activity, writer/sync/load, operator state recovery, UX |
-| **M1-P14 Config/admin/access — A/B/C, D operator UX** | YAML/access/host-account fixtures and browser checks | Broader admin/security, real admission/revocation, sponsorship, Linux/macOS/container and operator recovery |
+| Release | A/B/C, D UX | Independent install/origin/providers, operator restore/rollback, source/history/ZIP privacy and licensing |
+| P1 endurance | B/C/D | Real Firefox/Activity/multi-viewer endurance, hardware/resources, unload cause and physical fidelity |
+| P2 delivery | A/B/C | Source/output negotiation and real cross-account/codec/capacity matrix |
+| P3 fidelity | B/C/D | Real languages/downmix/captions and switching |
+| P4 reporting | A/B/C | Product absent; shared-producer lifecycle, external AV1 telemetry, personal-state/concurrency/sponsorship |
+| P5/P6 sync/pacing | B/C/D | Physical/WAN ≤50ms p95 / ≤100ms p99, supported-policy disposition and joint smoothness acceptance |
+| P7 UI | A/B/C/D | Broader journeys, physical mobile/Activity/accessibility and owner acceptance |
+| P9 subtitles | B/C/D; A licensing | Real authored fonts/content, lifecycle/resources and corresponding-source review |
+| P10 terminology | A; B/C where affected | Final current web/Activity sweep; canonical protocol has historical local evidence |
+| P11 architecture | A/B/C | Real proxy/resources and operator backup/restore/rollback |
+| P12 telemetry | A/B/C/D | Repeat actual-device score/confidence and readability; richer features remain future scope |
+| P13 rooms/queues | B/C/D | Real multi-viewer continuation, recovery, writer/load and UX |
+| P14 access/admin | A/B/C/D | Admin/security implementation, real admission/revocation/handoff and operator recovery |
 
-### Human and release authorization gates
+P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one tab ~10 seconds and return. Technical timing remains separate. Design authorization is not visual acceptance; neither permits deployment.
 
-- **P5/P6 D pending:** owner views a shared title for approximately three minutes (motion, lip-sync, same moment), pauses/resumes/seeks, and backgrounds one tab ~10 seconds before returning. Technical inter-viewer timing remains separately unverified ([full owner checklist](archive/testing-2026-10-22.md#joint-m1-p5m1-p6-human-verification)).
-- **P7 D pending:** screenshots in ignored artifacts are review material, not approved reference baselines or pixel tolerances. Design authorization does not equal visual acceptance.
-- **Independent approvals:** consent for real tests, account/history changes, private-state transfer, production restart, public push, signing, deployment and publication cannot be inferred from A/B/C/D evidence.
+## Maintenance
 
-## Evidence index and maintenance protocol
-
-- **Verbatim historical file:** [docs/archive/testing-2026-10-22.md](archive/testing-2026-10-22.md) retains all past methods, results, failures, counts, measurements, worktree context and owner observations.
-- **Owning plans:** [ROADMAP](../ROADMAP.md), [development](development.md), [playback](playback-reliability.md), [Plex reporting](plex-reporting-investigation.md), [codec matrix](discord-codec-compatibility.md), [room/queue](rooms-and-queues.md), [access](accounts-and-access.md).
-- **Do not append exhaustive chronological reports.** Update the relevant last-result, known-failure or open-gate row when actually new evidence is recorded; preserve existing unresolved wider failures and links.
-- **Concise result update:** date/revision, gate, required/completed levels, exact scope and command, observed outcome and counts, limitations, sanitized evidence pointer and next open check. Avoid repeated fixture disclaimers and historical suite-count progressions.
-- **Detailed evidence location:** ignored `artifacts/` for TAP, screenshots and transient logs, approved private storage for sensitive runs; a **new sanitized dated archive** for material durable failure investigations, measurements or owner observations.
-- **Cross-reference rule:** current-status links point here; former dated section/measurement anchors point to the verbatim archive. Keep requirements in ROADMAP and technical plans, not duplicated narratives here.
-- **No certification by inference:** docs-only changes, isolated-fixture passes, owner design approvals or old green counts do not pass an unverified gate.
-
-### Minimum record checklist
-
-1. Identify the precise milestone and behavior, not merely a feature name.
-2. State execution date and exact commit or working tree.
-3. List required A/B/C/D methods before recording completed levels.
-4. Use pass/fail/blocked/not run for each required level.
-5. Scope browsers, account/media/provider identity and simulated vs real context.
-6. Include reproducible commands or procedures and actual observable outcome.
-7. Record pass/fail/skip counts and identify unexpected skips explicitly.
-8. Separate intermediate errors, final reruns and unreproduced issues.
-9. Link sanitized detailed logs or a new dated archive when warranted.
-10. Keep broader known failures visible if only a narrower check passed.
-11. Update the affected M1 gate, without changing unrelated phase priorities.
-12. Keep raw private artifacts and credentials out of the tracked source tree.
-13. Validate redirected historical links and active dashboard anchors.
-14. Distinguish D owner acceptance from C integration test consent.
-15. Preserve separate deployment, state-migration and release permission.
-16. If editing docs only, explicitly say that no tests were executed.
+Update the affected result/gate only. Keep commands in development, requirements in owning plans, and detailed sanitized investigations in dated evidence. Do not append UI specifications, repeat suite histories, restore retired runners or turn old results into current green status.

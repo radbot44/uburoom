@@ -1,64 +1,52 @@
 # Account names and host directory
 
-M1-P13/P14 implementation contract. Leader-only reversible All hosts and editable names were approved on 2026-10-20. Local fixture verification is recorded in [testing](testing.md); real-provider verification remains open.
+Implemented M1-P13/P14 contract; real provider mapping and user acceptance remain open in [testing](testing.md).
 
 ## Accounts and names
 
-An uburoom account has one stable UUID and one display name. Successful provider sign-in creates the account and seeds its name once. Account settings let the person edit it. Provider refresh, linking and unlinking preserve it; verified merging keeps the surviving account's name. Future native authentication can attach to this model. Native password login and owner name-lock policy remain deferred.
-
-Names are plain text, 1–80 Unicode characters, normalized and trimmed, without control/invisible formatting characters. They need not be unique. Search includes verified provider aliases and supplies handles or a short account discriminator for ambiguous names. Names and emails never prove identity, merge accounts, choose credentials or grant permissions.
-
-Browser, Activity and bot actors resolve canonical names. Cosmetic edits do not increment authentication revisions or sign users out. Provider linking/removal/merge retain their authentication boundaries.
-
-Discovery does not create accounts. Private owner-assigned placeholders remain distinct from successful sign-in; search excludes these unless an enabled provider source discovers them. New accounts record first sign-in in `signedInAt`. For retained state, null means never authenticated; 0 means previously known with the historical date unknown.
+- One canonical UUID and independently editable name, seeded at first sign-in. Provider refresh/link/unlink preserves it; verified merging keeps the surviving account's name. Cosmetic edits do not sign users out.
+- Names are normalized, trimmed plain text, 1–80 Unicode characters, without control/invisible characters. Duplicates are allowed; aliases/handles or a short discriminator distinguish results. Names/emails never prove identity or grant authority.
+- Discovery creates no accounts. `signedInAt: null` means never authenticated; `0` means a known account with unknown historical sign-in time. Private placeholders are not treated as authenticated users.
+- Native login and owner name-lock rules remain deferred.
 
 ## Host authority
 
-**Add hosts** is a host permission in Room management, off by default in existing policies, new-room defaults and presets. Participants cannot receive it. Authorized hosts can add known accounts and pending provider assignments, but cannot remove another host or pending assignment. Appointed hosts inherit the same host policy.
+**Add hosts** is a host-only permission, off by default. Authorized hosts can assign known accounts or exact provider subjects but cannot remove other hosts or pending grants. Removal belongs to the leader/active administrator; explicit hosts may relinquish their own role with a warning about lost private/closed-room access.
 
-Ordinary removal stays with the leader or an authorized administrator in explicit Admin mode. Explicit hosts may relinquish their own assignment in People even without Add hosts. Confirmation explains possible private/closed-room access loss. Leaders use the existing leadership-transfer workflow instead.
-
-**All hosts** is a persistent, reversible switch in Permissions, controlled only by the actual room leader. Admitted members are displayed as hosts and use the host permission column. Participant settings are retained for when it is disabled; presets preserve the mode. Room-panel quick switches edit host controls while it is on. People still permits explicit assignment/removal. Relinquishing an explicit role while the mode is on leaves the person a host through the mode; confirmation explains this.
-
-The mode creates no permanent assignments, grants no server admission and exposes no private rooms. Private entry and saved-room reopening continue to require explicit membership or current Admin authority. Turning it off restores explicit-host/participant roles. Neither hosts nor administrators can toggle the leader-only mode through the API.
+**All hosts** is persistent, reversible and controlled only by the actual leader—even an administrator cannot toggle it. It makes admitted members effective hosts without creating assignments. Presets preserve the mode; disabling it restores explicit roles. Private entry/reopening still requires explicit membership or active Admin authority. Relinquishing an explicit role while All hosts is on does not remove the mode-derived role.
 
 ## Search and pending assignments
 
-Authorized actors see Add a host search in People. The room-scoped socket operation checks admission/role before and after provider work, limits requests and returns at most 20 results. Mutations use current room revisions and recheck authority. Search never exposes the owner account-management endpoint, credentials, emails or full provider profiles.
+Room-scoped search checks authority before and after provider work, rate-limits requests and returns at most 20 results. Mutations check current room revisions. Never expose credentials, emails, full provider profiles or the owner account endpoint.
 
-Match the uburoom name and provider aliases, then rank:
+Rank matches by:
 
 1. Present in this room.
-2. Connected elsewhere in uburoom, including the lobby.
-3. Previously signed in, currently disconnected.
-4. Provider members who have never signed in.
+2. Connected elsewhere, including the lobby.
+3. Previously signed in.
+4. Never-signed-in provider members.
 
-Within groups 3 and 4, positively observed Discord online/idle/do-not-disturb users come first. Remaining entries use stable name ordering. Unknown presence is not claimed offline; Plex presence is not queried. Actual uburoom presence follows authenticated live sockets, deduplicated by UUID, separately from reconnect capacity reservations.
+Within the last two groups, positively observed Discord presence comes first, followed by stable name order. Unknown presence is not offline; Plex presence is not queried. Deduplicate authenticated sockets by canonical UUID, separately from reconnect reservations.
 
-Results have a name and status/source/alias caption. Arrows select, Enter grants only the selected result and Escape dismisses results. Existing assignments are disabled. Unlinked identities remain distinct until verified linking proves one account.
+Results show name plus status/source/alias. Arrows select, Enter grants only the selected result, Escape dismisses; existing assignments are disabled. Unlinked identities stay distinct.
 
-Known targets receive UUID host assignments. Never-signed-in targets receive durable pending grants for an exact provider/subject, with issuer/time. Labels come from the enabled directory rather than mutation bodies. Authenticated admission lets exact verified identities claim grants. Pending grants remain visible/revocable after discovery is disabled. Claimed grants become ordinary canonical host memberships. No messages, email, shared credentials or automatic name matching are involved.
+Known accounts receive UUID assignments. Other targets receive durable exact provider/subject grants with issuer/time and server-derived labels. Authenticated admission plus verified identity claims them; disabling discovery does not hide or revoke pending grants. No name matching, messages or shared credentials are involved.
 
 ## Provider exposure
 
-```yaml
-directory:
-  expose_discord_members: true
-  expose_plex_members: false
-```
+`directory.expose_discord_members: true` and `directory.expose_plex_members: false` are defaults. Previously authenticated users remain searchable with either off. Discovery never grants sign-in, room or media access.
 
-These options expose new candidates; they do not enable sign-in or grant installation/media access. Previously authenticated accounts remain searchable with either source off.
+| Provider | Boundary |
+| --- | --- |
+| Discord | Configured guild only; exclude bots and bound pagination. Request optional member/presence intents only when application flags permit; missing capabilities warn without disabling ordinary operations. Read presence only from a ready shard. |
+| Plex | Configured owner token and pinned server's accepted library shares only. Exclude managed profiles, pending invitations, other servers, emails and shared-user tokens. Bound responses to 4 MiB; reject external XML entities. Unsupported privilege/shape reports unavailable. |
 
-Shared bounded caches retain successful results for 60 seconds with 15-second failure backoff. Failures leave local search usable with a truthful notice. Search is debounced by 250 ms; no full roster request occurs per keystroke.
+Search debounce is 250 ms; shared success cache 60 seconds and failure backoff 15 seconds. Provider failure leaves local search available with a truthful notice.
 
-Discord discovery pages only the configured guild, excludes bots and bounds pages/results. Before gateway login, optional member/presence intents are requested only when application flags advertise them. Missing capabilities produce setup warnings without preventing ordinary configured bot operations. Presence is read only while the guild/shard is ready. See [privileged intents](https://docs.discord.com/developers/events/gateway#privileged-intents) and [application flags](https://docs.discord.com/developers/resources/application#application-object-application-flags).
-
-The optional Plex adapter reads plex.tv's account roster with the configured owner token, keeping accepted library shares for the verified configured machine identifier. Managed profiles, pending invitations, other servers, emails and shared-user tokens are excluded. Unsupported responses/token privileges report unavailable. Responses are bounded to 4 MiB; external XML entities are rejected. Mapping follows the [Python-PlexAPI implementation](https://github.com/pushingkarmaorg/python-plexapi/blob/master/plexapi/myplex.py); fixtures do not establish live Plex compatibility. [Plex distinguishes library access from friendship](https://support.plex.tv/articles/201105738-creating-and-managing-server-shares/).
+References: [Discord intents](https://docs.discord.com/developers/events/gateway#privileged-intents), [application flags](https://docs.discord.com/developers/resources/application#application-object-application-flags), [Plex roster mapping](https://github.com/pushingkarmaorg/python-plexapi/blob/master/plexapi/myplex.py).
 
 ## Storage and verification
 
-SQLite baseline 6 adds nullable `users.signedInAt` and provider-bound pending grants. All hosts lives in existing policy JSON; explicit host rows remain intact. Startup rejects older private schemas unchanged. Retained installations need an explicit reviewed private transfer, matched backup and exact original key. No migration is shipped or run automatically.
+Use the existing SQLite mirror/writer and validated room operations. Preserve explicit host rows and canonical merges. Current baseline and private-transfer requirements are in [upgrading](upgrading.md), not a separate directory migration.
 
-Implementation uses existing native browser modules, account service, SQLite mirror/writer and validated room operations, with no new dependencies or credential database.
-
-Required evidence: A authorization/schema review; B unit/socket/provider fixtures, restart preservation, migration idempotence and Chrome/Firefox desktop/phone UI; C actual Discord intents/member/presence and Plex roster mapping; D user acceptance. Local B does not close C or authorize provider setup, production migrations or deployment.
+Check authorization races, restart preservation, provider failure and browser interaction in fixtures; actual Discord intents/presence, Plex roster mapping and human usability need separate evidence.
