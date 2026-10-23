@@ -325,7 +325,7 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   const aliceRoom=(await alice.post('/api/watch/rooms',{})).body.id,aliceViewer=randomUUID();let aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}&quality=direct`)).body;
   await alice.post(`/api/watch/rooms/${aliceRoom}/command`,{epoch:aliceState.epoch,expiresAt:Date.now()+2900,viewerId:aliceViewer,command:{action:'media.load',args:{mediaId:'999',quality:'direct'}}});aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
   f.provider.revoked.add('101');f.app.plexAuth.clear();assert.equal((await alice.request('/api/watch/me')).status,200,'Discord still provides uburoom account access');assert.equal((await alice.request(aliceState.mediaUrl)).status,403,'a linked Plex denial does not fall back to the owner token');
-  assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',guildId:'guild',channelId:'commands'},{roomId:aliceRoom,action:'media.pause'})).status,'forbidden','Discord commands enforce the same media entitlement');
+  assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',surface:'web',guildId:'guild',channelId:'commands'},{roomId:aliceRoom,action:'media.pause'})).status,'forbidden','Room commands enforce the same media entitlement');
   f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request(state.mediaUrl)).status,403,'revoked Plex access invalidates media grants');
   assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,401);
 });

@@ -174,7 +174,7 @@ test('reopen returns an authorized joined snapshot in one operation and validate
   assert.equal((await guest.call('/api/watch/rooms/'+id+'/reopen',{viewerId:randomUUID()})).status,403);
   const viewer=randomUUID(),opened=await creator.call('/api/watch/rooms/'+id+'/reopen',{viewerId:viewer,quality:'direct',subtitles:'browser'});
   assert.equal(opened.status,200);assert.equal(opened.body.id,id);assert.equal(opened.body.state.id,id);
-  assert.equal(opened.body.state.roomName,'Atomic reopen');assert.equal(opened.body.state.enabled,false);
+  assert.equal(opened.body.state.roomName,'Atomic reopen');
   assert.ok(f.app.watch.rooms.get(id).viewers.has(viewer),'Same operation joins the viewer and creates its authorized state');
 });
 
@@ -198,7 +198,7 @@ test('authenticated durable rooms close/reopen and survive a server restart with
   assert.ok(results.every(result => result.status===200 && result.body.id===id));
   assert.equal(f.app.watch.rooms.size,1);
   const state = (await returning.call('/api/watch/rooms/' + id + '?viewer=' + randomUUID())).body;
-  assert.equal(state.state.paused,true); assert.equal(state.state.position,23.5); assert.equal(state.enabled,false); assert.notEqual(state.epoch,epoch);
+  assert.equal(state.state.paused,true); assert.equal(state.state.position,23.5); assert.notEqual(state.epoch,epoch);
   settings = (await returning.call('/api/watch/rooms/' + id + '/settings')).body;
   assert.equal(settings.creator.id,creatorId); assert.equal(settings.hosts[0].id,hostId);
   await returning.call('/api/watch/rooms/' + id + '/close',{epoch:settings.epoch});
@@ -585,7 +585,7 @@ test('reboot recovery admits ordinary returning viewers, waits for everyone and 
   const returning=await f.login('guest');
   const joined=await returning.call('/api/watch/rooms/'+id+'?viewer='+b);
   assert.equal(joined.status,200,JSON.stringify(joined.body));
-  assert.equal(joined.body.recovery.missing,1);assert.equal(joined.body.state.paused,true);assert.equal(joined.body.enabled,false);
+  assert.equal(joined.body.recovery.missing,1);assert.equal(joined.body.state.paused,true);
   const recovery=f.app.watch.roomState.recoveries.get(id);
   await f.app.watch.roomState.maintain(recovery.until+1);
   const room=f.app.watch.rooms.get(id);
@@ -607,7 +607,7 @@ test('reboot playback resumes only with all expected people ready, or explicit p
   assert.ok(room.recovery,'missing viewer prevents resume');
   await viewer.call('/api/watch/rooms/'+id+'?viewer='+b);
   for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
-  assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,false);assert.equal(room.s.enabled,false);
+  assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,false);
 });
 
 

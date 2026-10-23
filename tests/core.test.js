@@ -6,16 +6,13 @@ const Engine = require('../shared/engine');
 const { Hub, resolve, hash, PRESENCE_MS } = require('../server/core');
 const config = { ownerId: 'owner', guildId: 'guild', channels: ['commands'] };
 const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' };
-test('command parser has explicit units, bounded finite values and no arbitrary actions', () => {
-  for (const prefix of ['!uburoom', '!ubux', '!u']) assert.throws(() => Engine.parse(prefix + ' pause'));
-  assert.equal(Engine.parse('!ubu start').action, 'media.seek.start');
-  for (const verb of ['end', 'live']) assert.equal(Engine.parse('!ubu ' + verb).action, 'media.seek.end');
-  assert.equal(Engine.parse('!ubu.bob.bedroom zoom 150').args.value, 1.5);
-  assert.equal(Engine.parse('!ubu zoom 1.5').args.value, 1.5);
-  assert.equal(Engine.parse('!ubu zoom 150%').args.value, 1.5);
-  assert.equal(Engine.parse('!ubu zoom -0.5%').args.delta, -.005);
-  assert.equal(Engine.parse('!ubu volume 50').args.percent, 50);
-  for (const text of ['!ubu zoom Infinity', '!ubu zoom NaN', '!ubu zoom 2000%', '!ubu zoom +5', '!ubu volume 101', '!ubu pause now', '!ubu enable', '!ubu eval alert(1)']) assert.throws(() => Engine.parse(text));
+test('command validation enforces explicit units, bounded finite values and no arbitrary actions', () => {
+  assert.equal(Engine.factor('150'), 1.5);
+  assert.equal(Engine.factor('1.5'), 1.5);
+  assert.equal(Engine.factor('150%'), 1.5);
+  for (const text of ['Infinity', 'NaN', '2000%', '+5']) assert.throws(() => Engine.factor(text));
+  assert.equal(Engine.validate({ action: 'media.volume.set', args: { percent: 50 } }).args.percent, 50);
+  assert.throws(() => Engine.validate({ action: 'media.volume.set', args: { percent: 101 } }));
   assert.throws(() => Engine.validate({ action: 'zoom.set', args: { value: '1.5' } }));
   let picture = Engine.picture(Engine.DEFAULT, { action: 'zoom.set', args: { value: 16 } });
   picture = Engine.picture(picture, { action: 'stretch.set', args: { axis: 'stretchX', value: 16 } });
@@ -38,8 +35,8 @@ test('seek boundaries respect the available DVR window and disjoint recordings',
   for (const ranges of [[],[[0,Infinity]],[[NaN,10]],[[50,10]]]) assert.equal(Engine.seekBoundary(ranges,'start'),undefined);
 });
 test('media seeking stays inside available DVR ranges and snapshots contain only validated state', () => {
-  assert.equal(Engine.parse('!ubu seek -15').args.seconds, -15);
-  assert.throws(() => Engine.parse('!ubu seek Infinity'));
+  assert.equal(Engine.validate({ action: 'media.seek.relative', args: { seconds: -15 } }).args.seconds, -15);
+  assert.throws(() => Engine.validate({ action: 'media.seek.relative', args: { seconds: Infinity } }));
   assert.throws(() => Engine.validate({ action: 'media.seek.relative', args: { seconds: 601 } }));
   assert.equal(Engine.seekTarget(25, [[10, 40]], -15), 10);
   assert.equal(Engine.seekTarget(35, [[10, 40]], 15), 39.99);
@@ -52,9 +49,10 @@ test('media seeking stays inside available DVR ranges and snapshots contain only
 });
 
 test('legacy room management aliases are rejected', () => {
+  assert.equal(Engine.validate({action:'room.visibility',args:{visibility:'private'}}).action,'room.visibility');
   for (const [name, args] of Object.entries({enable:{},disable:{},sharing:{mode:'owner'},visibility:{visibility:'private'},controls:{control:'playback',allowed:false},autojoin:{enabled:true}})) {
     assert.throws(() => Engine.validate({action:'session.'+name,args}));
-    assert.equal(Engine.validate({action:'room.'+name,args}).action,'room.'+name);
+    if (name !== 'visibility') assert.throws(() => Engine.validate({action:'room.'+name,args}));
   }
   assert.throws(() => Engine.validate({action:'session.controls',args:{control:'playback',allowed:'yes'}}));
   assert.throws(() => Engine.validate({action:'session.unknown'}));
@@ -77,6 +75,7 @@ test('live watch rooms use the shared engine and reject removed management actio
     kind:'watch',roomId,epoch:randomUUID(),alias:'livingroom',ownerId:'owner',
     hostId:'owner',hostName:'owner',ownerName:'owner',visibility:'public',
     lastSeen:Date.now(),reachable:true,socket:{readyState:1},
+    viewers:new Map([['guest-viewer',{userId:'friend',at:Date.now(),actor:guest}]]),
     controls:{...Engine.CONTROLS},state:{picture:{...Engine.DEFAULT},paused:true,muted:false,volume:50,seekable:false},
     execute:async command=>({status:'applied',message:command.action})
   };
@@ -84,10 +83,11 @@ test('live watch rooms use the shared engine and reject removed management actio
   assert.equal((await hub.list(guest))[0].id,roomId);
   assert.equal((await hub.dispatch(host,{roomId,action:'media.pause'})).status,'applied');
   assert.equal((await hub.dispatch(guest,{roomId,action:'media.pause'})).status,'applied');
+  assert.equal((await hub.dispatch({...guest,surface:'discord'},{roomId,action:'media.pause'})).status,'forbidden');
   room.controls.playback=false;
   assert.equal((await hub.dispatch(guest,{roomId,action:'media.pause'})).status,'forbidden');
   for(const action of ['room.enable','room.disable','room.sharing','room.autojoin','room.controls'])
     assert.throws(()=>Engine.validate({action}),/Unsupported/);
-  assert.throws(()=>Engine.parse('!ubu off'),/Unsupported|Unknown/);
+  assert.equal(Engine.parse,undefined);
   hub.close();
 });

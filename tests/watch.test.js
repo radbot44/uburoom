@@ -210,7 +210,7 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p8');
   assert.ok(stopped.includes(guestOld));
   assert.equal((await command(guest,a,'media.mute')).status,'unsupported','cannot spoof another viewer');
-  assert.equal((await hub.dispatch({...host,surface:'discord'},{roomId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
+  assert.equal((await hub.dispatch(host,{roomId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
   assert.equal((await command(guest,b,'zoom.set',{value:1.2})).status,'applied');
   assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'applied','personal quality stays independent of playback permissions');
   room.s.visibility = 'private';

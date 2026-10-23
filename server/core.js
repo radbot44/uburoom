@@ -16,17 +16,24 @@ const isOwner = (actor,config) => (actor?.discordId||actor?.userId)===config.own
 const isHost = (room, actor) => room.creatorId ? RoomPolicy.role(room,actor.userId) !== 'viewer' : actor.userId===room.hostId;
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin;
 const canWatch = (access,id,actor) => access?.canWatch ? access.canWatch(id,actor) : !!access?.isMember(id);
+function sameVoice(room, actor, access) {
+  const channel = access?.voiceChannel?.(room.hostId || room.ownerId);
+  return !!channel && !!access?.validVoiceChannel?.(channel) && access.voiceChannel(actor.userId) === channel;
+}
 function watching(room, actor, now = Date.now()) {
   return room.kind === 'watch' && [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
 function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
-  return room.kind === 'watch' && actor.guildId === config.guildId && config.channels.includes(actor.channelId) &&
+  return room.kind === 'watch' && actor.guildId === config.guildId && (!config.channels?.length || config.channels.includes(actor.channelId)) &&
     canWatch(access,actor.userId,actor) && room.reachable && now - room.lastSeen < PRESENCE_MS && room.socket.readyState === 1 &&
     (admin || room.visibility === 'public' || (room.creatorId ? RoomPolicy.assigned(room,actor.userId) : isHost(room,actor)));
 }
 function eligible(room, actor, config, now = Date.now(), access, manage = false, admin = false) {
-  return viewEligible(room, actor, config, now, access, admin);
+  if (actor.surface !== 'web' && !admin) return false;
+  if (!viewEligible(room, actor, config, now, access, admin)) return false;
+  if (privileged(room, actor, config, admin)) return true;
+  return watching(room, actor, now);
 }
 function labels(rooms) {
   // Number only the caller's visible rooms: hidden players never affect labels.
@@ -70,7 +77,7 @@ class Hub {
   }
   canManage(room, actor) { return room.permissions ? this.canRoom(room, actor, 'roomSettings') : privileged(room, actor, this.config, this.isAdmin(actor)); }
   roomCommandAllowed(room, actor, command, personal = false) {
-    if (personal || ['status.get', 'help.get'].includes(command.action)) return true;
+    if (personal) return true;
     const capability = RoomPolicy.commandCapability(command.action);
     if (!capability || !this.canRoom(room, actor, capability)) return false;
     if (actor.surface !== 'web' && !isHost(room, actor) && !this.isAdmin(actor) && !Engine.controlAllowed(room.controls,command)) return false;
@@ -89,7 +96,7 @@ class Hub {
   }
   setAdminMode(actor, enabled) {
     if (actor.surface !== 'web' || !this.canAdmin(actor) || actor.guildId !== this.config.guildId ||
-      !this.config.channels.includes(actor.channelId) || !canWatch(this.access,actor.userId,actor) || typeof enabled !== 'boolean') throw new Error('Only an authorized administrator can change Admin mode');
+      (this.config.channels?.length && !this.config.channels.includes(actor.channelId)) || !canWatch(this.access,actor.userId,actor) || typeof enabled !== 'boolean') throw new Error('Only an authorized administrator can change Admin mode');
     if (!enabled) { this.clearAdmin(actor); return; }
     if (this.isAdmin(actor)) return;
     if (this.isOwner(actor)) this.adminMode = true;
@@ -100,7 +107,7 @@ class Hub {
     if (Object.hasOwn(input, 'sessionId')) return { status: 'unsupported', message: 'Use the current room protocol.' };
     actor=this.accountActor?.(actor)||actor;
     if (this.refreshAdmin) await this.refreshAdmin(actor);
-    if (actor.guildId !== this.config.guildId || !this.config.channels.includes(actor.channelId)) return { status: 'forbidden', message: 'No controllable room.' };
+    if (actor.surface !== 'web' || actor.guildId !== this.config.guildId || (this.config.channels?.length && !this.config.channels.includes(actor.channelId))) return { status: 'forbidden', message: 'No controllable room.' };
     if (!this.isOwner(actor) || this.rooms.size) {
       try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId,actor)) return { status: 'forbidden', message: 'No controllable room.' }; }
       catch { return { status: 'forbidden', message: 'No controllable room.' }; }
@@ -158,7 +165,7 @@ class Hub {
   close() { this.rooms.clear(); }
   async list(actor) {
     actor=this.accountActor?.(actor)||actor;
-    if (actor.guildId !== this.config.guildId || !this.config.channels.includes(actor.channelId)) return [];
+    if (actor.guildId !== this.config.guildId || (this.config.channels?.length && !this.config.channels.includes(actor.channelId))) return [];
     if (!this.isOwner(actor) || actor.surface === 'web' && !canWatch(this.access,actor.userId,actor)) {
       try { if (!await (this.access?.refreshWatch||this.access?.refresh)?.(actor.userId,actor)) return []; } catch { return []; }
     }
@@ -171,4 +178,4 @@ class Hub {
         canPlayback:this.canManage(s, actor) || s.controls.playback, canTransform:this.canManage(s, actor) || s.controls.transform }));
   }
 }
-module.exports = { Hub, eligible, viewEligible, isHost, watching, resolve, hash, UUID, PRESENCE_MS, COMMAND_MS, canWatch };
+module.exports = { Hub, eligible, viewEligible, isHost, sameVoice, watching, resolve, hash, UUID, PRESENCE_MS, COMMAND_MS, canWatch };

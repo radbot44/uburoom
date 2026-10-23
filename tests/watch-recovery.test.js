@@ -245,14 +245,12 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
     playbackClock: { reset() {} },
     queueUI: { rememberPosition() {} },
     resetSyncQuality() { qualityResets++; },
-    toggleRemote() {},
-    renderRemote() {},
     renderTransport() {},
     renderBrowsing() {},
     renderVisibility() {},
-    document: { title: '🟢 Room · uburoom' },
+    document: { title: 'Room · uburoom' },
     selected: 'room-1',
-    state: { enabled: true, reachable: true, mediaUrl: '/media' },
+    state: { reachable: true, mediaUrl: '/media' },
     video: {
       currentTime: 10,
       buffered: { length: 1, start: () => 0, end: () => 30 }

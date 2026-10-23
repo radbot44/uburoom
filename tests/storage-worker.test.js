@@ -86,7 +86,7 @@ test('unsupported pre-release schema fails startup without leaving a live storag
 
 test('unsupported schemas fail without changing existing data or installing missing tables', t => {
   const {initializeSchema}=require('../server/storage');
-  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE users(id TEXT);','pre-release'],[7,'CREATE TABLE future_state(id TEXT);','newer']]) {
+  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE users(id TEXT);','pre-release'],[6,'CREATE TABLE users(id TEXT);','pre-release'],[8,'CREATE TABLE future_state(id TEXT);','newer']]) {
     const db=new DatabaseSync(':memory:');db.exec(sql+'PRAGMA user_version='+version);
     const before=db.prepare('SELECT name,sql FROM sqlite_master').all();
     assert.throws(()=>initializeSchema(db),new RegExp(message));
@@ -117,6 +117,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   fs.copyFileSync(file,copy);fs.copyFileSync(key,copyKey);
   const restored=new Accounts(copy,credentialVault(copyKey));
   try {
+    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,7);
     assert.equal(restored.identity('plex','101').userId,user.id);
     assert.equal(restored.credential('101').token,'private-restore-fixture');
     assert.equal(loginStore('baseline',restored.vault,restored).logins.get('b'.repeat(64)).oauth.refreshToken,'private-login-fixture');
@@ -124,20 +125,4 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
     assert.equal(restored.db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
     assert.deepEqual(fs.readFileSync(copyKey),fs.readFileSync(key));
   } finally {await restored.close();}
-});
-
-// A prior installation's paired credentials must not survive the new baseline.
-test('upgrades a matched version-6 database by dropping stored device credentials',async t=>{
-  const {file,vault}=fixture(t);
-  let accounts=new Accounts(file,vault);
-  await accounts.close();
-  const old=new DatabaseSync(file);
-  old.exec("CREATE TABLE devices(id TEXT PRIMARY KEY,record TEXT NOT NULL)");
-  old.prepare('INSERT INTO devices VALUES(?,?)').run('legacy-device','{\"credentialHash\":\"secret\"}');
-  old.exec('PRAGMA user_version=6');old.close();
-  accounts=new Accounts(file,vault);
-  try{
-    assert.equal(accounts.db.prepare('PRAGMA user_version').get().user_version,7);
-    assert.equal(accounts.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'").get(),undefined);
-  }finally{await accounts.close();}
 });

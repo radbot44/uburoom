@@ -99,7 +99,7 @@ For containers, mount private YAML read-only and set `server.host: '0.0.0.0'`. U
 
 ## Providers
 
-In your Discord application's Developer Portal, enable Message Content Intent. Invite the bot with bot/applications.commands, View Channels, Send Messages and Read Message History; no Administrator/voice connection permission is needed. Configure `https://watch.example/auth/callback` using your own origin. Start with `npm start` and check `/health`.
+Invite the bot to your configured guild with `bot` scope (no Administrator, message-content, or voice-connection permission is needed; enable Server Members Intent and Presence Intent only if using optional host-directory discovery). Configure `https://watch.example/auth/callback` using your own origin. Start with `npm start` and check `/health`.
 
 For an Activity, enable Activities and map its root to the installation's origin. Activity root requests redirect to `/watch`; player/API/media routes are relative. Use your actual application settings and verify SDK authorization, proxy playback and PIP delivery live. A project marketing website is not the installation endpoint.
 

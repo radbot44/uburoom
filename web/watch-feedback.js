@@ -45,7 +45,6 @@
       case 'profile.load': case 'profile.save':
         symbol = 'bookmark'; value = (action === 'profile.load' ? '↥ Load ' : '↧ Save ') + args.slot; label = value; break;
       case 'room.visibility': symbol = args.visibility === 'private' ? 'lock' : 'users'; value = args.visibility === 'private' ? 'Private' : 'Public'; label = value; break;
-      case 'status.get': case 'help.get': return;
       default: return;
     }
     const color = { zoom:'var(--accent-text)', stretchX:'var(--accent-text)', stretchY:'var(--accent-text)' }[symbol] ||

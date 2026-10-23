@@ -85,8 +85,8 @@ test('command deadlines use fresh mapped time and never queue controls without a
   let valid=true;
   const ctx={switchingRoom:false,reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',state:{epoch:'current',state:{paused:false}},pending:false,qualityPending:false,
     playbackClock:{read:()=>({valid,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
-    api:async(path,data)=>{sent.push({path,data});return {status:'applied'};},refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
-  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
+    api:async(path,data)=>{sent.push({path,data});return {status:'applied'};},refreshState:async()=>{},renderLibrary(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
+  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderMediaInformation(')),ctx);
   await ctx.execute({action:'media.pause'});assert.equal(sent[0].data.expiresAt,102500);assert.equal(sent[0].data.epoch,'current');
   valid=false;await assert.rejects(ctx.execute({action:'media.pause'}),/timing is refreshing/);assert.equal(sent.length,1);assert.equal(ctx.pending,false);
   valid=true;ctx.reconnecting=true;await assert.rejects(ctx.execute({action:'media.pause'}),/Reconnecting/);assert.equal(sent.length,1,'controls are not queued during reconnect');
@@ -108,8 +108,8 @@ test('ordinary unlocked resume does not play a probe before its shared deadline'
   const ctx={switchingRoom:false,reconnecting:false,transport:{ready:true},selected:'room',viewerId:'viewer',readyVersion:'media',autoplayBlocked:false,
     state:{epoch:'current',mediaVersion:'media',state:{paused:true,duration:120}},pending:false,qualityPending:false,expected:()=>10,
     unlockLocal:async()=>{probes++;},playbackClock:{read:()=>({valid:true,serverTime:100000})},diagnosticSample(){},diagnostics:{record(){}},fail(){},
-    api:async()=>({status:'applied'}),refreshState:async()=>{},renderLibrary(){},renderRemote(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
-  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderRemote(')),ctx);
+    api:async()=>({status:'applied'}),refreshState:async()=>{},renderLibrary(){},renderVisibility(){},renderTransport(){},pumpVolume(){}};
+  vm.runInNewContext(source.slice(source.indexOf('async function execute('),source.indexOf('function renderMediaInformation(')),ctx);
   await ctx.execute({action:'media.play'});assert.equal(probes,0);
   ctx.autoplayBlocked=true;await ctx.execute({action:'media.play'});assert.equal(probes,1,'blocked playback still unlocks in the user gesture');
 });

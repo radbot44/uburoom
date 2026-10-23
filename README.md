@@ -26,14 +26,14 @@ Server settings live in private `config.yaml`; copy the annotated `config.exampl
 
 - Shared playback, readiness/late-join synchronization, host succession, public/private rooms and configurable room permissions.
 - Plex browsing and linked Plex/Discord accounts; personal volume, quality and media-access checks.
-- Discord Activity and browser handoff, plus bot commands through the shared validated command engine.
+- Discord Activity and browser handoff, with all room commands routed through the shared validated command engine.
 - Native per-viewer observations and persisted playback history, retained for planned Plex resume/watched-state updates across clients and servers; Plex reporting is not enabled yet. Queueing and durable room restoration are later work.
 
 See the [roadmap](ROADMAP.md) for priorities, milestones and release gates. Playback development prioritizes smooth automatic delivery in browsers and Discord Activity, with complete video/audio/subtitle coverage; the [playback reliability plan](docs/playback-reliability.md) contains the detailed requirements.
 
 The player includes personal audio/subtitle selection, external SRT/WebVTT captions and Plex burn-in requests for styled or embedded subtitles. Live Plex and Discord coverage remains under verification; see [testing status](docs/testing.md).
 
-Discord commands are `/ubu` and `!ubu`; there are no previous-name aliases. Fixtures do not establish compatibility with every Plex server, Discord client or YouTube TV player. See [remaining verification](docs/testing.md). Preserve account data and the original encryption key when retaining existing state; private pre-release migration support will be removed before the first public release. See [upgrading](docs/upgrading.md).
+Fixtures do not establish compatibility with every Plex server or Discord client. See [remaining verification](docs/testing.md). Preserve account data and the original encryption key when retaining existing state; private pre-release migration support will be removed before the first public release. See [upgrading](docs/upgrading.md).
 
 ## License and attribution
 

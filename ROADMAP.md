@@ -29,7 +29,7 @@ The [product specification](SPEC.md) and [project instructions](AGENTS.md) defin
 **Current milestone. Outcome:** Another person can install the first public uburoom release safely, preserve state across supported future upgrades, and understand exactly what is supported. Private pre-release revisions have no promised upgrade path.
 
 - Verify a clean installation on an unrelated host/origin with separate provider applications and fresh profiles. Test backup/restore, stable account UUIDs and exact original encryption-key preservation for retained state, code/state separation and rollback. The sole pre-release installation may be reset or manually transferred with an explicit backup; do not add compatibility migrations solely for it or silently discard its data.
-- Verify restricted/revoked Plex access, linked accounts, `/ubu` and `!ubu`, real Activity setup and the claimed browser/transport combinations without owner-token fallback.
+- Verify restricted/revoked Plex access, linked accounts, real Activity setup and the claimed browser/transport combinations without owner-token fallback.
 - Close the confirmed media-access expansion when a restricted Plex identity is removed from a Discord-eligible account. Require an explicit authorization policy for viewers without personal Plex entitlement; verify admission, media grants and reporting attribution independently. Complete the M1-P14 configuration/security foundation before exposing expanded sharing controls.
 - Finish branding/artwork/media provenance, dependency notices and GPL-3.0-only distribution review. Switch `scripts/build-demo-media.js` to approved current branding and remove `assets/branding/old/` from the active source before packaging; retain prior artwork in Git history. Audit source, full publication history, assets and ZIP contents for private material; include LICENSE and required notices.
 - Source packaging now includes ROADMAP.md; local ZIP inventory verification confirms it is present alongside the existing private-file exclusions. Retain that coverage in later package reviews.
@@ -300,7 +300,7 @@ The current owner refinement changes roster heights to 8/16 rows and Room quick 
 ### M1-P10 — Transition "session" terminology to "room"
 
 
-- Inventory and rename all user-facing instances of "session" in the web UI, dialogs, status toasts, Discord bot command options/descriptions (`/ubu`, `!ubu`), and Discord Activity lobby views to "room" (e.g. "Room Lobby", "Create Room", "Room Settings").
+- Inventory and rename all user-facing instances of "session" in the web UI, dialogs, status toasts, and Discord Activity lobby views to "room" (e.g. "Room Lobby", "Create Room", "Room Settings").
 - Reserve the technical term "session" strictly for low-level connection and auth contexts: HTTP cookie sessions, WebSocket connection sessions, and Plex transcode sessions.
 - Update user documentation, developer docs, protocol fixtures and tests to use only canonical room terminology. Replace alias-acceptance tests with rejection/no-reintroduction coverage; this is an intentional breaking change to private pre-release clients.
 

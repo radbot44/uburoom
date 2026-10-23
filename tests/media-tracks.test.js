@@ -212,7 +212,7 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
     assert.equal((await command({subtitleId:'21'})).status,'applied');
     assert.equal(room.viewers.get(b).media,previous,'external subtitles do not restart video');
     assert.equal((await command({audioId:'12'})).status,'applied'); assert.equal(room.viewers.get(b).media.selection.audio.id,'12');
-    assert.equal(room.viewers.get(a).media,other); assert.equal(room.position,12); assert.equal(room.s.state.paused,true); assert.equal(room.s.enabled,false);
+    assert.equal(room.viewers.get(a).media,other); assert.equal(room.position,12); assert.equal(room.s.state.paused,true);
     const good=room.viewers.get(b).media; state.wrongBurn=true;
     assert.equal((await command({subtitleId:'22'})).status,'failed'); assert.equal(room.viewers.get(b).media,good);
     assert.equal((await command({streamVersion:randomUUID(),subtitleId:'off'})).status,'unavailable');
@@ -237,7 +237,6 @@ test('a failed automatic burn keeps its catalog available for an explicit Off re
     assert.match(viewer.media.playbackError,/did not confirm burning/);assert.ok(watch.snapshot(room,host,viewerId).tracks.subtitles.length);
     const result=await hub.dispatch({...host,watchViewerId:viewerId},{roomId:room.s.roomId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,subtitleId:'off'}});
     assert.equal(result.status,'applied');assert.equal(viewer.media.playbackError,undefined);assert.equal(viewer.media.selection.subtitle,undefined);
-    assert.equal(room.s.enabled,false);
   } finally {watch.close();await plex.close();}
 });
 

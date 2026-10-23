@@ -87,7 +87,7 @@ class Watch {
   }
   create(actor, visibility = 'public', saved) {
     if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
-    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || !this.hub.config.channels.includes(actor.channelId)) throw new Error('Only authenticated eligible users can create a viewing room');
+    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))) throw new Error('Only authenticated eligible users can create a viewing room');
     if (this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen && !this.roomState?.recoveries.has(saved?.id)) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = saved?.id || randomUUID();
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
@@ -826,7 +826,7 @@ class Watch {
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
     }
     if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion || room.readinessVersion !== actor.watchReadinessVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
-    if (!action.startsWith('room.') && !['media.load', 'status.get', 'help.get'].includes(action) && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
+    if (!action.startsWith('room.') && action !== 'media.load' && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
     if (['media.play','media.toggle'].includes(action) && room.media?.kind !== 'demo') {
       const version = room.mediaVersion, plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
@@ -880,7 +880,6 @@ class Watch {
         break;
       case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
       case 'profile.load': if (!room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' }; s.state.picture = { ...room.profiles[args.slot] }; break;
-      case 'status.get': case 'help.get': break;
       default: s.state.picture = Engine.picture(s.state.picture, command);
     }
     if (action.startsWith('media.seek.')) {

@@ -144,7 +144,7 @@ class WatchRooms {
   }
   async eligible(actor, current = async () => true) {
     const hub = this.watch.hub;
-    if (this.stopped || actor.surface !== 'web' || actor.guildId !== hub.config.guildId || !hub.config.channels.includes(actor.channelId) ||
+    if (this.stopped || actor.surface !== 'web' || actor.guildId !== hub.config.guildId || (hub.config.channels?.length && !hub.config.channels.includes(actor.channelId)) ||
         !await current() || !canWatch(hub.access, actor.userId, actor) && !await (hub.access?.refreshWatch || hub.access?.refresh)?.(actor.userId,actor)) {
       throw failure('Room access expired; sign in again', 403);
     }

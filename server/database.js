@@ -23,6 +23,7 @@ function openDatabase(file, initializeSchema) {
       const name = '"' + row.name.replaceAll('"', '""') + '"';
       db.exec(`INSERT INTO main.${name} SELECT * FROM durable.${name}`);
     }
+    db.exec(`PRAGMA user_version=${Number(db.prepare('PRAGMA durable.user_version').get().user_version)}`);
   } finally { db.exec('DETACH DATABASE durable'); }
   let session = db.createSession(), serial = Promise.resolve(), failure, closing = false, sequence = 0, pendingBytes = 0, batch;
   const worker = new Worker(path.join(__dirname, 'storage-worker.js'), { workerData: { file } });

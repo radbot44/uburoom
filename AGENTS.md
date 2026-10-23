@@ -20,7 +20,7 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 | Domain | Primary Files |
 | --- | --- |
 | **Room state & lifecycle** | [server/watch.js](server/watch.js), [server/core.js](server/core.js) |
-| **HTTP/WebSocket routing & auth** | [server/app.js](server/app.js), [server/login.js](server/login.js), [server/watch-http.js](server/watch-http.js) |
+| **HTTP/WebSocket routing & auth** | [server/app.js](server/app.js), [server/watch-http.js](server/watch-http.js), [server/watch-socket.js](server/watch-socket.js) |
 | **Shared command engine** | [shared/engine.js](shared/engine.js), [shared/room-protocol.js](shared/room-protocol.js), [shared/picture.js](shared/picture.js) |
 | **Web watch client** | [web/watch.js](web/watch.js), [web/watch.html](web/watch.html), [web/playback-timing.js](web/playback-timing.js), [web/watch-sync.mjs](web/watch-sync.mjs) |
 | **Accounts, SQLite & vault** | [server/accounts.js](server/accounts.js), [server/storage.js](server/storage.js), [server/database.js](server/database.js), [server/storage-worker.js](server/storage-worker.js) |
@@ -53,17 +53,17 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 
 ## Room Model & Command Engine
 
-- **Terminology rule:** Use **"room"** for watch parties, UI elements, lobby dialogs, and Discord commands. Reserve **"session"** strictly for low-level technical contexts (HTTP cookie sessions, WebSocket connections, Plex transcode sessions).
-- Rooms have an owner, viewers, media, playback state (position, paused, muted, volume, seekable), visibility (public/private), mode, controls, epochs, and optional scheduled starts.
-- **Every control surface** — web watch page, Discord bot and Discord Activity — sends commands through the shared validated handler in `core.js` via the shared `Engine` (`shared/engine.js`). Never bypass it with direct state mutation or a parallel control path.
+- **Terminology rule:** Use **"room"** for watch parties, UI elements, and lobby dialogs. Reserve **"session"** strictly for low-level technical contexts (HTTP cookie sessions, WebSocket connections, Plex transcode sessions).
+- Rooms have an owner, viewers, media, playback state (position, paused, muted, volume, seekable), visibility (public/private), controls, epochs, and optional scheduled starts.
+- **Every control surface** — web watch page and Discord Activity — sends commands through the shared validated handler in `core.js` via the shared `Engine` (`shared/engine.js`). Never bypass it with direct state mutation or a parallel control path.
 - The **server owns the shared timeline**. Viewers own quality, audio, subtitles, and volume. Server acknowledgement is not proof of client playback.
 
 ---
 
 ## Authorization & Consent
 
-- Authorize **actor, guild/channel, room eligibility and current permissions** for every command. This applies equally to WebSocket commands, REST API calls, and Discord-originated commands.
-- Access model: owner > host > voice-channel members > active watchers, with visibility (public/private) gates. Check guild membership, command channel whitelist, and voice channel matching for Discord commands.
+- Authorize **actor, guild/channel, room eligibility and current permissions** for every command. This applies equally to WebSocket commands and REST API calls.
+- Access model: owner > host > active watchers, with visibility (public/private) gates and per-room permission policies.
 - **Hide inaccessible/private rooms** from room lists, **reject ambiguous targets**, and **never replay stale commands**. Short TTLs on pending commands.
 
 ---
@@ -87,7 +87,7 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 
 ## Naming & Branding
 
-- Use **uburoom** names throughout all code, UI, docs, and assets. `/ubu` and `!ubu` are the only Discord commands (not `!uburoom`). The `session.*`/`/api/sessions` watch-room aliases are removed; all clients must use the canonical room protocol.
+- Use **uburoom** names throughout all code, UI, docs, and assets. The `session.*`/`/api/sessions` watch-room aliases are removed; all clients must use the canonical room protocol.
 - The brand transition is tracked in the roadmap. Public GitHub repository creation is deferred until the transition is complete.
 
 ---
@@ -114,10 +114,8 @@ After approval, record the owner's canonical types, attributes, exceptions and d
 
 ## Discord Integration
 
-- The bot uses `discord.js` for gateway + REST. It registers a single slash command (`/ubu` with `command` and optional `target` parameters) and a prefix command (`!ubu`), replacing application commands in the configured guild at startup.
+- The bot uses `discord.js` for gateway + REST to verify guild membership, voice-channel participation for Discord Activity sign-in, and optional host-directory member/presence discovery. It clears any legacy application commands in the configured guild at startup.
 - Discord Activity is an embedded iframe app (`@discord/embedded-app-sdk`). The watch page detects Activity mode via `frame_id` query param and uses short-lived bearer tokens from SDK authentication.
-- **All Discord commands route through the shared `Engine`** — Discord is just another command surface. Check guild membership, command channel whitelist, linked-account status, and voice channel matching for every command.
-- Requires **Message Content Intent** enabled in the Discord developer portal.
 
 ---
 

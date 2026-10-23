@@ -79,6 +79,8 @@ function discordAccess(client, guildId) {
     },
     isMember(userId) { const at = members.get(userId)?.at; return !!guild() && !!at && Date.now() - at < COMMAND_MS; },
     hasRole(userId, roleId) { const member = members.get(userId); return !!guild() && !!member?.at && Date.now() - member.at < COMMAND_MS && member.roles.has(roleId); },
+    voiceChannel(userId) { return guild()?.voiceStates?.cache?.get(userId)?.channelId; },
+    validVoiceChannel(channelId) { const c = channelId && guild()?.channels?.cache?.get(channelId); return !!c && typeof c.isVoiceBased === 'function' && c.isVoiceBased(); },
     options() {
       const g = guild();
       return { available: !!g, guildName: g?.name || '' };

@@ -5,9 +5,9 @@ function initializeSchema(db) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > 7) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-  if (version === 6 || version === 7) {
+  if (version === 7) {
     const columns = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
-      credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'], ...(version === 6 ? {devices:['id','record']} : {}),
+      credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
       browser_logins:['id','record'], playback_history:['id','userId','at','record'],
       watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState'],
       watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
@@ -18,7 +18,6 @@ function initializeSchema(db) {
       const actual = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name);
       if (actual.length !== expected.length || actual.some((name, i) => name !== expected[i])) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
     }
-    if (version === 6) db.exec('BEGIN IMMEDIATE; DROP TABLE devices; PRAGMA user_version=7; COMMIT;');
     return;
   }
   if (version !== 0 || tables.length) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
