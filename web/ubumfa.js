@@ -96,7 +96,30 @@
     return s.join('');
   }
 
+  // FNV-1a 64-bit seed hash and SplitMix64 pseudorandom stream.
+  // Once canonical names are assigned, retain this algorithm or store names.
+  function randomForSeed(seed) {
+    if (typeof seed !== 'string' && !Number.isSafeInteger(seed)) {
+      throw new TypeError('Seed must be a string or safe integer');
+    }
+    const value = (typeof seed === 'string' ? 's:' : 'n:') + seed;
+    const mask = 0xffffffffffffffffn;
+    let state = 0xcbf29ce484222325n;
+    for (let i = 0; i < value.length; i++) {
+      state = ((state ^ BigInt(value.charCodeAt(i))) * 0x100000001b3n) & mask;
+    }
+    return function() {
+      state = (state + 0x9e3779b97f4a7c15n) & mask;
+      let n = state;
+      n = ((n ^ (n >> 30n)) * 0xbf58476d1ce4e5b9n) & mask;
+      n = ((n ^ (n >> 27n)) * 0x94d049bb133111ebn) & mask;
+      return Number((n ^ (n >> 31n)) >> 11n) / 9007199254740992;
+    };
+  }
+
   // Numeric arguments generate one title-cased word per requested length.
+  // Optional final {seed} or string seed deterministically generates a name:
+  // generateName({seed: userId}) or generateName(6, {seed: userId}).
   function generateName(...lengths) {
     if (!lengths.length) return generateWord(6, Math.random);
     if (lengths.length === 1 && typeof lengths[0] === 'function') {
@@ -105,17 +128,53 @@
     if (lengths.length === 2 && typeof lengths[1] === 'function') {
       return generateWord(lengths[0], lengths[1]);
     }
+
+    let random = Math.random;
+    const last = lengths[lengths.length - 1];
+    if (typeof last === 'string' ||
+        (last !== null && typeof last === 'object' &&
+          Object.prototype.hasOwnProperty.call(last, 'seed'))) {
+      const seed = typeof last === 'string' ? last : last.seed;
+      random = randomForSeed(seed);
+      lengths.pop();
+    }
+    if (!lengths.length) return generateWord(6, random);
     return lengths.map(length => {
-      const word = generateWord(length, Math.random);
+      const word = generateWord(length, random);
       return word[0] + word.slice(1).toLowerCase();
     }).join(' ');
   }
 
-  function roomName() {
-    const word = generateName();
+  function roomName(seed) {
+    const word = arguments.length
+      ? generateName(seed !== null && typeof seed === 'object' ? seed : {seed})
+      : generateName();
     return 'Room ' + word[0] + word.slice(1).toLowerCase();
   }
-  const api = {generateName, roomName};
+  // A 12-letter Ubunym has a six-letter nomen and six letters of
+  // praenomen/cognomen, split 2+4, 3+3, 4+2, or 6+0.
+  // The same seed always yields the same nomen as generateName(6, {seed}).
+  function ubunym(seed) {
+    const random = arguments.length === 0 ? Math.random :
+      typeof seed === 'function' ? seed : randomForSeed(
+        seed !== null && typeof seed === 'object' &&
+          Object.prototype.hasOwnProperty.call(seed, 'seed') ? seed.seed : seed);
+    const word = length => {
+      const generated = generateWord(length, random);
+      return generated[0] + generated.slice(1).toLowerCase();
+    };
+    const nomen = word(6);
+    const extraLengths = [2, 3, 4, 6];
+    const extraLength = extraLengths[Math.floor(random() * extraLengths.length)];
+    const extra = word(extraLength);
+    const extraBefore = random() < 0.5;
+    const remainingLength = 6 - extraLength;
+    const opposite = remainingLength ? word(remainingLength) : '';
+    return (extraBefore ? [extra, nomen, opposite] : [opposite, nomen, extra])
+      .filter(Boolean).join(' ');
+  }
+
+  const api = {generateName, roomName, ubunym};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.uburoomUbumfa = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
