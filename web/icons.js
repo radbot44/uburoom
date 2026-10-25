@@ -143,6 +143,7 @@
     "wifi-2": [["path",{"d":"M12 18l.01 0"}],["path",{"d":"M9.172 15.172a4 4 0 0 1 5.656 0"}],["path",{"d":"M6.343 12.343a8 8 0 0 1 11.314 0"}]],
     "ghost-2": [["path",{"d":"M10 9h.01"}],["path",{"d":"M14 9h.01"}],["path",{"d":"M12 3a7 7 0 0 1 7 7v1l1 0a2 2 0 1 1 0 4l-1 0v3l2 3h-10a6 6 0 0 1 -6 -5.775l0 -.226l-1 0a2 2 0 0 1 0 -4l1 0v-1a7 7 0 0 1 7 -7l0 .001"}],["path",{"d":"M11 14h2a1 1 0 0 0 -2 0"}]],
     "robot": [["path",{"d":"M6 6a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -4"}],["path",{"d":"M12 2v2"}],["path",{"d":"M9 12v9"}],["path",{"d":"M15 12v9"}],["path",{"d":"M5 16l4 -2"}],["path",{"d":"M15 14l4 2"}],["path",{"d":"M9 18h6"}],["path",{"d":"M10 8v.01"}],["path",{"d":"M14 8v.01"}]],
+    "heart": "\u003cpath d=\"M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {
