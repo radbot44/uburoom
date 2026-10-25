@@ -187,7 +187,11 @@ class Watch {
     const plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;
     if(room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer)return;
     const queueRevision = room.saved ? this.roomState.queue.room(room.s.roomId).queueRevision : undefined;
-    const entries = room.saved ? [this.roomState.queue.current(room.s.roomId),...this.roomState.queue.pending(room.s.roomId)].filter(Boolean) : [];
+    if (room.saved && room.queueEntriesRevision !== queueRevision) {
+      room.queueEntries = [this.roomState.queue.current(room.s.roomId),...this.roomState.queue.pending(room.s.roomId)].filter(Boolean);
+      room.queueEntriesRevision = queueRevision;
+    }
+    const entries = room.saved ? [...(room.queueEntries || [])] : [];
     if (room.media && !entries.some(item=>item.mediaId===room.media.id)) entries.unshift({id:room.media.id,mediaId:room.media.id,title:room.media.title});
     if (plex.availability) {
       const availability = await plex.availability(entries.map(item=>item.mediaId));
@@ -465,9 +469,18 @@ class Watch {
         subtitleDelivery:viewer.media.selection.subtitle?.delivery,subtitleMode:viewer.trackChoice?.subtitleMode || 'auto',
         subtitleError:viewer.media.selection.subtitle && !viewer.media.selection.subtitle.available ? viewer.media.selection.subtitle.reason : undefined}} : {}),
       qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
-      hasPrevious: room.saved ? (this.position(room) >= 5 || !!this.roomState.queue.lastHistory(room.s.roomId)) : !!room.media?.previousId,
-      hasNext: room.saved ? !!this.roomState.queue.peekNext(room.s.roomId) : !!room.media?.nextId,
-      queueSummary: room.saved ? this.roomState.queue.summary(room.s.roomId) : undefined,
+      ...(room.saved ? (() => {
+        const queueSummary = this.roomState.queue.summary(room.s.roomId);
+        return {
+          hasPrevious: this.position(room) >= 5 || (queueSummary?.historyCount || 0) > 0,
+          hasNext: !!queueSummary?.next,
+          queueSummary
+        };
+      })() : {
+        hasPrevious: !!room.media?.previousId,
+        hasNext: !!room.media?.nextId,
+        queueSummary: undefined
+      }),
       autoplay: room.saved ? { enabled:this.roomState.store.get(room.s.roomId).autoplay,
         countdown:room.autoplayCountdown ? {id:room.autoplayCountdown.id,title:room.autoplayCountdown.title,endsAt:room.autoplayCountdown.endsAt} : null,
         error:room.autoplayError || room.autoQueueError } : undefined,

@@ -21,7 +21,7 @@ class PlaybackTracking {
     this.db = registry?.db || new (require('node:sqlite').DatabaseSync)(':memory:');
     this.db.exec('CREATE TABLE IF NOT EXISTS playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL); CREATE INDEX IF NOT EXISTS playback_history_user ON playback_history(userId,at);');
     // Runtime viewers and consent are never restored after a process restart.
-    for (const row of this.db.prepare('SELECT * FROM playback_history').all()) {
+    for (const row of this.db.prepare("SELECT * FROM playback_history WHERE json_extract(record,'$.endedAt') IS NULL").all()) {
       const record = JSON.parse(row.record);
       if (!record.endedAt) { record.endedAt = record.lastReceivedAt; record.endReason = 'interrupted'; this.save(record); }
     }
@@ -89,7 +89,9 @@ class PlaybackTracking {
     return {accepted:true,playbackId:record.id,state:record.state,watchedSeconds:record.watchedSeconds,credit};
   }
   history(userId) {
-    const ids = this.registry ? this.db.prepare('SELECT id FROM users').all().filter(u=>this.registry.canonical(u.id)?.id===userId).map(u=>u.id) : [userId];
+    const canonicalId = this.registry ? this.registry.canonical(userId)?.id : userId;
+    if (this.registry && !canonicalId) return {retentionDays:90,totals:[],sessions:[]};
+    const ids = this.registry ? this.db.prepare("WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged").all(canonicalId).map(u=>u.id) : [userId];
     const records = ids.flatMap(id=>this.db.prepare('SELECT record FROM playback_history WHERE userId=? ORDER BY at DESC').all(id).map(row=>JSON.parse(row.record))).sort((a,b)=>b.lastReceivedAt-a.lastReceivedAt);
     const media = new Map();
     for (const record of records) {
