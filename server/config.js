@@ -13,6 +13,7 @@ const KEYS = [
   ...Object.keys(require('./room-limits').SETTINGS).map(key => 'rooms.' + key),
   'plex.url', 'plex.token', 'plex.machine_identifier', 'plex.fallback_enabled', 'plex.fallback_token',
   'plex.delivery', 'plex.client_url', 'plex.lan_client_url', 'plex.direct_fallback_enabled',
+  'plex.reporting_enabled', 'plex.reporting_watch_state',
   'discord.bot_token', 'discord.client_id', 'discord.client_secret', 'discord.owner_id',
   'discord.guild_id', 'discord.command_channel_ids',
   'server.host', 'server.port', 'server.public_url', 'server.tls_cert', 'server.tls_key', 'server.public_web_app',
@@ -130,6 +131,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   if (config.serverOperator.discordId && !/^\d{17,20}$/.test(config.serverOperator.discordId)) throw new Error('operator.discord_id must be a quoted Discord account ID');
   if (config.serverOperator.plexId && !/^\d{1,20}$/.test(config.serverOperator.plexId)) throw new Error('operator.plex_id must be a quoted Plex account ID');
   config.plexFallback = { enabled:boolean('plex.fallback_enabled',true), token:get('plex.fallback_token') };
+  config.plexReporting = { enabled:boolean('plex.reporting_enabled',true), watchState:boolean('plex.reporting_watch_state',true) };
   config.plexDelivery = { mode:choice('plex.delivery','proxy',['proxy','auto']), clientUrl:get('plex.client_url'),
     lanClientUrl:get('plex.lan_client_url'), fallback:boolean('plex.direct_fallback_enabled',false) };
   if (config.plexDelivery.clientUrl) {

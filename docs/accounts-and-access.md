@@ -1,6 +1,6 @@
 # Accounts, administration and Plex reporting
 
-Current: YAML configuration, admission/password policies, configured sponsorship, Activity handoff, single-room operation and [names/host assignments](account-names-and-host-directory.md) are implemented. The administration panel, broader identity hardening, product Plex reporting and guest passes remain unfinished.
+Current: YAML configuration, admission/password policies, configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. The administration panel, broader identity hardening, and guest passes remain unfinished.
 
 ## Authorization contract
 
@@ -57,15 +57,15 @@ Further Plex-only/Activity association work must bind fresh Plex proof to the ex
 
 ## Plex activity and viewer attribution
 
-Product reporting is **not implemented**. Keep three outcomes separate: local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes. The [reporting investigation](plex-reporting-investigation.md) owns empirical request shapes and remaining compatibility questions.
+Product reporting architecture is implemented with decoupled session identity on branch `feat/m1-p4-plex-reporting`. Keep three outcomes separate: local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes. The [reporting investigation](plex-reporting-investigation.md) owns empirical request shapes and baseline compatibility notes.
 
-Future reporter requirements:
+Reporter guarantees:
 
+- Decouple viewer timeline reporting sessions (`viewerSessionId`) from shared transcode jobs (`transcodeId`). PMS Universal Transcoder couples a transcode job 1:1 to a `StreamingResourceSession`; sending `state=stopped` with that transcode's ID kills the transcoder and deletes temporary segments for all viewers. Decoupling ensures one viewer leaving never interrupts active room playback.
 - Drive reports from accepted decoded viewer observations, not room time or encoder progress. Fence by verified subject, server/item, playback occurrence and current viewer/stream epochs.
-- Separate operator activity reporting from personal-state consent. Serialize opt-out after dispatched writes settle and cancel queued stale writes. Never substitute full sync when activity-only behavior is unverified.
+- Separate operator activity reporting from personal-state consent. Users with connected Plex accounts default to activity-only reporting (`duration` is omitted from `/:/timeline` queries), keeping playback visible in Now Playing without mutating personal view offsets or play history. Personal watch-state synchronization requires explicit opt-in.
 - Handle duplicate tabs, handoff, external-player conflicts, revocation and process loss without stale retries or retroactive attribution.
-- Track sponsored viewers locally. Their source credential creates no personal Plex identity; never write owner history for guests. Verify source-account side effects before offering sponsored reporting.
-- Resolve shared-producer stop behavior before pooling reports: a linked stopped timeline report terminated its HLS job in testing. External AV1 output declarations did not fix Plex's source-based classification.
+- Track sponsored viewers locally. Their source credential creates no personal Plex identity; never report or write owner history for guests without personal Plex accounts.
 
 ## Guest passes
 
@@ -77,7 +77,7 @@ Operator delegation must bound issuers and media scope independently from room p
 
 1. Complete the configuration/admin contract and policy matrix.
 2. Harden sensitive account changes, operator recovery and live revocation.
-3. Resolve reporting lifecycle/compatibility, then implement personal reporting.
+3. Complete live verification for decoupled Plex reporting.
 4. Add granular sponsorship and guest passes only after their authority/attribution decisions.
 
 Use the [verification standard](testing.md#verification-standard-for-new-work); these plans do not authorize live history changes or deployment.

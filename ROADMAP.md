@@ -38,7 +38,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P1 | Sustained playback | Recovery, diagnostics and scoped real two-hour playback evidence | Real Firefox/Activity and multi-viewer lifecycle coverage; unexplained unload/resource behavior and long-run accounting |
 | M1-P2 | Automatic delivery | Direct file/HLS, proxy recovery, shared outputs, local codec selection and bounded capacity fallback | Complete source/version inventory, output validation, remux/audio-only selection, automatic quality and real cross-account/device coverage |
 | M1-P3 | Content fidelity | Personal tracks and initial decoded audio/caption evidence | Real track switching/restoration, downmix, A/V/caption alignment, source cadence and device coverage; subtitle renderer work is P9 |
-| M1-P4 | Plex viewing experience | Native viewer observations/history; activity-only and isolated HLS reporting research | Product reporting, shared-producer safety, personal-state consent/reconciliation and sponsored attribution; later parity increments below |
+| M1-P4 | Plex viewing experience | Native viewer observations/history; activity-only and isolated HLS reporting research | Decoupled session reporting, shared-producer safety, activity-only default with personal watch-state opt-in and sponsored isolation implemented on branch `feat/m1-p4-plex-reporting`; live validation and later parity increments below |
 | M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness and independent recovery | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
 | M1-P6 | Frame pacing | Default correction policy and opt-in Occasional jumps | Joint skew/smoothness acceptance; accept or reject disabled experiments and remove rejected production wiring |
 | M1-P7 | UI/UX | Layout split, Room/Queue/Media shared controls, sliding player menus, grouped two-column settings dialog, personal preferences and sync-module extraction | Current user-journey/accessibility review, physical mobile/Activity acceptance and bounded further modularization |
@@ -51,7 +51,9 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 ### M1-P4 — Plex viewing experience
 
-**Next:** Verify shared-output stop behavior and AV1 natural ending, then implement reporting with separate activity and personal-state controls. Keep viewer identity distinct from source credentials; never write another account's personal history on behalf of sponsored viewers. Reporting remains unimplemented despite successful research probes.
+**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, and sponsored viewer isolation are implemented and covered by unit/lifecycle tests on branch `feat/m1-p4-plex-reporting`.
+
+**Next:** Complete live validation against physical PMS/Tautulli instances; verify multi-viewer stop/seek transitions and natural playback completion.
 
 **Later increments:** Content versions and split-file timelines; resume/start-over, chapters, intro/credits markers, previews/extras; subtitle search and supported presentation/audio controls. Episode continuation uses P13's queue transition, not a second advance path.
 

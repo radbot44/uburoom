@@ -224,6 +224,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         try {
           const observed = watch.tracking.observe(room,viewer,data.viewerId,data);
           await watch.observeEnd(room,viewer,data,observed);
+          await watch.reporting?.observe(room,viewer,data.viewerId,data,observed);
           return result(200,observed);
         }
         catch(error) { return result(error instanceof ObservationError?409:503,{error:'Playback observation unavailable',rejection:error instanceof ObservationError?error.rejection:'storage-failure'}); }
@@ -242,6 +243,14 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if(url.searchParams.has('muted')) {
         if(!['true','false'].includes(url.searchParams.get('muted')))throw new Error('Invalid mute preference');
         preferences.muted=url.searchParams.get('muted')==='true';
+      }
+      if(url.searchParams.has('plexReporting')) {
+        if(!['true','false'].includes(url.searchParams.get('plexReporting')))throw new Error('Invalid reporting preference');
+        preferences.plexReporting=url.searchParams.get('plexReporting')==='true';
+      }
+      if(url.searchParams.has('plexWatchState')) {
+        if(!['true','false'].includes(url.searchParams.get('plexWatchState')))throw new Error('Invalid watch-state preference');
+        preferences.plexWatchState=url.searchParams.get('plexWatchState')==='true';
       }
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'),preferences);
       // Capability is set before the first source preparation and never grants access.

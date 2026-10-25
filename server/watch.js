@@ -11,6 +11,7 @@ const Engine = require('../shared/engine');
 const { eligible, viewEligible, isHost, sameVoice, canWatch } = require('./core');
 const { PlaybackError } = require('./av1');
 const { PlaybackTracking } = require('./playback-tracking');
+const { PlexReporting } = require('./plex-reporting');
 const Tracks = require('./media-tracks');
 const SubtitleResources = require('./subtitle-resources');
 const { WatchRooms } = require('./watch-rooms');
@@ -79,8 +80,9 @@ function syncQualityParticipants(room,participants,now=Date.now()) {
 }
 
 class Watch {
-  constructor(hub, plex, demoMedia, registry) {
+  constructor(hub, plex, demoMedia, registry, plexAuth) {
     this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map();
+    this.reporting = new PlexReporting({ config: hub?.config, hub, plexAuth, registry });
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
     this.autoplayDelayMs = 10000;
@@ -143,7 +145,7 @@ class Watch {
     this.cancelAutoplay(room); clearPlaybackEnd(room);
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
-      this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); viewer.media = undefined; viewer.ready = false;
+      this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
       if (reason === 'media-changed') {
         viewer.compatible = false; viewer.fallback = undefined;
         viewer.subtitleOffset=0;
@@ -262,11 +264,12 @@ class Watch {
           trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
+          plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
       if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
-      this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
+      this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, 'disconnected'); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
     if (hostTimedOut) this.invalidateControls(room);
     if (pruned) this.settle(room, now);
@@ -357,7 +360,8 @@ class Watch {
     }
     if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
     const hostLeft = actor.userId === room.s.hostId;
-    this.tracking.end(room.viewers.get(viewerId), reason); void this.plex.stop(room.viewers.get(viewerId).media);
+    const viewer = room.viewers.get(viewerId);
+    this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
     if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);
     this.settle(room);
@@ -421,10 +425,12 @@ class Watch {
     const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
       preferredQuality:saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
       volume:saved?.volume ?? preferences.volume ?? 30, muted:saved?.muted ?? preferences.muted ?? false,
+      plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
+      plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
       syncQuality:saved?.syncQuality,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
-    Object.assign(viewer, { at: now, userId: actor.userId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
+    Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
     if (room.saved && !oldViewer) { this.roomState.store.touch(room.s.roomId); void this.roomState.save(room).catch(() => {}); }
     if (!oldViewer && room.viewers.size === 2 && room.initialGate) {
@@ -838,7 +844,7 @@ class Watch {
       return { status:'applied', message:'Readiness choice applied.' };
     }
     if (room.readinessTimedOut && ['media.play','media.toggle','media.pause'].includes(action)) return { status:'unavailable', message:'The host must choose whether to start, wait or cancel.' };
-    if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute'].includes(action)) {
+    if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute','media.reporting.set'].includes(action)) {
       const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
       if (!viewer || viewer.userId !== actor.userId) return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
       if (action === 'media.tracks.set') return this.changeTracks(room,viewer,args,actor,permitted);
@@ -861,7 +867,13 @@ class Watch {
           throw error;
         } finally {viewer.updating=false;}
       } else if (action === 'media.volume.set') { viewer.volume = args.percent; viewer.muted = false; }
-      else viewer.muted = action === 'media.mute';
+      else if (action === 'media.mute' || action === 'media.unmute') viewer.muted = action === 'media.mute';
+      else if (action === 'media.reporting.set') {
+        if (typeof args.activity === 'boolean') viewer.plexReporting = args.activity;
+        if (typeof args.watchState === 'boolean') viewer.plexWatchState = args.watchState;
+        this.reporting?.updateConsent(viewer, { activity: viewer.plexReporting, watchState: viewer.plexWatchState });
+        return { status: 'applied', message: 'Your reporting preferences updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
+      }
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
     }
     if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion || room.readinessVersion !== actor.watchReadinessVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
@@ -1016,7 +1028,7 @@ class Watch {
   async close() {
     this.shuttingDown = true;
     await Promise.all([...this.rooms.keys()].map(id => this.remove(id)));
-    this.tracking.close(); return Promise.all([this.roomState?.close(), this.plex.close?.()]);
+    this.tracking.close(); return Promise.all([this.roomState?.close(), this.plex.close?.(), this.reporting?.close()]);
   }
 }
 module.exports = { Watch, syncQualityParticipants };

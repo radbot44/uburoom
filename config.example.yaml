@@ -33,6 +33,11 @@ plex:
   # with library access but no server ownership, verified against plex.tv.
   direct_fallback_enabled: false
 
+  # REPORTING: report active playback and watch progress for verified Plex accounts.
+  # Viewers without personal Plex access (sponsored/guests) are never reported.
+  reporting_enabled: true # Enable timeline activity reporting to Plex.
+  reporting_watch_state: true # Allow personal watch-state (resume/scrobble) synchronization.
+
 discord:
   bot_token: ''
   client_id: ''

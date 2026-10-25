@@ -212,7 +212,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
     };
   }
-  const watch = new Watch(hub, plex, fs.existsSync(demoFile) ? { kind: 'demo', title: 'uburoom synchronization test', duration: 60, format: 'file', quality: 'direct', file: demoFile } : undefined, registry);
+  const watch = new Watch(hub, plex, fs.existsSync(demoFile) ? { kind: 'demo', title: 'uburoom synchronization test', duration: 60, format: 'file', quality: 'direct', file: demoFile } : undefined, registry, plexAuth);
   if (registry) {
     hub.directory = new (require('./user-directory').UserDirectory)({registry,config,discord:()=>hub.access.directory(),discordOnline:subject=>hub.access.discordOnline(subject),plex:()=>require('./plex-directory').plexDirectory(plexAuth)});
     hub.renameAccount = async (id,name) => {

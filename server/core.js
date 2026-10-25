@@ -127,7 +127,7 @@ class Hub {
     // Only the authenticated watch endpoint can attach a viewer identity.
     // Personal audio/quality never changes the room for other viewers.
     const personal = this.rooms.get(input.roomId)?.kind === 'watch' && actor.surface === 'web' && !!actor.watchViewerId &&
-      ['media.quality.set', 'media.tracks.set', 'media.stream.refresh', 'media.volume.set', 'media.mute', 'media.unmute'].includes(command.action);
+      ['media.quality.set', 'media.tracks.set', 'media.stream.refresh', 'media.volume.set', 'media.mute', 'media.unmute', 'media.reporting.set'].includes(command.action);
     const manage = Engine.MANAGEMENT.includes(command.action) && !personal;
     if (manage && (actor.surface !== 'web' && !this.isAdmin(actor) || !input.roomId)) return { status: 'forbidden', message: 'This action requires an authorized room manager.' };
     const found = resolve(this.rooms.values(), actor, this.config, input.target, Date.now(), this.access, input.roomId, manage, personal, this.isAdmin(actor));

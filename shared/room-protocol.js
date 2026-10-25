@@ -132,6 +132,17 @@
       case 'room.visibility':
         if (!['public', 'private'].includes(a.visibility)) throw new Error('Choose Public or Private');
         args.visibility = a.visibility; break;
+      case 'media.reporting.set':
+        if (a.activity !== undefined) {
+          if (typeof a.activity !== 'boolean') throw new Error('Choose activity reporting on or off');
+          args.activity = a.activity;
+        }
+        if (a.watchState !== undefined) {
+          if (typeof a.watchState !== 'boolean') throw new Error('Choose watch state sync on or off');
+          args.watchState = a.watchState;
+        }
+        if (args.activity === undefined && args.watchState === undefined) throw new Error('Choose a reporting setting');
+        break;
       case 'media.volume.set': args.percent = numeric(a.percent, 0, 100); break;
       case 'media.load':
         if (typeof a.mediaId !== 'string' || !/^(?:demo|[0-9]{1,20})$/.test(a.mediaId)) throw new Error('Choose a library item');
