@@ -68,8 +68,15 @@
       case 'reset.all': return { ...DEFAULT };
       default: throw new Error('Not a picture command');
     }
-    for (const k of Object.keys(DEFAULT)) numeric(s[k], k === 'x' || k === 'y' ? -PAN_MAX : .1, k === 'x' || k === 'y' ? PAN_MAX : 16);
-    return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, round(v)]));
+    // Bolt Optimization: Construct object directly to avoid intermediate array allocations
+    // from Object.keys, Object.entries, Array.prototype.map, and Object.fromEntries.
+    return {
+      zoom: round(numeric(s.zoom, .1, 16)),
+      stretchX: round(numeric(s.stretchX, .1, 16)),
+      stretchY: round(numeric(s.stretchY, .1, 16)),
+      x: round(numeric(s.x, -PAN_MAX, PAN_MAX)),
+      y: round(numeric(s.y, -PAN_MAX, PAN_MAX))
+    };
   }
   const api = { DEFAULT, PAN_MAX, isCommand, validate, picture, factor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
