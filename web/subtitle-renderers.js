@@ -35,7 +35,8 @@ window.uburoomSubtitleRenderers={
       }else{
         const {PgsRenderer,VobSubRenderer}=await wait(import('/vendor/subtitles/libbitsub-renderer.js'));signal.throwIfAborted();
         await wait(new Promise((resolve,reject)=>{
-          const options={video,canvas,container:layer,subContent:assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength),
+          const options={video,canvas,container:layer,
+            ...(assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength)}),
             ...(assets.index?{idxContent:new TextDecoder().decode(assets.index)}:{}),fileName:assets.fileName,timeOffset:-offset,
             cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,onError:reject};
           renderer=format==='pgs'?new PgsRenderer(options):new VobSubRenderer(options);

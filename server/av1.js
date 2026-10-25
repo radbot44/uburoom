@@ -93,6 +93,39 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
   }
 }
 
+function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput = 64 * 1024 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new PlaybackError('Subtitle loading was cancelled.'));
+    const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let size = 0, settled = false, failure, stderr = '', idleTimer;
+    const finish = error => {
+      if (settled) return; settled = true; clearTimeout(idleTimer); signal?.removeEventListener('abort', cancel);
+      error ? reject(error) : resolve();
+    };
+    const stop = error => { failure ||= error; child.kill('SIGKILL'); };
+    const cancel = () => stop(new PlaybackError('Subtitle loading was cancelled.'));
+    const resetIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stop(new PlaybackError('Subtitle extraction timed out. Try Plex burn-in.')), idleTimeout);
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    resetIdle();
+    child.stdout.on('data', chunk => {
+      resetIdle(); size += chunk.length;
+      if (size > maxOutput) stop(new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.'));
+      else if (!failure) onChunk?.(chunk);
+    });
+    child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
+    child.on('error', () => finish(new PlaybackError('Subtitle extraction failed: FFmpeg unavailable on the server.')));
+    child.on('close', code => {
+      if (failure) return finish(failure);
+      if (code !== 0) return finish(new PlaybackError('Subtitle extraction failed during media demuxing. Try Plex burn-in.'));
+      if (size === 0) return finish(new PlaybackError('Subtitle extraction produced no usable data. Try Plex burn-in.'));
+      finish(null);
+    });
+  });
+}
+
 function encoderArgs(encoder = 'qsv', codec = 'av1') {
   if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
   if (encoder === 'software') {
@@ -151,6 +184,10 @@ class AV1 {
     this.maxActive = config.transcoding?.maxJobs || 2;
     this.run = (...args) => {
       const job = Promise.resolve().then(() => execute(...args)); this.jobs.add(job);
+      job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
+    };
+    this.stream = (...args) => {
+      const job = Promise.resolve().then(() => stream(...args)); this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
     };
     this.ffprobe = config.ffprobePath || (this.ffmpeg && path.join(path.dirname(this.ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'));
@@ -344,4 +381,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, run };
+module.exports = { AV1, PlaybackError, CHUNK, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, run, stream };

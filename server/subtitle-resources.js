@@ -28,6 +28,69 @@ function source(media){
   if(!row)throw new PlaybackError('Subtitle selection no longer belongs to this file.');
   return {track,row};
 }
+function startPgsJob(plex,media){
+  const {track}=source(media),version=media.captionVersion;
+  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
+  const abort=AbortSignal.any([media.subtitleAbort.signal,AbortSignal.timeout(300000)]);
+  const job={version,chunks:[],size:0,listeners:new Set(),complete:false,error:null};
+  active++;
+  job.promise=(async()=>{
+    try{
+      const av1=plex.av1;
+      if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
+      await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
+        const args=['-hide_banner','-loglevel','error','-nostdin','-y','-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
+        await av1.stream(av1.ffmpeg,args,abort,chunk=>{
+          job.chunks.push(chunk);job.size+=chunk.length;
+          for(const listener of job.listeners)try{listener(chunk,null);}catch{}
+        },{idleTimeout:30000,maxOutput:LIMIT});
+      });
+      job.complete=true;
+      const fullData=Buffer.concat(job.chunks,job.size);
+      const result={format:'pgs',assets:new Map([['data',fullData]]),version,size:job.size};
+      clear(media);
+      while(cache.size>=8||bytes+result.size>TOTAL)clear(cache.keys().next().value);
+      cache.set(media,result);bytes+=result.size;media.subtitleAssets=result.assets;
+      for(const listener of job.listeners)try{listener(null,null);}catch{}
+    }catch(error){
+      job.error=classifyExtractionError(error);
+      for(const listener of job.listeners)try{listener(null,job.error);}catch{}
+      throw job.error;
+    }finally{
+      active--;job.listeners.clear();
+      if(media.subtitleJob===job && !job.complete)media.subtitleJob=undefined;
+    }
+  })();
+  media.subtitleJob=job;
+  return job;
+}
+function pipe(plex,media,req,res,signal){
+  const version=media.captionVersion;
+  const previous=cache.get(media);
+  if(previous?.version===version&&previous.assets?.has('data')){
+    const data=previous.assets.get('data');
+    res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length,'Cache-Control':'no-store'});
+    return res.end(req?.method==='HEAD'?undefined:data);
+  }
+  if(req?.method==='HEAD'){
+    res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});
+    return res.end();
+  }
+  let job=media.subtitleJob;
+  if(!job||job.version!==version)job=startPgsJob(plex,media);
+  if(job.error)throw job.error;
+  res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});
+  for(const chunk of job.chunks)res.write(chunk);
+  if(job.complete)return res.end();
+  const listener=(chunk,error)=>{
+    if(error){res.destroy();return;}
+    if(chunk===null){res.end();return;}
+    res.write(chunk);
+  };
+  job.listeners.add(listener);
+  const cleanup=()=>{job.listeners.delete(listener);};
+  res.on('close',cleanup);signal?.addEventListener('abort',cleanup,{once:true});
+}
 async function extract(plex,media,track,signal){
   const av1=plex.av1;
   if(!av1?.ffmpeg || !Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
@@ -88,4 +151,4 @@ async function load(plex,media,signal){
   })().finally(()=>{active--;if(media.subtitleJob===job)media.subtitleJob=undefined;});
   media.subtitleJob=job;return job.promise;
 }
-module.exports={load,clear,read,classifyExtractionError,LIMIT};
+module.exports={load,clear,read,pipe,classifyExtractionError,LIMIT};
