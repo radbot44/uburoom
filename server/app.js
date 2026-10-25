@@ -241,6 +241,24 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   const operatorRoutes = operatorHttp({ config, registry, editor: config.configFile ? createConfigEditor(config.configFile) : undefined,
     user, protectedPost, validIdentity, logins, cookies, body, json });
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
+    const start = Date.now();
+    const logger = config.logger;
+    if (logger && config.logging?.requests) {
+      res.on('finish', () => {
+        const route = req.url ? req.url.split('?')[0] : '';
+        const isStatic = route.startsWith('/vendor/') || route.endsWith('.js') || route.endsWith('.css') || route.endsWith('.svg') || route.endsWith('.wasm') || route.endsWith('.woff2') || route === '/favicon.ico';
+        if (isStatic && res.statusCode < 400 && !logger.isLevelEnabled('debug')) return;
+        const duration = Date.now() - start;
+        const msg = `${req.method} ${route} ${res.statusCode} ${duration}ms`;
+        if (res.statusCode >= 500) {
+          logger.error('HTTP', msg);
+        } else if (res.statusCode >= 400) {
+          logger.warn('HTTP', msg);
+        } else {
+          logger.info('HTTP', msg);
+        }
+      });
+    }
     let operatorSettingsFlushed = false;
     if(registry&&req.url?.split('?')[0]!=='/health'){
       const end=res.end.bind(res);
@@ -483,7 +501,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();
     let expired = false;
     for (const [id, s] of logins) if (s.expires !== null && s.expires <= Date.now()) { logins.delete(id); expired = true; }
-    if (expired) Promise.resolve(accounts.save()).catch(()=>console.error('[uburoom] Login storage unavailable'));
+    if (expired) Promise.resolve(accounts.save()).catch(()=> (config.logger ? config.logger.error('Storage', 'Login storage unavailable') : console.error('[uburoom] Login storage unavailable')));
     for (const id of cookieRenewedAt.keys()) if (!logins.has(id)) cookieRenewedAt.delete(id);
     for (const [id, attempt] of oauthStates) if (attempt.expires <= Date.now()) oauthStates.delete(id);
     for (const [id, bucket] of limits) if (Date.now() - bucket.at > 60000) limits.delete(id);

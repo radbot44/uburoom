@@ -362,6 +362,38 @@ function checkStorageAndKey(config) {
     }
   }
 
+  // 4. Log file destination check (if configured)
+  if (config.logging?.file) {
+    const logFile = config.logging.file;
+    const logDir = path.dirname(logFile);
+    try {
+      if (!fs.existsSync(logDir)) {
+        checks.push({
+          category: 'Storage & Keys',
+          name: 'Log directory',
+          status: 'pass',
+          message: `Log directory will be created at: ${logDir}`
+        });
+      } else {
+        fs.accessSync(logDir, fs.constants.R_OK | fs.constants.W_OK);
+        checks.push({
+          category: 'Storage & Keys',
+          name: 'Log directory',
+          status: 'pass',
+          message: `Log directory is writable (${logDir})`
+        });
+      }
+    } catch (err) {
+      checks.push({
+        category: 'Storage & Keys',
+        name: 'Log directory',
+        status: 'fail',
+        message: `Log directory at ${logDir} is not writable (${err.code}).`,
+        remediation: 'Verify write permissions for the user account running uburoom or choose a different logging.file path.'
+      });
+    }
+  }
+
   return checks;
 }
 

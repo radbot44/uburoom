@@ -92,6 +92,12 @@ tools:
   ffmpeg: ''
   ffprobe: '' # Searches PATH first, then defaults beside the selected ffmpeg.
 
+# Logging behavior
+logging:
+  level: 'info' # error | warn | info | debug
+  requests: true # log incoming HTTP requests (skips static assets unless error/debug)
+  file: '' # Optional log file path, e.g. 'data/uburoom.log' (relative to this YAML file)
+
 # Rooms and permissions
 rooms:
   max_saved: 50

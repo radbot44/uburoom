@@ -1,0 +1,19 @@
+services:
+  uburoom:
+    build: .
+    container_name: uburoom
+    restart: unless-stopped
+    ports:
+      - "5756:5756"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ./certs:/app/certs:ro
+      - ./credentials.key:/app/credentials.key
+    # Optional: Hardware transcoding acceleration for Intel / AMD GPUs (VAAPI/QSV)
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # Optional: Required on Linux hosts when Plex runs directly on the host machine
+    # and config.yaml connects to http://host.docker.internal:32400
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"

@@ -1,0 +1,10 @@
+node_modules
+.git
+personal/
+artifacts/
+data/
+certs/
+*.key
+config.yaml
+*.log
+tests/

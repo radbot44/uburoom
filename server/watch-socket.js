@@ -113,6 +113,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     wss.handleUpgrade(req, socket, head, ws => {
       const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
       clients.add(client);
+      config.logger?.debug('Socket', `Client connected from ${client.remoteAddress || 'local'} (total: ${clients.size})`);
       ws.watchKick = roomId => {
         if (client.subscription?.split('?')[0] === '/api/watch/rooms/' + roomId) client.subscription = undefined;
         send(client,{type:'room-kicked',roomId});
@@ -150,7 +151,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             try { watch.roomState?.people.enter(auth.actor.userId); } catch { send(client,{type:'unavailable',status:429,value:{error:'Server full; try again when someone leaves'}}); return ws.close(4029,'Server full'); }
             client.headers=headers;
             client.userId=auth.actor.userId;client.authenticating=false;
-            client.authenticated = true; hub.directory?.connected(ws,client.userId); clearTimeout(timer); send(client, { type: 'auth-ok' }); return;
+            client.authenticated = true; hub.directory?.connected(ws,client.userId); clearTimeout(timer); send(client, { type: 'auth-ok' });
+            config.logger?.info('Socket', `User authenticated: ${auth.actor.name || auth.actor.userId} (total clients: ${clients.size})`);
+            return;
           }
           client.lastSeen = Date.now();
           hub.directory?.connected(ws,client.userId);
@@ -177,6 +180,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         })().catch(() => ws.close(4002, 'Request failed'));
       });
       ws.on('close', () => {
+        config.logger?.debug('Socket', `Client disconnected${client.userId ? ' (' + client.userId + ')' : ''} (remaining: ${clients.size - 1})`);
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         for (const room of watch.rooms.values()) {

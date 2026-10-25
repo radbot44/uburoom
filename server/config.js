@@ -23,7 +23,8 @@ const KEYS = [
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.plex', 'transcoding.uburoom', 'transcoding.encoder',
   'transcoding.formats', 'transcoding.max_jobs', 'transcoding.cpu_fallback',
-  'transcoding.qualities', 'transcoding.allow_original'];
+  'transcoding.qualities', 'transcoding.allow_original',
+  'logging.level', 'logging.requests', 'logging.file'];
 
 function configPath(args = process.argv.slice(2)) {
   let selected;
@@ -186,11 +187,36 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     if (config[key] && !/^\d{17,20}$/.test(config[key])) throw new Error('discord IDs must be quoted numeric Developer Mode IDs');
   }
   if (config.channels.some(id => !/^\d{17,20}$/.test(id))) throw new Error('discord.command_channel_ids requires exact quoted IDs');
+  const logFile = get('logging.file');
+  config.logging = {
+    level: choice('logging.level', 'info', ['error', 'warn', 'info', 'debug']),
+    requests: boolean('logging.requests', true),
+    file: logFile ? resolveFile('logging.file') : ''
+  };
   Object.assign(config, Policy.configuration(value.rooms || {}));
   return config;
 }
 
-function loadConfig(file = configPath()) {
+function applyLoggingFlags(logging, args = process.argv.slice(2)) {
+  if (!logging) return;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--verbose') {
+      if (logging.level === 'error' || logging.level === 'warn') logging.level = 'info';
+      logging.requests = true;
+    } else if (arg === '--debug') {
+      logging.level = 'debug';
+      logging.requests = true;
+    } else if (arg === '--log-level' || arg.startsWith('--log-level=')) {
+      const lvl = arg === '--log-level' ? args[++i] : arg.slice(12);
+      if (['error', 'warn', 'info', 'debug'].includes(lvl?.toLowerCase())) {
+        logging.level = lvl.toLowerCase();
+      }
+    }
+  }
+}
+
+function loadConfig(file = configPath(), args = process.argv.slice(2)) {
   let source;
   try { source = fs.readFileSync(file, 'utf8'); }
   catch (error) {
@@ -200,7 +226,8 @@ function loadConfig(file = configPath()) {
   const selectedPath = path.resolve(file);
   const config = normalizeConfig(parseConfig(source), { base: path.dirname(selectedPath) });
   config.configFile = selectedPath;
+  applyLoggingFlags(config.logging, args);
   return config;
 }
 
-module.exports = { ROOT, configPath, parseConfig, normalizeConfig, loadConfig };
+module.exports = { ROOT, configPath, parseConfig, normalizeConfig, loadConfig, applyLoggingFlags };

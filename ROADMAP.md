@@ -92,7 +92,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Personal client-side audio compression compatible with volume/mute |
 | M2-P7 | Installation validator | CLI checks for configuration, keys, TLS, providers and media tools, with actionable failures |
-| M2-P8 | Docker / Compose | Persistent state/external key mounts and optional hardware acceleration; reuse configuration validation |
+| M2-P8 | Docker / Compose | Dockerfile, Compose, and documentation added; persistent state/external key mounts and optional hardware acceleration |
 | M2-P9 | Discord presence and room invites | Discoverable room embeds with lifecycle updates; scope separately from removed bot commands |
 
 Further directions: native-player integration, managed/project-hosted rooms, and Live TV/DVR. Each needs a separate feasibility and authorization scope.

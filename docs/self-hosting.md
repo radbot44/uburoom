@@ -47,7 +47,7 @@ The server defaults to `127.0.0.1:5756`. Configure `server.host`/`server.port` f
 
 Reverse proxies must forward WebSocket upgrades on `/watch-socket`. The upstream connection to uburoom is also HTTPS. Supply a certificate/key for the Node listener even if the reverse proxy terminates public TLS.
 
-For Linux/macOS, run Node directly. In containers, bind `server.host: '0.0.0.0'`, use absolute paths, and persist the data directory and encryption key outside replaceable container storage. Mount private YAML with restricted access. Container loopback is not host loopback; there is no maintained, verified container image yet.
+For Linux/macOS, run Node directly. For containerized deployments, see [Docker guide](docker.md) for running with Docker and Docker Compose: bind `server.host: '0.0.0.0'`, use absolute paths, and persist the data directory and encryption key outside replaceable container storage. Mount private YAML with restricted access. Container loopback is not host loopback.
 
 Do not start a second instance using your live credentials or database. Check sign-in and actual playback from an external device, not just `/health`.
 

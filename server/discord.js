@@ -31,7 +31,12 @@ async function connectBot(client, token, timeoutMs = 30000) {
 }
 
 async function startBot(config, hub, { createClient = options => new Client(options) } = {}) {
-  if (!config.botToken) { console.log('[Discord] Not configured. Browser playback and HTTPS setup are available.'); return; }
+  const log = config.logger ? config.logger.child('Discord') : {
+    info: (...args) => console.log('[Discord] ' + args.join(' ')),
+    warn: (...args) => console.warn('[Discord] ' + args.join(' ')),
+    error: (...args) => console.error('[Discord] ' + args.join(' '))
+  };
+  if (!config.botToken) { log.info('Not configured. Browser playback and HTTPS setup are available.'); return; }
   if (!config.ownerId || !config.guildId) throw new Error('Configure Discord owner and guild');
   const client = createClient({ rest: { timeout:10000,retries:0,rejectOnRateLimit:()=>true }, intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   if (client.rest?.setToken && client.options?.intents?.add) {
@@ -41,19 +46,19 @@ async function startBot(config, hub, { createClient = options => new Client(opti
       const flags = Number(application.flags || 0);
       if (config.directory?.discord !== false) {
         if (flags & ((1<<14)|(1<<15))) client.options.intents.add(GatewayIntentBits.GuildMembers);
-        else console.warn('[Discord] Host search cannot list new members: enable Server Members Intent in the Developer Portal.');
+        else log.warn('Host search cannot list new members: enable Server Members Intent in the Developer Portal.');
       }
       if (flags & ((1<<12)|(1<<13))) client.options.intents.add(GatewayIntentBits.GuildPresences);
-      else console.warn('[Discord] Host search cannot show Discord availability: enable Presence Intent in the Developer Portal.');
-    } catch { console.warn('[Discord] Could not check optional directory intents. Known uburoom account search remains available.'); }
+      else log.warn('Host search cannot show Discord availability: enable Presence Intent in the Developer Portal.');
+    } catch { log.warn('Could not check optional directory intents. Known uburoom account search remains available.'); }
   }
   hub.access = discordAccess(client, config.guildId);
-  client.on(Events.ClientReady, () => console.log('[Discord] Connected to the configured guild.'));
-  client.on(Events.Error, error => console.error('[Discord] ' + loginFailure(error).message));
-  client.on(Events.ShardError, error => console.error('[Discord] ' + loginFailure(error).message));
-  client.on(Events.ShardDisconnect, event => console.warn('[Discord] Gateway disconnected' + (Number.isInteger(event.code) ? ` (code ${event.code})` : '') + '.'));
-  client.on(Events.ShardReconnecting, () => console.log('[Discord] Reconnecting to the Gateway...'));
-  console.log('[Discord] Connecting... waiting up to 30 seconds for the bot to become ready.');
+  client.on(Events.ClientReady, () => log.info('Connected to the configured guild.'));
+  client.on(Events.Error, error => log.error(loginFailure(error).message));
+  client.on(Events.ShardError, error => log.error(loginFailure(error).message));
+  client.on(Events.ShardDisconnect, event => log.warn('Gateway disconnected' + (Number.isInteger(event.code) ? ` (code ${event.code})` : '') + '.'));
+  client.on(Events.ShardReconnecting, () => log.info('Reconnecting to the Gateway...'));
+  log.info('Connecting... waiting up to 30 seconds for the bot to become ready.');
   await connectBot(client, config.botToken);
   try { hub.setOwnerName?.((await client.users.fetch(config.ownerId)).username); }
   catch { /* Retain the last authenticated account name if Discord lookup fails. */ }

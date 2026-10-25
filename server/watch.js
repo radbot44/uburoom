@@ -100,7 +100,9 @@ class Watch {
     s.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
     s.viewers = room.viewers;
     if (saved) this.roomState.apply(room, saved);
-    this.rooms.set(id, room); this.hub.rooms.set(id, s); return id;
+    this.rooms.set(id, room); this.hub.rooms.set(id, s);
+    this.hub?.config?.logger?.info('Room', `Room created "${s.alias || id}" (${id}) by ${actor.name || actor.userId}`);
+    return id;
   }
   position(room, now = Date.now()) {
     if (room.pauseAt) now = Math.min(now, room.pauseAt);
@@ -363,6 +365,7 @@ class Watch {
     const viewer = room.viewers.get(viewerId);
     this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason);
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
+    this.hub?.config?.logger?.info('Room', `Viewer "${viewer?.name || viewerId}" left "${room.s.alias || room.s.roomId}" (remaining: ${room.viewers.size})`);
     if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);
     this.settle(room);
     if (!room.viewers.size) { await this.remove(room.s.roomId); return; }
@@ -432,6 +435,7 @@ class Watch {
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
+    if (!oldViewer) this.hub?.config?.logger?.info('Room', `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`);
     if (room.saved && !oldViewer) { this.roomState.store.touch(room.s.roomId); void this.roomState.save(room).catch(() => {}); }
     if (!oldViewer && room.viewers.size === 2 && room.initialGate) {
       room.readinessStartAt = Math.max(room.readinessStartAt || 0, now + INITIAL_START_LEAD_MS);
@@ -1022,6 +1026,7 @@ class Watch {
     room.s.state.paused = true; room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
     this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
+    this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
     return saved;
   }
   sweep() { for (const room of this.rooms.values()) this.refresh(room); }
