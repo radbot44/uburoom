@@ -7,6 +7,7 @@ const {Watch}=require('../server/watch');
 const {Hub}=require('../server/core');
 const Tracks=require('../server/media-tracks');
 const Subtitles=require('../server/subtitles');
+const SubtitleResources=require('../server/subtitle-resources');
 const Engine=require('../shared/engine');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -91,6 +92,11 @@ test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal med
   assert.equal(cues[0].settings,'align:start position:20%'); assert.equal(cues[0].text,'<script>literal</script>');
   assert.throws(()=>Subtitles.parse('<html>Not subtitles</html>'),/usable/);
   assert.throws(()=>Subtitles.parse('1\n00:99:01,000 --> 00:00:04,000\nbad'),/invalid/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM encoder timed out.')).message,/timed out/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM output exceeded the supported limit.')).message,/exceeded/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('encoder failed with code 1')).message,/failed/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('Subtitle extraction produced no usable data.')).message,/no usable data/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('unrecognized failure')).message,/could not be extracted/);
 });
 test('Plex selects and confirms the exact subtitle before starting its private burn session',async()=>{
   const {plex,state}=provider();

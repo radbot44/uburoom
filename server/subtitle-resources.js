@@ -5,6 +5,14 @@ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:pa
 const {PlaybackError}=require('./av1');
 const LIMIT=64*1024*1024,FONTS=16*1024*1024,TOTAL=96*1024*1024;
 const cache=new Map();let bytes=0,active=0;
+function classifyExtractionError(error){
+  if(/timed out/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction timed out. Try Plex burn-in.');
+  if(/exceeded the.*limit|exceed/i.test(error?.message || ''))return new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.');
+  if(/no usable data/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction produced no usable data. Try Plex burn-in.');
+  if(/failed/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction failed during media demuxing. Try Plex burn-in.');
+  if(error instanceof PlaybackError)return error;
+  return new PlaybackError('Original subtitles could not be extracted. Try Plex burn-in.');
+}
 function clear(media){const old=cache.get(media);if(old){bytes-=old.size;cache.delete(media);}media.subtitleAssets=undefined;}
 async function read(response,signal,limit=LIMIT){
   if(!response.ok)throw new PlaybackError('The original subtitle resource is unavailable. Try Plex burn-in.');
@@ -50,7 +58,7 @@ async function extract(plex,media,track,signal){
       if(!data.length || oversize)throw new PlaybackError('Subtitle extraction produced no usable data.');
       return {format:track.delivery,fileName:track.delivery==='vobsub'?'track.mks':undefined,assets};
     }finally{clearInterval(timer);signal.removeEventListener('abort',cancel);}
-  });}catch(error){if(signal.aborted)throw error;throw new PlaybackError('Original subtitles or fonts could not be extracted within the supported limits. Try Plex burn-in.');}
+  });}catch(error){if(signal.aborted)throw error;throw classifyExtractionError(error);}
   finally{if(directory){const resolved=path.resolve(directory);if(path.dirname(resolved)!==path.resolve(os.tmpdir())||!path.basename(resolved).startsWith('uburoom-subtitles-'))throw new Error('Invalid subtitle temporary directory');await fs.rm(resolved,{recursive:true,force:true,maxRetries:5});}}
 }
 async function load(plex,media,signal){
@@ -80,4 +88,4 @@ async function load(plex,media,signal){
   })().finally(()=>{active--;if(media.subtitleJob===job)media.subtitleJob=undefined;});
   media.subtitleJob=job;return job.promise;
 }
-module.exports={load,clear,read,LIMIT};
+module.exports={load,clear,read,classifyExtractionError,LIMIT};
