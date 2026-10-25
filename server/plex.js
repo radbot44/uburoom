@@ -456,29 +456,37 @@ class Plex {
     // universal audioStreamID hint on some versions. Capture a private session
     // under the part lock, then restore the preference before releasing it.
     const read=async()=>Sources.select((await this.json('/library/metadata/'+media.id)).Metadata?.[0] || {},media.sourceSelection).part;
-    const selected=part=>part?.Stream?.filter(s=>Number(s.streamType)===2 && [true,1,'1'].includes(s.selected)) || [];
+    const selected=(part,confirming=false)=>{
+      const message=confirming?'Plex could not confirm its saved audio preference.':'Plex did not identify its current audio selection.';
+      if(!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !Array.isArray(part.Stream))throw new PlaybackError(message);
+      const audioRows=part.Stream.filter(s=>Number(s.streamType)===2);
+      const rows=audioRows.filter(s=>[true,1,'1'].includes(s.selected));
+      if(rows.length>1 || rows.length===1 && rows[0].id==null)throw new PlaybackError(message);
+      if(rows.length===1)return {id:String(rows[0].id),explicit:true};
+      const fallback=audioRows.find(s=>[true,1,'1'].includes(s.default) && s.id!=null) || audioRows.find(s=>s.id!=null);
+      if(!fallback)throw new PlaybackError(message);
+      return {id:String(fallback.id),explicit:false};
+    };
     const part=await read();
     if(!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===2 && String(s.id)===requested)) throw new PlaybackError('The requested audio no longer belongs to this source.');
     const previous=selected(part);
-    if(previous.length!==1)throw new PlaybackError('Plex did not identify its current audio selection.');
-    const original=String(previous[0].id);
+    const original=previous.id;
     if(original===requested)return;
     const set=id=>this.request('/library/parts/'+media.partId+'?'+new URLSearchParams({audioStreamID:id}),{method:'PUT'});
     const restore=async()=>{
-      const current=selected(await read());
-      if(current.length!==1)throw new PlaybackError('Plex could not confirm its saved audio preference.');
+      const current=selected(await read(),true);
       // Respect a selection changed by another Plex app in the meantime.
-      if(current.length===1 && String(current[0].id)===requested){
+      if(current.explicit && current.id===requested){
         await set(original);
-        const restored=selected(await read());
-        if(restored.length!==1 || String(restored[0].id)!==original)throw new PlaybackError('Plex could not restore its saved audio preference.');
+        const restored=selected(await read(),true);
+        if(!restored.explicit || restored.id!==original)throw new PlaybackError('Plex could not restore its saved audio preference.');
       }
     };
     if(choices.authorized && !await choices.authorized())throw new PlaybackError('Viewing access or track selection expired.');
     try {
       await set(requested);
       const confirmed=selected(await read());
-      if(confirmed.length!==1 || String(confirmed[0].id)!==requested)throw new PlaybackError('Plex did not select the requested audio.');
+      if(!confirmed.explicit || confirmed.id!==requested)throw new PlaybackError('Plex did not select the requested audio.');
     } catch(error) { await restore();throw error; }
     return restore;
   }
