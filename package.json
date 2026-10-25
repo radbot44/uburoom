@@ -10,6 +10,7 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "doctor": "node scripts/doctor.js",
+    "pretest": "node scripts/new-dev-cert.js --if-missing",
     "test": "node --test --test-reporter=dot tests/*.test.js",
     "test:full": "node --test tests/*.test.js",
     "test:playback": "node scripts/playback-baseline.js",

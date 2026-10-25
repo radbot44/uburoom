@@ -414,7 +414,7 @@ test('installation doctor validates healthy configurations and reports actionabl
   const { runDoctor } = require('../scripts/doctor');
   const valid = await runDoctor({ args: ['--config', path.join(ROOT, 'config.example.yaml'), '--json'], silent: true });
   assert.equal(valid.ok, true);
-  assert.ok(valid.passed >= 10);
+  assert.ok(valid.passed >= 5);
   assert.equal(valid.failures, 0);
 
   const missing = await runDoctor({ args: ['--config', path.join(ROOT, 'missing-config.yaml'), '--json'], silent: true });

@@ -422,7 +422,7 @@ function checkTlsCertificates(config) {
       status: isLocal ? 'warn' : 'fail',
       message: `Certificate or key file missing (Cert: ${certPath}, Key: ${keyPath})`,
       remediation: isLocal
-        ? 'Generate a local self-signed certificate with: powershell -File scripts/new-dev-cert.ps1'
+        ? 'Generate a local self-signed certificate with: node scripts/new-dev-cert.js'
         : 'Provide a valid TLS certificate and private key matching your domain.'
     });
     return checks;
