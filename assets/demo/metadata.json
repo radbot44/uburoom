@@ -11,7 +11,7 @@
         "pix_fmt": "yuv420p",
         "level": 22,
         "r_frame_rate": "12/1",
-        "bit_rate": "386887"
+        "bit_rate": "388051"
       },
       {
         "codec_name": "aac",
@@ -38,7 +38,7 @@
         "pix_fmt": "yuv420p",
         "level": 31,
         "r_frame_rate": "12/1",
-        "bit_rate": "404342"
+        "bit_rate": "404350"
       },
       {
         "codec_name": "aac",
@@ -65,7 +65,7 @@
         "pix_fmt": "yuv420p",
         "level": 31,
         "r_frame_rate": "12/1",
-        "bit_rate": "369967"
+        "bit_rate": "374170"
       },
       {
         "codec_name": "aac",
@@ -164,7 +164,7 @@
         "pix_fmt": "yuv420p",
         "level": 93,
         "r_frame_rate": "12/1",
-        "bit_rate": "322946"
+        "bit_rate": "322281"
       },
       {
         "codec_name": "aac",
