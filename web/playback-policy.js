@@ -104,7 +104,62 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames};
+  function choppinessDetector({ threshold = 0.10, windowMs = 10000, minFrames = 50 } = {}) {
+    let samples = [], cooldownUntil = 0, deliberatelyDismissed = false;
+    function reset() {
+      samples = [];
+      cooldownUntil = 0;
+      deliberatelyDismissed = false;
+    }
+    function interrupt() {
+      samples = [];
+    }
+    function triggerCooldown(cooldownMs = 10000, now = performance.now()) {
+      cooldownUntil = now + cooldownMs;
+      samples = [];
+    }
+    function dismiss(deliberate = false) {
+      if (deliberate) deliberatelyDismissed = true;
+      samples = [];
+    }
+    function update(now, quality, { paused = false, seeking = false, waiting = false, visible = true, active = true } = {}) {
+      if (deliberatelyDismissed) return { choppy: false, dismissed: true };
+      if (now < cooldownUntil) return { choppy: false, inCooldown: true };
+      const interrupted = paused || seeking || waiting || !visible || !active || !quality ||
+        !Number.isFinite(quality.totalVideoFrames) || !Number.isFinite(quality.droppedVideoFrames);
+      if (interrupted) {
+        samples = [];
+        return { choppy: false, interrupted: true };
+      }
+      const total = quality.totalVideoFrames, dropped = quality.droppedVideoFrames;
+      if (samples.length && (total < samples[samples.length - 1].total || dropped < samples[samples.length - 1].dropped)) {
+        samples = [];
+      }
+      samples.push({ time: now, total, dropped });
+      while (samples.length > 1 && samples[1].time <= now - windowMs) {
+        samples.shift();
+      }
+      const oldest = samples[0];
+      const durationMs = now - oldest.time;
+      if (durationMs < windowMs) {
+        return { choppy: false, durationMs, warming: true };
+      }
+      const deltaTotal = total - oldest.total;
+      const deltaDropped = dropped - oldest.dropped;
+      if (deltaTotal < minFrames) {
+        return { choppy: false, deltaTotal, deltaDropped, minFramesRequired: minFrames };
+      }
+      const ratio = deltaTotal > 0 ? deltaDropped / deltaTotal : 0;
+      const choppy = ratio >= threshold;
+      return { choppy, ratio, deltaTotal, deltaDropped, durationMs };
+    }
+    return {
+      update, reset, interrupt, triggerCooldown, dismiss,
+      get isDismissed() { return deliberatelyDismissed; },
+      inCooldown: now => now < cooldownUntil
+    };
+  }
+  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

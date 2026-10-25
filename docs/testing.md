@@ -15,6 +15,13 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Saved operator settings API — 2026-10-24
+
+A/B on local changes based on `d4c3f0f`; temporary Windows/NTFS configurations and fixture accounts only, not deployed. The working tree was clean and the discarded fresh-authentication increment was absent; it remains absent. Saved settings use the current operator session, existing origin/CSRF protection and the editor's unchanged allowlist, with authorization checks after queueing and just before replacement.
+
+- `node --test --test-reporter=tap tests/accounts.test.js tests/config.test.js tests/installation-policy.test.js`: **58 passed, 0 failed, 0 skipped**. Covers startup path pinning, editable-only/private-free responses, authorized saves, unauthorized/CSRF/origin rejection, stale revisions, forbidden/invalid edits, queued logout, authority loss during staging, sanitized write failures, actor/name-only audit events and honest post-save audit failure reporting. Existing running settings and watching/admission behavior passed. Initial targeted run: 2 passed / 1 failed because the new fixture tried enabling room Admin mode without satisfying its entry password; corrected fixture setup without changing admission. `git diff --check` and syntax checks passed.
+- Limits: YAML replacement and SQLite audit storage are separate operations; audit durability failure can follow a committed file. No automatic restart, extra authentication flow or UI. Full suite and C/D not run; the editor's external-writer race and platform/durability limits remain.
+
 ### Internal YAML settings persistence — 2026-10-24
 
 A/B on local changes based on `5074f86`; disposable Windows/NTFS fixtures only, not deployed. The internal editor validates complete YAML, preserves comments/private values, serializes revision-checked writes and retains protected backups before verified replacement. No write HTTP endpoint or running-configuration mutation.

@@ -24,6 +24,7 @@ const messages = {
   CONFIG_INVALID: 'Invalid proposed configuration; no settings were saved',
   CONFIG_FORBIDDEN: 'Setting is not editable; no settings were saved',
   CONFIG_CONFLICT: 'Configuration changed; read it again before saving',
+  CONFIG_AUTHORIZATION: 'Authorization changed; no settings were saved',
   CONFIG_IO: 'Configuration file operation failed; no settings were saved',
   CONFIG_UNSAFE_PATH: 'Configuration must be an existing regular file without symbolic or hard links'
 };
@@ -33,6 +34,28 @@ class ConfigEditError extends Error {
 const failure = code => new ConfigEditError(code);
 const revision = bytes => createHash('sha256').update(bytes).digest('hex');
 const metadata = stat => [stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs,stat.mode,stat.uid,stat.gid,stat.nlink].join(':');
+
+function editableSettings(config) {
+  const values = {
+    'directory.expose_discord_members': config.directory.discord,
+    'directory.expose_plex_members': config.directory.plex,
+    'rooms.host_permissions': Object.keys(config.roomPermissions.host).filter(key => config.roomPermissions.host[key]),
+    'rooms.viewer_permissions': Object.keys(config.roomPermissions.viewer).filter(key => config.roomPermissions.viewer[key]),
+    'transcoding.policy': config.transcoding.policy,
+    'transcoding.plex': config.transcoding.plex,
+    'transcoding.uburoom': config.transcoding.uburoom,
+    'transcoding.encoder': config.transcoding.encoder,
+    'transcoding.formats': config.transcoding.formats.slice(),
+    'transcoding.max_jobs': config.transcoding.maxJobs,
+    'transcoding.cpu_fallback': config.transcoding.cpuFallback,
+    'transcoding.qualities': config.transcoding.qualities.filter(quality => quality.id !== 'direct')
+      .map(quality => [quality.height, quality.bitrate / 1000]),
+    'transcoding.allow_original': config.transcoding.qualities.some(quality => quality.id === 'direct')
+  };
+  const limits = require('./room-limits').SETTINGS;
+  return Object.fromEntries([...EDITABLE].map(key => [key, key.startsWith('rooms.') && limits[key.slice(6)]
+    ? config.roomLimits[limits[key.slice(6)]] : values[key]]));
+}
 
 // One process-wide queue, including separate editor instances and path aliases.
 let writes = Promise.resolve();
@@ -137,8 +160,8 @@ async function writePrivate(file, bytes, original) {
 }
 
 /**
- * Local-only persistence; callers must enforce fresh operator authentication
- * before any future remote use. The path is selected by the server, not HTTP.
+ * The path is selected by the server, not HTTP. Remote callers supply a
+ * synchronous beforeReplace authorization check, also run after queueing.
  * @param {string} [selectedPath]
  */
 function createConfigEditor(selectedPath = configPath()) {
@@ -154,7 +177,16 @@ function createConfigEditor(selectedPath = configPath()) {
         return { source: 'file', revision: original.revision, settings: runningSettings(validate(original.bytes, file)).settings };
       });
     },
-    save(request) {
+    readEditable() {
+      return sanitized(async () => {
+        const original = await snapshot(file);
+        return { source: 'file', revision: original.revision, settings: editableSettings(validate(original.bytes, file)) };
+      });
+    },
+    save(request, { beforeReplace } = {}) {
+      const authorize = () => {
+        if (beforeReplace && beforeReplace() !== true) throw failure('CONFIG_AUTHORIZATION');
+      };
       let patch, expected;
       try {
         if (!request || typeof request !== 'object' || Array.isArray(request)) throw failure('CONFIG_INVALID');
@@ -166,6 +198,7 @@ function createConfigEditor(selectedPath = configPath()) {
         patch = structuredClone(changes);
       } catch (error) { return Promise.reject(error instanceof ConfigEditError ? error : failure('CONFIG_INVALID')); }
       return serialize(() => sanitized(async () => {
+        authorize();
         const original = await snapshot(file);
         if (original.revision !== expected) throw failure('CONFIG_CONFLICT');
         let bytes;
@@ -194,6 +227,7 @@ function createConfigEditor(selectedPath = configPath()) {
           if (current.revision !== original.revision || metadata(current.stat) !== metadata(original.stat) || current.acl !== original.acl) throw failure('CONFIG_CONFLICT');
           // No unlink/copy fallback. A filesystem that refuses replacement
           // fails closed. External editors can still race this check/rename.
+          authorize();
           await fs.rename(replacement, file);
           return { source: 'file', revision: nextRevision, restartRequired: true, backupPath };
         } finally {

@@ -53,13 +53,14 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 - Desktop player settings use one sliding menu: right-facing arrows open choices in place, final selections close it, and Back remains below the independently scrolling choices. Respect reduced motion. Quality changes do not show player notifications; Original includes the source bitrate rounded to whole Mbps when known. Owner requested 2026-10-23.
 - The full player settings dialog groups related controls in two columns on wide screens, keeping subtitle selection, rendering and timing together. Media information comes last; narrow screens stack groups in reading order. Owner requested 2026-10-23.
 - Keep selected, focused, disabled and read-only distinct; do not rely on color alone. Pending work must not disable unrelated controls.
+- Server settings reuse the shared dialog, tabs, pending checkboxes and permission thumbs. Explicit Cancel/Close discards its draft; Escape/backdrop preserve dirty drafts. Conflicts retain edits and require inline choices for overlapping changes before saving. Routine design/implementation delegated by the owner, 2026-10-24.
 - Switch labels stay left and switches right; wrap text without shrinking or moving the switch. Show the actual checked state even when disabled.
 - Segmented arrows/Home/End move focus; Enter/Space selects. Tab arrows activate immediately. Selection alone must not trigger a separate destructive or transfer action.
 - Adapt labels to available control width while retaining accessible names. Preserve focus and scroll during asynchronous updates; keep revealed content below sticky headers.
 
 ## Reuse and feedback
 
-Reuse the shared toast, dialog, menu, permission and status systems. Preserve their established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified.
+Reuse the shared toast, dialog, menu, permission and status systems. Preserve their established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified. Toasts with interactive actions use a container element sharing `.watch-toast` styling; two-line action toasts present the message on the first line and compact action and Dismiss buttons on the second line. Deliberate dismissal suppresses repeat warnings for the session. Owner approved 2026-10-25.
 
 Keep existing draft/save/cancel boundaries explicit and report failures truthfully. Preserve independent personal preferences and shared room authority. Put technical details in existing diagnostics surfaces, never credentials or private playback URLs.
 

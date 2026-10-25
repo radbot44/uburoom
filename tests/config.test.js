@@ -220,6 +220,7 @@ rooms:
   admin_discord_ids: ['345678901234567890']
 `);
   const config = loadConfig(file);
+  assert.equal(config.configFile,file);
   assert.equal(config.tlsCert, path.join(dir, 'tls/cert.pem'));
   assert.equal(config.accountFile, path.join(dir, 'persist/accounts.sqlite'));
   assert.equal(config.credentialKeyFile, path.join(dir, 'private/original.key'));

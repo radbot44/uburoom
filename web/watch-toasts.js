@@ -67,10 +67,13 @@
       const attributes = new view.MutationObserver(move);
       for (const element of [stage, doc.body, controls]) if (element) attributes.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     }
-    function dismiss(id) {
+    function dismiss(id, deliberate = false) {
       const entry = entries.get(id);
       if (!entry || entry.exiting) return;
       cancel(entry.timer);
+      if (deliberate && entry.onDismiss) {
+        try { entry.onDismiss(true); } catch {}
+      }
       entry.exiting = true;
       const remove = () => {
         entry.root.remove();
@@ -88,17 +91,27 @@
         motion.onfinish = () => { if (entry.motion === motion) remove(); };
       }
     }
-    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false }) {
+    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false, action, onDismiss } = {}) {
       if (!enabled && type !== 'error') return;
       // A stable ID updates an existing notification rather than duplicating it.
       let entry = entries.get(id);
+      if (entry && !!entry.actionButton !== !!action) {
+        entry.root.remove();
+        entries.delete(id);
+        entry = undefined;
+      }
       if (!entry) {
-        const root = doc.createElement('button');
-        root.type = 'button';
-        root.className = 'watch-toast';
+        const hasAction = !!action;
+        const root = doc.createElement(hasAction ? 'div' : 'button');
+        if (!hasAction) {
+          root.type = 'button';
+          root.title = 'Dismiss notification';
+          root.addEventListener('click', event => { event.stopPropagation(); dismiss(id, true); });
+        } else {
+          root.setAttribute('role', 'status');
+        }
+        root.className = 'watch-toast' + (hasAction ? ' with-action' : '');
         root.dataset.toast = id;
-        root.title = 'Dismiss notification';
-        root.addEventListener('click', event => { event.stopPropagation(); dismiss(id); });
         const artwork = doc.createElement('span');
         artwork.className = 'watch-toast-symbol';
         artwork.setAttribute('aria-hidden', 'true');
@@ -109,8 +122,34 @@
         const detail = doc.createElement('span');
         detail.className = 'watch-toast-hint';
         message.append(heading, detail);
+
+        let actionButton, dismissButton;
+        if (hasAction) {
+          const actionRow = doc.createElement('span');
+          actionRow.className = 'watch-toast-actions';
+          actionButton = doc.createElement('button');
+          actionButton.type = 'button';
+          actionButton.className = 'watch-toast-action primary';
+          actionButton.addEventListener('click', event => {
+            event.stopPropagation();
+            entry.actionCallback?.();
+            dismiss(id, false);
+          });
+          dismissButton = doc.createElement('button');
+          dismissButton.type = 'button';
+          dismissButton.className = 'watch-toast-dismiss quiet';
+          dismissButton.textContent = 'Dismiss';
+          dismissButton.addEventListener('click', event => {
+            event.stopPropagation();
+            dismiss(id, true);
+          });
+          actionRow.append(actionButton, dismissButton);
+          message.append(actionRow);
+        }
+
         root.append(artwork, message);
-        entry = { root, artwork, heading, detail, timer: undefined, motion: undefined, exiting: false };
+        entry = { root, artwork, heading, detail, actionButton, dismissButton,
+          actionCallback: action?.run, onDismiss, timer: undefined, motion: undefined, exiting: false };
         entries.set(id, entry);
         host.append(root);
         if (!reducedMotion.matches) entry.motion = root.animate([
@@ -128,6 +167,8 @@
       }
       cancel(entry.timer);
       entry.type = type;
+      entry.actionCallback = action?.run;
+      entry.onDismiss = onDismiss;
       entry.root.classList.toggle('normal', type !== 'error');
       entry.root.classList.toggle('error', type === 'error');
       entry.root.dataset.loading = String(loading);
@@ -136,9 +177,14 @@
       entry.heading.textContent = title;
       entry.detail.textContent = hint;
       entry.detail.hidden = !hint;
-      entry.root.setAttribute('aria-label', 'Dismiss notification: ' + title + (hint ? ' ' + hint : ''));
+      if (entry.actionButton && action) {
+        entry.actionButton.textContent = action.label;
+        entry.dismissButton.setAttribute('aria-label', 'Dismiss notification: ' + title);
+      } else {
+        entry.root.setAttribute('aria-label', 'Dismiss notification: ' + title + (hint ? ' ' + hint : ''));
+      }
       const lifetime = persistent ? 0 : type === 'error' ? 10000 : duration;
-      entry.timer = lifetime > 0 ? schedule(() => dismiss(id), lifetime) : undefined;
+      entry.timer = lifetime > 0 ? schedule(() => dismiss(id, false), lifetime) : undefined;
       requestLayout();
     }
     function clear() {

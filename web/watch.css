@@ -70,6 +70,14 @@ select,input[type=search]{border:1px solid var(--border);background:var(--elevat
 .watch-toast-message{display:flex;flex-direction:column;min-width:0}
 .watch-toast-title{font-size:14px;line-height:16px;font-weight:600;color:var(--text);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .watch-toast-hint{color:var(--muted);font-size:12px;line-height:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.watch-toast.with-action{height:auto;min-height:40px;padding:8px 12px;align-items:flex-start}
+.watch-toast.with-action .watch-toast-symbol{margin-top:2px}
+.watch-toast-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
+.watch-toast-action{display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 8px;border-radius:6px;background:var(--primary);color:var(--on-primary);font-size:12px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer}
+.watch-toast-action:hover{background:var(--primary-hover)}
+.watch-toast-dismiss{display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 8px;border-radius:6px;background:var(--elevated);color:var(--text);font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer}
+.watch-toast-dismiss:hover{background:var(--hover)}
+.watch-toast-action:focus-visible,.watch-toast-dismiss:focus-visible{outline:2px solid var(--text);outline-offset:2px}
 #library-panel{container-type:inline-size;container-name:plex-library;margin:0;overflow:visible;padding-top:0}
 .library-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px;height:48px;min-height:48px;box-sizing:border-box}
 #library-panel>.library-header{background:var(--card);border-radius:0}
@@ -434,3 +442,27 @@ input.watch-switch:disabled{cursor:default;opacity:.55}
 .room-host-action .room-host-hover{display:none}
 .room-host-promote:not(:disabled):hover>svg:first-child{display:none}
 .room-host-promote:not(:disabled):hover>.room-host-hover{display:block}
+
+/* Operator drafts reuse shared dialogs, tabs, checkboxes and permission controls. */
+.server-settings-dialog{width:min(760px,calc(100vw - 32px));padding:24px}
+.server-settings-dialog[open]{display:flex;flex-direction:column;height:min(860px,calc(100dvh - 32px));overflow:hidden}
+.server-settings-dialog>header,.server-settings-dialog>nav,.server-settings-dialog>p,.server-settings-dialog>footer{flex-shrink:0}
+.server-settings-content{min-height:0;flex:1;overflow:auto;padding-right:8px;overscroll-behavior:contain}
+#server-settings-conflicts{max-height:180px;overflow:auto;flex-shrink:0}
+.server-settings-dialog>header{margin-bottom:8px}.server-settings-dialog>p.hint{margin:8px 0 16px}
+.server-settings-tabs{display:flex;gap:6px;margin:18px 0}.server-settings-tabs button{flex:1;min-width:0}
+.server-settings-tabs [aria-selected=true]{background:var(--primary);color:var(--on-primary)}
+.server-settings-content h3{font-size:15px;margin:22px 0 8px}.server-settings-content p.hint{font-size:12px}
+.server-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.server-settings-field{display:grid;align-content:start;gap:6px;min-width:0}.server-settings-field>span{font-weight:500}
+.server-settings-dialog :is(input[type=number],select){box-sizing:border-box;width:100%;min-width:0;min-height:40px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);font:inherit}
+.server-settings-field:has(.button-group){grid-column:1/-1}.server-settings-field .button-group{display:flex;flex-wrap:wrap}
+.server-quality-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;align-items:end;gap:10px;margin:10px 0}.server-quality-row label{display:grid;gap:6px;font-size:12px}
+.server-settings-dialog>footer{justify-content:flex-end;background:var(--card);border-top:1px solid var(--border);padding:16px 0 0;margin:16px 0 0}
+.server-settings-error{color:var(--error)!important}.server-settings-error:empty,#server-settings-status:empty{display:none}
+.server-conflict{padding:12px 0;border-top:1px solid var(--border)}.server-conflict button{margin:4px 8px 4px 0}
+.server-settings-spinner{display:none;width:20px;height:20px;position:absolute;left:calc(50% - 10px);color:white;animation:toast-spin 2s linear infinite}
+#server-settings-save{position:relative}#server-settings-save[aria-busy=true]{opacity:1}#server-settings-save[aria-busy=true]>span{opacity:.4}#server-settings-save[aria-busy=true] .server-settings-spinner{display:block}
+#account-server-settings{margin-top:18px}
+@media(max-width:500px){.server-settings-dialog{padding:20px}.server-settings-grid{grid-template-columns:1fr}.server-settings-dialog>footer{bottom:-20px}.server-settings-tabs{gap:4px}.server-settings-tabs button{padding-inline:8px}}
+@media(prefers-reduced-motion:reduce){.server-settings-spinner{animation:none}}

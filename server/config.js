@@ -195,7 +195,10 @@ function loadConfig(file = configPath()) {
     if (error.code === 'ENOENT') throw new Error('Missing config.yaml. Copy config.example.yaml and configure your installation. Never share your private config.');
     throw new Error('Cannot read private configuration file (' + error.code + ')');
   }
-  return normalizeConfig(parseConfig(source), { base: path.dirname(path.resolve(file)) });
+  const selectedPath = path.resolve(file);
+  const config = normalizeConfig(parseConfig(source), { base: path.dirname(selectedPath) });
+  config.configFile = selectedPath;
+  return config;
 }
 
 module.exports = { ROOT, configPath, parseConfig, normalizeConfig, loadConfig };

@@ -241,6 +241,7 @@ function diagnosticSample(event='sample',fields={}) {
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
     if(event==='waiting'&&disconnectExtended)fullPlayerClear();
+    if(['pause','waiting','seeking','emptied'].includes(event))choppyDetector.interrupt();
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
     sync?.event(event);
@@ -346,7 +347,7 @@ async function api(path, data, options = {}) {
   }
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
-  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw Object.assign(new Error(value.error || 'Request failed'),{status:response.status});} return value;
+  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw Object.assign(new Error(value.error || 'Request failed'),{status:response.status,response:value});} return value;
   } catch(error) {
     diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
       rejection:uburoomDiagnostics.requestKind(path)==='observe'?rejection:undefined,
@@ -719,11 +720,77 @@ function watchFrames() {
     watchFrames();
   });
 }
+const choppyDetector = uburoomPlayback.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
+let choppyToastActive = false;
+function dropPlaybackQuality() {
+  const choices = state?.qualities || uburoom.QUALITIES;
+  const current = uburoom.qualityId(state?.quality || preferredQuality);
+  const index = choices.findIndex(q => q.id === current);
+  if (index >= 0 && index < choices.length - 1) {
+    const next = choices[index + 1].id;
+    preferredQuality = next;
+    savePlayerPreferences({ quality: preferredQuality });
+    choppyDetector.triggerCooldown(10000, performance.now());
+    if (state?.mediaId && state.mediaId !== 'demo') {
+      execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
+    }
+  }
+}
+function checkChoppyPlayback() {
+  if (!state?.mediaUrl || autoplayBlocked || playbackError || state?.mediaId === 'demo') {
+    choppyDetector.interrupt();
+    return;
+  }
+  const choices = state?.qualities || uburoom.QUALITIES;
+  const current = uburoom.qualityId(state?.quality || preferredQuality);
+  const index = choices.findIndex(q => q.id === current);
+  if (index >= choices.length - 1) {
+    if (choppyToastActive) {
+      toasts.dismiss('choppy', false);
+      choppyToastActive = false;
+    }
+    return;
+  }
+  const quality = video.getVideoPlaybackQuality?.();
+  const conditions = {
+    paused: video.paused || !!state?.state?.paused,
+    seeking: video.seeking || sync?.seekPending,
+    waiting: playerWaiting || video.readyState < 3,
+    visible: document.visibilityState === 'visible',
+    active: !pending && !qualityPending && video.currentTime > 1
+  };
+  const result = choppyDetector.update(performance.now(), quality, conditions);
+  if (result.choppy) {
+    if (!choppyToastActive && !choppyDetector.isDismissed) {
+      choppyToastActive = true;
+      toasts.show('choppy', {
+        title: 'Playback seems choppy',
+        duration: 15000,
+        action: {
+          label: 'Lower quality',
+          run: () => {
+            dropPlaybackQuality();
+          }
+        },
+        onDismiss: (deliberate) => {
+          choppyToastActive = false;
+          if (deliberate) {
+            choppyDetector.dismiss(true);
+          }
+        }
+      });
+    }
+  } else if (choppyToastActive && !result.warming && !result.interrupted && !result.inCooldown) {
+    toasts.dismiss('choppy', false);
+    choppyToastActive = false;
+  }
+}
 function decodedFrames() {
   const quality = video.getVideoPlaybackQuality?.();
   return videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
 }
 function checkVideoFrames() {
+  checkChoppyPlayback();
   if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError) { frameStartedAt = undefined; return; }
   frameStartedAt ??= performance.now();
   const frames = decodedFrames();
@@ -735,6 +802,8 @@ function clearPlayer(reason) {
   clearTimeout(directStartupTimer); clearTimeout(directStallTimer);
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
+  toasts.dismiss('choppy', false); choppyToastActive = false;
+  choppyDetector.reset();
   toasts.dismiss('participant'); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
@@ -1208,7 +1277,7 @@ function applyState(next) {
   diagnostics.state(next);
   const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
-  if(qualityContextChanged && !changed)resetSyncQuality();
+  if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();}
   const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
@@ -1435,6 +1504,8 @@ $('join-playback').addEventListener('click', async () => {
 $('quality').addEventListener('change', () => {
   preferredQuality = $('quality').value;
   savePlayerPreferences({quality:preferredQuality});
+  choppyDetector.triggerCooldown(10000, performance.now());
+  if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
   if (state?.mediaId && state.mediaId !== 'demo') execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
 });
 $('timeline').addEventListener('pointerdown', () => { seekDragging = true; });

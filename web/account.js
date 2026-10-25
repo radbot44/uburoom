@@ -8,6 +8,10 @@ accountPopups.register(accountDialog,{dirty:()=>!!accountValue &&
   ($('account-display-name').value!==accountValue.name || !!$('match-discord').value || !!$('match-plex').value)});
 $('account-display-name').addEventListener('input',()=>{accountNameDraft={id:accountValue?.id,name:$('account-display-name').value};});
 const accountButton=$('identity');
+const serverSettingsButton=document.createElement('button');serverSettingsButton.id='account-server-settings';serverSettingsButton.type='button';serverSettingsButton.className='quiet';serverSettingsButton.textContent='Server settings';serverSettingsButton.hidden=true;serverSettingsButton.setAttribute('aria-haspopup','dialog');serverSettingsButton.setAttribute('aria-controls','server-settings-dialog');
+$('account-content').append(serverSettingsButton);
+let serverSettingsPanel;
+serverSettingsButton.addEventListener('click',()=>{if(activity||token||serverSettingsButton.hidden)return;serverSettingsPanel ||= uburoomServerSettings.mount({request:api,trigger:serverSettingsButton});serverSettingsPanel.open();});
 $('account-close').append(uburoomIcons.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
 logoutButton.append(uburoomIcons.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
@@ -23,6 +27,7 @@ function identityRows(host,account){
 }
 async function showAccount(){
   const load=++accountLoad;
+  serverSettingsButton.hidden=true;
   accountError();invalidatePreview();
   $('account-content').hidden=true;$('account-loading').hidden=false;$('account-retry').hidden=true;
   $('account-admin').open=false;
@@ -33,6 +38,7 @@ async function showAccount(){
     const known=value.admin&&!activity?await api('/api/account/admin'):undefined;
     const isOwner=!!(value.owner??me?.owner);
     if(load!==accountLoad||!$('account-dialog').open)return;
+    serverSettingsButton.hidden=activity||!!token||value.serverOperator!==true;
     for(const provider of ['discord','plex']){
       const identity=value.account.identities.find(i=>i.provider===provider),label=provider==='discord'?'Discord':'Plex';
       const connected=identity?.authenticated&&(provider!=='plex'||identity.credentialStored);

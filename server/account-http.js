@@ -1,6 +1,7 @@
 'use strict';
 const {randomBytes}=require('node:crypto');
 const {hash}=require('./core');
+const {isServerOperator}=require('./operator-policy');
 
 function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore,discordStart,throttle}) {
   const attempts=new Map(),previews=new Map(),merges=new Map(),errors=new Map();
@@ -72,7 +73,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webA
       }
       const login=req.method==='GET'?await user(req):await protectedPost(req);
       if(!login){json(res,401,{error:'Sign in to manage your account'});return true;}
-      if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),owner:hub.isOwner(webActor(login)),admin:hub.isOwner(webActor(login))&&hub.isAdmin(webActor(login))});return true;}
+      if(req.method==='GET'&&route==='/api/account'){json(res,200,{account:registry.summary(login.userId),merge:pending(req,login),owner:hub.isOwner(webActor(login)),admin:hub.isOwner(webActor(login))&&hub.isAdmin(webActor(login)),serverOperator:isServerOperator(registry,config,login.userId)});return true;}
       if(req.method==='POST'&&route==='/api/account/plex/connect'){if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');json(res,200,{url:await startPlex(req,res,login)});return true;}
       if(req.method==='POST'&&route==='/api/account/discord/connect'){await discordStart(req,res,login);return true;}
       function providerEnabled(identity){

@@ -16,6 +16,8 @@ const { PlexAuth } = require('./plex-auth');
 const { accountHttp } = require('./account-http');
 const { isServerOperator } = require('./operator-policy');
 const { runningSettings } = require('./operator-settings');
+const { createConfigEditor } = require('./config-editor');
+const { operatorHttp } = require('./operator-http');
 const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
@@ -236,6 +238,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     if(linkLogin)json(res,200,{url:destination});else{res.writeHead(302,{Location:destination});res.end();}
   }
   const accountRoutes=accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore:accounts,discordStart,throttle});
+  const operatorRoutes = operatorHttp({ config, registry, editor: config.configFile ? createConfigEditor(config.configFile) : undefined,
+    user, protectedPost, validIdentity, logins, cookies, body, json });
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
     let operatorSettingsFlushed = false;
     if(registry&&req.url?.split('?')[0]!=='/health'){
@@ -267,6 +271,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
+      if (await operatorRoutes.route(req, res, url, (status, value) => {
+        operatorSettingsFlushed = true; json(res, status, value);
+      })) return;
       if (req.method === 'GET' && route === '/api/operator/settings') {
         const login = await user(req);
         const current = () => !!login && logins.get(hash(cookies(req).uburoom || '')) === login &&
@@ -382,7 +389,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/sync-quality.js':['sync-quality.js','text/javascript'],
-        '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
+        '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/server-settings.js':['server-settings.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
         const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)));
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
