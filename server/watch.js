@@ -205,14 +205,18 @@ class Watch {
     if (!room.media) return;
     if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
-    if (viewer.preparing) { await viewer.preparing; return this.prepareViewer(room, actor, viewerId); }
-    const prepare = async () => {
+    if (viewer.preparing) {
+      await viewer.preparing;
+      return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
+    }
+    const prepare = (async () => {
       await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
         this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
       if(viewer.media?.quality)viewer.quality=viewer.media.quality;
-    };
-    viewer.preparing = prepare();
-    try { await viewer.preparing; } finally { viewer.preparing = undefined; }
+    })();
+    const job = prepare.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; });
+    viewer.preparing = job;
+    await job;
     return viewer.media;
   }
   async replaceViewer(room,actor,viewerId,prepare,{permitted=()=>true,retainUnavailable=false,accept=()=>true}={}) {
@@ -285,13 +289,14 @@ class Watch {
     if (room.recovery && !room.viewers.size) return;
     if (room.hadViewers && !room.viewers.size) {
       this.cancelAutoplay(room); clearPlaybackEnd(room);
-      if (room.saved && !room.reconnecting) { room.disconnectedWasPlaying = !room.s.state.paused || room.initialGate && !room.manualPaused; this.roomState.freeze(room, lastPresence || now); void this.roomState.save(room); }
       const savedHost = room.disconnectedViewers.get(room.hostViewerId);
       if (room.saved ? room.disconnectedViewers.size : savedHost?.userId === room.s.hostId) {
+        if (room.saved && !room.reconnecting) { room.disconnectedWasPlaying = !room.s.state.paused || room.initialGate && !room.manualPaused; this.roomState.freeze(room, lastPresence || now); void this.roomState.save(room); }
         // An empty room has no command target. Only its original host tab may
         // reactivate it during the bounded, same-media reconnect grace.
         room.reconnecting = true; this.hub.rooms.delete(room.s.roomId); return;
       }
+      if (room.saved && !room.reconnecting) this.roomState.freeze(room, lastPresence || now);
       this.remove(room.s.roomId); return;
     }
     if (room.hadViewers && !room.recovery && ![...room.viewers.values()].some(viewer => viewer.userId === room.s.hostId)) void this.transfer(room);
@@ -630,7 +635,7 @@ class Watch {
         // A checkpoint or another control must not restore the completed item
         // while its durable completion is waiting for the writer.
         const completing = (async () => {
-          await room.saving;
+          await room.saving?.catch(() => {});
           if (current) await this.roomState.queue.completeCurrent(record.id);
           this.unloadQueueMedia(room);
         })();
@@ -702,7 +707,7 @@ class Watch {
     } else if (!removing) target = {mediaId:args.mediaId};
     room.mediaTransition = true;
     try {
-      await room.saving;
+      await room.saving?.catch(() => {});
       const corpus = record && !(removing && !advance) ? await this.autoCorpus(id,actor) : undefined;
       if (target) {
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;

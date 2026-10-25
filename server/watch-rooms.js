@@ -405,7 +405,7 @@ class WatchRooms {
     if(room&&(room.mediaTransition||room.queueEditing))throw failure('Wait for the current queue or media operation before resetting');
     if(room)room.mediaTransition=true;
     try{
-    if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving;}
+    if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving?.catch(()=>{});}
     this.registry.transaction(()=>{
       this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
       this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
@@ -457,15 +457,18 @@ class WatchRooms {
       title:media.title, duration:media.duration, position:this.watch.position(room) } : null;
     const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>Date.now())].map(v => this.store.account(v.userId)))];
     const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
-    const saving = (room.saving || Promise.resolve()).then(async () => {
+    const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
+    const saving = previous.then(async () => {
       const record = this.store.get(room.s.roomId);
       this.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(live ? JSON.stringify({viewers:live.viewers,wasPlaying:live.wasPlaying}) : null,record.id);
       if (room.viewers.size) this.store.touch(record.id);
       this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
       if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
+      room.saveError = undefined;
     }).catch(error => { room.saveError = 'Room progress could not be saved. Check server storage.'; this.freeze(room); throw error; });
     room.saving = saving;
-    saving.then(() => { if (room.saving === saving) room.saving = undefined; }, () => {});
+    const clear = () => { if (room.saving === saving) room.saving = undefined; };
+    saving.then(clear, clear);
     return this.track(saving);
   }
   async close() {

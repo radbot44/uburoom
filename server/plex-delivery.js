@@ -230,6 +230,7 @@ class PlexDelivery {
       if (scope.clientId === 'configured-fallback' && !await this.fallbackAllowed(scope)) return;
       if (!await valid()) return;
       const origin = await this.originFor(scope, remoteAddress);
+      if (signal?.aborted || !await valid()) return;
       const existing = this.files.get(media);
       const job = existing?.until > Date.now() && (!existing.origin || existing.origin === origin) ? existing.job : this.prepare(media, scope, valid, signal, origin);
       if (job !== existing?.job) this.files.set(media, { job, until: Date.now() + 24 * 3600000, origin });
