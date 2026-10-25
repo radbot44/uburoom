@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-23.
+Updated: 2026-10-25.
 
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work is owned by M1-P11.
 
@@ -8,7 +8,7 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 
 1. **Configuration and administration (P14):** Finish the settings inventory, effective-access matrix and YAML editing/recovery contract before building the administration panel.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
-3. **Plex reporting (P4):** Resolve shared-producer lifecycle and attribution before adding product activity reporting and independent personal watch-state synchronization.
+3. **Plex reporting (P4):** Complete real PMS/Tautulli integration verification for decoupled session reporting, shared-producer safety and personal watch-state synchronization.
 4. **Release closure:** Complete the supported-environment checks, operator recovery, branding and licensing gates below. Expand the supported matrix only with evidence.
 
 ## M1 — Verified self-hosted release
@@ -38,12 +38,12 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P1 | Sustained playback | Recovery, diagnostics and scoped real two-hour playback evidence | Real Firefox/Activity and multi-viewer lifecycle coverage; unexplained unload/resource behavior and long-run accounting |
 | M1-P2 | Automatic delivery | Direct file/HLS, proxy recovery, shared outputs, local codec selection and bounded capacity fallback | Complete source/version inventory, output validation, remux/audio-only selection, automatic quality and real cross-account/device coverage |
 | M1-P3 | Content fidelity | Personal tracks and initial decoded audio/caption evidence | Real track switching/restoration, downmix, A/V/caption alignment, source cadence and device coverage; subtitle renderer work is P9 |
-| M1-P4 | Plex viewing experience | Native viewer observations/history; activity-only and isolated HLS reporting research | Decoupled session reporting, shared-producer safety, activity-only default with personal watch-state opt-in and sponsored isolation implemented on branch `feat/m1-p4-plex-reporting`; live validation and later parity increments below |
-| M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness and independent recovery | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
-| M1-P6 | Frame pacing | Default correction policy and opt-in Occasional jumps | Joint skew/smoothness acceptance; accept or reject disabled experiments and remove rejected production wiring |
+| M1-P4 | Plex viewing experience | Native viewer observations/history; decoupled session reporting, shared-producer stop safety, activity-only default with personal watch-state opt-in and sponsored isolation | Live PMS/Tautulli validation, multi-viewer stop/seek transitions and natural playback completion; later parity increments below |
+| M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness, independent recovery, and bounded 5s sample expiry decoupled from socket watchdog | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
+| M1-P6 | Frame pacing | Default correction policy, opt-in Occasional jumps, and removal of rejected experimental production wiring | Joint skew/smoothness acceptance |
 | M1-P7 | UI/UX | Layout split, Room/Queue/Media shared controls, sliding player menus, grouped two-column settings dialog, personal preferences and sync-module extraction | Current user-journey/accessibility review, physical mobile/Activity acceptance and bounded further modularization |
-| M1-P9 | Browser subtitles | ASS/SSA, PGS/VobSub rendering, authorized resources and burn-in fallback | Complex fonts/authored content, lifecycle/resource and real Activity/mobile checks; licensing and corresponding-source obligations |
-| M1-P10 | Room terminology | Canonical room names/protocol and removal of legacy aliases | Final current web/Activity terminology review; retain “session” for technical connections/auth/media contexts |
+| M1-P9 | Browser subtitles | ASS/SSA, progressive chunked PGS streaming, VobSub rendering, truthful extraction error classification, authorized resources and burn-in fallback | Complex fonts/authored content, lifecycle/resource and real Activity/mobile checks; licensing and corresponding-source obligations |
+| M1-P10 | Room terminology | Canonical room names/protocol, removal of legacy aliases, and web/Activity terminology audit; “session” retained for technical contexts and “watch parties” preserved for public context | Final packaging review |
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries and bounded tools | Real proxy/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, generation, shuffle, cancellable autoplay and explicit endpoint completion | Real Plex/Activity continuity, accelerated-client endpoint retest, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
@@ -51,7 +51,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 ### M1-P4 — Plex viewing experience
 
-**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, and sponsored viewer isolation are implemented and covered by unit/lifecycle tests on branch `feat/m1-p4-plex-reporting`.
+**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, and sponsored viewer isolation are implemented and covered by unit/lifecycle tests on main.
 
 **Next:** Complete live validation against physical PMS/Tautulli instances; verify multi-viewer stop/seek transitions and natural playback completion.
 
