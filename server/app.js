@@ -271,6 +271,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    // Enforce HTTPS via Strict-Transport-Security to defend against SSL/TLS stripping attacks.
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     (async () => {
       const url = new URL(req.url, config.publicUrl), route = url.pathname;
