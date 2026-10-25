@@ -33,7 +33,7 @@ class ConfigEditError extends Error {
 }
 const failure = code => new ConfigEditError(code);
 const revision = bytes => createHash('sha256').update(bytes).digest('hex');
-const metadata = stat => [stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs,stat.mode,stat.uid,stat.gid,stat.nlink].join(':');
+const metadata = stat => [(process.platform === 'win32' ? '' : stat.dev),stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs,stat.mode,stat.uid,stat.gid,stat.nlink].join(':');
 
 function editableSettings(config) {
   const values = {
