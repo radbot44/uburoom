@@ -2,6 +2,7 @@
 config*.yaml
 config*.yml
 !config.example.yaml
+.uburoom-config-*/
 .env
 .env.*
 *.env

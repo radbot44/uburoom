@@ -15,6 +15,13 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Internal YAML settings persistence — 2026-10-24
+
+A/B on local changes based on `5074f86`; disposable Windows/NTFS fixtures only, not deployed. The internal editor validates complete YAML, preserves comments/private values, serializes revision-checked writes and retains protected backups before verified replacement. No write HTTP endpoint or running-configuration mutation.
+
+- `node --test --test-reporter=tap tests/config.test.js`: **16 passed, 0 failed, 0 skipped**. Covers selected `--config` and relative paths, comments/secrets, real Windows DACL preservation/protected backup directories, forbidden/invalid edits, cross-instance stale writes, an external edit during staging, hard-link refusal, injected backup/partial-write/rename failures and queue recovery. `git diff --check` passed. Initial targeted runs: 4 failures from ACL copying marking audit permissions for update (fixed by selecting only owner/group/access sections); then 3 passes / 1 failure from a test expecting rejection of a viewer permission the existing validator deliberately removes (corrected to an unsupported permission).
+- Limits: Unix ownership/mode handling reviewed but not executed here; full suite, network filesystems, power-loss durability and C/D not run. External writers can race the final check/rename; there is no cross-process lock. YAML restoration does not restore deleted application data. Remote writes still require a future fresh-operator-authentication increment.
+
 ### Operator-only running settings API — 2026-10-24
 
 A/B on local changes based on `36d33a1`, including the preceding operator-identity increment; not deployed. `GET /api/operator/settings` uses browser-session identity and an explicit nonprivate running-settings allowlist, with no-store responses and final session/operator checks after persistence waits.

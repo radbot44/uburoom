@@ -47,7 +47,7 @@ function parseConfig(source) {
   return value;
 }
 
-function normalizeConfig(value, { base = ROOT, environment = process.env, platform = process.platform } = {}) {
+function normalizeConfig(value, { base = ROOT, environment = process.env, platform = process.platform, discoverTools = true } = {}) {
   const object = (v, label) => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(label + ' must be a mapping');
   };
@@ -118,8 +118,8 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     botToken: get('discord.bot_token'), clientId: get('discord.client_id'), clientSecret: get('discord.client_secret'),
     ownerId: get('discord.owner_id'), guildId: get('discord.guild_id'),
     channels: list('discord.command_channel_ids') || [],
-    ffmpegPath: get('tools.ffmpeg') ? resolveFile('tools.ffmpeg') : findOnPath('ffmpeg', environment),
-    ffprobePath: get('tools.ffprobe') ? resolveFile('tools.ffprobe') : findOnPath('ffprobe', environment)
+    ffmpegPath: get('tools.ffmpeg') ? resolveFile('tools.ffmpeg') : discoverTools ? findOnPath('ffmpeg', environment) : undefined,
+    ffprobePath: get('tools.ffprobe') ? resolveFile('tools.ffprobe') : discoverTools ? findOnPath('ffprobe', environment) : undefined
   };
   config.accessPolicy = {
     discord:boolean('access.discord', true), plex:boolean('access.plex', true),
