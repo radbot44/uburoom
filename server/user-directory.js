@@ -51,15 +51,19 @@ class UserDirectory {
       if (!this.enabled(provider)) return;
       try { external.push(...await this.source(provider)); } catch (error) { notices.push(error.message); }
     }));
-    const online = this.online(), room = new Set(members), rows = [], linked = new Map();
+    const online = this.online(), room = new Set(members), rows = [], linked = new Map(), rowsByUserId = new Map();
     for (const account of this.registry.directory()) {
       for (const identity of account.identities) linked.set(identity.provider+':'+identity.subject,account.id);
       if (account.signedInAt === null && !room.has(account.id) && !online.has(account.id)) continue;
-      rows.push({userId:account.id,name:account.name,aliases:account.identities.map(i=>i.name),discord:account.identities.find(i=>i.provider==='discord')?.subject,
-        providers:account.identities.map(i=>i.provider),group:room.has(account.id)?0:online.has(account.id)?1:2});
+      const row = {userId:account.id,name:account.name,aliases:account.identities.map(i=>i.name),discord:account.identities.find(i=>i.provider==='discord')?.subject,
+        providers:account.identities.map(i=>i.provider),group:room.has(account.id)?0:online.has(account.id)?1:2};
+      rows.push(row);
+      rowsByUserId.set(account.id, row);
     }
+    // Bolt Optimization: Use rowsByUserId Map for O(1) account lookups across external roster entries,
+    // avoiding O(E * R) linear array scans when searching large directory sources (up to 100,000 entries).
     for (const entry of external) {
-      const id = linked.get(entry.provider+':'+entry.subject), known = id && rows.find(row=>row.userId===id);
+      const id = linked.get(entry.provider+':'+entry.subject), known = id && rowsByUserId.get(id);
       if (known) { known.aliases.push(entry.name,entry.alias); continue; }
       rows.push({...entry,aliases:[entry.alias],providers:[entry.provider],discord:entry.provider==='discord'?entry.subject:undefined,group:3});
     }
