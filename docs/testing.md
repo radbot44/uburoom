@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Browser operator settings dialog — 2026-10-25
+
+A/B on local changes based on `88357cb`; temporary Windows/NTFS configurations, isolated fixture accounts and disposable browser profiles only, not deployed. Reuses the shared dialog, tabs, control builders and session authentication without extra confirmation dialogs or restart controls.
+
+- `node personal/operator-panel/verify.cjs`: **Chrome 155.0.8059.84 and Firefox 158.0.1 PASSED**. Covers Account dialog "Server settings" entry visibility for verified operators, non-operator guest hiding, keyboard navigation (Tab/Arrow/Home/End), section switching (Rooms, Directory, Transcoding), dirty tracking and Escape/backdrop preservation vs Cancel draft discard, diff-only POST payloads (`directory.expose_plex_members`), duplicate save suppression while saving, revision conflict review with live file modifications ("Use saved value" vs "Keep my change"), honest reporting for post-save audit failures without claiming save failure, stale reply suppression after close/reopen, and responsive layout across narrow viewports (390×844), zoomed viewports (450×400) and light theme without horizontal overflow. Visual captures recorded in `personal/operator-panel/`.
+- `npm test`: **42 suites, 215 tests passed, 0 failed, 0 skipped**.
+- Limits: Isolated browser and fixture execution only; does not restart uburoom or reload running configuration into active memory. C/D real-environment acceptance not performed.
+
 ### Saved operator settings API — 2026-10-24
 
 A/B on local changes based on `d4c3f0f`; temporary Windows/NTFS configurations and fixture accounts only, not deployed. The working tree was clean and the discarded fresh-authentication increment was absent; it remains absent. Saved settings use the current operator session, existing origin/CSRF protection and the editor's unchanged allowlist, with authorization checks after queueing and just before replacement.
