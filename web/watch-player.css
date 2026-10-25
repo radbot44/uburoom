@@ -10,7 +10,8 @@
 .stage:focus-within .center-play,.stage.blocked .center-play,.stage.controls-visible .center-play{opacity:1;pointer-events:auto}
 .stage.controls-visible .player-chrome,.stage.settings-open .player-chrome{opacity:1;pointer-events:auto}
 @media(hover:hover){.stage:not(.touch-controls):hover .player-chrome,.stage:not(.touch-controls):hover .center-play{opacity:1;pointer-events:auto}}
-.stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}
+.center-play:disabled,.stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}
+.center-play:disabled{display:none!important}
 .stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open) .player-chrome,.stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open) .center-play{opacity:0;pointer-events:none}
 
 #tracks-dialog{width:min(800px,calc(100vw - 32px))}

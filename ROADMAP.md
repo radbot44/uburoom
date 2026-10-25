@@ -20,7 +20,7 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 - Declare the supported browser, Activity, codec and delivery combinations; verify actual picture, audio, captions, synchronization and recovery for those claims.
 - Verify installation on an independent host/origin with fresh provider applications and profiles; verify backup/restore and rollback while preserving account UUIDs and the exact encryption key.
 - Verify admission, revoked credentials, account changes and media authorization across browser and Activity. Configured sponsorship is implemented and enabled by default; it is not personal Plex entitlement. Direct fallback delegation requires an explicit opt-in and a dedicated non-owner account. Granular grants and sponsored reporting remain unfinished.
-- Finish branding and asset provenance, dependency/font notices and GPL-3.0-only distribution review. Replace the demo builder's old branding reference and remove `assets/branding/old/` from active source before packaging.
+- Finish branding and asset provenance, dependency/font notices and GPL-3.0-only distribution review. Demo builder branding reference updated to current wordmark and `assets/branding/old/` removed from active source before packaging.
 - Audit source, publication history and ZIP contents for private material and required license/source obligations. Obtain explicit publication approval.
 
 Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md). UI decisions remain governed by the [design guide](docs/design-guide.md). Neither a roadmap entry nor a passing test authorizes production changes, provider experiments or publication.

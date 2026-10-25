@@ -1135,8 +1135,9 @@ function renderTransport() {
   renderVolumeIcon(); $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
   $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
   $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
-  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut;
-  $('join-playback').disabled = !autoplayBlocked && (!playback || pending);
+  const joinDisabled = !autoplayBlocked && (!playback || pending);
+  $('join-playback').disabled = joinDisabled;
+  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || joinDisabled;
   const centerLabel=autoplayBlocked?'Join playback':paused?'Play':'Pause';
   glyph('join-playback',autoplayBlocked||paused?'play':'pause');
   $('join-playback').setAttribute('aria-label',centerLabel); $('join-playback').title=centerLabel;
