@@ -12,16 +12,32 @@
     if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Value outside supported range');
     return n;
   };
+  const NO_PAN = Object.freeze({ action: 'pan.move', args: { x: 0, y: 0 } });
   function snapshot(value) {
     if (!value || typeof value !== 'object') return;
     try {
-      const clean = Object.fromEntries(Object.keys(DEFAULT).map(key => [key, value.picture?.[key]]));
-      const result = { picture: picture(clean, { action: 'pan.move', args: { x: 0, y: 0 } }) };
+      // Bolt Optimization: Directly extract picture properties and filter profile slots with a fast loop
+      // to eliminate allocations from Object.keys, Object.fromEntries, map, filter, and Set.
+      const pic = value.picture;
+      const clean = { zoom: pic?.zoom, stretchX: pic?.stretchX, stretchY: pic?.stretchY, x: pic?.x, y: pic?.y };
+      const result = { picture: picture(clean, NO_PAN) };
       for (const field of ['paused', 'muted', 'seekable', 'waitingForReady']) if (typeof value[field] === 'boolean') result[field] = value[field];
       if (typeof value.volume === 'number') result.volume = numeric(value.volume, 0, 100);
       if (typeof value.position === 'number') result.position = numeric(value.position, 0, 1e9);
       if (typeof value.duration === 'number') result.duration = numeric(value.duration, 0, 1e9);
-      result.profileSlots = Array.isArray(value.profileSlots) ? [...new Set(value.profileSlots.filter(n => Number.isInteger(n) && n >= 1 && n <= 9))].slice(0, 9) : [];
+      if (Array.isArray(value.profileSlots)) {
+        const slots = [];
+        for (let i = 0; i < value.profileSlots.length; i++) {
+          const n = value.profileSlots[i];
+          if (Number.isInteger(n) && n >= 1 && n <= 9 && !slots.includes(n)) {
+            slots.push(n);
+            if (slots.length === 9) break;
+          }
+        }
+        result.profileSlots = slots;
+      } else {
+        result.profileSlots = [];
+      }
       return result;
     } catch { return; }
   }
