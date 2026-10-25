@@ -19,6 +19,7 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 | Need | Command |
 | --- | --- |
 | Focused regression | `node --test tests/<relevant-file>.test.js` |
+| Installation diagnostics / doctor | `npm run doctor` / `node scripts/doctor.js` |
 | Node suite | `npm test` |
 | Full pass/fail/skip output | `npm run test:full` |
 | Decoded video/audio baseline | `npm run test:playback` |

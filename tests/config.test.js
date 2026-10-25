@@ -409,3 +409,18 @@ test('single-room Plex leader accepts an explicit ID or token default without Di
   assert.throws(()=>normalizeConfig({access:{discord:false},rooms:{single_room:true}}),/plex.token/);
   assert.throws(()=>normalizeConfig({rooms:{single_room_leader_plex_id:'alice'}}),/Plex account ID/);
 });
+
+test('installation doctor validates healthy configurations and reports actionable failures', async () => {
+  const { runDoctor } = require('../scripts/doctor');
+  const valid = await runDoctor({ args: ['--config', path.join(ROOT, 'config.example.yaml'), '--json'], silent: true });
+  assert.equal(valid.ok, true);
+  assert.ok(valid.passed >= 10);
+  assert.equal(valid.failures, 0);
+
+  const missing = await runDoctor({ args: ['--config', path.join(ROOT, 'missing-config.yaml'), '--json'], silent: true });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.failures >= 1);
+  const configFail = missing.checks.find(c => c.name === 'Config file presence');
+  assert.equal(configFail.status, 'fail');
+  assert.match(configFail.remediation, /config\.example\.yaml/);
+});

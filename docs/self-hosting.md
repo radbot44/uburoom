@@ -19,7 +19,9 @@ From the project directory:
 ```sh
 npm ci
 cp config.example.yaml config.yaml
-# Edit config.yaml, then:
+# Edit config.yaml, then verify your installation environment:
+npm run doctor
+# Start the server:
 npm start
 ```
 
