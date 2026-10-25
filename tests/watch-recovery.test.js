@@ -23,7 +23,7 @@ async function alignmentFixture() {
   const ctx={state:{mediaUrl:'/current',format:'hls',mediaVersion:'media',streamVersion:'stream',state:{duration:120,paused:false,volume:50,muted:false}},
     selected:'room',mediaSource:'/current',expected:()=>target,startKey:()=> 'current',probing:false,playbackError:'',hlsNetworkFailure:undefined,
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,playerWaiting:true,autoplayBlocked:false,performance:{now:()=>now},document:{visibilityState:'visible'},
-    playbackClock:{read:()=>({valid:true})},syncCorrectionMode:'speed',precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,driftCorrection:timing.correction(),presentationTiming:timing.presentation(),
+    playbackClock:{read:()=>({valid:true})},syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},driftCorrection:timing.correction(),presentationTiming:timing.presentation(),
     uburoomPlayback:playback,video:{readyState:2,paused:false,seeking:false,playbackRate:1,buffered:{get length(){return ranges.length;},start:i=>ranges[i][0],end:i=>ranges[i][1]},
       pause(){this.paused=true;},async play(){this.paused=false;}},diagnosticSample(){},renderTransport(){},checkVideoFrames(){}};
   Object.defineProperty(ctx.video,'currentTime',{get:()=>position,set:value=>{position=value;seeks++;}});
@@ -134,7 +134,7 @@ test('exhausted HLS delivery failure allows cached playback and surfaces the err
   const context = {state:{mediaUrl:'/current',state:{paused:false,volume:50,muted:false}},probing:false,playbackError:'',
     video:{readyState:4,currentTime:12,paused:false,buffered:{length:1,start:()=>0,end:()=>20},pause:()=>{paused=true;}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,hlsNetworkFailure:'Connection failed',expected:()=>12,uburoomPlayback:playback,playbackClock:{read:()=>({valid:true})},
-    performance:{now:()=>0},document:{visibilityState:'visible'},syncCorrectionMode:'speed',precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
+    performance:{now:()=>0},document:{visibilityState:'visible'},syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},driftCorrection:require('../web/playback-timing').correction(),startKey:()=> 'fixture',
     presentationTiming:require('../web/playback-timing').presentation(),playerWaiting:false,
     fail:value=>{message=value;},renderTransport:()=>{},checkVideoFrames:()=>{}};
   await install(context);

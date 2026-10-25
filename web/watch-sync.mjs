@@ -29,8 +29,6 @@
  * @property {boolean} autoplayBlocked
  * @property {string} [readyVersion]
  * @property {string} syncCorrectionMode
- * @property {boolean} precisionCorrectionEnabled
- * @property {boolean} gentleCorrectionEnabled
  */
 /**
  * Local synchronization lifecycle; source anchoring stays fenced by the current HLS client.
@@ -44,7 +42,7 @@
  * correction?:(event:{magnitudeMs:number,kind:'seek'|'jump'})=>void, correctionEligible?:()=>boolean,
  * visibility:()=>string, online:()=>boolean, repeat:(callback:()=>void,delay:number)=>number, cancelRepeat:(timer:number)=>void,
  * now?:()=>number, driftCorrection?:ReturnType<typeof import('./playback-timing.js').correction>,
- * precisionDriftCorrection?:ReturnType<typeof import('./playback-timing.js').precisionCorrection>, jumpDriftCorrection?:ReturnType<typeof import('./playback-timing.js').jumpCorrection>,
+ * jumpDriftCorrection?:ReturnType<typeof import('./playback-timing.js').jumpCorrection>,
  * startAlarm?:ReturnType<typeof import('./playback-timing.js').alarm>, pauseAlarm?:ReturnType<typeof import('./playback-timing.js').alarm>}} host
  */
 export function createSync(host) {
@@ -52,7 +50,6 @@ export function createSync(host) {
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample}=host;
   const now=host.now || (()=>globalThis.performance.now());
   const driftCorrection=host.driftCorrection || timing.correction();
-  const precisionDriftCorrection=host.precisionDriftCorrection || timing.precisionCorrection();
   const jumpDriftCorrection=host.jumpDriftCorrection || timing.jumpCorrection();
   const startAlarm=host.startAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
   const pauseAlarm=host.pauseAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
@@ -60,7 +57,7 @@ export function createSync(host) {
   let correctionSuppressionUntil=0;
   function resetDriftCorrection(full=false) {
     if(full)jumpDriftCorrection.reset();
-    driftCorrection.reset();precisionDriftCorrection.reset();jumpDriftCorrection.interrupt();
+    driftCorrection.reset();jumpDriftCorrection.interrupt();
     if(video.playbackRate!==1)video.playbackRate=1;
   }
   function startKey(value=host.read().state) {
@@ -89,7 +86,7 @@ export function createSync(host) {
   }
   async function synchronize() {
     const {state,selected,mediaSource,probing,playbackError,playerWaiting,hlsNetworkFailure,autoplayBlocked,readyVersion,
-      syncCorrectionMode,precisionCorrectionEnabled,gentleCorrectionEnabled}=host.read();
+      syncCorrectionMode}=host.read();
     if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
     if(hlsTimelinePending){
       video.pause();resetDriftCorrection();
@@ -158,8 +155,7 @@ export function createSync(host) {
       eligible:correctionInput.eligible&&!state.waitingForReady,
       buffered:targetBuffered,settled:!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3,
       frames:decodedFrames(),position:video.currentTime}) && canAlign && !syncSeekPending && !video.seeking)align('sync-jump');
-    const rate=syncCorrectionMode==='jumps'?1:precisionCorrectionEnabled?precisionDriftCorrection.update(correctionInput):gentleCorrectionEnabled?driftCorrection.update(correctionInput):
-      !correctionInput.eligible||Math.abs(difference)<.15||Math.abs(difference)>.65?1:difference>0?1.04:.96;
+    const rate = syncCorrectionMode === 'jumps' ? 1 : (!correctionInput.eligible || Math.abs(difference) < .15 || Math.abs(difference) > .65 ? 1 : difference > 0 ? 1.04 : .96);
     if(video.playbackRate!==rate)video.playbackRate=rate;
     video.volume = state.state.volume / 100; video.muted = state.state.muted;
     if (paused) {

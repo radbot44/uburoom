@@ -78,9 +78,6 @@ let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, pu
 let lastPresentationSampleAt=0,lastPresentationErrorMs;
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
-let precisionCorrectionEnabled=false;
-// Experimental policies remain off; only isolated comparison runners enable them.
-let gentleCorrectionEnabled=false;
 let qualityPending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
@@ -173,7 +170,7 @@ function refreshSyncQuality() {
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
-      autoplayBlocked,readyVersion,syncCorrectionMode,precisionCorrectionEnabled,gentleCorrectionEnabled}),
+      autoplayBlocked,readyVersion,syncCorrectionMode}),
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
     correction:event=>syncQuality.recordCorrection({at:performance.now(),magnitudeMs:event.magnitudeMs,kind:event.kind}),
     correctionEligible:()=>performance.now()-lastPresentationBreak>=2000&&performance.now()>=syncQualitySettleUntil&&!sync?.timelinePending,
