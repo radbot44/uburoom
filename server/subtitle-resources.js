@@ -47,49 +47,97 @@ function startPgsJob(plex,media){
       });
       job.complete=true;
       const fullData=Buffer.concat(job.chunks,job.size);
+      job.chunks=[];
       const result={format:'pgs',assets:new Map([['data',fullData]]),version,size:job.size};
       clear(media);
       while(cache.size>=8||bytes+result.size>TOTAL)clear(cache.keys().next().value);
       cache.set(media,result);bytes+=result.size;media.subtitleAssets=result.assets;
       for(const listener of job.listeners)try{listener(null,null);}catch{}
+      return result;
     }catch(error){
       job.error=classifyExtractionError(error);
       for(const listener of job.listeners)try{listener(null,job.error);}catch{}
       throw job.error;
     }finally{
       active--;job.listeners.clear();
-      if(media.subtitleJob===job && !job.complete)media.subtitleJob=undefined;
+      if(media.subtitleJob===job)media.subtitleJob=undefined;
     }
   })();
+  job.promise.catch(()=>{});
   media.subtitleJob=job;
   return job;
 }
-function pipe(plex,media,req,res,signal){
+async function pipe(plex,media,req,res,signal){
   const version=media.captionVersion;
   const previous=cache.get(media);
   if(previous?.version===version&&previous.assets?.has('data')){
     const data=previous.assets.get('data');
     res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length,'Cache-Control':'no-store'});
-    return res.end(req?.method==='HEAD'?undefined:data);
+    res.end(req?.method==='HEAD'?undefined:data);
+    return;
   }
   if(req?.method==='HEAD'){
     res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});
-    return res.end();
+    res.end();
+    return;
   }
   let job=media.subtitleJob;
   if(!job||job.version!==version)job=startPgsJob(plex,media);
   if(job.error)throw job.error;
-  res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});
-  for(const chunk of job.chunks)res.write(chunk);
-  if(job.complete)return res.end();
-  const listener=(chunk,error)=>{
-    if(error){res.destroy();return;}
-    if(chunk===null){res.end();return;}
-    res.write(chunk);
-  };
-  job.listeners.add(listener);
-  const cleanup=()=>{job.listeners.delete(listener);};
-  res.on('close',cleanup);signal?.addEventListener('abort',cleanup,{once:true});
+  await new Promise((resolve,reject)=>{
+    let headersSent=false,settled=false;
+    const sendHeaders=()=>{
+      if(headersSent)return;
+      headersSent=true;
+      res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});
+    };
+    const cleanup=()=>{
+      if(settled)return;
+      settled=true;
+      job.listeners.delete(listener);
+      res.off('close',onClose);
+      signal?.removeEventListener('abort',onAbort);
+    };
+    const onClose=()=>{cleanup();resolve();};
+    const onAbort=()=>{
+      cleanup();
+      if(!res.writableEnded&&!res.destroyed)res.destroy();
+      resolve();
+    };
+    const listener=(chunk,error)=>{
+      if(error){
+        cleanup();
+        if(!headersSent&&!res.headersSent)reject(error);
+        else{res.destroy();resolve();}
+        return;
+      }
+      if(chunk===null){
+        cleanup();
+        sendHeaders();
+        res.end();
+        resolve();
+        return;
+      }
+      sendHeaders();
+      res.write(chunk);
+    };
+    if(signal?.aborted||res.destroyed){onAbort();return;}
+    if(job.chunks.length){
+      sendHeaders();
+      for(const chunk of job.chunks)res.write(chunk);
+    }
+    if(job.complete){
+      const cached=cache.get(media);
+      sendHeaders();
+      if(!job.chunks.length&&cached?.version===version&&cached.assets?.has('data'))res.end(cached.assets.get('data'));
+      else res.end();
+      resolve();
+      return;
+    }
+    res.on('close',onClose);
+    signal?.addEventListener('abort',onAbort,{once:true});
+    job.listeners.add(listener);
+  });
 }
 async function extract(plex,media,track,signal){
   const av1=plex.av1;

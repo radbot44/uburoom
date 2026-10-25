@@ -110,7 +110,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         }
         if(match[2]==='data' && media.selection?.subtitle?.delivery==='pgs' && !media.selection?.subtitle?.external){
           if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
-          return SubtitleResources.pipe(media.plexContext||watch.plex,media,req,res,controller.signal);
+          await SubtitleResources.pipe(media.plexContext||watch.plex,media,req,res,controller.signal);
+          return;
         }
         const result=await SubtitleResources.load(media.plexContext||watch.plex,media,controller.signal);
         if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
@@ -122,7 +123,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         }
         const data=result.assets.get(match[2]);if(!data)return json(res,404,{error:'Subtitle resource unavailable.'});
         res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length});return res.end(req.method==='HEAD'?undefined:data);
-      }catch(error){if(!res.destroyed)json(res,503,{error:error instanceof PlaybackError?error.message:'Subtitles could not load. Try Plex burn-in.'});}
+      }catch(error){if(!res.headersSent&&!res.destroyed)json(res,503,{error:error instanceof PlaybackError?error.message:'Subtitles could not load. Try Plex burn-in.'});else if(!res.destroyed)res.destroy();}
       finally{clearInterval(check);res.off('close',cancel);}return;
     }
     if (key.startsWith('captions-')) {
