@@ -15,11 +15,13 @@ test('removed endpoints are unavailable while the watch page still serves', { sk
   async function request(route,method='GET') {
     return new Promise((resolve,reject)=>{
       const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:'https://localhost:5756'}},res=>{
-        let body='';res.on('data',part=>body+=part);res.on('end',()=>resolve({status:res.statusCode,body}));
+        let body='';res.on('data',part=>body+=part);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body}));
       });req.on('error',reject);req.end();
     });
   }
-  assert.equal((await request('/watch')).status,200);
+  const watchRes = await request('/watch');
+  assert.equal(watchRes.status, 200);
+  assert.equal(watchRes.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   for (const path of ['/remote-ui.js','/viewport.js','/api/login/start','/api/login/finish','/api/devices/revoke']) {
     const method=path.startsWith('/api/')?'POST':'GET';
     assert.equal((await request(path,method)).status,404,path);
