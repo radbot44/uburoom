@@ -78,8 +78,8 @@ test('automatic hard corrections are observed, while startup and intentional sha
       pause(){this.paused=true;},async play(){this.paused=false;}};
     const idleCorrection={reset(){},interrupt(){},update(){return false;},committed(){}};
     const sync=createSync({video,read:()=>({state,selected:'room',mediaSource:'fixture',receivedAt:0,probing:false,playbackError:'',playerWaiting:false,
-      autoplayBlocked:false,readyVersion:eligible?'media':undefined,syncCorrectionMode:'speed',precisionCorrectionEnabled:false,gentleCorrectionEnabled:false}),
-      timing:{correction:()=>idleCorrection,precisionCorrection:()=>idleCorrection,jumpCorrection:()=>idleCorrection,alarm:()=>({cancel(){},arm(){}})},
+      autoplayBlocked:false,readyVersion:eligible?'media':undefined,syncCorrectionMode:'speed'}),
+      timing:{correction:()=>idleCorrection,jumpCorrection:()=>idleCorrection,alarm:()=>({cancel(){},arm(){}})},
       playback:{bufferedAhead:()=>10},clock:{read:()=>({valid:true,serverTime:10000,clockUncertaintyMs:5})},presentation:{cadence:()=>.04},
       expected:()=>10,decodedFrames:()=>1,unlockLocal:async()=>{},reportReadiness:async()=>{},render(){},checkFrames(){},sample(){},error(){},playing(){},
       correction:event=>corrections.push(event),correctionEligible:()=>eligible,visibility:()=> 'visible',online:()=>true,repeat:()=>1,cancelRepeat(){},now:()=>10000});

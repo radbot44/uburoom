@@ -63,18 +63,16 @@ test('correction runner retains invalid presentation segments without inventing 
   assert.equal(r.healthySkewMs,undefined);assert.equal(r.viewers[0].frames,3);
   assert.throws(()=>compareTrial({entries:[]},log),/unavailable/,'unrelated fixture errors still fail');
 });
-test('default keeps the existing gain with recovery guards; gentle correction requires explicit fixture enablement',async()=>{
+test('default keeps the existing gain with recovery guards',async()=>{
   let now=0;
   const ctx={state:{mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},expected:()=>10.3,
     playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
-    driftCorrection:correction(),presentationTiming:presentation(),syncCorrectionMode:'speed',precisionCorrectionEnabled:false,pauseAlarm:{cancel(){}},gentleCorrectionEnabled:false,performance:{now:()=>now},document:{visibilityState:'visible'},
+    driftCorrection:correction(),presentationTiming:presentation(),syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},performance:{now:()=>now},document:{visibilityState:'visible'},
     video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
     renderTransport(){},checkVideoFrames(){}};
   await install(ctx);
   await ctx.synchronize();assert.equal(ctx.video.playbackRate,1.04);
-  ctx.gentleCorrectionEnabled=true;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
-  for(let i=0;i<4;i++){now+=500;await ctx.synchronize();}assert.equal(ctx.video.playbackRate,1.005);
   ctx.playerWaiting=true;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
-  ctx.playerWaiting=false;ctx.document.visibilityState='hidden';ctx.gentleCorrectionEnabled=false;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
+  ctx.playerWaiting=false;ctx.document.visibilityState='hidden';await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
 });

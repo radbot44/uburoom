@@ -4,9 +4,11 @@
 /** @typedef {{timeoutMs?: number, signal?: AbortSignal}} WatchRequestOptions */
 (function(root) {
   'use strict';
+  const CLOCK_TIMEOUT_MS=5000, HEARTBEAT_TIMEOUT_MS=30000;
   class WatchTransport {
-    constructor({url,identity,onReady=()=>{},onClose=()=>{},onMessage=()=>{},beginClock=()=>{},onClock=()=>{}}) {
-      Object.assign(this,{url,identity,onReady,onClose,onMessage,beginClock,onClock});
+    constructor(options={}) {
+      const {url,identity,onReady=()=>{},onClose=()=>{},onMessage=()=>{},beginClock=()=>{},onClock=()=>{},clockTimeoutMs=CLOCK_TIMEOUT_MS,heartbeatTimeoutMs=HEARTBEAT_TIMEOUT_MS}=options;
+      Object.assign(this,{url,identity,onReady,onClose,onMessage,beginClock,onClock,clockTimeoutMs,heartbeatTimeoutMs},options);
       this.pending=new Map();this.sequence=0;this.attempt=0;this.stopped=false;
     }
     connect() {
@@ -15,13 +17,14 @@
       this.stopped=false;
       this.connecting=new Promise((resolve,reject)=>{
         this.authResolve=resolve;this.authReject=reject;
-        const socket=this.socket=new WebSocket(this.url);
+        const socket=this.socket=new (this.WebSocket||WebSocket)(this.url);
         this.authTimer=setTimeout(()=>socket.close(),5000);
         socket.onopen=()=>socket.send(JSON.stringify({type:'auth',...this.identity()}));
         socket.onerror=()=>{};
         socket.onmessage=event=>{
           if(socket!==this.socket)return;
           this.lastReceivedAt=Date.now();
+          if(this.ready)this.scheduleHeartbeat();
           try {
             const message=JSON.parse(event.data);
             if(message.type==='auth-ok') {
@@ -29,6 +32,7 @@
               this.authResolve?.();this.authResolve=this.authReject=undefined;
               clearInterval(this.heartbeat);
               this.heartbeat=setInterval(()=>this.clock(),1000);this.clock();
+              this.scheduleHeartbeat();
               Promise.resolve(this.onReady()).catch(()=>{});return;
             }
             if(message.type==='response'||message.type==='clock') {
@@ -44,7 +48,7 @@
         socket.onclose=event=>{
           if(socket!==this.socket)return;
           this.ready=false;this.connecting=undefined;
-          clearTimeout(this.authTimer);clearInterval(this.heartbeat);
+          clearTimeout(this.authTimer);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);
           const error=new TypeError('Room connection lost; reconnecting');
           this.authReject?.(error);this.authResolve=this.authReject=undefined;
           for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.cleanup?.();pending.reject(error);}
@@ -55,21 +59,30 @@
       return this.connecting;
     }
     reauthenticate() {
-      if(this.ready&&this.socket?.readyState===1)this.socket.send(JSON.stringify({type:'auth',...this.identity()}));
+      if(this.ready&&this.socket?.readyState!==1)this.socket.send(JSON.stringify({type:'auth',...this.identity()}));
+    }
+    scheduleHeartbeat() {
+      clearTimeout(this.heartbeatTimer);
+      const timeoutMs=this.heartbeatTimeoutMs||HEARTBEAT_TIMEOUT_MS;
+      const socket=this.socket,deadline=Date.now()+timeoutMs;
+      this.heartbeatTimer=setTimeout(()=>{
+        if(socket!==this.socket)return;
+        // A late timer also means receive callbacks may still be queued. Give
+        // a waking tab a fresh exchange rather than closing a healthy socket.
+        if(Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=timeoutMs)socket.close(4000,'Server heartbeat timed out');
+        else if(!this.stopped&&this.ready){this.scheduleHeartbeat();this.clock();}
+      },timeoutMs);
     }
     clock() {
       if(!this.ready||this.socket?.readyState!==1||this.pending.size>=8)return;
-      // One outstanding sample is enough. Background tabs can defer JavaScript
-      // for much longer than five seconds while native WebSocket pongs continue.
+      // One outstanding sample is enough. Clock exchange expiry is bounded to
+      // the timing sample validity window so dropped exchanges can recover
+      // promptly without waiting for the connection heartbeat deadline.
       if([...this.pending.values()].some(entry=>entry.clock))return;
       const id=++this.sequence,exchange=this.beginClock();
-      const socket=this.socket,deadline=Date.now()+30000;
       const timer=setTimeout(()=>{
         this.pending.delete(id);
-        // A late timer also means receive callbacks may still be queued. Give
-        // a waking tab a fresh exchange rather than closing a healthy socket.
-        if(socket===this.socket&&Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=30000)socket.close(4000,'Server heartbeat timed out');
-      },30000);
+      },this.clockTimeoutMs||CLOCK_TIMEOUT_MS);
       this.pending.set(id,{resolve:()=>{},reject:()=>{},timer,exchange,clock:true});
       this.socket.send(JSON.stringify({type:'clock',id}));
     }
@@ -91,7 +104,7 @@
       });
     }
     interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.socket?.close();}
-    close() {this.stopped=true;clearTimeout(this.retry);clearInterval(this.heartbeat);this.socket?.close();}
+    close() {this.stopped=true;clearTimeout(this.retry);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.socket?.close();}
   }
   root.uburoomWatchTransport=WatchTransport;
   if(typeof module==='object')module.exports=WatchTransport;

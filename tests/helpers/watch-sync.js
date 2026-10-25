@@ -9,7 +9,7 @@ async function install(context) {
     read: () => context.startKey && context.state ? { ...context, state: { ...context.state, epoch: context.startKey() } } : context,
     clock: context.playbackClock || { read: () => ({ valid: true }), reset: noop },
     presentation: context.presentationTiming || timing.presentation(),
-    driftCorrection: context.driftCorrection, precisionDriftCorrection: context.precisionDriftCorrection, jumpDriftCorrection: context.jumpDriftCorrection,
+    driftCorrection: context.driftCorrection, jumpDriftCorrection: context.jumpDriftCorrection,
     startAlarm: context.startAlarm || { arm: noop, cancel: noop }, pauseAlarm: context.pauseAlarm || { arm: noop, cancel: noop },
     expected: () => context.expected?.() || 0, decodedFrames: () => context.decodedFrames?.() || 0,
     unlockLocal: () => context.unlockLocal?.(), reportReadiness: () => context.reportReadiness?.(),

@@ -7,13 +7,13 @@ if (embedded) {
   $('back').addEventListener('click',event => {event.preventDefault(); parent.uburoomCloseCodecTester();});
 }
 const samples = [
-  { file:'sync-test.mp4', url:'/__diagnostics/media/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:386887 },
-  { file:'h264-baseline.mp4', video:'H.264 Constrained Baseline', codec:'avc1.42C01F', videoBitrate:404342 },
-  { file:'h264-main.mp4', video:'H.264 Main', codec:'avc1.4D401F', videoBitrate:369967 },
+  { file:'sync-test.mp4', url:'/__diagnostics/media/sample.mp4', video:'H.264 High', codec:'avc1.640016', videoBitrate:388051 },
+  { file:'h264-baseline.mp4', video:'H.264 Constrained Baseline', codec:'avc1.42C01F', videoBitrate:404350 },
+  { file:'h264-main.mp4', video:'H.264 Main', codec:'avc1.4D401F', videoBitrate:374170 },
   { file:'vp8.webm', video:'VP8', codec:'vp8' },
   { file:'vp9.webm', video:'VP9 Profile 0', codec:'vp09.00.21.08' },
   { file:'av1.webm', video:'AV1 Main', codec:'av01.0.01M.08' },
-  { file:'hevc.mp4', video:'HEVC Main', codec:'hvc1.1.6.L93.90', videoBitrate:322946 }
+  { file:'hevc.mp4', video:'HEVC Main', codec:'hvc1.1.6.L93.90', videoBitrate:322281 }
 ].map(sample => ({ width:640, height:360, framerate:12, pixelFormat:'yuv420p', videoBitrate:null,
   audio:sample.file.endsWith('.webm') ? 'Opus' : 'AAC LC', audioCodec:sample.file.endsWith('.webm') ? 'opus' : 'mp4a.40.2',
   container:sample.file.endsWith('.webm') ? 'video/webm' : 'video/mp4', sampleRate:48000, channels:1,

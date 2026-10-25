@@ -187,7 +187,7 @@ test('client pauses at the common deadline and cancels a superseded pause alarm'
   const ctx={state:{mediaUrl:'fixture',pauseAt:2000,state:{paused:false,duration:60,volume:50,muted:false}},
     playbackClock:{read:()=>({valid:true,serverTime:now})},expected:()=>10+Math.min(now-1000,1000)/1000,
     startKey:()=>key,pauseAlarm:{arm:(_,at,fire)=>{assert.equal(at,2000);callback=fire;},cancel(){}},
-    performance:{now:()=>now},document:{visibilityState:'visible'},syncCorrectionMode:'speed',precisionCorrectionEnabled:false,gentleCorrectionEnabled:false,
+    performance:{now:()=>now},document:{visibilityState:'visible'},syncCorrectionMode:'speed',
     presentationTiming:{cadence:()=>0},video:{readyState:4,currentTime:10.5,seeking:false,paused:false,playbackRate:1,
       buffered:{length:1,start:()=>0,end:()=>40},pause(){pauses++;this.paused=true;}},
     probing:false,playbackError:'',playerWaiting:false,autoplayBlocked:false,hlsTimelinePending:false,hlsPreparationUntil:0,

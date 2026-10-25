@@ -7,6 +7,7 @@ const {Watch}=require('../server/watch');
 const {Hub}=require('../server/core');
 const Tracks=require('../server/media-tracks');
 const Subtitles=require('../server/subtitles');
+const SubtitleResources=require('../server/subtitle-resources');
 const Engine=require('../shared/engine');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -91,6 +92,11 @@ test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal med
   assert.equal(cues[0].settings,'align:start position:20%'); assert.equal(cues[0].text,'<script>literal</script>');
   assert.throws(()=>Subtitles.parse('<html>Not subtitles</html>'),/usable/);
   assert.throws(()=>Subtitles.parse('1\n00:99:01,000 --> 00:00:04,000\nbad'),/invalid/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM encoder timed out.')).message,/timed out/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM output exceeded the supported limit.')).message,/exceeded/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('encoder failed with code 1')).message,/failed/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('Subtitle extraction produced no usable data.')).message,/no usable data/);
+  assert.match(SubtitleResources.classifyExtractionError(new Error('unrecognized failure')).message,/could not be extracted/);
 });
 test('Plex selects and confirms the exact subtitle before starting its private burn session',async()=>{
   const {plex,state}=provider();
@@ -267,6 +273,10 @@ test('browser subtitle resources enforce grants, selection generations and expli
   const app=createApp(config,{plexFetch:fixture.plex.fetch});app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
   app.watch.plex.av1.input=async(source,signal,action)=>action('http://127.0.0.1/synthetic-capability');
   app.watch.plex.av1.run=async(binary)=>Buffer.from(binary.includes('ffprobe')?'{"streams":[]}':'[Script Info]\n[Events]\n');
+  app.watch.plex.av1.stream=async(binary,args,signal,onChunk)=>{
+    onChunk(Buffer.from('PGS-RAW-CHUNK-1'));
+    onChunk(Buffer.from('PGS-RAW-CHUNK-2'));
+  };
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
   const control=require('./helpers/control-client').controlClient(t,config,cert);
@@ -294,6 +304,12 @@ test('browser subtitle resources enforce grants, selection generations and expli
   await command('media.tracks.set',{subtitleId:'off'});assert.equal((await snapshot()).tracks.subtitleMode,'burn');
   await command('media.tracks.set',{subtitleId:'22'});assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
   await command('media.tracks.set',{subtitleMode:'auto'});const next=await snapshot();assert.equal(next.tracks.subtitleDelivery,'ass');
+  await command('media.tracks.set',{subtitleId:'23'});
+  const pgsState=await snapshot();assert.equal(pgsState.tracks.subtitleDelivery,'pgs');
+  const pgsDescriptor=await request(pgsState.subtitleUrl);assert.equal(pgsDescriptor.status,200);assert.equal(pgsDescriptor.body.format,'pgs');
+  assert.equal(pgsDescriptor.body.fonts.length,0);
+  const pgsAsset=await request(pgsDescriptor.body.data);assert.equal(pgsAsset.status,200);
+  assert.equal(pgsAsset.body,'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');
   member=false;assert.equal((await request(next.subtitleUrl)).status,403);
   const page=await request('/watch');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
 });
