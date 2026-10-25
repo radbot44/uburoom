@@ -25,6 +25,7 @@ test('example YAML is usable, private inputs are absent and defaults preserve ex
   assert.deepEqual(config.channels, []);
   assert.deepEqual(config.roomPermissions, Policy.policy());
   assert.deepEqual(config.roomAdministrators, { discord: [], plex: [], discordRoles: [] });
+  assert.deepEqual(config.serverOperator, { discordId: '', plexId: '' });
   assert.equal(config.accountFile, path.join(ROOT, 'data/accounts.sqlite'));
   const environment = { HOME: path.join(os.tmpdir(), 'old-home') };
   assert.equal(normalizeConfig({}, { environment, platform:'linux' }).credentialKeyFile, path.join(environment.HOME, '.local/share/uburoom/credentials.key'));
@@ -35,6 +36,9 @@ test('custom file, mount paths, native lists and quoted snowflakes survive from 
   fs.writeFileSync(file, `
 plex:
   token: 'token:#with punctuation'
+operator:
+  discord_id: '456789012345678901'
+  plex_id: '102'
 discord:
   client_id: '123456789012345678'
   command_channel_ids: ['234567890123456789']
@@ -56,6 +60,7 @@ rooms:
   assert.equal(config.accountFile, path.join(dir, 'persist/accounts.sqlite'));
   assert.equal(config.credentialKeyFile, path.join(dir, 'private/original.key'));
   assert.equal(config.plexToken, 'token:#with punctuation');
+  assert.deepEqual(config.serverOperator, { discordId: '456789012345678901', plexId: '102' });
   assert.deepEqual(config.channels, ['234567890123456789']);
   assert.deepEqual(config.roomAdministrators.plex, ['101']);
   assert.equal(config.roomPermissions.viewer.seek, true);
@@ -101,6 +106,9 @@ test('malformed YAML and unsupported structures never echo secret source text', 
   for (const value of [null, [], {server:null}, {server:[]}, {server:{prot:42}}, {typo:{}},
     {server:{port:'5756'}}, {server:{port:0}}, {server:{port:65536}}, {server:{host:''}},
     {discord:{client_id:123456789012345678}}, {discord:{command_channel_ids:[123456789012345678]}},
+    {operator:{discord_id:123456789012345678}}, {operator:{plex_id:102}},
+    {operator:{discord_id:'alice'}}, {operator:{discord_id:'123'}},
+    {operator:{plex_id:'alice@example.invalid'}}, {operator:{plex_id:' 102'}},
     {rooms:{viewer_permissions:['manageHosts']}}, {rooms:{admin_plex_ids:['name']}},
     {server:{public_url:'http://localhost'}}, {server:{public_url:'https://private:token@example.com'}},
     {server:{public_url:'https://example.com/path'}}, {plex:{url:'file:///secret'}},

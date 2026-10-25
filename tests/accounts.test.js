@@ -6,6 +6,49 @@ const {createApp}=require('../server/app');
 const {accountFixture}=require('../scripts/account-fixture');
 const {Plex}=require('../server/plex');
 const {PlexAuth}=require('../server/plex-auth');
+const {isServerOperator}=require('../server/operator-policy');
+const {normalizeConfig}=require('../server/config');
+const RoomPolicy=require('../server/room-policy');
+
+test('server operator authority requires an explicit verified provider identity independently of room and media authority', async t => {
+  const accounts = new Accounts(undefined, credentialVault());
+  t.after(() => accounts.close());
+  const discordId = '123456789012345678', adminId = '234567890123456789';
+  const config = normalizeConfig({operator:{discord_id:discordId,plex_id:'101'},
+    discord:{owner_id:adminId},rooms:{admin_discord_ids:[adminId],admin_plex_ids:['102']}});
+  const ordinary = accounts.resolve('discord','345678901234567890','Operator');
+  const admin = accounts.resolve('discord',adminId,'Room owner');
+  const plexOwner = accounts.resolve('plex','102','Plex token owner');
+  accounts.credential('102',{token:'fixture-owner'});
+  assert.equal(RoomPolicy.administrator(accounts,config,admin.id),true);
+  assert.equal(RoomPolicy.administrator(accounts,config,plexOwner.id),true);
+  for (const id of [undefined,'',randomUUID(),discordId,ordinary.id,admin.id,plexOwner.id]) {
+    assert.equal(isServerOperator(accounts,config,id),false);
+  }
+  assert.equal(isServerOperator(undefined,config,admin.id),false);
+  // Manual matches reserve identities but cannot confer operator authority.
+  const pending = accounts.assign(accounts.preview(discordId,'101'),admin.id);
+  assert.equal(isServerOperator(accounts,config,pending),false);
+  accounts.resolve('discord',discordId,'Operator',false);
+  assert.equal(isServerOperator(accounts,config,pending),false);
+  accounts.resolve('discord',discordId,'Verified operator');
+  assert.equal(isServerOperator(accounts,config,pending),true);
+  assert.equal(RoomPolicy.administrator(accounts,config,pending),false);
+  assert.equal(accounts.hasCredential('101'),false,'operator identity grants no Plex credentials');
+  assert.equal(isServerOperator(accounts,normalizeConfig({}),pending),false,'no implicit owner or token promotion');
+  assert.equal(isServerOperator(accounts,{},pending),false,'older configuration grants none');
+  const plexOnly = normalizeConfig({operator:{plex_id:'101'}});
+  assert.equal(isServerOperator(accounts,plexOnly,pending),false,'verified Discord cannot prove pending Plex');
+  accounts.resolve('plex','101','Verified Plex operator');
+  assert.equal(isServerOperator(accounts,plexOnly,pending),true);
+  accounts.unlink(pending,'plex','101');
+  assert.equal(isServerOperator(accounts,plexOnly,pending),false,'unlink takes effect immediately');
+  assert.equal(isServerOperator(accounts,config,pending),true,'the other configured identity still authorizes');
+  accounts.link(pending,'plex','103','Ordinary Plex account');
+  accounts.credential('103',{token:'fixture-personal'});
+  accounts.unlink(pending,'discord',discordId);
+  assert.equal(isServerOperator(accounts,config,pending),false);
+});
 
 test('traditional PIN sign-in works when PMS rejects JWT resource tokens, with safe stage-specific access errors',async t=>{
   const provider=accountFixture(),accounts=new Accounts(),config={plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'};
@@ -80,9 +123,9 @@ test('account IDs persist, owner reservations resolve exact subjects, conflictin
   }finally{await accounts.close();const resolved=path.resolve(directory);assert.ok(resolved.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(resolved,{recursive:true,force:true});}
 });
 
-async function fixture(t, deliveryFetch){
+async function fixture(t, deliveryFetch, overrides={}){
   const provider=accountFixture(),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
-  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:provider.subjects.host,clientId:'100000000000000010',clientSecret:'fixture-secret',guildId:'guild',channels:['commands'],demo:true,unifiedAccounts:true,demoSubjects:provider.subjects,plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner'};
+  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost:6768',ownerId:provider.subjects.host,clientId:'100000000000000010',clientSecret:'fixture-secret',guildId:'guild',channels:['commands'],demo:true,unifiedAccounts:true,demoSubjects:provider.subjects,plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',...overrides};
   const app=createApp(config,{plexFetch:deliveryFetch ? (input,options)=>deliveryFetch(input,options,provider) : provider.fetch,plexDemo:provider,oauthFetch:provider.discordFetch});const members=new Set(Object.values(provider.subjects));
   app.hub.access={identity:async id=>Object.values(provider.subjects).includes(id)?{id,name:'Known Discord user'}:undefined,refresh:async id=>members.has(id),isMember:id=>members.has(id),voiceChannel:id=>members.has(id)?'call':undefined,validVoiceChannel:id=>id==='call',options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());config.publicUrl=`https://localhost:${app.server.address().port}`;
@@ -103,6 +146,101 @@ async function fixture(t, deliveryFetch){
   return {app,provider,config,members,browser};
 }
 const tls={skip:!fs.existsSync(path.join(__dirname,'../certs/server-cert.pem'))};
+
+test('operator settings HTTP uses verified session identities and exposes only nonprivate running settings',tls,async t=>{
+  const settings = normalizeConfig({rooms:{max_members:12},directory:{expose_plex_members:true},
+    transcoding:{encoder:'software',qualities:[[480,1]]}});
+  const f = await fixture(t,undefined,{
+    accessPolicy:settings.accessPolicy,roomLimits:settings.roomLimits,roomPermissions:settings.roomPermissions,
+    directory:settings.directory,transcoding:settings.transcoding
+  });
+  f.config.serverOperator={discordId:f.provider.subjects.guest2,plexId:'101'};
+  const endpoint='/api/operator/settings',anonymous=f.browser(),ordinary=f.browser(),admin=f.browser(),operator=f.browser(),pending=f.browser();
+  let response=await anonymous.request(endpoint+'?userId=101');
+  assert.equal(response.status,401);assert.equal(response.headers['cache-control'],'no-store');
+  await ordinary.discord('guest');await admin.discord();await pending.plex('bob');
+  assert.equal((await admin.post('/api/watch/admin-mode',{enabled:true})).status,200);
+  for(const browser of [ordinary,admin,pending]) {
+    response=await browser.request(endpoint+'?userId=101',undefined,{'X-User-Id':'101'});
+    assert.equal(response.status,403);assert.equal(response.headers['cache-control'],'no-store');
+  }
+  f.app.registry.assign(f.app.registry.preview(f.provider.subjects.guest2,'102'),'fixture-admin');
+  assert.equal((await pending.request(endpoint)).status,401,'assignment invalidates the previous session revision');
+  await pending.plex('bob');
+  assert.equal((await pending.request(endpoint)).status,403,'a session with an unverified assigned operator identity is denied');
+  await operator.plex('alice');
+  // Seed private fields at every object depth to catch accidental object spreads.
+  const secret='settings-private-marker';
+  f.config.unlistedPrivateValue=secret;f.config.accountFile=secret;f.config.credentialKeyFile=secret;
+  f.config.tlsCert=secret;f.config.tlsKey=secret;f.config.ffmpegPath=secret;f.config.ffprobePath=secret;
+  f.config.plexFallback={enabled:true,token:secret};f.config.plexDelivery={mode:'proxy',clientUrl:secret,lanClientUrl:secret};
+  f.config.accessPolicy.password=secret;
+  for(const object of [f.config.accessPolicy,f.config.roomLimits,f.config.roomPermissions,
+    f.config.roomPermissions.host,f.config.roomPermissions.viewer,f.config.directory,f.config.transcoding,
+    f.config.transcoding.qualities[0]]) object.futurePrivate=secret;
+  response=await operator.request(endpoint);
+  assert.equal(response.status,200);assert.equal(response.headers['cache-control'],'no-store');
+  assert.equal(response.body.source,'running');
+  assert.deepEqual(response.body.settings.access,{discord:true,plex:true,requirePlex:false,requirePlexInActivity:true,publicWeb:true});
+  assert.equal(response.body.settings.rooms.limits.maxMembers,12);
+  assert.equal(response.body.settings.rooms.hostPermissions.seek,true);
+  assert.deepEqual(response.body.settings.directory,{discord:true,plex:true});
+  assert.deepEqual(response.body.settings.transcoding.qualities,[{height:480,mbps:1}]);
+  assert.equal(response.body.settings.transcoding.encoder,'software');
+  const serialized=JSON.stringify(response.body);
+  for(const privateValue of [secret,f.config.plexToken,f.config.plexUrl,f.config.publicUrl,
+    f.config.clientSecret,f.config.clientId,f.config.ownerId,f.config.guildId,
+    f.provider.subjects.guest2,'101','102','commands']) {
+    assert.equal(serialized.includes(JSON.stringify(privateValue)),false,'private value excluded: '+privateValue);
+  }
+  assert.equal((await operator.request('/api/watch/me')).status,401,'operator status does not bypass the entry password');
+  assert.equal((await operator.request(endpoint,{})).status,404,'no settings write operation');
+  f.config.accessPolicy.password='';f.config.accessPolicy.discord=false;f.config.accessPolicy.plex=false;
+  await anonymous.request('/api/watch/entry',{});
+  assert.equal((await anonymous.request(endpoint)).status,403,'anonymous guest sessions gain no authority');
+});
+
+test('operator settings rechecks logout, account validity and operator identity after persistence waits', {...tls,timeout:15000}, async t=>{
+  const f=await fixture(t,undefined,{accessPolicy:{discord:true,plex:true,requirePlex:false,requirePlexInActivity:true,password:'',publicWeb:true}});
+  f.config.serverOperator={discordId:f.provider.subjects.guest,plexId:''};
+  const browser=f.browser(),endpoint='/api/operator/settings';await browser.discord('guest');
+  const account=f.app.registry.identity('discord',f.provider.subjects.guest);
+  assert.equal((await browser.request(endpoint)).status,200,'verified Discord operator is independent of room Admin mode');
+  f.config.accessPolicy.requirePlex=true;
+  assert.equal((await browser.request(endpoint)).status,200);
+  assert.equal((await browser.request('/api/watch/me')).status,401,'operator authority cannot satisfy required personal Plex admission');
+  f.config.accessPolicy.requirePlex=false;
+  const duringFlush=async change=>{
+    const flush=f.app.registry.flush.bind(f.app.registry);
+    let entered,release;
+    const waiting=new Promise(resolve=>entered=resolve),held=new Promise(resolve=>release=resolve);
+    f.app.registry.flush=async()=>{f.app.registry.flush=flush;entered();await held;return flush();};
+    const request=browser.request(endpoint);
+    try {await waiting;await change();} finally {release();f.app.registry.flush=flush;}
+    return request;
+  };
+  const unverified=await duringFlush(async()=>{
+    f.app.registry.db.prepare('UPDATE identities SET verified=0 WHERE provider=? AND subject=?').run('discord',account.subject);
+  });
+  assert.equal(unverified.status,403);assert.equal(unverified.body.settings,undefined);
+  f.app.registry.resolve('discord',account.subject,'Verified again');
+  const loggedOut=await duringFlush(async()=>{assert.equal((await browser.post('/api/logout',{})).status,200);});
+  assert.equal(loggedOut.status,401);assert.equal(loggedOut.body.settings,undefined);
+  await browser.discord('guest');await browser.plex('bob',true);
+  f.provider.revoked.add('102');f.app.plexAuth.clear();
+  assert.equal((await browser.request(endpoint)).status,200);
+  const deniedMedia=await browser.request('/api/watch/library');
+  assert.equal(deniedMedia.status,400,'revoked media credentials retain the existing library failure behavior for operators');
+  assert.deepEqual(Object.keys(deniedMedia.body),['error']);
+  f.provider.revoked.clear();f.app.plexAuth.clear();
+  const staleCookie=browser.jar.get('uburoom');
+  const removed=await duringFlush(async()=>{
+    assert.equal((await browser.post('/api/account/discord/remove',{subject:account.subject})).status,200);
+  });
+  assert.equal(removed.status,401);assert.equal(removed.body.settings,undefined);
+  assert.equal((await browser.request(endpoint)).status,403,'remaining Plex identity is not the configured operator');
+  assert.equal((await browser.request(endpoint,undefined,{Cookie:'uburoom='+staleCookie})).status,401);
+});
 
 test('direct original delivery isolates delegated credentials and fences private transport recovery',tls,async t=>{
   const delegated=[];

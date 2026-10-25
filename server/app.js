@@ -14,6 +14,8 @@ const { watchSockets } = require('./watch-socket');
 const { Accounts, credentialVault } = require('./accounts');
 const { PlexAuth } = require('./plex-auth');
 const { accountHttp } = require('./account-http');
+const { isServerOperator } = require('./operator-policy');
+const { runningSettings } = require('./operator-settings');
 const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
@@ -235,9 +237,13 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   const accountRoutes=accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore:accounts,discordStart,throttle});
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
+    let operatorSettingsFlushed = false;
     if(registry&&req.url?.split('?')[0]!=='/health'){
       const end=res.end.bind(res);
-      res.end=(...args)=>{registry.flush().then(()=>end(...args),()=>res.destroy());return res;};
+      res.end=(...args)=>{
+        if (operatorSettingsFlushed) return end(...args);
+        registry.flush().then(()=>end(...args),()=>res.destroy());return res;
+      };
     }
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -261,6 +267,20 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
       if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
+      if (req.method === 'GET' && route === '/api/operator/settings') {
+        const login = await user(req);
+        const current = () => !!login && logins.get(hash(cookies(req).uburoom || '')) === login &&
+          validIdentity(login) && (login.expires === null || login.expires > Date.now());
+        if (!current()) return json(res, 401, { error: 'Sign in to read operator settings' });
+        if (!isServerOperator(registry, config, login.userId)) return json(res, 403, { error: 'Server operator required' });
+        // Flush before the final checks, rather than deferring res.end: logout,
+        // account changes or operator removal during persistence must win.
+        await registry.flush();
+        operatorSettingsFlushed = true;
+        if (!current()) return json(res, 401, { error: 'Sign in to read operator settings' });
+        if (!isServerOperator(registry, config, login.userId)) return json(res, 403, { error: 'Server operator required' });
+        return json(res, 200, runningSettings(config));
+      }
       const watchDocument = route === '/watch' || route === '/activity';
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;

@@ -11,6 +11,7 @@ Current: YAML configuration, admission/password policies, configured sponsorship
 | Admission | Current provider/Plex/password rules and verified Activity context |
 | Media | Current personal Plex entitlement or explicitly configured sponsorship |
 | Room roles | Viewer, host, creator and explicit Admin override; none grants Plex entitlement |
+| Server operator | Verified Discord or Plex subject explicitly selected in YAML; independent of room roles and media entitlement |
 | Reporting | Actual verified Plex subject, independently of the source/encoder credential |
 
 **Approved sharing policy:** Fallback is enabled by default for eligible viewers without an attached Plex account or with confirmed server nonmembership when personal access is not required. Removing a Plex link can therefore permit configured sponsorship. This is an explicit operator choice, not personal entitlement. Revoked/expired credentials, provider errors and item denials fail closed. Dedicated non-owner direct delegation is a separate opt-in. See [operator settings](self-hosting.md#shared-plex-fallback).
@@ -18,6 +19,12 @@ Current: YAML configuration, admission/password policies, configured sponsorship
 Recheck authority around awaited work across sockets, catalogs, artwork, captions, queues and media. Planned canonical deny/revocation rules must take precedence over alternate providers and passes. Finer-grained source/library/item/audience grants remain future work; do not describe them as implemented.
 
 ## Configuration and administration
+
+Set `operator.discord_id` and/or `operator.plex_id` to exact quoted provider account IDs in private YAML, then restart. Either matching **verified** identity on the authenticated account grants server-operator authority; blank or omitted settings grant none. Names, manual pending assignments, `discord.owner_id`, room administrators/owners and the owner of `plex.token` grant no implicit operator authority. Operator status does not grant room permissions, admission or Plex media entitlement.
+
+The reusable server check is `isServerOperator(registry, config, userId)` in `server/operator-policy.js`. Call it with the canonical UUID from a current authenticated server session and recheck after awaited work before an administration mutation. It reads current verified registry identities, so unlinking the configured identity removes that authority unless the other configured identity still matches. Existing owner Admin account matching retains its current authorization.
+
+`GET /api/operator/settings` uses the authenticated browser session and returns `401` without a valid session or `403` for a nonoperator. Its noncacheable response has `source: 'running'` and an allowlisted `settings` object covering access policy, room limits/default permissions, directory visibility and transcoding policy/quality choices. It reads the running configuration, not pending YAML edits. Credentials, passwords, provider/account IDs, endpoints and paths are excluded. Session validity and operator authority are rechecked after persistence waits. This is read-only; no settings writes, panel, restart controls, recent-auth or recovery flow are implemented, and playback admission/media entitlement remain independent.
 
 Before building the panel:
 

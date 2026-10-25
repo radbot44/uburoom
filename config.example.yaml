@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2e
+# Config schema v2f
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -54,6 +54,13 @@ storage:
 ##################################
 
 # Access and authorization
+operator:
+  # Exact provider account IDs, never names, emails or tokens. Blank grants none.
+  # Either configured identity must be verified on the signed-in account.
+  # Separate from Discord owner, room Admin mode/ownership and Plex media access.
+  discord_id: ''
+  plex_id: ''
+
 access:
   # Choose sign-in methods. Both false allows anonymous guests (not guest passes).
   # Discord sign-in requires guild membership. Plex proves the account identity.

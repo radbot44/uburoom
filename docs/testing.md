@@ -15,6 +15,20 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Operator-only running settings API — 2026-10-24
+
+A/B on local changes based on `36d33a1`, including the preceding operator-identity increment; not deployed. `GET /api/operator/settings` uses browser-session identity and an explicit nonprivate running-settings allowlist, with no-store responses and final session/operator checks after persistence waits.
+
+- `node --test --test-reporter=tap tests/accounts.test.js tests/config.test.js tests/installation-policy.test.js`: **51 passed, 0 failed, 0 skipped**. HTTP cases cover verified Plex/Discord operators, unauthenticated/anonymous/ordinary/Admin/pending-assignment denial, invalidated sessions, logout/unverification/unlink during a held persistence wait, private-value exclusion and independent playback admission/media entitlement. An intermediate targeted run had 1 pass / 1 failure because the new revoked-media assertion expected 403; the existing library endpoint returns 400 with an error. Corrected that assertion without changing media behavior. `git diff --check` passed.
+- Limits: running configuration only, not pending file edits; no settings writes, UI, restart controls or recovery flow. Full suite, real provider integration (C) and human acceptance (D) not run.
+
+### Explicit server-operator authorization — 2026-10-24
+
+A/B on local changes based on `36d33a1`; not deployed. YAML `operator.discord_id` / `operator.plex_id` select verified provider identities for the reusable `isServerOperator` check. Ordinary users, room administrators, token owners and unverified manual assignments gain no implicit authority. Existing room/account operations retain their authorization.
+
+- `node --test --test-reporter=tap tests/config.test.js tests/accounts.test.js`: **28 passed, 0 failed, 0 skipped**. Covers settings validation, either verified provider, pending identities, independent room/media authority and unlink revocation. Initial run: 27 passed / 1 failed because the new fixture attempted to unlink its last usable sign-in; corrected the fixture, then reran successfully. `git diff --check` passed.
+- Limits: helper requires a current authenticated canonical account UUID; no new administration operation, settings UI/API, recent-auth or recovery flow. Full suite, real provider integration (C) and human acceptance (D) not run.
+
 ### Player settings dialog organization — 2026-10-23
 
 A/B on local changes based on `fc21ab9`; not deployed. The dialog uses two columns for Playback/Audio and Subtitles, keeping subtitle selection, rendering and delay together. Media information comes last with source and technical details side by side; narrow layouts stack the groups.
