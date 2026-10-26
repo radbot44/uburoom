@@ -11,7 +11,7 @@ On-demand playback must preload useful video while paused, retain a bounded rewi
 ## Watch rooms
 
 
-Retain durable per-viewer playback history for future Plex timeline, resume and watched-state updates across clients/servers; these Plex writes are not enabled yet and must honor each viewer’s permission and consent. Check access before and after awaited catalog/media operations. A linked Plex user's denied/revoked access must never fall back to the configured owner token. Account UUIDs remain stable across verified links/merges. Device/browser/provider credentials stay private; encrypted records require the original key.
+Retain durable per-viewer playback history and decoupled Plex session reporting across clients/servers; connected Plex accounts default to activity-only reporting while personal resume and watched-state writes require explicit per-viewer opt-in, and sponsored viewers remain local-only. Check access before and after awaited catalog/media operations. A linked Plex user's denied/revoked access must never fall back to the configured owner token. Account UUIDs remain stable across verified links/merges. Device/browser/provider credentials stay private; encrypted records require the original key.
 
 ## Watch-room commands
 

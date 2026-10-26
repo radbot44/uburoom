@@ -2,11 +2,11 @@
 
 Updated: 2026-10-25.
 
-A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work is owned by M1-P11.
+A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
 ## Priorities
 
-1. **Configuration and administration (P14):** Finish the settings inventory, effective-access matrix and YAML editing/recovery contract before building the administration panel.
+1. **Configuration and administration (P14):** Verify the effective-access matrix, harden sensitive account changes and session revocation, and finish operator bootstrap/recovery.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
 3. **Plex reporting (P4):** Complete real PMS/Tautulli integration verification for decoupled session reporting, shared-producer safety and personal watch-state synchronization.
 4. **Release closure:** Complete the supported-environment checks, operator recovery, branding and licensing gates below. Expand the supported matrix only with evidence.
@@ -18,9 +18,9 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 ### Release gates
 
 - Declare the supported browser, Activity, codec and delivery combinations; verify actual picture, audio, captions, synchronization and recovery for those claims.
-- Verify installation on an independent host/origin with fresh provider applications and profiles; verify backup/restore and rollback while preserving account UUIDs and the exact encryption key.
+- Verify installation on an independent host/origin (including Docker/Compose and `npm run doctor` diagnostics) with fresh provider applications and profiles; verify backup/restore and rollback while preserving account UUIDs and the exact encryption key.
 - Verify admission, revoked credentials, account changes and media authorization across browser and Activity. Configured sponsorship is implemented and enabled by default; it is not personal Plex entitlement. Direct fallback delegation requires an explicit opt-in and a dedicated non-owner account. Granular grants and sponsored reporting remain unfinished.
-- Finish branding and asset provenance, dependency/font notices and GPL-3.0-only distribution review. Demo builder branding reference updated to current wordmark and `assets/branding/old/` removed from active source before packaging.
+- Finish branding and asset provenance, dependency/font notices and GPL-3.0-only distribution review.
 - Audit source, publication history and ZIP contents for private material and required license/source obligations. Obtain explicit publication approval.
 
 Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md). UI decisions remain governed by the [design guide](docs/design-guide.md). Neither a roadmap entry nor a passing test authorizes production changes, provider experiments or publication.
@@ -44,10 +44,10 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P7 | UI/UX | Layout split, Room/Queue/Media shared controls, sliding player menus, grouped two-column settings dialog, personal preferences and sync-module extraction | Current user-journey/accessibility review, physical mobile/Activity acceptance and bounded further modularization |
 | M1-P9 | Browser subtitles | ASS/SSA, progressive chunked PGS streaming, VobSub rendering, truthful extraction error classification, authorized resources and burn-in fallback | Complex fonts/authored content, lifecycle/resource and real Activity/mobile checks; licensing and corresponding-source obligations |
 | M1-P10 | Room terminology | Canonical room names/protocol, removal of legacy aliases, and web/Activity terminology audit; “session” retained for technical contexts and “watch parties” preserved for public context | Final packaging review |
-| M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries and bounded tools | Real proxy/resource checks and operator backup/restore/rollback |
+| M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, generation, shuffle, cancellable autoplay and explicit endpoint completion | Real Plex/Activity continuity, accelerated-client endpoint retest, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
-| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and browser settings panel, configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Broader administration contract, sensitive-account security, operator recovery and real policy/UX acceptance |
+| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Sensitive-account security, session revocation, operator recovery and real policy/UX acceptance |
 
 ### M1-P4 — Plex viewing experience
 
@@ -71,7 +71,9 @@ Details: [rooms and queues](docs/rooms-and-queues.md).
 
 ### M1-P14 — Configuration, administration and account authorization
 
-**Next:** Inventory settings, defaults, secrets, authority, persistence, restart requirements and effects on active viewers. Define effective access and administrator recovery before implementing mutable settings; YAML remains authoritative until a different contract is approved.
+**Status:** Private `config.yaml` remains the sole configuration authority. The browser Server Settings panel and `/api/operator/settings/saved` cover the complete M1 browser-editable scope (the 19-key allowlist across Rooms, Directory and Transcoding, requiring a manual restart to take effect), while access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
+
+**Next:** Validate the effective-access matrix and harden sensitive account changes, session revocation and operator bootstrap/recovery.
 
 Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed. Keep sign-in, admission, media entitlement, room roles and server administration separate. Preserve Discord sign-in and authorized Activity-to-browser handoff.
 
@@ -91,8 +93,6 @@ Select and scope these individually after the relevant foundations are ready. Th
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Personal client-side audio compression compatible with volume/mute |
-| M2-P7 | Installation validator | CLI checks for configuration, keys, TLS, providers and media tools, with actionable failures |
-| M2-P8 | Docker / Compose | Dockerfile, Compose, and documentation added; persistent state/external key mounts and optional hardware acceleration |
 | M2-P9 | Discord presence and room invites | Discoverable room embeds with lifecycle updates; scope separately from removed bot commands |
 
 Further directions: native-player integration, managed/project-hosted rooms, and Live TV/DVR. Each needs a separate feasibility and authorization scope.
@@ -102,6 +102,6 @@ Further directions: native-player integration, managed/project-hosted rooms, and
 - **This roadmap:** priorities, phase status, remaining outcomes and dependencies. Update the affected row after material work; delete superseded status.
 - **[Testing](docs/testing.md):** evidence, failures and open verification gates. Keep dated results and test counts out of this roadmap.
 - **[Playback](docs/playback-reliability.md), [delivery](docs/plex-hls-delivery.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
-- **[Design](docs/design-guide.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
+- **[Design](docs/design-guide.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [Docker](docs/docker.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
 
 Do not append work diaries, UI dimensions, commit narratives, repeated disclaimers or completed test reports here. Preserve substantive evidence in its owning document or history. Private suggestion audits stay in the ignored personal queue.

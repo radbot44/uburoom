@@ -1,6 +1,6 @@
 # Accounts, administration and Plex reporting
 
-Current: YAML configuration, admission/password policies, configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. The administration panel, broader identity hardening, and guest passes remain unfinished.
+Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. Sensitive-account hardening, operator recovery, live verification and guest passes remain unfinished.
 
 ## Authorization contract
 
@@ -34,14 +34,12 @@ The browser panel groups editable fields into Rooms, Directory and Transcoding. 
 
 Saves are serialized within the process, retain a verified backup in a protected `.uburoom-config-*/original.yaml` directory beside the selected file, and verify staged bytes before same-filesystem rename. Windows preserves owner/group/access rules with inheritance frozen; Unix preserves ownership and tightens access to the owner's prior read/write bits. Linked configuration files are refused. Errors omit source contents/paths. Content, metadata and Windows access rules are rechecked before replacement, but an external editor can still race the final check/rename; this is not a cross-process lock or a power-loss durability guarantee. Unsupported replacement fails without a delete/copy fallback. Protected backups may remain after a failed save or interrupted process; treat them as secret-bearing files. Restoring YAML cannot restore already-deleted application data.
 
-Before building the panel:
+M1 administration boundary and remaining verification:
 
-- Inventory each setting's type/default, validation, secret status, authority, persistence, restart requirement and effect on active viewers.
-- Decide how editing preserves YAML authority or explicitly approve a secrets/mutable-settings split. Never expose the secret-bearing file or create competing stores.
-- Define operator bootstrap/recovery for Plex, Discord or both; prevent loss of the last administrative sign-in. Room Admin mode is not global configuration authority.
-- Require validated, authorized, durable changes with audit/revocation behavior and clear pending/restart/error states. Saving cannot implicitly restart services or alter provider registration.
-
-Validate the effective-policy matrix: each provider alone/linked/disabled, required Plex access, absent versus revoked credentials, membership loss, sponsorship, account merge/deny and existing sessions after policy changes.
+- Private `config.yaml` remains the sole configuration authority. The 19-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete M1 browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
+- Saving never exposes secret-bearing YAML content, creates competing stores, implicitly restarts services or alters provider registration.
+- Define and verify operator bootstrap/recovery for Plex, Discord or both, preventing loss of the last administrative sign-in. Room Admin mode is not global configuration authority.
+- Validate the effective-policy matrix: each provider alone/linked/disabled, required Plex access, absent versus revoked credentials, membership loss, sponsorship, account merge/deny and existing sessions after policy changes.
 
 ## Sensitive account changes
 
@@ -57,7 +55,7 @@ Further Plex-only/Activity association work must bind fresh Plex proof to the ex
 
 ## Plex activity and viewer attribution
 
-Product reporting architecture is implemented with decoupled session identity on branch `feat/m1-p4-plex-reporting`. Keep three outcomes separate: local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes. The [reporting investigation](plex-reporting-investigation.md) owns empirical request shapes and baseline compatibility notes.
+Product reporting architecture is implemented on `main` (`server/plex-reporting.js`) with decoupled session identity. Keep three outcomes separate: local viewer history, Plex activity visibility, and personal Plex resume/watched/history writes. The [reporting investigation](plex-reporting-investigation.md) owns empirical request shapes and baseline compatibility notes.
 
 Reporter guarantees:
 
@@ -75,7 +73,7 @@ Operator delegation must bound issuers and media scope independently from room p
 
 ## Next increments
 
-1. Complete the configuration/admin contract and policy matrix.
+1. Verify the effective-access policy matrix across providers, credentials and existing sessions.
 2. Harden sensitive account changes, operator recovery and live revocation.
 3. Complete live verification for decoupled Plex reporting.
 4. Add granular sponsorship and guest passes only after their authority/attribution decisions.

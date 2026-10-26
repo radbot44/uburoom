@@ -1,6 +1,6 @@
 # Plex reporting investigation
 
-**Product reporting is not implemented.** This is scoped research from 2026-10-19/20, not a supported Plex reporting API contract. Current sponsorship policy is in [accounts/access](accounts-and-access.md); the original implicit-fallback recommendation is superseded.
+**Historical investigation record (2026-10-19/20).** Decoupled session reporting, shared-producer stop safety, activity-only default with personal watch-state opt-in, and sponsored viewer isolation are now implemented on `main` (`server/plex-reporting.js`); see [accounts and reporting](accounts-and-access.md#plex-activity-and-viewer-attribution) for the current contract and [testing](testing.md) for remaining live PMS/Tautulli verification gates. The original implicit-fallback recommendation is superseded.
 
 ## Conclusions
 
@@ -8,7 +8,7 @@ Keep **Plex activity**, **personal resume/watched/history**, and **uburoom viewe
 
 - A verified Plex account can report observed playback under its own identity.
 - Omitting timeline duration preserved activity without further personal-state writes in the tested Original/HLS/AV1 cases. This is empirical, version/path-specific behavior.
-- Matching playback-session identity fixed isolated HLS classification, but a linked stopped report also terminated the encoder. Pooled reporting remains unresolved.
+- Matching playback-session identity fixed isolated HLS classification, but a linked stopped report also terminated the encoder during this investigation; production reporting on `main` decouples `viewerSessionId` from `transcodeId` so viewer teardowns never stop shared HLS jobs.
 - PMS ignored external AV1 output declarations; truthful AV1 delivery telemetry belongs in uburoom unless a supported PMS association is established.
 - Sponsored/guest viewers have local identities, not invented Plex accounts. Source activity and side effects require separate validation; never write owner personal history for them.
 

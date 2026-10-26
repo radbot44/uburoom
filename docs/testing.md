@@ -164,7 +164,7 @@ Detailed measurements and repaired historical failures are retained in the [dige
 | P1 endurance | B/C/D | Real Firefox/Activity/multi-viewer endurance, hardware/resources, unload cause and physical fidelity |
 | P2 delivery | A/B/C | Source/output negotiation and real cross-account/codec/capacity matrix |
 | P3 fidelity | B/C/D | Real languages/downmix/captions and switching |
-| P4 reporting | A/B/C | Product absent; shared-producer lifecycle, external AV1 telemetry, personal-state/concurrency/sponsorship |
+| P4 reporting | C/D (A/B on main) | Live PMS/Tautulli validation, multi-viewer shared-producer stop/seek transitions, natural completion, external AV1 telemetry and personal-state/sponsorship isolation |
 | P5/P6 sync/pacing | B/C/D | Physical/WAN ≤50ms p95 / ≤100ms p99, supported-policy disposition and joint smoothness acceptance |
 | P7 UI | A/B/C/D | Broader journeys, physical mobile/Activity/accessibility and owner acceptance |
 | P9 subtitles | B/C/D; A licensing | Real authored fonts/content, lifecycle/resources and corresponding-source review |
@@ -172,7 +172,7 @@ Detailed measurements and repaired historical failures are retained in the [dige
 | P11 architecture | A/B/C | Real proxy/resources and operator backup/restore/rollback |
 | P12 telemetry | A/B/C/D | Repeat actual-device score/confidence and readability; richer features remain future scope |
 | P13 rooms/queues | B/C/D | Real multi-viewer continuation, recovery, writer/load and UX |
-| P14 access/admin | A/B/C/D | Admin/security implementation, real admission/revocation/handoff and operator recovery |
+| P14 access/admin | A/B/C/D | Sensitive-account security, session revocation, real admission/revocation/handoff and operator recovery |
 
 P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one tab ~10 seconds and return. Technical timing remains separate. Design authorization is not visual acceptance; neither permits deployment.
 
