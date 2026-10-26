@@ -1,5 +1,5 @@
 'use strict';
-const { randomBytes, randomInt } = require('node:crypto');
+const { randomBytes, randomInt, timingSafeEqual } = require('node:crypto');
 const { hash } = require('./core');
 const SECRET = /^[a-f0-9]{64}$/;
 const TTL = 60000;
@@ -33,7 +33,9 @@ class Handoff {
     return SECRET.test(proof || '') && SECRET.test(browserNonce || '') && attempt?.proofHash === hash(proof) && attempt.browserHash === hash(browserNonce) ? attempt : undefined;
   }
   approve(attempt, verification) {
-    if (this.get(attempt.id) !== attempt || attempt.state !== 'claimed' || verification !== attempt.verification) return false;
+    if (this.get(attempt.id) !== attempt || attempt.state !== 'claimed' || typeof verification !== 'string') return false;
+    const expected = Buffer.from(attempt.verification), actual = Buffer.from(verification);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
     attempt.state = 'approved'; return true;
   }
   consume(attempt) {

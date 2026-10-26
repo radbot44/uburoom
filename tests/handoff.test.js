@@ -17,7 +17,7 @@ test('handoff binds a single claim and approval to the exact browser proof; expi
   assert.ok(attempt); assert.equal(handoff.claim(issued.code,secret(),secret()),undefined,'URL code claims only once');
   assert.equal(handoff.browser(issued.id,secret(),nonce),undefined); assert.equal(handoff.browser(issued.id,proof,secret()),undefined);
   assert.equal(handoff.consume(attempt),false,'browser cannot redeem before source approval');
-  assert.equal(handoff.approve(attempt,'000000'),false); assert.equal(handoff.approve(attempt,attempt.verification),true);
+  assert.equal(handoff.approve(attempt,'000000'),false); assert.equal(handoff.approve(attempt,Number(attempt.verification)),false); assert.equal(handoff.approve(attempt,attempt.verification),true);
   assert.equal(handoff.consume(attempt),true); assert.equal(handoff.consume(attempt),false);
   assert.equal(handoff.browser(issued.id,proof,nonce),undefined,'consumed browser proof cannot replay');
   const second = handoff.issue(source); assert.equal(handoff.get(issued.id),undefined,'new link invalidates the source previous attempt');
