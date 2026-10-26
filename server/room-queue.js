@@ -569,10 +569,8 @@ class RoomQueue {
     const at = this.now();
     this.registry.transaction(() => {
       this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(entryId);
-      const rows = this.db.prepare("SELECT id FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC").all(roomId);
-      const updateRank = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
-      for (let i = 0; i < rows.length; i++) {
-        updateRank.run(i, at, rows[i].id);
+      if (entry.state === 'pending') {
+        this.db.prepare("UPDATE watch_queue_entries SET rank = rank - 1, updatedAt = ? WHERE roomId = ? AND state = 'pending' AND rank > ?").run(at, roomId, entry.rank);
       }
       if (entry.state === 'current') this.db.prepare('UPDATE watch_rooms SET bookmark = NULL, checkpointRevision = checkpointRevision + 1 WHERE id = ?').run(roomId);
       this.bumpQueueRevision(roomId, at);
