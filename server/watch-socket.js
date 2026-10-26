@@ -198,8 +198,19 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         config.logger?.debug('Socket', `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause||'peer-or-network'} account=${JSON.stringify(client.userName||client.userId||'unauthenticated')} ageMs=${Date.now()-client.openedAt} attachedViewers=${attached} (remaining: ${clients.size-1})`);
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
+        // A transient close can precede the next authenticated socket by only
+        // a second. Do not tear down the Plex session and revoke its HLS grant
+        // before the same viewer has an opportunity to reattach. The normal
+        // 10-second presence sweep still expires truly disconnected viewers.
+        // Graceful tab exits and protocol/authorization closures retain the
+        // prior immediate-cleanup behavior.
+        const unexpected = (code === 1005 || code === 1006) &&
+          client.terminationCause !== 'server-shutdown' && client.terminationCause !== 'backpressure';
+        const disconnectedAt = Date.now();
         for (const room of watch.rooms.values()) {
-          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = Date.now() - 10001;
+          for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) {
+            viewer.at = unexpected ? disconnectedAt : disconnectedAt - 10001;
+          }
           watch.refresh(room);
         }
         changed();

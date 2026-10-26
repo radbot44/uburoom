@@ -42,6 +42,39 @@ test('authenticated sockets have distinct server connection IDs',tls,async t=>{
   assert.ok(second.connectionId>first.connectionId);
 });
 
+test('abnormal socket close retains viewer media and grant for prompt reconnect, then expires normally',tls,async t=>{
+  const f=await fixture(t),identity=await f.login('host'),first=await f.connect(identity);
+  t.after(()=>first.ws.terminate());
+  const roomId=(await first.call('/api/watch/rooms',{})).value.id,viewerId=randomUUID(),route='/api/watch/rooms/'+roomId;
+  const initial=(await first.call(route+'?viewer='+viewerId)).value;
+  const loaded=await first.call(route+'/command',{epoch:initial.epoch,expiresAt:Date.now()+2500,viewerId,
+    command:{action:'media.load',args:{mediaId:'demo',quality:'direct'}}});
+  assert.equal(loaded.value.status,'applied');
+  const before=(await first.call(route+'?viewer='+viewerId)).value;
+  assert.ok(before.mediaUrl,'media grant exists before disconnect');
+  const room=f.app.watch.rooms.get(roomId),viewer=room.viewers.get(viewerId),media=viewer.media,oldSocket=viewer.watchSocket;
+  assert.ok(media,'server prepared viewer output');
+  const disconnected=once(first.ws,'close');first.ws.terminate();await disconnected;
+  assert.equal(room.viewers.get(viewerId),viewer,'abnormal closure does not evict the viewer');
+  assert.equal(viewer.media,media,'output survives unexpected close');
+  assert.equal(room.disconnectedViewers.has(viewerId),false,'no cold-rejoin record was created');
+  const replacement=await f.connect(identity);t.after(()=>replacement.ws.terminate());
+  const after=(await replacement.call(route+'?viewer='+viewerId)).value;
+  assert.equal(room.viewers.get(viewerId),viewer,'same viewer instance reattaches');
+  assert.equal(viewer.media,media,'Plex/media session is reused');
+  assert.equal(after.streamVersion,before.streamVersion,'no stream replacement');
+  assert.equal(after.mediaUrl,before.mediaUrl,'existing media grant stays usable');
+  assert.equal(after.observationEpoch,before.observationEpoch,'observation context remains stable');
+  assert.notEqual(viewer.watchSocket,oldSocket,'replacement server socket now owns viewer');
+  assert.equal(viewer.watchSocket.readyState,1);
+  const lostAgain=once(replacement.ws,'close');replacement.ws.terminate();await lostAgain;
+  assert.equal(room.viewers.get(viewerId),viewer);
+  viewer.at=Date.now()-11000;
+  f.app.watch.refresh(room);
+  assert.equal(room.viewers.has(viewerId),false,'normal presence expiry releases the abandoned viewer');
+  assert.equal(room.disconnectedViewers.has(viewerId),true,'cold reconnect still needs a new stream');
+});
+
 test('native WebSocket pongs retain room presence without JavaScript clock messages',tls,async t=>{
   const f=await fixture(t),host=await f.connect(await f.login('host'));
   t.after(()=>host.ws.close());host.stopClock();
@@ -88,8 +121,8 @@ test('watch socket pushes shared Engine commands, rejects stale/foreign viewers,
   assert.ok(guest.events.slice(before).some(message=>message.type==='state'&&message.value.visibility==='public'),'other viewer receives a pushed state without requesting it');
   state=(await host.call(target+'?viewer='+viewer)).value;
   assert.equal(state.visibility,'public');
-  const guestClosed=once(guest.ws,'close');guest.ws.close();await guestClosed;await new Promise(resolve=>setTimeout(resolve,30));
-  const closed=once(host.ws,'close');host.ws.close();await closed;
+  const guestClosed=once(guest.ws,'close');guest.ws.close(1000);await guestClosed;await new Promise(resolve=>setTimeout(resolve,30));
+  const closed=once(host.ws,'close');host.ws.close(1000);await closed;
   await new Promise(resolve=>setTimeout(resolve,30));
   const room=f.app.watch.rooms.get(roomId);assert.equal(Object.hasOwn(room.s,'enabled'),false);assert.ok(room.disconnectedViewers.has(viewer));
   const rejoined=await f.connect(await f.login('host'));
