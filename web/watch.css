@@ -194,7 +194,11 @@ body.immersive{overflow:hidden;background:black}
   align-items: center;
   justify-content: center;
   z-index: 10;
+  isolation: isolate;
   overflow: hidden;
+  background: #101217;
+  --text: #F8F7F4;
+  --muted: #AAB0BC;
   color: var(--text);
   box-sizing: border-box;
   padding: 24px;
@@ -204,23 +208,15 @@ body.immersive{overflow:hidden;background:black}
 }
 
 .ending-backdrop {
+  display: block;
   position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
+  inset: -20px;
+  background-position: center;
+  background-size: cover;
+  filter: blur(22px) brightness(.24);
+  opacity: .85;
+  z-index: -1;
   pointer-events: none;
-}
-.ending-backdrop img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: blur(28px) brightness(0.38);
-  transform: scale(1.15);
-}
-.ending-backdrop .ending-scrim {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at center, rgba(16,18,23,0.45) 0%, rgba(16,18,23,0.85) 100%), linear-gradient(to bottom, rgba(16,18,23,0.6) 0%, rgba(16,18,23,0.9) 100%);
 }
 
 .ending-header {
@@ -254,31 +250,34 @@ body.immersive{overflow:hidden;background:black}
   position: relative;
   width: 72px;
   height: 72px;
+  padding: 0;
+  box-sizing: border-box;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--card) 90%, transparent);
-  border: 1px solid var(--border);
+  background: #101217c9;
+  border: 1px solid #ffffff24;
   color: var(--text);
   cursor: pointer;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  pointer-events: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .ending-center-play:hover {
-  background: var(--primary);
-  color: var(--on-primary);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--elevated) 85%, transparent);
 }
-.ending-center-play.is-secondary:hover {
-  background: var(--secondary);
-  color: #fff;
-  border-color: transparent;
-}
-.ending-center-play svg.tabler-icon {
-  width: 32px;
-  height: 32px;
-  fill: currentColor;
-  stroke: none;
+.ending-center-play svg.ending-play-icon {
+  width: 40px;
+  height: 40px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 .ending-center-play:disabled {
   opacity: 0.4;
@@ -286,20 +285,22 @@ body.immersive{overflow:hidden;background:black}
   pointer-events: none;
 }
 
-.ending-ring {
+.ending-center-play svg.ending-ring {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  display: block;
   transform: rotate(-90deg);
   pointer-events: none;
+  overflow: visible;
 }
-.ending-ring[hidden] {
+.ending-center-play svg.ending-ring[hidden] {
   display: none !important;
 }
 .ending-ring-track {
   fill: none;
-  stroke: rgba(255,255,255,0.15);
+  stroke: rgba(255,255,255,0.16);
   stroke-width: 3.5;
 }
 .ending-ring-progress {
@@ -307,7 +308,7 @@ body.immersive{overflow:hidden;background:black}
   stroke: var(--primary);
   stroke-width: 3.5;
   stroke-linecap: round;
-  stroke-dasharray: 207.345;
+  stroke-dasharray: 215.199;
   stroke-dashoffset: 0;
   transition: stroke-dashoffset 0.1s linear;
 }
@@ -430,9 +431,9 @@ body.immersive{overflow:hidden;background:black}
     width: 48px;
     height: 48px;
   }
-  .ending-center-play svg.tabler-icon {
-    width: 24px;
-    height: 24px;
+  .ending-center-play svg.ending-play-icon {
+    width: 28px;
+    height: 28px;
   }
   .ending-title {
     font-size: 17px;

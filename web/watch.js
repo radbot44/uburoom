@@ -300,31 +300,17 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
 });
 
 let endingTicker = null;
+let endingArtController = null;
+const endingArtUrls = new Map();
 
 function initEndingStage() {
   const container = $('ending-stage');
   if (!container) return;
 
   const backdrop = document.createElement('div');
+  backdrop.id = 'ending-backdrop';
   backdrop.className = 'ending-backdrop';
-  const img = document.createElement('img');
-  img.id = 'ending-art';
-  img.alt = '';
-  img.setAttribute('aria-hidden', 'true');
-  img.hidden = true;
-  img.onerror = () => {
-    if (img.dataset.kind === 'landscape') {
-      img.dataset.kind = 'poster';
-      img.src = '/api/watch/artwork/' + img.dataset.mediaId + '?kind=poster';
-    } else {
-      img.hidden = true;
-    }
-  };
-  img.onload = () => { img.hidden = false; };
-  const scrim = document.createElement('div');
-  scrim.className = 'ending-scrim';
-  scrim.setAttribute('aria-hidden', 'true');
-  backdrop.append(img, scrim);
+  backdrop.setAttribute('aria-hidden', 'true');
 
   const header = document.createElement('div');
   header.className = 'ending-header';
@@ -334,7 +320,7 @@ function initEndingStage() {
   playWrap.className = 'ending-play-wrap';
   const playBtn = document.createElement('button');
   playBtn.id = 'ending-play';
-  playBtn.className = 'center-play ending-center-play';
+  playBtn.className = 'ending-center-play';
   playBtn.type = 'button';
   playBtn.setAttribute('aria-label', 'Play');
 
@@ -347,16 +333,17 @@ function initEndingStage() {
   track.setAttribute('class', 'ending-ring-track');
   track.setAttribute('cx', '36');
   track.setAttribute('cy', '36');
-  track.setAttribute('r', '33');
+  track.setAttribute('r', '34.25');
   const progress = document.createElementNS(svgNS, 'circle');
   progress.setAttribute('id', 'ending-ring-progress');
   progress.setAttribute('class', 'ending-ring-progress');
   progress.setAttribute('cx', '36');
   progress.setAttribute('cy', '36');
-  progress.setAttribute('r', '33');
+  progress.setAttribute('r', '34.25');
   ring.append(track, progress);
 
   const playIcon = uburoomIcons.icon(document, 'play');
+  playIcon.setAttribute('class', 'ending-play-icon');
   playBtn.append(ring, playIcon);
   playWrap.append(playBtn);
 
@@ -466,16 +453,37 @@ function renderEnding(next) {
     return;
   }
 
-  const artMediaId = ending.next?.mediaId || ending.completed?.mediaId;
-  const img = $('ending-art');
-  if (img && artMediaId && img.dataset.mediaId !== artMediaId) {
-    img.dataset.mediaId = artMediaId;
-    img.dataset.kind = 'landscape';
-    img.src = '/api/watch/artwork/' + artMediaId + '?kind=landscape';
-    img.hidden = false;
-  } else if (img && !artMediaId) {
-    img.hidden = true;
-    img.dataset.mediaId = '';
+  const artItem = ending.next || ending.completed;
+  const artMediaId = artItem?.mediaId;
+  const artType = artItem?.type || 'movie';
+  const artKey = artMediaId && /^\d{1,20}$/.test(String(artMediaId)) ? (artMediaId + ':' + artType) : '';
+  const backdrop = $('ending-backdrop');
+  if (backdrop && backdrop.dataset.artKey !== artKey) {
+    backdrop.dataset.artKey = artKey;
+    if (!artKey) {
+      backdrop.style.backgroundImage = '';
+    } else if (endingArtUrls.has(artKey)) {
+      backdrop.style.backgroundImage = 'url(' + endingArtUrls.get(artKey) + ')';
+    } else {
+      backdrop.style.backgroundImage = '';
+      endingArtController?.abort();
+      const controller = new AbortController();
+      endingArtController = controller;
+      const params = new URLSearchParams({ item: String(artMediaId), kind: 'poster', type: artType });
+      fetchArtwork('/api/watch/library/art?' + params, controller.signal).then(blob => {
+        if (controller.signal.aborted) return;
+        const url = URL.createObjectURL(blob);
+        endingArtUrls.set(artKey, url);
+        while (endingArtUrls.size > 24) {
+          const first = endingArtUrls.keys().next().value;
+          URL.revokeObjectURL(endingArtUrls.get(first));
+          endingArtUrls.delete(first);
+        }
+        if (backdrop.dataset.artKey === artKey) {
+          backdrop.style.backgroundImage = 'url(' + url + ')';
+        }
+      }).catch(() => {});
+    }
   }
 
   const header = $('ending-header');
@@ -493,10 +501,12 @@ function renderEnding(next) {
   const isSecondary = ending.next?.source === 'auto' || ending.next?.source === 'offer';
   const playBtn = $('ending-play');
   if (playBtn) {
+    playBtn.hidden = false;
     playBtn.classList.toggle('is-secondary', isSecondary);
-    const canPlay = (ending.state === 'offer')
-      ? (!!next.capabilities?.addQueue && !!next.capabilities?.playPause)
-      : (!!next.capabilities?.playPause || !!next.capabilities?.chooseMedia);
+    const hasCaps = !!next.capabilities;
+    const canPlay = !hasCaps || ((ending.state === 'offer')
+      ? (!!next.capabilities.addQueue && !!next.capabilities.playPause)
+      : (!!next.capabilities.playPause || !!next.capabilities.chooseMedia));
     playBtn.disabled = !canPlay;
     const status = $('ending-status');
     if (status) {
@@ -571,7 +581,7 @@ function renderEnding(next) {
       if (kickerEl) kickerEl.textContent = 'Up next in ' + seconds + 's';
       const progressEl = $('ending-ring-progress');
       if (progressEl) {
-        const circumference = 207.345;
+        const circumference = 215.199;
         progressEl.style.strokeDashoffset = String(circumference * (1 - fraction));
       }
       endingTicker = requestAnimationFrame(updateCountdown);
