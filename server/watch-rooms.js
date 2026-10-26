@@ -183,20 +183,26 @@ class WatchRooms {
     if(this.watch.hub.config.singleRoom)throw failure('Room creation is disabled in single-room mode',403);
     await this.eligible(actor, current); this.reserve(); this.creating++;
     try {
-      let creation = options;
+      let creation = options, initialCorpus;
       if (options?.autoQueue && ['following','random'].includes(options.autoQueue.mode)) {
         const config = options.autoQueue, scope = config.scope;
         if (!scope?.id || !['show','library','collection'].includes(scope.type)) throw failure('Choose an auto-queue source');
         const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
-        await plex.queueItems({...scope,includeSpecials:!!config.includeSpecials});
+        const items = await plex.queueItems({...scope,includeSpecials:!!config.includeSpecials});
         const serverId = await this.identify(scope);
         if (this.watch.hub.plexFor && (await this.watch.hub.plexFor(actor)).principal !== plex.principal) throw failure('Plex access changed',403);
         creation = {...options,autoQueue:{...config,scope:{type:scope.type,id:scope.id,serverId}}};
+        initialCorpus = items.map(item => this.watch.queueItem(item, serverId));
         await this.eligible(actor,current);
       } else if (options?.autoQueue && options.autoQueue.mode === 'continue') {
         creation = {...options,autoQueue:{mode:'continue',scope:null,includeSpecials:false}};
       }
-      const record = await this.store.create(actor.userId, creation);
+      let record = await this.store.create(actor.userId, creation);
+      if (initialCorpus?.length) {
+        await this.queue.generate(record.id, actor.userId, initialCorpus);
+        await this.watch.verifyAutoNext?.(record.id, actor, initialCorpus);
+        record = this.store.get(record.id);
+      }
       await this.eligible(actor, current);
       return this.watch.create(actor, record.visibility, record);
     } finally { this.creating--; }

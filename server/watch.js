@@ -583,6 +583,24 @@ class Watch {
     if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
     return items.map(item => this.queueItem(item,serverId));
   }
+  async verifyAutoNext(id, actor, corpus) {
+    const queue = this.roomState?.queue;
+    if (!queue) return null;
+    const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+    if (!plex?.availability) return this.roomState.store.get(id).autoQueue;
+    let remaining = corpus;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const currentAuto = this.roomState.store.get(id).autoQueue;
+      const candidate = currentAuto?.mode !== 'off' ? currentAuto?.next : null;
+      if (!candidate || candidate.mediaId === 'demo') return currentAuto;
+      const status = await plex.availability([candidate.mediaId]);
+      if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      if (status.get(candidate.mediaId) !== false) return currentAuto;
+      remaining = (remaining || await this.autoCorpus(id, actor) || []).filter(item => item.mediaId !== candidate.mediaId);
+      await queue.generate(id, actor.userId, attempt === 4 ? [] : remaining, { continuation: true, forceAdvance: true });
+    }
+    return this.roomState.store.get(id).autoQueue;
+  }
   queueItem(item, serverId) {
     let parentTitle = item.parentTitle;
     const epNum = Number.isInteger(item.index) ? item.index : (typeof item.episode === 'number' && Number.isInteger(item.episode)) ? item.episode : undefined;
@@ -717,7 +735,8 @@ class Watch {
         if (corpus) {
           await check();
           const generated = await queue.generate(id,actor.userId,corpus,{expectedRevision:value.queueRevision});
-          value = {...value,...generated};
+          const verified = await this.verifyAutoNext(id,actor,corpus);
+          value = {...value,...generated,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
         }
         if (room && !room.media && !queue.current(id) && !queue.pending(id).length && value.autoQueue?.next && this.roomState.store.get(id).autoplay) {
           room.queueEditing = false;
@@ -727,10 +746,14 @@ class Watch {
         const corpus = await this.autoCorpus(id,actor) || [];
         await check();
         value = await queue.skipAuto(id,actor.userId,corpus,{expectedRevision:revision});
+        const verified = await this.verifyAutoNext(id,actor,corpus);
+        value = {...value,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
       } else if (action === 'queue.auto.pin') {
         const corpus = await this.autoCorpus(id,actor) || [];
         await check();
         value = await queue.pinAuto(id,actor.userId,corpus,{expectedRevision:revision});
+        const verified = await this.verifyAutoNext(id,actor,corpus);
+        value = {...value,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
         if (room && !room.media && wasEmptyQueue && value.added && this.roomState.store.get(id).autoplay) {
           room.queueEditing = false;
           return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:value.added.id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
@@ -743,6 +766,8 @@ class Watch {
         const corpus = await this.autoCorpus(id,actor);
         await check();
         value = await queue.playAutoNow(id,actor.userId,{expectedRevision:revision,autoCorpus:corpus});
+        await this.verifyAutoNext(id,actor,corpus);
+        value = {...value,queueRevision:this.roomState.store.get(id).queueRevision};
       } else if (action === 'queue.move') value = await queue.move(id,actor.userId,args.entryId,args.targetRank,revision);
       else if (action === 'queue.remove') value = await queue.remove(id,actor.userId,args.entryId,revision);
       else if (action === 'queue.clear') value = await queue.clear(id,actor.userId,revision);
@@ -761,8 +786,9 @@ class Watch {
           const corpus = await this.autoCorpus(id,actor);
           if (corpus) {
             const latestRev = this.roomState.store.get(id).queueRevision;
-            const generated = await queue.generate(id,actor.userId,corpus,{expectedRevision:latestRev,continuation:true});
-            value = {...value,autoQueue:generated.autoQueue,queueRevision:generated.queueRevision};
+            await queue.generate(id,actor.userId,corpus,{expectedRevision:latestRev,continuation:true});
+            const verified = await this.verifyAutoNext(id,actor,corpus);
+            value = {...value,autoQueue:verified,queueRevision:this.roomState.store.get(id).queueRevision};
           }
         } catch (error) { if (room) room.autoQueueError = error.message; }
       }
@@ -1077,13 +1103,15 @@ class Watch {
       }
       room.autoplayError = undefined; room.revision++; room.lastActivity = Date.now();
       room.transitionCommit = undefined;
-      if (record && !['media.next','queue.playEntry','queue.auto.playNow'].includes(action) && !advance && this.roomState.store.get(id).autoQueue.mode !== 'off') {
+      if (record && this.roomState.store.get(id).autoQueue.mode !== 'off') {
         try {
-          const postCorpus = await this.autoCorpus(id,actor);
-          if (postCorpus) {
-            await queue.generate(id,actor.userId,postCorpus,{continuation:true});
-            this.roomState.apply(room,this.roomState.store.get(id));
+          let postCorpus = corpus;
+          if (!['media.next','queue.playEntry','queue.auto.playNow'].includes(action) && !advance) {
+            postCorpus = await this.autoCorpus(id,actor);
+            if (postCorpus) await queue.generate(id,actor.userId,postCorpus,{continuation:true});
           }
+          await this.verifyAutoNext(id,actor,postCorpus);
+          this.roomState.apply(room,this.roomState.store.get(id));
         } catch (error) { room.autoQueueError = error.message; }
       }
       return {status:'applied',message:'Viewing room updated.',...(initialAdd ? {added:queue.current(id),queueRevision:this.roomState.store.get(id).queueRevision} : {})};

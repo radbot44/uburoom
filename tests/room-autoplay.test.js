@@ -568,7 +568,9 @@ test('turning auto-queue on in an idle room with autoplay enabled immediately ma
     res.source = { type: 'episode' };
     return res;
   };
+  f.plex.availability = async ids => new Map(ids.map(itemId => [itemId, itemId !== '300']));
   f.plex.queueItems = async () => [
+    { id: '300', type: 'episode', title: 'Missing Episode', duration: 100 },
     { id: '301', type: 'episode', title: 'Episode 1', duration: 100 },
     { id: '302', type: 'episode', title: 'Episode 2', duration: 100 }
   ];

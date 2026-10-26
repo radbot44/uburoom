@@ -149,33 +149,36 @@ class Plex {
     }
     return this.items(rows);
   }
-  async queueItems({ type, id, includeSpecials = false } = {}, budget = { remaining: 20000, requests: 200 }) {
+  async queueItems({ type, id, includeSpecials = false } = {}, budget) {
     id = this.id(id);
     if (typeof includeSpecials !== 'boolean' || !['show','season','library','collection'].includes(type)) throw new Error('Invalid queue scope');
-    let items;
-    if (type === 'library') {
-      const sections = (await this.json('/library/sections')).Directory || [];
-      if (!sections.some(section => String(section.key) === id && section.type === 'movie')) throw new Error('Choose a movie library');
-      items = (await this.allItems('/library/sections/' + id + '/all?type=1', 120, 20000, budget)).filter(item => item.type === 'movie');
-    } else if (type === 'collection') {
-      items = [];
-      const children = await this.allItems('/library/collections/' + id + '/children', 120, 20000, budget);
-      const expanded = new Set();
-      for (const child of children) {
-        if (['movie','episode'].includes(child.type)) items.push(child);
-        else if (['show','season'].includes(child.type) && !expanded.has(child.id)) {
-          expanded.add(child.id);
-          items.push(...await this.queueItems({ type: child.type, id: child.id, includeSpecials }, budget));
-        }
-        if (items.length > 20000) throw new Error('Plex selection exceeds the supported 20000-item catalog limit');
+    const load = async (activeBudget = { remaining: 20000, requests: 200 }) => {
+      if (type === 'library') {
+        const sections = (await this.catalog('/library/sections')).Directory || [];
+        if (!sections.some(section => String(section.key) === id && section.type === 'movie')) throw new Error('Choose a movie library');
+        return (await this.allItems('/library/sections/' + id + '/all?type=1', 2500, 20000, activeBudget)).filter(item => item.type === 'movie');
       }
-    } else {
-      items = (await this.allItems('/library/metadata/' + id + (type === 'show' ? '/allLeaves' : '/children'), 120, 20000, budget))
+      if (type === 'collection') {
+        const items = [];
+        const children = await this.allItems('/library/collections/' + id + '/children', 2500, 20000, activeBudget);
+        const expanded = new Set();
+        for (const child of children) {
+          if (['movie','episode'].includes(child.type)) items.push(child);
+          else if (['show','season'].includes(child.type) && !expanded.has(child.id)) {
+            expanded.add(child.id);
+            items.push(...await this.queueItems({ type: child.type, id: child.id, includeSpecials }, activeBudget));
+          }
+          if (items.length > 20000) throw new Error('Plex selection exceeds the supported 20000-item catalog limit');
+        }
+        return items;
+      }
+      return (await this.allItems('/library/metadata/' + id + (type === 'show' ? '/allLeaves' : '/children'), 2500, 20000, activeBudget))
         .filter(item => item.type === 'episode')
         .sort((a,b) => Number(a.seasonIndex || 0) - Number(b.seasonIndex || 0) || Number(a.index || 0) - Number(b.index || 0) || a.id.localeCompare(b.id, undefined, { numeric: true }));
-    }
+    };
+    const key = 'queue:' + type + ':' + id + (type === 'collection' ? ':' + includeSpecials : '');
+    const items = this.cachedAvailability(budget ? await load(budget) : await this.cached(this.catalogCache, key, 96, () => load()));
     const seen = new Set();
-    items=await this.checkedItems(items,budget,true);
     return items.filter(item => {
       if(item.available===false)return false;
       if (item.type === 'episode' && !includeSpecials && Number(item.seasonIndex) === 0 || seen.has(item.id)) return false;

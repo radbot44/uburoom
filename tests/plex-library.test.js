@@ -18,7 +18,7 @@ test('library pagination and native search/sort/filter queries cover titles beyo
   const plex = fixture(async (url,options) => {
     requests.push(url); assert.equal(options.headers['X-Plex-Token'],'fixture-private-token'); assert.equal(String(url).includes('fixture-private-token'),false);
     const filtered = rows.filter(x=>!url.searchParams.get('title') || x.title.includes(url.searchParams.get('title')));
-    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120);
     return json({totalSize:filtered.length,Metadata:filtered.slice(start,start+size)});
   },rows); t.after(()=>plex.close());
   const first = await plex.browse({section:'1',sort:'year',order:'desc',genre:'5',year:'2020'});
@@ -35,7 +35,7 @@ test('collection order is retained; filtering reads all child pages instead of f
   rows[rows.length-1].title = 'Needle beyond the first two hundred';
   const plex = fixture(async url => {
     assert.equal(url.pathname,'/library/collections/9/children');
-    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size')); starts.push(start);
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120); starts.push(start);
     return json({totalSize:rows.length,Metadata:rows.slice(start,start+size)});
   },rows); t.after(()=>plex.close());
   const ordered = await plex.browse({section:'1',collection:'9',sort:'default'}); assert.equal(ordered.items[0].id,'245');
@@ -89,7 +89,7 @@ test('show and season queue expansion pages the complete corpus, sorts cross-sea
   const plex = fixture(async url => {
     requests.push(url.pathname + ':' + url.searchParams.get('X-Plex-Container-Start'));
     const rows = url.pathname.endsWith('/children') ? episodes.filter(item => item.parentIndex === 2) : episodes;
-    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120);
     return json({ totalSize: rows.length, Metadata: rows.slice(start, start + size) });
   },episodes); t.after(() => plex.close());
   const normal = await plex.queueItems({ type: 'show', id: '50' });
@@ -135,7 +135,7 @@ test('collection expansion bounds upstream work even when every nested show is e
   const plex = fixture(async url => {
     requests++;
     if (url.pathname.startsWith('/library/metadata/')) return json({ totalSize: 0, Metadata: [] });
-    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120);
     return json({ totalSize: shows.length, Metadata: shows.slice(start, start + size) });
   }); t.after(() => plex.close());
   await assert.rejects(plex.queueItems({ type: 'collection', id: '900' }), /200-request expansion limit/);
