@@ -15,6 +15,9 @@
     connect() {
       if(this.ready&&this.socket?.readyState===1)return Promise.resolve();
       if(this.connecting)return this.connecting;
+      // A manual reconnect supersedes any pending automatic retry. Otherwise
+      // its orphan timer can later resurrect a deliberately closed transport.
+      clearTimeout(this.retry);this.retry=undefined;
       this.stopped=false;
       this.connecting=new Promise((resolve,reject)=>{
         this.authResolve=resolve;this.authReject=reject;
@@ -63,7 +66,10 @@
           for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.cleanup?.();pending.reject(error);}
           this.pending.clear();this.onClose({code:event?.code,reason:event?.reason,clean:event?.wasClean,
             connectionAttempt,connectionId:this.connectionId,connectionAgeMs:Date.now()-openedAt,closeInitiator:this.closeInitiator||'none',wasReady});
-          if(!this.stopped){const delay=Math.max(this.resumeAt-Date.now()||0,Math.min(15000,500*2**Math.min(this.attempt++,5)));this.retry=setTimeout(()=>{void this.connect().catch(()=>{});},delay);}
+          if(!this.stopped){const delay=Math.max(this.resumeAt-Date.now()||0,Math.min(15000,500*2**Math.min(this.attempt++,5)));this.retry=setTimeout(()=>{
+            this.retry=undefined;
+            if(!this.stopped)void this.connect().catch(()=>{});
+          },delay);}
         };
       });
       return this.connecting;
@@ -114,7 +120,7 @@
       });
     }
     interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.closeInitiator='interrupt';this.socket?.close();}
-    close() {this.stopped=true;clearTimeout(this.retry);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close();}
+    close() {this.stopped=true;clearTimeout(this.retry);this.retry=undefined;clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close();}
   }
   root.uburoomWatchTransport=WatchTransport;
   if(typeof module==='object')module.exports=WatchTransport;
