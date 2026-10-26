@@ -37,7 +37,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
         !qualityStatuses.has(message.status) || Object.hasOwn(message,'score')&&!Number.isFinite(message.score) ||
         message.confidence!==undefined&&!qualityConfidences.has(message.confidence) ||
-        message.measurementFreshnessMs!==undefined&&(!Number.isFinite(message.measurementFreshnessMs)||message.measurementFreshnessMs<0||message.measurementFreshnessMs>300000) ||
+        message.measurementFreshnessMs!==undefined&&(!Number.isFinite(message.measurementFreshnessMs)||message.measurementFreshnessMs<0) ||
         message.reason!==undefined&&!qualityReasons.has(message.reason))
       return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
@@ -63,8 +63,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     const confidence=message.confidence||(['playing','buffering'].includes(message.status)?previous.confidence||'reduced':
       previous.confidence==='provisional'?'provisional':'reduced');
     // Receiving a retained score is not a new playback measurement.
-    const reportedAt=Number.isFinite(message.measurementFreshnessMs)&&confidence!=='provisional'
-      ?now-message.measurementFreshnessMs:undefined;
+    // Old paused measurements are stale telemetry, not grounds to tear down the control socket.
+    const reportAge=SyncQuality.reportableMeasurementFreshnessMs(message.measurementFreshnessMs);
+    const reportedAt=reportAge!==undefined&&confidence!=='provisional'?now-reportAge:undefined;
     // A pause/seek may report an old score, but cannot manufacture a new
     // measurement. Its first report can still carry the original evidence age.
     const mayAdvance=['playing','buffering'].includes(message.status)||!Number.isFinite(previous.measuredAt);

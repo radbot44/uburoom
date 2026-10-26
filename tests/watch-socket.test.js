@@ -120,8 +120,12 @@ test('watch socket accepts only a viewer\'s current ephemeral synchronization te
   assert.equal(hostPresence.syncQuality.measuredAt,firstMeasuredAt);
   assert.equal(hostPresence.syncQuality.lastKnownAt,firstKnownAt,'reporting a retained score must not refresh evidence time');
   await new Promise(resolve=>setTimeout(resolve,550));
-  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'seeking',score:.995,confidence:'reduced'}));
+  // A five-minute-old paused measurement must not invalidate an otherwise healthy viewer socket.
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'seeking',score:.995,confidence:'reduced',measurementFreshnessMs:301000}));
   await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(host.ws.readyState,WebSocket.OPEN,'stale measurement age must not disconnect the viewer');
+  assert.equal(hostPresence.syncQuality.status,'seeking','stale age is ignored but the report is accepted');
+  assert.equal(hostPresence.syncQuality.measuredAt,firstMeasuredAt,'old telemetry must not refresh evidence time');
   assert.equal(hostPresence.syncQuality.score,.995,'minor percentage changes update the stored score without changing its band');
   assert.equal(hostPresence.syncQuality.lastKnownLevel,'excellent');
   assert.equal(hostPresence.syncQuality.lastKnownAt,firstKnownAt);

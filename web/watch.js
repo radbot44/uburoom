@@ -86,10 +86,11 @@ let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, p
 const video = $('video');
 function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
+  const freshness=uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
   const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,
     score:Number.isFinite(score)?Math.max(0,Math.min(1,score)):1,
     confidence:['confident','reduced','provisional'].includes(confidence)?confidence:'reduced',
-    ...(Number.isFinite(measurementFreshnessMs)?{measurementFreshnessMs:Math.max(0,measurementFreshnessMs)}:{}),...(reason?{reason}:{})};
+    ...(freshness===undefined?{}:{measurementFreshnessMs:freshness}),...(reason?{reason}:{})};
   const sent=transport?.syncQuality(value) || false;
   if(sent){publishedSyncQualityStatus=status;publishedSyncQualityConfidence=value.confidence;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
   return sent;
