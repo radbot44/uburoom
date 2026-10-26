@@ -7,3 +7,7 @@
 ## 2026-03-31 - O(N) Map indexing and array splice for auto-queue corpus generation
 **Learning:** `RoomQueue.generatePending` processes catalog corpora up to 20,000 items. Calling linear `findIndex` searches in `following` mode or re-filtering the entire corpus inside the pending loop in `random` mode caused O(N * P) scaling.
 **Action:** Pre-compute a Map index (`itemsIndexMap`) for O(1) candidate matching in `following` mode and mutate candidate pools with `.splice(idx, 1)` in `random` mode.
+
+## 2026-03-31 - Batch query fetching for user directory account identities
+**Learning:** `Accounts.directory()` executed `SELECT` for users followed by an individual `this.identities(user.id)` query per user inside a `.map` callback, creating an N+1 query pattern on every user directory search.
+**Action:** Replace per-record database query loops with a single batch `SELECT` and group rows using an in-memory `Map`.

@@ -47,8 +47,24 @@ class Accounts {
   }
   seen(userId) { this.db.prepare('UPDATE users SET signedInAt=COALESCE(signedInAt,?) WHERE id=?').run(Date.now(),userId); }
   directory() {
-    return this.db.prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL').all()
-      .map(user => ({...user,identities:this.identities(user.id).filter(identity=>identity.verified).map(({provider,subject,name})=>({provider,subject,name}))}));
+    // Bolt Optimization: Batch fetch verified identities into a Map index to reduce
+    // database queries from 1 + N (per-user queries) to exactly 2 queries during directory search.
+    const users = this.db.prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL').all();
+    const rows = this.db.prepare('SELECT userId,provider,subject,name FROM identities WHERE verified=1 ORDER BY provider').all();
+    const identitiesByUserId = new Map();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      let list = identitiesByUserId.get(row.userId);
+      if (!list) {
+        list = [];
+        identitiesByUserId.set(row.userId, list);
+      }
+      list.push({ provider: row.provider, subject: row.subject, name: row.name });
+    }
+    return users.map(user => ({
+      ...user,
+      identities: identitiesByUserId.get(user.id) || []
+    }));
   }
   resolve(provider,subject,name,verified=true) {
     subject=String(subject);const old=this.identity(provider,subject);
