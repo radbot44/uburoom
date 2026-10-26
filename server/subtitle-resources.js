@@ -13,10 +13,11 @@ function classifyExtractionError(error){
   if(error instanceof PlaybackError)return error;
   return new PlaybackError('Original subtitles could not be extracted. Try Plex burn-in.');
 }
-function clear(media){const old=cache.get(media);if(old){bytes-=old.size;cache.delete(media);}media.subtitleAssets=undefined;}
+function clear(media){const old=cache.get(media);if(old){bytes-=old.size;cache.delete(media);}media.subtitleAssets=undefined;media.windowCache?.clear();}
 function transfer(from,to){
   if(!from || !to || from===to || !from.sourceKey || from.sourceKey!==to.sourceKey || from.principal!==to.principal)return false;
   if(from.subtitleCache){to.subtitleCache=from.subtitleCache;from.subtitleCache=undefined;}
+  if(from.windowCache){to.windowCache=from.windowCache;from.windowCache=undefined;}
   const a=from.selection?.subtitle,b=to.selection?.subtitle;
   if(!a?.available || !b?.available || a.delivery==='burn' || a.delivery!==b.delivery || a.id!==b.id)return false;
   to.captionVersion=from.captionVersion;
@@ -218,4 +219,75 @@ async function load(plex,media,signal){
   })().finally(()=>{active--;if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;});
   media.subtitleJob=job;return job.promise;
 }
-module.exports={load,clear,transfer,read,pipe,classifyExtractionError,LIMIT};
+async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}){
+  const {track}=source(media),version=media.captionVersion;
+  const at=Math.max(0,Number(atMs)||0)/1000;
+  const before=Math.min(60,Math.max(0,Number(beforeMs)||15000)/1000);
+  const after=Math.min(180,Math.max(10,Number(afterMs)||60000)/1000);
+  const startSeconds=Math.max(0,at-before),durationSeconds=before+after;
+  const endSeconds=startSeconds+durationSeconds;
+  const startMs=Math.round(startSeconds*1000),endMs=Math.round(endSeconds*1000);
+
+  media.windowCache||=new Map();
+  const cacheKey=`${startMs}-${endMs}`;
+  const existing=media.windowCache.get(cacheKey);
+  if(existing){existing.at=Date.now();return {format:'pgs',startMs,endMs,data:existing.data,cues:existing.cues};}
+  for(const item of media.windowCache.values()){
+    if(item.startMs<=startMs&&item.endMs>=endMs){
+      item.at=Date.now();
+      return {format:'pgs',startMs,endMs,data:item.data,cues:item.cues};
+    }
+  }
+
+  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
+  const abort=AbortSignal.any([signal,media.subtitleAbort?.signal,AbortSignal.timeout(30000)].filter(Boolean));
+  const av1=plex.av1;
+  if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
+
+  active++;
+  try{
+    const data=await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
+      const args=['-hide_banner','-loglevel','error','-nostdin','-y',
+        '-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,
+        '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
+      return await av1.run(av1.ffmpeg,args,abort,25000,16*1024*1024);
+    });
+
+    abort.throwIfAborted();
+    if(media.captionVersion!==version)throw new PlaybackError('Subtitle selection changed.');
+
+    let cues=0;
+    if(data&&data.length>=13){
+      let offset=0;
+      while(offset+13<=data.length){
+        if(data[offset]===0x50&&data[offset+1]===0x47){
+          if(data[offset+10]===0x16)cues++;
+          const segSize=data.readUInt16BE(offset+11);
+          offset+=13+segSize;
+        }else break;
+      }
+    }
+
+    const entry={startMs,endMs,data:data||Buffer.alloc(0),cues,at:Date.now()};
+    media.windowCache.set(cacheKey,entry);
+
+    let trackBytes=0;
+    for(const item of media.windowCache.values())trackBytes+=item.data.length;
+    while(media.windowCache.size>16||trackBytes>16*1024*1024){
+      let oldestKey,oldestTime=Infinity;
+      for(const [k,v] of media.windowCache.entries()){if(v.at<oldestTime){oldestTime=v.at;oldestKey=k;}}
+      if(!oldestKey)break;
+      const removed=media.windowCache.get(oldestKey);
+      trackBytes-=removed.data.length;
+      media.windowCache.delete(oldestKey);
+    }
+
+    return {format:'pgs',startMs,endMs,data:entry.data,cues};
+  }catch(error){
+    if(signal?.aborted||media.subtitleAbort?.signal.aborted)throw error;
+    throw classifyExtractionError(error);
+  }finally{
+    active--;
+  }
+}
+module.exports={load,clear,transfer,read,pipe,window,classifyExtractionError,LIMIT};

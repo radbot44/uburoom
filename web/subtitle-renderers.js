@@ -50,7 +50,7 @@ window.uburoomSubtitleRenderers={
       signal.throwIfAborted();repaint();
       for(const event of ['seeked','loadedmetadata','pause'])video.addEventListener(event,repaint);
       const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause'])video.removeEventListener(event,repaint);dispose();};
-      return {destroy:cleanup,append:chunk=>renderer.append(chunk),flush:()=>renderer.flush(),
+      return {destroy:cleanup,append:chunk=>renderer.append(chunk),flush:()=>renderer.flush(),reset:()=>renderer.reset?.(),
         synced:(time=currentMediaTime())=>renderer.isSyncedAtMediaTime?renderer.isSyncedAtMediaTime(time):true,
         offset(value){renderer.timeOffset=-value;repaint();},picture(value){
         layer.style.scale=value.zoom*value.stretchX+' '+value.zoom*value.stretchY;layer.style.translate=value.x*100+'% '+value.y*100+'%';

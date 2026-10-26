@@ -101,9 +101,9 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     return text.split(/\r?\n/).map(line => !line.trim() ? line : line.startsWith('#') ?
       line.replace(/URI="([^"\r\n]+)"/g, (_, value) => `URI="${resolve(value)}"`) : resolve(line.trim())).join('\n');
   }
-  async function stream(req, res, grant, key) {
+  async function stream(req, res, grant, key, url) {
     if(key.startsWith('subtitle-')){
-      const match=/^subtitle-([a-f0-9-]{36})(?:\/(data|index|font-\d{1,2}))?$/.exec(key);
+      const match=/^subtitle-([a-f0-9-]{36})(?:\/(data|index|window|font-\d{1,2}))?$/.exec(key);
       if(!match || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle selection changed or access expired.'});
       const currentMedia=()=>grant.room.viewers.get(grant.viewerId)?.media;
       const controller=new AbortController(),cancel=()=>controller.abort();res.on('close',cancel);
@@ -114,7 +114,24 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           res.setHeader('Cache-Control','no-store');
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
-          return json(res,200,{format:'pgs',data:base+'data',fonts:[]});
+          return json(res,200,{format:'pgs',data:base+'data',window:base+'window',fonts:[]});
+        }
+        if(match[2]==='window' && media?.selection?.subtitle?.delivery==='pgs'){
+          if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
+          const atMs=url?.searchParams ? Number(url.searchParams.get('atMs')) : 0;
+          const beforeMs=url?.searchParams ? Number(url.searchParams.get('beforeMs')) : 15000;
+          const afterMs=url?.searchParams ? Number(url.searchParams.get('afterMs')) : 60000;
+          const win=await SubtitleResources.window(media.plexContext||watch.plex,media,{atMs,beforeMs,afterMs,signal:controller.signal});
+          if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
+          res.writeHead(200,{
+            'Content-Type':'application/octet-stream',
+            'Content-Length':win.data.length,
+            'Cache-Control':'no-store',
+            'X-Subtitle-Start-Ms':String(win.startMs),
+            'X-Subtitle-End-Ms':String(win.endMs),
+            'X-Subtitle-Cues':String(win.cues)
+          });
+          return res.end(req.method==='HEAD'?undefined:win.data);
         }
         if(match[2]==='data' && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
@@ -262,9 +279,9 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         pendingIdentity:identity?{name:identity.name,csrf:identity.csrf,account:registry?.summary(identity.userId)}:undefined});return true;
     }
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
-      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
+      const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|window|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
-      await stream(req, res, grants.get(match[1]), match[2]); return true;
+      await stream(req, res, grants.get(match[1]), match[2], url); return true;
     }
     if (!throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
     try {

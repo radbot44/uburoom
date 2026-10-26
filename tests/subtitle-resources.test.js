@@ -194,3 +194,91 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
   assert.equal(streamedOptions.length, 1);
   clear(replacement);
 });
+
+test('window retrieves bounded subtitle intervals, counts cues, and caches results', async () => {
+  const { window, clear, transfer } = SubtitleResources;
+  const ffmpegRuns = [];
+
+  // Create a valid dummy PGS display set: PCS (0x16) + END (0x80)
+  const pcs = Buffer.alloc(13 + 4);
+  pcs[0] = 0x50; pcs[1] = 0x47; // 'PG'
+  pcs.writeUInt32BE(90000 * 10, 2); // PTS: 10s
+  pcs.writeUInt32BE(90000 * 10, 6); // DTS: 10s
+  pcs[10] = 0x16; // PCS
+  pcs.writeUInt16BE(4, 11); // size: 4
+
+  const end = Buffer.alloc(13);
+  end[0] = 0x50; end[1] = 0x47;
+  end.writeUInt32BE(90000 * 10, 2);
+  end.writeUInt32BE(90000 * 10, 6);
+  end[10] = 0x80; // END
+  end.writeUInt16BE(0, 11);
+
+  const mockSupData = Buffer.concat([pcs, end]);
+
+  const plex = {
+    av1: {
+      ffmpeg: 'ffmpeg',
+      input: async (source, signal, fn) => fn('http://127.0.0.1:12345/source'),
+      run: async (binary, args, signal, timeout, maxOutput) => {
+        ffmpegRuns.push(args);
+        return mockSupData;
+      }
+    }
+  };
+
+  const media = {
+    sourceKey: '["https://plex.example","1","10","/library/parts/10/file.mkv",100,60,"1"]',
+    principal: 'plex-user-1',
+    captionVersion: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', available: true, external: false } },
+    source: { Media: [{ Part: [{ Stream: [{ id: 23, index: 4, streamType: 3, codec: 'pgs' }] }] }] }
+  };
+
+  // 1. Initial window request at 10s (atMs: 10000, beforeMs: 5000, afterMs: 20000)
+  const result = await window(plex, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  assert.equal(result.format, 'pgs');
+  assert.equal(result.startMs, 5000); // 10s - 5s
+  assert.equal(result.endMs, 30000); // 5s + (5s + 20s)
+  assert.equal(result.cues, 1);
+  assert.equal(result.data.length, mockSupData.length);
+  assert.equal(ffmpegRuns.length, 1);
+
+  // Verify FFmpeg args included -ss, -t, and -copyts
+  const runArgs = ffmpegRuns[0];
+  const ssIdx = runArgs.indexOf('-ss');
+  assert.ok(ssIdx >= 0);
+  assert.equal(runArgs[ssIdx + 1], '5');
+  const tIdx = runArgs.indexOf('-t');
+  assert.ok(tIdx >= 0);
+  assert.equal(runArgs[tIdx + 1], '25');
+  assert.ok(runArgs.includes('-copyts'));
+
+  // 2. Repeat request within the same interval uses windowCache without running FFmpeg
+  const cachedResult = await window(plex, media, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  assert.equal(cachedResult.data, mockSupData);
+  assert.equal(ffmpegRuns.length, 1); // No new run!
+
+  // 3. Request contained inside existing coverage also uses windowCache
+  const innerResult = await window(plex, media, { atMs: 12000, beforeMs: 2000, afterMs: 5000 });
+  assert.equal(innerResult.data, mockSupData);
+  assert.equal(ffmpegRuns.length, 1); // Still 1
+
+  // 4. Quality transfer preserves windowCache
+  const replacement = {
+    sourceKey: media.sourceKey,
+    principal: media.principal,
+    captionVersion: 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', available: true, external: false } },
+    source: media.source
+  };
+  assert.equal(transfer(media, replacement), true);
+  assert.ok(replacement.windowCache instanceof Map);
+  assert.ok(replacement.windowCache.size > 0);
+
+  // 5. Clear cleans up windowCache
+  clear(replacement);
+  assert.equal(replacement.windowCache.size, 0);
+});
