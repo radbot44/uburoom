@@ -531,7 +531,9 @@ function setSyncPreference(value) {
 $('sync-correction').addEventListener('change',event=>setSyncPreference(event.target.value));
 function renderAccount() {
   loadSyncPreference();
-  $('identity').textContent = me.name + (config.demo ? ' · local demo' : '');
+  const identityName = me.name + (config.demo ? ' · local demo' : '');
+  $('identity').textContent = identityName;
+  $('identity').setAttribute('aria-label', identityName + ' · Account settings');
   $('admin-mode').hidden = !(me.adminEligible ?? me.owner); $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
   $('open-browser').hidden = !activity||config.access?.publicWeb===false;
