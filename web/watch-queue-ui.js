@@ -49,7 +49,6 @@
     let lastFetchedRevision = -1;
     let lastFetchedRoomId = null;
     let moveFollow = null;
-    let selectedEntryId = null, selectionFrame;
 
     function node(tag, parent, text, className) {
       const el = doc.createElement(tag);
@@ -429,16 +428,6 @@
       }
       return closest;
     }
-    function selectCenteredEntry() {
-      const row = timeline.hidden ? undefined : nearestEntry();
-      selectedEntryId = row?.dataset.entryId || null;
-      host.dataset.selectedEntryId = selectedEntryId || '';
-      for (const item of entries()) {
-        const selected = item === row;
-        item.classList.toggle('queue-selected', selected);
-        if (selected) item.setAttribute('aria-current','true'); else item.removeAttribute('aria-current');
-      }
-    }
     function centerEntry(target, smooth = true) {
       if (!target || timeline.hidden) return;
       const rect = target.getBoundingClientRect(), bounds = layout.getBoundingClientRect();
@@ -446,22 +435,21 @@
         { top:layout.scrollTop + rect.top - bounds.top - (layout.clientHeight - rect.height) / 2, behavior:smooth ? motion() : 'instant' });
       updateNavigation();
     }
-    function directionTarget(direction, crossSection = false) {
+    function directionTarget(direction) {
       const rows = entries(), selected = nearestEntry();
-      if (crossSection && direction < 0 && selected?.classList.contains('queue-entry') && historyView.querySelector('.queue-history-entry:last-child')) return historyView.querySelector('.queue-history-entry:last-child');
-      if (crossSection && direction > 0 && selected?.classList.contains('queue-history-entry') && upcomingView.querySelector('.queue-entry')) return upcomingView.querySelector('.queue-entry');
-      if (selected === nowPlayingBox || !selected) return direction < 0 ? historyView.querySelector('.queue-history-entry:last-child') : upcomingView.querySelector('.queue-entry');
-      return rows[rows.indexOf(selected) + direction];
+      const index = rows.indexOf(selected);
+      if (index === -1) return undefined;
+      return rows[index + direction];
     }
-    function scrollCards(direction) { centerEntry(directionTarget(direction,true)); }
+    function scrollCards(direction) { centerEntry(directionTarget(direction)); }
     function updateNavigation() {
       if (!layout.clientWidth) return;
       previousCard.disabled = !directionTarget(-1); nextCard.disabled = !directionTarget(1);
-      selectCenteredEntry();
     }
-    function scheduleSelection() {
-      if (selectionFrame) return;
-      selectionFrame = requestAnimationFrame(() => { selectionFrame = undefined; updateNavigation(); });
+    let navFrame;
+    function scheduleNavigation() {
+      if (navFrame) return;
+      navFrame = requestAnimationFrame(() => { navFrame = undefined; updateNavigation(); });
     }
 
     function updateView() {
@@ -476,7 +464,7 @@
       requestAnimationFrame(() => centerCurrent());
     }
 
-    layout.addEventListener('scroll', scheduleSelection, { passive: true });
+    layout.addEventListener('scroll', scheduleNavigation, { passive: true });
     layout.addEventListener('keydown', event => {
       if (event.target !== layout) return;
       if ((view === 'cards' ? ['ArrowLeft','ArrowRight'] : ['ArrowUp','ArrowDown']).includes(event.key)) {
@@ -591,7 +579,6 @@
       host.classList.toggle('queue-is-empty', noEntries);
       emptyTitle.textContent = state ? 'The queue is empty' : 'Join a room to use the queue';
       emptyBrowse.disabled = !getMe?.() || !!state && !state.canBrowse;
-      if (noEntries) { selectedEntryId = null; host.dataset.selectedEntryId = ''; }
     }
 
     function renderNowPlaying() {
@@ -601,7 +588,6 @@
       updateViewsVisibility();
       if (empty) {
         delete nowPlayingBox.dataset.entryId;
-        nowPlayingBox.classList.remove('queue-selected'); nowPlayingBox.removeAttribute('aria-current');
         if (currentKey !== 'empty') { nowPlayingBox.replaceChildren(); node('p',nowPlayingBox,'No video selected'); const browse = button(nowPlayingBox,'Browse media','media',() => browseMedia(),!state ? !getMe?.() : !state?.canBrowse); node('span',browse,'Browse media'); currentKey = 'empty'; }
         return;
       }
@@ -704,7 +690,8 @@
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'Queue', 'queue-card-caption');
         action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
-        action(actions, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
+        const skipLabel = i === 0 ? 'Skip to' : ('Skip ' + i + (i === 1 ? ' item to' : ' items to'));
+        action(actions, skipLabel, 'player-track-next', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
       });
       if (autoNext && items.length >= (currentQueue.total || items.length)) {
         const canIdlePlay = !state?.mediaId && !state?.queueSummary?.current && !!state?.capabilities?.playPause;
@@ -714,7 +701,8 @@
         node('span', top, 'AUTO', 'queue-rank queue-rank-auto');
         const moves = node('div', top, undefined, 'queue-move-actions');
         action(moves, 'Add to queue', 'queue', async () => { await mutate('auto.pin'); await changed(); }, !state?.capabilities?.addQueue, 'queue-action-pin');
-        action(moves, 'Skip suggestion', 'end', async () => { await mutate('auto.skip'); await changed(); }, !canEdit, 'queue-action-auto-skip');
+        const isShuffle = state?.queueSummary?.autoQueue?.mode === 'random';
+        action(moves, 'Skip suggestion', isShuffle ? 'refresh' : 'end', async () => { await mutate('auto.skip'); await changed(); }, !canEdit, 'queue-action-auto-skip');
         art(row, autoNext);
         const info = node('div', row, undefined, 'queue-entry-info');
         title(info, autoNext, 'queue-entry-title');
@@ -722,7 +710,8 @@
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'Auto-queue', 'queue-card-caption');
         action(actions, 'Play now', 'play', async () => { await mutate('auto.playNow'); await changed(); }, !canChoose && !canIdlePlay, 'queue-action-play');
-        action(actions, 'Skip to', 'end', async () => {
+        const autoSkipLabel = items.length === 0 ? 'Skip to' : ('Skip ' + items.length + (items.length === 1 ? ' item to' : ' items to'));
+        action(actions, autoSkipLabel, 'player-track-next', async () => {
           if (!items.length) await execute({ action: 'media.next' });
           else { await mutate('auto.playNow'); await changed(); }
         }, !canChoose, 'queue-action-skip');
@@ -810,10 +799,8 @@
         node('span', info, outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' / ' + formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'History', 'queue-card-caption');
-        action(actions, 'Go back to', 'start', () => replayHistory(item.id, true, true), !canChoose, 'queue-item-go-back');
-        if (outcome !== 'completed') action(actions, 'Resume now', 'play', () => replayHistory(item.id, true), !canChoose, 'queue-item-resume');
-        action(actions, 'Start over now', 'refresh', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
-        action(actions, 'Add to queue', 'queue', () => add({ ...item, position: 0 }), !state?.capabilities?.addQueue, 'queue-item-add');
+        action(actions, 'Restart from here', 'player-track-next', () => replayHistory(item.id, true, true), !canChoose, 'queue-item-go-back');
+        action(actions, 'Restart now', 'rotate-clockwise', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
       }
     }
 
@@ -834,7 +821,7 @@
         });
       } else if (centerPending) requestAnimationFrame(() => centerCurrent());
       else { layout.scrollLeft = scroll; updateNavigation(); }
-      scheduleSelection();
+      scheduleNavigation();
     }
 
     function fetchData(force = false) {
@@ -1045,7 +1032,7 @@
       bulk,
       openAuto,
       fetchData,
-      get selectedEntryId() { return selectedEntryId; },
+      get selectedEntryId() { return null; },
       selectEntry(entryId) { centerEntry(entries().find(row => row.dataset.entryId === entryId)); }
     };
   }
