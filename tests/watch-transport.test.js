@@ -62,6 +62,11 @@ test('socket diagnostics distinguish an abnormal loss from an intentional reconn
   assert.equal(closes[1].closeInitiator,'interrupt');
   assert.equal(closes[1].connectionAttempt,2);
   transport.close();
+  // The first disconnect scheduled a 500ms retry, which was superseded by
+  // the manual connect. It must not reopen the transport after final close.
+  await new Promise(resolve=>setTimeout(resolve,650));
+  assert.equal(transport.connectionAttempt,2,'an orphan retry must not resurrect a stopped transport');
+  assert.equal(transport.stopped,true);
 });
 
 test('diagnostic exports distinguish missing and locked rooms without leaking room identifiers', () => {
