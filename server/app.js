@@ -3,7 +3,13 @@ const https = require('node:https');
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, createHash, timingSafeEqual } = require('node:crypto');
+
+// Use constant-time comparison for CSRF tokens to prevent timing side-channel attacks.
+function timingSafeMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+}
 const { Hub, hash, UUID } = require('./core');
 const { loginStore } = require('./storage');
 const { Plex } = require('./plex');
@@ -131,7 +137,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   async function protectedPost(req) {
     if (req.headers.origin !== config.publicUrl) return;
     const login = await user(req);
-    return login && req.headers.origin === config.publicUrl && req.headers['x-csrf-token'] === login.csrf ? login : undefined;
+    return login && req.headers.origin === config.publicUrl && timingSafeMatch(req.headers['x-csrf-token'], login.csrf) ? login : undefined;
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
@@ -487,7 +493,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         // Sign-out needs the existing cookie and CSRF proof, not current provider
         // eligibility: revocation or an upstream outage must not trap a login.
         const token=cookies(req).uburoom,id=token&&hash(token),login=id&&logins.get(id);
-        if (!login || req.headers.origin!==config.publicUrl || req.headers['x-csrf-token']!==login.csrf) return json(res,403,{error:'Not authorized'});
+        if (!login || req.headers.origin!==config.publicUrl || !timingSafeMatch(req.headers['x-csrf-token'], login.csrf)) return json(res,403,{error:'Not authorized'});
         hub.clearAdmin(webActor(login));
         logins.delete(id);cookieRenewedAt.delete(id);accounts.save();
         await watchRoutes.logout(id);

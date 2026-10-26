@@ -3,8 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { randomBytes, randomUUID } = require('node:crypto');
+const { randomBytes, randomUUID, createHash, timingSafeEqual } = require('node:crypto');
 const { UUID, hash } = require('./core');
+
+// Constant-time comparison for CSRF tokens to mitigate timing side-channel attacks.
+function timingSafeMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+}
 const { PlaybackError, CHUNK, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
@@ -50,7 +56,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   async function authorized(req, write = false) {
     const identity = await login(req);
-    if (!identity || req.controlSocket && req.controlSocket.readyState !== 1 || write && (!allowedOrigin(req) || !req.headers.authorization && req.headers['x-csrf-token'] !== identity.csrf)) return;
+    if (!identity || req.controlSocket && req.controlSocket.readyState !== 1 || write && (!allowedOrigin(req) || !req.headers.authorization && !timingSafeMatch(req.headers['x-csrf-token'], identity?.csrf))) return;
     return { identity, actor: webActor(identity) };
   }
   async function validGrant(grant) {
