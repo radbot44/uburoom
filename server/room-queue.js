@@ -101,6 +101,7 @@ class RoomQueue {
     this.store = store;
     this.randomIndex = randomIndex;
     this.maxPending = store.limits.maxQueue; this.maxHistory = store.limits.maxHistory;
+    this.rankStmtCache = new Map();
     let lastNow = 0;
     this.now = typeof now === 'function' ? now : () => {
       const n = Date.now();
@@ -136,6 +137,27 @@ class RoomQueue {
 
   bumpQueueRevision(roomId, at = this.now()) {
     this.db.prepare('UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(at, at, roomId);
+  }
+
+  updateRanks(ids, at) {
+    if (!ids || !ids.length) return;
+    if (ids.length === 1) {
+      this.db.prepare('UPDATE watch_queue_entries SET rank = 0, updatedAt = ? WHERE id = ?').run(at, ids[0]);
+      return;
+    }
+    let stmt = this.rankStmtCache ? this.rankStmtCache.get(ids.length) : null;
+    if (!stmt) {
+      const placeholders = ids.map(() => '(?, ?)').join(',');
+      const sql = `WITH updates(id, rank) AS (VALUES ${placeholders}) UPDATE watch_queue_entries SET rank = updates.rank, updatedAt = ? FROM updates WHERE watch_queue_entries.id = updates.id`;
+      stmt = this.db.prepare(sql);
+      if (this.rankStmtCache) this.rankStmtCache.set(ids.length, stmt);
+    }
+    const params = [];
+    for (let i = 0; i < ids.length; i++) {
+      params.push(ids[i], i);
+    }
+    params.push(at);
+    stmt.run(...params);
   }
 
   getEntry(entryId) {
@@ -250,8 +272,7 @@ class RoomQueue {
     }
     const at = this.now();
     this.registry.transaction(() => {
-      const update = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
-      items.forEach((item, rank) => update.run(rank, at, item.id));
+      this.updateRanks(items.map(item => item.id), at);
       this.bumpQueueRevision(roomId, at);
     });
     await this.store.commit();
@@ -394,10 +415,7 @@ class RoomQueue {
 
     const at = this.now();
     this.registry.transaction(() => {
-      const updateRank = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
-      for (let i = 0; i < ids.length; i++) {
-        updateRank.run(i, at, ids[i]);
-      }
+      this.updateRanks(ids, at);
       this.bumpQueueRevision(roomId, at);
     });
 
@@ -420,10 +438,12 @@ class RoomQueue {
     const at = this.now();
     this.registry.transaction(() => {
       this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(entryId);
-      const rows = this.db.prepare("SELECT id FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC").all(roomId);
-      const updateRank = this.db.prepare('UPDATE watch_queue_entries SET rank = ?, updatedAt = ? WHERE id = ?');
-      for (let i = 0; i < rows.length; i++) {
-        updateRank.run(i, at, rows[i].id);
+      if (entry.state === 'pending') {
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET rank = rank - 1, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending' AND rank > ?
+        `).run(at, roomId, entry.rank);
       }
       if (entry.state === 'current') this.db.prepare('UPDATE watch_rooms SET bookmark = NULL, checkpointRevision = checkpointRevision + 1 WHERE id = ?').run(roomId);
       this.bumpQueueRevision(roomId, at);
