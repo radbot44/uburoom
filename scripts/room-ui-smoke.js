@@ -34,7 +34,11 @@ async function main() {
       else if(p==='/library/metadata/100/allLeaves')rows=episodes;
       else if(p==='/library/metadata/110/children')rows=episodes.slice(0,1);
       else if(p==='/library/metadata/111/children')rows=episodes.slice(1);
-      else if(/^\/library\/metadata\/\d+$/.test(p))rows=[show,...seasons,...episodes,...movies,collection].filter(item=>item.ratingKey===p.split('/').pop());
+      else if(/^\/library\/metadata\/\d+(?:,\d+)*$/.test(p)){
+        const ids=new Set(p.split('/').pop().split(','));
+        rows=[show,...seasons,...episodes,...movies,collection].filter(item=>ids.has(item.ratingKey));
+        if(!rows.length)return fixture.fetch(input,options);
+      }
       else return fixture.fetch(input,options);
       const start=Number(url.searchParams.get('X-Plex-Container-Start')||0),size=Number(url.searchParams.get('X-Plex-Container-Size')||120);
       return new Response(JSON.stringify({MediaContainer:{Metadata:rows.slice(start,start+size),totalSize:rows.length}}));
