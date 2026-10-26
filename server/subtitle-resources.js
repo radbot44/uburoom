@@ -231,11 +231,11 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   media.windowCache||=new Map();
   const cacheKey=`${startMs}-${endMs}`;
   const existing=media.windowCache.get(cacheKey);
-  if(existing){existing.at=Date.now();return {format:'pgs',startMs,endMs,data:existing.data,cues:existing.cues};}
+  if(existing){existing.at=Date.now();return {format:track.delivery,startMs,endMs,data:existing.data,cues:existing.cues};}
   for(const item of media.windowCache.values()){
     if(item.startMs<=startMs&&item.endMs>=endMs){
       item.at=Date.now();
-      return {format:'pgs',startMs,endMs,data:item.data,cues:item.cues};
+      return {format:track.delivery,startMs,endMs,data:item.data,cues:item.cues};
     }
   }
 
@@ -246,10 +246,11 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
 
   active++;
   try{
+    const format=track.delivery==='ass'?'ass':track.delivery==='vobsub'?'matroska':'sup';
     const data=await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
       const args=['-hide_banner','-loglevel','error','-nostdin','-y',
         '-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,
-        '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
+        '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',format,'pipe:1'];
       return await av1.run(av1.ffmpeg,args,abort,25000,16*1024*1024);
     });
 
@@ -257,14 +258,21 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
     if(media.captionVersion!==version)throw new PlaybackError('Subtitle selection changed.');
 
     let cues=0;
-    if(data&&data.length>=13){
-      let offset=0;
-      while(offset+13<=data.length){
-        if(data[offset]===0x50&&data[offset+1]===0x47){
-          if(data[offset+10]===0x16)cues++;
-          const segSize=data.readUInt16BE(offset+11);
-          offset+=13+segSize;
-        }else break;
+    if(data&&data.length>0){
+      if(track.delivery==='pgs'&&data.length>=13){
+        let offset=0;
+        while(offset+13<=data.length){
+          if(data[offset]===0x50&&data[offset+1]===0x47){
+            if(data[offset+10]===0x16)cues++;
+            const segSize=data.readUInt16BE(offset+11);
+            offset+=13+segSize;
+          }else break;
+        }
+      }else if(track.delivery==='ass'){
+        const matches=data.toString('utf8').match(/^Dialogue:/mg);
+        cues=matches?matches.length:0;
+      }else if(track.delivery==='vobsub'){
+        cues=data.length>500?1:0;
       }
     }
 
@@ -282,7 +290,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       media.windowCache.delete(oldestKey);
     }
 
-    return {format:'pgs',startMs,endMs,data:entry.data,cues};
+    return {format:track.delivery,startMs,endMs,data:entry.data,cues};
   }catch(error){
     if(signal?.aborted||media.subtitleAbort?.signal.aborted)throw error;
     throw classifyExtractionError(error);

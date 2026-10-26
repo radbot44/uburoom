@@ -144,7 +144,8 @@ class uburoomSubtitles {
           const bytes=new Uint8Array(size);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.length;}return bytes;
         };
         let data, subUrl;
-        if(value.format==='pgs')subUrl=value.data;
+        if(value.window && ['pgs','ass','vobsub'].includes(value.format))subUrl=value.data;
+        else if(value.format==='pgs')subUrl=value.data;
         else data=await asset(value.data,value.format==='ass'?4*1024*1024:64*1024*1024);
         const index=value.index?await asset(value.index,1024*1024):undefined;
         if(value.fonts.length)this.status({message:'Loading subtitle fonts…',error:false,loading:true});
@@ -153,7 +154,7 @@ class uburoomSubtitles {
         const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,subUrl,index,fonts,fileName:value.fileName},this.offset||0,abort.signal,this.resolveMediaTime);
         if(generation!==this.generation){renderer.destroy();return;}
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
-        if(value.window && value.format==='pgs'){
+        if(value.window && ['pgs','ass','vobsub'].includes(value.format)){
           const scheduler=this.windowScheduler=new uburoomSubtitleWindows(renderer,value.window,()=>this.syncStatus(),abort.signal);
           this.syncStatus();
           scheduler.check(this.mediaTime());

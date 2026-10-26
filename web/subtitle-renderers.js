@@ -30,16 +30,17 @@ window.uburoomSubtitleRenderers={
         const {default:JASSUB}=await wait(import('/vendor/subtitles/jassub.js'));signal.throwIfAborted();
         const fontResponse=await fetch('/vendor/subtitles/default.woff2',{signal});if(!fontResponse.ok)throw new Error('Subtitle fallback font could not load.');
         const fallbackFont=new Uint8Array(await fontResponse.arrayBuffer());signal.throwIfAborted();
-        renderer=new JASSUB({video,canvas,subContent:new TextDecoder().decode(assets.data),fonts:[fallbackFont,...assets.fonts || []],queryFonts:false,timeOffset:-offset,
+        const initialSubContent=assets.data?new TextDecoder().decode(assets.data):'[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+        renderer=new JASSUB({video,canvas,subContent:initialSubContent,fonts:[fallbackFont,...assets.fonts || []],queryFonts:false,timeOffset:-offset,
           workerUrl:'/vendor/subtitles/jassub-worker.js',wasmUrl:'/vendor/subtitles/jassub-worker.wasm',modernWasmUrl:'/vendor/subtitles/jassub-worker-modern.wasm',
           libassMemoryLimit:32,libassGlyphLimit:1000,maxRenderHeight:2160});
         await wait(renderer.ready);
       }else{
         const {PgsRenderer,VobSubRenderer}=await wait(import('/vendor/subtitles/libbitsub-renderer.js'));signal.throwIfAborted();
-        const pushStream=format==='pgs' && !!assets.subUrl && !assets.data;
+        const pushStream=(format==='pgs'||format==='vobsub') && !!assets.subUrl && !assets.data;
         await wait(new Promise((resolve,reject)=>{
           const options={video,canvas,container:layer,
-            ...(pushStream?{}:assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength)}),
+            ...(pushStream?{}:assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data?assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength):new Uint8Array(0)}),
             ...(assets.index?{idxContent:new TextDecoder().decode(assets.index)}:{}),fileName:assets.fileName,timeOffset:-offset,
             cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,onError:reject};
           renderer=format==='pgs'?new PgsRenderer(options):new VobSubRenderer(options);
@@ -50,7 +51,21 @@ window.uburoomSubtitleRenderers={
       signal.throwIfAborted();repaint();
       for(const event of ['seeked','loadedmetadata','pause'])video.addEventListener(event,repaint);
       const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause'])video.removeEventListener(event,repaint);dispose();};
-      return {destroy:cleanup,append:chunk=>renderer.append(chunk),flush:()=>renderer.flush(),reset:()=>renderer.reset?.(),
+      return {destroy:cleanup,
+        append:chunk=>renderer.append ? renderer.append(chunk) :
+          format==='ass' ? (async()=>{
+            const text=new TextDecoder().decode(chunk);
+            await (renderer.renderer?.setTrack ? renderer.renderer.setTrack(text) : Promise.resolve());
+            repaint();
+            return 1;
+          })() :
+          format==='vobsub' && renderer.loadVobSubBuffer ? (async()=>{
+            await renderer.loadVobSubBuffer(chunk,null,true,true);
+            repaint();
+            return 1;
+          })() : undefined,
+        flush:()=>renderer.flush?.(),
+        reset:()=>renderer.reset ? renderer.reset() : renderer.onSeek ? renderer.onSeek() : undefined,
         synced:(time=currentMediaTime())=>renderer.isSyncedAtMediaTime?renderer.isSyncedAtMediaTime(time):true,
         offset(value){renderer.timeOffset=-value;repaint();},picture(value){
         layer.style.scale=value.zoom*value.stretchX+' '+value.zoom*value.stretchY;layer.style.translate=value.x*100+'% '+value.y*100+'%';

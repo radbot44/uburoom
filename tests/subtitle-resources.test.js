@@ -281,4 +281,49 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   // 5. Clear cleans up windowCache
   clear(replacement);
   assert.equal(replacement.windowCache.size, 0);
+
+  // 6. ASS subtitle windowing: extracts -f ass and counts Dialogue lines
+  const assText = '[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:10.00,0:00:15.00,Default,,0,0,0,,Line 1\nDialogue: 0,0:00:16.00,0:00:20.00,Default,,0,0,0,,Line 2\n';
+  const mockAssData = Buffer.from(assText, 'utf8');
+  const assMedia = {
+    sourceKey: '["https://plex.example","1","10","/library/parts/10/file.mkv",100,60,"1"]',
+    principal: 'plex-user-1',
+    captionVersion: '22222222-bbbb-cccc-dddd-eeeeeeeeeeee',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '24', index: 5, delivery: 'ass', available: true, external: false } },
+    source: { Media: [{ Part: [{ Stream: [{ id: 24, index: 5, streamType: 3, codec: 'ass' }] }] }] }
+  };
+  plex.av1.run = async (binary, args) => {
+    ffmpegRuns.push(args);
+    return mockAssData;
+  };
+  const assResult = await window(plex, assMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  assert.equal(assResult.format, 'ass');
+  assert.equal(assResult.cues, 2);
+  const assRunArgs = ffmpegRuns[ffmpegRuns.length - 1];
+  const fIdxAss = assRunArgs.indexOf('-f');
+  assert.ok(fIdxAss >= 0);
+  assert.equal(assRunArgs[fIdxAss + 1], 'ass');
+
+  // 7. VobSub subtitle windowing: extracts -f matroska and detects content
+  const mockVobsubData = Buffer.alloc(600, 0x11);
+  const vobsubMedia = {
+    sourceKey: '["https://plex.example","1","10","/library/parts/10/file.mkv",100,60,"1"]',
+    principal: 'plex-user-1',
+    captionVersion: '33333333-bbbb-cccc-dddd-eeeeeeeeeeee',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '25', index: 6, delivery: 'vobsub', available: true, external: false } },
+    source: { Media: [{ Part: [{ Stream: [{ id: 25, index: 6, streamType: 3, codec: 'vobsub' }] }] }] }
+  };
+  plex.av1.run = async (binary, args) => {
+    ffmpegRuns.push(args);
+    return mockVobsubData;
+  };
+  const vobsubResult = await window(plex, vobsubMedia, { atMs: 10000, beforeMs: 5000, afterMs: 20000 });
+  assert.equal(vobsubResult.format, 'vobsub');
+  assert.equal(vobsubResult.cues, 1);
+  const vobsubRunArgs = ffmpegRuns[ffmpegRuns.length - 1];
+  const fIdxVobsub = vobsubRunArgs.indexOf('-f');
+  assert.ok(fIdxVobsub >= 0);
+  assert.equal(vobsubRunArgs[fIdxVobsub + 1], 'matroska');
 });
