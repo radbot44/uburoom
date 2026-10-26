@@ -312,7 +312,7 @@ class Plex {
       count:Number(x.childCount || 0), episodeCount:Number(x.leafCount || 0), index:x.index, seasonIndex:x.parentIndex,
       showTitle:text(x.grandparentTitle), parentTitle:text(x.parentTitle), parentId:x.parentRatingKey && String(x.parentRatingKey), showId:x.grandparentRatingKey && String(x.grandparentRatingKey),
       hasPoster:!!poster, hasLandscape:!!landscape,
-      ...(x.type === 'episode' ? {summary:String(x.summary || '').slice(0,500)} : {})
+      ...(['movie', 'episode'].includes(x.type) ? {summary:String(x.summary || '').slice(0,500)} : {})
     }; });
   }
   subtitle(item) {
@@ -329,6 +329,39 @@ class Plex {
     const index = episodes.findIndex(x => String(x.ratingKey) === String(item.ratingKey));
     if (index < 0) return {};
     return { previousId: episodes[index - 1] && String(episodes[index - 1].ratingKey), nextId: episodes[index + 1] && String(episodes[index + 1].ratingKey) };
+  }
+  async nextEpisodeOffer(episodeMediaId) {
+    try {
+      const data = await this.catalog('/library/metadata/' + this.id(episodeMediaId));
+      const source = data.Metadata?.[0];
+      if (source?.type !== 'episode' || !source.grandparentRatingKey) return null;
+      const leavesData = await this.json(`/library/metadata/${source.grandparentRatingKey}/allLeaves`);
+      const episodes = (leavesData.Metadata || [])
+        .filter(x => x.type === 'episode' && /^\d+$/.test(String(x.ratingKey)) && (x.parentIndex == null || Number(x.parentIndex) !== 0))
+        .sort((a, b) => (Number(a.parentIndex) || 0) - (Number(b.parentIndex) || 0) || (Number(a.index) || 0) - (Number(b.index) || 0));
+      const index = episodes.findIndex(x => String(x.ratingKey) === String(source.ratingKey));
+      if (index < 0 || index + 1 >= episodes.length) return null;
+      const nextRaw = episodes[index + 1];
+      if (!nextRaw) return null;
+      if (!await this.allows(String(nextRaw.ratingKey)) || !Sources.available(nextRaw)) return null;
+      const item = this.items([nextRaw])[0];
+      if (!item) return null;
+      return {
+        mediaId: item.id,
+        showId: String(source.grandparentRatingKey),
+        showTitle: item.showTitle || String(source.grandparentTitle || ''),
+        title: item.title,
+        subtitle: item.subtitle,
+        parentTitle: item.parentTitle,
+        grandparentTitle: item.showTitle,
+        duration: item.duration,
+        summary: item.summary || '',
+        hasLandscape: item.hasLandscape,
+        hasPoster: item.hasPoster
+      };
+    } catch {
+      return null;
+    }
   }
   qualities(media) {
     const original = !media?.unavailable && media?.source && Sources.select(media.source,media.sourceSelection).media;

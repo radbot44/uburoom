@@ -298,6 +298,295 @@ const queueUI = uburoomQueueUI.mount($('queue-content'), {
   artwork: fetchArtwork,
   changed:async()=>{if(selected)await refreshState();}
 });
+
+let endingTicker = null;
+
+function initEndingStage() {
+  const container = $('ending-stage');
+  if (!container) return;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'ending-backdrop';
+  const img = document.createElement('img');
+  img.id = 'ending-art';
+  img.alt = '';
+  img.setAttribute('aria-hidden', 'true');
+  img.hidden = true;
+  img.onerror = () => {
+    if (img.dataset.kind === 'landscape') {
+      img.dataset.kind = 'poster';
+      img.src = '/api/watch/artwork/' + img.dataset.mediaId + '?kind=poster';
+    } else {
+      img.hidden = true;
+    }
+  };
+  img.onload = () => { img.hidden = false; };
+  const scrim = document.createElement('div');
+  scrim.className = 'ending-scrim';
+  scrim.setAttribute('aria-hidden', 'true');
+  backdrop.append(img, scrim);
+
+  const header = document.createElement('div');
+  header.className = 'ending-header';
+  header.id = 'ending-header';
+
+  const playWrap = document.createElement('div');
+  playWrap.className = 'ending-play-wrap';
+  const playBtn = document.createElement('button');
+  playBtn.id = 'ending-play';
+  playBtn.className = 'center-play ending-center-play';
+  playBtn.type = 'button';
+  playBtn.setAttribute('aria-label', 'Play');
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const ring = document.createElementNS(svgNS, 'svg');
+  ring.setAttribute('class', 'ending-ring');
+  ring.setAttribute('viewBox', '0 0 72 72');
+  ring.setAttribute('aria-hidden', 'true');
+  const track = document.createElementNS(svgNS, 'circle');
+  track.setAttribute('class', 'ending-ring-track');
+  track.setAttribute('cx', '36');
+  track.setAttribute('cy', '36');
+  track.setAttribute('r', '33');
+  const progress = document.createElementNS(svgNS, 'circle');
+  progress.setAttribute('id', 'ending-ring-progress');
+  progress.setAttribute('class', 'ending-ring-progress');
+  progress.setAttribute('cx', '36');
+  progress.setAttribute('cy', '36');
+  progress.setAttribute('r', '33');
+  ring.append(track, progress);
+
+  const playIcon = uburoomIcons.icon(document, 'play');
+  playBtn.append(ring, playIcon);
+  playWrap.append(playBtn);
+
+  const status = document.createElement('p');
+  status.className = 'ending-status';
+  status.id = 'ending-status';
+  status.setAttribute('role', 'status');
+
+  const body = document.createElement('div');
+  body.className = 'ending-body';
+
+  const kicker = document.createElement('div');
+  kicker.id = 'ending-kicker';
+  kicker.className = 'ending-kicker';
+
+  const title = document.createElement('h2');
+  title.id = 'ending-title';
+  title.className = 'ending-title';
+
+  const subtitle = document.createElement('p');
+  subtitle.id = 'ending-subtitle';
+  subtitle.className = 'ending-subtitle';
+
+  const summary = document.createElement('p');
+  summary.id = 'ending-summary';
+  summary.className = 'ending-summary';
+
+  const actions = document.createElement('div');
+  actions.className = 'ending-actions';
+
+  const startNowBtn = document.createElement('button');
+  startNowBtn.id = 'ending-start-now';
+  startNowBtn.className = 'primary ending-secondary-primary';
+  startNowBtn.type = 'button';
+  startNowBtn.append(uburoomIcons.icon(document, 'play'), document.createTextNode('Start now'));
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.id = 'ending-cancel';
+  cancelBtn.className = 'quiet';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel';
+
+  const watchAgainBtn = document.createElement('button');
+  watchAgainBtn.id = 'ending-watch-again';
+  watchAgainBtn.className = 'quiet';
+  watchAgainBtn.type = 'button';
+  watchAgainBtn.append(uburoomIcons.icon(document, 'refresh'), document.createTextNode('Watch again'));
+
+  const browseBtn = document.createElement('button');
+  browseBtn.id = 'ending-browse';
+  browseBtn.className = 'quiet';
+  browseBtn.type = 'button';
+  browseBtn.append(uburoomIcons.icon(document, 'media'), document.createTextNode('Browse media'));
+  browseBtn.addEventListener('click', browseMedia);
+
+  actions.append(startNowBtn, cancelBtn, watchAgainBtn, browseBtn);
+  body.append(kicker, title, subtitle, summary, actions);
+
+  container.replaceChildren(backdrop, header, playWrap, status, body);
+
+  playBtn.onclick = async () => {
+    if (!state?.ending) return;
+    const ending = state.ending;
+    if (ending.state === 'countdown' || ending.state === 'upNext') {
+      await execute({ action: 'media.next' });
+    } else if (ending.state === 'offer' && ending.next) {
+      await execute({
+        action: 'queue.offer.start',
+        args: { mediaId: ending.next.mediaId, showId: ending.next.showId }
+      });
+    } else if (ending.state === 'finished' && ending.completed) {
+      await execute({
+        action: 'queue.history.replay',
+        args: { entryId: ending.completed.entryId, resume: false }
+      });
+    }
+  };
+
+  startNowBtn.onclick = async () => {
+    if (!state?.ending?.next) return;
+    await execute({
+      action: 'queue.offer.start',
+      args: { mediaId: state.ending.next.mediaId, showId: state.ending.next.showId }
+    });
+  };
+
+  cancelBtn.onclick = async () => {
+    await execute({ action: 'media.autoplay.cancel' });
+  };
+
+  watchAgainBtn.onclick = async () => {
+    if (!state?.ending?.completed) return;
+    await execute({
+      action: 'queue.history.replay',
+      args: { entryId: state.ending.completed.entryId, resume: false }
+    });
+  };
+}
+
+function renderEnding(next) {
+  const ending = next.ending;
+  if (!ending || next.mediaUrl) {
+    if (endingTicker) {
+      cancelAnimationFrame(endingTicker);
+      endingTicker = null;
+    }
+    return;
+  }
+
+  const artMediaId = ending.next?.mediaId || ending.completed?.mediaId;
+  const img = $('ending-art');
+  if (img && artMediaId && img.dataset.mediaId !== artMediaId) {
+    img.dataset.mediaId = artMediaId;
+    img.dataset.kind = 'landscape';
+    img.src = '/api/watch/artwork/' + artMediaId + '?kind=landscape';
+    img.hidden = false;
+  } else if (img && !artMediaId) {
+    img.hidden = true;
+    img.dataset.mediaId = '';
+  }
+
+  const header = $('ending-header');
+  if (header) {
+    if (ending.completed && ending.next) {
+      header.hidden = false;
+      const subtitleStr = ending.completed.subtitle ? ' (' + ending.completed.subtitle + ')' : '';
+      header.textContent = 'Last played: ' + ending.completed.title + subtitleStr;
+    } else {
+      header.hidden = true;
+      header.textContent = '';
+    }
+  }
+
+  const isSecondary = ending.next?.source === 'auto' || ending.next?.source === 'offer';
+  const playBtn = $('ending-play');
+  if (playBtn) {
+    playBtn.classList.toggle('is-secondary', isSecondary);
+    const canPlay = (ending.state === 'offer')
+      ? (!!next.capabilities?.addQueue && !!next.capabilities?.playPause)
+      : (!!next.capabilities?.playPause || !!next.capabilities?.chooseMedia);
+    playBtn.disabled = !canPlay;
+    const status = $('ending-status');
+    if (status) {
+      if (!canPlay) {
+        status.textContent = ending.state === 'offer'
+          ? 'Starting continuation requires permission to add to queue and play.'
+          : 'Playing next requires playback permission.';
+      } else if (ending.error) {
+        status.textContent = ending.error;
+      } else {
+        status.textContent = '';
+      }
+    }
+  }
+
+  const displayItem = ending.next || ending.completed;
+  const title = $('ending-title');
+  if (title) title.textContent = displayItem?.title || '';
+  const subtitle = $('ending-subtitle');
+  if (subtitle) subtitle.textContent = displayItem?.subtitle || '';
+  const summary = $('ending-summary');
+  if (summary) {
+    summary.textContent = ending.next?.summary || '';
+    summary.hidden = !ending.next?.summary;
+  }
+
+  const kicker = $('ending-kicker');
+  if (kicker) {
+    kicker.classList.toggle('is-secondary', isSecondary);
+    if (ending.state === 'upNext') {
+      kicker.textContent = isSecondary ? 'Auto-queue · Up next' : 'Up next';
+    } else if (ending.state === 'offer') {
+      kicker.textContent = 'Next episode · Auto-queue';
+    } else if (ending.state === 'finished') {
+      kicker.textContent = 'Just ended';
+    }
+  }
+
+  const ring = document.querySelector('.ending-ring');
+  if (ring) ring.hidden = ending.state !== 'countdown';
+
+  const startNowBtn = $('ending-start-now');
+  if (startNowBtn) {
+    const canOffer = !!next.capabilities?.addQueue && !!next.capabilities?.playPause;
+    startNowBtn.hidden = ending.state !== 'offer' || !canOffer;
+  }
+  const cancelBtn = $('ending-cancel');
+  if (cancelBtn) {
+    cancelBtn.hidden = ending.state !== 'countdown' || !next.capabilities?.autoplay;
+  }
+  const watchAgainBtn = $('ending-watch-again');
+  if (watchAgainBtn) {
+    const canReplay = !!next.capabilities?.playPause || !!next.capabilities?.chooseMedia;
+    watchAgainBtn.hidden = !ending.completed || !canReplay;
+  }
+  const browseBtn = $('ending-browse');
+  if (browseBtn) {
+    browseBtn.hidden = !next.canBrowse;
+  }
+
+  if (ending.state === 'countdown' && ending.countdown) {
+    const updateCountdown = () => {
+      if (!state?.ending || state.ending.state !== 'countdown' || !state.ending.countdown) {
+        endingTicker = null;
+        return;
+      }
+      const now = (playbackClock.read().serverTime ?? (Date.now() + offset));
+      const remaining = Math.max(0, state.ending.countdown.endsAt - now);
+      const fraction = Math.max(0, Math.min(1, remaining / (state.ending.countdown.durationMs || 10000)));
+      const seconds = Math.max(0, Math.ceil(remaining / 1000));
+      const kickerEl = $('ending-kicker');
+      if (kickerEl) kickerEl.textContent = 'Up next in ' + seconds + 's';
+      const progressEl = $('ending-ring-progress');
+      if (progressEl) {
+        const circumference = 207.345;
+        progressEl.style.strokeDashoffset = String(circumference * (1 - fraction));
+      }
+      endingTicker = requestAnimationFrame(updateCountdown);
+    };
+    if (!endingTicker) {
+      endingTicker = requestAnimationFrame(updateCountdown);
+    }
+  } else {
+    if (endingTicker) {
+      cancelAnimationFrame(endingTicker);
+      endingTicker = null;
+    }
+  }
+}
+
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
   beforeSettings:()=>{renderMediaInformation(state);trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
   afterSettings:()=>{trackContext=undefined;}});
@@ -319,6 +608,7 @@ const library = uburoomLibrary.mount($('library-content'), {
   },
   close:returnToVideo, getPlayer:() => state
 });
+initEndingStage();
 // The nested same-origin tester uses current Activity authorization without
 // copying its bearer token into a URL, iframe or exported diagnostics.
 globalThis.uburoomCodecSample = async (path, options = {}) => {
@@ -825,7 +1115,13 @@ function clearPlayer(reason) {
   dropVolume(); video.pause(); stopHls(reason);
   video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined; readyQueued = false;
   playbackError = ''; autoplayBlocked = false;
-  $('join-playback').hidden = true; $('empty-stage').hidden = false; $('ready-status').textContent = '';
+  $('join-playback').hidden = true;
+  const isEnding = !!(state && !state.mediaUrl && state.ending);
+  stage.classList.toggle('ending-active', isEnding);
+  $('ending-stage').hidden = !isEnding;
+  $('empty-stage').hidden = isEnding;
+  if (isEnding) renderEnding(state);
+  $('ready-status').textContent = '';
 }
 function stopHls(reason) {
   if(hls)diagnosticSample('hls-stop',{reason});
@@ -1308,6 +1604,8 @@ function applyState(next) {
   if (changed) {
     clearPlayer('state-change'); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
+      stage.classList.remove('ending-active');
+      $('ending-stage').hidden = true;
       $('empty-stage').hidden = true;
       watchFrames();
       if (next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) {
@@ -1365,6 +1663,12 @@ function applyState(next) {
   video.style.scale = picture.zoom * picture.stretchX + ' ' + picture.zoom * picture.stretchY;
   video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
   const isIdle = !next.mediaUrl;
+  const isEnding = isIdle && !!next.ending;
+  stage.classList.toggle('ending-active', isEnding);
+  $('ending-stage').hidden = !isEnding;
+  $('empty-stage').hidden = !isIdle || isEnding;
+  if (isEnding) renderEnding(next);
+  else renderEnding({ ending: null });
   $('title').textContent = isIdle ? (next.roomName || 'Room') : next.title; $('details').textContent = isIdle ? '' : next.subtitle;
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
@@ -1476,7 +1780,11 @@ function applyRooms(rooms) {
     $('rooms').hidden=true;
     if(!selected&&transport?.ready&&rooms[0]&&!rooms[0].locked&&!switchingRoom)void selectRoom(rooms[0].id).catch(error=>fail(error.message));
   }
-  if (!selected) { $('viewers').textContent = ''; $('close-room').hidden = true; $('empty-browse').hidden = true;
+  if (!selected) {
+    stage.classList.remove('ending-active');
+    $('ending-stage').hidden = true;
+    renderEnding({ ending: null });
+    $('viewers').textContent = ''; $('close-room').hidden = true; $('empty-browse').hidden = true;
     $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.'; }
   placeRoomBar();
   renderBrowsing(); renderVisibility();

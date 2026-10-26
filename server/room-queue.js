@@ -596,12 +596,19 @@ class RoomQueue {
   async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard, discardCurrent = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
-    this.assertAllowed(room, userId, 'chooseMedia');
+    const current = this.current(roomId);
+    if (!current && !discardCurrent) {
+      const canonical = this.account(userId);
+      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'playPause')) {
+        throw error('Room queue permission required', 403);
+      }
+    } else {
+      this.assertAllowed(room, userId, 'chooseMedia');
+    }
     if (discardCurrent) this.assertAllowed(room, userId, 'editQueue');
     this.assertRevision(room, expectedRevision);
 
     const nextPending = this.peekNext(roomId);
-    const current = this.current(roomId);
     if (currentEntryId !== undefined && currentEntryId !== (current?.id || null) || nextEntryId !== undefined && nextEntryId !== (nextPending?.id || null)) {
       throw error('Queue changed; refresh before advancing', 409);
     }
@@ -729,7 +736,14 @@ class RoomQueue {
   async historyReplay(roomId, userId, historyEntryId, { resume = false, restore = false, expectedRevision } = {}, currentPosition = 0) {
     this.healthy();
     const room = this.room(roomId);
-    this.assertAllowed(room, userId, 'chooseMedia');
+    if (!restore && !this.current(roomId)) {
+      const canonical = this.account(userId);
+      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'playPause')) {
+        throw error('Room queue permission required', 403);
+      }
+    } else {
+      this.assertAllowed(room, userId, 'chooseMedia');
+    }
     this.assertRevision(room, expectedRevision);
 
     const historyEntry = this.getEntry(historyEntryId);
@@ -843,6 +857,7 @@ class RoomQueue {
     const historyCount = this.db.prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'history'").get(roomId)?.c || 0;
     const currentRow = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'current'").get(roomId);
     const nextRow = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT 1").get(roomId);
+    const lastHistoryRow = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT 1").get(roomId);
     const roomRow = this.db.prepare('SELECT queueRevision,autoQueue,autoplay FROM watch_rooms WHERE id = ?').get(roomId);
     const autoQueue = roomRow?.autoQueue ? JSON.parse(roomRow.autoQueue) : { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [] };
 
@@ -875,6 +890,20 @@ class RoomQueue {
         grandparentTitle: nextRow.grandparentTitle || null,
         thumb: nextRow.thumb || null,
         duration: nextRow.duration
+      } : null,
+      lastHistory: lastHistoryRow ? {
+        id: lastHistoryRow.id,
+        serverId: lastHistoryRow.serverId,
+        mediaId: lastHistoryRow.mediaId,
+        type: lastHistoryRow.type,
+        title: lastHistoryRow.title,
+        parentTitle: lastHistoryRow.parentTitle || null,
+        grandparentTitle: lastHistoryRow.grandparentTitle || null,
+        thumb: lastHistoryRow.thumb || null,
+        duration: lastHistoryRow.duration,
+        position: lastHistoryRow.position,
+        outcome: lastHistoryRow.outcome || null,
+        endedAt: lastHistoryRow.endedAt || null
       } : null
     };
   }

@@ -62,6 +62,10 @@
       case 'queue.add': case 'queue.playNow':
         if (!a.item || typeof a.item !== 'object' || Array.isArray(a.item)) throw new Error('Choose a queue item');
         args.item = a.item; break;
+      case 'queue.offer.start':
+        if (typeof a.mediaId !== 'string' || !/^\d{1,20}$/.test(a.mediaId) ||
+            typeof a.showId !== 'string' || !/^\d{1,20}$/.test(a.showId)) throw new Error('Choose an offer item');
+        args = { mediaId: a.mediaId, showId: a.showId }; break;
       case 'queue.bulk':
         if (!['show','season'].includes(a.type) || typeof a.mediaId !== 'string' || !/^\d{1,20}$/.test(a.mediaId) ||
             typeof a.unfinished !== 'boolean' || typeof a.includeSpecials !== 'boolean') throw new Error('Choose show or season queue options');

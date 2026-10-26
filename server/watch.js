@@ -24,6 +24,16 @@ const RECONNECT_GRACE_MS = 60000;
 // Late readiness retains a short delivery margin for a 300+ ms RTT.
 const INITIAL_START_LEAD_MS = 1750;
 const READY_START_MARGIN_MS = 400;
+
+function formatEntrySubtitle(entry) {
+  if (!entry) return '';
+  if (entry.subtitle) return entry.subtitle;
+  if (entry.type === 'episode') {
+    return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' · ');
+  }
+  return entry.parentTitle || '';
+}
+
 function syncQualityParticipants(room,participants,now=Date.now()) {
   for (const person of participants || []) {
     const sessions=[];
@@ -471,15 +481,58 @@ class Watch {
       qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
       ...(room.saved ? (() => {
         const queueSummary = this.roomState.queue.summary(room.s.roomId);
+        const completed = queueSummary?.lastHistory;
+        const next = queueSummary?.next;
+        const endingOffer = room.endingOffer?.key === (completed?.id + ':' + queueSummary?.queueRevision) ? room.endingOffer.offer : null;
+        const hasInterstitial = !room.media && !!(completed || next || endingOffer);
+        const ending = hasInterstitial ? {
+          state: room.autoplayCountdown ? 'countdown' : next ? 'upNext' : endingOffer ? 'offer' : 'finished',
+          completed: completed ? {
+            entryId: completed.id,
+            mediaId: completed.mediaId,
+            type: completed.type,
+            title: completed.title,
+            subtitle: formatEntrySubtitle(completed),
+            outcome: completed.outcome
+          } : null,
+          next: next ? {
+            entryId: next.id,
+            mediaId: next.mediaId,
+            type: next.type,
+            title: next.title,
+            subtitle: formatEntrySubtitle(next),
+            duration: next.duration,
+            summary: room.endingMeta?.get(next.mediaId)?.summary || '',
+            source: next.provenance === 'following' || next.provenance === 'random' || next.source === 'auto' ? 'auto' : 'queue'
+          } : endingOffer ? {
+            ...endingOffer,
+            source: 'offer'
+          } : null,
+          countdown: room.autoplayCountdown ? {
+            id: room.autoplayCountdown.id,
+            startedAt: room.autoplayCountdown.startedAt,
+            durationMs: room.autoplayCountdown.durationMs,
+            endsAt: room.autoplayCountdown.endsAt
+          } : null,
+          error: room.autoplayError || room.autoQueueError || null
+        } : null;
+        if (!room.media && hasInterstitial && !room.refreshingEndingMeta) {
+          const offerKey = completed?.id + ':' + queueSummary?.queueRevision;
+          const needsOffer = !next && completed?.type === 'episode' && queueSummary.autoQueue.mode === 'off' && room.endingOffer?.key !== offerKey;
+          const needsSummary = next && !room.endingMeta?.has(next.mediaId);
+          if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
+        }
         return {
           hasPrevious: this.position(room) >= 5 || (queueSummary?.historyCount || 0) > 0,
           hasNext: !!queueSummary?.next,
-          queueSummary
+          queueSummary,
+          ending
         };
       })() : {
         hasPrevious: !!room.media?.previousId,
         hasNext: !!room.media?.nextId,
-        queueSummary: undefined
+        queueSummary: undefined,
+        ending: null
       }),
       autoplay: room.saved ? { enabled:this.roomState.store.get(room.s.roomId).autoplay,
         countdown:room.autoplayCountdown ? {id:room.autoplayCountdown.id,title:room.autoplayCountdown.title,endsAt:room.autoplayCountdown.endsAt} : null,
@@ -547,7 +600,16 @@ class Watch {
     const revision = args.expectedRevision ?? queue.room(id).queueRevision;
     queue.assertRevision(queue.room(id),revision);
     if (room?.mediaTransition || room?.queueEditing) throw Object.assign(new Error('Wait for the current queue operation'),{status:409});
-    if (room) { room.queueEditing = true; this.cancelAutoplay(room); clearPlaybackEnd(room); }
+    const priorCountdown = room?.autoplayCountdown;
+    const hadMedia = !!room?.media;
+    const wasEmptyQueue = !queue.current(id) && !queue.pending(id).length;
+    if (room) {
+      room.queueEditing = true;
+      if (hadMedia) {
+        this.cancelAutoplay(room);
+        clearPlaybackEnd(room);
+      }
+    }
     try {
       let value;
       if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
@@ -571,11 +633,40 @@ class Watch {
           room.queueEditing = false;
           return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted);
         }
-        if (action === 'queue.add' && room && !room.media && !queue.current(id) && !queue.pending(id).length) {
+        if (action === 'queue.add' && room && !room.media && wasEmptyQueue) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true});
+          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
         }
         value = action === 'queue.add' ? await queue.add(id,actor.userId,item,{expectedRevision:revision}) : await queue.playNow(id,actor.userId,item);
+      } else if (action === 'queue.offer.start') {
+        if (!room) throw Object.assign(new Error('Room unavailable'), { status: 404 });
+        if (!this.hub.canRoom(room.s, actor, 'addQueue') || !this.hub.canRoom(room.s, actor, 'playPause')) {
+          throw Object.assign(new Error('Room permission required'), { status: 403 });
+        }
+        if (room.media || queue.current(id) || queue.pending(id).length) {
+          throw Object.assign(new Error('Queue is no longer empty'), { status: 409 });
+        }
+        const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+        const checked = plex.playableItem ? await plex.playableItem(args.mediaId) : { id: args.mediaId, type: 'episode' };
+        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) {
+          throw Object.assign(new Error('Plex access changed'), { status: 403 });
+        }
+        const serverId = await this.roomState.identify({ id: args.showId });
+        await check();
+        const autoConfig = { mode: 'following', scope: { type: 'show', id: args.showId, serverId }, includeSpecials: false };
+        await queue.configureAuto(id, actor.userId, autoConfig, { expectedRevision: revision });
+        room.queueEditing = false;
+        const res = await this.changeQueueMedia(room, { action: 'media.load', args: { mediaId: args.mediaId } }, actor, permitted, { initialAdd: true, forcePlay: true });
+        try {
+          const corpus = await this.autoCorpus(id, actor, autoConfig);
+          if (corpus) {
+            const latestRecord = this.roomState.store.get(id);
+            await queue.generate(id, actor.userId, corpus, { expectedRevision: latestRecord.queueRevision });
+            this.roomState.apply(room, this.roomState.store.get(id));
+            room.revision++;
+          }
+        } catch {}
+        return res;
       } else if (action === 'queue.playEntry' || action === 'queue.skipTo') {
         const skipPrevious = action === 'queue.skipTo' || !!args.skipPrevious;
         if (room) {
@@ -590,9 +681,9 @@ class Watch {
         if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
         await check();
         value = await queue.addBulk(id,actor.userId,items.map(item => this.queueItem(item,serverId)),{expectedRevision:revision,unfinished:args.unfinished});
-        if (room && !room.media && !queue.current(id) && value.addedCount) {
+        if (room && !room.media && wasEmptyQueue && value.addedCount) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true});
+          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
         }
       } else if (action === 'queue.auto') {
         let scope = args.scope, corpus;
@@ -626,7 +717,26 @@ class Watch {
         }
         value = await queue.historyReplay(id,actor.userId,args.entryId,{resume:args.resume,restore:action === 'queue.history.goBack',expectedRevision:revision});
       }
-      if (room && this.rooms.get(id) === room) { this.roomState.apply(room,this.roomState.store.get(id)); room.revision++; room.autoQueueError = undefined; }
+      if (room && this.rooms.get(id) === room) {
+        const latest = this.roomState.store.get(id);
+        this.roomState.apply(room, latest);
+        if (priorCountdown && !room.media) {
+          const afterNext = this.nextCandidate(id);
+          const afterKey = afterNext ? (afterNext.id || (afterNext.serverId + ':' + afterNext.mediaId)) : null;
+          if (!afterNext) {
+            this.cancelAutoplay(room);
+          } else if (afterKey === priorCountdown.nextKey && room.autoplayCountdown === priorCountdown) {
+            priorCountdown.queueRevision = latest.queueRevision;
+          } else {
+            this.cancelAutoplay(room);
+            room.queueEditing = false;
+            await this.startAutoplayCountdown(room);
+          }
+        }
+        void this.refreshEndingMeta(room);
+        room.revision++;
+        room.autoQueueError = undefined;
+      }
       return {status:'applied',...value};
     } finally { if (room) room.queueEditing = false; }
   }
@@ -634,52 +744,171 @@ class Watch {
     if (!room.saved || !observePlaybackEnd(room,viewer,data,observed)) return;
     await this.finishQueueMedia(room,data);
   }
-  async finishQueueMedia(room, data) {
-    if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
-    const intent = room.playbackIntent || 0;
-    room.endedVersion = room.mediaVersion;
-    room.initialGate = false; room.readinessTimedOut = false; room.readinessVersion = randomUUID();
-    room.readinessStartAt = room.pauseAt = room.startAt = undefined;
-    room.position = room.media.duration; room.changedAt = Date.now(); room.s.state.paused = true; room.revision++;
-    const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id), next = this.roomState.queue.peekNext(record.id);
-    if (!current || !next) {
-      room.mediaTransition = true;
-      try {
-        // A checkpoint or another control must not restore the completed item
-        // while its durable completion is waiting for the writer.
-        const completing = (async () => {
-          await room.saving?.catch(() => {});
-          if (current) await this.roomState.queue.completeCurrent(record.id);
-          this.unloadQueueMedia(room);
-        })();
-        room.transitionCommit = completing;
-        await completing;
-        room.transitionCommit = undefined;
-        await this.roomState.save(room);
-        this.roomState.apply(room, this.roomState.store.get(record.id));
-        room.revision++;
-      } finally { room.transitionCommit = undefined; room.mediaTransition = false; }
+  nextCandidate(roomId) {
+    return this.roomState?.queue.peekNext(roomId) || null;
+  }
+  async refreshEndingMeta(room) {
+    if (!room?.saved || room.media || room.refreshingEndingMeta) return;
+    room.refreshingEndingMeta = true;
+    try {
+      const record = this.roomState?.store.get(room.s.roomId);
+      if (!record) return;
+      const summary = this.roomState.queue.summary(record.id);
+      if (!summary) return;
+      room.endingMeta ||= new Map();
+      const needed = [summary.lastHistory, summary.next].filter(Boolean);
+      const viewer = [...room.viewers.values()][0];
+      const plex = viewer && this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex;
+      if (plex?.details) {
+        for (const item of needed) {
+          if (!room.endingMeta.has(item.mediaId)) {
+            try {
+              const details = await plex.details(item.mediaId, item.type);
+              room.endingMeta.set(item.mediaId, {
+                summary: details?.summary || '',
+                subtitle: details?.subtitle || '',
+                hasLandscape: !!details?.hasLandscape,
+                hasPoster: !!details?.hasPoster
+              });
+              while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
+            } catch {
+              room.endingMeta.set(item.mediaId, { summary: '', subtitle: '', hasLandscape: false, hasPoster: false });
+            }
+          }
+        }
+      } else {
+        for (const item of needed) {
+          if (!room.endingMeta.has(item.mediaId)) {
+            room.endingMeta.set(item.mediaId, { summary: '', subtitle: '', hasLandscape: false, hasPoster: false });
+          }
+        }
+      }
+      if (!summary.next && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
+        const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
+        if (!room.endingOffer || room.endingOffer.key !== offerKey) {
+          await this.resolveEndingOffer(room, summary.lastHistory);
+        }
+      }
+    } finally {
+      room.refreshingEndingMeta = false;
+    }
+  }
+  async resolveEndingOffer(room, completed) {
+    if (!completed || completed.type !== 'episode') return;
+    const record = this.roomState?.store.get(room.s.roomId);
+    if (!record || record.autoQueue?.mode !== 'off') return;
+    const epoch = room.s.epoch;
+    const revision = record.queueRevision;
+    const key = completed.id + ':' + revision;
+    const viewer = [...room.viewers.values()][0];
+    const plex = viewer && this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex;
+    if (!plex || typeof plex.nextEpisodeOffer !== 'function') {
+      room.endingOffer = { key, offer: null };
       return;
     }
-    const controller = [...room.viewers.entries()].find(([,person]) => this.hub.canRoom(room.s,person.actor,'chooseMedia') && this.hub.canRoom(room.s,person.actor,'autoplay'));
+    try {
+      const offer = await plex.nextEpisodeOffer(completed.mediaId);
+      if (room.s.epoch !== epoch || this.roomState.store.get(record.id)?.queueRevision !== revision) return;
+      room.endingOffer = { key, offer: offer || null };
+      if (offer) {
+        room.endingMeta ||= new Map();
+        room.endingMeta.set(offer.mediaId, {
+          summary: offer.summary || '',
+          subtitle: offer.subtitle || '',
+          hasLandscape: offer.hasLandscape,
+          hasPoster: offer.hasPoster
+        });
+        room.revision++;
+      }
+    } catch {
+      if (room.s.epoch === epoch && this.roomState.store.get(record.id)?.queueRevision === revision) {
+        room.endingOffer = { key, offer: null };
+      }
+    }
+  }
+  async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
+    const record = this.roomState?.store.get(room.s.roomId);
+    if (!record || !record.autoplay || room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.manualPaused) return;
+    const controller = [...room.viewers.entries()].find(([, person]) =>
+      (this.hub.canRoom(room.s, person.actor, 'chooseMedia') || this.hub.canRoom(room.s, person.actor, 'playPause')) &&
+      this.hub.canRoom(room.s, person.actor, 'autoplay')
+    );
     if (!controller) return;
     const [viewerId, person] = controller;
-    if (person.alive && !await person.alive() || !await this.canView(room,person.actor) || room.viewers.get(viewerId) !== person || this.rooms.get(record.id) !== room || room.manualPaused ||
-        room.mediaVersion !== data.mediaVersion || room.s.epoch !== data.epoch || room.autoplayCountdown || room.mediaTransition || room.queueEditing ||
-        (room.playbackIntent || 0) !== intent || this.roomState.store.get(record.id).queueRevision !== record.queueRevision ||
-        !this.roomState.store.get(record.id).autoplay || !this.hub.canRoom(room.s,person.actor,'chooseMedia') || !this.hub.canRoom(room.s,person.actor,'autoplay')) return;
-    const countdown = {id:randomUUID(),title:next.title,endsAt:Date.now()+this.autoplayDelayMs,epoch:room.s.epoch,
-      mediaVersion:room.mediaVersion,currentEntryId:current.id,nextEntryId:next.id,queueRevision:record.queueRevision,viewerId};
-    room.autoplayCountdown = countdown; room.autoplayError = undefined; room.revision++;
+    if (person.alive && !await person.alive() || !await this.canView(room, person.actor) || room.viewers.get(viewerId) !== person || this.rooms.get(record.id) !== room || room.manualPaused ||
+        (data && (room.s.epoch !== data.epoch || (room.endedVersion !== data.mediaVersion && room.mediaVersion !== data.mediaVersion))) ||
+        room.autoplayCountdown || room.mediaTransition || room.queueEditing ||
+        (room.playbackIntent || 0) !== intent ||
+        !this.roomState.store.get(record.id).autoplay) return;
+    const latest = this.roomState.store.get(record.id);
+    const next = this.nextCandidate(record.id);
+    if (!next) return;
+    clearTimeout(room.autoplayTimer);
+    const now = Date.now();
+    const countdown = {
+      id: randomUUID(),
+      title: next.title,
+      startedAt: now,
+      durationMs: this.autoplayDelayMs,
+      endsAt: now + this.autoplayDelayMs,
+      epoch: room.s.epoch,
+      mediaVersion: room.mediaVersion,
+      currentEntryId: null,
+      nextEntryId: next.id,
+      nextKey: next.id || (next.serverId + ':' + next.mediaId),
+      queueRevision: latest.queueRevision,
+      viewerId
+    };
+    room.autoplayCountdown = countdown;
+    room.autoplayError = undefined;
+    room.revision++;
     room.autoplayTimer = setTimeout(() => {
-      const advance = this.hub.dispatch({...person.actor,watchViewerId:viewerId,watchQueueAdvance:countdown},{roomId:record.id,action:'media.next'}).then(result => {
+      const advance = this.hub.dispatch({ ...person.actor, watchViewerId: viewerId, watchQueueAdvance: countdown }, { roomId: record.id, action: 'media.next' }).then(result => {
         if (result.status !== 'applied' && room.autoplayCountdown === countdown) {
           this.cancelAutoplay(room); room.autoplayError = result.message || 'The next video could not be loaded.'; room.revision++;
         }
       }).catch(() => { this.cancelAutoplay(room); room.autoplayError = 'The next video could not be loaded.'; room.revision++; });
       this.roomState.track(advance);
-    },this.autoplayDelayMs);
+    }, this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
+  }
+  async finishQueueMedia(room, data) {
+    if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
+    const intent = room.playbackIntent || 0;
+    const endedVersion = room.mediaVersion;
+    room.endedVersion = endedVersion;
+    room.initialGate = false; room.readinessTimedOut = false; room.readinessVersion = randomUUID();
+    room.readinessStartAt = room.pauseAt = room.startAt = undefined;
+    if (room.media) room.position = room.media.duration;
+    room.changedAt = Date.now(); room.s.state.paused = true; room.revision++;
+    const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id);
+    room.mediaTransition = true;
+    try {
+      const completing = (async () => {
+        await room.saving?.catch(() => {});
+        if (current) await this.roomState.queue.completeCurrent(record.id);
+        this.unloadQueueMedia(room);
+        room.endedVersion = endedVersion;
+        room.manualPaused = false;
+      })();
+      room.transitionCommit = completing;
+      await completing;
+      room.transitionCommit = undefined;
+      await this.roomState.save(room);
+      this.roomState.apply(room, this.roomState.store.get(record.id));
+      room.revision++;
+    } finally {
+      room.transitionCommit = undefined;
+      room.mediaTransition = false;
+    }
+    await this.refreshEndingMeta(room);
+    const latestRecord = this.roomState.store.get(record.id);
+    const next = this.nextCandidate(record.id);
+    if (next && latestRecord.autoplay) {
+      await this.startAutoplayCountdown(room, { intent: room.playbackIntent || 0, data });
+    } else if (!next && current?.type === 'episode' && latestRecord.autoQueue.mode === 'off') {
+      await this.resolveEndingOffer(room, current);
+    }
   }
   unloadQueueMedia(room) {
     const old = room.media;
@@ -690,7 +919,7 @@ class Watch {
     this.dropMedia(room, 'end');
     if (old) void this.plex.stop(old);
   }
-  async changeQueueMedia(room, command, actor, permitted, { initialAdd = false } = {}) {
+  async changeQueueMedia(room, command, actor, permitted, { initialAdd = false, forcePlay = false } = {}) {
     if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
     if (!room.viewers.size && command.action !== 'media.load' && !(command.action === 'queue.remove' && !command.args.advance)) return {status:'unavailable',message:'No viewer is connected.'};
     const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
@@ -699,7 +928,7 @@ class Watch {
     const valid = () => permitted() && this.rooms.get(id) === room && room.mediaVersion === version && room.s.epoch === epoch &&
       (room.playbackIntent || 0) === intent && (!countdown || room.autoplayCountdown === countdown && room.viewers.has(countdown.viewerId) &&
         !room.manualPaused && this.roomState.store.get(id).autoplay && countdown.epoch === epoch && countdown.mediaVersion === version &&
-        countdown.currentEntryId === current?.id && countdown.nextEntryId === next?.id && countdown.queueRevision === record.queueRevision &&
+        (countdown.currentEntryId || null) === (current?.id || null) && countdown.nextEntryId === next?.id && countdown.queueRevision === record.queueRevision &&
         this.hub.canRoom(room.s,actor,'autoplay'));
     if (!valid()) return {status:'unavailable',message:'Autoplay or media selection was cancelled.'};
     const removing = action === 'queue.remove', advance = removing && args.advance;
@@ -741,7 +970,7 @@ class Watch {
         queue.assertRevision(queue.room(id),record.queueRevision);
         const position = this.position(room);
         let saving;
-        if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? old.duration : position,
+        if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid,discardCurrent:!!advance});
         else if (removing) saving = queue.remove(id,actor.userId,args.entryId,record.queueRevision,{allowCurrent:true});
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
@@ -761,7 +990,7 @@ class Watch {
         room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
         room.position = record ? queue.current(id).position : 0; room.changedAt = Date.now();
         if (room.recovery) this.roomState.finishRecovery(room);
-        this.dropMedia(room); room.s.state.paused = true; room.manualPaused = initialAdd && !this.roomState.store.get(id).autoplay; room.initialGate = true;
+        this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
         this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;
         void this.plex.stop(old); adopted = true;
       } else {
@@ -809,6 +1038,23 @@ class Watch {
     }
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
     if (room.transitionCommit) return {status:'unavailable',message:'Wait for the current queue transition to finish.'};
+    if (!room.media && room.saved && ['media.play', 'media.toggle'].includes(action) && this.nextCandidate(s.roomId)) {
+      if (!this.hub.canRoom(s, actor, 'playPause') && !this.hub.canRoom(s, actor, 'chooseMedia')) {
+        return { status: 'forbidden', message: 'Starting the next video requires permission.' };
+      }
+      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      return this.changeQueueMedia(room, { action: 'media.next', args: {} }, actor, permitted);
+    }
+    if (!room.media && room.saved && room.autoplayCountdown && action === 'media.pause') {
+      if (!this.hub.canRoom(s, actor, 'playPause')) return { status: 'forbidden', message: 'Pausing requires playback permission.' };
+      this.cancelAutoplay(room);
+      room.manualPaused = true;
+      return { status: 'applied', message: 'Autoplay paused.' };
+    }
+    if (!room.media && room.saved && room.endedVersion && (action === 'media.seek.end' || action.startsWith('media.seek.'))) {
+      if (!this.hub.canRoom(s, actor, 'playPause')) return { status: 'forbidden', message: 'Seeking requires playback permission.' };
+      return { status: 'applied', message: 'Current video finished.' };
+    }
     const endpointSeek = room.saved && room.media && (action === 'media.seek.end' ||
       action === 'media.seek.absolute' && args.seconds >= room.media.duration ||
       action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration);
@@ -816,19 +1062,10 @@ class Watch {
       (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - .1);
     if (endpointSeek || endpointPlay) {
       if (!room.viewers.size || room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for an available viewing room.'};
-      if (endpointPlay && room.endedVersion === room.mediaVersion && this.roomState.queue.peekNext(s.roomId)) {
-        if (!this.hub.canRoom(s,actor,'chooseMedia')) return {status:'forbidden',message:'Choosing the next video requires video-selection permission.'};
-        this.cancelAutoplay(room); clearPlaybackEnd(room);
-        return this.changeQueueMedia(room,{action:'media.next',args:{}},actor,permitted);
-      }
-      // Endpoint intent is an authorized command, not decoded watch evidence.
-      // Never ask a decoder to become ready beyond its last presented frame.
-      if (room.endedVersion !== room.mediaVersion || !this.roomState.queue.peekNext(s.roomId)) {
-        this.cancelAutoplay(room); clearPlaybackEnd(room);
-        if (room.recovery) this.roomState.finishRecovery(room);
-        room.manualPaused = false; room.endedVersion = undefined;
-        await this.finishQueueMedia(room,{mediaVersion:room.mediaVersion,epoch:s.epoch});
-      }
+      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      if (room.recovery) this.roomState.finishRecovery(room);
+      room.manualPaused = false; room.endedVersion = undefined;
+      await this.finishQueueMedia(room,{mediaVersion:room.mediaVersion,epoch:s.epoch});
       return {status:'applied',message:'Current video finished.'};
     }
     if (action.startsWith('queue.')) return this.queueCommand(s.roomId,command,actor,permitted);

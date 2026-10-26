@@ -80,6 +80,7 @@ class Hub {
     if (personal) return true;
     const capability = RoomPolicy.commandCapability(command.action);
     if (!capability || !this.canRoom(room, actor, capability)) return false;
+    if (command.action === 'queue.offer.start' && !this.canRoom(room, actor, 'playPause')) return false;
     if (actor.surface !== 'web' && !isHost(room, actor) && !this.isAdmin(actor) && !Engine.controlAllowed(room.controls,command)) return false;
     if (['media.play','media.toggle','media.ready.start'].includes(command.action) && !isHost(room, actor) && !this.isAdmin(actor) &&
         ![...(room.viewers?.values() || [])].some(viewer => isHost(room, viewer.actor) || this.isAdmin(viewer.actor))) {

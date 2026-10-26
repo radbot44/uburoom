@@ -145,31 +145,6 @@
       catch (error) { notice.textContent = error.message; }
       finally { autoPending = false; if (notice.textContent === 'Saving Auto-queue…') notice.textContent = 'Auto-queue saved.'; renderContinuation(); }
     });
-    const countdown = node('div', doc.getElementById('stage'), undefined, 'queue-countdown');
-    countdown.id = 'queue-autoplay-countdown';
-    countdown.hidden = true;
-    const countdownText = node('span', countdown, undefined, 'queue-countdown-text');
-    countdownText.setAttribute('role', 'status');
-    const countdownSeconds = node('span',countdown,undefined,'queue-countdown-seconds'); countdownSeconds.id = 'queue-countdown-seconds';
-    const countdownActions = node('div', countdown, undefined, 'queue-countdown-actions');
-    const playNowAutoplay = button(countdownActions, 'Play now', undefined, async () => {
-      if (cancelPending) return;
-      cancelPending = true; playNowAutoplay.disabled = cancelAutoplay.disabled = true;
-      try { await execute({ action: 'media.next' }); }
-      catch (error) { notice.textContent = error.message; }
-      finally { cancelPending = false; renderContinuation(); }
-    }, false, 'primary queue-autoplay-now');
-    playNowAutoplay.id = 'queue-autoplay-play-now';
-    playNowAutoplay.textContent = 'Play now';
-    const cancelAutoplay = button(countdownActions, 'Cancel auto-play', undefined, async () => {
-      if (cancelPending) return;
-      cancelPending = true; playNowAutoplay.disabled = cancelAutoplay.disabled = true;
-      try { await execute({ action: 'media.autoplay.cancel' }); }
-      catch (error) { notice.textContent = error.message; }
-      finally { cancelPending = false; renderContinuation(); }
-    }, false, 'quiet queue-autoplay-cancel');
-    cancelAutoplay.id = 'queue-autoplay-cancel';
-    cancelAutoplay.textContent = 'Cancel';
 
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
@@ -193,15 +168,6 @@
       if (!autoPending) autoToggle.checked = !!auto?.mode && auto.mode !== 'off';
       autoToggle.disabled = autoPending || !state?.capabilities?.editQueue;
       autoToggle.title = autoToggle.disabled ? (autoPending ? 'Saving Auto-queue…' : 'Queue editing is unavailable for your role.') : 'Auto-queue';
-      const next = state?.autoplay?.countdown;
-      countdown.hidden = !state?.durable || !next;
-      if (next) {
-        const now = serverTime?.() ?? state.serverNow;
-        const seconds = Math.max(0, Math.ceil((next.endsAt - now) / 1000));
-        if (countdownText.textContent !== 'Up next: ' + next.title) countdownText.textContent = 'Up next: ' + next.title; countdownText.title = next.title;
-        countdownSeconds.textContent = seconds + 's'; countdownSeconds.setAttribute('aria-label',seconds + (seconds === 1 ? ' second' : ' seconds'));
-      }
-      playNowAutoplay.disabled = cancelAutoplay.disabled = cancelPending || !state?.capabilities?.autoplay;
       if (state?.autoplay?.error) notice.textContent = state.autoplay.error;
       else if (lastAutoplayError && notice.textContent === lastAutoplayError) notice.textContent = '';
       lastAutoplayError = state?.autoplay?.error || '';
