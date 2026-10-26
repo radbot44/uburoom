@@ -135,13 +135,13 @@
     const autoToggle = node('input', autoLabel); autoToggle.type = 'checkbox'; autoToggle.id = 'queue-auto-toggle';
     autoToggle.className = 'watch-switch'; autoToggle.setAttribute('role','switch');
     autoLabel.append(doc.createTextNode('Auto-queue')); continuation.append(autoOpen);
-    let rememberedAuto = null, rememberedRoom;
+    let rememberedAuto = null, rememberedRoom, lastAutoNextKey = '';
     autoToggle.addEventListener('change', async () => {
       if (autoPending) return;
-      if (autoToggle.checked && !rememberedAuto) { autoToggle.checked = false; await openSettings(); return; }
       autoPending = true; autoToggle.disabled = true;
       notice.textContent = 'Saving Auto-queue…';
-      try { await mutate('auto', autoToggle.checked ? rememberedAuto : { mode: 'off' }); await changed(); }
+      const targetAuto = autoToggle.checked ? (rememberedAuto || { mode: 'continue', scope: null, includeSpecials: false }) : { mode: 'off', scope: null, includeSpecials: false };
+      try { await mutate('auto', targetAuto); await changed(); }
       catch (error) { notice.textContent = error.message; }
       finally { autoPending = false; if (notice.textContent === 'Saving Auto-queue…') notice.textContent = 'Auto-queue saved.'; renderContinuation(); }
     });
@@ -236,7 +236,7 @@
     const autoModeLabel = node('label', autoDialog, 'Mode');
     const autoMode = node('select', autoModeLabel); autoMode.id = 'queue-auto-mode';
     autoMode.hidden = true;
-    for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
+    for (const [value, label] of [['off', 'Off'], ['continue', 'Continue'], ['following', 'In order'], ['random', 'Shuffle']]) {
       const option = node('option', autoMode, label); option.value = value;
     }
     const autoModeGroup = node('div', autoDialog, undefined, 'button-group watch-segmented');
@@ -244,11 +244,14 @@
     autoModeGroup.setAttribute('role', 'group');
     autoModeGroup.setAttribute('aria-label', 'Mode');
     const modeButtons = new Map();
-    for (const [value, label] of [['off', 'Off'], ['following', 'Following'], ['random', 'Random']]) {
+    for (const [value, label] of [['off', 'Off'], ['continue', 'Continue'], ['following', 'In order'], ['random', 'Shuffle']]) {
       const btn = node('button', autoModeGroup, label, 'group-button');
       btn.type = 'button';
       btn.dataset.value = value;
-      btn.title = value === 'off' ? 'Do not generate queued videos automatically.' : value === 'following' ? 'Queue the following episodes from the selected show.' : 'Choose videos at random from the selected source.';
+      btn.title = value === 'off' ? 'Do not generate queued videos automatically.' :
+        value === 'continue' ? 'Automatically queue the next episode of the last TV show in the queue.' :
+        value === 'following' ? 'Queue episodes in order from the selected show.' :
+        'Shuffle videos from the selected source.';
       btn.setAttribute('aria-pressed', String(value === 'off'));
       btn.addEventListener('click', () => {
         if (autoMode.value !== value) {
@@ -328,10 +331,11 @@
       } catch (error) { if (ticket === autoTicket && draftScope === scope) autoSource.textContent = 'Source unavailable: ' + error.message; }
     }
     function updateAutoFields() {
-      const off = autoMode.value === 'off'; autoSource.hidden = sourceChange.hidden = off;
-      autoSpecialLabel.hidden = off || draftScope.type !== 'show';
+      const hideSource = autoMode.value === 'off' || autoMode.value === 'continue';
+      autoSource.hidden = sourceChange.hidden = hideSource;
+      autoSpecialLabel.hidden = hideSource || draftScope.type !== 'show';
       autoMode.querySelector('[value=following]').disabled = draftScope.type !== 'show';
-      if (off) sourcePicker.hidden = true;
+      if (hideSource) sourcePicker.hidden = true;
       syncAutoModeButtons();
     }
     autoMode.addEventListener('change',() => { hasAutoDraft = true; updateAutoFields(); });
@@ -378,8 +382,9 @@
         if (getSettingsState()?.id !== roomId || !getSettingsState()?.capabilities?.editQueue) { return; }
         autoPending = true; autoSave.disabled = autoCancel.disabled = autoMode.disabled = autoSpecials.disabled = sourceChange.disabled = true; setAutoNotice('Saving…');
         try {
-          const selectedScope = { ...draftScope };
-          await saveSettings({autoQueue:{ mode: autoMode.value, scope: selectedScope, includeSpecials: draftScope.type === 'show' && autoSpecials.checked }});
+          const hasScope = ['following', 'random'].includes(autoMode.value);
+          const selectedScope = hasScope ? { ...draftScope } : null;
+          await saveSettings({autoQueue:{ mode: autoMode.value, scope: selectedScope, includeSpecials: hasScope && draftScope.type === 'show' && autoSpecials.checked }});
           hasAutoDraft = false;
           setAutoNotice('Saved', true); await changed();
         } catch (error) { setAutoNotice(error.message); }
@@ -578,7 +583,7 @@
 
     function updateViewsVisibility() {
       const state = getState();
-      const noEntries = !state || !(state.mediaId || state.queueSummary?.current || state.queueSummary?.pendingCount || currentQueue.items.length || state.queueSummary?.historyCount || currentHistory.items.length);
+      const noEntries = !state || !(state.mediaId || state.queueSummary?.current || state.queueSummary?.pendingCount || currentQueue.items.length || state.queueSummary?.autoQueue?.next || state.queueSummary?.historyCount || currentHistory.items.length);
       views.hidden = toolbar.hidden = timeline.hidden = noEntries;
       emptyScreen.hidden = !noEntries;
       continuation.hidden = !state;
@@ -592,7 +597,7 @@
     function renderNowPlaying() {
       const state = getState();
       const empty = !state?.mediaId && !state?.queueSummary?.current;
-      host.classList.toggle('queue-no-current',empty); host.classList.toggle('queue-no-entries',!(state?.queueSummary?.pendingCount || state?.queueSummary?.historyCount));
+      host.classList.toggle('queue-no-current',empty); host.classList.toggle('queue-no-entries',!(state?.queueSummary?.pendingCount || state?.queueSummary?.autoQueue?.next || state?.queueSummary?.historyCount));
       updateViewsVisibility();
       if (empty) {
         delete nowPlayingBox.dataset.entryId;
@@ -636,7 +641,7 @@
       const progress = nowPlayingBox.querySelector('progress');
       progress.max = duration || 1; progress.value = Math.min(position, duration);
       const toggle = nowPlayingBox.querySelector('.queue-current-toggle');
-      nowPlayingBox.querySelector('.queue-current-later').disabled = !currentQueue.items.length || !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia;
+      nowPlayingBox.querySelector('.queue-current-later').disabled = !(currentQueue.items.length || state?.queueSummary?.autoQueue?.next) || !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia;
       nowPlayingBox.querySelector('.queue-current-skip').disabled = !state?.hasNext || !state?.capabilities?.chooseMedia;
       const label = state?.state?.paused ? 'Play' : 'Pause';
       if (toggle.title !== label) {
@@ -661,20 +666,27 @@
       const duration = state?.queueSummary?.current?.duration || state?.state?.duration || 0;
       let remaining = Math.max(0, duration - (state?.state?.position || 0));
       const ranks = upcomingView.querySelectorAll('.queue-rank');
-      (currentQueue.items || []).forEach((item, i) => {
+      const captions = upcomingView.querySelectorAll('.queue-card-caption');
+      const items = currentQueue.items || [];
+      items.forEach((item, i) => {
         if (ranks[i]) { ranks[i].textContent = i === 0 ? 'NEXT' : '#' + (i + 1); ranks[i].classList.toggle('queue-next',i === 0); }
-        const caption = upcomingView.querySelectorAll('.queue-card-caption')[i];
-        if (caption) caption.textContent = 'Up in ' + formatTime(remaining);
+        if (captions[i]) captions[i].textContent = 'Up in ' + formatTime(remaining);
         remaining += Math.max(0, item.duration - (item.position || 0));
       });
+      const autoRow = upcomingView.querySelector('.queue-entry-auto');
+      if (autoRow) {
+        const autoCaption = autoRow.querySelector('.queue-card-caption');
+        if (autoCaption) autoCaption.textContent = view === 'list' ? 'Auto · Up in ' + formatTime(remaining) : 'Auto-queue';
+      }
     }
 
     function renderUpcoming() {
       upcomingView.replaceChildren();
       node('h3', upcomingView, 'Upcoming →', 'queue-column-heading');
       const state = getState(), items = currentQueue.items || [];
+      const autoNext = state?.queueSummary?.autoQueue?.mode !== 'off' ? state?.queueSummary?.autoQueue?.next : null;
       const canEdit = !!state?.capabilities?.editQueue, canChoose = !!state?.capabilities?.chooseMedia;
-      if (!items.length) node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from Media to line up videos.', 'hint queue-empty');
+      if (!items.length && !autoNext) node('p', upcomingView, 'The queue is empty. Choose "Add to queue" from Media to line up videos.', 'hint queue-empty');
       const list = node('div', upcomingView, undefined, 'queue-list queue-upcoming-list');
       list.id = 'queue-upcoming-list';
       items.forEach((item, i) => {
@@ -694,6 +706,27 @@
         action(actions, 'Play now', 'play', () => playEntry(item.id, false), !canChoose, 'queue-action-play');
         action(actions, 'Skip to', 'end', () => playEntry(item.id, true), !canChoose, 'queue-action-skip');
       });
+      if (autoNext && items.length >= (currentQueue.total || items.length)) {
+        const canIdlePlay = !state?.mediaId && !state?.queueSummary?.current && !!state?.capabilities?.playPause;
+        const row = node('article', list, undefined, 'queue-entry queue-entry-auto');
+        row.dataset.entryId = 'auto:' + autoNext.mediaId;
+        const top = node('div', row, undefined, 'queue-entry-top');
+        node('span', top, 'AUTO', 'queue-rank queue-rank-auto');
+        const moves = node('div', top, undefined, 'queue-move-actions');
+        action(moves, 'Add to queue', 'queue', async () => { await mutate('auto.pin'); await changed(); }, !state?.capabilities?.addQueue, 'queue-action-pin');
+        action(moves, 'Skip suggestion', 'end', async () => { await mutate('auto.skip'); await changed(); }, !canEdit, 'queue-action-auto-skip');
+        art(row, autoNext);
+        const info = node('div', row, undefined, 'queue-entry-info');
+        title(info, autoNext, 'queue-entry-title');
+        node('span', info, formatTime(autoNext.duration), 'queue-meta');
+        const actions = node('div', row, undefined, 'queue-entry-actions');
+        node('span', actions, 'Auto-queue', 'queue-card-caption');
+        action(actions, 'Play now', 'play', async () => { await mutate('auto.playNow'); await changed(); }, !canChoose && !canIdlePlay, 'queue-action-play');
+        action(actions, 'Skip to', 'end', async () => {
+          if (!items.length) await execute({ action: 'media.next' });
+          else { await mutate('auto.playNow'); await changed(); }
+        }, !canChoose, 'queue-action-skip');
+      }
       updateUpcomingTimes();
       const actions = node('div', footer, undefined, 'queue-footer-actions watch-control-group');
       if (items.length < currentQueue.total) {
@@ -864,7 +897,7 @@
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const expectedRevision = queueRevision(state);
       const result = await request('/api/watch/rooms/' + state.id + '/queue', { action, ...args, expectedRevision },
-        ['bulk', 'auto', 'playEntry', 'skipTo', 'remove'].includes(action) ? { timeoutMs: 35000 } : {});
+        ['bulk', 'auto', 'auto.skip', 'auto.pin', 'auto.playNow', 'playEntry', 'skipTo', 'remove'].includes(action) ? { timeoutMs: 35000 } : {});
       await fetchData(true);
       return result;
     }
@@ -989,6 +1022,8 @@
         renderTab();
       }
       if (lastFetchedRevision < 0 || lastFetchedRevision === queueSummary?.queueRevision) {
+        const autoNextKey = JSON.stringify(queueSummary?.autoQueue?.mode !== 'off' ? queueSummary?.autoQueue?.next || null : null);
+        if (autoNextKey !== lastAutoNextKey) { lastAutoNextKey = autoNextKey; renderTab(); }
         renderNowPlaying(); updateUpcomingTimes();
       }
       const permissions = JSON.stringify(state.capabilities);

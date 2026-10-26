@@ -420,25 +420,30 @@ test('shuffle reorders only pending occurrences with contiguous ranks and curren
   await assert.rejects(f.queue.shuffle(room.id, f.viewer, shuffled.queueRevision), /permission/);
 });
 
-const autoConfig = mode => ({ mode, scope: { type: 'show', id: '50', serverId: 'plex-server-1' }, includeSpecials: false });
+const autoConfig = mode => ({ mode, scope: mode === 'continue' ? null : { type: 'show', id: '50', serverId: 'plex-server-1' }, includeSpecials: false });
 
-test('following generation appends after the current or pending tail and atomic advance saves the successor', async t => {
+test('following generation sets autoQueue.next preview without pending rows and atomic advance materializes it', async t => {
   const f = fixture(t), room = await f.store.create(f.creator);
   const corpus = [1, 2, 3, 4].map(sampleItem);
   await f.queue.playNow(room.id, f.creator, sampleItem(1));
   await f.queue.configureAuto(room.id, f.creator, autoConfig('following'));
   const generated = await f.queue.generate(room.id, f.creator, corpus);
   assert.deepEqual(generated.added.map(item => item.mediaId), ['102']);
+  assert.equal(f.queue.pending(room.id).length, 0, 'autoQueue.next is never inserted as a pending row');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '102');
   assert.equal((await f.queue.generate(room.id, f.creator, corpus)).added.length, 0);
-  const current = f.queue.current(room.id), next = f.queue.peekNext(room.id), revision = f.store.get(room.id).queueRevision;
-  const advanced = await f.queue.next(room.id, f.creator, { outcome: 'completed', expectedRevision: revision, currentEntryId: current.id, nextEntryId: next.id, corpus });
+  const current = f.queue.current(room.id), revision = f.store.get(room.id).queueRevision;
+  const advanced = await f.queue.next(room.id, f.creator, { outcome: 'completed', expectedRevision: revision, currentEntryId: current.id, nextEntryId: 'auto:102', corpus });
   assert.equal(advanced.current.mediaId, '102');
+  assert.equal(advanced.current.provenance, 'following');
   assert.equal(advanced.generated[0].mediaId, '103');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '103');
+  assert.equal(f.queue.pending(room.id).length, 0);
   assert.equal(advanced.queueRevision, revision + 1);
   assert.equal(f.queue.history(room.id).items[0].outcome, 'completed');
   assert.equal(f.queue.history(room.id).items[0].position, current.duration);
   assert.equal(f.store.get(room.id).bookmark.mediaId, '102');
-  await assert.rejects(f.queue.next(room.id, f.creator, { expectedRevision: revision, currentEntryId: current.id, nextEntryId: next.id }), /Queue changed/);
+  await assert.rejects(f.queue.next(room.id, f.creator, { expectedRevision: revision, currentEntryId: current.id, nextEntryId: 'auto:102' }), /Queue changed/);
   await assert.rejects(f.queue.next(room.id, f.creator, { currentEntryId: current.id }), /Queue changed/);
   await assert.rejects(f.queue.next(room.id, f.creator, { guard: () => false }), /Playback changed/);
   assert.equal(f.queue.current(room.id).id, advanced.current.id);
@@ -451,33 +456,38 @@ test('random generation persists its pool cycle and autoplay choice across reope
   await f.queue.setAutoplay(room.id, f.creator, false);
   f.queue.randomIndex = () => 0;
   assert.equal((await f.queue.generate(room.id, f.creator, corpus)).added[0].mediaId, '102');
+  assert.equal(f.queue.pending(room.id).length, 0);
   await f.restart();
   f.queue.randomIndex = () => 0;
   assert.equal(f.store.get(room.id).autoplay, false);
-  assert.equal(f.queue.peekNext(room.id).mediaId, '102');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '102');
   assert.deepEqual(f.store.get(room.id).autoQueue.used, ['101', '102']);
   await f.queue.next(room.id, f.creator, { corpus });
-  assert.equal(f.queue.peekNext(room.id).mediaId, '103');
+  assert.equal(f.queue.current(room.id).mediaId, '102');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '103');
   assert.equal(f.store.get(room.id).autoQueue.cycle, 0);
   await f.queue.next(room.id, f.creator, { corpus });
-  assert.equal(f.queue.peekNext(room.id).mediaId, '101');
+  assert.equal(f.queue.current(room.id).mediaId, '103');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '101');
   assert.equal(f.store.get(room.id).autoQueue.cycle, 1);
   const summary = f.queue.summary(room.id);
   assert.equal(summary.autoplay, false);
+  assert.equal(summary.autoQueue.next.mediaId, '101');
   assert.equal(summary.autoQueue.used, undefined, 'snapshots exclude the potentially large persisted pool');
   await assert.rejects(f.queue.setAutoplay(room.id, f.viewer, true), /permission/);
 });
 
-test('generation insertion failure rolls back completion, bookmark, successor and random state together', async t => {
+test('generation materialization failure rolls back completion, bookmark, successor and random state together', async t => {
   const f = fixture(t), room = await f.store.create(f.creator), corpus = [1, 2, 3].map(sampleItem);
   await f.queue.playNow(room.id, f.creator, sampleItem(1));
-  await f.queue.add(room.id, f.creator, sampleItem(2));
   await f.queue.configureAuto(room.id, f.creator, autoConfig('random'));
+  f.queue.randomIndex = () => 0;
+  await f.queue.generate(room.id, f.creator, corpus);
   const before = f.store.get(room.id);
-  f.registry.db.exec("CREATE TEMP TRIGGER reject_generation BEFORE INSERT ON watch_queue_entries WHEN NEW.mediaId = '103' BEGIN SELECT RAISE(ABORT, 'fixture generation failure'); END");
+  f.registry.db.exec("CREATE TEMP TRIGGER reject_generation BEFORE INSERT ON watch_queue_entries WHEN NEW.mediaId = '102' BEGIN SELECT RAISE(ABORT, 'fixture generation failure'); END");
   await assert.rejects(f.queue.next(room.id, f.creator, { outcome: 'completed', corpus }), /fixture generation failure/);
   assert.equal(f.queue.current(room.id).mediaId, '101');
-  assert.equal(f.queue.peekNext(room.id).mediaId, '102');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '102');
   assert.equal(f.queue.history(room.id).total, 0);
   assert.deepEqual(f.store.get(room.id), before);
 });
@@ -582,11 +592,11 @@ test('random auto-queue remembers its full cycle after visible history is pruned
   assert.equal(f.queue.history(room.id).total,1);
   await f.queue.historyClear(room.id,f.creator);
   await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
-  assert.equal(f.queue.peekNext(room.id).mediaId,corpus[4].mediaId);
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId,corpus[4].mediaId);
   assert.equal(f.store.get(room.id).autoQueue.cycle,0);
 });
 
-test('auto-queue generatePending performs fast O(N) generation with large catalog corpora', async t => {
+test('auto-queue computeAutoNext performs fast O(N) preview selection with large catalog corpora and supports continue, skip, pin and playAutoNow', async t => {
   const f = fixture(t);
   const room = await f.store.create(f.creator);
   const corpusSize = 5000;
@@ -601,17 +611,49 @@ test('auto-queue generatePending performs fast O(N) generation with large catalo
   const durationFollowing = performance.now() - startFollowing;
 
   assert.equal(resFollowing.added[0].mediaId, '201');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '201');
   assert.ok(durationFollowing < 500, `Following mode took ${durationFollowing}ms, expected < 500ms`);
 
-  // 2. Test 'random' mode with large corpus
+  // Skip suggestion advances preview to 202 without inserting pending rows
+  const skipped = await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.equal(skipped.skipped.mediaId, '201');
+  assert.equal(skipped.next.mediaId, '202');
+  assert.equal(f.queue.pending(room.id).length, 0);
+
+  // Pin converts 202 into a regular pending row and advances preview to 203
+  const pinned = await f.queue.pinAuto(room.id, f.creator, corpus);
+  assert.equal(pinned.added.mediaId, '202');
+  assert.equal(pinned.added.provenance, 'manual');
+  assert.equal(pinned.next.mediaId, '203');
+  assert.equal(f.queue.pending(room.id).length, 1);
+
+  // playAutoNow plays 203 immediately while preserving pending row 202 and advancing preview to 204
+  const playedAuto = await f.queue.playAutoNow(room.id, f.creator, { corpus });
+  assert.equal(playedAuto.current.mediaId, '203');
+  assert.equal(f.queue.pending(room.id).length, 1);
+  assert.equal(f.queue.pending(room.id)[0].mediaId, '202');
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '204');
+
+  // 2. Test 'continue' mode dynamic anchor
+  await f.queue.clear(room.id, f.creator);
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'continue' });
+  const contRes = await f.queue.generate(room.id, f.creator, corpus);
+  assert.equal(contRes.next.mediaId, '204');
+  // Movie at tail of pending produces next = null in continue mode
+  await f.queue.add(room.id, f.creator, { ...sampleItem(9999), type: 'movie' });
+  const movieRes = await f.queue.generate(room.id, f.creator, []);
+  assert.equal(movieRes.next, null);
+
+  // 3. Test 'random' mode with large corpus
   await f.queue.clear(room.id, f.creator);
   await f.queue.configureAuto(room.id, f.creator, { mode: 'random', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
   f.queue.randomIndex = max => Math.floor(max / 2);
 
   const startRandom = performance.now();
-  const resRandom = await f.queue.generate(room.id, f.creator, corpus, { targetPending: 10 });
+  const resRandom = await f.queue.generate(room.id, f.creator, corpus);
   const durationRandom = performance.now() - startRandom;
 
-  assert.equal(resRandom.added.length, 10);
+  assert.equal(resRandom.added.length, 1);
+  assert.equal(f.queue.pending(room.id).length, 0);
   assert.ok(durationRandom < 500, `Random mode took ${durationRandom}ms, expected < 500ms`);
 });

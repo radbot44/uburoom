@@ -263,7 +263,7 @@
         if (target.draft) {
           if (change.autoplay !== undefined) target.autoplay.enabled = change.autoplay;
           if (change.autoQueue) {
-            if (change.autoQueue.mode !== 'off' && !change.autoQueue.scope?.id) throw new Error('Choose an auto-queue source');
+            if (['following','random'].includes(change.autoQueue.mode) && !change.autoQueue.scope?.id) throw new Error('Choose an auto-queue source');
             target.queueSummary.autoQueue = structuredClone(change.autoQueue);
           }
           draftRecord = target; draftChanged?.(draftOptions()); renderSettings(); return target;

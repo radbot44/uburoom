@@ -444,7 +444,7 @@ test('live bulk and auto-queue commands normalize Plex episodes, enforce capabil
   const automatic = await command(creator,id,a,'queue.auto',{mode:'following',scope:{type:'show',id:'900'},includeSpecials:false});
   assert.equal(automatic.body.status,'applied',JSON.stringify(automatic.body));
   listed = (await creator.call('/api/watch/rooms/' + id + '/queue')).body;
-  assert.equal(listed.total,1); assert.equal(listed.items[0].mediaId,'301'); assert.equal(listed.items[0].provenance,'following');
+  assert.equal(listed.total,0); assert.equal(f.app.watch.roomState.store.get(id).autoQueue.next.mediaId,'301'); assert.equal(f.app.watch.roomState.store.get(id).autoQueue.next.provenance,'following');
   assert.equal(f.app.watch.roomState.store.get(id).autoQueue.scope.serverId,'fixture-plex');
   assert.equal(f.app.watch.roomState.queue.current(id).id,current.id); assert.equal(room.mediaVersion,originalMedia);
 });
@@ -510,10 +510,10 @@ test('closed room shuffle and random auto-queue use the saved Engine branch whil
   const automatic = await creator.call('/api/watch/rooms/' + id + '/queue',{action:'auto',mode:'random',scope:{type:'collection',id:'901'},includeSpecials:false,expectedRevision:listed.queueRevision});
   assert.equal(automatic.status,200,JSON.stringify(automatic.body));
   listed = (await creator.call('/api/watch/rooms/' + id + '/queue')).body;
-  assert.equal(listed.total,1); assert.equal(listed.items[0].provenance,'random');
+  assert.equal(listed.total,0); assert.equal(f.app.watch.roomState.store.get(id).autoQueue.next.provenance,'random');
   const saved = f.app.watch.roomState.store.get(id);
   assert.equal(saved.autoQueue.mode,'random'); assert.deepEqual(saved.autoQueue.scope,{type:'collection',id:'901',serverId:'fixture-plex'});
-  assert.ok(saved.autoQueue.used.includes(listed.items[0].mediaId));
+  assert.ok(saved.autoQueue.used.includes(saved.autoQueue.next.mediaId));
   assert.equal(saved.bookmark.mediaId,'demo'); assert.equal(f.app.watch.rooms.has(id),false);
 });
 

@@ -79,7 +79,9 @@ class Hub {
   roomCommandAllowed(room, actor, command, personal = false) {
     if (personal) return true;
     const capability = RoomPolicy.commandCapability(command.action);
-    if (!capability || !this.canRoom(room, actor, capability)) return false;
+    if (command.action === 'queue.auto.playNow') {
+      if (!this.canRoom(room, actor, 'chooseMedia') && !(this.watchIdle?.(room.roomId) && this.canRoom(room, actor, 'playPause'))) return false;
+    } else if (!capability || !this.canRoom(room, actor, capability)) return false;
     if (command.action === 'queue.offer.start' && !this.canRoom(room, actor, 'playPause')) return false;
     if (actor.surface !== 'web' && !isHost(room, actor) && !this.isAdmin(actor) && !Engine.controlAllowed(room.controls,command)) return false;
     if (['media.play','media.toggle','media.ready.start'].includes(command.action) && !isHost(room, actor) && !this.isAdmin(actor) &&
@@ -120,7 +122,7 @@ class Hub {
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
       const acceptedAt = Date.now(), admissionDeadline = Math.min(acceptedAt + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
       if (acceptedAt >= admissionDeadline) return {status:'unavailable',message:'Room changed or command expired.'};
-      const deadline = acceptedAt + (['queue.bulk','queue.auto'].includes(command.action) ? 30000 : COMMAND_MS), adminEpoch = this.adminEpoch;
+      const deadline = acceptedAt + (['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin'].includes(command.action) ? 30000 : COMMAND_MS), adminEpoch = this.adminEpoch;
       const permitted = () => Date.now() < deadline && this.adminEpoch === adminEpoch && !this.rooms.has(input.roomId) && canWatch(this.access,actor.userId,actor);
       try { return await this.savedQueueExecute(input.roomId, command, actor, permitted); }
       catch (error) { return { status:error.status === 403 ? 'forbidden' : 'failed', message:error.message, httpStatus:error.status || 400 }; }
@@ -149,7 +151,7 @@ class Hub {
       // preparation can take longer than the default command deadline.
       // Keep completion bounded and recheck the same live authorization below.
       const preparing = personal && command.action === 'media.quality.set' || s.permissions &&
-        ['queue.bulk','queue.auto','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','media.load','media.next','media.previous'].includes(command.action);
+        ['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.auto.playNow','queue.offer.start','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','media.load','media.next','media.previous'].includes(command.action);
       const deadline = preparing ? acceptedAt + 30000 : admissionDeadline;
       const epoch = s.epoch, adminEpoch = this.adminEpoch;
       const permitted = () => this.rooms.get(s.roomId) === s && s.epoch === epoch && Date.now() < deadline &&

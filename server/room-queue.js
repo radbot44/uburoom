@@ -77,16 +77,16 @@ function rowToEntry(row) {
 }
 
 function validateAuto(config) {
-  if (!config || typeof config !== 'object' || !['off','following','random'].includes(config.mode) ||
+  if (!config || typeof config !== 'object' || !['off','continue','following','random'].includes(config.mode) ||
     config.includeSpecials !== undefined && typeof config.includeSpecials !== 'boolean') throw error('Invalid auto-queue settings');
   let scope = null;
-  if (config.mode !== 'off') {
+  if (['following','random'].includes(config.mode)) {
     const selected = config.scope;
     if (!selected || !['show','library','collection'].includes(selected.type) || config.mode === 'following' && selected.type !== 'show' ||
       typeof selected.id !== 'string' || !/^\d{1,20}$/.test(selected.id)) throw error('Invalid auto-queue scope');
     scope = { type: selected.type, id: selected.id, serverId: cleanText(selected.serverId, 200, 'Plex server identity') };
   }
-  return {mode:config.mode,scope,includeSpecials:!!config.includeSpecials,cycle:0,used:[]};
+  return {mode:config.mode,scope,includeSpecials:config.mode === 'continue' ? false : !!config.includeSpecials,cycle:0,used:[],next:null};
 }
 
 class RoomQueue {
@@ -263,12 +263,12 @@ class RoomQueue {
     const room = this.room(roomId);
     this.assertAllowed(room, userId, 'editQueue');
     this.assertRevision(room, expectedRevision);
-    const { scope } = validateAuto(config);
-    const same = room.autoQueue.mode === config.mode && JSON.stringify(room.autoQueue.scope) === JSON.stringify(scope) && room.autoQueue.includeSpecials === !!config.includeSpecials;
+    const { scope, includeSpecials } = validateAuto(config);
+    const same = room.autoQueue.mode === config.mode && JSON.stringify(room.autoQueue.scope) === JSON.stringify(scope) && room.autoQueue.includeSpecials === includeSpecials;
     const current = this.current(roomId);
     const active = [...this.pending(roomId), ...(current ? [current] : [])];
     const used = config.mode === 'random' ? [...new Set(active.filter(item => item.serverId === scope.serverId).map(item => item.mediaId))] : [];
-    const autoQueue = same ? room.autoQueue : { mode: config.mode, scope, includeSpecials: !!config.includeSpecials, cycle: 0, used };
+    const autoQueue = same ? { ...room.autoQueue, next: room.autoQueue.next ?? null } : { mode: config.mode, scope, includeSpecials, cycle: 0, used, next: null };
     const at = this.now();
     this.registry.transaction(() => {
       this.db.prepare('UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(JSON.stringify(autoQueue), at, at, roomId);
@@ -291,54 +291,101 @@ class RoomQueue {
   }
 
   // The caller resolves Plex access before supplying the full, ordered corpus.
-  // Bolt Optimization: Use Map indexing for O(1) item lookups in 'following' mode
-  // and maintain the 'available' array with fast splices in 'random' mode,
-  // reducing auto-queue generation complexity from O(N * P) to O(N + P) for large corpora (up to 20,000 items).
-  generatePending(roomId, corpus, targetPending, at) {
-    const room = this.room(roomId), autoQueue = { ...room.autoQueue, used: [...room.autoQueue.used] };
-    if (autoQueue.mode === 'off') return { ids: [], autoQueue, changed: false };
-    const pending = this.pending(roomId), current = this.current(roomId);
-    const items = corpus.filter(item => item.serverId === autoQueue.scope.serverId);
-    const active = new Set([...pending, ...(current ? [current] : [])].filter(item => item.serverId === autoQueue.scope.serverId).map(item => item.mediaId));
-    const selected = [];
-    if (autoQueue.mode === 'following') {
+  // Bolt Optimization: Use Map indexing for O(1) item lookups in 'following'/'continue' modes
+  // and maintain the 'available' array in 'random' mode for O(N) preview selection.
+  computeAutoNext(roomId, corpus, { forceAdvance = false } = {}) {
+    const room = this.room(roomId);
+    const autoQueue = { ...room.autoQueue, used: [...(room.autoQueue.used || [])], next: room.autoQueue.next ?? null };
+    if (autoQueue.mode === 'off') {
+      autoQueue.next = null;
+      const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
+      if (changed) this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
+      return { next: null, autoQueue, changed };
+    }
+    const pending = this.pending(roomId), current = this.current(roomId), lastHistory = this.lastHistory(roomId);
+    const activeEntries = [...(current ? [current] : []), ...pending];
+    if (autoQueue.mode === 'continue') {
+      const anchorItem = activeEntries.length ? activeEntries[activeEntries.length - 1] : lastHistory;
+      if (!anchorItem || anchorItem.type !== 'episode' || !corpus.length) {
+        autoQueue.next = null;
+        autoQueue.cursor = null;
+      } else {
+        const serverId = anchorItem.serverId;
+        const items = corpus.filter(item => item.serverId === serverId);
+        const active = new Set(activeEntries.filter(item => item.serverId === serverId).map(item => item.mediaId));
+        const itemsIndexMap = new Map();
+        for (let i = 0; i < items.length; i++) itemsIndexMap.set(items[i].serverId + ':' + items[i].mediaId, i);
+        let anchor = itemsIndexMap.get(serverId + ':' + anchorItem.mediaId) ?? -1;
+        if (anchor === -1) {
+          autoQueue.next = null;
+          autoQueue.cursor = null;
+        } else {
+          if (autoQueue.cursor) {
+            const cursorIdx = itemsIndexMap.get(serverId + ':' + autoQueue.cursor);
+            if (cursorIdx !== undefined && cursorIdx > anchor) anchor = cursorIdx;
+            else if (cursorIdx === undefined) autoQueue.cursor = null;
+          }
+          let nextItem = null;
+          for (let index = anchor + 1; index < items.length; index++) {
+            const item = items[index];
+            if (!active.has(item.mediaId)) { nextItem = { ...item, position: 0, provenance: 'continue' }; break; }
+          }
+          autoQueue.next = nextItem;
+        }
+      }
+    } else if (autoQueue.mode === 'following') {
+      const serverId = autoQueue.scope.serverId;
+      const items = corpus.filter(item => item.serverId === serverId);
+      const active = new Set(activeEntries.filter(item => item.serverId === serverId).map(item => item.mediaId));
       const itemsIndexMap = new Map();
       for (let i = 0; i < items.length; i++) itemsIndexMap.set(items[i].serverId + ':' + items[i].mediaId, i);
-      let anchor = autoQueue.cursor ? (itemsIndexMap.get(autoQueue.scope.serverId + ':' + autoQueue.cursor) ?? -1) : -1;
-      for (const item of [...(current ? [current] : []), ...pending]) {
+      let anchor = autoQueue.cursor ? (itemsIndexMap.get(serverId + ':' + autoQueue.cursor) ?? -1) : -1;
+      for (const item of activeEntries) {
         const index = itemsIndexMap.get(item.serverId + ':' + item.mediaId);
-        if (index !== undefined) anchor = index;
+        if (index !== undefined && index > anchor) anchor = index;
       }
-      for (let index = anchor + 1; index < items.length && pending.length + selected.length < targetPending; index++) {
+      let nextItem = null;
+      for (let index = anchor + 1; index < items.length; index++) {
         const item = items[index];
-        if (!active.has(item.mediaId)) { selected.push({ ...item, position: 0, provenance: 'following' }); active.add(item.mediaId); }
+        if (!active.has(item.mediaId)) { nextItem = { ...item, position: 0, provenance: 'following' }; break; }
       }
+      autoQueue.next = nextItem;
     } else {
+      const serverId = autoQueue.scope.serverId;
+      const items = corpus.filter(item => item.serverId === serverId);
       const poolIds = new Set(items.map(item => item.mediaId));
-      let used = new Set(autoQueue.used.filter(id => poolIds.has(id)));
-      for (const id of active) if (poolIds.has(id)) used.add(id);
-      let available = items.filter(item => !used.has(item.mediaId) && !active.has(item.mediaId));
-      while (pending.length + selected.length < targetPending) {
-        if (!available.length) {
-          if (!items.some(item => !active.has(item.mediaId))) break;
-          if (used.size < poolIds.size) break;
+      const active = new Set(activeEntries.filter(item => item.serverId === serverId).map(item => item.mediaId));
+      if (!forceAdvance && autoQueue.next && poolIds.has(autoQueue.next.mediaId) && !active.has(autoQueue.next.mediaId)) {
+        const poolItem = items.find(item => item.mediaId === autoQueue.next.mediaId);
+        if (poolItem) autoQueue.next = { ...poolItem, position: 0, provenance: 'random' };
+        const used = new Set(autoQueue.used.filter(id => poolIds.has(id)));
+        for (const id of active) if (poolIds.has(id)) used.add(id);
+        used.add(autoQueue.next.mediaId);
+        autoQueue.used = [...used];
+      } else {
+        let used = new Set(autoQueue.used.filter(id => poolIds.has(id)));
+        for (const id of active) if (poolIds.has(id)) used.add(id);
+        if (forceAdvance && autoQueue.next && poolIds.has(autoQueue.next.mediaId)) used.add(autoQueue.next.mediaId);
+        let available = items.filter(item => !used.has(item.mediaId) && !active.has(item.mediaId));
+        if (!available.length && items.some(item => !active.has(item.mediaId)) && used.size >= poolIds.size) {
           autoQueue.cycle++;
           used = new Set([...active].filter(id => poolIds.has(id)));
           available = items.filter(item => !active.has(item.mediaId));
         }
-        const idx = this.randomIndex(available.length);
-        const item = available[idx];
-        selected.push({ ...item, position: 0, provenance: 'random' });
-        used.add(item.mediaId); active.add(item.mediaId);
-        available.splice(idx, 1);
+        if (available.length) {
+          const idx = this.randomIndex(available.length);
+          const item = available[idx];
+          autoQueue.next = { ...item, position: 0, provenance: 'random' };
+          used.add(item.mediaId);
+        } else {
+          autoQueue.next = null;
+        }
+        autoQueue.used = [...used];
       }
-      autoQueue.used = [...used];
     }
-    if (autoQueue.mode === 'following' && selected.length) autoQueue.cursor = selected[selected.length - 1].mediaId;
-    const ids = this.insertPending(roomId, selected, pending.length, at);
-    const changed = ids.length > 0 || JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
+    const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
     if (changed) this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
-    return { ids, autoQueue, changed };
+    return { next: autoQueue.next, autoQueue, changed };
   }
 
   validateCorpus(rawItems) {
@@ -351,20 +398,122 @@ class RoomQueue {
     });
   }
 
-  async generate(roomId, userId, rawItems, { expectedRevision, targetPending = 1, continuation = false } = {}) {
+  async generate(roomId, userId, rawItems, { expectedRevision, continuation = false, forceAdvance = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
     if (typeof continuation !== 'boolean') throw error('Invalid auto-queue continuation');
-    this.assertAllowed(room, userId, continuation ? 'chooseMedia' : 'editQueue');
+    if (continuation) {
+      const canonical = this.account(userId);
+      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'addQueue') && !Policy.allowed(room, canonical, 'editQueue') && !Policy.allowed(room, canonical, 'playPause')) {
+        throw error('Room queue permission required', 403);
+      }
+    } else {
+      this.assertAllowed(room, userId, 'editQueue');
+    }
     this.assertRevision(room, expectedRevision);
-    if (!Number.isSafeInteger(targetPending) || targetPending < 1 || targetPending > this.maxPending) throw error('Invalid auto-queue target');
     const corpus = this.validateCorpus(rawItems), at = this.now(); let result;
     this.registry.transaction(() => {
-      result = this.generatePending(roomId, corpus, targetPending, at);
+      result = this.computeAutoNext(roomId, corpus, { forceAdvance });
       if (result.changed) this.bumpQueueRevision(roomId, at);
     });
     await this.store.commit();
-    return { added: result.ids.map(id => this.getEntry(id)), autoQueue: result.autoQueue, queueRevision: room.queueRevision + (result.changed ? 1 : 0) };
+    return { added: result.changed && result.next ? [result.next] : [], next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + (result.changed ? 1 : 0) };
+  }
+
+  async skipAuto(roomId, userId, rawItems, { expectedRevision } = {}) {
+    this.healthy();
+    const room = this.room(roomId);
+    this.assertAllowed(room, userId, 'editQueue');
+    this.assertRevision(room, expectedRevision);
+    const autoNext = room.autoQueue?.mode !== 'off' ? room.autoQueue?.next : null;
+    if (!autoNext) throw error('Auto-queue item unavailable', 404);
+    const corpus = this.validateCorpus(rawItems), at = this.now();
+    let result;
+    this.registry.transaction(() => {
+      if (room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue') {
+        const updated = { ...room.autoQueue, cursor: autoNext.mediaId };
+        this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(updated), roomId);
+      }
+      result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
+      this.bumpQueueRevision(roomId, at);
+    });
+    await this.store.commit();
+    return { skipped: autoNext, next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
+  }
+
+  async pinAuto(roomId, userId, rawItems, { expectedRevision } = {}) {
+    this.healthy();
+    const room = this.room(roomId);
+    this.assertAllowed(room, userId, 'addQueue');
+    this.assertRevision(room, expectedRevision);
+    const autoNext = room.autoQueue?.mode !== 'off' ? room.autoQueue?.next : null;
+    if (!autoNext) throw error('Auto-queue item unavailable', 404);
+    const pending = this.pending(roomId);
+    if (pending.length >= this.maxPending) throw error('Queue is full (maximum ' + this.maxPending + ' upcoming items)');
+    const corpus = rawItems === undefined ? [] : this.validateCorpus(rawItems), at = this.now();
+    let addedId, result;
+    this.registry.transaction(() => {
+      [addedId] = this.insertPending(roomId, [{ ...autoNext, position: 0, provenance: 'manual' }], pending.length, at);
+      const cleared = { ...room.autoQueue, next: null, ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue' ? { cursor: autoNext.mediaId } : {}) };
+      this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(cleared), roomId);
+      result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
+      this.bumpQueueRevision(roomId, at);
+    });
+    await this.store.commit();
+    return { added: this.getEntry(addedId), next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
+  }
+
+  async playAutoNow(roomId, userId, { currentPosition = 0, expectedRevision, autoCorpus, corpus, guard } = {}) {
+    this.healthy();
+    const room = this.room(roomId);
+    const current = this.current(roomId);
+    if (!current) {
+      const canonical = this.account(userId);
+      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'playPause')) {
+        throw error('Room queue permission required', 403);
+      }
+    } else {
+      this.assertAllowed(room, userId, 'chooseMedia');
+    }
+    this.assertRevision(room, expectedRevision);
+    if (guard && guard() !== true) throw error('Playback changed before queue advance', 409);
+    const autoNext = room.autoQueue?.mode !== 'off' ? room.autoQueue?.next : null;
+    if (!autoNext) throw error('Auto-queue item unavailable', 404);
+    const generationCorpus = autoCorpus ?? corpus;
+    const validatedCorpus = generationCorpus === undefined ? undefined : this.validateCorpus(generationCorpus);
+    const at = this.now(), id = randomUUID();
+    let generated;
+    this.registry.transaction(() => {
+      if (current) {
+        const clamped = Math.min(Math.max(0, currentPosition || 0), current.duration);
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(clamped, at, at, current.id);
+      }
+      this.db.prepare(`
+        INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        id, roomId, 'current', null, autoNext.serverId, autoNext.mediaId, autoNext.type,
+        autoNext.title, autoNext.parentTitle || null, autoNext.grandparentTitle || null, autoNext.thumb || null, autoNext.duration,
+        0, null, autoNext.provenance || room.autoQueue.mode, at, at, null, at
+      );
+      const bookmark = {
+        serverId: autoNext.serverId, mediaId: autoNext.mediaId, type: autoNext.type,
+        title: autoNext.title, duration: autoNext.duration, position: 0
+      };
+      const cleared = { ...room.autoQueue, next: null, ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue' ? { cursor: autoNext.mediaId } : {}) };
+      this.db.prepare(`
+        UPDATE watch_rooms
+        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        WHERE id = ?
+      `).run(JSON.stringify(bookmark), JSON.stringify(cleared), at, roomId);
+      if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus, { forceAdvance: true });
+      this.pruneHistory(roomId);
+    });
+    await this.store.commit();
+    return { current: this.getEntry(id), previous: current, generated: generated?.next ? [generated.next] : [], queueRevision: room.queueRevision + 1 };
   }
 
   async move(roomId, userId, entryId, targetRank, expectedRevision) {
@@ -511,7 +660,7 @@ class RoomQueue {
     const generationCorpus = autoCorpus ?? corpus;
     const validatedCorpus = generationCorpus === undefined ? undefined : this.validateCorpus(generationCorpus);
     const at = this.now();
-    let generated = [];
+    let generated;
 
     this.registry.transaction(() => {
       if (current) {
@@ -559,12 +708,12 @@ class RoomQueue {
         WHERE id = ?
       `).run(JSON.stringify(bookmark), at, roomId);
 
-      if (validatedCorpus) generated = this.generatePending(roomId, validatedCorpus, 1, at).ids;
+      if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
       this.pruneHistory(roomId);
     });
 
     await this.store.commit();
-    return { current: this.getEntry(target.id), previous: current, generated: generated.map(id => this.getEntry(id)), queueRevision: room.queueRevision + 1 };
+    return { current: this.getEntry(target.id), previous: current, generated: generated?.next ? [generated.next] : [], queueRevision: room.queueRevision + 1 };
   }
 
   async completeCurrent(roomId) {
@@ -593,13 +742,13 @@ class RoomQueue {
     return { completed: current, queueRevision: room.queueRevision + 1 };
   }
 
-  async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard, discardCurrent = false } = {}) {
+  async next(roomId, userId, { currentPosition = 0, outcome = 'skipped', expectedRevision, currentEntryId, nextEntryId, autoCorpus, corpus, guard, discardCurrent = false, initialAdd = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
     const current = this.current(roomId);
     if (!current && !discardCurrent) {
       const canonical = this.account(userId);
-      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'playPause')) {
+      if (this.store.isAdmin(canonical) !== true && !Policy.allowed(room, canonical, 'chooseMedia') && !Policy.allowed(room, canonical, 'playPause') && !(initialAdd && (Policy.allowed(room, canonical, 'addQueue') || Policy.allowed(room, canonical, 'editQueue')))) {
         throw error('Room queue permission required', 403);
       }
     } else {
@@ -609,17 +758,22 @@ class RoomQueue {
     this.assertRevision(room, expectedRevision);
 
     const nextPending = this.peekNext(roomId);
-    if (currentEntryId !== undefined && currentEntryId !== (current?.id || null) || nextEntryId !== undefined && nextEntryId !== (nextPending?.id || null)) {
+    const autoNext = !nextPending && room.autoQueue?.mode !== 'off' ? room.autoQueue?.next || null : null;
+    if (currentEntryId !== undefined && currentEntryId !== (current?.id || null)) {
       throw error('Queue changed; refresh before advancing', 409);
     }
+    if (nextEntryId !== undefined) {
+      const validNextId = nextPending ? nextEntryId === nextPending.id : autoNext ? (nextEntryId === 'auto:' + autoNext.mediaId || nextEntryId === autoNext.mediaId) : nextEntryId === null;
+      if (!validNextId) throw error('Queue changed; refresh before advancing', 409);
+    }
     if (guard && guard() !== true) throw error('Playback changed before queue advance', 409);
-    if (!nextPending) return { current: null, previous: null, queueRevision: room.queueRevision };
+    if (!nextPending && !autoNext) return { current: null, previous: null, queueRevision: room.queueRevision };
 
     const generationCorpus = autoCorpus ?? corpus;
     const validatedCorpus = generationCorpus === undefined ? undefined : this.validateCorpus(generationCorpus);
     const at = this.now();
     const validOutcome = ['completed', 'skipped', 'interrupted'].includes(outcome) ? outcome : 'skipped';
-    let generated = [];
+    let generated, targetId;
 
     this.registry.transaction(() => {
       if (current && discardCurrent) this.db.prepare('DELETE FROM watch_queue_entries WHERE id = ?').run(current.id);
@@ -633,34 +787,59 @@ class RoomQueue {
         if (validOutcome === 'completed') this.db.prepare('INSERT OR IGNORE INTO watch_room_progress VALUES(?,?,?)').run(roomId,current.serverId,current.mediaId);
       }
 
-      this.db.prepare(`
-        UPDATE watch_queue_entries
-        SET state = 'current', rank = NULL, startedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `).run(at, at, nextPending.id);
+      if (nextPending) {
+        targetId = nextPending.id;
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET state = 'current', rank = NULL, startedAt = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(at, at, nextPending.id);
 
-      this.db.prepare(`
-        UPDATE watch_queue_entries
-        SET rank = rank - 1, updatedAt = ?
-        WHERE roomId = ? AND state = 'pending'
-      `).run(at, roomId);
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET rank = rank - 1, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending'
+        `).run(at, roomId);
 
-      const bookmark = {
-        serverId: nextPending.serverId, mediaId: nextPending.mediaId, type: nextPending.type,
-        title: nextPending.title, duration: nextPending.duration, position: nextPending.position || 0
-      };
-      this.db.prepare(`
-        UPDATE watch_rooms
-        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
-        WHERE id = ?
-      `).run(JSON.stringify(bookmark), at, roomId);
+        const bookmark = {
+          serverId: nextPending.serverId, mediaId: nextPending.mediaId, type: nextPending.type,
+          title: nextPending.title, duration: nextPending.duration, position: nextPending.position || 0
+        };
+        this.db.prepare(`
+          UPDATE watch_rooms
+          SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+          WHERE id = ?
+        `).run(JSON.stringify(bookmark), at, roomId);
 
-      if (validatedCorpus) generated = this.generatePending(roomId, validatedCorpus, 1, at).ids;
+        if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
+      } else {
+        targetId = randomUUID();
+        this.db.prepare(`
+          INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          targetId, roomId, 'current', null, autoNext.serverId, autoNext.mediaId, autoNext.type,
+          autoNext.title, autoNext.parentTitle || null, autoNext.grandparentTitle || null, autoNext.thumb || null, autoNext.duration,
+          0, null, autoNext.provenance || room.autoQueue.mode, at, at, null, at
+        );
+
+        const bookmark = {
+          serverId: autoNext.serverId, mediaId: autoNext.mediaId, type: autoNext.type,
+          title: autoNext.title, duration: autoNext.duration, position: 0
+        };
+        const cleared = { ...room.autoQueue, next: null, ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue' ? { cursor: autoNext.mediaId } : {}) };
+        this.db.prepare(`
+          UPDATE watch_rooms
+          SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+          WHERE id = ?
+        `).run(JSON.stringify(bookmark), JSON.stringify(cleared), at, roomId);
+
+        if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus, { forceAdvance: true });
+      }
       this.pruneHistory(roomId);
     });
 
     await this.store.commit();
-    return { current: this.getEntry(nextPending.id), previous: current, generated: generated.map(id => this.getEntry(id)), queueRevision: room.queueRevision + 1 };
+    return { current: this.getEntry(targetId), previous: current, generated: generated?.next ? [generated.next] : [], queueRevision: room.queueRevision + 1 };
   }
 
   async previous(roomId, userId, currentPosition = 0, thresholdSeconds = 5) {
@@ -720,11 +899,12 @@ class RoomQueue {
         serverId: last.serverId, mediaId: last.mediaId, type: last.type,
         title: last.title, duration: last.duration, position: 0
       };
+      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
       this.db.prepare(`
         UPDATE watch_rooms
-        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
         WHERE id = ?
-      `).run(JSON.stringify(bookmark), at, roomId);
+      `).run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
 
       this.pruneHistory(roomId);
     });
@@ -789,11 +969,12 @@ class RoomQueue {
         serverId: historyEntry.serverId, mediaId: historyEntry.mediaId, type: historyEntry.type,
         title: historyEntry.title, duration: historyEntry.duration, position: targetPosition
       };
+      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
       this.db.prepare(`
         UPDATE watch_rooms
-        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
         WHERE id = ?
-      `).run(JSON.stringify(bookmark), at, roomId);
+      `).run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
 
       this.pruneHistory(roomId);
     });
@@ -859,7 +1040,7 @@ class RoomQueue {
     const nextRow = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'pending' ORDER BY rank ASC LIMIT 1").get(roomId);
     const lastHistoryRow = this.db.prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT 1").get(roomId);
     const roomRow = this.db.prepare('SELECT queueRevision,autoQueue,autoplay FROM watch_rooms WHERE id = ?').get(roomId);
-    const autoQueue = roomRow?.autoQueue ? JSON.parse(roomRow.autoQueue) : { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [] };
+    const autoQueue = roomRow?.autoQueue ? { next: null, ...JSON.parse(roomRow.autoQueue) } : { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [], next: null };
 
     return {
       queueLength: pendingCount,
@@ -867,7 +1048,7 @@ class RoomQueue {
       pendingCount,
       historyCount,
       queueRevision: roomRow?.queueRevision ?? 0,
-      autoQueue: { mode: autoQueue.mode, scope: autoQueue.scope, includeSpecials: autoQueue.includeSpecials, cycle: autoQueue.cycle, usedCount: autoQueue.used.length },
+      autoQueue: { mode: autoQueue.mode, scope: autoQueue.scope, includeSpecials: autoQueue.includeSpecials, cycle: autoQueue.cycle, usedCount: (autoQueue.used || []).length, next: autoQueue.next || null },
       autoplay: roomRow?.autoplay === 1,
       current: currentRow ? {
         id: currentRow.id,

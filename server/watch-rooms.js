@@ -51,7 +51,7 @@ class WatchRooms {
     if (this.watch.hub.config.singleRoom || record.keepEmpty) return 'Kept when empty';
     if (record.bookmark && record.bookmark.position < record.bookmark.duration * .9) return 'Video in progress';
     if (this.queue.pending(record.id).length) return 'Queue pending';
-    if (record.autoQueue.mode !== 'off') return 'Auto-queue enabled';
+    if (record.autoQueue.mode === 'following' || record.autoQueue.mode === 'random' || record.autoQueue.next) return 'Auto-queue enabled';
     return null;
   }
   checkCapacity(room, userId) {
@@ -184,7 +184,7 @@ class WatchRooms {
     await this.eligible(actor, current); this.reserve(); this.creating++;
     try {
       let creation = options;
-      if (options?.autoQueue && options.autoQueue.mode !== 'off') {
+      if (options?.autoQueue && ['following','random'].includes(options.autoQueue.mode)) {
         const config = options.autoQueue, scope = config.scope;
         if (!scope?.id || !['show','library','collection'].includes(scope.type)) throw failure('Choose an auto-queue source');
         const plex = this.watch.hub.plexFor ? await this.watch.hub.plexFor(actor) : this.watch.plex;
@@ -193,6 +193,8 @@ class WatchRooms {
         if (this.watch.hub.plexFor && (await this.watch.hub.plexFor(actor)).principal !== plex.principal) throw failure('Plex access changed',403);
         creation = {...options,autoQueue:{...config,scope:{type:scope.type,id:scope.id,serverId}}};
         await this.eligible(actor,current);
+      } else if (options?.autoQueue && options.autoQueue.mode === 'continue') {
+        creation = {...options,autoQueue:{mode:'continue',scope:null,includeSpecials:false}};
       }
       const record = await this.store.create(actor.userId, creation);
       await this.eligible(actor, current);

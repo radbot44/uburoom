@@ -542,9 +542,40 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
   assert.equal((await command('queue.offer.start', { mediaId: '202', showId: '50' }, guestActor)).status, 'forbidden');
 
   // Authorized user starts offer
+  f.plex.details = async mediaId => mediaId === '202' ? { id: '202', type: 'episode', showId: '50' } : null;
+  f.plex.queueItems = async () => [
+    { id: '201', type: 'episode', title: 'Episode 1', duration: 100 },
+    { id: '202', type: 'episode', title: 'Episode 2', duration: 100 },
+    { id: '203', type: 'episode', title: 'Episode 3', duration: 100 }
+  ];
   const startResult = await command('queue.offer.start', { mediaId: '202', showId: '50' }, actor);
   assert.equal(startResult.status, 'applied');
   assert.equal(room.media.id, '202');
-  assert.equal(f.store.get(id).autoQueue.mode, 'following');
-  assert.equal(f.store.get(id).autoQueue.scope.id, '50');
+  assert.equal(f.store.get(id).autoQueue.mode, 'continue');
+  assert.equal(f.store.get(id).autoQueue.scope, null);
+  assert.equal(f.store.get(id).autoQueue.next?.mediaId, '203');
+});
+
+test('turning auto-queue on in an idle room with autoplay enabled immediately materializes autoQueue.next and starts playback', async t => {
+  const f = await fixture(t);
+  const id = await f.watch.roomState.create(f.creator, { name: 'Idle auto-queue start' });
+  const room = f.watch.rooms.get(id), actor = f.creator;
+  f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
+  const command = (action, args) => f.hub.dispatch(actor, { roomId: id, action, ...(args ? { args } : {}) });
+  const origPrepare = f.plex.prepare;
+  f.plex.prepare = async (mediaId, ...args) => {
+    const res = await origPrepare(mediaId, ...args);
+    res.source = { type: 'episode' };
+    return res;
+  };
+  f.plex.queueItems = async () => [
+    { id: '301', type: 'episode', title: 'Episode 1', duration: 100 },
+    { id: '302', type: 'episode', title: 'Episode 2', duration: 100 }
+  ];
+  const applied = await command('queue.auto', { mode: 'following', scope: { type: 'show', id: '50' }, includeSpecials: false });
+  assert.equal(applied.status, 'applied');
+  assert.equal(room.media.id, '301');
+  assert.equal(f.queue.current(id).mediaId, '301');
+  assert.equal(f.queue.pending(id).length, 0);
+  assert.equal(f.store.get(id).autoQueue.next?.mediaId, '302');
 });

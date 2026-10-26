@@ -71,15 +71,18 @@
             typeof a.unfinished !== 'boolean' || typeof a.includeSpecials !== 'boolean') throw new Error('Choose show or season queue options');
         args = { type:a.type, mediaId:a.mediaId, unfinished:a.unfinished, includeSpecials:a.includeSpecials }; break;
       case 'queue.auto':
-        if (!['off','following','random'].includes(a.mode) || typeof a.includeSpecials !== 'boolean') throw new Error('Choose an auto-queue mode');
+        if (!['off','continue','following','random'].includes(a.mode) || typeof a.includeSpecials !== 'boolean') throw new Error('Choose an auto-queue mode');
         args = { mode:a.mode, includeSpecials:a.includeSpecials };
-        if (a.mode !== 'off') {
+        if (['following','random'].includes(a.mode)) {
           if (!a.scope || !['show','library','collection'].includes(a.scope.type) ||
               a.mode === 'following' && a.scope.type !== 'show' ||
               a.scope.id !== undefined && (typeof a.scope.id !== 'string' || !/^\d{1,20}$/.test(a.scope.id))) throw new Error('Choose an auto-queue source');
           args.scope = { type:a.scope.type, ...(a.scope.id ? { id:a.scope.id } : {}) };
+        } else {
+          args.scope = null;
         }
         break;
+      case 'queue.auto.skip': case 'queue.auto.pin': case 'queue.auto.playNow': break;
       case 'queue.move': case 'queue.remove': case 'queue.history.replay':
       case 'queue.playEntry': case 'queue.skipTo': case 'queue.history.goBack':
         if (typeof a.entryId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.entryId)) throw new Error('Choose a queue entry');

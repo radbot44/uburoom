@@ -15,6 +15,13 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### Auto-queue tail preview and Continue mode — 2026-10-26
+
+A/B on local changes based on `853fe8e`; isolated SQLite/Plex fixtures only, not deployed. Replaces `pending` row insertion during auto-queue generation with a single persisted tail preview (`autoQueue.next` in `watch_rooms.autoQueue`), adds dynamic `continue` mode alongside `following` (In order) and `random` (Shuffle), materializes `autoQueue.next` into `current` only when `pending` is empty (or via explicit `queue.auto.playNow` / idle `queue.auto` with Auto-play enabled), and adds `queue.auto.pin` / `queue.auto.skip` / `queue.auto.playNow` commands and tail card UI.
+
+- `node --test tests/room-store.test.js tests/room-queue.test.js tests/room-queue-races.test.js tests/room-autoplay.test.js tests/durable-rooms.test.js`: **108 passed, 0 failed, 0 skipped**. Covers `autoQueue.next` preview persistence without `pending` rows, atomic materialization on advance, `continue` mode across shows/movies/series finales, `random` pool stability and exhaustion cycling, `skipAuto` / `pinAuto` / `playAutoNow`, next-episode interstitial `queue.offer.start` activating `continue` mode, and immediate playback start when enabling auto-queue in an idle room with Auto-play enabled. `git diff --check` and `node --check` passed.
+- Limits: Isolated fixture execution and source review only; full suite, dual-browser rendered UI checks, live Plex provider integration (C) and owner acceptance (D) not run.
+
 ### Browser operator settings dialog — 2026-10-25
 
 A/B on local changes based on `88357cb`; temporary Windows/NTFS configurations, isolated fixture accounts and disposable browser profiles only, not deployed. Reuses the shared dialog, tabs, control builders and session authentication without extra confirmation dialogs or restart controls.

@@ -65,8 +65,8 @@ function allowed(room, userId, capability) {
 function commandCapability(action) {
   if (action === 'room.kick') return 'kickParticipants';
   if (action.startsWith('media.autoplay.')) return 'autoplay';
-  if (['queue.add','queue.bulk','queue.offer.start'].includes(action)) return 'addQueue';
-  if (['queue.playNow','queue.playEntry','queue.skipTo','queue.history.replay','queue.history.goBack'].includes(action)) return 'chooseMedia';
+  if (['queue.add','queue.bulk','queue.offer.start','queue.auto.pin'].includes(action)) return 'addQueue';
+  if (['queue.playNow','queue.playEntry','queue.skipTo','queue.history.replay','queue.history.goBack','queue.auto.playNow'].includes(action)) return 'chooseMedia';
   if (action.startsWith('queue.')) return 'editQueue';
   if (['media.play', 'media.pause', 'media.toggle'].includes(action)) return 'playPause';
   if (action.startsWith('media.seek.')) return 'seek';

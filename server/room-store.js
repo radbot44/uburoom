@@ -77,7 +77,7 @@ class RoomStore {
       createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt:row.lastAccessedAt,
       keepEmpty:!!row.keepEmpty, maxMembers:row.maxMembers, liveState:row.liveState ? JSON.parse(row.liveState) : null,
       permissions: Policy.policy(JSON.parse(row.permissions)), bookmark: row.bookmark === null ? null : bookmark(JSON.parse(row.bookmark)),
-      autoQueue: row.autoQueue === null ? { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [] } : JSON.parse(row.autoQueue),
+      autoQueue: row.autoQueue === null ? { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [], next: null } : { next: null, ...JSON.parse(row.autoQueue) },
       autoplay: row.autoplay === 1
     };
   }
@@ -164,7 +164,7 @@ class RoomStore {
           this.validateMembers(change.value);
           this.db.prepare('UPDATE watch_rooms SET maxMembers=? WHERE id=?').run(change.value,id); break;
         case 'auto.reset': {
-          const auto = { ...room.autoQueue, used:[], cycle:0, cursor:null };
+          const auto = { ...room.autoQueue, used:[], cycle:0, cursor:null, next:null };
           this.db.prepare('UPDATE watch_rooms SET autoQueue=?,queueRevision=queueRevision+1 WHERE id=?').run(JSON.stringify(auto),id);
           this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id); break;
         }
