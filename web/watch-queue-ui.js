@@ -605,8 +605,6 @@
         const top = node('div', nowPlayingBox, undefined, 'queue-now-playing-header');
         node('span', top, 'Now playing', 'queue-section-label');
         const moves = node('div', top, undefined, 'queue-move-actions');
-        action(moves, 'Move earlier', view === 'cards' ? 'left' : 'up', undefined, true, 'queue-current-earlier');
-        action(moves, 'Discard current and play next', view === 'cards' ? 'right' : 'down', () => removeCurrent(true), true, 'queue-current-later');
         action(moves, 'Remove current video', 'close', () => removeCurrent(false), !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia, 'queue-current-remove');
         art(nowPlayingBox, item);
         const body = node('div', nowPlayingBox, undefined, 'queue-now-playing-body');
@@ -627,7 +625,6 @@
       const progress = nowPlayingBox.querySelector('progress');
       progress.max = duration || 1; progress.value = Math.min(position, duration);
       const toggle = nowPlayingBox.querySelector('.queue-current-toggle');
-      nowPlayingBox.querySelector('.queue-current-later').disabled = !(currentQueue.items.length || state?.queueSummary?.autoQueue?.next) || !state?.capabilities?.editQueue || !state?.capabilities?.chooseMedia;
       nowPlayingBox.querySelector('.queue-current-skip').disabled = !state?.hasNext || !state?.capabilities?.chooseMedia;
       const label = state?.state?.paused ? 'Play' : 'Pause';
       if (toggle.title !== label) {
@@ -799,7 +796,7 @@
         node('span', info, outcome === 'completed' ? formatTime(item.duration) : formatTime(item.position) + ' / ' + formatTime(item.duration), 'queue-meta');
         const actions = node('div', row, undefined, 'queue-entry-actions');
         node('span', actions, 'History', 'queue-card-caption');
-        action(actions, 'Restart from here', 'player-track-next', () => replayHistory(item.id, true, true), !canChoose, 'queue-item-go-back');
+        action(actions, 'Restart from here', 'player-track-prev', () => replayHistory(item.id, true, true), !canChoose, 'queue-item-go-back');
         action(actions, 'Restart now', 'rotate-clockwise', () => replayHistory(item.id, false), !canChoose, 'queue-item-restart');
       }
     }
