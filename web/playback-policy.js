@@ -104,54 +104,90 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  function choppinessDetector({ threshold = 0.10, windowMs = 10000, minFrames = 50 } = {}) {
-    let samples = [], cooldownUntil = 0, deliberatelyDismissed = false;
+  function choppinessDetector({ threshold = 0.10, windowMs = 10000, minFrames = 50, maxStallMs = 1500, maxStallCount = 2, minMultiStallMs = 1000, settleMs = 2500 } = {}) {
+    let samples = [], stallHistory = [], currentStallStart = undefined, playingStartedAt = 0;
+    let cooldownUntil = 0, deliberatelyDismissed = false;
     function reset() {
       samples = [];
+      stallHistory = [];
+      currentStallStart = undefined;
+      playingStartedAt = 0;
       cooldownUntil = 0;
       deliberatelyDismissed = false;
     }
     function interrupt() {
       samples = [];
+      stallHistory = [];
+      currentStallStart = undefined;
+      playingStartedAt = 0;
     }
     function triggerCooldown(cooldownMs = 10000, now = performance.now()) {
       cooldownUntil = now + cooldownMs;
-      samples = [];
+      interrupt();
     }
     function dismiss(deliberate = false) {
       if (deliberate) deliberatelyDismissed = true;
-      samples = [];
+      interrupt();
     }
     function update(now, quality, { paused = false, seeking = false, waiting = false, visible = true, active = true } = {}) {
       if (deliberatelyDismissed) return { choppy: false, dismissed: true };
       if (now < cooldownUntil) return { choppy: false, inCooldown: true };
-      const interrupted = paused || seeking || waiting || !visible || !active || !quality ||
-        !Number.isFinite(quality.totalVideoFrames) || !Number.isFinite(quality.droppedVideoFrames);
-      if (interrupted) {
-        samples = [];
+      const userInterrupted = paused || seeking || !visible || !active;
+      if (userInterrupted) {
+        interrupt();
         return { choppy: false, interrupted: true };
       }
-      const total = quality.totalVideoFrames, dropped = quality.droppedVideoFrames;
-      if (samples.length && (total < samples[samples.length - 1].total || dropped < samples[samples.length - 1].dropped)) {
-        samples = [];
+      const isSettled = playingStartedAt > 0 && (now - playingStartedAt >= settleMs);
+      if (waiting) {
+        if (!isSettled) {
+          interrupt();
+          return { choppy: false, interrupted: true, isSettled: false };
+        }
+        if (currentStallStart === undefined) currentStallStart = now;
+      } else {
+        if (playingStartedAt === 0) playingStartedAt = now;
+        if (currentStallStart !== undefined) {
+          stallHistory.push({ start: currentStallStart, end: now });
+          currentStallStart = undefined;
+        }
       }
-      samples.push({ time: now, total, dropped });
-      while (samples.length > 1 && samples[1].time <= now - windowMs) {
-        samples.shift();
+      const cutoff = now - windowMs;
+      while (stallHistory.length && stallHistory[0].end <= cutoff) stallHistory.shift();
+      let totalStallMs = 0, stallCount = 0;
+      for (const s of stallHistory) {
+        const sStart = Math.max(cutoff, s.start), sEnd = Math.min(now, s.end);
+        if (sEnd > sStart) { totalStallMs += (sEnd - sStart); stallCount++; }
       }
-      const oldest = samples[0];
-      const durationMs = now - oldest.time;
-      if (durationMs < windowMs) {
-        return { choppy: false, durationMs, warming: true };
+      if (currentStallStart !== undefined) {
+        const cStart = Math.max(cutoff, currentStallStart);
+        if (now > cStart) { totalStallMs += (now - cStart); stallCount++; }
       }
-      const deltaTotal = total - oldest.total;
-      const deltaDropped = dropped - oldest.dropped;
-      if (deltaTotal < minFrames) {
-        return { choppy: false, deltaTotal, deltaDropped, minFramesRequired: minFrames };
+      const stallChoppy = isSettled && (totalStallMs >= maxStallMs || (stallCount >= maxStallCount && totalStallMs >= minMultiStallMs));
+      let dropChoppy = false, deltaTotal = 0, deltaDropped = 0, ratio = 0, minFramesRequired = undefined;
+      const hasQuality = quality && Number.isFinite(quality.totalVideoFrames) && Number.isFinite(quality.droppedVideoFrames);
+      if (hasQuality && !waiting) {
+        const total = quality.totalVideoFrames, dropped = quality.droppedVideoFrames;
+        if (samples.length && (total < samples[samples.length - 1].total || dropped < samples[samples.length - 1].dropped)) samples = [];
+        samples.push({ time: now, total, dropped });
+        while (samples.length > 1 && samples[1].time <= cutoff) samples.shift();
+        const oldest = samples[0];
+        const durationMs = now - oldest.time;
+        if (durationMs >= windowMs) {
+          deltaTotal = total - oldest.total;
+          deltaDropped = dropped - oldest.dropped;
+          if (deltaTotal < minFrames) {
+            minFramesRequired = minFrames;
+          } else {
+            ratio = deltaTotal > 0 ? deltaDropped / deltaTotal : 0;
+            dropChoppy = ratio >= threshold;
+          }
+        }
       }
-      const ratio = deltaTotal > 0 ? deltaDropped / deltaTotal : 0;
-      const choppy = ratio >= threshold;
-      return { choppy, ratio, deltaTotal, deltaDropped, durationMs };
+      const oldestSample = samples[0];
+      const durationMs = oldestSample ? now - oldestSample.time : (isSettled ? windowMs : 0);
+      const choppy = stallChoppy || dropChoppy;
+      const warming = !isSettled || (!choppy && (!oldestSample || durationMs < windowMs));
+      return { choppy, ratio, deltaTotal, deltaDropped, durationMs, minFramesRequired, totalStallMs, stallCount, stallChoppy, dropChoppy, warming, isSettled };
     }
     return {
       update, reset, interrupt, triggerCooldown, dismiss,

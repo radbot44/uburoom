@@ -193,3 +193,60 @@ test('toast with action renders container div and supports action and deliberate
   assert.equal(actionRan, true);
   assert.equal(toastRoot.removed, true);
 });
+
+test('mid-stream buffering stalls trigger choppiness while initial load and seek buffers are ignored', () => {
+  const detector = policy.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50, maxStallMs: 1500, maxStallCount: 2, minMultiStallMs: 1000, settleMs: 2500 });
+  const cond = { paused: false, seeking: false, waiting: false, visible: true, active: true };
+
+  // 1. Initial load buffering (4 seconds of waiting before playback starts)
+  for (let t = 0; t <= 4000; t += 1000) {
+    const res = detector.update(t, { totalVideoFrames: 0, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+    assert.equal(res.choppy, false);
+    assert.equal(res.isSettled, false);
+  }
+
+  // 2. Playback starts and warms up for 3 seconds (settles at 2.5s)
+  detector.update(5000, { totalVideoFrames: 0, droppedVideoFrames: 0 }, cond);
+  detector.update(6000, { totalVideoFrames: 30, droppedVideoFrames: 0 }, cond);
+  detector.update(7000, { totalVideoFrames: 60, droppedVideoFrames: 0 }, cond);
+  let res = detector.update(8000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, cond);
+  assert.equal(res.isSettled, true);
+  assert.equal(res.choppy, false);
+
+  // 3. Mid-stream stall: buffer runs empty at t=9000
+  detector.update(9000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  // At t=10000: 1000ms of stall (<1500ms), not yet choppy
+  res = detector.update(10000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  assert.equal(res.choppy, false);
+  assert.equal(res.totalStallMs, 1000);
+
+  // At t=11000: 2000ms of stall (>=1500ms maxStallMs) -> triggers choppiness!
+  res = detector.update(11000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  assert.equal(res.choppy, true);
+  assert.equal(res.stallChoppy, true);
+  assert.equal(res.totalStallMs, 2000);
+
+  // 4. User seeks to new position at t=12000: seek buffer resets detector and is not choppy
+  res = detector.update(12000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, seeking: true });
+  assert.equal(res.choppy, false);
+  assert.equal(res.interrupted, true);
+
+  // Seek load buffering for 2 seconds
+  detector.update(13000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  res = detector.update(14000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  assert.equal(res.choppy, false);
+
+  // Resumes playing and settles
+  detector.update(15000, { totalVideoFrames: 90, droppedVideoFrames: 0 }, cond);
+  detector.update(18000, { totalVideoFrames: 180, droppedVideoFrames: 0 }, cond); // settled
+
+  // 5. Two distinct shorter stalls (700ms each = 1400ms >= minMultiStallMs 1000ms and count >= 2)
+  detector.update(19000, { totalVideoFrames: 180, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  detector.update(19700, { totalVideoFrames: 180, droppedVideoFrames: 0 }, cond); // stall 1 ends (700ms)
+
+  detector.update(21000, { totalVideoFrames: 220, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  res = detector.update(21700, { totalVideoFrames: 220, droppedVideoFrames: 0 }, { ...cond, waiting: true }); // stall 2 in progress (700ms)
+  assert.equal(res.stallCount, 2);
+  assert.equal(res.choppy, true);
+  assert.equal(res.stallChoppy, true);
+});

@@ -239,7 +239,7 @@ function diagnosticSample(event='sample',fields={}) {
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
     if(event==='waiting'&&disconnectExtended)fullPlayerClear();
-    if(['pause','waiting','seeking','emptied'].includes(event))choppyDetector.interrupt();
+    if(['pause','seeking','emptied'].includes(event))choppyDetector.interrupt();
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
     sync?.event(event);
@@ -1079,7 +1079,7 @@ function checkChoppyPlayback() {
   const quality = video.getVideoPlaybackQuality?.();
   const conditions = {
     paused: video.paused || !!state?.state?.paused,
-    seeking: video.seeking || sync?.seekPending,
+    seeking: seekDragging || sync?.timelinePending,
     waiting: playerWaiting || video.readyState < 3,
     visible: document.visibilityState === 'visible',
     active: !pending && !qualityPending && video.currentTime > 1
@@ -1386,6 +1386,7 @@ async function execute(command) {
   const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
   if(qualityChange)qualityPending=qualityRequest;else if(volumeChange)volumePending=true;else pending=true;
   fail('');renderTransport();
+  if(command.action.startsWith('media.seek') || ['media.load','media.next','media.previous','queue.history.replay','queue.playNow'].includes(command.action))choppyDetector.interrupt();
   diagnosticSample('command-start',{action:command.action});
   try {
     const timing=playbackClock.read();
@@ -1687,6 +1688,7 @@ function applyState(next) {
   if(!changed&&previousRevision!==undefined&&previousRevision!==next.revision&&previousTarget!==undefined&&nextTarget!==undefined&&Math.abs(nextTarget-previousTarget)>.05)
     sync.suppressCorrectionTelemetry(5000);
   if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(nextTarget-previousTarget) > 1.5) {
+    choppyDetector.interrupt();
     sync.sharedSeek();
     if(sync.preparationUntil&&hls){hls.startLoad(expected());}
     else restartHlsForSeek(expected());
