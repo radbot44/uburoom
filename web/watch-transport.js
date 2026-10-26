@@ -10,6 +10,7 @@
       const {url,identity,onReady=()=>{},onClose=()=>{},onMessage=()=>{},beginClock=()=>{},onClock=()=>{},clockTimeoutMs=CLOCK_TIMEOUT_MS,heartbeatTimeoutMs=HEARTBEAT_TIMEOUT_MS}=options;
       Object.assign(this,{url,identity,onReady,onClose,onMessage,beginClock,onClock,clockTimeoutMs,heartbeatTimeoutMs},options);
       this.pending=new Map();this.sequence=0;this.attempt=0;this.stopped=false;
+      this.connectionAttempt=0;this.connectionId=undefined;this.closeInitiator=undefined;
     }
     connect() {
       if(this.ready&&this.socket?.readyState===1)return Promise.resolve();
@@ -18,7 +19,9 @@
       this.connecting=new Promise((resolve,reject)=>{
         this.authResolve=resolve;this.authReject=reject;
         const socket=this.socket=new (this.WebSocket||WebSocket)(this.url);
-        this.authTimer=setTimeout(()=>socket.close(),5000);
+        const connectionAttempt=++this.connectionAttempt,openedAt=Date.now();
+        this.connectionId=undefined;this.closeInitiator=undefined;
+        this.authTimer=setTimeout(()=>{if(socket===this.socket){this.closeInitiator='auth-timeout';socket.close();}},5000);
         socket.onopen=()=>socket.send(JSON.stringify({type:'auth',...this.identity()}));
         socket.onerror=()=>{};
         socket.onmessage=event=>{
@@ -28,6 +31,7 @@
           try {
             const message=JSON.parse(event.data);
             if(message.type==='auth-ok') {
+              this.connectionId=Number.isSafeInteger(message.connectionId)&&message.connectionId>0?message.connectionId:undefined;
               const initial=!this.ready;
               clearTimeout(this.authTimer);this.ready=true;this.attempt=0;this.connecting=undefined;
               this.authResolve?.();this.authResolve=this.authReject=undefined;
@@ -47,16 +51,18 @@
               else pending.resolve(message.value);return;
             }
             this.onMessage(message);
-          } catch { socket.close(4002,'Invalid server message'); }
+          } catch { this.closeInitiator='protocol-error';socket.close(4002,'Invalid server message'); }
         };
         socket.onclose=event=>{
           if(socket!==this.socket)return;
+          const wasReady=this.ready;
           this.ready=false;this.connecting=undefined;
           clearTimeout(this.authTimer);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);
           const error=new TypeError('Room connection lost; reconnecting');
           this.authReject?.(error);this.authResolve=this.authReject=undefined;
           for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.cleanup?.();pending.reject(error);}
-          this.pending.clear();this.onClose({code:event?.code,reason:event?.reason,clean:event?.wasClean});
+          this.pending.clear();this.onClose({code:event?.code,reason:event?.reason,clean:event?.wasClean,
+            connectionAttempt,connectionId:this.connectionId,connectionAgeMs:Date.now()-openedAt,closeInitiator:this.closeInitiator||'none',wasReady});
           if(!this.stopped){const delay=Math.max(this.resumeAt-Date.now()||0,Math.min(15000,500*2**Math.min(this.attempt++,5)));this.retry=setTimeout(()=>{void this.connect().catch(()=>{});},delay);}
         };
       });
@@ -73,7 +79,7 @@
         if(socket!==this.socket)return;
         // A late timer also means receive callbacks may still be queued. Give
         // a waking tab a fresh exchange rather than closing a healthy socket.
-        if(Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=timeoutMs)socket.close(4000,'Server heartbeat timed out');
+        if(Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=timeoutMs){this.closeInitiator='heartbeat-timeout';socket.close(4000,'Server heartbeat timed out');}
         else if(!this.stopped&&this.ready){this.scheduleHeartbeat();this.clock();}
       },timeoutMs);
     }
@@ -107,8 +113,8 @@
         this.socket.send(JSON.stringify({type:'request',id,path,...(data===undefined?{}:{data})}));
       });
     }
-    interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.socket?.close();}
-    close() {this.stopped=true;clearTimeout(this.retry);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.socket?.close();}
+    interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.closeInitiator='interrupt';this.socket?.close();}
+    close() {this.stopped=true;clearTimeout(this.retry);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close();}
   }
   root.uburoomWatchTransport=WatchTransport;
   if(typeof module==='object')module.exports=WatchTransport;

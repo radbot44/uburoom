@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { WebSocketServer } = require('ws');
 const WatchTransport = require('../web/watch-transport');
+const PlaybackDiagnostics = require('../web/playback-diagnostics');
 
 class MockSocket {
   constructor(url) {
     this.url = url;
+    this.connectionId=++MockSocket.nextId;
     this.readyState = 0;
     this.sent = [];
     this.autoAuth = true;
@@ -22,7 +24,7 @@ class MockSocket {
     const msg = JSON.parse(data);
     this.sent.push(msg);
     if (this.autoAuth && msg.type === 'auth') {
-      queueMicrotask(() => this.receive({ type: 'auth-ok' }));
+      queueMicrotask(() => this.receive({ type: 'auth-ok',connectionId:this.connectionId }));
     }
   }
   close(code = 1000, reason = '') {
@@ -36,6 +38,51 @@ class MockSocket {
     this.onmessage?.({ data: JSON.stringify(message) });
   }
 }
+
+MockSocket.nextId=0;
+
+test('socket diagnostics distinguish an abnormal loss from an intentional reconnect', async () => {
+  const closes=[];
+  const transport=new WatchTransport({url:'wss://example.test/watch-socket',WebSocket:MockSocket,
+    identity:()=>({token:'tok',csrf:'csr'}),onClose:details=>closes.push(details)});
+  await transport.connect();
+  const firstId=transport.connectionId;
+  assert.ok(firstId>0);
+  transport.socket.close(1006);
+  assert.equal(closes.length,1);
+  assert.equal(closes[0].connectionId,firstId);
+  assert.equal(closes[0].connectionAttempt,1);
+  assert.equal(closes[0].closeInitiator,'none');
+  assert.equal(closes[0].wasReady,true);
+  assert.ok(closes[0].connectionAgeMs>=0);
+  await transport.connect();
+  assert.equal(transport.connectionAttempt,2);
+  assert.notEqual(transport.connectionId,firstId);
+  transport.interrupt(1000);
+  assert.equal(closes[1].closeInitiator,'interrupt');
+  assert.equal(closes[1].connectionAttempt,2);
+  transport.close();
+});
+
+test('diagnostic exports distinguish missing and locked rooms without leaking room identifiers', () => {
+  const diagnostics=PlaybackDiagnostics.create({now:()=>1000,monotonic:()=>0});
+  diagnostics.record('control-connected',{connectionId:4,connectionAttempt:2,visibility:'hidden',url:'wss://secret'});
+  diagnostics.record('room-list-unavailable',{roomListState:'locked',roomCount:2,connectionId:4,roomId:'secret',reason:'private'});
+  diagnostics.record('control-disconnected',{socketCloseCode:1006,connectionId:4,connectionAgeMs:400000,
+    closeInitiator:'none',socketCloseClean:false,socketWasReady:true,reason:'secret'});
+  const rows=diagnostics.snapshot().entries;
+  const room=rows.find(row=>row.event==='room-list-unavailable');
+  assert.equal(room.roomListState,'locked');
+  assert.equal(room.roomCount,2);
+  assert.equal(room.connectionId,4);
+  assert.equal(Object.hasOwn(room,'roomId'),false);
+  const closed=rows.find(row=>row.event==='control-disconnected');
+  assert.equal(closed.closeInitiator,'none');
+  assert.equal(closed.socketWasReady,true);
+  assert.equal(closed.socketCloseClean,false);
+  assert.equal(Object.hasOwn(closed,'reason'),false);
+  assert.equal(Object.hasOwn(rows.find(row=>row.event==='control-connected'),'url'),false);
+});
 
 test('clock sample resolves promptly and cleans up pending entry', async () => {
   const clocks = [];
