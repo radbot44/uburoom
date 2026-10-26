@@ -147,8 +147,8 @@
     "player-track-next": [["path",{"d":"M3 5v14l8 -7l-8 -7"}],["path",{"d":"M14 5v14l8 -7l-8 -7"}]],
     "player-track-prev": [["path",{"d":"M21 5v14l-8 -7l8 -7"}],["path",{"d":"M10 5v14l-8 -7l8 -7"}]],
     "rotate-clockwise": [["path",{"d":"M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5"}]],
-    "loader-2": "\u003cpath d=\"M12 3a9 9 0 1 0 9 9\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
-    "loader-4": "\u003cpath d=\"M12 21v-3m6.36 .36l-2.12 -2.12m4.76 -4.24h-3m.36 -6.36l-2.12 2.12m-4.24 -4.76v3m-6.36 -.36l2.12 2.12m-3.76 4.24h2m1 4.95l.71 -.71\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "loader-2": [["path",{"d":"M12 3a9 9 0 1 0 9 9"}]],
+    "loader-4": [["path",{"d":"M12 21v-3m6.36 .36l-2.12 -2.12m4.76 -4.24h-3m.36 -6.36l-2.12 2.12m-4.24 -4.76v3m-6.36 -.36l2.12 2.12m-3.76 4.24h2m1 4.95l.71 -.71"}]],
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {

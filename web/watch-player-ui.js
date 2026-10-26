@@ -19,6 +19,7 @@
     const submenu=document.createElement('div'); submenu.id='player-settings-choices'; submenu.className='settings-submenu'; submenu.setAttribute('role','menu'); submenu.inert=true; submenu.setAttribute('aria-hidden','true'); menu.append(submenu);
     const options=document.createElement('div'); options.className='settings-options'; submenu.append(options);
     const badge=document.createElement('span'); badge.id='quality-badge'; badge.setAttribute('aria-hidden','true'); cog.append(badge);
+    const spinner=document.createElement('span'); spinner.id='captions-spinner'; spinner.setAttribute('aria-hidden','true'); spinner.append(uburoomIcons.icon(document,'loader-4'));
     const choices=[['quality','Quality'],['audio-track','Audio track'],['subtitle-track','Subtitle track']];
     const rows=[]; let opened=false, activeChoice, choiceSignature, chromeTimer, tapTimer, feedbackTimer, press, taps, lastSubtitle, touching=false;
     function layoutCaptions() {
@@ -109,7 +110,8 @@
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
       cc.setAttribute('aria-pressed',String(enabled)); cc.title=cc.ariaLabel=!available?'No subtitles available':enabled?'Disable subtitles':'Enable subtitles';
       const symbol=enabled?'subtitles':'subtitles-off';
-      if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomIcons.icon(document,symbol));cc.dataset.symbol=symbol;}
+      if(cc.dataset.symbol!==symbol){cc.replaceChildren(uburoomIcons.icon(document,symbol),spinner);cc.dataset.symbol=symbol;}
+      if(!enabled&&cc.dataset.loading==='true'){cc.dataset.loading='false';cc.removeAttribute('aria-busy');}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {
         const select=$(id), audio=id==='audio-track';

@@ -265,23 +265,24 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 let subtitleLoadingTimer, subtitleLoadingActive = false;
-function setSubtitleLoadingToast(loading) {
+function setSubtitleLoading(loading) {
+  const cc = $('captions-toggle');
   if (!loading) {
     subtitleLoadingActive = false;
     clearTimeout(subtitleLoadingTimer); subtitleLoadingTimer = undefined;
-    toasts?.dismiss('subtitle-loading', false);
+    if (cc) { cc.dataset.loading = 'false'; cc.removeAttribute('aria-busy'); }
     return;
   }
   if (subtitleLoadingActive) return;
   subtitleLoadingActive = true;
   subtitleLoadingTimer = setTimeout(() => {
     subtitleLoadingTimer = undefined;
-    if (subtitleLoadingActive) toasts?.show('subtitle-loading', { symbol: 'subtitles', title: 'Loading subtitles…', duration: 0 });
+    if (subtitleLoadingActive && cc) { cc.dataset.loading = 'true'; cc.setAttribute('aria-busy', 'true'); }
   }, 250);
 }
 const captions = new uburoomSubtitles(video, value => {
   trackNotice = value.message; trackNoticeError = value.error;
-  setSubtitleLoadingToast(!!value.loading);
+  setSubtitleLoading(!!value.loading);
   renderTracks();
 }, mediaTime => (sync.timelinePending || video.readyState < 1) ? expected() : (Number.isFinite(mediaTime) ? mediaTime : video.currentTime));
 const subtitleMode=$('subtitle-mode');
