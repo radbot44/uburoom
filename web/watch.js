@@ -10,9 +10,9 @@ const DISCONNECT_GRACE_MS = 8000;
 let switchingRoom=false, knownRooms=[];
 let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
-let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0;
+let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0, identityTimer;
 let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
-let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readinessSent, browseRoom, preferredQuality = '720p4';
+let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readyQueued = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
 const playerPreferenceKey='uburoom.player';
 let playerPreferences={volume:30,muted:false,quality:'720p4'};
@@ -64,7 +64,7 @@ function viewerPreferences() {
 }
 
 const activity = params.has('frame_id');
-let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, frameStartedAt, videoFrames = 0, frameCallback;
+let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, fallbackRetryTimer, frameStartedAt, videoFrames = 0, frameCallback;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
@@ -626,11 +626,16 @@ $('drawer-open').addEventListener('click', () => {
 });
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
 async function compatibleFallback(reason, preferHLS = false) {
-  if (!state?.mediaUrl || state.mediaId === 'demo') return;
+  if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
   const useLocal = !preferHLS && (state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || ''));
-  if (pending || qualityPending || fallbackPending) {
+  if (pending || qualityPending) {
+    if (fallbackRetryTimer) return;
     const id = selected, version = state.mediaVersion, stream = state.streamVersion;
-    setTimeout(() => { if (selected === id && state?.mediaVersion === version && state?.streamVersion === stream) void compatibleFallback(reason,preferHLS); }, 200); return;
+    fallbackRetryTimer = setTimeout(() => {
+      fallbackRetryTimer = undefined;
+      if (selected === id && state?.mediaVersion === version && state?.streamVersion === stream) void compatibleFallback(reason,preferHLS);
+    }, 200);
+    return;
   }
   if (localFallbackVersion !== state.mediaVersion) {localFallbackVersion=state.mediaVersion;localFallbackAttempts=new Set();}
   if (uburoomPlayback.localFormat(state.format)) localFallbackAttempts.add(state.format);
@@ -638,11 +643,11 @@ async function compatibleFallback(reason, preferHLS = false) {
     mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
   const candidates=useLocal || fallbackVersion===state.mediaVersion?localCandidates:[undefined,...localCandidates];
   if (!candidates.length) {
-    av1?.destroy();video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
+    av1?.destroy();av1=undefined;video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
     $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
   }
   const id=selected,version=state.mediaVersion;
-  fallbackPending = true;diagnosticSample('fallback');stopHls('fallback');
+  fallbackPending = true;diagnosticSample('fallback');av1?.destroy();av1=undefined;stopHls('fallback');
   try {
     for (const codec of candidates) {
       if(selected!==id || state?.mediaVersion!==version)return;
@@ -788,7 +793,7 @@ function decodedFrames() {
 }
 function checkVideoFrames() {
   checkChoppyPlayback();
-  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError) { frameStartedAt = undefined; return; }
+  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending) { frameStartedAt = undefined; return; }
   frameStartedAt ??= performance.now();
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
@@ -796,6 +801,7 @@ function checkVideoFrames() {
 function clearPlayer(reason) {
   directProbe?.abort(); directProbe = undefined;
   directRecovery = undefined;
+  clearTimeout(fallbackRetryTimer); fallbackRetryTimer = undefined;
   clearTimeout(directStartupTimer); clearTimeout(directStallTimer);
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
@@ -815,12 +821,13 @@ function clearPlayer(reason) {
   frameCallback = undefined; frameStartedAt = undefined; videoFrames = 0;
   presentationTiming.reset();
   dropVolume(); video.pause(); stopHls(reason);
-  video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
+  video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined; readyQueued = false;
   playbackError = ''; autoplayBlocked = false;
   $('join-playback').hidden = true; $('empty-stage').hidden = false; $('ready-status').textContent = '';
 }
 function stopHls(reason) {
   if(hls)diagnosticSample('hls-stop',{reason});
+  clearTimeout(hls?.refreshRetryTimer);
   clearTimeout(hlsRecoveryTimer);
   hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
   const client = hls; hls = undefined; client?.destroy();
@@ -836,7 +843,16 @@ function restartHlsForSeek(target) {
   hls.stopLoad(); hls.startLoad(target);
 }
 async function refreshHlsSession(client) {
-  if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending || pending || qualityPending) return;
+  if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending) return;
+  if (pending || qualityPending) {
+    if (client.refreshRetryTimer) return;
+    const room = selected, version = state.mediaVersion, stream = state.streamVersion;
+    client.refreshRetryTimer = setTimeout(() => {
+      client.refreshRetryTimer = undefined;
+      if (hls === client && selected === room && state?.mediaVersion === version && state?.streamVersion === stream) void refreshHlsSession(client);
+    }, 200);
+    return;
+  }
   if (hlsRefreshVersion !== state.mediaVersion) { hlsRefreshVersion = state.mediaVersion; hlsRefreshTimes = []; }
   const now = Date.now(); hlsRefreshTimes = hlsRefreshTimes.filter(time => now-time < 60000);
   if (hlsRefreshTimes.length >= 3) return;
@@ -1006,7 +1022,8 @@ async function unlockLocal() {
   const version = state.mediaVersion, source = mediaSource; probing = true; let playTimer;
   try {
     await Promise.race([video.play(), new Promise((resolve,reject) => { playTimer = setTimeout(() => {
-      video.pause(); reject(new DOMException('Playback is still buffering','AbortError'));
+      if (state?.mediaVersion === version && mediaSource === source) video.pause();
+      reject(new DOMException('Playback is still buffering','AbortError'));
     }, 8500); })]);
     clearTimeout(playTimer);
     const until = performance.now() + 8500;
@@ -1243,7 +1260,8 @@ for (const event of ['playing','pause','waiting','seeking','seeked','ended','err
 setInterval(() => { void reportObservation(); },1000);
 setInterval(refreshSyncQuality,1000);
 async function reportReadiness() {
-  if (readyPending || !selected || !state?.mediaUrl) return;
+  if (!selected || !state?.mediaUrl) return;
+  if (readyPending) { readyQueued = true; return; }
   const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
   const target = expected();
   const bufferedReady = !state.state.paused || !video.seeking && Math.abs(video.currentTime-target) <= (target === 0 ? .25 : readinessVersion ? .15 : .65) &&
@@ -1253,7 +1271,10 @@ async function reportReadiness() {
   if (readinessSent === key || !state.readiness && !state.waitingForReady && !ready) return;
   readyPending = true;
   try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
-    ready, readinessVersion }); readinessSent = key; } catch {} finally { readyPending = false; }
+    ready, readinessVersion }); readinessSent = key; } catch {} finally {
+    readyPending = false;
+    if (readyQueued) { readyQueued = false; void reportReadiness(); }
+  }
 }
 let unavailableNotices = new Set();
 function unavailableToasts(items = []) {
@@ -1753,6 +1774,7 @@ async function start() {
   if(initialRooms){applyRooms(initialRooms);$('auth-overlay').hidden=true;document.body.classList.remove('auth-pending');placeRoomBar();}
   $('diagnostic-actions').hidden=!controlProbe&&!soakMode;
   let bootstrap;
+  transport?.close();
   transport=new uburoomWatchTransport({
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
     onReady:()=>bootstrap=(async()=>{
@@ -1785,7 +1807,8 @@ async function start() {
     }
   });
   $('create').hidden = false; renderBrowsing(); renderVisibility(); renderTransport();
-  setInterval(async () => {
+  clearInterval(identityTimer);
+  identityTimer = setInterval(async () => {
     try { await renewIdentity(); }
     catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); }
   }, 1000);

@@ -28,12 +28,16 @@
           try {
             const message=JSON.parse(event.data);
             if(message.type==='auth-ok') {
+              const initial=!this.ready;
               clearTimeout(this.authTimer);this.ready=true;this.attempt=0;this.connecting=undefined;
               this.authResolve?.();this.authResolve=this.authReject=undefined;
-              clearInterval(this.heartbeat);
-              this.heartbeat=setInterval(()=>this.clock(),1000);this.clock();
-              this.scheduleHeartbeat();
-              Promise.resolve(this.onReady()).catch(()=>{});return;
+              if(initial) {
+                clearInterval(this.heartbeat);
+                this.heartbeat=setInterval(()=>this.clock(),1000);this.clock();
+                this.scheduleHeartbeat();
+                Promise.resolve(this.onReady()).catch(()=>{});
+              }
+              return;
             }
             if(message.type==='response'||message.type==='clock') {
               const pending=this.pending.get(message.id);if(!pending)return;
@@ -59,7 +63,7 @@
       return this.connecting;
     }
     reauthenticate() {
-      if(this.ready&&this.socket?.readyState!==1)this.socket.send(JSON.stringify({type:'auth',...this.identity()}));
+      if(this.ready&&this.socket?.readyState===1)this.socket.send(JSON.stringify({type:'auth',...this.identity()}));
     }
     scheduleHeartbeat() {
       clearTimeout(this.heartbeatTimer);

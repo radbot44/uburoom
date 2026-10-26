@@ -118,7 +118,7 @@ export function createSync(host) {
       hlsPreparationUntil=0;
     }
     if (state.waitingForReady) video.pause();
-    const bufferedTarget = state.format === 'av1' && [...Array(video.buffered.length)].some((_, i) =>
+    const bufferedTarget = (uburoomPlayback.localFormat ? uburoomPlayback.localFormat(state.format) : state.format === 'av1') && [...Array(video.buffered.length)].some((_, i) =>
       target >= video.buffered.start(i) - .05 && target < video.buffered.end(i));
     // A shared seek/restart can supersede a native seek still waiting for old
     // chunks. Retarget it once the new source-time window is buffered.

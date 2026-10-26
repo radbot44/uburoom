@@ -2,13 +2,13 @@
 (function(root) {
   'use strict';
   const choices = {
-    reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','leave','end','logout','fallback','decoder','fatal','complete','source-changed','unavailable'],
+    reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','control-disconnected','kicked','leave','end','logout','fallback','decoder','fatal','complete','source-changed','unavailable'],
     action:['media.load','media.play','media.pause','media.toggle','media.seek.absolute','media.seek.relative','media.quality.set','media.tracks.set','media.stream.refresh','room.enable','room.disable','room.visibility'],
     request:['room-poll','rooms','observe','ready','command','identity','other'],
     failure:['http','network','timeout','abort','decode','other'],
     category:['network','media','other'],
     detail:['reset','fragment','manifest','quota-exceeded','buffer-append','other'],
-    format:['hls','file','av1'], delivery:['text','burn','off'],syncMode:['speed','jumps'],
+    format:['hls','file','av1','vp9','vp8'], delivery:['text','image','burn','off'],syncMode:['speed','jumps'],
     visibility:['visible','hidden','prerender'],
     rejection:['media-unavailable','media-changed','stream-changed','epoch-changed','invalid-discontinuity','invalid-state','invalid-sequence','sequence-replayed',
       'invalid-sample','sample-replayed','invalid-clock','sample-stale','sample-future','invalid-position','invalid-rate','invalid-frames','observation-timeout','storage-failure'],
