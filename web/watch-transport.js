@@ -120,7 +120,7 @@
       });
     }
     interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.closeInitiator='interrupt';this.socket?.close();}
-    close() {this.stopped=true;clearTimeout(this.retry);this.retry=undefined;clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close();}
+    close() {this.stopped=true;clearTimeout(this.retry);this.retry=undefined;clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close(1000);}
   }
   root.uburoomWatchTransport=WatchTransport;
   if(typeof module==='object')module.exports=WatchTransport;
