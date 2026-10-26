@@ -1137,7 +1137,7 @@ function clearPlayer(reason, preserveSubtitles = false) {
   diagnosticSample('player-clear',{reason});
   if (!preserveSubtitles) {
     captions.reset(); trackActionError='';
-    setSubtitleLoadingToast(false);
+    setSubtitleLoading(false);
     toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
   }
   observing = false; observationBreak++; playerWaiting = false;
