@@ -15,7 +15,7 @@ let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readyQueued = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
 const playerPreferenceKey='uburoom.player';
-let playerPreferences={volume:30,muted:false,quality:'720p4'};
+let playerPreferences={volume:30,muted:false,quality:'720p4',subtitleColor:'#ffffff',subtitleBg:'background',subtitleBrightness:100};
 try {
   const saved=JSON.parse(localStorage.getItem(playerPreferenceKey)||'null');
   if(saved && typeof saved==='object') {
@@ -25,6 +25,9 @@ try {
     if(['auto','burn'].includes(saved.subtitleMode))playerPreferences.subtitleMode=saved.subtitleMode;
     if(['auto','off'].includes(saved.subtitles?.choice))playerPreferences.subtitles={choice:saved.subtitles.choice};
     else if(saved.subtitles?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.subtitles.language || ''))playerPreferences.subtitles={choice:'language',language:saved.subtitles.language};
+    if(typeof saved.subtitleColor==='string' && /^#[0-9a-f]{6}$/i.test(saved.subtitleColor))playerPreferences.subtitleColor=saved.subtitleColor.toLowerCase();
+    if(['off','background','shadow'].includes(saved.subtitleBg))playerPreferences.subtitleBg=saved.subtitleBg;
+    if(Number.isFinite(saved.subtitleBrightness) && saved.subtitleBrightness>=20 && saved.subtitleBrightness<=100)playerPreferences.subtitleBrightness=saved.subtitleBrightness;
   }
 } catch {}
 preferredQuality=playerPreferences.quality;
@@ -84,6 +87,31 @@ let lastPresentationBreak=performance.now(), stateRequestSequence=0;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
+function applySubtitleAppearance() {
+  const color = playerPreferences.subtitleColor || '#ffffff';
+  const bg = playerPreferences.subtitleBg || 'background';
+  const brightness = playerPreferences.subtitleBrightness ?? 100;
+  video.style.setProperty('--subtitle-color', color);
+  video.dataset.subtitleBg = bg;
+  const stage = $('stage');
+  if (stage) stage.style.setProperty('--subtitle-brightness', (brightness / 100).toFixed(2));
+  const preset = $('subtitle-color-preset');
+  const hex = $('subtitle-color-hex');
+  const picker = $('subtitle-color-picker');
+  const bgSelect = $('subtitle-bg');
+  const brightnessInput = $('subtitle-brightness');
+  const brightnessValue = $('subtitle-brightness-value');
+  if (hex && document.activeElement !== hex) hex.value = color;
+  if (picker) picker.value = color;
+  if (preset) {
+    const match = [...preset.options].find(o => o.value.toLowerCase() === color.toLowerCase());
+    preset.value = match ? match.value : 'custom';
+  }
+  if (bgSelect && bgSelect.value !== bg) bgSelect.value = bg;
+  if (brightnessInput && document.activeElement !== brightnessInput) brightnessInput.value = brightness;
+  if (brightnessValue) brightnessValue.textContent = brightness + '%';
+}
+applySubtitleAppearance();
 function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
   const freshness=uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
@@ -1553,8 +1581,47 @@ async function changeTrack(args,context=trackContext) {
 $('audio-track').addEventListener('change',()=>void changeTrack({audioId:$('audio-track').value}));
 $('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$('subtitle-track').value}));
 $('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
-subtitleMode.addEventListener('change',()=>void changeTrack({subtitleMode:subtitleMode.value}));
+$('subtitle-mode').addEventListener('change',()=>void changeTrack({subtitleMode:$('subtitle-mode').value}));
 $('subtitle-retry').addEventListener('click',()=>captions.retry());
+$('subtitle-color-preset')?.addEventListener('change', () => {
+  const val = $('subtitle-color-preset').value;
+  if (val !== 'custom') {
+    savePlayerPreferences({ subtitleColor: val });
+    applySubtitleAppearance();
+  } else {
+    $('subtitle-color-hex')?.focus();
+    $('subtitle-color-hex')?.select();
+  }
+});
+function onSubtitleHexChange() {
+  let val = $('subtitle-color-hex').value.trim();
+  if (!val.startsWith('#')) val = '#' + val;
+  if (/^#[0-9a-f]{6}$/i.test(val)) {
+    savePlayerPreferences({ subtitleColor: val.toLowerCase() });
+    applySubtitleAppearance();
+  }
+}
+$('subtitle-color-hex')?.addEventListener('input', onSubtitleHexChange);
+$('subtitle-color-hex')?.addEventListener('change', onSubtitleHexChange);
+$('subtitle-color-picker')?.addEventListener('input', () => {
+  savePlayerPreferences({ subtitleColor: $('subtitle-color-picker').value.toLowerCase() });
+  applySubtitleAppearance();
+});
+$('subtitle-color-picker')?.addEventListener('change', () => {
+  savePlayerPreferences({ subtitleColor: $('subtitle-color-picker').value.toLowerCase() });
+  applySubtitleAppearance();
+});
+$('subtitle-bg')?.addEventListener('change', () => {
+  savePlayerPreferences({ subtitleBg: $('subtitle-bg').value });
+  applySubtitleAppearance();
+});
+function onSubtitleBrightnessChange() {
+  const val = Math.max(20, Math.min(100, Number($('subtitle-brightness').value) || 100));
+  savePlayerPreferences({ subtitleBrightness: val });
+  applySubtitleAppearance();
+}
+$('subtitle-brightness')?.addEventListener('input', onSubtitleBrightnessChange);
+$('subtitle-brightness')?.addEventListener('change', onSubtitleBrightnessChange);
 function expected() {
   const timing=playbackClock.read();
   return uburoomTiming.target(state,timing.serverTime) ?? arrivalExpected();
@@ -1965,6 +2032,8 @@ syncButtonGroup('room-create-visibility', 'room-create-visibility-group');
 syncButtonGroup('room-create-preset', 'room-create-preset-group');
 syncButtonGroup('room-settings-visibility', 'room-settings-visibility-group');
 syncButtonGroup('room-permission-preset', 'room-permission-preset-group');
+syncButtonGroup('subtitle-bg', 'subtitle-bg-group');
+applySubtitleAppearance();
 for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') || []) {
   btn.prepend(uburoomIcons.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
