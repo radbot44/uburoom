@@ -275,7 +275,7 @@ const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
   button.setAttribute('aria-pressed', String(toasts.enabled));
-  button.title = toasts.enabled ? 'Hide notifications' : 'Show notifications';
+  button.title = button.ariaLabel = toasts.enabled ? 'Hide notifications' : 'Show notifications';
   button.replaceChildren(uburoomIcons.icon(document, toasts.enabled ? 'bell' : 'bell-off'));
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
