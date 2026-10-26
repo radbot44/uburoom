@@ -585,3 +585,33 @@ test('random auto-queue remembers its full cycle after visible history is pruned
   assert.equal(f.queue.peekNext(room.id).mediaId,corpus[4].mediaId);
   assert.equal(f.store.get(room.id).autoQueue.cycle,0);
 });
+
+test('auto-queue generatePending performs fast O(N) generation with large catalog corpora', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator);
+  const corpusSize = 5000;
+  const corpus = Array.from({ length: corpusSize }, (_, i) => sampleItem(i + 1));
+
+  // 1. Test 'following' mode with large corpus
+  await f.queue.playNow(room.id, f.creator, sampleItem(100));
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'following', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
+
+  const startFollowing = performance.now();
+  const resFollowing = await f.queue.generate(room.id, f.creator, corpus);
+  const durationFollowing = performance.now() - startFollowing;
+
+  assert.equal(resFollowing.added[0].mediaId, '201');
+  assert.ok(durationFollowing < 500, `Following mode took ${durationFollowing}ms, expected < 500ms`);
+
+  // 2. Test 'random' mode with large corpus
+  await f.queue.clear(room.id, f.creator);
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'random', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
+  f.queue.randomIndex = max => Math.floor(max / 2);
+
+  const startRandom = performance.now();
+  const resRandom = await f.queue.generate(room.id, f.creator, corpus, { targetPending: 10 });
+  const durationRandom = performance.now() - startRandom;
+
+  assert.equal(resRandom.added.length, 10);
+  assert.ok(durationRandom < 500, `Random mode took ${durationRandom}ms, expected < 500ms`);
+});
