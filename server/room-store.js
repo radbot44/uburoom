@@ -81,6 +81,48 @@ class RoomStore {
       autoplay: row.autoplay === 1
     };
   }
+  /** @returns {Map<string, SavedRoom>} */
+  getMany(ids) {
+    this.healthy();
+    const validIds = [...new Set(ids.filter(id => typeof id === 'string' && UUID.test(id)))];
+    if (validIds.length === 0) return new Map();
+
+    const placeholders = validIds.map(() => '?').join(',');
+    const roomRows = this.db.prepare(`SELECT * FROM watch_rooms WHERE id IN (${placeholders})`).all(...validIds);
+    if (roomRows.length === 0) return new Map();
+
+    const foundIds = roomRows.map(r => r.id);
+    const foundPlaceholders = foundIds.map(() => '?').join(',');
+    const hostRows = this.db.prepare(`SELECT roomId, userId FROM watch_room_hosts WHERE roomId IN (${foundPlaceholders}) ORDER BY userId`).all(...foundIds);
+
+    const hostsByRoom = new Map();
+    for (const entry of hostRows) {
+      let list = hostsByRoom.get(entry.roomId);
+      if (!list) {
+        list = [];
+        hostsByRoom.set(entry.roomId, list);
+      }
+      list.push(entry.userId);
+    }
+
+    const result = new Map();
+    for (const row of roomRows) {
+      const creatorId = this.account(row.creatorId);
+      const rawHosts = hostsByRoom.get(row.id) || [];
+      const hosts = [...new Set(rawHosts.map(userId => this.account(userId)))].filter(userId => userId !== creatorId);
+
+      result.set(row.id, {
+        id: row.id, creatorId, hosts, name: row.name, visibility: row.visibility,
+        revision: row.revision, checkpointRevision: row.checkpointRevision, queueRevision: row.queueRevision ?? 0,
+        createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt: row.lastAccessedAt,
+        keepEmpty: !!row.keepEmpty, maxMembers: row.maxMembers, liveState: row.liveState ? JSON.parse(row.liveState) : null,
+        permissions: Policy.policy(JSON.parse(row.permissions)), bookmark: row.bookmark === null ? null : bookmark(JSON.parse(row.bookmark)),
+        autoQueue: row.autoQueue === null ? { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [] } : JSON.parse(row.autoQueue),
+        autoplay: row.autoplay === 1
+      });
+    }
+    return result;
+  }
   async commit(result) {
     try { await this.registry.flush(); }
     catch (failure) { this.failure = failure; this.healthy(); }
@@ -239,15 +281,19 @@ class RoomStore {
     const grants = this.db.prepare('SELECT g.* FROM watch_room_host_grants g JOIN identities i ON i.provider=g.provider AND i.subject=g.subject WHERE i.userId=? AND i.verified=1').all(userId);
     if (!grants.length) return [];
     this.healthy();
+    const roomIds = [...new Set(grants.map(grant => grant.roomId))];
+    const rooms = this.getMany(roomIds);
     this.registry.transaction(() => {
       for (const grant of grants) {
-        const room = this.get(grant.roomId);
-        if (userId !== room.creatorId) this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(room.id,userId);
-        this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=? AND provider=? AND subject=?').run(room.id,grant.provider,grant.subject);
-        this.db.prepare('UPDATE watch_rooms SET revision=revision+1 WHERE id=?').run(room.id);
+        const room = rooms.get(grant.roomId);
+        if (room) {
+          if (userId !== room.creatorId) this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(room.id,userId);
+          this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=? AND provider=? AND subject=?').run(room.id,grant.provider,grant.subject);
+          this.db.prepare('UPDATE watch_rooms SET revision=revision+1 WHERE id=?').run(room.id);
+        }
       }
     });
-    await this.commit(); return [...new Set(grants.map(grant=>grant.roomId))];
+    await this.commit(); return roomIds;
   }
   touch(id, at = this.now()) {
     this.healthy();

@@ -81,6 +81,21 @@ test('pending host grants create no account, require exact verified identity, ar
   await store.edit(room.id,creator.id,room.revision,{action:'host.pending.remove',provider:'plex',subject:'999'});
   assert.deepEqual(store.pendingHosts(room.id),[]);
 });
+test('getMany fetches multiple room records in batch and handles invalid or missing IDs',async t=>{
+  const {store,creator,host}=fixture(t);
+  const room1=await store.create(creator.id,{name:'Batch 1',keepEmpty:true});
+  const room2=await store.create(creator.id,{name:'Batch 2',keepEmpty:true});
+  await store.edit(room1.id,creator.id,room1.revision,{action:'host.add',userId:host.id});
+
+  const empty=store.getMany(['not-a-uuid']);
+  assert.equal(empty.size,0);
+
+  const batch=store.getMany([room1.id,room2.id,'00000000-0000-0000-0000-000000000000']);
+  assert.equal(batch.size,2);
+  assert.equal(batch.get(room1.id).name,'Batch 1');
+  assert.deepEqual(batch.get(room1.id).hosts,[host.id]);
+  assert.equal(batch.get(room2.id).name,'Batch 2');
+});
 test('directory ranks live room/uburoom/known/new users, deduplicates verified aliases, caches sources and excludes private profile data',async t=>{
   const {registry,creator,host,viewer}=fixture(t);
   registry.rename(creator.id,'Match leader');registry.rename(host.id,'Match host');registry.rename(viewer.id,'Match viewer');

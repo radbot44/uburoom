@@ -152,9 +152,14 @@ class WatchRooms {
     if (this.stopped || !await current()) throw failure('Room connection changed; retry manually', 403);
   }
   async claimHosts(userId) {
-    for (const id of await this.store.claimHosts(userId)) {
+    const claimedIds = await this.store.claimHosts(userId);
+    const activeIds = claimedIds.filter(id => this.watch.rooms.has(id));
+    if (!activeIds.length) return;
+    const records = this.store.getMany(activeIds);
+    for (const id of activeIds) {
       const room = this.watch.rooms.get(id);
-      if (room) { this.apply(room,this.store.get(id)); room.revision++; }
+      const record = records.get(id);
+      if (room && record) { this.apply(room, record); room.revision++; }
     }
   }
   apply(room, record) {
