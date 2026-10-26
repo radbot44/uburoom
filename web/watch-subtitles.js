@@ -90,17 +90,29 @@ class uburoomSubtitles {
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
         if(subUrl){
           if(typeof subUrl!=='string'||!subUrl.startsWith(url+'/')||!subUrl.endsWith('/data'))throw new Error('Invalid subtitle asset.');
-          const headerTimer=setTimeout(()=>abort.abort(new Error('Subtitle stream timed out.')),35000);
+          // Stall timers are backstops for the server's own FFmpeg idle limit. They
+          // abort only this request so the failure is reported and retried; the
+          // shared controller stays reserved for reset/cancellation. Headers wait
+          // for the first extracted packet, which can follow a long demux catch-up.
+          const stall=new AbortController(),stalled=()=>stall.abort(new Error('Subtitle stream timed out. Retry or choose Plex burn-in.'));
+          const signal=AbortSignal.any([abort.signal,stall.signal]);
+          const interrupted=error=>abort.signal.aborted ? error : stall.signal.aborted ? stall.signal.reason :
+            error instanceof TypeError || error?.name==='AbortError' ? new Error('Subtitle stream was interrupted. Retry or choose Plex burn-in.') : error;
+          const headerTimer=setTimeout(stalled,310000);
           let result;
-          try{result=await fetch(subUrl,{signal:abort.signal});}finally{clearTimeout(headerTimer);}
-          if(!result.ok || !result.body)throw new Error('Subtitle resource could not load. Retry or choose Plex burn-in.');
+          try{result=await fetch(subUrl,{signal});}
+          catch(error){throw interrupted(error);}
+          finally{clearTimeout(headerTimer);}
+          if(!result.ok || !result.body){const value=await result.json().catch(()=>({}));throw Object.assign(new Error(value.error || 'Subtitle resource could not load. Retry or choose Plex burn-in.'),{terminal:result.status===403});}
           const reader=result.body.getReader(),limit=64*1024*1024;let size=0,idleTimer;
-          const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>abort.abort(new Error('Subtitle stream timed out.')),300000);};
+          const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(stalled,310000);};
           this.streaming=true;this.streamSynced=false;this.syncStatus();
           resetIdle();
           try{
             for(;;){
-              const {done,value:chunk}=await reader.read();
+              let next;
+              try{next=await reader.read();}catch(error){throw interrupted(error);}
+              const {done,value:chunk}=next;
               if(done)break;
               resetIdle();
               if(!chunk || !chunk.byteLength)continue;
@@ -121,6 +133,9 @@ class uburoomSubtitles {
       this.loaded=true; this.status({message:'',error:false,loading:false});
     } catch (error) {
       if (generation!==this.generation || abort.signal.aborted) return;
+      // Release this attempt's renderer and requests before retrying so a
+      // retry never stacks a second overlay over a stale partial stream.
+      abort.abort();this.renderer?.destroy();this.renderer=undefined;
       this.streaming=false;this.streamSynced=false;
       this.attempts=error.terminal ? 3 : this.attempts+1;
       const failed=this.attempts>=3;

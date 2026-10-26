@@ -54,7 +54,9 @@ function startPgsJob(plex,media){
       const av1=plex.av1;
       if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
       await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
-        const args=['-hide_banner','-loglevel','error','-nostdin','-y','-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
+        // Flush each packet so viewers receive cues as soon as demuxing reaches
+        // them, instead of waiting for FFmpeg's pipe buffer to fill.
+        const args=['-hide_banner','-loglevel','error','-nostdin','-y','-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-flush_packets','1','-f','sup','pipe:1'];
         await av1.stream(av1.ffmpeg,args,abort,chunk=>{
           job.chunks.push(chunk);job.size+=chunk.length;
           for(const listener of job.listeners)try{listener(chunk,null);}catch{}
