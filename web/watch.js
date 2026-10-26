@@ -1311,7 +1311,9 @@ function unavailable(message,reason='room-unavailable') {
   renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
 }
 function connectionLost(details={}) {
-  diagnostics.record('control-disconnected',{socketCloseCode:details.code});
+  diagnostics.record('control-disconnected',{socketCloseCode:details.code,connectionId:details.connectionId,
+    connectionAttempt:details.connectionAttempt,connectionAgeMs:details.connectionAgeMs,closeInitiator:details.closeInitiator,
+    socketCloseClean:details.clean,socketWasReady:details.wasReady,visibility:document.visibilityState});
   if(transport?.ready)transport.interrupt(1000);
   if(reconnecting)return;
   reconnecting=true;stateRequestSequence++;stateTransportSequence=0;
@@ -1723,7 +1725,7 @@ function applyState(next) {
   const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
   document.title = (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
   renderVisibility(); renderTransport();
-  if(resumed){queueUI.restorePosition();diagnostics.record('control-reconnected');}
+  if(resumed){queueUI.restorePosition();diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});}
   if (next.feedback && next.feedback.revision !== lastFeedback && Date.now() + offset - next.feedback.at < 3000) {
     lastFeedback = next.feedback.revision;
     const details = uburoomWatchFeedback.badgeDetails(next.feedback, next.state);
@@ -1750,7 +1752,7 @@ async function refreshState() {
     offset = next.serverNow - (before + Date.now()) / 2; applyState(next); fail(playbackError); void reportReadiness();
   } catch (error) { if (id === selected && sequence===stateRequestSequence) {
     if(!error.status||error.status>=500)connectionLost();
-    else unavailable(error.message,'room-poll');
+    else {diagnostics.record('room-state-unavailable',{status:error.status,connectionId:transport?.connectionId,visibility:document.visibilityState});unavailable(error.message,'room-poll');}
   } }
 }
 async function selectRoom(id,initial) {
@@ -1804,7 +1806,12 @@ function applyRooms(rooms) {
     renderRoomChoices(rooms);
   }
   if (!reconnecting && !switchingRoom && !rooms.some(room => room.id === selected && !room.locked)) {
-    if (selected) { selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false); }
+    if (selected) {
+      const listed=rooms.find(room=>room.id===selected);
+      diagnostics.record('room-list-unavailable',{roomListState:listed?.locked?'locked':'missing',roomCount:rooms.length,
+        connectionId:transport?.connectionId,visibility:document.visibilityState});
+      selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false);
+    }
   }
   $('status').textContent = !config?.singleRoom&&!selected && rooms.length ? 'Choose an active room or create your own.' : '';
   $('create').textContent = 'New room';
@@ -2122,8 +2129,9 @@ async function start() {
   transport=new uburoomWatchTransport({
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
     onReady:()=>bootstrap=(async()=>{
+      diagnostics.record('control-connected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt,visibility:document.visibilityState});
       await refreshState();if(initialRooms)initialRooms=undefined;else await refreshRooms();
-      if(!selected){if(reconnecting)diagnostics.record('control-reconnected');clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
+      if(!selected){if(reconnecting)diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
       $('auth-loading').hidden=$('auth-overlay').hidden=true;
       document.body.classList.remove('auth-pending');
       renderBrowsing();renderVisibility();placeRoomBar();
@@ -2143,7 +2151,7 @@ async function start() {
       else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
         if(message.status===200){applyState(message.value);fail(playbackError);void reportReadiness();}
         else if(message.status>=500)connectionLost();
-        else unavailable(message.value?.error||'Room unavailable','room-poll');
+        else {diagnostics.record('room-state-unavailable',{status:message.status,connectionId:transport?.connectionId,visibility:document.visibilityState});unavailable(message.value?.error||'Room unavailable','room-poll');}
       } else if(message.type==='unavailable'){
         if(message.status===401||message.status===403)unavailable(message.value?.error||'Sign in again','identity-poll');
         else connectionLost();

@@ -24,13 +24,23 @@ async function fixture(t) {
     ws.on('message',raw=>{const message=JSON.parse(raw);events.push(message);if(message.type==='response'){const pending=waiting.get(message.id);if(pending){waiting.delete(message.id);pending(message);}}});
     await once(ws,'open');
     const authenticated=once(ws,'message');ws.send(JSON.stringify({type:'auth',token:identity.token,csrf:identity.csrf}));
-    assert.equal(JSON.parse((await authenticated)[0]).type,'auth-ok');
+    const authMessage=JSON.parse((await authenticated)[0]);
+    assert.equal(authMessage.type,'auth-ok');
+    assert.ok(Number.isSafeInteger(authMessage.connectionId)&&authMessage.connectionId>0);
     const ping=setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'clock',id:0}));},1000);t.after(()=>clearInterval(ping));
-    return {ws,events,stopClock:()=>clearInterval(ping),call:(route,data)=>new Promise(resolve=>{const id=++sequence;waiting.set(id,resolve);ws.send(JSON.stringify({type:'request',id,path:route,...(data===undefined?{}:{data})}));})};
+    return {ws,connectionId:authMessage.connectionId,events,stopClock:()=>clearInterval(ping),call:(route,data)=>new Promise(resolve=>{const id=++sequence;waiting.set(id,resolve);ws.send(JSON.stringify({type:'request',id,path:route,...(data===undefined?{}:{data})}));})};
   }
   return {app,config,cert,login,connect,revoke:()=>{allowed=false;}};
 }
 const tls={skip:!fs.existsSync(certFile)};
+ 
+test('authenticated sockets have distinct server connection IDs',tls,async t=>{
+  const f=await fixture(t),identity=await f.login('host');
+  const first=await f.connect(identity),second=await f.connect(identity);
+  t.after(()=>{first.ws.close();second.ws.close();});
+  assert.notEqual(first.connectionId,second.connectionId);
+  assert.ok(second.connectionId>first.connectionId);
+});
 
 test('native WebSocket pongs retain room presence without JavaScript clock messages',tls,async t=>{
   const f=await fixture(t),host=await f.connect(await f.login('host'));

@@ -18,6 +18,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   const clockEpoch = routes.clockEpoch;
   const allowed = origin => origin === config.publicUrl || /^\d{17,20}$/.test(config.clientId || '') && origin === `https://${config.clientId}.discordsays.com`;
   const clients = new Set();
+  let nextConnectionId=0;
   const qualityStatuses=new Set(['playing','buffering','paused','seeking','starting','stale','unknown','error']);
   const qualityReasons=new Set(['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples',
     'measurement-stale','measurement-expired','invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting',
@@ -26,7 +27,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   const qualityConfidences=new Set(['confident','reduced','provisional']);
   function send(client, message) {
     if (client.ws.readyState !== 1) return;
-    if (client.ws.bufferedAmount > 1024 * 1024) { client.ws.terminate(); return; }
+    if (client.ws.bufferedAmount > 1024 * 1024) { client.terminationCause='backpressure';client.ws.terminate(); return; }
     const raw=JSON.stringify(message);
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
@@ -93,6 +94,17 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
       send(client, { type: 'identity', value: me.value });
       const rooms = await request(client, '/api/watch/rooms');
       send(client, { type: 'rooms', ...rooms });
+      // Record only transitions in selected-room visibility, not every periodic publication.
+      const selectedRoom=/^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\?|$)/.exec(path||'')?.[1];
+      if(selectedRoom) {
+        const listed=rooms.status===200&&Array.isArray(rooms.value?.rooms)?rooms.value.rooms.find(room=>room.id===selectedRoom):undefined;
+        const availability=rooms.status!==200?'list-error-'+rooms.status:!listed?'missing':listed.locked?'locked':'available';
+        if(client.lastPublishedRoomId!==selectedRoom||client.lastPublishedRoomAvailability!==availability) {
+          const serverRoom=watch.rooms.get(selectedRoom);
+          config.logger?.debug('Socket',`conn=${client.connectionId} selected-room=${availability} serverExists=${!!serverRoom} viewers=${serverRoom?.viewers.size??0}`);
+          client.lastPublishedRoomId=selectedRoom;client.lastPublishedRoomAvailability=availability;
+        }
+      }
       if (path && client.subscription === path) {
         const result = await request(client, path);
         if (client.subscription === path) send(client, { type: 'state', path, ...result });
@@ -112,9 +124,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (req.url !== '/watch-socket') return socket.destroy();
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + req.socket.remoteAddress, 30) || clients.size >= 128) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => {
-      const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set() };
+      const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set(),connectionId:++nextConnectionId,openedAt:Date.now() };
       clients.add(client);
-      config.logger?.debug('Socket', `Client connected from ${client.remoteAddress || 'local'} (total: ${clients.size})`);
+      config.logger?.debug('Socket', `conn=${client.connectionId} opened from ${client.remoteAddress || 'local'} (total: ${clients.size})`);
       ws.watchKick = roomId => {
         if (client.subscription?.split('?')[0] === '/api/watch/rooms/' + roomId) client.subscription = undefined;
         send(client,{type:'room-kicked',roomId});
@@ -151,9 +163,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             if (!auth || client.userId && client.userId !== auth.actor.userId || ws.readyState !== 1) return ws.close(4003, 'Authentication failed');
             try { watch.roomState?.people.enter(auth.actor.userId); } catch { send(client,{type:'unavailable',status:429,value:{error:'Server full; try again when someone leaves'}}); return ws.close(4029,'Server full'); }
             client.headers=headers;
-            client.userId=auth.actor.userId;client.authenticating=false;
-            client.authenticated = true; hub.directory?.connected(ws,client.userId); clearTimeout(timer); send(client, { type: 'auth-ok' });
-            config.logger?.info('Socket', `User authenticated: ${auth.actor.name || auth.actor.userId} (total clients: ${clients.size})`);
+            client.userId=auth.actor.userId;client.userName=auth.actor.name;client.authenticating=false;
+            client.authenticated = true; hub.directory?.connected(ws,client.userId); clearTimeout(timer); send(client, { type: 'auth-ok',connectionId:client.connectionId });
+            config.logger?.info('Socket', `conn=${client.connectionId} User authenticated: ${auth.actor.name || auth.actor.userId} (total clients: ${clients.size})`);
             return;
           }
           client.lastSeen = Date.now();
@@ -180,8 +192,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
           } finally { client.inflight.delete(message.id); }
         })().catch(() => ws.close(4002, 'Request failed'));
       });
-      ws.on('close', () => {
-        config.logger?.debug('Socket', `Client disconnected${client.userId ? ' (' + client.userId + ')' : ''} (remaining: ${clients.size - 1})`);
+      ws.on('close', (code,rawReason) => {
+        const reason=rawReason?.toString('utf8').slice(0,80).replace(/[^\x20-\x7e]/g,'')||'';
+        const attached=[...watch.rooms.values()].reduce((n,room)=>n+[...room.viewers.values()].filter(viewer=>viewer.watchSocket===ws).length,0);
+        config.logger?.debug('Socket', `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause||'peer-or-network'} account=${JSON.stringify(client.userName||client.userId||'unauthenticated')} ageMs=${Date.now()-client.openedAt} attachedViewers=${attached} (remaining: ${clients.size-1})`);
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         for (const room of watch.rooms.values()) {
@@ -194,10 +208,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   });
   const timer = setInterval(() => {
     for (const client of clients) {
-      if (Date.now() - client.lastSeen >= 10000) client.ws.terminate();
+      if (Date.now() - client.lastSeen >= 10000) {client.terminationCause='server-idle-timeout';client.ws.terminate();}
       else { if (client.pingAt === undefined && client.ws.readyState === 1) { client.pingAt = performance.now(); client.ws.ping(); } void publish(client); }
     }
   }, 1000); timer.unref();
-  return { close() { clearInterval(timer); for (const client of clients) client.ws.terminate(); wss.close(); } };
+  return { close() { clearInterval(timer); for (const client of clients) {client.terminationCause='server-shutdown';client.ws.terminate();} wss.close(); } };
 }
 module.exports = { watchSockets };
