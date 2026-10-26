@@ -263,17 +263,19 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   const link=document.createElement('a');link.href=url;link.download=filename;link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-let subtitleLoadingTimer;
+let subtitleLoadingTimer, subtitleLoadingActive = false;
 function setSubtitleLoadingToast(loading) {
   if (!loading) {
+    subtitleLoadingActive = false;
     clearTimeout(subtitleLoadingTimer); subtitleLoadingTimer = undefined;
     toasts?.dismiss('subtitle-loading', false);
     return;
   }
-  if (subtitleLoadingTimer || toasts?.active('subtitle-loading')) return;
+  if (subtitleLoadingActive) return;
+  subtitleLoadingActive = true;
   subtitleLoadingTimer = setTimeout(() => {
     subtitleLoadingTimer = undefined;
-    toasts?.show('subtitle-loading', { symbol: 'subtitles', title: 'Loading subtitles…', duration: 0 });
+    if (subtitleLoadingActive) toasts?.show('subtitle-loading', { symbol: 'subtitles', title: 'Loading subtitles…', duration: 0 });
   }, 250);
 }
 const captions = new uburoomSubtitles(video, value => {

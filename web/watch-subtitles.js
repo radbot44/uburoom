@@ -19,7 +19,7 @@ class uburoomSubtitles {
   }
   clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); }
   reset() {
-    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false; this.streaming=false; this.streamSynced=false;
+    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loading=false; this.loaded=false; this.streaming=false; this.streamSynced=false;
     this.renderer?.destroy();this.renderer=undefined;
     this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false,loading:false});
   }
@@ -62,8 +62,8 @@ class uburoomSubtitles {
   async load() {
     const generation=this.generation, url=this.url; if(!url)return;
     this.loading=true; const abort=this.abort=new AbortController();
-    this.status({message:'Loading subtitles…',error:false,loading:true});
     try {
+      this.status({message:'Loading subtitles…',error:false,loading:true});
       const response=await fetch(url,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(90000)])}), value=await response.json();
       if (!response.ok) throw Object.assign(new Error(value.error || 'Subtitles could not load.'),{terminal:response.status===403});
       if (generation!==this.generation) return;
@@ -127,8 +127,7 @@ class uburoomSubtitles {
       this.status({message:failed ? error.message : 'Retrying subtitles…',error:failed,loading:!failed});
       if(!failed)this.timer=setTimeout(()=>{this.timer=undefined;void this.load();},1000*2**(this.attempts-1));
     } finally {
-      this.loading=false;
-      if(generation!==this.generation && this.url && !this.loaded && !this.timer)void this.load();
+      if(generation===this.generation)this.loading=false;
     }
   }
   destroy() {
