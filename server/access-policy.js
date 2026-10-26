@@ -21,6 +21,7 @@ class AccessPolicy {
     return !!token && (this.passwordGrants.get(createHash('sha256').update(token).digest('hex')) || 0) > Date.now();
   }
   enter(value, identity) {
+    if (!this.passwordRequired) return;
     const digest = value => createHash('sha256').update(value).digest();
     if (typeof value !== 'string' || value.length > 1024 || !timingSafeEqual(digest(value), digest(this.settings?.password || ''))) return;
     if (identity?.activity) identity.entryAuthorized = true;
