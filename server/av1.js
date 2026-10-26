@@ -257,7 +257,8 @@ class AV1 {
         } catch { res.destroy(); }
         finally { clearTimeout(timer); res.off('close', cancel); entry.signal.removeEventListener('abort', cancel); }
       });
-      server.requestTimeout = 30000;
+      server.requestTimeout = 0;
+      server.headersTimeout = 30000;
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       if (this.closed) { server.close(); throw new PlaybackError('Server is shutting down.'); }
       server.unref(); return server.address().port;

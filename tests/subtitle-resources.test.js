@@ -123,3 +123,43 @@ test('read streams subtitle data and enforces response status and size limits', 
     err => err.name === 'AbortError'
   );
 });
+
+test('pipe streams PGS chunks progressively with a 300s idle timeout and caches completed output', async () => {
+  const { pipe, clear } = SubtitleResources;
+  const streamedOptions = [];
+  const plex = {
+    av1: {
+      ffmpeg: 'ffmpeg',
+      input: async (source, signal, fn) => fn('http://127.0.0.1:12345/cap'),
+      stream: async (binary, args, signal, onChunk, options) => {
+        streamedOptions.push(options);
+        onChunk(Buffer.from('PG-CHUNK-1'));
+        onChunk(Buffer.from('PG-CHUNK-2'));
+      }
+    }
+  };
+  const media = {
+    captionVersion: '11111111-2222-3333-4444-555555555555',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', external: false } },
+    source: { Media: [{ Part: [{ Stream: [{ id: 23, index: 4, streamType: 3, codec: 'pgs' }] }] }] }
+  };
+  const written = [];
+  let statusCode = 0;
+  const res = {
+    writableEnded: false,
+    destroyed: false,
+    headersSent: false,
+    writeHead(code) { statusCode = code; this.headersSent = true; },
+    write(chunk) { written.push(Buffer.from(chunk)); },
+    end(chunk) { if (chunk) written.push(Buffer.from(chunk)); this.writableEnded = true; },
+    on() {},
+    off() {}
+  };
+  await pipe(plex, media, { method: 'GET' }, res, new AbortController().signal);
+  assert.equal(statusCode, 200);
+  assert.equal(Buffer.concat(written).toString('utf8'), 'PG-CHUNK-1PG-CHUNK-2');
+  assert.equal(streamedOptions.length, 1);
+  assert.equal(streamedOptions[0].idleTimeout, 300000);
+  clear(media);
+});

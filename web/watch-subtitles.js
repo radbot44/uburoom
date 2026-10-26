@@ -75,6 +75,30 @@ class uburoomSubtitles {
         const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,subUrl,index,fonts,fileName:value.fileName},this.offset||0,abort.signal);
         if(generation!==this.generation || url!==this.url){renderer.destroy();return;}
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
+        if(subUrl){
+          if(typeof subUrl!=='string'||!subUrl.startsWith(url+'/')||!subUrl.endsWith('/data'))throw new Error('Invalid subtitle asset.');
+          const headerTimer=setTimeout(()=>abort.abort(new Error('Subtitle stream timed out.')),35000);
+          let result;
+          try{result=await fetch(subUrl,{signal:abort.signal});}finally{clearTimeout(headerTimer);}
+          if(!result.ok || !result.body)throw new Error('Subtitle resource could not load. Retry or choose Plex burn-in.');
+          const reader=result.body.getReader(),limit=64*1024*1024;let size=0,readyCleared=false,idleTimer;
+          const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>abort.abort(new Error('Subtitle stream timed out.')),300000);};
+          resetIdle();
+          try{
+            for(;;){
+              const {done,value:chunk}=await reader.read();
+              if(done)break;
+              resetIdle();
+              if(!chunk || !chunk.byteLength)continue;
+              size+=chunk.byteLength;
+              if(size>limit)throw new Error('Subtitle resource exceeds the supported size.');
+              const added=await renderer.append(chunk);
+              if(!readyCleared && added>0){readyCleared=true;this.status({message:'',error:false});}
+            }
+            clearTimeout(idleTimer);
+            await renderer.flush();
+          }finally{clearTimeout(idleTimer);await reader.cancel().catch(()=>{});reader.releaseLock();}
+        }
       }else{
         if (!Array.isArray(value.cues) || value.cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string')) throw new Error('Invalid subtitle response.');
         this.cues=value.cues; this.rebuild();

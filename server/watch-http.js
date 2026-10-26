@@ -110,6 +110,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         }
         if(match[2]==='data' && media.selection?.subtitle?.delivery==='pgs' && !media.selection?.subtitle?.external){
           if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
+          req.setTimeout?.(0);res.setTimeout?.(0);
           await SubtitleResources.pipe(media.plexContext||watch.plex,media,req,res,controller.signal);
           return;
         }

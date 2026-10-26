@@ -34,9 +34,10 @@ window.uburoomSubtitleRenderers={
         await wait(renderer.ready);
       }else{
         const {PgsRenderer,VobSubRenderer}=await wait(import('/vendor/subtitles/libbitsub-renderer.js'));signal.throwIfAborted();
+        const pushStream=format==='pgs' && !!assets.subUrl && !assets.data;
         await wait(new Promise((resolve,reject)=>{
           const options={video,canvas,container:layer,
-            ...(assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength)}),
+            ...(pushStream?{}:assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength)}),
             ...(assets.index?{idxContent:new TextDecoder().decode(assets.index)}:{}),fileName:assets.fileName,timeOffset:-offset,
             cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,onError:reject};
           renderer=format==='pgs'?new PgsRenderer(options):new VobSubRenderer(options);
@@ -46,7 +47,7 @@ window.uburoomSubtitleRenderers={
       signal.throwIfAborted();repaint();
       for(const event of ['seeked','loadedmetadata','pause'])video.addEventListener(event,repaint);
       const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause'])video.removeEventListener(event,repaint);dispose();};
-      return {destroy:cleanup,offset(value){renderer.timeOffset=-value;repaint();},picture(value){
+      return {destroy:cleanup,append:chunk=>renderer.append(chunk),flush:()=>renderer.flush(),offset(value){renderer.timeOffset=-value;repaint();},picture(value){
         layer.style.scale=value.zoom*value.stretchX+' '+value.zoom*value.stretchY;layer.style.translate=value.x*100+'% '+value.y*100+'%';
       }};
     }catch(error){dispose();throw error;}

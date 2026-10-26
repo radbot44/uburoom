@@ -43,7 +43,7 @@ function startPgsJob(plex,media){
         await av1.stream(av1.ffmpeg,args,abort,chunk=>{
           job.chunks.push(chunk);job.size+=chunk.length;
           for(const listener of job.listeners)try{listener(chunk,null);}catch{}
-        },{idleTimeout:30000,maxOutput:LIMIT});
+        },{idleTimeout:300000,maxOutput:LIMIT});
       });
       job.complete=true;
       const fullData=Buffer.concat(job.chunks,job.size);
