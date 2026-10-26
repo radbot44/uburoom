@@ -4,9 +4,14 @@
   const WINDOW_MS=60000, SAMPLE_INTERVAL_MS=1000, INTERVAL_SLOTS=64, BUFFER_SLOTS=32, CORRECTION_SLOTS=64;
   const MAX_CLOCK_AGE_MS=5000, MAX_CLOCK_UNCERTAINTY_MS=1000;
   const RECENT_EVIDENCE_MS=12000, PAUSED_EVIDENCE_MS=120000;
+  // Omit over-age evidence from reports to older servers that reject it with socket code 4002.
+  const MAX_REPORT_FRESHNESS_MS=300000;
   const REFRESH_INTERVAL_MS=5000, STALE_AFTER_MS=15000;
   const finite=Number.isFinite;
   function clamp(value,min,max) { return Math.max(min,Math.min(max,value)); }
+  function reportableMeasurementFreshnessMs(age) {
+    return finite(age)&&age>=0&&age<=MAX_REPORT_FRESHNESS_MS?age:undefined;
+  }
   function level(score,previous) {
     if(!finite(score)||score<0||score>1)return undefined;
     if(previous==='excellent')return score>=.87?'excellent':score>=.72?'good':score>=.47?'fair':'poor';
@@ -147,6 +152,7 @@
     }
     return {sample,breakSample,startBuffer,endBuffer,recordCorrection,refresh,reset,metricsAt};
   }
-  const api={WINDOW_MS,REFRESH_INTERVAL_MS,MAX_CLOCK_AGE_MS,MAX_CLOCK_UNCERTAINTY_MS,RECENT_EVIDENCE_MS,PAUSED_EVIDENCE_MS,calculate,level,create};
+  const api={WINDOW_MS,REFRESH_INTERVAL_MS,MAX_CLOCK_AGE_MS,MAX_CLOCK_UNCERTAINTY_MS,RECENT_EVIDENCE_MS,PAUSED_EVIDENCE_MS,
+    MAX_REPORT_FRESHNESS_MS,reportableMeasurementFreshnessMs,calculate,level,create};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomSyncQuality=api;
 })(typeof globalThis==='object'?globalThis:this);

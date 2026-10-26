@@ -155,6 +155,20 @@ test('Android-style clock variability and missed probes do not flicker, but prol
   assert.equal(refresh(tracker,17000,{rttSampleCount:1}).confidence,'confident');
 });
 
+test('five-minute-old paused measurements are omitted from reports without waiting',()=>{
+  const tracker=quality.create(),context='paused-age';
+  tracker.sample({at:0,errorMs:20,eligible:true,context,clockRevision:1});
+  tracker.sample({at:1000,errorMs:20,eligible:true,context,clockRevision:1});
+  refresh(tracker,1000);
+  const paused=refresh(tracker,301201,{playbackStatus:'paused'});
+  assert.equal(paused.metrics.measurementFreshnessMs,300201);
+  assert.equal(quality.reportableMeasurementFreshnessMs(paused.metrics.measurementFreshnessMs),undefined);
+  assert.equal(quality.reportableMeasurementFreshnessMs(300000),300000);
+  assert.equal(quality.reportableMeasurementFreshnessMs(299999),299999);
+  assert.equal(quality.reportableMeasurementFreshnessMs(-1),undefined);
+  assert.equal(quality.reportableMeasurementFreshnessMs(NaN),undefined);
+});
+
 test('pauses retain measured ratings, then expire, without a long resume warmup',()=>{
   const tracker=quality.create(),context='paused';
   tracker.sample({at:0,errorMs:10,eligible:true,context,clockRevision:1});
