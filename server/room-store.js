@@ -200,18 +200,14 @@ class RoomStore {
         case 'host.remove': {
           const target = change.action === 'host.leave' ? userId : this.account(change.userId);
           if (target === room.creatorId) throw error('Transfer room leadership before removing the room leader');
-          for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
-            if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
-          }
+          this.db.prepare('WITH RECURSIVE u(id) AS (SELECT ? UNION SELECT users.id FROM users JOIN u ON users.retiredInto = u.id) DELETE FROM watch_room_hosts WHERE roomId=? AND userId IN (SELECT id FROM u)').run(target, id);
           break;
         }
         case 'creator.transfer': {
           const target = this.account(change.userId);
           if (target === room.creatorId || !room.hosts.includes(target)) throw error('Transfer room leadership to another assigned host');
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, room.creatorId);
-          for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
-            if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
-          }
+          this.db.prepare('WITH RECURSIVE u(id) AS (SELECT ? UNION SELECT users.id FROM users JOIN u ON users.retiredInto = u.id) DELETE FROM watch_room_hosts WHERE roomId=? AND userId IN (SELECT id FROM u)').run(target, id);
           room.creatorId = target;
           break;
         }
