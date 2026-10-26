@@ -38,10 +38,10 @@ async function main() {
       assert.equal(await run('document.querySelector("[data-toast=reconnect]").dataset.loading==="true"'), true, 'Reconnect icon spins');
       for (const width of [1280, 390]) {
         await browser.viewport(page, width, 900);
-        for (const theme of ['dark', 'light']) for (const accent of ['orange', 'pink']) {
-          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.dataset.accent=${JSON.stringify(accent)};toasts.show('participant',{title:'PauseAlice <fixture>',symbol:'pause',duration:2500})`);
+        for (const theme of ['dark', 'light']) {
+          await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)};toasts.show('participant',{title:'PauseAlice <fixture>',symbol:'pause',duration:2500})`);
           assert.equal(await run('[...document.querySelectorAll(".watch-toast")].every(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})'), true, 'Toasts fit viewport');
-          await browser.screenshot(page, path.join(output, `${name}-${width}-${theme}-${accent}.png`));
+          await browser.screenshot(page, path.join(output, `${name}-${width}-${theme}.png`));
         }
       }
       await pause(2700);

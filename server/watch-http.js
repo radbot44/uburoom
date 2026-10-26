@@ -58,10 +58,22 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       grant.version === grant.room.mediaVersion && grant.room.viewers.get(grant.viewerId)?.media === grant.media &&
       grant.streamVersion === grant.room.viewers.get(grant.viewerId)?.streamVersion && await watch.canView(grant.room, grant.actor);
   }
+  async function validCaptionGrant(grant, captionVersion) {
+    const viewer = grant && grant.room.viewers.get(grant.viewerId);
+    return grant && grant.expires > Date.now() && await grant.alive() && watch.rooms.get(grant.room.s.roomId) === grant.room &&
+      grant.version === grant.room.mediaVersion && viewer?.media?.captionVersion === captionVersion &&
+      await watch.canView(grant.room, grant.actor);
+  }
   function mediaGrant(room, auth, req, viewerId) {
     const viewer = room.viewers.get(viewerId);
     if (!viewer?.media || viewer.media.playbackError) return;
     const credential = req.headers.authorization || cookies(req).uburoom;
+    for (const g of grants.values()) {
+      if (g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion &&
+        g.credential === credential && g.media?.captionVersion && g.media.captionVersion === viewer.media.captionVersion) {
+        g.expires = Date.now() + 15000;
+      }
+    }
     const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion);
     if (existing?.credential === credential) { existing.expires = Date.now() + 15000; return existing.id; }
     if (existing) grants.delete(existing.id);
@@ -90,32 +102,28 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       line.replace(/URI="([^"\r\n]+)"/g, (_, value) => `URI="${resolve(value)}"`) : resolve(line.trim())).join('\n');
   }
   async function stream(req, res, grant, key) {
-    if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
-    const media = grant.media;
-    // A direct output never serves video through this process, even if a client
-    // tries a stale or manually constructed resource URL. Its start is text only.
-    if(media.directHls && key==='start' && !media.initialManifest)return json(res,409,{error:'Direct Plex playlist unavailable'});
-    if(media.directHls && key!=='start' && !key.startsWith('subtitle-') && !key.startsWith('captions-'))return json(res,409,{error:'Use the direct Plex media route'});
     if(key.startsWith('subtitle-')){
       const match=/^subtitle-([a-f0-9-]{36})(?:\/(data|index|font-\d{1,2}))?$/.exec(key);
-      if(!match || match[1]!==media.captionVersion)return json(res,403,{error:'Subtitle selection changed or access expired.'});
+      if(!match || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle selection changed or access expired.'});
+      const currentMedia=()=>grant.room.viewers.get(grant.viewerId)?.media;
       const controller=new AbortController(),cancel=()=>controller.abort();res.on('close',cancel);
-      const check=setInterval(async()=>{try{if(!await validGrant(grant)||media.captionVersion!==match[1])controller.abort();}catch{controller.abort();}},1000);
+      const check=setInterval(async()=>{try{if(!await validCaptionGrant(grant,match[1]))controller.abort();}catch{controller.abort();}},1000);
       try{
-        if(!match[2] && media.selection?.subtitle?.delivery==='pgs'){
-          if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        const media=currentMedia();
+        if(!match[2] && media?.selection?.subtitle?.delivery==='pgs'){
+          if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           res.setHeader('Cache-Control','no-store');
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
           return json(res,200,{format:'pgs',data:base+'data',fonts:[]});
         }
-        if(match[2]==='data' && media.selection?.subtitle?.delivery==='pgs' && !media.selection?.subtitle?.external){
-          if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        if(match[2]==='data' && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
+          if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           req.setTimeout?.(0);res.setTimeout?.(0);
           await SubtitleResources.pipe(media.plexContext||watch.plex,media,req,res,controller.signal);
           return;
         }
         const result=await SubtitleResources.load(media.plexContext||watch.plex,media,controller.signal);
-        if(controller.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1])return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
         res.setHeader('Cache-Control','no-store');
         if(!match[2]){
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
@@ -129,17 +137,24 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if (key.startsWith('captions-')) {
       const match = /^captions-([a-f0-9-]{36})$/.exec(key);
-      if (!match || match[1]!==media.captionVersion) return json(res,403,{error:'Subtitle selection changed or access expired.'});
+      if (!match || !await validCaptionGrant(grant,match[1])) return json(res,403,{error:'Subtitle selection changed or access expired.'});
       const abort=new AbortController(), cancel=()=>abort.abort(); res.on('close',cancel);
-      const check=setInterval(async()=>{try{if(!await validGrant(grant)||media.captionVersion!==match[1])abort.abort();}catch{abort.abort();}},2000);
+      const check=setInterval(async()=>{try{if(!await validCaptionGrant(grant,match[1]))abort.abort();}catch{abort.abort();}},2000);
       try {
+        const media=grant.room.viewers.get(grant.viewerId)?.media;
         const cues=await Subtitles.load(media.plexContext||watch.plex,media,abort.signal);
-        if (abort.signal.aborted || !await validGrant(grant) || media.captionVersion!==match[1]) return json(res,403,{error:'Subtitle access expired or selection changed.'});
+        if (abort.signal.aborted || !await validCaptionGrant(grant,match[1])) return json(res,403,{error:'Subtitle access expired or selection changed.'});
         json(res,200,{cues});
       } catch(error) { if(!res.destroyed)json(res,503,{error:error instanceof PlaybackError ? error.message : 'Subtitles could not load.'}); }
       finally {clearInterval(check);res.off('close',cancel);}
       return;
     }
+    if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
+    const media = grant.media;
+    // A direct output never serves video through this process, even if a client
+    // tries a stale or manually constructed resource URL. Its start is text only.
+    if(media.directHls && key==='start' && !media.initialManifest)return json(res,409,{error:'Direct Plex playlist unavailable'});
+    if(media.directHls && key!=='start')return json(res,409,{error:'Use the direct Plex media route'});
     if (Playback.localFormat(media.format)) {
       if (key === 'start') return json(res, 200, { format:media.format, mime:Playback.LOCAL_CODECS[media.format], audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration,buffer:Playback.BUFFER });
       const match = /^chunk-(video|audio)-(\d{1,9})$/.exec(key), index = Number(match?.[2]);

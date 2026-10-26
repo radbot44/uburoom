@@ -259,7 +259,7 @@ class Watch {
         const entry=room.saved && this.roomState.queue.current(room.s.roomId);
         viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
       }
-      if(current && current!==media)void this.plex.stop(current);
+      if(current && current!==media){SubtitleResources.transfer(current,media);void this.plex.stop(current);}
       return {status:'applied'};
     } finally {
       if(media && !adopted && media!==current && media!==room.media)await this.plex.stop(media);

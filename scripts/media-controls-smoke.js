@@ -80,10 +80,10 @@ async function main() {
       await run('$("media-collapse").click()');
       assert.equal(await run('!$("library-panel").classList.contains("section-collapsed")'),true);
       await shot('desktop');
-      await run('$("theme-toggle").click();$("accent-toggle").click()');
-      assert.equal(await run('getComputedStyle(document.querySelector(".library-views [aria-pressed=true]")).backgroundColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()'),true,'Media selected view follows the active accent');
-      await shot('light-pink');
-      await run('$("accent-toggle").click();$("theme-toggle").click()');
+      await run('$("theme-toggle").click()');
+      assert.equal(await run('getComputedStyle(document.querySelector(".library-views [aria-pressed=true]")).backgroundColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()'),true,'Media selected view follows the active theme');
+      await shot('light');
+      await run('$("theme-toggle").click()');
       await run('document.querySelector(".library-tile:last-child").scrollIntoView({block:"end"})');
       await pause(180);
       assert.equal(await run('(()=>{const h=$("library-header").getBoundingClientRect(),t=document.querySelector(".library-tools").getBoundingClientRect();return Math.abs(h.top)<2 && Math.abs(t.top-h.bottom)<2 && $("library-panel").scrollTop===0 && getComputedStyle($("library-panel")).getPropertyValue("--media-header-height").trim()===Math.round(h.height)+"px"})()'),true,'Header and tools remain sticky with measured offset and page scrolling');

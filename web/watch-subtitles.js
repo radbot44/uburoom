@@ -2,24 +2,37 @@
 // Native TextTrack/VTTCue rendering follows the video into fullscreen. Cue text
 // is parsed by the media API, never inserted into the document as HTML.
 class uburoomSubtitles {
-  constructor(video,status) {
-    this.video=video; this.status=status; this.cues=[]; this.generation=0;
+  constructor(video,status,resolveMediaTime) {
+    this.video=video; this.status=status; this.resolveMediaTime=resolveMediaTime; this.cues=[]; this.generation=0; this.key='';
     this.track=video.addTextTrack('subtitles','uburoom subtitles'); this.track.mode='disabled';
     video.textTracks.addEventListener('addtrack',event=>{if(event.track!==this.track)event.track.mode='disabled';});
+    this.onTimeChange=()=>this.syncStatus();
+    for(const event of ['seeking','seeked','timeupdate'])video.addEventListener?.(event,this.onTimeChange);
+  }
+  mediaTime() { return typeof this.resolveMediaTime==='function' ? this.resolveMediaTime(this.video.currentTime) : this.video.currentTime; }
+  syncStatus() {
+    if(!this.streaming || !this.renderer)return;
+    const synced=this.renderer.synced ? this.renderer.synced(this.mediaTime()) : true;
+    if(synced===this.streamSynced)return;
+    this.streamSynced=synced;
+    this.status({message:synced ? '' : 'Loading subtitles…',error:false,loading:!synced});
   }
   clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); }
   reset() {
-    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false;
+    this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loaded=false; this.streaming=false; this.streamSynced=false;
     this.renderer?.destroy();this.renderer=undefined;
-    this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false});
+    this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false,loading:false});
   }
   update(state) {
-    if (state.subtitleUrl!==this.url) { this.reset(); this.url=state.subtitleUrl; }
+    const key=state.subtitleUrl?.replace(/^\/api\/watch\/media\/[a-f0-9]+\//,'') || '';
+    if (key!==this.key) { this.reset(); this.key=key; }
+    this.url=state.subtitleUrl;
     const offset=state.tracks?.subtitleOffset || 0;
     if (this.offset!==offset) { this.offset=offset; this.rebuild();this.renderer?.offset(offset); }
     this.picture=state.state?.picture; if(this.picture)this.renderer?.picture(this.picture);
-    if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError}); return; }
+    if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError,loading:false}); return; }
     this.track.mode=this.renderer?'disabled':'showing';
+    if (this.streaming) this.syncStatus();
     if (!this.loaded && !this.loading && !this.timer && this.attempts<3) void this.load();
   }
   rebuild() {
@@ -49,11 +62,11 @@ class uburoomSubtitles {
   async load() {
     const generation=this.generation, url=this.url; if(!url)return;
     this.loading=true; const abort=this.abort=new AbortController();
-    this.status({message:'Loading subtitles…',error:false});
+    this.status({message:'Loading subtitles…',error:false,loading:true});
     try {
       const response=await fetch(url,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(90000)])}), value=await response.json();
       if (!response.ok) throw Object.assign(new Error(value.error || 'Subtitles could not load.'),{terminal:response.status===403});
-      if (generation!==this.generation || url!==this.url) return;
+      if (generation!==this.generation) return;
       if(value.format){
         if(!['ass','pgs','vobsub'].includes(value.format)||!Array.isArray(value.fonts)||value.fonts.length>32)throw new Error('Invalid subtitle response.');
         const asset=async(name,limit)=>{
@@ -69,11 +82,11 @@ class uburoomSubtitles {
         if(value.format==='pgs')subUrl=value.data;
         else data=await asset(value.data,value.format==='ass'?4*1024*1024:64*1024*1024);
         const index=value.index?await asset(value.index,1024*1024):undefined;
-        if(value.fonts.length)this.status({message:'Loading subtitle fonts…',error:false});
+        if(value.fonts.length)this.status({message:'Loading subtitle fonts…',error:false,loading:true});
         const fonts=[];let fontSize=0;for(const font of value.fonts){const bytes=await asset(font,16*1024*1024-fontSize);fontSize+=bytes.length;fonts.push(bytes);}
-        this.status({message:'Preparing subtitles…',error:false});
-        const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,subUrl,index,fonts,fileName:value.fileName},this.offset||0,abort.signal);
-        if(generation!==this.generation || url!==this.url){renderer.destroy();return;}
+        this.status({message:'Preparing subtitles…',error:false,loading:true});
+        const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,subUrl,index,fonts,fileName:value.fileName},this.offset||0,abort.signal,this.resolveMediaTime);
+        if(generation!==this.generation){renderer.destroy();return;}
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
         if(subUrl){
           if(typeof subUrl!=='string'||!subUrl.startsWith(url+'/')||!subUrl.endsWith('/data'))throw new Error('Invalid subtitle asset.');
@@ -81,8 +94,9 @@ class uburoomSubtitles {
           let result;
           try{result=await fetch(subUrl,{signal:abort.signal});}finally{clearTimeout(headerTimer);}
           if(!result.ok || !result.body)throw new Error('Subtitle resource could not load. Retry or choose Plex burn-in.');
-          const reader=result.body.getReader(),limit=64*1024*1024;let size=0,readyCleared=false,idleTimer;
+          const reader=result.body.getReader(),limit=64*1024*1024;let size=0,idleTimer;
           const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>abort.abort(new Error('Subtitle stream timed out.')),300000);};
+          this.streaming=true;this.streamSynced=false;this.syncStatus();
           resetIdle();
           try{
             for(;;){
@@ -93,27 +107,33 @@ class uburoomSubtitles {
               size+=chunk.byteLength;
               if(size>limit)throw new Error('Subtitle resource exceeds the supported size.');
               const added=await renderer.append(chunk);
-              if(!readyCleared && added>0){readyCleared=true;this.status({message:'',error:false});}
+              if(added>0)this.syncStatus();
             }
             clearTimeout(idleTimer);
             await renderer.flush();
+            this.streaming=false;this.streamSynced=true;
           }finally{clearTimeout(idleTimer);await reader.cancel().catch(()=>{});reader.releaseLock();}
         }
       }else{
         if (!Array.isArray(value.cues) || value.cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string')) throw new Error('Invalid subtitle response.');
         this.cues=value.cues; this.rebuild();
       }
-      this.loaded=true; this.status({message:'',error:false});
+      this.loaded=true; this.status({message:'',error:false,loading:false});
     } catch (error) {
       if (generation!==this.generation || abort.signal.aborted) return;
+      this.streaming=false;this.streamSynced=false;
       this.attempts=error.terminal ? 3 : this.attempts+1;
-      this.status({message:this.attempts>=3 ? error.message : 'Retrying subtitles…',error:this.attempts>=3});
-      if(this.attempts<3)this.timer=setTimeout(()=>{this.timer=undefined;void this.load();},1000*2**(this.attempts-1));
+      const failed=this.attempts>=3;
+      this.status({message:failed ? error.message : 'Retrying subtitles…',error:failed,loading:!failed});
+      if(!failed)this.timer=setTimeout(()=>{this.timer=undefined;void this.load();},1000*2**(this.attempts-1));
     } finally {
       this.loading=false;
       if(generation!==this.generation && this.url && !this.loaded && !this.timer)void this.load();
     }
   }
-  destroy() { this.reset(); }
+  destroy() {
+    for(const event of ['seeking','seeked','timeupdate'])this.video.removeEventListener?.(event,this.onTimeChange);
+    this.reset();
+  }
 }
 window.uburoomSubtitles=uburoomSubtitles;

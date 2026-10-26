@@ -36,7 +36,7 @@ Use existing theme tokens and shared control classes; do not recreate their sizi
 
 Use local Tabler assets with accessible names. Preserve the circular main Play overlay. SVG icons are constructed safely using `createElementNS` with static attribute dictionaries and appended without `innerHTML`, preserving the public icon API, local asset set and accessible attributes. Text labels may wrap to two lines; compact labels stay single-line. Respect reduced motion; hover/press changes color or surface, not scale or position.
 
-Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` for icon actions, `.danger-button` for destructive, `.solid-button` for player title-bar controls only. `var(--secondary)` (pink by default, swapping to orange when `[data-accent=pink]` is active) is the designated accent color for auto-queue and continuation offers.
+Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` for icon actions, `.danger-button` for destructive, `.solid-button` for player title-bar controls only. Primary accent is orange (`var(--primary)`) and secondary accent is pink (`var(--secondary)`); `var(--secondary)` is the designated accent color for auto-queue and continuation offers. Owner approved 2026-10-26.
 
 ## States and interaction
 
@@ -62,12 +62,12 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 
 ## Reuse and feedback
 
-Reuse the shared toast, dialog, menu, permission and status systems. Preserve their established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified. Toasts with interactive actions use a container element sharing `.watch-toast` styling; two-line action toasts present the message on the first line and compact action and Dismiss buttons on the second line. Deliberate dismissal suppresses repeat warnings for the session. Owner approved 2026-10-25.
+Reuse the shared toast, dialog, menu, permission and status systems. Preserve their established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified. Toasts with interactive actions use a container element sharing `.watch-toast` styling; two-line action toasts present the message on the first line and compact action and Dismiss buttons on the second line. Deliberate dismissal suppresses repeat warnings for the session. Subtitle loading and progressive subtitle catch-up surface a delayed (`250ms`) top-right toast with the `subtitles` icon, `"Loading subtitles..."`, and no spinner until subtitles are ready at the active playback timestamp. Owner approved 2026-10-25, updated 2026-10-26.
 
 Keep existing draft/save/cancel boundaries explicit and report failures truthfully. Preserve independent personal preferences and shared room authority. Put technical details in existing diagnostics surfaces, never credentials or private playback URLs.
 
 ## Review and maintenance
 
-Inspect affected controls across themes/accents, narrow layouts, 200% zoom and keyboard use. Automated checks and screenshots do not replace owner acceptance.
+Inspect affected controls across themes (light and dark), narrow layouts, 200% zoom and keyboard use. Automated checks and screenshots do not replace owner acceptance.
 
 Add a rule here only when it guides future design or records a necessary exception. Do not append feature labels, roster layouts, scoring formulas, preference inventories, toast timings or implementation history already owned by an established system.

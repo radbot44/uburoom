@@ -125,7 +125,7 @@ test('read streams subtitle data and enforces response status and size limits', 
 });
 
 test('pipe streams PGS chunks progressively with a 300s idle timeout and caches completed output', async () => {
-  const { pipe, clear } = SubtitleResources;
+  const { pipe, clear, transfer } = SubtitleResources;
   const streamedOptions = [];
   const plex = {
     av1: {
@@ -139,9 +139,11 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
     }
   };
   const media = {
+    sourceKey: '["https://plex.example","1","10","/library/parts/10/file.mkv",100,60,"1"]',
+    principal: 'plex-user-1',
     captionVersion: '11111111-2222-3333-4444-555555555555',
     subtitleAbort: new AbortController(),
-    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', external: false } },
+    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', available: true, external: false } },
     source: { Media: [{ Part: [{ Stream: [{ id: 23, index: 4, streamType: 3, codec: 'pgs' }] }] }] }
   };
   const written = [];
@@ -161,5 +163,34 @@ test('pipe streams PGS chunks progressively with a 300s idle timeout and caches 
   assert.equal(Buffer.concat(written).toString('utf8'), 'PG-CHUNK-1PG-CHUNK-2');
   assert.equal(streamedOptions.length, 1);
   assert.equal(streamedOptions[0].idleTimeout, 300000);
+
+  // Quality/stream replacement with the same source and subtitle track preserves captionVersion and cached bytes
+  const replacement = {
+    sourceKey: media.sourceKey,
+    principal: media.principal,
+    captionVersion: '99999999-8888-7777-6666-555555555555',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '23', index: 4, delivery: 'pgs', available: true, external: false } },
+    source: media.source
+  };
+  assert.equal(transfer(media, replacement), true);
+  assert.equal(replacement.captionVersion, '11111111-2222-3333-4444-555555555555');
+  assert.equal(media.subtitleAbort, undefined);
   clear(media);
+
+  const cachedWritten = [];
+  const cachedRes = {
+    writableEnded: false,
+    destroyed: false,
+    headersSent: false,
+    writeHead() { this.headersSent = true; },
+    write(chunk) { cachedWritten.push(Buffer.from(chunk)); },
+    end(chunk) { if (chunk) cachedWritten.push(Buffer.from(chunk)); this.writableEnded = true; },
+    on() {},
+    off() {}
+  };
+  await pipe(plex, replacement, { method: 'GET' }, cachedRes, new AbortController().signal);
+  assert.equal(Buffer.concat(cachedWritten).toString('utf8'), 'PG-CHUNK-1PG-CHUNK-2');
+  assert.equal(streamedOptions.length, 1);
+  clear(replacement);
 });

@@ -41,10 +41,21 @@ await bundle(path.join(root,'node_modules/libbitsub/dist/wrapper.js'),'libbitsub
     contents=contents.replace(mount,'const videoRect = {left:this.video.offsetLeft,top:this.video.offsetTop};\n        const containerRect = {left:0,top:0};')
       .replace(bounds,'const rect = {width:this.video.clientWidth,height:this.video.clientHeight};');
     const manual='renderAtMediaTime(mediaTime) {\n        this.renderSynchronizedFrame({ mediaTime, presentedFrames: null });\n    }';
-    if(!contents.includes(manual))throw new Error('Review libbitsub readiness/repaint integration after upstream update.');
+    const indexed='emitIndexed(format, metadata, partial) {\n        this.emitEvent({ type: \'indexed\', format, metadata, partial });\n    }';
+    const refresh='refreshStreamPresentation() {\n        this.invalidatePresentation();\n        this.lastRenderedIndex = -1;\n        this.lastRenderedTime = -1;\n        this.renderPausedFrame();\n    }';
+    const metadata='this.loadedMetadataHandler = () => this.updateCanvasSize();';
+    const syncFrame='const currentTime = tick.mediaTime + this.timeOffset;';
+    const pgsIndex='findCurrentIndex(time) {\n        if (this.state.useWorker && this.state.workerReady) {\n            return binarySearchTimestamp(this.state.timestamps, time * 1000);\n        }\n        return this.pgsParser?.findIndexAtTimestamp(time) ?? -1;\n    }';
+    if(!contents.includes(manual)||!contents.includes(indexed)||!contents.includes(refresh)||!contents.includes(metadata)||!contents.includes(syncFrame)||!contents.includes(pgsIndex))
+      throw new Error('Review libbitsub readiness/repaint integration after upstream update.');
     // Expose initialization completion rather than treating parsed-data onLoaded
     // as presentation readiness. Forced host repaints also invalidate stale work.
-    contents=contents.replace(manual,'whenReady() { return this.waitUntilInitialized(); }\n    renderAtMediaTime(mediaTime, force = false) {\n        if (force) { this.invalidatePresentation(); this.lastRenderedIndex = -2; this.lastRenderedTime = -1; }\n        this.renderSynchronizedFrame({ mediaTime, presentedFrames: null });\n    }');
+    contents=contents.replace(indexed,'emitIndexed(format, metadata, partial) {\n        this.isPartialStream = Boolean(partial);\n        this.emitEvent({ type: \'indexed\', format, metadata, partial });\n    }')
+      .replace(refresh,'refreshStreamPresentation() {\n        const mediaTime = typeof this.resolveMediaTime === \'function\' ? this.resolveMediaTime(this.video.currentTime) : this.video.currentTime;\n        const nextIndex = this.findCurrentIndex(mediaTime + this.timeOffset);\n        if (nextIndex === this.lastRenderedIndex) return;\n        this.renderAtMediaTime(mediaTime, true);\n    }')
+      .replace(metadata,'this.loadedMetadataHandler = () => { this.frameScheduler?.start(); this.updateCanvasSize(); };')
+      .replace(manual,'whenReady() { return this.waitUntilInitialized(); }\n    renderAtMediaTime(mediaTime, force = false) {\n        if (force) { this.invalidatePresentation(); this.lastRenderedIndex = -2; this.lastRenderedTime = -1; }\n        this.renderSynchronizedFrame({ mediaTime, presentedFrames: null });\n    }')
+      .replace(syncFrame,'const effectiveMediaTime = typeof this.resolveMediaTime === \'function\' ? this.resolveMediaTime(tick.mediaTime) : tick.mediaTime;\n        const currentTime = effectiveMediaTime + this.timeOffset;')
+      .replace(pgsIndex,'isSyncedAtMediaTime(mediaTime) {\n        if (!this.isPartialStream) return true;\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        return timestamps.length > 0 && timestamps[timestamps.length - 1] > Math.max(0, (mediaTime + this.timeOffset) * 1000);\n    }\n    findCurrentIndex(time) {\n        const timestamps = (this.state.useWorker && this.state.workerReady) ? this.state.timestamps : (this.pgsParser?.getTimestamps() ?? this.state.timestamps);\n        const index = (this.state.useWorker && this.state.workerReady) ? binarySearchTimestamp(timestamps, time * 1000) : (this.pgsParser?.findIndexAtTimestamp(time) ?? -1);\n        return this.isPartialStream && (index < 0 || index >= timestamps.length - 1) ? -1 : index;\n    }');
     return {contents,loader:'js'};
   });
 }}]);

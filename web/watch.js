@@ -263,7 +263,24 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   const link=document.createElement('a');link.href=url;link.download=filename;link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-const captions = new uburoomSubtitles(video,value=>{trackNotice=value.message;trackNoticeError=value.error;renderTracks();});
+let subtitleLoadingTimer;
+function setSubtitleLoadingToast(loading) {
+  if (!loading) {
+    clearTimeout(subtitleLoadingTimer); subtitleLoadingTimer = undefined;
+    toasts?.dismiss('subtitle-loading', false);
+    return;
+  }
+  if (subtitleLoadingTimer || toasts?.active('subtitle-loading')) return;
+  subtitleLoadingTimer = setTimeout(() => {
+    subtitleLoadingTimer = undefined;
+    toasts?.show('subtitle-loading', { symbol: 'subtitles', title: 'Loading subtitles…', duration: 0 });
+  }, 250);
+}
+const captions = new uburoomSubtitles(video, value => {
+  trackNotice = value.message; trackNoticeError = value.error;
+  setSubtitleLoadingToast(!!value.loading);
+  renderTracks();
+}, mediaTime => (sync.timelinePending || video.readyState < 1) ? expected() : (Number.isFinite(mediaTime) ? mediaTime : video.currentTime));
 const subtitleMode=$('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
 video.muted = playerPreferences.muted;
@@ -1100,7 +1117,7 @@ function checkVideoFrames() {
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
-function clearPlayer(reason) {
+function clearPlayer(reason, preserveSubtitles = false) {
   directProbe?.abort(); directProbe = undefined;
   directRecovery = undefined;
   clearTimeout(fallbackRetryTimer); fallbackRetryTimer = undefined;
@@ -1114,8 +1131,11 @@ function clearPlayer(reason) {
   sync.reset();
   resetSyncQuality();
   diagnosticSample('player-clear',{reason});
-  captions.reset(); trackActionError='';
-  toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
+  if (!preserveSubtitles) {
+    captions.reset(); trackActionError='';
+    setSubtitleLoadingToast(false);
+    toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
+  }
   observing = false; observationBreak++; playerWaiting = false;
   av1?.destroy(); av1 = undefined;
   clearTimeout(hlsRecoveryTimer); hlsRecoveryCount = 0; $('acceleration-help').hidden = true;
@@ -1602,7 +1622,8 @@ function applyState(next) {
   const resumed=reconnecting;reconnecting=false;
   sync.transition(next);
   diagnostics.state(next);
-  const changed = mediaVersion !== next.mediaVersion || mediaSource !== next.mediaUrl;
+  const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
+  const changed = mediaChanged || mediaSource !== next.mediaUrl;
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();}
   const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
@@ -1612,7 +1633,7 @@ function applyState(next) {
   unavailableToasts(next.unavailableMedia);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
-    clearPlayer('state-change'); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
+    clearPlayer('state-change', !mediaChanged); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       stage.classList.remove('ending-active');
       $('ending-stage').hidden = true;

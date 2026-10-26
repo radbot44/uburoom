@@ -144,6 +144,9 @@
     "ghost-2": [["path",{"d":"M10 9h.01"}],["path",{"d":"M14 9h.01"}],["path",{"d":"M12 3a7 7 0 0 1 7 7v1l1 0a2 2 0 1 1 0 4l-1 0v3l2 3h-10a6 6 0 0 1 -6 -5.775l0 -.226l-1 0a2 2 0 0 1 0 -4l1 0v-1a7 7 0 0 1 7 -7l0 .001"}],["path",{"d":"M11 14h2a1 1 0 0 0 -2 0"}]],
     "robot": [["path",{"d":"M6 6a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -4"}],["path",{"d":"M12 2v2"}],["path",{"d":"M9 12v9"}],["path",{"d":"M15 12v9"}],["path",{"d":"M5 16l4 -2"}],["path",{"d":"M15 14l4 2"}],["path",{"d":"M9 18h6"}],["path",{"d":"M10 8v.01"}],["path",{"d":"M14 8v.01"}]],
     "heart": "\u003cpath d=\"M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "player-track-next": "\u003cpath d=\"M3 5v14l8 -7l-8 -7\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M14 5v14l8 -7l-8 -7\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "player-track-prev": "\u003cpath d=\"M21 5v14l-8 -7l8 -7\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M10 5v14l-8 -7l8 -7\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "rotate-clockwise": "\u003cpath d=\"M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {

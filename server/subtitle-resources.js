@@ -14,6 +14,21 @@ function classifyExtractionError(error){
   return new PlaybackError('Original subtitles could not be extracted. Try Plex burn-in.');
 }
 function clear(media){const old=cache.get(media);if(old){bytes-=old.size;cache.delete(media);}media.subtitleAssets=undefined;}
+function transfer(from,to){
+  if(!from || !to || from===to || !from.sourceKey || from.sourceKey!==to.sourceKey || from.principal!==to.principal)return false;
+  if(from.subtitleCache){to.subtitleCache=from.subtitleCache;from.subtitleCache=undefined;}
+  const a=from.selection?.subtitle,b=to.selection?.subtitle;
+  if(!a?.available || !b?.available || a.delivery==='burn' || a.delivery!==b.delivery || a.id!==b.id)return false;
+  to.captionVersion=from.captionVersion;
+  to.subtitleAbort?.abort();
+  to.subtitleAbort=from.subtitleAbort;
+  to.subtitleAssets=from.subtitleAssets;
+  to.subtitleJob=from.subtitleJob;
+  if(to.subtitleJob)to.subtitleJob.media=to;
+  if(cache.has(from)){const entry=cache.get(from);cache.delete(from);cache.set(to,entry);}
+  from.subtitleAbort=undefined;from.subtitleAssets=undefined;from.subtitleJob=undefined;
+  return true;
+}
 async function read(response,signal,limit=LIMIT){
   if(!response.ok)throw new PlaybackError('The original subtitle resource is unavailable. Try Plex burn-in.');
   const chunks=[];let size=0;
@@ -32,7 +47,7 @@ function startPgsJob(plex,media){
   const {track}=source(media),version=media.captionVersion;
   if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
   const abort=AbortSignal.any([media.subtitleAbort.signal,AbortSignal.timeout(300000)]);
-  const job={version,chunks:[],size:0,listeners:new Set(),complete:false,error:null};
+  const job={media,version,chunks:[],size:0,listeners:new Set(),complete:false,error:null};
   active++;
   job.promise=(async()=>{
     try{
@@ -49,9 +64,10 @@ function startPgsJob(plex,media){
       const fullData=Buffer.concat(job.chunks,job.size);
       job.chunks=[];
       const result={format:'pgs',assets:new Map([['data',fullData]]),version,size:job.size};
-      clear(media);
+      const target=job.media;
+      clear(target);
       while(cache.size>=8||bytes+result.size>TOTAL)clear(cache.keys().next().value);
-      cache.set(media,result);bytes+=result.size;media.subtitleAssets=result.assets;
+      cache.set(target,result);bytes+=result.size;target.subtitleAssets=result.assets;
       for(const listener of job.listeners)try{listener(null,null);}catch{}
       return result;
     }catch(error){
@@ -60,7 +76,7 @@ function startPgsJob(plex,media){
       throw job.error;
     }finally{
       active--;job.listeners.clear();
-      if(media.subtitleJob===job)media.subtitleJob=undefined;
+      if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;
     }
   })();
   job.promise.catch(()=>{});
@@ -127,7 +143,7 @@ async function pipe(plex,media,req,res,signal){
       for(const chunk of job.chunks)res.write(chunk);
     }
     if(job.complete){
-      const cached=cache.get(media);
+      const cached=cache.get(job.media || media);
       sendHeaders();
       if(!job.chunks.length&&cached?.version===version&&cached.assets?.has('data'))res.end(cached.assets.get('data'));
       else res.end();
@@ -179,7 +195,7 @@ async function load(plex,media,signal){
   if(media.subtitleJob?.version===version)return media.subtitleJob.promise;
   if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
   const abort=AbortSignal.any([signal,media.subtitleAbort.signal,AbortSignal.timeout(85000)]);
-  const job={version};active++;
+  const job={media,version};active++;
   job.promise=(async()=>{
     let result;
     if(track.external){
@@ -190,13 +206,14 @@ async function load(plex,media,signal){
       result={format:track.delivery,assets:new Map([['data',data]])};
       if(track.delivery==='vobsub')result.assets.set('index',await read(await plex.request(key.replace(/\.sub$/,'.idx'),{signal:abort,headers:{Accept:'*/*'}}),abort,1024*1024));
     }else result=await extract(plex,media,track,abort);
-    abort.throwIfAborted();if(media.captionVersion!==version)throw new PlaybackError('Subtitle selection changed.');
+    const target=job.media;
+    abort.throwIfAborted();if(target.captionVersion!==version)throw new PlaybackError('Subtitle selection changed.');
     result.version=version;result.size=[...result.assets.values()].reduce((sum,value)=>sum+value.length,0);
     if(result.size>TOTAL)throw new PlaybackError('Subtitle resources exceed the cache limit.');
-    clear(media);
+    clear(target);
     while(cache.size>=8 || bytes+result.size>TOTAL)clear(cache.keys().next().value);
-    cache.set(media,result);bytes+=result.size;media.subtitleAssets=result.assets;return result;
-  })().finally(()=>{active--;if(media.subtitleJob===job)media.subtitleJob=undefined;});
+    cache.set(target,result);bytes+=result.size;target.subtitleAssets=result.assets;return result;
+  })().finally(()=>{active--;if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;});
   media.subtitleJob=job;return job.promise;
 }
-module.exports={load,clear,read,pipe,classifyExtractionError,LIMIT};
+module.exports={load,clear,transfer,read,pipe,classifyExtractionError,LIMIT};
