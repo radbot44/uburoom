@@ -54,7 +54,8 @@ test('abnormal socket close retains viewer media and grant for prompt reconnect,
   assert.ok(before.mediaUrl,'media grant exists before disconnect');
   const room=f.app.watch.rooms.get(roomId),viewer=room.viewers.get(viewerId),media=viewer.media,oldSocket=viewer.watchSocket;
   assert.ok(media,'server prepared viewer output');
-  const disconnected=once(first.ws,'close');first.ws.terminate();await disconnected;
+  const disconnected=once(first.ws,'close'),serverDisconnected=once(oldSocket,'close');
+  first.ws.terminate();await Promise.all([disconnected,serverDisconnected]);
   assert.equal(room.viewers.get(viewerId),viewer,'abnormal closure does not evict the viewer');
   assert.equal(viewer.media,media,'output survives unexpected close');
   assert.equal(room.disconnectedViewers.has(viewerId),false,'no cold-rejoin record was created');
@@ -67,7 +68,8 @@ test('abnormal socket close retains viewer media and grant for prompt reconnect,
   assert.equal(after.observationEpoch,before.observationEpoch,'observation context remains stable');
   assert.notEqual(viewer.watchSocket,oldSocket,'replacement server socket now owns viewer');
   assert.equal(viewer.watchSocket.readyState,1);
-  const lostAgain=once(replacement.ws,'close');replacement.ws.terminate();await lostAgain;
+  const lostAgain=once(replacement.ws,'close'),serverLostAgain=once(viewer.watchSocket,'close');
+  replacement.ws.terminate();await Promise.all([lostAgain,serverLostAgain]);
   assert.equal(room.viewers.get(viewerId),viewer);
   viewer.at=Date.now()-11000;
   f.app.watch.refresh(room);
