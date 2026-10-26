@@ -92,7 +92,9 @@ class PlaybackTracking {
     const canonicalId = this.registry ? this.registry.canonical(userId)?.id : userId;
     if (this.registry && !canonicalId) return {retentionDays:90,totals:[],sessions:[]};
     const ids = this.registry ? this.db.prepare("WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged").all(canonicalId).map(u=>u.id) : [userId];
-    const records = ids.flatMap(id=>this.db.prepare('SELECT record FROM playback_history WHERE userId=? ORDER BY at DESC').all(id).map(row=>JSON.parse(row.record))).sort((a,b)=>b.lastReceivedAt-a.lastReceivedAt);
+    if (ids.length === 0) return {retentionDays:90,totals:[],sessions:[]};
+    const placeholders = ids.map(() => '?').join(',');
+    const records = this.db.prepare(`SELECT record FROM playback_history WHERE userId IN (${placeholders}) ORDER BY at DESC`).all(...ids).map(row=>JSON.parse(row.record)).sort((a,b)=>b.lastReceivedAt-a.lastReceivedAt);
     const media = new Map();
     for (const record of records) {
       const item = media.get(record.mediaId) || {mediaId:record.mediaId,wall:[],source:[]};
