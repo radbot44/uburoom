@@ -131,8 +131,13 @@ class Logger {
 
   setFile(filePath) {
     if (this.fileStream) {
-      try { this.fileStream.end(); } catch {}
-      this.fileStream = null;
+      try {
+        this.fileStream.end();
+      } catch (err) {
+        process.stderr.write(`[uburoom:logger] Could not close previous log file stream: ${err.message}\n`);
+      } finally {
+        this.fileStream = null;
+      }
     }
     if (!filePath) {
       this.filePath = null;
