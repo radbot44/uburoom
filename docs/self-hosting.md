@@ -53,7 +53,7 @@ Do not start a second instance using your live credentials or database. Check si
 
 ## Sign-in and access
 
-Sign-in, permission to enter uburoom, and Plex media access are separate checks.
+Sign-in, permission to enter uburoom, Plex media access, and server administration are separate checks.
 
 | Setting | Behavior |
 | --- | --- |
@@ -62,6 +62,7 @@ Sign-in, permission to enter uburoom, and Plex media access are separate checks.
 | `access.require_plex_in_activity: false` | Exempt **verified Discord Activities** from the personal-Plex entry requirement, not web visits or browser handoff. |
 | `secrets.entry_password` | Optional extra entry password alongside provider rules. Access lasts 12 hours and resets on restart; it does not grant admin access. |
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
+| `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 19-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 
 With both sign-in methods off, uburoom allows separate 24-hour anonymous browser logins without owner/admin rights; these are not managed guest passes. Admission changes invalidate existing browser logins. `/auth/owner` supports the configured Discord owner's OAuth recovery, subject to the remaining admission rules.
 
@@ -79,7 +80,7 @@ Fallback does not bypass `access.require_plex: true`. Revoked/expired credential
 
 **Direct fallback** is a separate opt-in with stricter requirements; see [direct Plex delivery](#direct-plex-delivery).
 
-## Plex delivery and transcoding
+## Plex delivery, reporting and transcoding
 
 ### Delivery
 
@@ -90,6 +91,10 @@ For `auto`, configure `plex.client_url` as a trusted, viewer-reachable HTTPS ori
 **Direct fallback** needs all three: `plex.fallback_enabled: true`, `plex.direct_fallback_enabled: true` and a dedicated `plex.fallback_token` verified as a **non-owner** Plex account. Blank, owner, ambiguous or unverifiable fallback credentials are rejected for direct delegation. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
 
 Technical details, failure budgets and provider boundaries: [Plex delivery](plex-hls-delivery.md) and [Plex developer reference](https://developer.plex.tv/pms/).
+
+### Reporting
+
+`plex.reporting_enabled: true` (default) reports active playback sessions to Plex for viewers with verified personal Plex credentials using a decoupled viewer session ID so individual viewer departures never stop shared HLS transcodes. Connected Plex accounts default to activity-only reporting (omitting timeline duration so playback appears in Now Playing without mutating personal resume offsets or watch history). `plex.reporting_watch_state: true` (default) allows viewers with connected Plex accounts to explicitly opt in to personal watch-state synchronization in player settings. Sponsored and guest viewers without personal Plex credentials remain local-only and never report to Plex.
 
 ### Transcoding
 

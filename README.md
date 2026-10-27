@@ -20,11 +20,11 @@ Open `https://localhost:6768/watch?demo=host` and `https://localhost:6768/watch?
 
 - Shared playback, late-join synchronization, public/private rooms, host permissions and persistent rooms/queues.
 - Plex browsing and media-access checks, linked Plex/Discord accounts, browser/Activity handoff and personal volume, quality and track choices.
-- Native per-viewer playback observations and history. Plex activity, resume and watched-state reporting are **not enabled**.
+- Native per-viewer playback observations and history, plus decoupled Plex session reporting (activity-only by default for connected Plex accounts, with explicit per-viewer opt-in for personal watch-state sync and local-only isolation for sponsored viewers).
 
 ## Self-hosting
 
-Follow the [self-hosting guide](docs/self-hosting.md) to configure Plex, HTTPS and optional Discord integration. Copy [`config.example.yaml`](config.example.yaml) to a **private** `config.yaml`, supply your settings, then run `npm start` or `node server/index.js --config /path/to/config.yaml`.
+Follow the [self-hosting guide](docs/self-hosting.md) (or the [Docker guide](docs/docker.md)) to configure Plex, HTTPS and optional Discord integration. Copy [`config.example.yaml`](config.example.yaml) to a **private** `config.yaml`, supply your settings, verify with `npm run doctor`, then run `npm start` or `node server/index.js --config /path/to/config.yaml`.
 
 Never commit or share configuration, tokens, databases or encryption keys. Preserve the **original encryption key** when restoring existing state; see [upgrading](docs/upgrading.md). Shared Plex fallback is enabled by default and can expand eligible viewers' media access; review its [access implications](docs/self-hosting.md#shared-plex-fallback).
 
