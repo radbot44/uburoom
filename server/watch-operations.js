@@ -33,7 +33,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       const opened = async id => {
         if(data.viewerId===undefined)return result(200,{id});
         if(!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
-        const query=new URLSearchParams({viewer:data.viewerId,quality:data.quality||'720p4'});
+        const query=new URLSearchParams({viewer:data.viewerId,quality:data.quality||'720p4'});if(data.delivery==='local')query.set('delivery','local');
         if(data.subtitles==='browser')query.set('subtitles','browser');
         if(data.volume!==undefined)query.set('volume',String(data.volume));
         if(data.muted!==undefined)query.set('muted',String(data.muted));
@@ -236,6 +236,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (write || match[2]) { return result(405, { error: 'Method not allowed' }); }
       const viewerId = url.searchParams.get('viewer');
       if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
+      if (url.searchParams.has('delivery') && !/^(?:auto|local)$/.test(url.searchParams.get('delivery') || '')) throw new Error('Invalid delivery mode');
       const headers = { cookie: context.headers.cookie, authorization: context.headers.authorization };
       const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login({ headers }))?.userId === auth.actor.userId;
       const preferences={};
@@ -266,11 +267,12 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       }
       if(context.controlSocket)viewer.watchSocket=context.controlSocket;
       if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
+      viewer.localDelivery = url.searchParams.get('delivery') === 'local';
       room.viewers.get(viewerId).browserLoginHash=context.headers.authorization?undefined:cookies(context).uburoom&&hash(cookies(context).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!await watch.canView(room, auth.actor) || !await alive() || room.viewers.get(viewerId) !== viewer) { return result(403, { error: 'Viewing access was revoked' }); }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);
-      const grant = mediaGrant(room, auth, context, viewerId);
+      const grant = (!viewer.localDelivery && viewer.media?.format !== 'local') ? mediaGrant(room, auth, context, viewerId) : undefined;
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;
         const media=room.viewers.get(viewerId).media;

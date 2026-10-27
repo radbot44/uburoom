@@ -363,6 +363,48 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const replacementState = (await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`,'GET',undefined,replacementGuest)).body;
   assert.equal(replacementState.streamVersion,guestState.streamVersion,'identity renewal retains the personal stream');
   assert.notEqual(replacementState.mediaUrl,guestState.mediaUrl,'identity renewal rotates the media grant');
+
+  // delivery=local validation, transcode bypass, readiness and observation tracking
+  const badDelivery = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}&delivery=ftp`, 'GET', undefined, guest);
+  assert.equal(badDelivery.status, 400, 'invalid delivery mode is rejected');
+
+  const localViewerId = randomUUID();
+  const localState = (await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=local`, 'GET', undefined, guest)).body;
+  assert.equal(localState.mediaUrl, undefined, 'delivery=local skips media grant allocation');
+  assert.equal(localState.format, 'local', 'local delivery returns local format');
+  assert.equal(localState.mediaId, 'demo');
+  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, true);
+
+  const localReady = await request(`/api/watch/rooms/${id}/ready`, 'POST', {
+    viewerId: localViewerId,
+    mediaVersion: localState.mediaVersion,
+    ready: true,
+    readinessVersion: localState.readinessVersion
+  }, guest);
+  assert.equal(localReady.status, 200, 'ready succeeds for delivery=local');
+
+  const localObs = {
+    viewerId: localViewerId,
+    mediaVersion: localState.mediaVersion,
+    streamVersion: localState.streamVersion,
+    observationEpoch: localState.observationEpoch,
+    sequence: 1,
+    sampleAt: 1000,
+    observedAt: Date.now(),
+    position: 0,
+    state: 'paused',
+    frames: 0,
+    rate: 1,
+    discontinuity: 0
+  };
+  const localObserveRes = await request(`/api/watch/rooms/${id}/observe`, 'POST', localObs, guest);
+  assert.equal(localObserveRes.status, 200, 'observe succeeds for delivery=local');
+  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).tracking.record.deliveryMode, 'local-file');
+
+  // Switching from delivery=local back to delivery=auto
+  const autoSwitched = (await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=auto`, 'GET', undefined, guest)).body;
+  assert.ok(autoSwitched.mediaUrl, 'switching to auto allocates stream URL');
+  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, false);
   assert.equal((await request(guestState.mediaUrl)).status,403,'old identity grant is revoked');
   assert.equal((await request(replacementState.mediaUrl)).status,200);
   await command('room.visibility', {visibility:'private'}); assert.equal((await request(replacementState.mediaUrl)).status, 403);

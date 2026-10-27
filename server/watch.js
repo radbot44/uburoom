@@ -218,6 +218,16 @@ class Watch {
       if (viewer.media?.unavailable) viewer.media = undefined;
     }
     if (!room.media) return;
+    if (viewer.localDelivery) {
+      if (viewer.media && viewer.mediaVersion === version && viewer.media.format === 'local' && (!viewer.media.principal || viewer.media.principal === plex.principal)) return viewer.media;
+      this.tracking.end(viewer, 'stream-changed');
+      if (viewer.media) void this.plex.stop(viewer.media);
+      viewer.directDelivery = undefined;
+      viewer.media = { id: room.media.id, title: room.media.title, duration: room.media.duration, kind: room.media.kind, format: 'local', principal: plex.principal, resources: new Map() };
+      viewer.mediaVersion = version; viewer.streamVersion = randomUUID(); viewer.ready = false;
+      return viewer.media;
+    }
+    if (!viewer.localDelivery && viewer.media?.format === 'local') viewer.media = undefined;
     if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) {
@@ -286,6 +296,7 @@ class Watch {
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
           plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
+          localDelivery:viewer.localDelivery,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
@@ -451,7 +462,7 @@ class Watch {
       plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
       plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
-      syncQuality:saved?.syncQuality,
+      syncQuality:saved?.syncQuality, localDelivery:saved?.localDelivery ?? false,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);

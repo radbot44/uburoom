@@ -118,3 +118,56 @@ test('HTTPS handoff rechecks revocation, cancellation, room privacy/closure and 
   const disappeared=await f.claim(await f.issue(host));
   const fresh=await fixture(t);assert.equal((await fresh.redeem(disappeared)).status,410,'new process cannot redeem an old attempt');
 });
+
+test('native client handoff requires authenticated browser approval, enforces proof matching, issues 7-day bearer token and supports socket authentication',tlsOptions,async t=> {
+  const f=await fixture(t), host=await f.source('host');
+  // 1. Unauthenticated claim fails with 401
+  const started=(await f.request('/api/watch/handoff/native/start',{})).body;
+  assert.ok(started.id); assert.ok(started.code); assert.ok(started.proof);
+  assert.match(started.url,/\/auth\/native#[a-f0-9]{64}$/);
+  const unauthClaim=await f.request('/api/watch/handoff/native/claim',{code:started.code});
+  assert.equal(unauthClaim.status,401);
+
+  // 2. Authenticated browser claim and approval
+  // Obtain browser cookie for host
+  const issuedHost = await f.issue(host);
+  const claimedHost = await f.claim(issuedHost);
+  await f.approve(host, claimedHost);
+  const redeemed = await f.redeem(claimedHost);
+  const loginCookie = redeemed.headers['set-cookie'][0].split(';')[0];
+  const authedClaim=await f.request('/api/watch/handoff/native/claim',{code:started.code},{Cookie:loginCookie});
+  assert.equal(authedClaim.status,200);
+  assert.equal(authedClaim.body.id,started.id);
+  assert.equal(authedClaim.body.name,'Demo host');
+
+  // Poll before approval returns 202 pending
+  const pendingPoll=await f.request('/api/watch/handoff/native/poll',{id:started.id,proof:started.proof});
+  assert.equal(pendingPoll.status,202);
+  assert.equal(pendingPoll.body.pending,true);
+
+  // Poll with wrong proof fails with 410
+  const wrongProofPoll=await f.request('/api/watch/handoff/native/poll',{id:started.id,proof:secret()});
+  assert.equal(wrongProofPoll.status,410);
+
+  // Approve in browser
+  const approved=await f.request('/api/watch/handoff/native/approve',{id:started.id},{Cookie:loginCookie});
+  assert.equal(approved.status,200);
+
+  // Poll after approval consumes the token and returns 7-day bearer credentials
+  const pollDone=await f.request('/api/watch/handoff/native/poll',{id:started.id,proof:started.proof});
+  assert.equal(pollDone.status,200);
+  assert.match(pollDone.body.token,/^[a-f0-9]{64}$/);
+  assert.equal(pollDone.body.name,'Demo host');
+  const ttlMs=pollDone.body.expiresAt-Date.now();
+  assert.ok(ttlMs>6*86400000&&ttlMs<=7*86400000+1000);
+
+  // Second poll returns 410 (single-use)
+  const pollConsumed=await f.request('/api/watch/handoff/native/poll',{id:started.id,proof:started.proof});
+  assert.equal(pollConsumed.status,410);
+
+  // Verify bearer token works against authenticated endpoints
+  const bearerHeaders={Authorization:'Bearer '+pollDone.body.token};
+  const me=await f.request('/api/watch/me',undefined,bearerHeaders);
+  assert.equal(me.status,200);
+  assert.equal(me.body.name,'Demo host');
+});

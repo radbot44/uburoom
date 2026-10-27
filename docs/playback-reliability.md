@@ -13,7 +13,7 @@ A playback attempt includes edition/version/file, item timeline, video/color/cad
 5. Confirm decoded picture; verify intended audio/captions independently.
 6. Recover through bounded candidates while preserving position, pause intent and personal choices. Fence superseded work by attempt/stream generation.
 
-Distinguish network failure, unsupported decoding, missing source, overload and authorization denial. No credential substitution to bypass denial, oscillating quality or indefinite spinner. Capacity fallback must respect saved quality ceilings. [Direct HLS](plex-hls-delivery.md) owns route/delegation details.
+Distinguish network failure, unsupported decoding, missing source, overload and authorization denial. No credential substitution to bypass denial, oscillating quality or indefinite spinner. Capacity fallback must respect saved quality ceilings. [Direct HLS](plex-hls-delivery.md) owns route/delegation details. Companion native clients (`plezy-uburoom`) playing a verified local download subscribe with `delivery=local` to participate in room readiness, clock synchronization and `observe` reporting without allocating server HLS or proxy media grants; when no local download exists, they fall back to the room's authorized `mediaUrl` or `directHls` stream.
 
 ## Shared playback timing
 

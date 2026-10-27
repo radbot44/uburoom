@@ -98,8 +98,9 @@ Select and scope these individually after the relevant foundations are ready. Th
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Personal client-side audio compression compatible with volume/mute |
 | M2-P9 | Discord presence and room invites | Discoverable room embeds with lifecycle updates; scope separately from removed bot commands |
+| M2-P10 | Native client integration (`plezy-uburoom`) | Companion Flutter/`libmpv` client using authenticated `/watch-socket` sync, expiring handoff bearer tokens, and `delivery=local` for downloaded Plex files without upstream transcode allocation |
 
-Further directions: native-player integration, managed/project-hosted rooms, and Live TV/DVR. Each needs a separate feasibility and authorization scope.
+Further directions: managed/project-hosted rooms and Live TV/DVR. Each needs a separate feasibility and authorization scope.
 
 ## Document ownership and maintenance
 

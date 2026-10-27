@@ -360,6 +360,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(content);
       }
+      if (req.method === 'GET' && route === '/auth/native') {
+        const content = await readAsset(path.join(publicDir, 'native-handoff.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(content);
+      }
       const branding = {
         '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
         '/assets/branding/uburoom-oomark-brand.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],

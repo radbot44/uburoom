@@ -23,9 +23,9 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
   const allowedOrigin = req => req.headers.origin === config.publicUrl || activityOrigin && req.headers.origin === activityOrigin;
   if (config.demo && (!['localhost', '127.0.0.1'].includes(new URL(config.publicUrl).hostname) || config.botToken)) throw new Error('Demo identities are restricted to an isolated localhost server without a bot token');
-  function issue(login) {
+  function issue(login, customLifetime) {
     const token = randomBytes(32).toString('hex');
-    const lifetime = config.demo && Number.isSafeInteger(config.demoIdentityMs) && config.demoIdentityMs >= 10000 ? config.demoIdentityMs : 3600000;
+    const lifetime = customLifetime || (config.demo && Number.isSafeInteger(config.demoIdentityMs) && config.demoIdentityMs >= 10000 ? config.demoIdentityMs : 3600000);
     login.expires = Date.now() + lifetime; login.viewerId = randomUUID();
     identities.set(token, login); return { token, expiresAt: login.expires };
   }
@@ -33,6 +33,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '')?.[1];
     const identity = req.headers.authorization ? token && identities.get(token) : await user(req);
     if (!identity || !validIdentity(identity) || identity.expires != null && identity.expires <= Date.now()) return;
+    if (token && identity.expires != null) identity.expires = Math.max(identity.expires, Date.now() + 3600000);
     return identity;
   }
   async function login(req) {
@@ -284,6 +285,54 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if (!throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
     try {
+      if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/start') {
+        if (!throttle('handoff-native-start:' + req.socket.remoteAddress, 30)) { json(res, 429, { error: 'Too many requests' }); return true; }
+        const attempt = handoff.issueNative();
+        json(res, 200, {
+          id: attempt.id,
+          code: attempt.code,
+          proof: attempt.proof,
+          expires: attempt.expires,
+          url: config.publicUrl + '/auth/native#' + attempt.code
+        });
+        return true;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/claim') {
+        const identity = await login(req);
+        if (!identity) { json(res, 401, { error: 'Sign in to approve native client', loginUrl: '/auth/discord' }); return true; }
+        const data = await body(req);
+        const attempt = handoff.claimNative(data.code, identity);
+        if (!attempt) { json(res, 410, { error: 'Authorization request expired or was already claimed' }); return true; }
+        json(res, 200, { id: attempt.id, name: identity.name, userId: identity.userId });
+        return true;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/approve') {
+        const identity = await login(req);
+        if (!identity) { json(res, 401, { error: 'Sign in to approve native client' }); return true; }
+        const data = await body(req);
+        const attempt = handoff.get(data.id);
+        if (!attempt || !attempt.native || attempt.claimedActor?.userId !== identity.userId) {
+          json(res, 403, { error: 'Authorization request unavailable or user mismatch' });
+          return true;
+        }
+        const issued = issue({ userId: identity.userId, name: identity.name, accountRevision: identity.accountRevision, activity: false, native: true }, 7 * 86400000);
+        if (!handoff.approveNative(attempt, { token: issued.token, expiresAt: issued.expiresAt, userId: identity.userId, name: identity.name })) {
+          json(res, 410, { error: 'Authorization request expired or already completed' });
+          return true;
+        }
+        json(res, 200, { ok: true });
+        return true;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/poll') {
+        if (!throttle('handoff-native-poll:' + req.socket.remoteAddress, 180)) { json(res, 429, { error: 'Too many requests' }); return true; }
+        const data = await body(req);
+        const attempt = handoff.pollNative(data.id, data.proof);
+        if (!attempt) { json(res, 410, { error: 'Authorization request expired or invalid proof' }); return true; }
+        if (attempt.state !== 'approved') { json(res, 202, { pending: true }); return true; }
+        handoff.remove(attempt);
+        json(res, 200, { token: attempt.token, expiresAt: attempt.expiresAt, userId: attempt.userId, name: attempt.name });
+        return true;
+      }
       if (req.method === 'POST' && ['/api/watch/handoff/claim', '/api/watch/handoff/redeem'].includes(url.pathname)) {
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
         const nonce = cookies(req).uburoom_handoff;

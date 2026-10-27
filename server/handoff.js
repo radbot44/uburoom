@@ -42,6 +42,36 @@ class Handoff {
     if (this.get(attempt.id) !== attempt || attempt.state !== 'approved') return false;
     attempt.state = 'complete'; delete attempt.proofHash; delete attempt.browserHash; return true;
   }
+  issueNative() {
+    this.sweep();
+    if (this.attempts.size >= 200) throw new Error('Browser sign-in is busy; try again shortly');
+    const id = randomBytes(32).toString('hex'), code = randomBytes(32).toString('hex'), proof = randomBytes(32).toString('hex');
+    const attempt = { id, codeHash: hash(code), proofHash: hash(proof), native: true, expires: this.now() + TTL * 2, state: 'waiting' };
+    this.attempts.set(id, attempt); this.codes.set(attempt.codeHash, attempt);
+    return { id, code, proof, expires: attempt.expires };
+  }
+  claimNative(code, actor) {
+    if (!SECRET.test(code || '')) return;
+    const attempt = this.codes.get(hash(code));
+    if (!attempt || !attempt.native || this.get(attempt.id) !== attempt || attempt.state !== 'waiting') return;
+    this.codes.delete(attempt.codeHash);
+    attempt.claimedActor = actor; attempt.state = 'claimed';
+    return attempt;
+  }
+  approveNative(attempt, tokenData) {
+    if (this.get(attempt.id) !== attempt || !attempt.native || attempt.state !== 'claimed') return false;
+    attempt.state = 'approved';
+    attempt.token = tokenData.token;
+    attempt.expiresAt = tokenData.expiresAt;
+    attempt.userId = tokenData.userId;
+    attempt.name = tokenData.name;
+    return true;
+  }
+  pollNative(id, proof) {
+    const attempt = this.get(id);
+    if (!attempt || !attempt.native || !SECRET.test(proof || '') || attempt.proofHash !== hash(proof)) return;
+    return attempt;
+  }
   remove(attempt) { this.attempts.delete(attempt.id); this.codes.delete(attempt.codeHash); }
   sweep() { for (const attempt of this.attempts.values()) if (attempt.expires <= this.now()) this.remove(attempt); }
   close() { this.attempts.clear(); this.codes.clear(); }
