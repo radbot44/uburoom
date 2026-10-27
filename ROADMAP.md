@@ -6,7 +6,7 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 
 ## Priorities
 
-1. **Configuration and administration (P14):** Verify the effective-access matrix, harden sensitive account changes and session revocation, and finish operator bootstrap/recovery.
+1. **Configuration and administration (P14):** Verify existing authorization boundaries, verify safe account linking/unlinking without a universal reauthentication framework, and ensure dependable server configuration and backup/restore.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
 3. **Plex reporting (P4):** Complete real PMS/Tautulli integration verification for decoupled session reporting, shared-producer safety and personal watch-state synchronization.
 4. **Release closure:** Complete the supported-environment checks, operator recovery, branding and licensing gates below. Expand the supported matrix only with evidence.
@@ -47,7 +47,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, single tail preview (`autoQueue.next`), `continue`/in-order/shuffle modes, `pin`/`skip`/`playNow` controls, cancellable autoplay, full-stage ending interstitial and explicit endpoint completion | Dual-browser rendered UI checks for tail preview/`continue` mode, real Plex/Activity continuity, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
-| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Sensitive-account security, session revocation, operator recovery and real policy/UX acceptance |
+| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Focused verification of authorization boundaries, safe account linking/unlinking, and dependable configuration/backup/restore |
 
 ### M1-P4 — Plex viewing experience
 
@@ -73,11 +73,13 @@ Details: [rooms and queues](docs/rooms-and-queues.md).
 
 **Status:** Private `config.yaml` remains the sole configuration authority. The browser Server Settings panel and `/api/operator/settings/saved` cover the complete M1 browser-editable scope (the 19-key allowlist across Rooms, Directory and Transcoding, requiring a manual restart to take effect), while access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
 
-**Next:** Validate the effective-access matrix and harden sensitive account changes, session revocation and operator bootstrap/recovery.
+**Next:** Finish P14 across three focused outcomes without introducing a universal reauthentication framework or extra administration/recovery screens:
 
-Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed. Keep sign-in, admission, media entitlement, room roles and server administration separate. Preserve Discord sign-in and authorized Activity-to-browser handoff.
+1. **Verify existing authorization boundaries:** Confirm ordinary viewers cannot administer the server, room hosts cannot gain Plex permissions, and revoked Plex access cannot continue fetching media.
+2. **Keep account linking and unlinking safe:** Preserve protections against removing the last usable login, merging conflicting identities, and processing outdated account changes; fix concrete vulnerabilities if found.
+3. **Ensure dependable server configuration:** Confirm operators can edit supported settings, configuration remains valid, and normal backup/restore works.
 
-**Remaining:** Recent proof for sensitive link/unlink/merge changes, session revocation and adversarial account checks; finer-grained sponsorship/invitation authority; operator bootstrap/recovery. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
+Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
 
 Details: [accounts and access](docs/accounts-and-access.md), [names and host directory](docs/account-names-and-host-directory.md).
 

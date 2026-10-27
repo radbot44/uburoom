@@ -1,6 +1,6 @@
 # Accounts, administration and Plex reporting
 
-Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. Sensitive-account hardening, operator recovery, live verification and guest passes remain unfinished.
+Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. Focused verification of authorization boundaries, account link/unlink safety, and configuration backup/restore remains open; guest passes are M2-P3.
 
 ## Authorization contract
 
@@ -38,12 +38,12 @@ M1 administration boundary and remaining verification:
 
 - Private `config.yaml` remains the sole configuration authority. The 19-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete M1 browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
 - Saving never exposes secret-bearing YAML content, creates competing stores, implicitly restarts services or alters provider registration.
-- Define and verify operator bootstrap/recovery for Plex, Discord or both, preventing loss of the last administrative sign-in. Room Admin mode is not global configuration authority.
-- Validate the effective-policy matrix: each provider alone/linked/disabled, required Plex access, absent versus revoked credentials, membership loss, sponsorship, account merge/deny and existing sessions after policy changes.
+- Ensure operators can edit the supported settings, configuration remains valid, and normal backup/restore works without adding extra recovery screens or administration layers. Room Admin mode is not global configuration authority.
+- Verify existing authorization boundaries: an ordinary viewer cannot administer the server, a room host cannot gain Plex permissions, and a viewer whose Plex access is revoked cannot continue fetching media.
 
-## Sensitive account changes
+## Account linking and unlinking safety
 
-Remaining work: recent proof of the initiating account for link/unlink/merge, proof of incoming identities, last-usable-login protection, session revocation and recovery. Preserve conflict rejection, canonical UUIDs and role/history consequences. Routine watching and authorized handoff must remain usable without repeated reauthentication.
+Keep the existing protections against removing the last usable login, merging conflicting identities, and processing outdated account changes. Fix concrete vulnerabilities if found; do not introduce a universal reauthentication framework without evidence of an exploitable weakness. Preserve conflict rejection, canonical UUIDs, session revocation on account changes, and role/history consequences.
 
 Cover replayed/expired callbacks, mismatched browsers/accounts, concurrent changes, revocation during provider calls, stale merge previews and failed durable writes. Manual provider assignments are not verified identities. Existing name search and pending host assignments are described in their [own contract](account-names-and-host-directory.md); do not reimplement them.
 
@@ -73,9 +73,9 @@ Operator delegation must bound issuers and media scope independently from room p
 
 ## Next increments
 
-1. Verify the effective-access policy matrix across providers, credentials and existing sessions.
-2. Harden sensitive account changes, operator recovery and live revocation.
-3. Complete live verification for decoupled Plex reporting.
-4. Add granular sponsorship and guest passes only after their authority/attribution decisions.
+1. Verify existing authorization boundaries (viewer vs. operator, room host vs. Plex entitlement, and immediate media denial on Plex revocation).
+2. Verify safe account linking/unlinking (last usable login protection, conflicting merge rejection, stale change rejection) and fix any concrete vulnerabilities found.
+3. Verify dependable server configuration and normal backup/restore.
+4. Complete live verification for decoupled Plex reporting; defer guest passes to M2-P3.
 
 Use the [verification standard](testing.md#verification-standard-for-new-work); these plans do not authorize live history changes or deployment.
