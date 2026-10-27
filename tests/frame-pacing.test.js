@@ -7,11 +7,28 @@ function fixture() {
   const policy=correction();let now=0;
   return {policy,step:(ms=500,extra={})=>policy.update({now:now+=ms,error:.3,eligible:true,context:'one',...extra})};
 }
-test('small drift stays at native speed at every required cadence and within clock uncertainty',()=>{
-  for(const fps of[24000/1001,24,25,30,50,60]) {
-    const f=fixture();for(let i=0;i<100;i++)assert.equal(f.step(500,{error:.15,frameSeconds:1/fps}),1);
+test('small drift stays at native speed at every required cadence and within clock uncertainty', () => {
+  for (const fps of [24000 / 1001, 24, 25, 30, 50, 60]) {
+    const f = fixture();
+    for (let i = 0; i < 10; i++) {
+      assert.equal(f.step(500, { error: 0.04, frameSeconds: 1 / fps, uncertaintyMs: 10 }), 1);
+    }
   }
-  const f=fixture();for(let i=0;i<20;i++)assert.equal(f.step(500,{error:.29,uncertaintyMs:250}),1);
+  const uncertain = fixture();
+  for (let i = 0; i < 10; i++) assert.equal(uncertain.step(500, { error: 0.29, uncertaintyMs: 250 }), 1);
+
+  const f = fixture();
+  assert.equal(f.step(), 1, 'initial observation arms persistence');
+  assert.equal(f.step(), 1, 'sub-second drift waits for persistence');
+  for (let i = 0; i < 20; i++) assert.equal(f.step(), 1.025, 'proportional gain during active window');
+  assert.equal(f.step(), 1, 'ten second limit');
+  for (let i = 0; i < 9; i++) assert.equal(f.step(), 1, 'five second quiet interval');
+  assert.equal(f.step(), 1, 'first sample after quiet interval arms persistence');
+  assert.equal(f.step(), 1, 'fresh persistence required');
+  assert.equal(f.step(), 1.025);
+  assert.equal(f.step(500, { error: 0.12 }), 1.01, 'proportional taper as error shrinks');
+  assert.equal(f.step(500, { error: 0.05 }), 1.005, 'hysteresis avoids threshold chatter');
+  assert.equal(f.step(500, { error: 0.02 }), 1, 'clean exit inside deadband');
 });
 test('persistent drift uses bounded subtle bursts with a quiet interval and hysteresis',()=>{
   const f=fixture();for(let i=0;i<4;i++)assert.equal(f.step(),1);
@@ -25,14 +42,23 @@ test('persistent drift uses bounded subtle bursts with a quiet interval and hyst
   assert.equal(f.step(500,{error:.12}),1.005,'hysteresis avoids threshold chatter');
   assert.equal(f.step(500,{error:.08}),1);
 });
-test('transient/sign-changing drift never accumulates evidence; interrupted playback cancels a burst',()=>{
-  const f=fixture();for(let i=0;i<20;i++)assert.equal(f.step(500,{error:i%2?.3:-.3}),1);
-  for(const extra of[{eligible:false},{context:'replacement'},{error:-.3},{error:NaN},{error:1}]) {
-    const g=fixture();for(let i=0;i<5;i++)g.step();assert.equal(g.step(500,extra),1);
+test('transient/sign-changing drift never accumulates evidence; interrupted playback cancels a burst', () => {
+  const f = fixture();
+  for (let i = 0; i < 20; i++) assert.equal(f.step(500, { error: i % 2 ? 0.3 : -0.3 }), 1);
+  for (const extra of [{ eligible: false }, { context: 'replacement' }, { error: -0.3 }, { error: NaN }, { error: 1 }]) {
+    const g = fixture();
+    for (let i = 0; i < 3; i++) g.step();
+    assert.equal(g.step(500, extra), 1);
   }
-  const g=fixture();for(let i=0;i<5;i++)g.step();assert.equal(g.step(4000),1,'sleep cannot continue a burst');
-  g.policy.reset();assert.equal(g.step(),1);
-  const ahead=fixture();for(let i=0;i<4;i++)ahead.step(500,{error:-.3});assert.equal(ahead.step(500,{error:-.3}),.995);
+  const g = fixture();
+  for (let i = 0; i < 3; i++) g.step();
+  assert.equal(g.step(4000), 1, 'sleep cannot continue a burst');
+  g.policy.reset();
+  assert.equal(g.step(), 1);
+  const ahead = fixture();
+  for (let i = 0; i < 2; i++) ahead.step(500, { error: -0.3 });
+  assert.equal(ahead.step(500, { error: -0.3 }), 0.975);
+  assert.equal(ahead.step(500, { error: -0.05 }), 0.995);
 });
 test('cadence estimate needs contiguous frames and resets across source/seek boundaries',()=>{
   for(const fps of[24000/1001,24,25,30,50,60]) {
@@ -63,16 +89,40 @@ test('correction runner retains invalid presentation segments without inventing 
   assert.equal(r.healthySkewMs,undefined);assert.equal(r.viewers[0].frames,3);
   assert.throws(()=>compareTrial({entries:[]},log),/unavailable/,'unrelated fixture errors still fail');
 });
-test('default keeps the existing gain with recovery guards',async()=>{
-  let now=0;
-  const ctx={state:{mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},expected:()=>10.3,
-    playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
-    driftCorrection:correction(),presentationTiming:presentation(),syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},performance:{now:()=>now},document:{visibilityState:'visible'},
-    video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
-    hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
-    renderTransport(){},checkVideoFrames(){}};
+test('default uses proportional drift correction with persistence and recovery guards', async () => {
+  let now = 0;
+  const ctx = {
+    state: { mediaUrl: 'fixture', state: { paused: false, volume: 50, muted: false } },
+    expected: () => 10.3,
+    playbackClock: { read: () => ({ valid: true, clockUncertaintyMs: 12 }) },
+    startKey: () => 'fixture',
+    driftCorrection: correction(),
+    presentationTiming: presentation(),
+    syncCorrectionMode: 'speed',
+    pauseAlarm: { cancel() {} },
+    performance: { now: () => now },
+    document: { visibilityState: 'visible' },
+    video: { currentTime: 10, readyState: 4, seeking: false, paused: false, playbackRate: 1, buffered: { length: 1, start: () => 0, end: () => 40 } },
+    hlsPreparationUntil: 0, hlsTimelinePending: false, syncSeekPending: false,
+    uburoomPlayback: require('../web/playback-policy'),
+    playerWaiting: false, probing: false, playbackError: '', hlsNetworkFailure: undefined,
+    renderTransport() {}, checkVideoFrames() {}
+  };
   await install(ctx);
-  await ctx.synchronize();assert.equal(ctx.video.playbackRate,1.04);
-  ctx.playerWaiting=true;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
-  ctx.playerWaiting=false;ctx.document.visibilityState='hidden';await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
+  await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1, 'waits for sustained drift before adjusting speed');
+  now = 500; await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1);
+  now = 1000; await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1.025, 'applies proportional speed adjustment');
+  ctx.video.currentTime = 10.25;
+  now = 1500; await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1.005, 'tapers rate smoothly as viewer catches up');
+  ctx.playerWaiting = true;
+  now = 2000; await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1);
+  ctx.playerWaiting = false;
+  ctx.document.visibilityState = 'hidden';
+  now = 2500; await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate, 1);
 });

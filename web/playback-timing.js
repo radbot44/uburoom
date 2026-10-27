@@ -124,25 +124,47 @@
   // Local drift correction only. Frame intervals widen tolerance; they never
   // authorize a shared action or imply that physical display cadence is known.
   function correction() {
-    let since, direction=0, activeUntil=0, quietUntil=0, last, key;
-    function reset() {since=last=key=undefined;direction=activeUntil=quietUntil=0;}
-    function update({now,error,eligible,context,uncertaintyMs=0,frameSeconds=0}) {
-      if(context!==key || !Number.isFinite(now) || last!==undefined&&(now<last||now-last>3000))reset();
-      key=context;last=now;
-      const stop=()=>{if(direction)quietUntil=now+10000;direction=0;activeUntil=0;since=undefined;};
-      const tolerance=Math.max(.15+Math.min(.1,Math.max(0,frameSeconds)),Math.min(.25,uncertaintyMs/1000));
-      if(!eligible || !Number.isFinite(error) || !Number.isFinite(now)){stop();return 1;}
-      const sign=Math.sign(error),magnitude=Math.abs(error);
-      if(direction) {
-        if(sign!==direction || magnitude<=tolerance*.6 || magnitude>.65 || now>=activeUntil)stop();
-        else return 1+direction*.005;
+    let since, direction = 0, activeUntil = 0, quietUntil = 0, last, key;
+    function reset() { since = last = key = undefined; direction = activeUntil = quietUntil = 0; }
+    function update({ now, error, eligible, context, uncertaintyMs = 0, frameSeconds = 0 }) {
+      if (key !== context) reset();
+      if (!Number.isFinite(now)) { reset(); return 1; }
+      if (last !== undefined && (now < last || now - last > 1500)) {
+        since = undefined; direction = activeUntil = 0;
       }
-      if(magnitude<=tolerance+.05 || magnitude>.65 || now<quietUntil){since=undefined;return 1;}
-      if(since===undefined || since.sign!==sign)since={at:now,sign};
-      if(now-since.at<2000)return 1;
-      direction=sign;activeUntil=now+10000;since=undefined;return 1+direction*.005;
+      key = context; last = now;
+      const magnitude = Math.abs(error), sign = Math.sign(error);
+      if (!eligible || !Number.isFinite(error) || !Number.isFinite(uncertaintyMs) ||
+          uncertaintyMs < 0 || uncertaintyMs > 100 || magnitude > 0.65 || sign === 0) {
+        since = undefined; direction = activeUntil = 0; return 1;
+      }
+      const frameMargin = Math.min(0.05, Math.max(0, Number.isFinite(frameSeconds) ? frameSeconds : 0));
+      const tolerance = Math.max(0.045 + frameMargin, (uncertaintyMs / 1000) * 1.25);
+      const exitTol = Math.max(0.02, tolerance * 0.45);
+      const gainFor = mag => {
+        const span = Math.max(0.001, 0.50 - exitTol);
+        const ratio = Math.min(1, Math.max(0, (mag - exitTol) / span));
+        const step = Math.round((0.005 + ratio * 0.035) / 0.005) * 0.005;
+        return Number((1 + direction * step).toFixed(3));
+      };
+      const stop = timedOut => {
+        direction = activeUntil = 0; since = undefined;
+        if (timedOut) quietUntil = now + 5000;
+      };
+      if (direction !== 0) {
+        if (sign !== direction || magnitude <= exitTol || now >= activeUntil) {
+          stop(now >= activeUntil && magnitude > exitTol && sign === direction);
+          return 1;
+        }
+        return gainFor(magnitude);
+      }
+      if (magnitude <= tolerance || now < quietUntil) { since = undefined; return 1; }
+      if (since === undefined || since.sign !== sign) { since = { at: now, sign }; return 1; }
+      if (now - since.at < 1000) return 1;
+      direction = sign; activeUntil = now + 10000; since = undefined;
+      return gainFor(magnitude);
     }
-    return {update,reset};
+    return { update, reset };
   }
   // Candidate policy: require sustained, resolvable error and separate entry
   // and exit thresholds. Clock uncertainty never authorizes a correction.
