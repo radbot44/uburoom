@@ -1,6 +1,6 @@
 # Accounts, administration and Plex reporting
 
-Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. Focused verification of authorization boundaries, account link/unlink safety, and configuration backup/restore remains open; guest passes are M2-P3.
+Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. P14's three outcomes have passed source review and isolated execution: authorization boundaries, account mutation/session safety, and configuration backup/restore. Real-provider integration remains a release gate; guest passes are M2-P3.
 
 ## Authorization contract
 
@@ -34,18 +34,26 @@ The browser panel groups editable fields into Rooms, Directory and Transcoding. 
 
 Saves are serialized within the process, retain a verified backup in a protected `.uburoom-config-*/original.yaml` directory beside the selected file, and verify staged bytes before same-filesystem rename. Windows preserves owner/group/access rules with inheritance frozen; Unix preserves ownership and tightens access to the owner's prior read/write bits. Linked configuration files are refused. Errors omit source contents/paths. Content, metadata and Windows access rules are rechecked before replacement, but an external editor can still race the final check/rename; this is not a cross-process lock or a power-loss durability guarantee. Unsupported replacement fails without a delete/copy fallback. Protected backups may remain after a failed save or interrupted process; treat them as secret-bearing files. Restoring YAML cannot restore already-deleted application data.
 
-M1 administration boundary and remaining verification:
+M1 administration boundary:
 
 - Private `config.yaml` remains the sole configuration authority. The 19-key allowlist in `server/config-editor.js` (Rooms, Directory and Transcoding) is the complete M1 browser-editable scope; access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
 - Saving never exposes secret-bearing YAML content, creates competing stores, implicitly restarts services or alters provider registration.
-- Ensure operators can edit the supported settings, configuration remains valid, and normal backup/restore works without adding extra recovery screens or administration layers. Room Admin mode is not global configuration authority.
-- Verify existing authorization boundaries: an ordinary viewer cannot administer the server, a room host cannot gain Plex permissions, and a viewer whose Plex access is revoked cannot continue fetching media.
+- Operators can edit the supported settings with complete-file validation and revision conflict rejection. Room Admin mode is not global configuration authority.
+- Ordinary viewers cannot administer the server; creators, explicit hosts, All hosts and room Admin mode grant no Plex entitlement. Detected provider/item denial rejects existing media/caption grants, including subtitle windows, without owner-token fallback. Provider checks cache for up to 30 seconds and item checks for 3 seconds; active proxy streams recheck every 2 seconds (subtitle resources every 1 second). Already-issued direct Plex URLs remain subject to PMS enforcement.
 
 ## Account linking and unlinking safety
 
-Keep the existing protections against removing the last usable login, merging conflicting identities, and processing outdated account changes. Fix concrete vulnerabilities if found; do not introduce a universal reauthentication framework without evidence of an exploitable weakness. Preserve conflict rejection, canonical UUIDs, session revocation on account changes, and role/history consequences.
+Provider removal requires another verified, enabled, currently eligible sign-in method; Plex also requires a stored credential. A configured operator identity does not enable a disabled provider. The configured Discord owner can retain Discord through the existing owner-only sign-in when ordinary Discord is disabled; removal still checks current Discord eligibility.
 
-Cover replayed/expired callbacks, mismatched browsers/accounts, concurrent changes, revocation during provider calls, stale merge previews and failed durable writes. Manual provider assignments are not verified identities. Existing name search and pending host assignments are described in their [own contract](account-names-and-host-directory.md); do not reimplement them.
+Link/reconnect, unlink, merge and assignment advance account revisions and invalidate previous browser sessions, Activity bearer tokens and media/caption grants for affected accounts. Active viewers are removed and their sockets closed. Successful self-service mutations issue a replacement browser session; Activity must authenticate again. Logout affects only the selected browser session and its viewers, preserving provider links and independently authenticated sessions. Merge and assignment require the affected accounts to leave active rooms and recheck current login, authority, revisions and participation after awaited work.
+
+Callback and preview proofs expire, bind to their originating browser/account and reject replay, conflicts and stale revisions. Manual provider assignments are not verified identities. Existing name search and pending host assignments are described in their [own contract](account-names-and-host-directory.md); do not reimplement them.
+
+## Backup, restore and rollback
+
+Use the [matched backup procedure](upgrading.md#retaining-state): stop and flush the installation before copying, or take a consistent SQLite online snapshot. Copy the matching private YAML and exact original 32-byte credential key, preserving restricted access and any separately stored TLS material. Do not copy a changing database as an ordinary file. Coordinate configuration/key changes so the snapshot and files belong together.
+
+Restore into a clean directory with the selected compatible code and correct configured paths; check SQLite integrity, canonical UUIDs, verified identities, credential decryption, durable rooms/queues and saved settings before use. Missing keys prevent startup; mismatched keys fail authenticated decryption and are never replaced automatically. Rollback across state changes requires the matched database/config/key set, not code alone, and discards changes made after the snapshot. Isolated coverage includes an online SQLite snapshot with stable YAML/key files and restore of pre-change state; independent operator recovery remains a release gate.
 
 ## Discord Activity and browser handoff
 
@@ -73,9 +81,6 @@ Operator delegation must bound issuers and media scope independently from room p
 
 ## Next increments
 
-1. Verify existing authorization boundaries (viewer vs. operator, room host vs. Plex entitlement, and immediate media denial on Plex revocation).
-2. Verify safe account linking/unlinking (last usable login protection, conflicting merge rejection, stale change rejection) and fix any concrete vulnerabilities found.
-3. Verify dependable server configuration and normal backup/restore.
-4. Complete live verification for decoupled Plex reporting; defer guest passes to M2-P3.
+Complete real-provider admission/revocation/handoff and independent operator recovery under the release gates. Complete live verification for decoupled Plex reporting; guest passes remain M2-P3.
 
 Use the [verification standard](testing.md#verification-standard-for-new-work); these plans do not authorize live history changes or deployment.

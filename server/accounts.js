@@ -59,9 +59,12 @@ class Accounts {
     const user=this.canonical(userId),old=this.identity(provider,subject),current=this.identities(user.id).find(i=>i.provider===provider);
     if(current && current.subject!==String(subject))throw new Error('This account already has a different '+provider+' identity');
     if(old && old.userId!==user.id)return {conflict:this.canonical(old.userId)};
-    if(old)this.db.prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?').run(name,provider,String(subject));
-    else this.db.prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,1)').run(provider,String(subject),user.id,name);
-    return {user};
+    this.transaction(()=>{
+      if(old)this.db.prepare('UPDATE identities SET verified=1,name=? WHERE provider=? AND subject=?').run(name,provider,String(subject));
+      else this.db.prepare('INSERT INTO identities(provider,subject,userId,name,verified) VALUES(?,?,?,?,1)').run(provider,String(subject),user.id,name);
+      this.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(user.id);
+    });
+    return {user:this.canonical(user.id)};
   }
   unlink(userId,provider,subject) {
     const user=this.canonical(userId),identities=this.identities(user.id);

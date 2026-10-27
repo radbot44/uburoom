@@ -1,12 +1,12 @@
 # uburoom roadmap
 
-Updated: 2026-10-26.
+Updated: 2026-10-27.
 
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
 ## Priorities
 
-1. **Configuration and administration (P14):** Verify existing authorization boundaries, verify safe account linking/unlinking without a universal reauthentication framework, and ensure dependable server configuration and backup/restore.
+1. **Configuration and administration (P14):** Three-outcome A/B verification complete: authorization boundaries, safe account mutations/session revocation, and supported settings with matched backup/restore. Real installation and recovery checks remain release gates.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
 3. **Plex reporting (P4):** Complete real PMS/Tautulli integration verification for decoupled session reporting, shared-producer safety and personal watch-state synchronization.
 4. **Release closure:** Complete the supported-environment checks, operator recovery, branding and licensing gates below. Expand the supported matrix only with evidence.
@@ -47,7 +47,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, single tail preview (`autoQueue.next`), `continue`/in-order/shuffle modes, `pin`/`skip`/`playNow` controls, cancellable autoplay, full-stage ending interstitial and explicit endpoint completion | Dual-browser rendered UI checks for tail preview/`continue` mode, real Plex/Activity continuity, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
-| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Focused verification of authorization boundaries, safe account linking/unlinking, and dependable configuration/backup/restore |
+| M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Three-outcome A/B verification complete; real admission/revocation and independent operator recovery remain release gates |
 
 ### M1-P4 — Plex viewing experience
 
@@ -73,11 +73,13 @@ Details: [rooms and queues](docs/rooms-and-queues.md).
 
 **Status:** Private `config.yaml` remains the sole configuration authority. The browser Server Settings panel and `/api/operator/settings/saved` cover the complete M1 browser-editable scope (the 19-key allowlist across Rooms, Directory and Transcoding, requiring a manual restart to take effect), while access policy, single-room mode, retention/history deletion, operator IDs, credentials, connections and paths remain YAML-only.
 
-**Next:** Finish P14 across three focused outcomes without introducing a universal reauthentication framework or extra administration/recovery screens:
+**Complete (A/B):** P14 is bounded to three verified outcomes:
 
-1. **Verify existing authorization boundaries:** Confirm ordinary viewers cannot administer the server, room hosts cannot gain Plex permissions, and revoked Plex access cannot continue fetching media.
-2. **Keep account linking and unlinking safe:** Preserve protections against removing the last usable login, merging conflicting identities, and processing outdated account changes; fix concrete vulnerabilities if found.
-3. **Ensure dependable server configuration:** Confirm operators can edit supported settings, configuration remains valid, and normal backup/restore works.
+1. **Authorization boundaries:** Verified operator identities alone authorize server settings. Room roles grant no Plex entitlement. Detected provider/item revocation rejects media, captions and subtitle windows and aborts active proxy streams.
+2. **Account safety:** Last usable login, conflicting identity and stale mutation protections are verified. Linking advances account revision; account changes revoke prior sessions, Activity tokens, media grants and viewers. Logout revokes the selected browser and its viewers.
+3. **Configuration and recovery:** All 19 supported keys pass the validated settings API; comments/private values and conflict handling are preserved. A consistent live SQLite snapshot plus YAML and the original key restores accounts, encrypted credentials, durable rooms/queues and settings, including rollback of subsequent fixture changes.
+
+Provider detection retains existing cache/polling bounds; direct Plex delivery depends on PMS enforcement. Real-provider/device integration and independent installation recovery remain release checks, with limits recorded in [testing](docs/testing.md).
 
 Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
 

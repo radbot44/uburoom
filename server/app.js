@@ -117,7 +117,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           const renewed = await response.json();
           if (typeof renewed.refresh_token !== 'string' || !Number.isFinite(renewed.expires_in) || renewed.expires_in <= 0) throw new Error('Invalid login renewal');
           // Logout may have removed this login while Discord was responding.
-          if (logins.get(id) !== login) return;
+          if (logins.get(id) !== login || !validIdentity(login)) return;
           login.oauth = { refreshToken: renewed.refresh_token, expires: Date.now() + renewed.expires_in * 1000 };
           accounts.save(); return login;
         })().catch(() => { throw Object.assign(new Error('Discord login renewal temporarily unavailable'), { status: 503 }); })
@@ -126,7 +126,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       return renewals.get(id);
     }
-    return logins.get(id) === login ? login : undefined;
+    return logins.get(id) === login && validIdentity(login) ? login : undefined;
   }
   async function protectedPost(req) {
     if (req.headers.origin !== config.publicUrl) return;
@@ -237,7 +237,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     const destination=config.demo&&plexAuth?.demo?config.publicUrl+'/demo-discord?state='+state:authorizeUrl+'?'+query;
     if(linkLogin)json(res,200,{url:destination});else{res.writeHead(302,{Location:destination});res.end();}
   }
-  const accountRoutes=accountHttp({config,registry,plexAuth,hub,watch,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore:accounts,discordStart,throttle});
+  const accountRoutes=accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore:accounts,discordStart,throttle});
   const operatorRoutes = operatorHttp({ config, registry, editor: config.configFile ? createConfigEditor(config.configFile) : undefined,
     user, protectedPost, validIdentity, logins, cookies, body, json });
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
@@ -468,8 +468,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if(attempt.ownerOnly&&identity.id!==config.ownerId)return json(res,403,{error:'This sign-in is reserved for the configured installation owner'});
         if(linking){
           if((await user(req))!==linking)return json(res,403,{error:'Account sign-in expired during linking'});
-          accountRoutes.verifiedLink(req,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
-          res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':cookie('uburoom_oauth','',0)});return res.end();
+          await accountRoutes.verifiedLink(req,res,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
+          const existing=res.getHeader('Set-Cookie');
+          res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':[...(existing?[existing]:[]),cookie('uburoom_oauth','',0)]});return res.end();
         }
         if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');

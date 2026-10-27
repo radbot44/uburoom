@@ -43,10 +43,9 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if(!entryPolicy.password(req,identity))return;
       entryPolicy.entered(identity.userId);
       if(!await entryPolicy.admit(identity.userId,identity))return;
-      return identity;
-    }
-    if (!(hub.access?.canWatch?hub.access.canWatch(identity.userId):hub.access?.isMember(identity.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(identity.userId)) return;
-    return identity;
+    } else if (!(hub.access?.canWatch?hub.access.canWatch(identity.userId):hub.access?.isMember(identity.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(identity.userId)) return;
+    const current = await rawLogin(req);
+    return current?.userId === identity.userId && current?.accountRevision === identity.accountRevision ? current : undefined;
   }
   async function authorized(req, write = false) {
     const identity = await login(req);
@@ -388,7 +387,13 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     for (const [token, value] of grants) if (value.expires <= Date.now()) grants.delete(token);
   }
   async function logout(loginHash){
-    for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash)await watch.leave(room,viewer.actor,id,'logout');
+    for(const [id,grant]of grants)if(grant.credential&&!grant.credential.startsWith('Bearer ')&&hash(grant.credential)===loginHash)grants.delete(id);
+    for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash){viewer.watchSocket?.close(4003,'Sign in again');await watch.leave(room,viewer.actor,id,'logout');}
+  }
+  async function invalidate(ids){
+    for(const [token,identity]of identities)if(ids.includes(identity.userId))identities.delete(token);
+    for(const [id,grant]of grants)if(ids.includes(grant.actor.userId))grants.delete(id);
+    for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(ids.includes(viewer.userId)){viewer.watchSocket?.close(4003,'Sign in again');await watch.leave(room,viewer.actor,id,'account-changed');}
   }
   async function bootstrap(req) {
     const initial = {config:publicConfig()};
@@ -400,6 +405,6 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
     return initial;
   }
-  return { route, bootstrap, execute: operations.execute, sweep, logout, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest, deliveryOrigins: req => delivery.deliveryOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)) };
+  return { route, bootstrap, execute: operations.execute, sweep, logout, invalidate, authorized, clockEpoch, close: () => { identities.clear(); grants.clear(); handoff.close(); }, rewriteManifest, deliveryOrigins: req => delivery.deliveryOrigins(typeof req === 'string' || req === undefined ? req : clientAddress(req)) };
 }
 module.exports = { watchHttp };

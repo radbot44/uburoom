@@ -12,7 +12,7 @@ function fixture(t) {
   const store=new RoomStore(registry,{isAdmin:id=>id==='admin'});
   return {registry,creator,host,viewer,store};
 }
-test('display names survive provider refresh, link/unlink and merge without invalidating authentication',t=>{
+test('display names survive provider refresh, link/unlink and merge while identity changes revoke authentication',t=>{
   const {registry,host,viewer}=fixture(t);
   const initial=host.revision;
   registry.rename(host.id,'  Custom name  ');
@@ -20,7 +20,7 @@ test('display names survive provider refresh, link/unlink and merge without inva
   registry.link(host.id,'plex','102','Plex alias'); registry.credential('102',{token:'fixture-only'});
   registry.unlink(host.id,'discord','100000000000000002');
   assert.equal(registry.canonical(host.id).name,'Custom name');
-  assert.equal(registry.canonical(host.id).revision,initial+1,'Only unlink changes the authentication revision');
+  assert.equal(registry.canonical(host.id).revision,initial+2,'Link and unlink change the authentication revision; display names do not');
   registry.rename(viewer.id,'Custom name');
   for(const name of ['', 'x'.repeat(81),'a\u202eb','a\nb'])assert.throws(()=>registry.rename(host.id,name),/display name/);
   const assigned=registry.resolve('discord','100000000000000009','Assigned account',false);

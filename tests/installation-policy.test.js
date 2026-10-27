@@ -148,7 +148,10 @@ test('Plex-required Activity can approve browser linking without enabling browse
   const redeem=await browser.request('/api/watch/handoff/redeem',{id:issue.id,proof});assert.equal(redeem.status,200);assert.equal(redeem.body.destination,'/auth/plex');
   assert.equal((await browser.plex('alice')).status,302);
   assert.equal((await browser.request('/api/watch/me')).status,401,'browser identity cannot play in Activity-only mode');
-  assert.equal((await activity.request('/api/watch/me',undefined,headers)).status,200,'the original Activity now has the linked personal Plex access');
+  assert.equal((await activity.request('/api/watch/me',undefined,headers)).status,401,'linking revokes the original Activity bearer');
+  const renewed=await activity.request('/api/watch/activity-login',{code:'guest'},{Origin:headers.Origin});
+  headers.Authorization='Bearer '+renewed.body.token;
+  assert.equal((await activity.request('/api/watch/me',undefined,headers)).status,200,'fresh Activity authentication uses the linked Plex identity');
 });
 
 test('Activity password is additional to OAuth and survives verified renewal for the same identity',async t=>{
@@ -354,6 +357,7 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   const u1=(await b1.request('/api/account')).body.account;
   fPlexOff.app.registry.link(u1.id,'plex','101','Alice');
   fPlexOff.app.registry.credential('101',{token:'fixture-server-101',authType:'traditional'});
+  await b1.discord('guest');
   assert.equal(fPlexOff.app.registry.identities(u1.id).length,2);
   const resPlexOff=await b1.post('/api/account/discord/remove',{subject:fPlexOff.provider.subjects.guest});
   assert.equal(resPlexOff.status,400,'cannot remove Discord when Plex is disabled');
@@ -363,6 +367,8 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   const bGuest=fDiscordOff.browser();await bGuest.plex('alice');
   const uGuest=(await bGuest.request('/api/account')).body.account;
   fDiscordOff.app.registry.link(uGuest.id,'discord',fDiscordOff.provider.subjects.guest,'Guest');
+  await bGuest.plex('alice');
+  fDiscordOff.config.serverOperator={discordId:fDiscordOff.provider.subjects.guest};
   assert.equal(fDiscordOff.app.registry.identities(uGuest.id).length,2);
   const resGuest=await bGuest.post('/api/account/plex/remove',{subject:'101'});
   assert.equal(resGuest.status,400,'regular user cannot remove Plex when Discord is disabled');
@@ -371,6 +377,7 @@ test('provider removal rejects leaving only a disabled login provider; owner exc
   const bOwner=fDiscordOff.browser();await bOwner.plex('bob');
   const uOwner=(await bOwner.request('/api/account')).body.account;
   fDiscordOff.app.registry.link(uOwner.id,'discord',fDiscordOff.config.ownerId,'Host');
+  await bOwner.plex('bob');
   assert.equal(fDiscordOff.app.registry.identities(uOwner.id).length,2);
   const resOwner=await bOwner.post('/api/account/plex/remove',{subject:'102'});
   assert.equal(resOwner.status,200,'owner can remove Plex when Discord auth is available via /auth/owner');

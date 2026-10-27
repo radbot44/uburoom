@@ -1,6 +1,6 @@
 # Verification dashboard — M1
 
-**Release status: open.** Results below belong to their recorded revisions/scenarios; they do not combine into a current-HEAD pass. This documentation cleanup ran no runtime tests. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Historical evidence digest](archive/testing-2026-10-22.md) · [Commands](development.md#tests).
+**Release status: open.** Results below belong to their recorded revisions/scenarios; they do not combine into a current-HEAD pass. [Release gates](../ROADMAP.md#m1--verified-self-hosted-release) · [Historical evidence digest](archive/testing-2026-10-22.md) · [Commands](development.md#tests).
 
 ## Verification standard for new work
 
@@ -14,6 +14,23 @@
 Record date/revision, scope/environment, command/procedure, actual outcome and failures/skips, remaining methods and sanitized evidence. Label each required method pass/fail/blocked/not run. API success, capability hints and advancing clocks are not decoded playback, persisted history or physical synchronization. Unexpected skips invalidate a full-suite pass. C and production/history changes require explicit authorization.
 
 ## Latest scoped evidence
+
+### M1-P14 — Configuration, administration and account authorization — 2026-10-27
+
+A/B on local changes based on `7a55f1da6d9157572ddabea3f160898ced782603`, Node v22.22.2 on Windows. P14 closes with three outcomes; the existing architecture and UI surfaces are retained.
+
+| Outcome | A — source review | B — isolated execution |
+| --- | --- | --- |
+| Authorization boundaries | Operator policy and both settings routes require a current session and verified configured subject; room roles do not enter Plex entitlement checks. Media/caption grants recheck identity, room and personal item scope. | Ordinary viewers, creators/hosts, room Admin mode, Discord owner and token ownership confer no implicit operator authority. Restricted items remain denied for All hosts, assigned hosts and Admin mode. Revoked access rejects media, captions and subtitle windows; an open proxy response aborts after detection. Direct delivery fixtures preserve personal delegation and reject owner fallback delegation. |
+| Account safety | Provider removal requires another enabled, verified, usable login. Operator IDs do not enable disabled providers; the Discord owner's existing reserved sign-in remains available. Callback/merge/assignment proofs bind browser, expiry, revision and authority. | Existing scenarios cover disabled/missing/revoked remaining credentials, membership loss, conflicting identities, browser mismatch, stale previews and body/provider races. Linking now advances revision, rotates the initiating browser login, rejects old browser/Activity tokens and grants, evicts viewers and closes their sockets. Merge/assignment repeat revision/participation checks after awaited authentication; logout preserves independently authenticated sessions and provider links. |
+| Configuration and recovery | The browser and editor share the 19-key Rooms/Directory/Transcoding scope; doctor uses the same parser/normalizer as startup. SQLite worker acknowledgements and original-key decryption preserve the storage contract. | All editable keys traverse the settings save API. Invalid/forbidden keys, stale revisions, authority loss, write failures and audit-after-save failures retain their existing protections. An online SQLite `VACUUM INTO` snapshot with stable fixture YAML and original key restores UUIDs, verified links, encrypted Plex/Discord credentials, durable room/queue records and saved settings into a clean directory. Later source changes do not alter the restored snapshot. Missing/mismatched keys fail closed without replacement; the original key restores access. |
+
+- `node --test tests/accounts.test.js tests/config.test.js tests/installation-policy.test.js`: **59 passed, 0 failed/cancelled/skipped**.
+- Broader focused regression including `tests/account-directory.test.js` and `tests/plex-library.test.js`: **80 passed, 0 failed/cancelled/skipped**.
+- `npm test`: **450 passed, 0 failed/cancelled/skipped**, including the existing storage-worker persistence/backup scenarios.
+- `npm run doctor -- --config config.example.yaml --json`: **12 passed, 0 failures, 1 warning** for unreachable example Plex at loopback; no provider credentials were supplied. Config fixtures also exercise healthy and missing-file diagnostics. `git diff --check` passed.
+- Intermediate failures: the initial focused run was **58 passed / 1 failed**, exposing the old expectation that Activity authentication survives linking. The first full run also exposed an obsolete link-revision expectation and object-reference assumptions in the new post-await login check, with dependent library cases cancelled. The Activity/name scenarios now assert mutation revocation; post-await checks compare canonical account ID and revision. Final results above supersede those runs.
+- Limits: provider access caches last up to 30 seconds, item checks 3 seconds, proxy stream checks 2 seconds and subtitle-resource checks 1 second. Revocation fixtures clear the provider cache to exercise detected denial; they do not establish instant upstream detection. Already-issued direct Plex URLs rely on PMS enforcement. Snapshot YAML/key files are held stable; this is not an atomic backup across independent external writers. Real provider/device integration, independent installation recovery and human acceptance (C/D) were not run and remain release gates.
 
 ### Auto-queue tail preview and Continue mode — 2026-10-26
 
@@ -179,7 +196,7 @@ Detailed measurements and repaired historical failures are retained in the [dige
 | P11 architecture | A/B/C | Real proxy/resources and operator backup/restore/rollback |
 | P12 telemetry | A/B/C/D | Repeat actual-device score/confidence and readability; richer features remain future scope |
 | P13 rooms/queues | B/C/D | Real multi-viewer continuation, recovery, writer/load and UX |
-| P14 access/admin | A/B/C/D | Sensitive-account security, session revocation, real admission/revocation/handoff and operator recovery |
+| P14 access/admin | A/B complete; C/D release checks | Three-outcome local scope closed; real admission/revocation/handoff and independent operator recovery remain release gates |
 
 P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one tab ~10 seconds and return. Technical timing remains separate. Design authorization is not visual acceptance; neither permits deployment.
 

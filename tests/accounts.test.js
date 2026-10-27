@@ -203,7 +203,7 @@ test('saved operator settings HTTP uses the startup path, preserves the allowlis
   assert.deepEqual(initial.settings['transcoding.formats'],['av1']);
   for(const key of ['access.discord','rooms.single_room','rooms.inactive_days','rooms.min_retained','rooms.max_history',
     'operator.discord_id','plex.token','storage.credential_key_file']) assert.equal(Object.hasOwn(initial.settings,key),false);
-  const payload={revision:initial.revision,changes:{'rooms.max_members':12,'transcoding.max_jobs':2}};
+  const payload={revision:initial.revision,changes:{...initial.settings,'rooms.max_members':12,'transcoding.max_jobs':2}};
   assert.equal((await browser.request(endpoint,payload)).status,403,'save requires CSRF proof');
   assert.equal((await f.save(browser,payload,{Origin:'https://attacker.invalid'})).status,403);
   assert.equal((await f.save(browser,{...payload,path:f.other})).status,400,'client-selected paths are rejected');
@@ -225,7 +225,7 @@ test('saved operator settings HTTP uses the startup path, preserves the allowlis
   const events=f.app.registry.db.prepare("SELECT actor,detail FROM audit WHERE action='operator-settings-save'").all();
   assert.equal(events.length,1);
   assert.equal(events[0].actor,f.app.registry.identity('discord',f.provider.subjects.guest).userId);
-  assert.deepEqual(JSON.parse(events[0].detail),{settings:['rooms.max_members','transcoding.max_jobs']});
+  assert.deepEqual(JSON.parse(events[0].detail),{settings:Object.keys(payload.changes).sort()});
   const exposed=JSON.stringify([initial,saved.body,response.body,events]);
   for(const value of ['fixture-private-password','fixture-private-client-secret','fixture-owner',f.file,f.other,f.directory,'backupPath']) assert.equal(exposed.includes(value),false);
 });
@@ -567,9 +567,45 @@ test('SQLite restart retains UUIDs and encrypted logins without reading or backi
     const baseline=new Accounts(config.accountFile,credentialVault(config.credentialKeyFile));await baseline.close();
     app=createApp(config);assert.equal(app.registry.db.prepare('SELECT COUNT(*) AS n FROM browser_logins').get().n,0);
     const account=app.registry.resolve('discord',config.ownerId,'Owner');
+    app.registry.link(account.id,'plex','101','Fixture Plex');
+    app.registry.credential('101',{token:'private-restore-plex'});
     const store=require('../server/storage').loginStore(JSON.stringify([config.publicUrl,config.ownerId,config.guildId,config.clientId]),app.registry.vault,app.registry);
     store.logins.set('a'.repeat(64),{userId:account.id,accountRevision:account.revision,name:'Owner',csrf:'b'.repeat(64),expires:null,oauth:{refreshToken:'private-fixture-refresh',expires:Date.now()+3600000}});await store.save();
     const keyBytes=fs.readFileSync(config.credentialKeyFile);
+    const yaml=path.join(directory,'config.yaml');
+    fs.writeFileSync(yaml,"# Matched private fixture\nplex:\n  token: 'fixture-only'\nstorage:\n  credential_key_file: './credentials.key'\n");
+    const editor=require('../server/config-editor').createConfigEditor(yaml);
+    await editor.save({revision:(await editor.readEditable()).revision,changes:{'rooms.max_members':12}});
+    const {RoomStore}=require('../server/room-store'),{RoomQueue}=require('../server/room-queue');
+    const rooms=new RoomStore(app.registry),queue=new RoomQueue(app.registry,rooms);
+    const savedRoom=await rooms.create(account.id,{name:'Restore room',keepEmpty:true});
+    await queue.add(savedRoom.id,account.id,{serverId:'fixture-machine',mediaId:'123',type:'movie',title:'Fixture movie',duration:60,position:0});
+    await app.registry.flush();
+    const restoreDir=path.join(directory,'restored');fs.mkdirSync(restoreDir);
+    const restoreFile=path.join(restoreDir,'accounts.sqlite'),restoreKey=path.join(restoreDir,'credentials.key');
+    // SQLite creates a consistent snapshot while the fixture installation stays open.
+    const disk=new (require('node:sqlite').DatabaseSync)(config.accountFile);
+    try{disk.prepare('VACUUM INTO ?').run(restoreFile);}finally{disk.close();}
+    fs.copyFileSync(config.credentialKeyFile,restoreKey);fs.copyFileSync(yaml,path.join(restoreDir,'config.yaml'));
+    app.registry.rename(account.id,'Changed after backup');await app.registry.flush();
+    await editor.save({revision:(await editor.readEditable()).revision,changes:{'rooms.max_members':16}});
+    const restoreConfig={...config,accountFile:restoreFile,credentialKeyFile:restoreKey};
+    let restored=createApp(restoreConfig);
+    try{
+      assert.equal(restored.registry.identity('discord',config.ownerId).userId,account.id);
+      assert.equal(restored.registry.canonical(account.id).name,'Owner','matched restore rolls back later state changes');
+      assert.equal(restored.registry.identity('plex','101').verified,1);
+      assert.equal(restored.registry.credential('101').token,'private-restore-plex');
+      assert.equal(new RoomStore(restored.registry).get(savedRoom.id).creatorId,account.id);
+      assert.equal(restored.registry.db.prepare('SELECT mediaId FROM watch_queue_entries WHERE roomId=?').get(savedRoom.id).mediaId,'123');
+      assert.equal((await require('../server/config-editor').createConfigEditor(path.join(restoreDir,'config.yaml')).readEditable()).settings['rooms.max_members'],12);
+      assert.equal(restored.registry.db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+    }finally{await restored.close();}
+    fs.unlinkSync(restoreKey);assert.throws(()=>createApp(restoreConfig),/key is missing/);assert.equal(fs.existsSync(restoreKey),false);
+    const wrongKey=Buffer.alloc(32,7);fs.writeFileSync(restoreKey,wrongKey);
+    assert.throws(()=>createApp(restoreConfig),'a mismatched key cannot decrypt restored browser credentials');
+    assert.deepEqual(fs.readFileSync(restoreKey),wrongKey,'never replace a mismatched key');
+    fs.writeFileSync(restoreKey,keyBytes);restored=createApp(restoreConfig);await restored.close();
     await app.close();app=createApp(config);
     const stored=JSON.parse(app.registry.db.prepare('SELECT record FROM browser_logins').get().record);
     assert.equal(stored.userId,account.id);assert.equal(app.registry.identity('discord',config.ownerId).userId,account.id);
@@ -581,9 +617,28 @@ test('SQLite restart retains UUIDs and encrypted logins without reading or backi
 });
 
 test('Discord/Plex link ownership, stable accounts and Plex-only room authorization preserve provider-specific media restrictions',tls,async t=>{
-  const f=await fixture(t),alice=f.browser(),bob=f.browser(),denied=f.browser();
+  let holdMedia=false;
+  const f=await fixture(t,(input,options,provider)=>{
+    if(holdMedia&&new URL(input).pathname==='/library/parts/123/file.mp4')return new Response(new ReadableStream({start(controller){
+      controller.enqueue(Buffer.from('fixture-stream-start'));
+      options.signal.addEventListener('abort',()=>controller.error(new Error('Fixture stream revoked')),{once:true});
+    }}),{headers:{'content-type':'video/mp4'}});
+    return provider.fetch(input,options);
+  }),alice=f.browser(),bob=f.browser(),denied=f.browser();
   assert.equal((await alice.discord()).status,302);const a=(await alice.request('/api/account')).body.account;assert.match(a.id,/^[a-f0-9-]{36}$/);assert.notEqual(a.id,f.config.ownerId);
+  const oldCookie=alice.jar.get('uburoom'),oldActivity=(await alice.request('/api/watch/demo-login',{persona:'host',activity:true})).body;
+  const oldRoom=(await alice.post('/api/watch/rooms',{})).body.id,oldViewer=randomUUID();
+  const oldState=(await alice.request(`/api/watch/rooms/${oldRoom}?viewer=${oldViewer}&quality=direct`)).body;
+  await alice.post(`/api/watch/rooms/${oldRoom}/command`,{epoch:oldState.epoch,expiresAt:Date.now()+2900,viewerId:oldViewer,command:{action:'media.load',args:{mediaId:'123',quality:'direct'}}});
+  const oldMedia=(await alice.request(`/api/watch/rooms/${oldRoom}?viewer=${oldViewer}`)).body.mediaUrl;
+  const previousRoom=f.app.watch.rooms.get(oldRoom);
+  const oldSocket=previousRoom.viewers.get(oldViewer).watchSocket;
   assert.equal((await alice.plex('alice',true)).status,302);assert.equal((await alice.request('/api/account')).body.account.id,a.id);
+  assert.equal((await alice.request('/api/account',undefined,{Cookie:'uburoom='+oldCookie})).status,401,'linking revokes the previous browser session');
+  assert.equal((await alice.request('/api/watch/me',undefined,{Authorization:'Bearer '+oldActivity.token})).status,401,'linking revokes Activity tokens');
+  assert.equal(previousRoom.viewers.has(oldViewer),false,'linking evicts existing room viewers');
+  assert.notEqual(oldSocket.readyState,1,'linking closes the viewer socket');
+  assert.equal((await alice.request(oldMedia)).status,403,'old media grants cannot inherit the newly linked identity');
   const same=f.browser();assert.equal((await same.plex('alice')).status,302);assert.equal((await same.request('/api/account')).body.account.id,a.id,'either login resolves the same uburoom account');
   f.members.delete(f.config.ownerId);assert.equal((await same.post('/api/watch/admin-mode',{enabled:true})).status,200,'the verified owner can use Plex authorization independently of guild membership');await same.post('/api/watch/admin-mode',{enabled:false});f.members.add(f.config.ownerId);
   assert.equal((await bob.plex('bob')).status,302);const b=(await bob.request('/api/account')).body.account;assert.equal(b.identities.length,1);assert.equal(b.identities[0].provider,'plex');
@@ -602,9 +657,36 @@ test('Discord/Plex link ownership, stable accounts and Plex-only room authorizat
   assert.equal(f.app.hub.access.isMember(b.id),false);assert.equal(await f.app.watch.canView(f.app.watch.rooms.get(roomId),actor),true,'Plex access does not require Discord membership');
   const aliceRoom=(await alice.post('/api/watch/rooms',{})).body.id,aliceViewer=randomUUID();let aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}&quality=direct`)).body;
   await alice.post(`/api/watch/rooms/${aliceRoom}/command`,{epoch:aliceState.epoch,expiresAt:Date.now()+2900,viewerId:aliceViewer,command:{action:'media.load',args:{mediaId:'999',quality:'direct'}}});aliceState=(await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
+  const restrictedRoom=f.app.watch.rooms.get(aliceRoom);
+  restrictedRoom.s.permissions.allHosts=true;
+  assert.equal(await f.app.watch.canView(restrictedRoom,actor),false,'All hosts grants no item entitlement');
+  restrictedRoom.s.permissions.allHosts=false;restrictedRoom.s.hosts.push(b.id);
+  assert.equal(await f.app.watch.canView(restrictedRoom,actor),false,'explicit host assignment grants no item entitlement');
+  f.config.roomAdministrators={discord:[],plex:['102'],discordRoles:[]};
+  assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,200);
+  assert.equal(f.app.hub.isAdmin(actor),true);
+  assert.equal(await f.app.watch.canView(restrictedRoom,actor),false,'Admin mode grants no item entitlement');
+  for(const endpoint of ['/api/operator/settings','/api/operator/settings/saved'])assert.equal((await bob.request(endpoint)).status,403,'a room creator/host in Admin mode cannot read server settings');
+  assert.equal((await bob.post('/api/operator/settings/saved',{revision:'a'.repeat(64),changes:{'rooms.max_members':12}})).status,403);
+  f.app.hub.clearAdmin(actor);
   f.provider.revoked.add('101');f.app.plexAuth.clear();assert.equal((await alice.request('/api/watch/me')).status,200,'Discord still provides uburoom account access');assert.equal((await alice.request(aliceState.mediaUrl)).status,403,'a linked Plex denial does not fall back to the owner token');
   assert.equal((await f.app.hub.dispatch({userId:f.config.ownerId,name:'Owner',surface:'web',guildId:'guild',channelId:'commands'},{roomId:aliceRoom,action:'media.pause'})).status,'forbidden','Room commands enforce the same media entitlement');
+  const grantBase=state.mediaUrl.slice(0,state.mediaUrl.lastIndexOf('/')+1),captionVersion=randomUUID();
+  f.app.watch.rooms.get(roomId).viewers.get(viewer).media.captionVersion=captionVersion;
+  holdMedia=true;
+  let streamStarted;
+  const started=new Promise(resolve=>{streamStarted=resolve;});
+  const stopped=new Promise((resolve,reject)=>{
+    const req=https.get(f.config.publicUrl+state.mediaUrl,{ca:f.config.cert},res=>{
+      res.once('data',streamStarted);res.once('aborted',resolve);res.on('error',()=>{});
+      res.once('end',()=>reject(new Error('Fixture stream ended without revocation')));
+    });
+    req.on('error',reject);req.setTimeout(5000,()=>req.destroy(new Error('Revoked stream stayed open')));
+  });
+  await started;
   f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request(state.mediaUrl)).status,403,'revoked Plex access invalidates media grants');
+  await stopped;
+  for(const resource of ['captions-'+captionVersion,'subtitle-'+captionVersion,'subtitle-'+captionVersion+'/window'])assert.equal((await bob.request(grantBase+resource)).status,403,'revoked access rejects captions and subtitle windows');
   assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.post('/api/watch/admin-mode',{enabled:true})).status,401);
 });
 
@@ -653,6 +735,10 @@ test('provider removal rejects unusable Plex credentials and account changes dur
   assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'revoked Plex cannot replace Discord sign-in');
   assert.equal(f.app.registry.identities(original.id).length,2);
   f.provider.revoked.delete('101');
+  const credential=f.app.registry.credential('101');
+  f.app.registry.db.prepare('DELETE FROM credentials WHERE subject=?').run('101');f.app.registry.credentialCache.delete('101');
+  assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'a verified Plex link without a stored credential is not a usable login');
+  f.app.registry.credential('101',credential);
   const verify=f.app.plexAuth.forUser.bind(f.app.plexAuth);
   f.app.plexAuth.forUser=async id=>{const result=await verify(id);f.app.registry.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(id);return result;};
   assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'stale sign-in cannot unlink after awaited verification');
@@ -663,7 +749,11 @@ test('verified reverse linking offers an explicit offline merge, refuses stale p
   const f=await fixture(t),discord=f.browser(),plex=f.browser();await discord.discord('guest');await plex.plex('bob');
   const oldD=(await discord.request('/api/account')).body.account.id,oldP=(await plex.request('/api/account')).body.account.id;
   assert.notEqual(oldD,oldP);await plex.discord('guest',true);
-  const preview=(await plex.request('/api/account')).body.merge;assert.ok(preview);assert.equal(preview.accounts.length,2);
+  let preview=(await plex.request('/api/account')).body.merge;assert.ok(preview);assert.equal(preview.accounts.length,2);
+  assert.equal((await discord.post('/api/account/merge',{id:preview.id})).status,400,'merge proof belongs to its originating browser');
+  f.app.registry.link(oldD,'discord',f.provider.subjects.guest,'Reverified guest');
+  assert.equal((await plex.post('/api/account/merge',{id:preview.id})).status,400,'a target account revision change invalidates the preview');
+  await discord.discord('guest');await plex.discord('guest',true);preview=(await plex.request('/api/account')).body.merge;
   const roomId=(await discord.post('/api/watch/rooms',{})).body.id;
   assert.equal((await plex.post('/api/account/merge',{id:preview.id})).status,400,'live room ownership cannot move during a merge');
   await discord.post('/api/watch/rooms/'+roomId+'/close',{epoch:f.app.watch.rooms.get(roomId).s.epoch});
