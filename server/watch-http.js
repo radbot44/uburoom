@@ -292,6 +292,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           id: attempt.id,
           code: attempt.code,
           proof: attempt.proof,
+          verification: attempt.verification,
           expires: attempt.expires,
           url: config.publicUrl + '/auth/native#' + attempt.code
         });
@@ -303,7 +304,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         const data = await body(req);
         const attempt = handoff.claimNative(data.code, identity);
         if (!attempt) { json(res, 410, { error: 'Authorization request expired or was already claimed' }); return true; }
-        json(res, 200, { id: attempt.id, name: identity.name, userId: identity.userId });
+        json(res, 200, { id: attempt.id, name: identity.name, userId: identity.userId, verification: attempt.verification, csrf: identity.csrf });
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/approve') {

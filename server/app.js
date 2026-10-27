@@ -229,9 +229,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
   const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins, plexAuth });
-  async function discordStart(req,res,linkLogin,ownerOnly=false) {
+  async function discordStart(req,res,linkLogin,ownerOnly=false,returnTo=undefined) {
     if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly)throw new Error('Discord authorization is disabled');
-    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,ownerOnly,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
+    const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,ownerOnly,returnTo,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
     const query=new URLSearchParams({client_id:config.clientId,redirect_uri:config.publicUrl+'/auth/callback',response_type:'code',scope:'identify',state});
     res.setHeader('Set-Cookie',cookie('uburoom_oauth',state,300));
     const destination=config.demo&&plexAuth?.demo?config.publicUrl+'/demo-discord?state='+state:authorizeUrl+'?'+query;
@@ -415,6 +415,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
         '/playback-timing.js':['playback-timing.js','text/javascript'],
         '/sync-quality.js':['sync-quality.js','text/javascript'],
+        '/native-handoff.js':['native-handoff.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/server-settings.js':['server-settings.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
         const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)));
@@ -457,7 +458,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
-        return discordStart(req,res,undefined,route==='/auth/owner');
+        const returnParam = url.searchParams.get('return');
+        const returnTo = (returnParam && /^\/auth\/native#[a-f0-9]{64}$/.test(returnParam)) ? returnParam : undefined;
+        return discordStart(req,res,undefined,route==='/auth/owner',returnTo);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
         const state = url.searchParams.get('state'), code = url.searchParams.get('code');
@@ -486,7 +489,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
             oauth: { refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000 }
           } : {}) });
         accounts.save();
-        const destination = '/watch';
+        const destination = (attempt.returnTo && /^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo)) ? attempt.returnTo : '/watch';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {

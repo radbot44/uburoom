@@ -124,6 +124,7 @@ test('native client handoff requires authenticated browser approval, enforces pr
   // 1. Unauthenticated claim fails with 401
   const started=(await f.request('/api/watch/handoff/native/start',{})).body;
   assert.ok(started.id); assert.ok(started.code); assert.ok(started.proof);
+  assert.match(started.verification, /^\d{6}$/);
   assert.match(started.url,/\/auth\/native#[a-f0-9]{64}$/);
   const unauthClaim=await f.request('/api/watch/handoff/native/claim',{code:started.code});
   assert.equal(unauthClaim.status,401);
@@ -139,6 +140,7 @@ test('native client handoff requires authenticated browser approval, enforces pr
   assert.equal(authedClaim.status,200);
   assert.equal(authedClaim.body.id,started.id);
   assert.equal(authedClaim.body.name,'Demo host');
+  assert.equal(authedClaim.body.verification, started.verification);
 
   // Poll before approval returns 202 pending
   const pendingPoll=await f.request('/api/watch/handoff/native/poll',{id:started.id,proof:started.proof});

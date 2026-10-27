@@ -46,9 +46,10 @@ class Handoff {
     this.sweep();
     if (this.attempts.size >= 200) throw new Error('Browser sign-in is busy; try again shortly');
     const id = randomBytes(32).toString('hex'), code = randomBytes(32).toString('hex'), proof = randomBytes(32).toString('hex');
-    const attempt = { id, codeHash: hash(code), proofHash: hash(proof), native: true, expires: this.now() + TTL * 2, state: 'waiting' };
+    const verification = String(randomInt(100000, 1000000));
+    const attempt = { id, codeHash: hash(code), proofHash: hash(proof), verification, native: true, expires: this.now() + TTL * 2, state: 'waiting' };
     this.attempts.set(id, attempt); this.codes.set(attempt.codeHash, attempt);
-    return { id, code, proof, expires: attempt.expires };
+    return { id, code, proof, verification, expires: attempt.expires };
   }
   claimNative(code, actor) {
     if (!SECRET.test(code || '')) return;
