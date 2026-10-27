@@ -158,7 +158,7 @@
         }
         return gainFor(magnitude);
       }
-      if (magnitude <= tolerance || now <= quietUntil) { since = undefined; return 1; }
+      if (magnitude <= tolerance || now < quietUntil) { since = undefined; return 1; }
       if (since === undefined || since.sign !== sign) { since = { at: now, sign }; return 1; }
       if (now - since.at < 1000) return 1;
       direction = sign; activeUntil = now + 10000; since = undefined;
