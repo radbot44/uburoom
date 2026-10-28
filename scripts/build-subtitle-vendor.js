@@ -66,14 +66,15 @@ const notices=[];
 for(const name of [...packages].sort()){
   const directory=path.join(root,'node_modules',name),pkg=JSON.parse(fs.readFileSync(path.join(directory,'package.json')));
   const license=[...['LICENSE','LICENSE.md','LICENSE.txt','LICENCE','license','license.md'].map(n=>path.join(directory,n)),path.join(root,'web/vendor/licenses',name+'.txt')].find(p=>fs.existsSync(p));
-  if(!license && !['abslink','lfa-ponyfill','throughput'].includes(name))throw new Error('Missing upstream license for '+name);
+  if(!license)throw new Error('Missing upstream license for '+name);
   const declaration='Upstream author metadata: '+JSON.stringify(pkg.author || pkg.contributors || 'unspecified')+'\nRepository: '+JSON.stringify(pkg.repository)+'\n';
   const fallback=pkg.license==='Apache-2.0'?fs.readFileSync(path.join(root,'web/vendor/licenses/Apache-2.0.txt'),'utf8'):
     fs.readFileSync(path.join(root,'node_modules/jassub/LICENSE'),'utf8').split('\n').filter(line=>!/^Copyright/.test(line)).join('\n');
   notices.push(name+' '+pkg.version+' ('+pkg.license+')\n'+declaration+(license?fs.readFileSync(license,'utf8'):
     'Upstream package and repository omit a dedicated license file. Standard text for the declared license follows; upstream attribution clarification remains a publication gate.\n'+fallback));
 }
-notices.push('JASSUB native components: see ../licenses/JASSUB-components.txt and docs/third-party.md for source/build provenance.');
+notices.push(fs.readFileSync(path.join(root,'web/vendor/licenses/OFL-1.1.txt'),'utf8').trim());
+notices.push('JASSUB native WASM components (jassub-worker.wasm, jassub-worker-modern.wasm): see ../licenses/JASSUB-components.txt and docs/third-party.md. Corresponding source is archived at https://github.com/radbot44/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3 (upstream https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3).');
 notices.push('uburoom modifies libbitsub asset URLs and overlay geometry during bundling. See scripts/build-subtitle-vendor.js. Upstream copyright and licenses are retained.');
 notices.push('uburoom exposes libbitsub initialization completion and an optional forced manual repaint that invalidates prior presentation work.');
 notices.push('uburoom bounds JASSUB worker disposal to one second if startup or worker IPC does not settle. See scripts/build-subtitle-vendor.js.');

@@ -1,3 +1,19 @@
+# JASSUB 2.5.21 Native WASM Component Inventory (jassub-worker.wasm / jassub-worker-modern.wasm)
+# Upstream source revision: https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3
+# Corresponding source mirror: https://github.com/radbot44/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3
+# Locked npm artifact: https://registry.npmjs.org/jassub/-/jassub-2.5.21.tgz
+# Locked integrity: sha512-ejG8oNWOV9iYLEAjPbYnZmjeCFwfuw67SWzJntWqQVPDqUtDVkt88ntSKNmqnRi9Yqbry0XmCb1YiTCiM9IQHQ==
+#
+# Statically linked C/C++ libraries in jassub-worker*.wasm:
+# - JASSUB C/JS bridge: Copyright (c) 2021-2026 ThaUnknown / JASSUB contributors, 2017-2021 JavascriptSubtitlesOctopus contributors (MIT / LGPL-2.1-or-later)
+# - libass: Copyright (c) 2006-2016 Evgeniy Stepanov, Grigori Goronzy, and libass contributors (ISC)
+# - FreeType 2: Copyright (c) 1996-2021 David Turner, Robert Wilhelm, and Werner Lemberg / The FreeType Project (FTL OR GPL-2.0-or-later)
+# - FriBidi: Copyright (c) 1999-2000 Dov Grobgeld, 2001-2018 Behdad Esfahbod and FriBidi contributors (LGPL-2.1-or-later)
+# - HarfBuzz: Copyright (c) 2010-2022 Behdad Esfahbod, Google, Inc., Red Hat, Inc., and HarfBuzz contributors (MIT-Modern-Variant / Expat)
+# - Brotli: Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors / Google Inc. (MIT / Expat)
+# - Highway (SIMD): Copyright (c) Google LLC (Apache-2.0 / BSL-1.0)
+# - Emscripten runtime / musl / zlib: Copyright (c) 2010-2024 Emscripten authors, Rich Felker, Jean-loup Gailly, Mark Adler (MIT / NCSA / Zlib)
+
 # The following section contains the full license text or
 # where permitted a shorter notice for all works contained
 # in JASSUB listed above

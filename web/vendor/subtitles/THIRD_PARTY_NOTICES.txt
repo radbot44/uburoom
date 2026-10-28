@@ -1,7 +1,11 @@
 abslink 1.3.1 (Apache-2.0)
 Upstream author metadata: "unspecified"
 Repository: {"type":"git","url":"https://github.com/ThaUnknown/abslink.git"}
-Upstream package and repository omit a dedicated license file. Standard text for the declared license follows; upstream attribution clarification remains a publication gate.
+Declared in upstream package.json: Apache-2.0
+Upstream repository: https://github.com/ThaUnknown/abslink (owner: ThaUnknown)
+Locked npm tarball: https://registry.npmjs.org/abslink/-/abslink-1.3.1.tgz
+Locked integrity: sha512-ukFoU6q/RBMjoC7fu0Zx2+eVH2QFMfV+aJ2cI3Ypl0Shm0ikGjZ0T2VN0xvLl0a8imhWqvfVrqu2n2Ml3eSMyQ==
+
 
                                  Apache License
                            Version 2.0, January 2004
@@ -238,9 +242,12 @@ SOFTWARE.
 lfa-ponyfill 1.1.1 (MIT)
 Upstream author metadata: "ThaUnknown"
 Repository: {"type":"git","url":"git+https://github.com/ThaUnknown/lfa-ponyfill.git"}
-Upstream package and repository omit a dedicated license file. Standard text for the declared license follows; upstream attribution clarification remains a publication gate.
 MIT License
 
+Copyright (c) ThaUnknown (https://github.com/ThaUnknown/lfa-ponyfill)
+Declared in upstream package.json: MIT ("author": "ThaUnknown")
+Locked npm tarball: https://registry.npmjs.org/lfa-ponyfill/-/lfa-ponyfill-1.1.1.tgz
+Locked integrity: sha512-Had4tsGEHtIj58MRtf6SlubNDltxinxMSdxIn1GdwrWbye8TD+pZ+D6qKETnJ9+vQOfG9q/Ds4WUPskhyAMp5Q==
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -973,9 +980,12 @@ Public License instead of this License.  But first, please read
 throughput 1.0.2 (MIT)
 Upstream author metadata: "ThaUnknown"
 Repository: {"type":"git","url":"git+https://github.com/ThaUnknown/throughput.git"}
-Upstream package and repository omit a dedicated license file. Standard text for the declared license follows; upstream attribution clarification remains a publication gate.
 MIT License
 
+Copyright (c) ThaUnknown (https://github.com/ThaUnknown/throughput)
+Declared in upstream package.json: MIT ("author": "ThaUnknown")
+Locked npm tarball: https://registry.npmjs.org/throughput/-/throughput-1.0.2.tgz
+Locked integrity: sha512-jvK1ZXuhsggjb3qYQjMiU/AVYYiTeqT5thWvYR2yuy2LGM84P5MSSyAinwHahGsdBYKR9m9HncVR/3f3nFKkxg==
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -997,7 +1007,103 @@ SOFTWARE.
 
 -----
 
-JASSUB native components: see ../licenses/JASSUB-components.txt and docs/third-party.md for source/build provenance.
+Liberation Sans Bold (web/vendor/subtitles/default.woff2)
+Bundled default fallback font from jassub 2.5.21 (mapped as 'liberation sans').
+Copyright (c) 2010 Google Corporation, Red Hat, Inc., and Ascender Corp. with Reserved Font Name "Liberation".
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+-----
+
+JASSUB native WASM components (jassub-worker.wasm, jassub-worker-modern.wasm): see ../licenses/JASSUB-components.txt and docs/third-party.md. Corresponding source is archived at https://github.com/radbot44/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3 (upstream https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3).
 -----
 
 uburoom modifies libbitsub asset URLs and overlay geometry during bundling. See scripts/build-subtitle-vendor.js. Upstream copyright and licenses are retained.
