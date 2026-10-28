@@ -99,15 +99,14 @@ test('default uses proportional drift correction with persistence and recovery g
   ctx.playerWaiting=false;ctx.document.visibilityState='hidden';now=2500;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
 
   jumps.committed({now:3000,frames:10,target:5,context:'fixture'});
-  assert.equal(jumps.update({now:3100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10,stabilityMs:10}),false,'blocks premature completion immediately after backward jump');
-  assert.equal(jumps.update({now:5000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.2,uncertaintyMs:10,stabilityMs:10}),false,'unlocks cleanly when frame callbacks resume with elapsed progression');
+  assert.equal(jumps.update({now:3100,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10,stabilityMs:10}),false,'blocks premature completion immediately after backward jump');
+  assert.equal(jumps.update({now:5000,error:.08,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.05,uncertaintyMs:10,stabilityMs:10}),false,'unlocks cleanly when frame callbacks resume with elapsed progression');
   jumps.committed({now:14000,frames:30,target:5,context:'fixture'});
-  assert.equal(jumps.update({now:17500,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:50,uncertaintyMs:10,stabilityMs:10}),false,'recovers via 8s cooldown if seek fails to land after 3s');
-  assert.equal(jumps.update({now:25600,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:5,uncertaintyMs:10,stabilityMs:10}),false);
-  assert.equal(jumps.update({now:26700,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:52,position:5,uncertaintyMs:10,stabilityMs:10}),true);
+  assert.equal(jumps.update({now:17500,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:8.9,uncertaintyMs:10,stabilityMs:10}),false,'failed seek remains blocked after 3+ seconds');
+  assert.equal(jumps.update({now:25000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:16.4,uncertaintyMs:10,stabilityMs:10}),false,'remains blocked until reset');
   ctx.sync.sharedSeek();
-  assert.equal(jumps.update({now:27000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10,stabilityMs:10}),false);
-  assert.equal(jumps.update({now:28000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears stale pending target');
+  assert.equal(jumps.update({now:26000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:27100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears stale pending target');
 
   ctx.document.visibilityState='visible';
   ctx.video.currentTime=10;

@@ -209,8 +209,9 @@
       if (pending) {
         pending.at ??= now;
         const elapsed = Math.max(0, (now - pending.at) / 1000);
-        const reached = (position >= pending.target - .1 && position <= pending.target + Math.max(.25, elapsed * 1.25 + .2)) || elapsed >= 3;
-        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && reached) {
+        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 &&
+            position >= pending.target - .1 && position <= pending.target + elapsed + .1 &&
+            (!Number.isFinite(error) || Math.abs(error) < .2)) {
           pending = undefined; quietUntil = now + 8000;
         }
         interrupt(); return false;
