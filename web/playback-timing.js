@@ -195,9 +195,9 @@
   // Opt-in local seeks. Interruptions discard drift evidence, but never erase
   // an outstanding seek or its cooldown. Only a new source/context resets those.
   function jumpCorrection() {
-    let key, last, since, direction = 0, pending, quietUntil = 0, retries = 0;
+    let key, last, since, direction = 0, pending, quietUntil = 0, retries = 0, suspended = false;
     function interrupt() { since = undefined; direction = 0; }
-    function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; retries = 0; }
+    function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; retries = 0; suspended = false; }
     /** @param {{now:number,error:number,eligible:boolean,context:string,uncertaintyMs?:number,stabilityMs?:number,buffered:boolean,settled:boolean,frames?:number,position:number}} input */
     function update({now,error,eligible,context,uncertaintyMs,stabilityMs = uncertaintyMs,buffered,settled,frames,position}) {
       if (key !== context) reset();
@@ -212,9 +212,10 @@
         if (settled && Number.isFinite(frames) && frames >= pending.frames + 2) {
           if (position >= pending.target - .1 && position <= pending.target + elapsed + .1 &&
               (!Number.isFinite(error) || Math.abs(error) < .2)) {
-            pending = undefined; quietUntil = now + 8000; retries = 0;
-          } else if (elapsed >= 3 && retries < 1) {
-            pending = undefined; quietUntil = now + 30000; retries++;
+            pending = undefined; quietUntil = now + 8000; retries = 0; suspended = false;
+          } else if (elapsed >= 3) {
+            if (retries < 1) { pending = undefined; quietUntil = now + 30000; retries++; }
+            else suspended = true;
           }
         }
         interrupt(); return false;
@@ -236,7 +237,7 @@
       if (key !== context) reset();
       key = context; pending = {at:Number.isFinite(now) ? now : undefined,frames:Number.isFinite(frames) ? frames : Infinity,target}; interrupt();
     }
-    return {update,committed,interrupt,reset};
+    return {update,committed,interrupt,reset,suspended:()=>suspended};
   }
   const api={clock,target,presentation,alarm,correction,precisionCorrection,jumpCorrection};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;

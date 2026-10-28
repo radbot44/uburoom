@@ -101,17 +101,25 @@ test('default uses proportional drift correction with persistence and recovery g
   ctx.playerWaiting=false;ctx.document.visibilityState='hidden';now=2500;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
 
   jumps.committed({now:3000,frames:10,target:5,context:'fixture'});
-  assert.equal(jumps.update({now:3100,error:-.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10,stabilityMs:10}),false,'blocks premature completion immediately after backward jump');
-  assert.equal(jumps.update({now:5000,error:.08,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.05,uncertaintyMs:10,stabilityMs:10}),false,'settles completed seek and enters 8s cooldown');
-  assert.equal(jumps.update({now:12500,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:25,position:14.5,uncertaintyMs:10,stabilityMs:10}),false,'honors 8s quietUntil cooldown');
-  assert.equal(jumps.update({now:13100,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:28,position:15.1,uncertaintyMs:10,stabilityMs:10}),false);
-  assert.equal(jumps.update({now:14100,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:30,position:16.1,uncertaintyMs:10,stabilityMs:10}),true,'unlocked pending state permits a new jump after cooldown');
-  jumps.committed({now:15000,frames:30,target:5,context:'fixture'});
-  assert.equal(jumps.update({now:18500,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:8.9,uncertaintyMs:10,stabilityMs:10}),false,'failed seek remains blocked after 3+ seconds');
-  assert.equal(jumps.update({now:25000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:15.4,uncertaintyMs:10,stabilityMs:10}),false,'remains blocked until reset');
+  assert.equal(jumps.update({now:3100,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10,stabilityMs:10}),false,'blocks premature completion immediately after backward jump');
+  assert.equal(jumps.update({now:5000,error:.08,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.05,uncertaintyMs:10,stabilityMs:10}),false,'unlocks cleanly when frame callbacks resume with elapsed progression');
+  assert.equal(jumps.update({now:12500,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:22,position:7.2,uncertaintyMs:10,stabilityMs:10}),false,'8s cooldown active until 13000');
+  assert.equal(jumps.update({now:13100,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:24,position:7.3,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:14100,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:26,position:7.4,uncertaintyMs:10,stabilityMs:10}),true,'pending unlocked and fires new jump after cooldown');
+  jumps.committed({now:14100,frames:30,target:5,context:'fixture'});
+  assert.equal(jumps.update({now:17500,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:8.9,uncertaintyMs:10,stabilityMs:10}),false,'first failed seek enters 30s bounded retry backoff');
+  assert.equal(jumps.update({now:40000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:40,position:12,uncertaintyMs:10,stabilityMs:10}),false,'30s backoff blocks early retry');
+  assert.equal(jumps.update({now:47600,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:45,position:15,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:48600,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:48,position:16,uncertaintyMs:10,stabilityMs:10}),true,'allows one bounded retry after 30s backoff');
+  jumps.committed({now:48600,frames:48,target:5,context:'fixture'});
+  assert.equal(jumps.suspended(),false);
+  assert.equal(jumps.update({now:52000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:55,position:19.4,uncertaintyMs:10,stabilityMs:10}),false,'second failed seek locks until explicit reset');
+  assert.equal(jumps.suspended(),true,'marks jump correction suspended after exhausting retry budget');
+  assert.equal(jumps.update({now:90000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:80,position:30,uncertaintyMs:10,stabilityMs:10}),false,'remains locked after retry budget exhausted');
   ctx.sync.sharedSeek();
-  assert.equal(jumps.update({now:26000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10,stabilityMs:10}),false);
-  assert.equal(jumps.update({now:27100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears stale pending target');
+  assert.equal(jumps.suspended(),false,'sharedSeek clears suspended jump state');
+  assert.equal(jumps.update({now:91000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:85,position:5,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:92100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:88,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears exhausted pending lock');
 
   ctx.document.visibilityState='visible';
   ctx.video.currentTime=10;
@@ -123,4 +131,12 @@ test('default uses proportional drift correction with persistence and recovery g
   assert.equal(ctx.video.playbackRate,1.01,'steers playbackRate from fresh lastPresentationErrorMs');
   now=31500;await ctx.synchronize();
   assert.equal(ctx.video.playbackRate,1.025,'falls back to currentTime difference when lastPresentationErrorMs is stale');
+  ctx.syncCorrectionMode='jumps';
+  jumps.committed({now:32000,frames:10,target:5,context:':::fixture:'});
+  jumps.update({now:35500,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:15,position:10,uncertaintyMs:12,stabilityMs:12});
+  jumps.committed({now:66000,frames:20,target:5,context:':::fixture:'});
+  jumps.update({now:69500,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:25,position:10,uncertaintyMs:12,stabilityMs:12});
+  assert.equal(jumps.suspended(),true);
+  now=70000;await ctx.synchronize();now=70500;await ctx.synchronize();now=71000;await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate,1.025,'suspended jump mode falls back to speed correction');
 });

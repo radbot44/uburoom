@@ -158,7 +158,7 @@ export function createSync(host) {
       eligible:correctionInput.eligible&&!state.waitingForReady,
       buffered:targetBuffered,settled:!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3,
       frames:decodedFrames(),position:video.currentTime}) && canAlign && !syncSeekPending && !video.seeking)align('sync-jump');
-    const rate = syncCorrectionMode === 'jumps' ? 1 : driftCorrection.update(correctionInput);
+    const rate = syncCorrectionMode === 'jumps' && !jumpDriftCorrection.suspended?.() ? 1 : driftCorrection.update(correctionInput);
     if(video.playbackRate!==rate)video.playbackRate=rate;
     video.volume = state.state.volume / 100; video.muted = state.state.muted;
     if (paused) {
