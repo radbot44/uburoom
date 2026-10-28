@@ -9,7 +9,7 @@
   }
   function hlsConfig(bitrateKbps,direct=false) {
     // Establish transport timestamps from the first segment before any seek.
-    const config={enableWorker:true,startPosition:0,
+    const config={enableWorker:true,startPosition:0,maxLiveSyncPlaybackRate:1,
       maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024)};
     if(direct) {
       // A failed optional direct playlist or segment should refresh or fall back,

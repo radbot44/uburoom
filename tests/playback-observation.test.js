@@ -6,7 +6,7 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../web/watch.j
 function client() {
   let mono=1000,wall=100000;const sent=[];
   const clock=policy.observationClock?.();clock?.update('epoch',100000,1000,1000);
-  const ctx={observationPending:false,observing:true,selected:'room',state:{mediaUrl:'url',streamVersion:'stream',mediaVersion:'media',observationEpoch:'epoch'},mediaSource:'url',
+  const ctx={observationPending:false,observationQueued:false,observing:true,selected:'room',state:{mediaUrl:'url',streamVersion:'stream',mediaVersion:'media',observationEpoch:'epoch'},mediaSource:'url',
     playbackError:'',autoplayBlocked:false,probing:false,playerWaiting:false,viewerId:'viewer',observationSequence:0,observationBreak:0,videoFrames:30,
     performance:{now:()=>mono},Date:{now:()=>wall},offset:0,observationClock:clock,uburoomPlayback:policy,
     video:{currentTime:0,playbackRate:1,readyState:4,requestVideoFrameCallback(){},getVideoPlaybackQuality:()=>({totalVideoFrames:100,droppedVideoFrames:0})},
@@ -17,6 +17,20 @@ function client() {
 test('observations keep monotonic duration through client wall steps and poll offset jitter',async()=>{
   const f=client();await f.ctx.reportObservation();f.tick(1000,5745);f.ctx.offset=-2300;await f.ctx.reportObservation();
   assert.equal(f.sent[1].observedAt-f.sent[0].observedAt,1000);
+  let resolveFlight;
+  f.ctx.api=(_,data)=>new Promise(r=>{f.sent.push(data);resolveFlight=r;});
+  const first=f.ctx.reportObservation();
+  assert.equal(f.ctx.observationPending,true);
+  f.ctx.video.ended=true;
+  f.ctx.reportObservation();
+  assert.equal(f.ctx.observationQueued,true);
+  assert.equal(f.sent.length,3);
+  resolveFlight({credit:{reason:'baseline'}});
+  await first;
+  await new Promise(r=>setTimeout(r,10));
+  assert.equal(f.sent.length,4);
+  assert.equal(f.sent[3].state,'ended','in-flight ended observation drained after pending request');
+  assert.equal(f.ctx.observationQueued,false);
 });
 test('observations use advancing frame callbacks when native total-minus-dropped is flat',async()=>{
   const f=client();await f.ctx.reportObservation();f.tick();await f.ctx.reportObservation();

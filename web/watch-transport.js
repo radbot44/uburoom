@@ -39,8 +39,7 @@
               clearTimeout(this.authTimer);this.ready=true;this.attempt=0;this.connecting=undefined;
               this.authResolve?.();this.authResolve=this.authReject=undefined;
               if(initial) {
-                clearInterval(this.heartbeat);
-                this.heartbeat=setInterval(()=>this.clock(),1000);this.clock();
+                this.scheduleClock();this.clock();
                 this.scheduleHeartbeat();
                 Promise.resolve(this.onReady()).catch(()=>{});
               }
@@ -60,7 +59,7 @@
           if(socket!==this.socket)return;
           const wasReady=this.ready;
           this.ready=false;this.connecting=undefined;
-          clearTimeout(this.authTimer);clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);
+          clearTimeout(this.authTimer);clearTimeout(this.heartbeat);clearTimeout(this.heartbeatTimer);
           const error=new TypeError('Room connection lost; reconnecting');
           this.authReject?.(error);this.authResolve=this.authReject=undefined;
           for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.cleanup?.();pending.reject(error);}
@@ -88,6 +87,16 @@
         if(Date.now()-deadline<1000&&Date.now()-this.lastReceivedAt>=timeoutMs){this.closeInitiator='heartbeat-timeout';socket.close(4000,'Server heartbeat timed out');}
         else if(!this.stopped&&this.ready){this.scheduleHeartbeat();this.clock();}
       },timeoutMs);
+    }
+    scheduleClock() {
+      clearTimeout(this.heartbeat);
+      if(this.stopped||!this.ready)return;
+      const delay=this.clockIntervalMs||(850+Math.floor(Math.random()*300));
+      this.heartbeat=setTimeout(()=>{
+        if(this.stopped||!this.ready)return;
+        this.clock();
+        this.scheduleClock();
+      },delay);
     }
     clock() {
       if(!this.ready||this.socket?.readyState!==1||this.pending.size>=8)return;
@@ -120,7 +129,7 @@
       });
     }
     interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.closeInitiator='interrupt';this.socket?.close();}
-    close() {this.stopped=true;clearTimeout(this.retry);this.retry=undefined;clearInterval(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close(1000);}
+    close() {this.stopped=true;clearTimeout(this.retry);this.retry=undefined;clearTimeout(this.heartbeat);clearTimeout(this.heartbeatTimer);this.closeInitiator='manual-close';this.socket?.close(1000);}
   }
   root.uburoomWatchTransport=WatchTransport;
   if(typeof module==='object')module.exports=WatchTransport;

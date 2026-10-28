@@ -40,6 +40,18 @@ test('authenticated sockets have distinct server connection IDs',tls,async t=>{
   t.after(()=>{first.ws.close();second.ws.close();});
   assert.notEqual(first.connectionId,second.connectionId);
   assert.ok(second.connectionId>first.connectionId);
+  await new Promise(resolve=>{
+    const check=()=>{
+      if(first.events.some(e=>e.type==='identity')&&first.events.some(e=>e.type==='rooms'))resolve();
+      else setTimeout(check,50);
+    };
+    check();
+  });
+  assert.equal(first.events.filter(e=>e.type==='identity').length,1);
+  assert.equal(first.events.filter(e=>e.type==='rooms').length,1);
+  await new Promise(r=>setTimeout(r,1200));
+  assert.equal(first.events.filter(e=>e.type==='identity').length,1,'unchanged identity frame is deduplicated');
+  assert.equal(first.events.filter(e=>e.type==='rooms').length,1,'unchanged rooms frame is deduplicated');
 });
 
 test('abnormal socket close retains viewer media and grant for prompt reconnect, then expires normally',tls,async t=>{

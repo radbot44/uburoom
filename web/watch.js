@@ -72,7 +72,7 @@ let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFai
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
-let observationPending = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
+let observationPending = false, observationQueued = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
 const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
 const syncQuality=uburoomSyncQuality.create();
@@ -199,7 +199,7 @@ function refreshSyncQuality() {
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
-      autoplayBlocked,readyVersion,syncCorrectionMode}),
+      autoplayBlocked,readyVersion,syncCorrectionMode,lastPresentationSampleAt,lastPresentationErrorMs}),
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
     correction:event=>syncQuality.recordCorrection({at:performance.now(),magnitudeMs:event.magnitudeMs,kind:event.kind}),
     correctionEligible:()=>performance.now()-lastPresentationBreak>=2000&&performance.now()>=syncQualitySettleUntil&&!sync?.timelinePending,
@@ -1631,7 +1631,8 @@ function arrivalExpected() {
   return Math.min(state.state.duration || 0, state.state.position + (state.state.paused ? 0 : (performance.now() - receivedAt) / 1000));
 }
 async function reportObservation() {
-  if (observationPending || !observing || !selected || !state?.mediaUrl || !state.streamVersion || mediaSource !== state.mediaUrl) return;
+  if (!observing || !selected || !state?.mediaUrl || !state.streamVersion || mediaSource !== state.mediaUrl) { observationQueued = false; return; }
+  if (observationPending) { observationQueued = true; return; }
   const id = selected;
   const playerState = playbackError || video.error ? 'error' : autoplayBlocked ? 'blocked' : video.ended ? 'ended' : video.seeking ? 'seeking' :
     probing ? 'buffering' : video.paused ? 'paused' : playerWaiting || video.readyState < 3 ? 'buffering' : 'playing';
@@ -1646,7 +1647,7 @@ async function reportObservation() {
     if(result.credit && result.credit.reason!=='credited')diagnostics.record('observation-uncredited',{...result.credit,creditReason:result.credit.reason});
   }
   catch { /* Never replay an observation after reconnect. The next sample is fresh. */ }
-  finally { observationPending = false; }
+  finally { observationPending = false; if (observationQueued) { observationQueued = false; void reportObservation(); } }
 }
 for (const event of ['playing','pause','waiting','seeking','seeked','ended','error']) video.addEventListener(event, () => {
   if (event === 'waiting') playerWaiting = true;
@@ -2219,7 +2220,7 @@ async function start() {
     onMessage:message=>{
       if(message.type==='room-kicked' && message.roomId===selected){selected=undefined;viewerId=crypto.randomUUID();unavailable('You were removed from the room. You may rejoin.','kicked');}
       else if(message.type==='identity'){me=message.value;renderAccount();}
-      else if(message.type==='rooms'&&message.status===200)applyRooms(message.value.rooms);
+      else if(message.type==='rooms'&&message.status===200){if(JSON.stringify(message.value.rooms)!==JSON.stringify(knownRooms))applyRooms(message.value.rooms);}
       else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
         if(message.status===200){applyState(message.value);fail(playbackError);void reportReadiness();}
         else if(message.status>=500)connectionLost();

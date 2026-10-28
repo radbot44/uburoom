@@ -29,6 +29,8 @@
  * @property {boolean} autoplayBlocked
  * @property {string} [readyVersion]
  * @property {string} syncCorrectionMode
+ * @property {number} [lastPresentationSampleAt]
+ * @property {number} [lastPresentationErrorMs]
  */
 /**
  * Local synchronization lifecycle; source anchoring stays fenced by the current HLS client.
@@ -86,7 +88,7 @@ export function createSync(host) {
   }
   async function synchronize() {
     const {state,selected,mediaSource,probing,playbackError,playerWaiting,hlsNetworkFailure,autoplayBlocked,readyVersion,
-      syncCorrectionMode}=host.read();
+      syncCorrectionMode,lastPresentationSampleAt,lastPresentationErrorMs}=host.read();
     if (!state?.mediaUrl || video.readyState < 1 || probing || playbackError) return;
     if(hlsTimelinePending){
       video.pause();resetDriftCorrection();
@@ -146,10 +148,11 @@ export function createSync(host) {
     if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
       align();
     }
-    const correctionInput={now:now(),error:difference,context:startKey(),
+    const presentationDifference = Number.isFinite(lastPresentationErrorMs) && Number.isFinite(lastPresentationSampleAt) && now() - lastPresentationSampleAt <= 1000 && Math.abs(-lastPresentationErrorMs / 1000 - difference) <= 0.25 ? -lastPresentationErrorMs / 1000 : difference;
+    const correctionInput={now:now(),error:presentationDifference,context:startKey(),
       eligible:clockValid&&host.visibility()==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
         uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
-      uncertaintyMs:timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
+      uncertaintyMs:timing.clockStabilityMs ?? timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
     if(syncCorrectionMode==='jumps' && jumpDriftCorrection.update({...correctionInput,
       context:jumpContext,
       eligible:correctionInput.eligible&&!state.waitingForReady,
@@ -186,7 +189,7 @@ export function createSync(host) {
     hlsTimelinePending=false;hlsPreparationUntil=now()+10000;
     if(target>.65){try{diagnosticSample('hls-anchor');video.currentTime=target;syncSeekPending=true;}catch{}}
   }
-  function sharedSeek() {syncSeekPending=false;correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+5000);if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
+  function sharedSeek() {syncSeekPending=false;jumpDriftCorrection.reset();correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+5000);if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
   function suppressCorrectionTelemetry(durationMs=5000) {correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+Math.max(0,durationMs));}
   function transition(next) {if(startKey()!==startKey(next)){startAlarm.cancel();pauseAlarm.cancel();}}
   const interval=host.repeat(()=>{if(host.read().state)void synchronize();},500);

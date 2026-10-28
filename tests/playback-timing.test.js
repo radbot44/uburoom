@@ -44,6 +44,9 @@ test('a stable slower route is reacquired without a thirty-second clock outage',
   f.tick(700);assert.equal(f.sample(150,150),false);
   f.tick(700);assert.equal(f.sample(150,150),true);
   assert.equal(f.c.read().networkMinRttMs,300);assert.equal(f.c.read().clockOffsetMs,500);assert.ok(f.c.read().clockUncertaintyMs>=150);
+  assert.ok(f.c.read().clockStabilityMs<=30,'stable high-RTT path retains low clockStabilityMs');
+  f.tick(700);assert.equal(f.sample(250,250),false,'jitter spike rejected');
+  assert.ok(f.c.read().clockStabilityMs>100,'excess jitter inflates clockStabilityMs past cutoff');
 });
 test('shared target removes response-arrival bias and follows pause, seek, replacement and bounds',()=>{
   const state={serverNow:100000,state:{position:10,duration:60,paused:false}};

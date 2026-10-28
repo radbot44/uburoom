@@ -66,9 +66,11 @@
       const reliable=samples.filter(s=>!s.suspect && now-s.at<=WINDOW), best=reliable.reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
       const valid=mapping!==undefined && best && now-lastGood<=MAX_AGE && !uncertain;
       const rtts=delays.filter(s=>now-s.at<=WINDOW).map(s=>s.rtt), jitter=rtts.length?Math.max(...rtts)-Math.min(...rtts):undefined;
+      const excessRtt = valid && rtts.length ? Math.max(0, rtts.at(-1) - best.rtt) : 0;
       return {valid:!!valid,serverTime:valid?at+mapping:undefined,clockRevision:revision,clockAccepted:accepted,clockRejected:rejected,clockReason:reason,
         clockOffsetMs:valid?now+mapping-wall():undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
         clockUncertaintyMs:valid?best.rtt/2+2+Math.abs(desired-mapping)+(now-best.at)*.0001:undefined,
+        clockStabilityMs: valid ? Math.min(25, best.rtt / 2) + 2 + excessRtt / 2 + Math.abs(desired - mapping) + (now - best.at) * .0001 : undefined,
         networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter,networkRttSampleCount:rtts.length};
     }
     return {begin,add,read,reset};
@@ -203,7 +205,7 @@
       if (last !== undefined && (now < last || now - last > 1500)) interrupt();
       key = context; last = now;
       if (pending) {
-        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && position >= pending.target - .1) {
+        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && position >= pending.target - .1 && position <= pending.target + 1) {
           pending = undefined; quietUntil = now + 8000;
         }
         interrupt(); return false;

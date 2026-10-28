@@ -49,8 +49,8 @@ window.uburoomSubtitleRenderers={
         await wait(renderer.whenReady());
       }
       signal.throwIfAborted();repaint();
-      for(const event of ['seeked','loadedmetadata','pause'])video.addEventListener(event,repaint);
-      const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause'])video.removeEventListener(event,repaint);dispose();};
+      for(const event of ['seeked','loadedmetadata','pause','playing','ratechange'])video.addEventListener(event,repaint);
+      const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause','playing','ratechange'])video.removeEventListener(event,repaint);dispose();};
       return {destroy:cleanup,
         append:chunk=>renderer.append ? renderer.append(chunk) :
           format==='ass' ? (async()=>{

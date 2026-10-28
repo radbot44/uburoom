@@ -1,7 +1,7 @@
 'use strict';
 const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict');
-const {correction,presentation}=require('../web/playback-timing');
+const {correction,presentation,jumpCorrection}=require('../web/playback-timing');
 const {summarize}=require('../scripts/sync-report');
 
 function fixture() {
@@ -77,9 +77,10 @@ test('correction runner retains invalid presentation segments without inventing 
 
 test('default uses proportional drift correction with persistence and recovery guards',async()=>{
   let now=0;
+  const jumps=jumpCorrection();
   const ctx={state:{mediaUrl:'fixture',state:{paused:false,volume:50,muted:false}},expected:()=>10.3,
     playbackClock:{read:()=>({valid:true,clockUncertaintyMs:12})},startKey:()=> 'fixture',
-    driftCorrection:correction(),presentationTiming:presentation(),syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},performance:{now:()=>now},document:{visibilityState:'visible'},
+    driftCorrection:correction(),jumpDriftCorrection:jumps,presentationTiming:presentation(),syncCorrectionMode:'speed',pauseAlarm:{cancel(){}},performance:{now:()=>now},document:{visibilityState:'visible'},
     video:{currentTime:10,readyState:4,seeking:false,paused:false,playbackRate:1,buffered:{length:1,start:()=>0,end:()=>40}},
     hlsPreparationUntil:0,hlsTimelinePending:false,syncSeekPending:false,uburoomPlayback:require('../web/playback-policy'),playerWaiting:false,probing:false,playbackError:'',hlsNetworkFailure:undefined,
     renderTransport(){},checkVideoFrames(){}};
@@ -90,4 +91,23 @@ test('default uses proportional drift correction with persistence and recovery g
   ctx.video.currentTime=10.25;now=1500;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1.005,'tapers rate smoothly as viewer catches up');
   ctx.playerWaiting=true;now=2000;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
   ctx.playerWaiting=false;ctx.document.visibilityState='hidden';now=2500;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
+
+  jumps.committed({frames:10,target:5,context:'fixture'});
+  assert.equal(jumps.update({now:3000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10}),false);
+  assert.equal(jumps.update({now:15000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:20,uncertaintyMs:10}),false,'pending lock retained while position > pending.target + 1');
+  assert.equal(jumps.update({now:16500,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:52,position:20,uncertaintyMs:10}),false);
+  ctx.sync.sharedSeek();
+  assert.equal(jumps.update({now:17000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10}),false);
+  assert.equal(jumps.update({now:18000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10}),true,'sharedSeek clears stale pending target');
+
+  ctx.document.visibilityState='visible';
+  ctx.video.currentTime=10;
+  ctx.lastPresentationSampleAt=20000;
+  ctx.lastPresentationErrorMs=-120;
+  now=20000;await ctx.synchronize();
+  now=20500;await ctx.synchronize();
+  now=21000;await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate,1.01,'steers playbackRate from fresh lastPresentationErrorMs');
+  now=21500;await ctx.synchronize();
+  assert.equal(ctx.video.playbackRate,1.025,'falls back to currentTime difference when lastPresentationErrorMs is stale');
 });

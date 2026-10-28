@@ -91,9 +91,17 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
       const me = await request(client, '/api/watch/me');
       if (client.ws.readyState !== 1) return;
       if (me.status !== 200) { send(client, { type: 'unavailable', ...me }); client.ws.close(4003, 'Sign in again'); return; }
-      send(client, { type: 'identity', value: me.value });
+      const identityJson = JSON.stringify(me.value);
+      if (identityJson !== client.lastIdentityJson) {
+        client.lastIdentityJson = identityJson;
+        send(client, { type: 'identity', value: me.value });
+      }
       const rooms = await request(client, '/api/watch/rooms');
-      send(client, { type: 'rooms', ...rooms });
+      const roomsJson = JSON.stringify(rooms);
+      if (roomsJson !== client.lastRoomsJson) {
+        client.lastRoomsJson = roomsJson;
+        send(client, { type: 'rooms', ...rooms });
+      }
       // Record only transitions in selected-room visibility, not every periodic publication.
       const selectedRoom=/^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\?|$)/.exec(path||'')?.[1];
       if(selectedRoom) {
