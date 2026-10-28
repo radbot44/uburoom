@@ -37,6 +37,22 @@ function compareStarts(a,b) {
 function installFixture(delay,gentle,precision=false) {
   const apply=applyState,rate=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'playbackRate');
   globalThis.startupFixture={delay,unit:false,legacy:false,states:[],attempts:0};
+  const baseController=precision?uburoomTiming.precisionCorrection():uburoomTiming.correction();
+  const controller={
+    policy:precision?'precision':'gentle',
+    get mode(){return startupFixture.legacy?'legacy':(precision?'precision':'gentle');},
+    update(input){
+      if(startupFixture.legacy) {
+        return !input.eligible||Math.abs(input.error)<.15||Math.abs(input.error)>.65?1:input.error>0?1.04:.96;
+      }
+      return baseController.update(input);
+    },
+    reset(){baseController.reset();}
+  };
+  sync.driftCorrection=controller;
+  if(sync.driftCorrection?.policy!==(precision?'precision':'gentle')) {
+    throw new Error('Requested policy is not active on the live controller');
+  }
   Object.defineProperty(video,'playbackRate',{configurable:true,get(){return rate.get.call(this);},set(value){
     if(value!==rate.get.call(this))startupFixture.attempts++;rate.set.call(this,startupFixture.unit?1:value);
   }});
@@ -91,12 +107,22 @@ async function main() {
   try {
     host=await playbackBrowser(name);guest=await playbackBrowser(name);report.versions=[host.version,guest.version];
     const h=await host.page(config.publicUrl+'/watch?demo=host'),g=await guest.page(config.publicUrl+'/watch?demo=guest'),clients=[[host,h],[guest,g]];
-    for(const [browser,page]of clients){await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(comparison==='legacy'&&!precision)+','+precision+')');}
+    for(const [browser,page]of clients){
+      await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');
+      await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(policy==='gentle')+','+precision+')');
+      const activePolicy=await browser.evaluate(page,'sync?.driftCorrection?.policy');
+      assert.equal(activePolicy,policy,'Requested policy must be active on live controller');
+    }
     await host.evaluate(h,'document.getElementById("create").click();document.getElementById("room-create").click();true');await host.until(h,'!!state','Fixture room');
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest room');
     for(const trial of trials(repeats,rtts,seed,comparison)) {
       if(app.watch.rooms.get(room).media)await host.evaluate(h,'execute({action:"media.pause"}).then(()=>true)');
       await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};sync.resetCorrection(true);startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
+      for(const [browser,page]of clients){
+        const activeMode=await browser.evaluate(page,'sync?.driftCorrection?.mode');
+        const expectedMode=trial.mode==='legacy'?'legacy':policy;
+        assert.equal(activeMode,expectedMode,'Live controller mode must match requested mode');
+      }
       for(const [browser,page]of clients)await browser.until(page,'playbackClock.read().valid','Fresh clock');
       const boundaries=await Promise.all(clients.map(([browser,page])=>browser.evaluate(page,'diagnosticSample();diagnostics.snapshot().entries.at(-1).ms')));
       await host.evaluate(h,'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');

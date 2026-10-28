@@ -51,7 +51,7 @@ export function createSync(host) {
   const {video,timing,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample}=host;
   const now=host.now || (()=>globalThis.performance.now());
-  const driftCorrection=host.driftCorrection || timing.correction();
+  let driftCorrection=host.driftCorrection || timing.correction();
   const jumpDriftCorrection=host.jumpDriftCorrection || timing.jumpCorrection();
   const startAlarm=host.startAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
   const pauseAlarm=host.pauseAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
@@ -195,5 +195,6 @@ export function createSync(host) {
   const interval=host.repeat(()=>{if(host.read().state)void synchronize();},500);
   function close() {host.cancelRepeat(interval);reset();}
   return {synchronize,reset,resetCorrection:resetDriftCorrection,event,prepare,anchor,sharedSeek,suppressCorrectionTelemetry,transition,close,
+    get driftCorrection(){return driftCorrection;},set driftCorrection(value){driftCorrection=value||timing.correction();},
     get seekPending(){return syncSeekPending;},get preparationUntil(){return hlsPreparationUntil;},get timelinePending(){return hlsTimelinePending;}};
 }

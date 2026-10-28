@@ -139,4 +139,15 @@ test('default uses proportional drift correction with persistence and recovery g
   assert.equal(jumps.suspended(),true);
   now=70000;await ctx.synchronize();now=70500;await ctx.synchronize();now=71000;await ctx.synchronize();
   assert.equal(ctx.video.playbackRate,1.025,'suspended jump mode falls back to speed correction');
+
+  assert.equal(typeof ctx.sync.driftCorrection?.update,'function');
+  const custom={updated:0,policy:'precision',update(){this.updated++;return 1.04;},reset(){}};
+  ctx.sync.driftCorrection=custom;
+  assert.equal(ctx.sync.driftCorrection.policy,'precision');
+  ctx.syncCorrectionMode='speed';
+  now=72000;await ctx.synchronize();
+  assert.equal(custom.updated,1);
+  assert.equal(ctx.video.playbackRate,1.04,'swapped driftCorrection controller drives rate adjustment');
+  ctx.sync.driftCorrection=undefined;
+  assert.equal(typeof ctx.sync.driftCorrection?.update,'function','clearing driftCorrection restores default controller');
 });

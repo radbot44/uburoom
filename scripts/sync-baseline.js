@@ -23,7 +23,7 @@ async function main() {
   app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'synthetic-call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));config.publicUrl='https://localhost:'+app.server.address().port;
   const report={controller:mode,browser:name,sourceFps:fps,steadySeconds:seconds,results:[],
-    limitations:'Headless software decoding on one machine; symmetric delays added only to room-state fetches. No physical refresh, geographic WAN, packet loss, Tunnel, audio output, HLS or AV1 certification.'};
+    limitations:'Headless software decoding on one machine; symmetric WebSocket control/clock delay injection. No physical refresh, geographic WAN, packet loss, Tunnel, audio output, HLS or AV1 certification.'};
   try {
     for(const rtt of rtts) {
       let host,guest;
@@ -31,14 +31,11 @@ async function main() {
         host=await playbackBrowser(name);guest=await playbackBrowser(name);
         const h=await host.page(config.publicUrl+'/watch?demo=host'),g=await guest.page(config.publicUrl+'/watch?demo=guest');
         const setup=async(browser,page,delay)=>{
-          await browser.until(page,'typeof me!=="undefined" && !!me','Fixture login');
+          await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');
           await browser.evaluate(page,`(()=>{
-            const originalFetch=fetch;
-            globalThis.fetch=async function(url,options){
-              if(!/^\\/api\\/watch\\/rooms\\/[^/?]+\\?/.test(String(url)))return originalFetch(url,options);
-              const delay=${delay}/2;await new Promise(r=>setTimeout(r,delay));
-              const response=await originalFetch(url,options);await new Promise(r=>setTimeout(r,delay));return response;
-            };
+            const socket=transport.socket,send=socket.send.bind(socket),receive=socket.onmessage;
+            socket.send=data=>setTimeout(()=>{if(socket.readyState===1)send(data);},${delay}/2);
+            socket.onmessage=event=>setTimeout(()=>receive(event),${delay}/2);
             ${mode==='arrival'?'expected=arrivalExpected;':''}
             return true;
           })()`);

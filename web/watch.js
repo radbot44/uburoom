@@ -12,6 +12,7 @@ let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
 let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0, identityTimer;
 let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
+let seekPendingValue = undefined, seekPendingUntil = 0, seekPendingRevision = undefined;
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readyQueued = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
 const playerPreferenceKey='uburoom.player';
@@ -124,6 +125,7 @@ function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) 
   return sent;
 }
 function resetSyncQuality() {
+  seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;
   const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
   syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
   lastPresentationSampleAt=0;lastPresentationErrorMs=undefined;
@@ -1701,6 +1703,7 @@ function applyState(next) {
   const changed = mediaChanged || mediaSource !== next.mediaUrl;
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();}
+  if(seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)){seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;}
   const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
@@ -1951,7 +1954,19 @@ $('quality').addEventListener('change', () => {
 });
 $('timeline').addEventListener('pointerdown', () => { seekDragging = true; });
 $('timeline').addEventListener('input', () => { $('time').textContent = clock($('timeline').value); });
-$('timeline').addEventListener('change', () => { const seconds = Number($('timeline').value); seekDragging = false; execute({ action:'media.seek.absolute',args:{seconds} }).catch(error => fail(error.message)); });
+$('timeline').addEventListener('change', () => {
+  const seconds = Number($('timeline').value);
+  seekDragging = false;
+  seekPendingValue = seconds;
+  seekPendingUntil = performance.now() + 1500;
+  seekPendingRevision = state?.revision;
+  execute({ action: 'media.seek.absolute', args: { seconds } }).catch(error => {
+    seekPendingValue = undefined;
+    seekPendingUntil = 0;
+    seekPendingRevision = undefined;
+    fail(error.message);
+  });
+});
 $('timeline').addEventListener('pointercancel', () => { seekDragging = false; });
 video.addEventListener('loadedmetadata', () => { void sync.synchronize(); });
 video.addEventListener('canplay', () => { void sync.synchronize(); });
@@ -2141,7 +2156,21 @@ window.addEventListener('pagehide', () => { stopBrowserHandoff(true); transport?
 window.addEventListener('pageshow',event=>{if(event.persisted&&transport)void transport.connect().catch(error=>fail(error.message));});
 setInterval(() => {
   const timeline = $('timeline'), duration = state?.state.duration || 0;
-  const value = seekDragging ? Number(timeline.value) : state ? expected() : 0;
+  let value;
+  if (seekDragging) {
+    value = Number(timeline.value);
+  } else if (seekPendingValue !== undefined) {
+    if (performance.now() < seekPendingUntil && state?.revision === seekPendingRevision) {
+      value = seekPendingValue;
+    } else {
+      seekPendingValue = undefined;
+      seekPendingUntil = 0;
+      seekPendingRevision = undefined;
+      value = state ? expected() : 0;
+    }
+  } else {
+    value = state ? expected() : 0;
+  }
   if (!seekDragging) { timeline.value = value; $('time').textContent = clock(value); }
   timeline.style.setProperty('--timeline-fill',uburoomPlayback.timeline(video.buffered,duration,value));
   const loaded = Math.floor(uburoomPlayback.bufferedAhead(video.buffered,video.currentTime));
