@@ -135,6 +135,11 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-row-backdrop{display:none;pointer-events:none}
 [data-view=list] :is(.queue-entry,.queue-history-entry,.queue-now-playing){isolation:isolate;overflow:hidden;background:#101217;--text:#F8F7F4;--muted:#AAB0BC;color:var(--text)}
 [data-view=list] .queue-row-backdrop{display:block;position:absolute;inset:-20px;background-position:center;background-size:cover;filter:blur(22px) brightness(.24);opacity:.85;z-index:-1}
-.queue-entry-auto{border-color:color-mix(in srgb,var(--secondary) 55%,var(--border))!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--secondary) 28%,transparent)}
+.queue-entry-auto{border-color:color-mix(in srgb,var(--secondary) 55%,var(--border))!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--secondary) 35%,transparent)}
 .queue-entry-auto .queue-rank-auto,.queue-entry-auto .queue-card-caption{color:var(--secondary)!important}
+[data-view=cards] .queue-entry-auto{outline:2px solid color-mix(in srgb,var(--secondary) 75%,transparent);outline-offset:-2px}
 [data-view=list] .queue-entry-auto{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--secondary) 55%,transparent)}
+#queue-auto-toggle:checked,#queue-auto-specials:checked{background:var(--secondary)}
+#queue-auto-toggle:focus-visible,#queue-auto-specials:focus-visible{outline-color:var(--secondary)}
+#queue-auto-mode-group .group-button[aria-pressed=true]:not([data-value=off]){color:var(--secondary)}
+#queue-auto-mode-group .group-button:focus-visible{outline-color:var(--secondary)}
