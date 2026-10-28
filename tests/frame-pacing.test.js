@@ -18,7 +18,9 @@ test('small drift stays at native speed at every required cadence and within clo
   for(let i=0;i<10;i++)assert.equal(highRtt.step(500,{error:.10,uncertaintyMs:110,stabilityMs:25}),1,'ignores drift inside asymmetry bound');
   assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1);
   assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1);
-  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1.03,'corrects resolvable drift on stable high-RTT clock');
+  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1.025,'corrects resolvable drift on stable high-RTT clock');
+  assert.equal(highRtt.step(500,{error:.10,uncertaintyMs:110,stabilityMs:25}),1,'exits speed correction once error drops inside clock uncertainty');
+  for(let i=0;i<3;i++)highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25});
   assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:105}),1,'aborts when stabilityMs > 100');
 });
 

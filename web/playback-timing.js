@@ -144,7 +144,7 @@
       }
       const frameMargin = Math.min(0.05, Math.max(0, Number.isFinite(frameSeconds) ? frameSeconds : 0));
       const tolerance = Math.max(0.045 + frameMargin, (uncertaintyMs / 1000) * 1.25);
-      const exitTol = Math.max(0.02, tolerance * 0.45);
+      const exitTol = Math.max(0.02, uncertaintyMs / 1000, tolerance * 0.45);
       const gainFor = mag => {
         const span = Math.max(0.001, 0.50 - exitTol);
         const ratio = Math.min(1, Math.max(0, (mag - exitTol) / span));
@@ -195,9 +195,9 @@
   // Opt-in local seeks. Interruptions discard drift evidence, but never erase
   // an outstanding seek or its cooldown. Only a new source/context resets those.
   function jumpCorrection() {
-    let key, last, since, direction = 0, pending, quietUntil = 0;
+    let key, last, since, direction = 0, pending, quietUntil = 0, retries = 0;
     function interrupt() { since = undefined; direction = 0; }
-    function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; }
+    function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; retries = 0; }
     /** @param {{now:number,error:number,eligible:boolean,context:string,uncertaintyMs?:number,stabilityMs?:number,buffered:boolean,settled:boolean,frames?:number,position:number}} input */
     function update({now,error,eligible,context,uncertaintyMs,stabilityMs = uncertaintyMs,buffered,settled,frames,position}) {
       if (key !== context) reset();
@@ -209,10 +209,13 @@
       if (pending) {
         pending.at ??= now;
         const elapsed = Math.max(0, (now - pending.at) / 1000);
-        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 &&
-            position >= pending.target - .1 && position <= pending.target + elapsed + .1 &&
-            (!Number.isFinite(error) || Math.abs(error) < .2)) {
-          pending = undefined; quietUntil = now + 8000;
+        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2) {
+          if (position >= pending.target - .1 && position <= pending.target + elapsed + .1 &&
+              (!Number.isFinite(error) || Math.abs(error) < .2)) {
+            pending = undefined; quietUntil = now + 8000; retries = 0;
+          } else if (elapsed >= 3 && retries < 1) {
+            pending = undefined; quietUntil = now + 30000; retries++;
+          }
         }
         interrupt(); return false;
       }
