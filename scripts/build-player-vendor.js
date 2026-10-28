@@ -30,12 +30,12 @@ for (const name of [...new Set([...packages, 'hls.js', ...[...sdkLibraries.keys(
   }
   notices.push(`${scope}${name} ${pkg.version} (${pkg.license})\n${[...sourceNotices].join('\n')}\n${fs.readFileSync(license, 'utf8')}\n`);
 }
-notices.push(`Tabler Icons (MIT) ? selected outline SVGs in web/icons.js
+notices.push(`Tabler Icons (MIT) — selected outline SVGs in web/icons.js
 https://github.com/tabler/tabler-icons
 
 MIT License
 
-Copyright (c) 2020-2026 Pawe? Kuna
+Copyright (c) 2020-2026 Paweł Kuna
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
