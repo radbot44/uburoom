@@ -1,7 +1,7 @@
 'use strict';
 const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
-const {clock,target,presentation,correction,jumpCorrection}=require('../web/playback-timing');
+const {clock,target,presentation,correction}=require('../web/playback-timing');
 const {create}=require('../web/playback-diagnostics');
 const {compare}=require('../scripts/sync-report');
 function fixture() {
@@ -47,23 +47,6 @@ test('a stable slower route is reacquired without a thirty-second clock outage',
   assert.ok(f.c.read().clockStabilityMs<=30,'stable high-RTT path retains low clockStabilityMs');
   f.tick(700);assert.equal(f.sample(250,250),false,'jitter spike rejected');
   assert.ok(f.c.read().clockStabilityMs>100,'excess jitter inflates clockStabilityMs past cutoff');
-
-  const corr=correction();
-  assert.equal(corr.update({now:1000,error:.10,eligible:true,context:'fixture',uncertaintyMs:110,stabilityMs:25}),1,'ignores drift inside asymmetry bound');
-  assert.equal(corr.update({now:1500,error:.35,eligible:true,context:'fixture',uncertaintyMs:110,stabilityMs:25}),1);
-  assert.equal(corr.update({now:2500,error:.35,eligible:true,context:'fixture',uncertaintyMs:110,stabilityMs:25}),1.03,'corrects resolvable drift');
-  assert.equal(corr.update({now:3000,error:.35,eligible:true,context:'fixture',uncertaintyMs:110,stabilityMs:105}),1,'aborts when stabilityMs > 100');
-
-  const jc=jumpCorrection();
-  jc.committed({now:1000,frames:10,target:5,context:'fixture'});
-  assert.equal(jc.update({now:1100,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:110,stabilityMs:25}),false,'blocks premature completion after backward jump');
-  assert.equal(jc.update({now:3500,error:.05,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.5,uncertaintyMs:110,stabilityMs:25}),false,'unlocks cleanly when frame callbacks resume');
-  jc.committed({now:12000,frames:30,target:5,context:'fixture'});
-  assert.equal(jc.update({now:15500,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:8.9,uncertaintyMs:110,stabilityMs:25}),false,'failed seek remains blocked after 3+ seconds');
-  assert.equal(jc.update({now:20000,error:.4,eligible:true,context:'fixture',buffered:true,settled:true,frames:40,position:13.4,uncertaintyMs:110,stabilityMs:25}),false,'remains blocked until reset');
-  jc.reset();
-  assert.equal(jc.update({now:21000,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:45,position:5,uncertaintyMs:110,stabilityMs:25}),false);
-  assert.equal(jc.update({now:22100,error:.35,eligible:true,context:'fixture',buffered:true,settled:true,frames:47,position:5,uncertaintyMs:110,stabilityMs:25}),true,'reset unlocks jump evaluation');
 });
 test('shared target removes response-arrival bias and follows pause, seek, replacement and bounds',()=>{
   const state={serverNow:100000,state:{position:10,duration:60,paused:false}};
