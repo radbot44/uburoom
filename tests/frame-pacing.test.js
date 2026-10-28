@@ -14,6 +14,12 @@ test('small drift stays at native speed at every required cadence and within clo
     const f=fixture();for(let i=0;i<100;i++)assert.equal(f.step(500,{error:.04,frameSeconds:1/fps,uncertaintyMs:10}),1);
   }
   const f=fixture();for(let i=0;i<20;i++)assert.equal(f.step(500,{error:.29,uncertaintyMs:250}),1);
+  const highRtt=fixture();
+  for(let i=0;i<10;i++)assert.equal(highRtt.step(500,{error:.10,uncertaintyMs:110,stabilityMs:25}),1,'ignores drift inside asymmetry bound');
+  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1);
+  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1);
+  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:25}),1.03,'corrects resolvable drift on stable high-RTT clock');
+  assert.equal(highRtt.step(500,{error:.35,uncertaintyMs:110,stabilityMs:105}),1,'aborts when stabilityMs > 100');
 });
 
 test('persistent drift uses bounded subtle bursts with a quiet interval and hysteresis',()=>{
@@ -92,22 +98,25 @@ test('default uses proportional drift correction with persistence and recovery g
   ctx.playerWaiting=true;now=2000;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
   ctx.playerWaiting=false;ctx.document.visibilityState='hidden';now=2500;await ctx.synchronize();assert.equal(ctx.video.playbackRate,1);
 
-  jumps.committed({frames:10,target:5,context:'fixture'});
-  assert.equal(jumps.update({now:3000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10}),false);
-  assert.equal(jumps.update({now:15000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:20,uncertaintyMs:10}),false,'pending lock retained while position > pending.target + 1');
-  assert.equal(jumps.update({now:16500,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:52,position:20,uncertaintyMs:10}),false);
+  jumps.committed({now:3000,frames:10,target:5,context:'fixture'});
+  assert.equal(jumps.update({now:3100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:14,position:20,uncertaintyMs:10,stabilityMs:10}),false,'blocks premature completion immediately after backward jump');
+  assert.equal(jumps.update({now:5000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:20,position:7.2,uncertaintyMs:10,stabilityMs:10}),false,'unlocks cleanly when frame callbacks resume with elapsed progression');
+  jumps.committed({now:14000,frames:30,target:5,context:'fixture'});
+  assert.equal(jumps.update({now:17500,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:35,position:50,uncertaintyMs:10,stabilityMs:10}),false,'recovers via 8s cooldown if seek fails to land after 3s');
+  assert.equal(jumps.update({now:25600,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:50,position:5,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:26700,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:52,position:5,uncertaintyMs:10,stabilityMs:10}),true);
   ctx.sync.sharedSeek();
-  assert.equal(jumps.update({now:17000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10}),false);
-  assert.equal(jumps.update({now:18000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10}),true,'sharedSeek clears stale pending target');
+  assert.equal(jumps.update({now:27000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:60,position:5,uncertaintyMs:10,stabilityMs:10}),false);
+  assert.equal(jumps.update({now:28000,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:62,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears stale pending target');
 
   ctx.document.visibilityState='visible';
   ctx.video.currentTime=10;
-  ctx.lastPresentationSampleAt=20000;
+  ctx.lastPresentationSampleAt=30000;
   ctx.lastPresentationErrorMs=-120;
-  now=20000;await ctx.synchronize();
-  now=20500;await ctx.synchronize();
-  now=21000;await ctx.synchronize();
+  now=30000;await ctx.synchronize();
+  now=30500;await ctx.synchronize();
+  now=31000;await ctx.synchronize();
   assert.equal(ctx.video.playbackRate,1.01,'steers playbackRate from fresh lastPresentationErrorMs');
-  now=21500;await ctx.synchronize();
+  now=31500;await ctx.synchronize();
   assert.equal(ctx.video.playbackRate,1.025,'falls back to currentTime difference when lastPresentationErrorMs is stale');
 });

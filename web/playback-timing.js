@@ -128,7 +128,7 @@
   function correction() {
     let since, direction = 0, activeUntil = 0, quietUntil = 0, last, key;
     function reset() { since = last = key = undefined; direction = activeUntil = quietUntil = 0; }
-    function update({ now, error, eligible, context, uncertaintyMs = 0, frameSeconds = 0 }) {
+    function update({ now, error, eligible, context, uncertaintyMs = 0, stabilityMs = uncertaintyMs, frameSeconds = 0 }) {
       if (key !== context) reset();
       if (!Number.isFinite(now)) { reset(); return 1; }
       if (last !== undefined && (now < last || now - last > 1500)) {
@@ -137,7 +137,9 @@
       key = context; last = now;
       const magnitude = Math.abs(error), sign = Math.sign(error);
       if (!eligible || !Number.isFinite(error) || !Number.isFinite(uncertaintyMs) ||
-          uncertaintyMs < 0 || uncertaintyMs > 100 || magnitude > 0.65 || sign === 0) {
+          uncertaintyMs < 0 || uncertaintyMs > 250 ||
+          !Number.isFinite(stabilityMs) || stabilityMs < 0 || stabilityMs > 100 ||
+          magnitude > 0.65 || sign === 0) {
         since = undefined; direction = activeUntil = 0; return 1;
       }
       const frameMargin = Math.min(0.05, Math.max(0, Number.isFinite(frameSeconds) ? frameSeconds : 0));
@@ -196,8 +198,8 @@
     let key, last, since, direction = 0, pending, quietUntil = 0;
     function interrupt() { since = undefined; direction = 0; }
     function reset() { interrupt(); key = last = pending = undefined; quietUntil = 0; }
-    /** @param {{now:number,error:number,eligible:boolean,context:string,uncertaintyMs?:number,buffered:boolean,settled:boolean,frames?:number,position:number}} input */
-    function update({now,error,eligible,context,uncertaintyMs,buffered,settled,frames,position}) {
+    /** @param {{now:number,error:number,eligible:boolean,context:string,uncertaintyMs?:number,stabilityMs?:number,buffered:boolean,settled:boolean,frames?:number,position:number}} input */
+    function update({now,error,eligible,context,uncertaintyMs,stabilityMs = uncertaintyMs,buffered,settled,frames,position}) {
       if (key !== context) reset();
       if (!Number.isFinite(now)) { interrupt(); return false; }
       // Missing observations cannot count as sustained drift. Preserve cooldown
@@ -205,26 +207,30 @@
       if (last !== undefined && (now < last || now - last > 1500)) interrupt();
       key = context; last = now;
       if (pending) {
-        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && position >= pending.target - .1 && position <= pending.target + 1) {
+        pending.at ??= now;
+        const elapsed = Math.max(0, (now - pending.at) / 1000);
+        const reached = (position >= pending.target - .1 && position <= pending.target + Math.max(.25, elapsed * 1.25 + .2)) || elapsed >= 3;
+        if (settled && Number.isFinite(frames) && frames >= pending.frames + 2 && reached) {
           pending = undefined; quietUntil = now + 8000;
         }
         interrupt(); return false;
       }
       const magnitude = Math.abs(error), sign = Math.sign(error);
       if (!eligible || !buffered || !Number.isFinite(frames) || frames <= 0 || now < quietUntil || !Number.isFinite(error) || magnitude < .25 || magnitude > .65 ||
-          !Number.isFinite(uncertaintyMs) || uncertaintyMs < 0 || uncertaintyMs > 50 || uncertaintyMs / 1000 >= magnitude / 2) {
+          !Number.isFinite(uncertaintyMs) || uncertaintyMs < 0 || uncertaintyMs > 125 || uncertaintyMs / 1000 >= magnitude / 2 ||
+          !Number.isFinite(stabilityMs) || stabilityMs < 0 || stabilityMs > 50) {
         interrupt(); return false;
       }
       if (sign !== direction) { interrupt(); direction = sign; }
       since ??= now;
       return now - since >= 1000;
     }
-    /** @param {{frames?:number,target:number,context:string}} input */
-    function committed({frames,target,context}) {
+    /** @param {{now?:number,frames?:number,target:number,context:string}} input */
+    function committed({now,frames,target,context}) {
       // Without decoded-frame evidence, remain blocked until source replacement
       // or a deliberate mode change. Large-error recovery remains independent.
       if (key !== context) reset();
-      key = context; pending = {frames:Number.isFinite(frames) ? frames : Infinity,target}; interrupt();
+      key = context; pending = {at:Number.isFinite(now) ? now : undefined,frames:Number.isFinite(frames) ? frames : Infinity,target}; interrupt();
     }
     return {update,committed,interrupt,reset};
   }

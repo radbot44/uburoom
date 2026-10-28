@@ -139,7 +139,7 @@ export function createSync(host) {
         const seekDeltaMs=(destination-video.currentTime)*1000;
         const frames=syncCorrectionMode==='jumps'?decodedFrames():undefined;
         video.currentTime=destination;syncSeekPending=true;
-        if(syncCorrectionMode==='jumps')jumpDriftCorrection.committed({frames,target:destination,context:jumpContext});
+        if(syncCorrectionMode==='jumps')jumpDriftCorrection.committed({now:now(),frames,target:destination,context:jumpContext});
         diagnosticSample(event,{seekDeltaMs});
         if(automaticCorrection)host.correction?.({magnitudeMs:Math.abs(seekDeltaMs),kind:event==='sync-jump'?'jump':'seek'});
       } catch { return false; }
@@ -152,7 +152,7 @@ export function createSync(host) {
     const correctionInput={now:now(),error:presentationDifference,context:startKey(),
       eligible:clockValid&&host.visibility()==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
         uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
-      uncertaintyMs:timing.clockStabilityMs ?? timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
+      uncertaintyMs:timing.clockUncertaintyMs,stabilityMs:timing.clockStabilityMs ?? timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
     if(syncCorrectionMode==='jumps' && jumpDriftCorrection.update({...correctionInput,
       context:jumpContext,
       eligible:correctionInput.eligible&&!state.waitingForReady,
