@@ -87,6 +87,7 @@ async function showAccount(){
       const remove=$('remove-'+provider);remove.hidden=!identity;
       remove.disabled=!activity&&!otherEnabled;
       remove.title=remove.disabled?'Connect another sign-in method before removing '+label:'Remove '+label;
+      remove.setAttribute('aria-label',remove.title);
     }
     $('account-browser-hint').hidden=!activity;
     $('account-connect-hint').hidden=activity;
