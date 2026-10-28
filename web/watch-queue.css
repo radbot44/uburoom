@@ -106,7 +106,8 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 [data-view=list] .queue-history-status{padding:0;min-height:0}
 [data-view=list] .queue-rank{padding-top:0}
 [data-view=list] .queue-history-older{flex:none;font-size:12px}
-@container queue (max-width:560px){.queue-quick-controls .queue-check{font-size:11px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-header .queue-view-switch{flex-basis:auto}}
+@container queue (max-width:560px){.queue-quick-controls .watch-switch-text{display:none}.queue-quick-controls .queue-check{font-size:11px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-header .queue-view-switch{flex-basis:auto}}
+@media(max-width:650px){.queue-quick-controls .watch-switch-text{display:none}}
 @container queue (max-width:370px){.queue-quick-controls{grid-row:2;grid-column:1/-1;justify-self:end}.queue-header .queue-view-switch{grid-row:1}.queue-toolbar{grid-row:3}}
 @media(pointer:coarse){.queue-navigation button,.queue-view-button{min-height:40px;min-width:40px}}
 

@@ -42,7 +42,7 @@ async function main() {
       await until('document.querySelector(".library-tile")','Media items');
       await run('$("library-panel").scrollIntoView({block:"start"})');
       await pause(180);
-      assert.equal(await run('getComputedStyle($("library-heading")).fontSize'),'17px');
+      assert.equal(await run('getComputedStyle($("library-heading")).fontSize'),'24px');
       assert.equal(await run('(()=>{const a=$("media-symbol").getBoundingClientRect(),b=$("library-heading").querySelector(".section-toggle>span:last-of-type").getBoundingClientRect();return Math.round(b.left-a.right)})()'),8);
       assert.equal(await run('$("media-symbol").querySelector("svg").getBoundingClientRect().width'),24);
       assert.equal(await run('(()=>{const ids=["library-back","library-forward","library-home","library-direction","library-filters-toggle"];const elevated=getComputedStyle($("switch-room")).backgroundColor;return ids.every(id=>{const e=$(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.height===40 && s.borderRadius==="10px" && s.borderTopWidth==="0px" && s.backgroundColor===elevated})})()'),true,'Media actions use the Room control surface even while disabled');

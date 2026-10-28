@@ -43,8 +43,15 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 - Body and controls: `Inter, system-ui, -apple-system, "Segoe UI", sans-serif`.
 - Headings: `Uburoom Sans` (`UburoomSans-Regular.woff2`, 400 weight).
   - Scope: Major headings (`h1`, `h2`), dialog headers (`dialog h2`, `.privacy-dialog h2`, `.room-actions h2`), and sidebar panel headers (`.watch-panel-heading`).
+  - Section panel headings (`.watch-panel-heading`): 24px size, 400 weight.
   - Fallback stack: `'Uburoom Sans', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif`.
   - Weight & styling: Headings strictly use natural 400 weight (`font-weight: 400`), never faux-bold (`font-weight: 700`). Discretionary ligatures (`dlig`) and the Color edition are excluded in the web application.
+
+### Panel headings & quick toggles
+
+- Section heading icon badges: 40×40px solid orange (`var(--primary)`) square, 10px radius (`var(--watch-control-radius)`), with dark artwork (`var(--on-primary): #101217`, 24px icon).
+- Section toggle layout: The minimize chevron stays immediately adjacent to the heading title with an 8px gap (`var(--watch-control-gap)`). `#options-title` sizes to content and truncates with ellipsis for long room names rather than expanding to fill the header.
+- Continuation toggles: Enlarged switches (42×24px track, 18×18px thumb, min 44px touch target) with embedded thumb icons. Auto-play displays a play icon when ON and pause icon when OFF (`var(--primary)`). Auto-queue displays the sparkle icon at all times (`var(--secondary)`). On narrow/compact widths, text labels hide to display icon-only switches while retaining accessible labels.
 
 ## States and interaction
 

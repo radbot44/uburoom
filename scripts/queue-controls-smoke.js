@@ -39,7 +39,7 @@ async function main() {
       assert.deepEqual(await run(`(()=>{const ids=['queue-center','queue-auto-open'];return ids.map(id=>{const e=$(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return [r.height,s.borderTopWidth,s.borderRadius]})})()`),
         [[40,'0px','10px'],[40,'0px','10px']]);
       assert.deepEqual(await run('(()=>{const r=$("queue-auto-open").getBoundingClientRect();return [r.width,r.height]})()'),[40,40]);
-      assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'),'17px');
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'),'24px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).gap'),'8px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-quick-controls")).gap'),'8px');
       assert.equal(await run('getComputedStyle(document.querySelector(".queue-header")).rowGap'),'16px');
@@ -66,7 +66,7 @@ async function main() {
       assert.equal(await run('$("queue-content").dataset.view'),'list');
       assert.equal(await run('getComputedStyle($("queue-view-list")).outlineWidth'),'2px');
       assert.equal(await run('getComputedStyle($("queue-view-list")).outlineColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()'),true);
-      assert.equal(await run('["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && $(id).getBoundingClientRect().width===36 && $(id).getBoundingClientRect().height===22 && $(id).closest("label").getBoundingClientRect().height>=44)'),true);
+      assert.equal(await run('["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && $(id).getBoundingClientRect().width===42 && $(id).getBoundingClientRect().height===24 && $(id).closest("label").getBoundingClientRect().height>=44)'),true);
       const autoplay = await run('$("queue-autoplay").checked');
       await run(`globalThis.originalQueueRequest=transport.request.bind(transport);globalThis.queueWrites=0;
         transport.request=async(path,data,options)=>{if(data?.command?.action==='media.autoplay.set'){queueWrites++;await new Promise(resolve=>setTimeout(resolve,700));}return originalQueueRequest(path,data,options)};
@@ -108,7 +108,7 @@ async function main() {
       await run('$("section-tab-queue").click()');
       await run('$("queue-view-cards").click()');
       await pause(1500);
-      assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'),'17px');
+      assert.equal(await run('getComputedStyle(document.querySelector(".queue-heading")).fontSize'),'24px');
       assert.equal(await run('$("queue-view-list").querySelector("span").getBoundingClientRect().width'),0,'Narrow view label hidden');
       assert.equal(await run('!!$("queue-view-list").getAttribute("aria-label") && !!$("queue-view-list").title'),true);
       const viewInsets = await run('(()=>{const b=$("queue-view-cards").getBoundingClientRect(),i=$("queue-view-cards").querySelector("svg").getBoundingClientRect();return [b.width,i.width,i.left-b.left,b.right-i.right]})()');

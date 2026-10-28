@@ -111,8 +111,8 @@ body:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-
 .theater:not(.immersive):not(.page-scrolled):not(:has(.below-video:hover,.below-video:focus-within)) .below-video{opacity:.35}
 .room-column{display:flex;flex-direction:column;gap:18px;min-width:0}
 .oomark-icon{display:inline-block;width:22px;height:20px;flex:none;fill:none;stroke:currentColor}
-#room-symbol,#media-symbol{color:var(--accent-text)}
-#media-symbol{display:flex;margin-right:0}#media-symbol svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+:is(.watch-panel-symbol,#room-symbol,#media-symbol,#queue-symbol){width:40px;height:40px;min-width:40px;min-height:40px;border-radius:var(--watch-control-radius);background:var(--primary);color:var(--on-primary);display:inline-grid;place-items:center;flex:none;box-sizing:border-box}
+:is(.watch-panel-symbol,#room-symbol,#media-symbol,#queue-symbol) svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block}
 #section-tabs{display:flex;align-items:center;gap:4px;background:var(--card);padding:5px;border-radius:15px;min-width:0}
 #section-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-width:0;min-height:44px;padding:8px;border-radius:11px;background:none;color:var(--muted);font-weight:600}
 #section-tabs button[aria-selected=true]{background:var(--primary);color:var(--on-primary)}
@@ -450,7 +450,6 @@ body.mobile-player .ending-summary {
 #options-panel>.library-header,#library-panel>.library-header,#queue-content>.queue-header{height:auto;min-height:80px;padding:20px 0 16px;margin:0;box-sizing:border-box}
 #options-content{margin-top:0}
 #options-content>#room-bar{width:100%;margin:0 0 16px}
-.queue-heading .section-toggle>svg:first-child{color:var(--accent-text)}
 body:not(.mobile-player) #options-panel.section-collapsed #options-content,
 body:not(.mobile-player) #queue-panel.section-collapsed :is(#queue-body,.queue-toolbar),
 body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.library-header-right,.library-header-left>:not(h2)){display:none!important}
@@ -602,15 +601,14 @@ body.idle-player #video{visibility:hidden}
 :is(.watch-control>svg,#options-panel .watch-control>svg,#room-dialog .watch-control>svg,#room-settings-dialog .watch-control>svg),.watch-segmented .group-button>svg{width:var(--watch-icon-size);height:var(--watch-icon-size);margin:0;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 :is(.watch-control,#options-panel .watch-control,#room-dialog .watch-control,#room-settings-dialog .watch-control):hover:not(:disabled),.watch-segmented button:hover:not(:disabled){background:var(--hover);color:var(--text)}
 .watch-panel-header{display:flex;align-items:center;justify-content:space-between;gap:var(--watch-group-gap)}
-.watch-panel-heading{font-size:17px;font-weight:400;min-width:0;margin:0}
+.watch-panel-heading{font-size:24px;line-height:1.25;font-weight:400;min-width:0;margin:0}
 .watch-panel-heading .section-toggle{font:inherit;font-weight:400;gap:var(--watch-control-gap);min-height:var(--watch-control-height)}
-.watch-panel-heading .section-toggle>svg:first-child,.watch-panel-heading #room-symbol{width:var(--watch-icon-size);height:var(--watch-icon-size);flex:none}
-.watch-panel-heading #room-symbol{display:inline-grid;place-items:center}.watch-panel-heading #room-symbol .oomark-icon{width:100%;height:100%}
-.watch-panel-heading .section-toggle>span:not(.oomark-icon){min-width:0;overflow-wrap:anywhere}
-#options-panel .watch-panel-heading{flex:1;overflow:hidden}
-#options-panel .watch-panel-heading .section-toggle{width:100%;min-width:0}
-#options-title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
-#options-chevron{flex:none}
+.watch-panel-heading #room-symbol .oomark-icon{width:22px;height:20px}
+.watch-panel-heading .section-toggle>span:not(.oomark-icon):not(.watch-panel-symbol){min-width:0;overflow-wrap:anywhere}
+#options-panel .watch-panel-heading{flex:0 1 auto;min-width:0}
+#options-panel .watch-panel-heading .section-toggle{width:auto;min-width:0}
+#options-title{display:inline-block;min-width:0;max-width:min(240px,38vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+#options-chevron{display:inline-flex;align-items:center;flex:none}
 .room-header-actions{flex:none;flex-wrap:nowrap}
 .room-header-actions #room-people-open{padding-inline:8px;font-size:12px}
 .watch-header-actions{gap:var(--watch-icon-gap)}
@@ -645,11 +643,23 @@ body.idle-player #video{visibility:hidden}
 .watch-segmented-view .group-button{justify-content:center;min-width:var(--watch-control-height);min-height:var(--watch-control-height)}
 .watch-segmented-view .group-button[aria-pressed=true]{min-width:var(--watch-control-height);min-height:var(--watch-control-height)}
 .watch-segmented.watch-segmented-view button[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
-.watch-switch-label{display:inline-flex;align-items:center;gap:var(--watch-control-gap);min-height:44px;cursor:pointer}
-input.watch-switch{appearance:none;position:relative;width:var(--watch-switch-width);height:var(--watch-switch-height);margin:0;border:0;border-radius:999px;background:var(--border);cursor:pointer;flex:none;vertical-align:middle}
-input.watch-switch::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text)}
-input.watch-switch:checked{background:var(--primary)}input.watch-switch:checked::after{translate:14px;background:var(--on-primary)}
-input.watch-switch:disabled{cursor:default;opacity:.55}
+.watch-switch-label{display:inline-flex;align-items:center;gap:var(--watch-control-gap);min-height:44px;cursor:pointer;position:relative;user-select:none}
+.watch-switch-input{position:absolute;top:50%;left:0;transform:translateY(-50%);width:42px;height:24px;margin:0;opacity:0;cursor:pointer;z-index:2}
+.watch-switch-track{position:relative;display:inline-block;width:42px;height:24px;border-radius:999px;background:var(--border);flex:none;transition:background 120ms ease;box-sizing:border-box}
+.watch-switch-thumb{position:absolute;left:3px;top:3px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--text);color:var(--background);transition:translate 120ms ease,background 120ms ease,color 120ms ease}
+.watch-switch-thumb svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.watch-switch-input:focus-visible + .watch-switch-track{outline:2px solid var(--primary);outline-offset:2px}
+.watch-switch-input.watch-switch-secondary:focus-visible + .watch-switch-track{outline-color:var(--secondary)}
+.watch-switch-input:checked + .watch-switch-track{background:var(--primary)}
+.watch-switch-input.watch-switch-secondary:checked + .watch-switch-track{background:var(--secondary)}
+.watch-switch-input:checked + .watch-switch-track .watch-switch-thumb{translate:18px;background:var(--on-primary);color:var(--primary)}
+.watch-switch-input.watch-switch-secondary:checked + .watch-switch-track .watch-switch-thumb{translate:18px;background:var(--on-primary);color:var(--secondary)}
+.watch-switch-input:disabled + .watch-switch-track{opacity:.5;cursor:default}
+.watch-switch-input:disabled{cursor:default}
+input.watch-switch:not(.watch-switch-input){appearance:none;position:relative;width:var(--watch-switch-width);height:var(--watch-switch-height);margin:0;border:0;border-radius:999px;background:var(--border);cursor:pointer;flex:none;vertical-align:middle}
+input.watch-switch:not(.watch-switch-input)::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text)}
+input.watch-switch:not(.watch-switch-input):checked{background:var(--primary)}input.watch-switch:not(.watch-switch-input):checked::after{translate:14px;background:var(--on-primary)}
+input.watch-switch:not(.watch-switch-input):disabled{cursor:default;opacity:.55}
 .watch-control:focus-visible,.watch-focus:focus-visible,.watch-segmented button:focus-visible,.watch-switch:focus-visible,.watch-panel-heading button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 #options-panel{container-type:inline-size}
 @container(max-width:350px){.watch-control-responsive .watch-control-label{display:none}.watch-control-responsive{width:var(--watch-control-height);padding:0}}
