@@ -30,4 +30,4 @@ Never commit or share configuration, tokens, databases or encryption keys. Prese
 
 ## License
 
-Original source code is **GPL-3.0-only**; see [LICENSE](LICENSE). Third-party components retain their own licenses and [notices](web/vendor/THIRD_PARTY_NOTICES.txt). [Asset and license review](docs/third-party.md) remains open before public distribution.
+Original source code is **GPL-3.0-only**; see [LICENSE](LICENSE). Third-party components retain their own licenses and [notices](web/vendor/THIRD_PARTY_NOTICES.txt). First-party branding artwork is dual-licensed under **GPL-3.0-only OR CC-BY-4.0** with trademark terms in [docs/third-party.md](docs/third-party.md).

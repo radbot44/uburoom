@@ -9,7 +9,7 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 1. **Configuration and administration (P14):** Three-outcome A/B verification complete: authorization boundaries, safe account mutations/session revocation, and supported settings with matched backup/restore. Real installation and recovery checks remain release gates.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
 3. **Plex reporting (P4):** Complete real PMS/Tautulli integration verification for decoupled session reporting, shared-producer safety and personal watch-state synchronization.
-4. **Release closure:** Complete the supported-environment checks, operator recovery, branding and licensing gates below. Expand the supported matrix only with evidence.
+4. **Release closure:** Complete the supported-environment checks, operator recovery and publication audit gates below. Expand the supported matrix only with evidence.
 
 ## M1 — Verified self-hosted release
 
@@ -20,7 +20,6 @@ A map of priorities and unfinished work. Implementation does not imply live veri
 - Declare the supported browser, Activity, codec and delivery combinations; verify actual picture, audio, captions, synchronization and recovery for those claims.
 - Verify installation on an independent host/origin (including Docker/Compose and `npm run doctor` diagnostics) with fresh provider applications and profiles; verify backup/restore and rollback while preserving account UUIDs and the exact encryption key.
 - Verify admission, revoked credentials, account changes and media authorization across browser and Activity. Configured sponsorship is implemented and enabled by default; it is not personal Plex entitlement. Direct fallback delegation requires an explicit opt-in and a dedicated non-owner account. Granular grants and sponsored reporting remain unfinished.
-- Finish branding and asset provenance, dependency/font notices and GPL-3.0-only distribution review.
 - Audit source, publication history and ZIP contents for private material and required license/source obligations. Obtain explicit publication approval.
 
 Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and [SPEC.md](SPEC.md). UI decisions remain governed by the [design guide](docs/design-guide.md). Neither a roadmap entry nor a passing test authorizes production changes, provider experiments or publication.
@@ -42,7 +41,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness, independent recovery, and bounded 5s sample expiry decoupled from socket watchdog | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
 | M1-P6 | Frame pacing | Default correction policy, opt-in Occasional jumps, and removal of rejected experimental production wiring | Joint skew/smoothness acceptance |
 | M1-P7 | UI/UX | Layout split, Room/Queue/Media shared controls, sliding player menus, grouped two-column settings dialog with subtitle appearance controls, delayed subtitle loading indicator, full-stage ending interstitial, personal preferences and sync-module extraction | Current user-journey/accessibility review, physical mobile/Activity acceptance and bounded further modularization |
-| M1-P9 | Browser subtitles | ASS/SSA, progressive chunked PGS streaming, VobSub rendering, truthful extraction error classification, authorized resources and burn-in fallback | Complex fonts/authored content, lifecycle/resource and real Activity/mobile checks; licensing and corresponding-source obligations |
+| M1-P9 | Browser subtitles | ASS/SSA, progressive chunked PGS streaming, VobSub rendering, truthful extraction error classification, authorized resources and burn-in fallback | Complex fonts/authored content, lifecycle/resource and real Activity/mobile checks |
 | M1-P10 | Room terminology | Canonical room names/protocol, removal of legacy aliases, and web/Activity terminology audit; “session” retained for technical contexts and “watch parties” preserved for public context | Final packaging review |
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
