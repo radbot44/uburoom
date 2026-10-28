@@ -273,7 +273,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
     // Enforce HTTPS via Strict-Transport-Security to defend against SSL/TLS stripping attacks.
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     (async () => {
       const url = new URL(req.url, config.publicUrl), route = url.pathname;
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -315,7 +315,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const player = watchDocument || route === '/__diagnostics/codec';
       const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins(req) : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
       const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' ? plexDeliveryOrigins.map(origin => ' ' + origin).join('') : '';
-      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
+      if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; font-src 'self'; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
       const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
@@ -391,6 +391,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+themeScript);
       }
       const assets = {
+        '/assets/fonts/UburoomSans-Regular.woff2': ['assets/fonts/UburoomSans-Regular.woff2', 'font/woff2'],
         '/icons.js': ['icons.js', 'text/javascript'],
         '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
         '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
@@ -443,7 +444,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
         }
         const content = await readAsset(path.join(publicDir, file));
-        res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(content);
+        const contentType = type.startsWith('font/') ? type : type + '; charset=utf-8';
+        res.writeHead(200, { 'Content-Type': contentType }); return res.end(content);
       }
       if (req.method === 'GET' && route === '/api/me') {
         const login = await user(req);

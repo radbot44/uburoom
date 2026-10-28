@@ -38,6 +38,14 @@ Use local Tabler assets with accessible names. Preserve the circular main Play o
 
 Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` for icon actions, `.danger-button` for destructive, `.solid-button` for player title-bar controls only. Primary accent is orange (`var(--primary)`) and secondary accent is pink (`var(--secondary)`); `var(--secondary)` is the designated accent color for auto-queue and continuation offers.
 
+### Typography
+
+- Body and controls: `Inter, system-ui, -apple-system, "Segoe UI", sans-serif`.
+- Headings: `Uburoom Sans` (`UburoomSans-Regular.woff2`, 400 weight).
+  - Scope: Major headings (`h1`, `h2`), dialog headers (`dialog h2`, `.privacy-dialog h2`, `.room-actions h2`), and sidebar panel headers (`.watch-panel-heading`).
+  - Fallback stack: `'Uburoom Sans', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif`.
+  - Weight & styling: Headings strictly use natural 400 weight (`font-weight: 400`), never faux-bold (`font-weight: 700`). Discretionary ligatures (`dlig`) and the Color edition are excluded in the web application.
+
 ## States and interaction
 
 - Disabled actions: entire control at 40%, inert.

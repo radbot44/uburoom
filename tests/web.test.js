@@ -22,6 +22,10 @@ test('removed endpoints are unavailable while the watch page still serves', { sk
   const watchRes = await request('/watch');
   assert.equal(watchRes.status, 200);
   assert.equal(watchRes.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  assert.ok(watchRes.headers['content-security-policy'].includes("font-src 'self'"));
+  const fontRes = await request('/assets/fonts/UburoomSans-Regular.woff2');
+  assert.equal(fontRes.status, 200);
+  assert.equal(fontRes.headers['content-type'], 'font/woff2');
   for (const path of ['/remote-ui.js','/viewport.js','/api/login/start','/api/login/finish','/api/devices/revoke']) {
     const method=path.startsWith('/api/')?'POST':'GET';
     assert.equal((await request(path,method)).status,404,path);
