@@ -52,7 +52,7 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 
 Personal browser preferences retain subtitle language/mode, not audio language or subtitle timing.
 
-Full multichannel/lossless/Atmos guarantees and efficient audio-only conversion remain unfinished. Rendering/license gates are independent; see [third-party review](third-party.md).
+Full multichannel/lossless/Atmos guarantees and efficient audio-only conversion remain unfinished. Subtitle rendering verification and [third-party attribution](third-party.md) are tracked separately.
 
 ## Shared conversions
 

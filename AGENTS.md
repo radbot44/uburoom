@@ -51,5 +51,5 @@
 ## Repository hygiene
 
 - Keep commits focused and public docs generic. Never stage, commit, package or publish `personal/`, private configuration, credentials, personal paths or private evidence.
-- First-party code is GPL-3.0-only. Include LICENSE in distributions and preserve third-party notices/source obligations; [provenance review](docs/third-party.md) remains a release gate.
+- First-party code is GPL-3.0-only. Include LICENSE in distributions and preserve third-party notices/source obligations; maintain provenance and attribution in [docs/third-party.md](docs/third-party.md).
 - Use [development](docs/development.md) for setup, commands and diagnostics. Keep this file limited to durable agent rules; do not append feature status, implementation inventories or work diaries.
