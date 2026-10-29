@@ -23,7 +23,7 @@ Use server receive/send timestamps with monotonic RTT minus server processing. T
 
 Group startup/shared seeks combine decoder readiness with a scheduled lead. Ordinary pause/resume uses a bounded RTT-derived deadline. A single viewing tab skips group leads; count tabs, not account identities. After readiness timeout, the host chooses Start with ready viewers, Wait or Cancel.
 
-Ongoing buffering/late join recovers locally and never pauses healthy viewers. Missing clock confidence suppresses drift correction while preserving authoritative intent. Default speed correction and opt-in Occasional jumps remain separate; disabled experimental policies need disposition before release.
+Ongoing buffering/late join recovers locally and never pauses healthy viewers. Missing clock confidence suppresses drift correction while preserving authoritative intent. Default speed correction uses a per-frame exponential moving average (alpha = 0.35) with a hybrid divergence policy (<=90 ms selects presentation error, 90-180 ms blends presentation and position, >180 ms falls back to position error); opt-in Occasional jumps and hard seeks use position-based error exclusively. The experimental precision policy is retired and removed.
 
 Measure presented-frame skew, cadence, correction rate and dropped frames separately. Frame callbacks estimate compositor timing, not physical pixels/audio; sparse callbacks require explicit exclusion/coverage counts. Targets ≤50ms p95 / ≤100ms p99 remain unverified on real separated displays.
 

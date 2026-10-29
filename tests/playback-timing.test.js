@@ -1,7 +1,7 @@
 'use strict';
 const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
-const {clock,target,presentation,correction}=require('../web/playback-timing');
+const {clock,target,presentation,controlSignal,correction}=require('../web/playback-timing');
 const {create}=require('../web/playback-diagnostics');
 const {compare}=require('../scripts/sync-report');
 function fixture() {
@@ -123,6 +123,216 @@ test('presentation measures compositor cadence and callback gaps, never equating
   assert.equal(b.frameIntervalMs,42);assert.equal(b.frameCallbackGap,1);
   assert.equal(p.frame(64,{mediaTime:1+1/24,expectedDisplayTime:65,presentedFrames:4}).frameRepeated,true);
   p.reset();assert.equal(p.frame(200,{mediaTime:9,expectedDisplayTime:200,presentedFrames:1}).frameIntervalMs,undefined);
+});
+
+test('presentation tracker manages EMA smoothing, reinitialization, interruption lifecycle and read validity', () => {
+  const p = presentation();
+  const ctx = 'room:m1:s1:0:0:0:undefined';
+
+  const f1 = p.frame(1000, { mediaTime: 10.05, expectedDisplayTime: 1000, presentedFrames: 1 }, { target: 10.0, context: ctx, clockRevision: 1 });
+  assert.ok(Math.abs(f1.presentationErrorMs - 50) < 1e-4);
+  assert.ok(Math.abs(f1.smoothedPresentationErrorMs - 50) < 1e-4);
+  assert.equal(f1.presentationReset, true);
+
+  const r1 = p.read(1050, { context: ctx, clockRevision: 1 });
+  assert.equal(r1.valid, true);
+  assert.ok(Math.abs(r1.errorMs - 50) < 1e-4);
+  assert.ok(Math.abs(r1.smoothedErrorMs - 50) < 1e-4);
+  assert.equal(r1.ageMs, 50);
+  assert.equal(r1.samples, 1);
+  assert.equal(r1.reason, 'fresh');
+
+  const f2 = p.frame(1040, { mediaTime: 10.07, expectedDisplayTime: 1040, presentedFrames: 2 }, { target: 10.0, context: ctx, clockRevision: 1 });
+  assert.ok(Math.abs(f2.presentationErrorMs - 70) < 1e-4);
+  assert.equal(Math.round(f2.smoothedPresentationErrorMs * 10) / 10, 57.0);
+  assert.equal(f2.presentationReset, false);
+
+  const r2 = p.read(1040, { context: ctx, clockRevision: 1 });
+  assert.equal(r2.samples, 2);
+
+  const rStale = p.read(2500, { context: ctx, clockRevision: 1 });
+  assert.equal(rStale.valid, false);
+  assert.equal(rStale.reason, 'stale');
+  assert.ok(Math.abs(rStale.errorMs - 70) < 1e-4);
+  assert.equal(rStale.ageMs, 1460);
+
+  const f3 = p.frame(2600, { mediaTime: 11.6, expectedDisplayTime: 2600, presentedFrames: 3 }, { target: 11.5, context: ctx, clockRevision: 1 });
+  assert.ok(Math.abs(f3.presentationErrorMs - 100) < 1e-4);
+  assert.ok(Math.abs(f3.smoothedPresentationErrorMs - 100) < 1e-4);
+  assert.equal(f3.presentationReset, true);
+
+  const otherCtx = 'room2:m1:s1:0:0:0:undefined';
+  assert.equal(p.read(2650, { context: otherCtx, clockRevision: 1 }).valid, false);
+  assert.equal(p.read(2650, { context: otherCtx, clockRevision: 1 }).reason, 'context');
+  const fContext = p.frame(2650, { mediaTime: 11.65, expectedDisplayTime: 2650, presentedFrames: 4 }, { target: 11.5, context: otherCtx, clockRevision: 1 });
+  assert.equal(fContext.presentationReset, true);
+
+  assert.equal(p.read(2660, { context: otherCtx, clockRevision: 2 }).valid, false);
+  assert.equal(p.read(2660, { context: otherCtx, clockRevision: 2 }).reason, 'clock');
+  const fClock = p.frame(2690, { mediaTime: 11.69, expectedDisplayTime: 2690, presentedFrames: 5 }, { target: 11.5, context: otherCtx, clockRevision: 2 });
+  assert.equal(fClock.presentationReset, true);
+
+  const fGap = p.frame(3000, { mediaTime: 12.0, expectedDisplayTime: 3000, presentedFrames: 6 }, { target: 11.8, context: otherCtx, clockRevision: 2 });
+  assert.equal(fGap.presentationReset, true);
+
+  for (let i = 0; i < 10; i++) {
+    p.frame(3100 + i * 40, { mediaTime: 12.0 + (i + 1) * 0.04, expectedDisplayTime: 3100 + i * 40, presentedFrames: 7 + i }, { target: 12.0 + (i + 1) * 0.04, context: otherCtx, clockRevision: 2 });
+  }
+  assert.ok(p.cadence() > 0, 'cadence was learned');
+  const learnedCadence = p.cadence();
+
+  p.interrupt('pause');
+  assert.equal(p.cadence(), learnedCadence, 'interrupt preserves cadence');
+  const rInt = p.read(3600, { context: otherCtx, clockRevision: 2 });
+  assert.equal(rInt.valid, false);
+  assert.equal(rInt.smoothedErrorMs, undefined);
+  assert.equal(rInt.reason, 'pause');
+
+  const fAfterInt = p.frame(4000, { mediaTime: 13.0, expectedDisplayTime: 4000, presentedFrames: 20 }, { target: 13.02, context: otherCtx, clockRevision: 2 });
+  assert.equal(fAfterInt.presentationReset, true);
+
+  p.reset();
+  assert.equal(p.cadence(), 0);
+  const rReset = p.read(4100);
+  assert.equal(rReset.valid, false);
+  assert.equal(rReset.errorMs, undefined);
+  assert.equal(rReset.reason, 'none');
+});
+
+test('sync-quality reporting rejects interrupted presentation samples while retaining the 2500ms window for uninterrupted samples', () => {
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
+  const p = presentation();
+  const samples = [];
+  const ctx = {
+    selected: 'room',
+    viewerId: 'viewer',
+    mediaSource: 'https://media',
+    state: { id: 'room', mediaUrl: 'https://media', streamVersion: 's', mediaVersion: 'm', state: { paused: false }, waitingForReady: false },
+    video: { currentTime: 10.0, paused: false, seeking: false, readyState: 4, playbackRate: 1 },
+    playerWaiting: false,
+    probing: false,
+    playbackError: false,
+    autoplayBlocked: false,
+    readyVersion: 'm',
+    document: { visibilityState: 'visible' },
+    syncQualityContext: 'room:viewer:m:s',
+    syncQualityClockRevision: 1,
+    syncQualitySettleUntil: 0,
+    lastPresentationBreak: 0,
+    sync: { timelinePending: false, contextKey: () => 'room:viewer:m:s' },
+    presentationTiming: p,
+    uburoomTiming: { target: () => 10.0 },
+    uburoomSyncQuality: require('../web/sync-quality'),
+    syncQuality: { reset() {}, breakSample() {}, sample(data) { samples.push(data); } }
+  };
+  const code = source.slice(source.indexOf('function syncQualityClockUsable('), source.indexOf('function refreshSyncQuality('));
+  vm.runInNewContext(code, ctx);
+
+  const timingClock = { valid: true, clockAgeMs: 50, clockUncertaintyMs: 20, clockRevision: 1, serverTime: 100000 };
+  const syncKey = 'room:viewer:m:s';
+
+  // 1. Frame recorded at t=1000 with presentation error = +120ms (currentTime=10.0, target=10.0 => position error=0ms)
+  p.frame(1000, { mediaTime: 10.12, expectedDisplayTime: 1000, presentedFrames: 1 }, { target: 10.0, context: syncKey, clockRevision: 1 });
+
+  // 2. Uninterrupted sample at t=2500: age=1500ms > 1000ms controller freshness, but <= 2500ms sync quality window
+  ctx.sampleSyncQuality(timingClock, 2500);
+  assert.equal(samples.length, 1);
+  assert.equal(samples[0].source, 'presentation');
+  assert.ok(Math.abs(samples[0].errorMs - 120) < 1e-4, 'uninterrupted sample contributes presentation error up to 2500ms');
+
+  // 3. Interrupted by pause at t=2600 (sample age 1600ms <= 2500ms): must NOT contribute presentation error
+  p.interrupt('pause');
+  ctx.sampleSyncQuality(timingClock, 2600);
+  assert.equal(samples[1].source, 'position');
+  assert.equal(samples[1].errorMs, 0, 'interrupted sample (pause) falls back to position error');
+
+  // 4. Interrupted by seek at t=2700 (sample age 1700ms <= 2500ms): must NOT contribute presentation error
+  p.interrupt('seek');
+  ctx.sampleSyncQuality(timingClock, 2700);
+  assert.equal(samples[2].source, 'position');
+  assert.equal(samples[2].errorMs, 0, 'interrupted sample (seek) falls back to position error');
+
+  // 5. Interrupted by waiting at t=2800 (sample age 1800ms <= 2500ms): must NOT contribute presentation error
+  p.interrupt('waiting');
+  ctx.sampleSyncQuality(timingClock, 2800);
+  assert.equal(samples[3].source, 'position');
+  assert.equal(samples[3].errorMs, 0, 'interrupted sample (waiting) falls back to position error');
+
+  // 6. Interrupted by visibilitychange at t=2900 (sample age 1900ms <= 2500ms): must NOT contribute presentation error
+  p.interrupt('visibilitychange');
+  ctx.sampleSyncQuality(timingClock, 2900);
+  assert.equal(samples[4].source, 'position');
+  assert.equal(samples[4].errorMs, 0, 'interrupted sample (visibilitychange) falls back to position error');
+
+  // 7. Resumption: new frame arrives at t=3000
+  p.frame(3000, { mediaTime: 10.05, expectedDisplayTime: 3000, presentedFrames: 2 }, { target: 10.0, context: syncKey, clockRevision: 1 });
+  ctx.sampleSyncQuality(timingClock, 3050);
+  assert.equal(samples[5].source, 'presentation');
+  assert.ok(Math.abs(samples[5].errorMs - 50) < 1e-4, 'fresh frames after interruption resume presentation reporting');
+});
+
+test('controlSignal selects presentation, blend, or position based on 90/180 ms divergence and validity', () => {
+  const presAhead = { valid: true, errorMs: 50, smoothedErrorMs: 50, ageMs: 40, reason: 'fresh' };
+  const sigAhead = controlSignal({ target: 10.0, currentTime: 10.05, presentation: presAhead, clockValid: true, visible: true, eligible: true });
+  assert.equal(sigAhead.source, 'presentation');
+  assert.equal(sigAhead.error, -0.05);
+  assert.equal(sigAhead.divergenceMs, 0);
+
+  const presBehind = { valid: true, errorMs: -80, smoothedErrorMs: -80, ageMs: 30, reason: 'fresh' };
+  const sigBehind = controlSignal({ target: 10.0, currentTime: 9.92, presentation: presBehind, clockValid: true, visible: true, eligible: true });
+  assert.equal(sigBehind.source, 'presentation');
+  assert.equal(sigBehind.error, 0.08);
+
+  const pres80 = { valid: true, errorMs: -100, smoothedErrorMs: -100, ageMs: 20, reason: 'fresh' };
+  const sig80 = controlSignal({ target: 10.0, currentTime: 9.82, presentation: pres80, clockValid: true, visible: true, eligible: true });
+  assert.equal(sig80.source, 'presentation');
+  assert.equal(sig80.error, 0.10);
+  assert.equal(sig80.divergenceMs, 80);
+
+  const pres90 = { valid: true, errorMs: -100, smoothedErrorMs: -100, ageMs: 20, reason: 'fresh' };
+  const sig90 = controlSignal({ target: 10.0, currentTime: 9.81, presentation: pres90, clockValid: true, visible: true, eligible: true });
+  assert.equal(sig90.source, 'presentation');
+  assert.equal(sig90.divergenceMs, 90);
+
+  const pres120 = { valid: true, errorMs: -100, smoothedErrorMs: -100, ageMs: 20, reason: 'fresh' };
+  const sig120 = controlSignal({ target: 10.0, currentTime: 9.78, presentation: pres120, clockValid: true, visible: true, eligible: true });
+  assert.equal(sig120.source, 'blend');
+  assert.equal(sig120.divergenceMs, 120);
+  assert.equal(Math.round(sig120.error * 1000), Math.round((0.5 * 0.10 + 0.5 * 0.22) * 1000));
+
+  const pres180 = { valid: true, errorMs: -100, smoothedErrorMs: -100, ageMs: 20, reason: 'fresh' };
+  const sig180 = controlSignal({ target: 10.0, currentTime: 9.72, presentation: pres180, clockValid: true, visible: true, eligible: true });
+  assert.equal(sig180.source, 'blend');
+  assert.equal(sig180.divergenceMs, 180);
+
+  const pres200 = { valid: true, errorMs: -100, smoothedErrorMs: -100, ageMs: 20, reason: 'fresh' };
+  const sig200 = controlSignal({ target: 10.0, currentTime: 9.70, presentation: pres200, clockValid: true, visible: true, eligible: true });
+  assert.equal(sig200.source, 'position');
+  assert.ok(Math.abs(sig200.error - 0.30) < 1e-4);
+  assert.equal(sig200.divergenceMs, 200);
+  assert.equal(sig200.reason, 'divergent');
+
+  const sigMissing = controlSignal({ target: 10.0, currentTime: 9.8, presentation: undefined, clockValid: true, visible: true, eligible: true });
+  assert.equal(sigMissing.source, 'position');
+  assert.ok(Math.abs(sigMissing.error - 0.20) < 1e-4);
+  assert.equal(sigMissing.reason, 'none');
+
+  const presStale = { valid: false, errorMs: -100, smoothedErrorMs: -100, ageMs: 1200, reason: 'stale' };
+  const sigStale = controlSignal({ target: 10.0, currentTime: 9.8, presentation: presStale, clockValid: true, visible: true, eligible: true });
+  assert.equal(sigStale.source, 'position');
+  assert.equal(sigStale.reason, 'stale');
+
+  const sigHidden = controlSignal({ target: 10.0, currentTime: 9.8, presentation: pres80, clockValid: true, visible: false, eligible: true });
+  assert.equal(sigHidden.source, 'position');
+  assert.equal(sigHidden.reason, 'hidden');
+
+  const sigClock = controlSignal({ target: 10.0, currentTime: 9.8, presentation: pres80, clockValid: false, visible: true, eligible: true });
+  assert.equal(sigClock.source, 'position');
+  assert.equal(sigClock.reason, 'clock-invalid');
+
+  const sigIneligible = controlSignal({ target: 10.0, currentTime: 9.8, presentation: pres80, clockValid: true, visible: true, eligible: false });
+  assert.equal(sigIneligible.source, 'position');
+  assert.equal(sigIneligible.reason, 'ineligible');
 });
 test('frame diagnostics have their own bounded sanitized ring',()=>{
   const d=create();for(let i=0;i<7300;i++)d.record('frame',{frameMediaTime:i,frameServerTime:100000+i,clockEpoch:'secret',url:'secret'});

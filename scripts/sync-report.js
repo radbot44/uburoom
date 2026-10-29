@@ -30,6 +30,7 @@ function summarize(log) {
     seeks:rows.filter(r=>r.event==='seeking').length,syncSeeks:rows.filter(r=>r.event==='sync-seek').length,
     rateChanges:rows.filter(r=>r.event==='ratechange').length,nonUnitRateFrames:frames.filter(r=>r.rate!==1).length,
     rateDeviationPercent:distribution(frames.map(r=>Math.abs(r.rate-1)*100)),
+    controlDecisions:{presentation:samples.filter(r=>r.controlSource==='presentation').length,blend:samples.filter(r=>r.controlSource==='blend').length,position:samples.filter(r=>r.controlSource==='position').length,total:samples.filter(r=>r.controlSource).length},
     observedRateMs,nonUnitRateMs,unknownRateMs,
     waits:rows.filter(r=>r.event==='waiting').length,stalls:rows.filter(r=>r.event==='stalled').length};
 }

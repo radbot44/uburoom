@@ -34,13 +34,13 @@ function compareStarts(a,b) {
   for(const l of left){const r=lookup.get(Math.round(l.frameMediaTime*1000));if(r)matches.push({mediaTime:l.frameMediaTime,displayDifferenceMs:Math.abs(l.frameServerTime-r.frameServerTime)});}
   return {firstCommonFrame:matches[0]??null,matchingFrameDifferencesMs:distribution(matches.map(r=>r.displayDifferenceMs))};
 }
-function installFixture(delay,gentle,precision=false) {
+function installFixture(delay,gentle=true) {
   const apply=applyState,rate=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'playbackRate');
   globalThis.startupFixture={delay,unit:false,legacy:false,states:[],attempts:0};
-  const baseController=precision?uburoomTiming.precisionCorrection():uburoomTiming.correction();
+  const baseController=uburoomTiming.correction();
   const controller={
-    policy:precision?'precision':'gentle',
-    get mode(){return startupFixture.legacy?'legacy':(precision?'precision':'gentle');},
+    policy:'gentle',
+    get mode(){return startupFixture.legacy?'legacy':'gentle';},
     update(input){
       if(startupFixture.legacy) {
         return !input.eligible||Math.abs(input.error)<.15||Math.abs(input.error)>.65?1:input.error>0?1.04:.96;
@@ -50,7 +50,7 @@ function installFixture(delay,gentle,precision=false) {
     reset(){baseController.reset();}
   };
   sync.driftCorrection=controller;
-  if(sync.driftCorrection?.policy!==(precision?'precision':'gentle')) {
+  if(sync.driftCorrection?.policy!=='gentle') {
     throw new Error('Requested policy is not active on the live controller');
   }
   Object.defineProperty(video,'playbackRate',{configurable:true,get(){return rate.get.call(this);},set(value){
@@ -85,11 +85,10 @@ async function main() {
   const name=option('browser','firefox'),repeats=Number(option('repeats','5')),seconds=Number(option('seconds','6')),
     rtts=option('rtts','20,320').split(',').map(Number),seed=Number(option('seed','20261016')),fps=option('fps','24'),
     output=path.resolve(option('output','artifacts/startup-'+Date.now())),initialStart=option('initial-start','scheduled'),
-    comparison=option('comparison','unit'),drift=Number(option('drift','0')),policy=option('policy','gentle'),precision=policy==='precision';
+    comparison=option('comparison','unit'),drift=Number(option('drift','0'));
   assert.ok(Number.isInteger(repeats)&&repeats>0&&repeats<=20&&seconds>=4&&seconds<=15&&rtts.every(n=>n>=0&&n<=1000)&&/^\d+(?:\/\d+)?$/.test(fps));
   assert.ok(['immediate','scheduled'].includes(initialStart));
   assert.ok(['unit','legacy'].includes(comparison)&&Number.isFinite(drift)&&Math.abs(drift)<=.6);
-  assert.ok(['gentle','precision'].includes(policy));
   if(initialStart==='immediate'&&option('lifecycle','off')==='on')throw new Error('Lifecycle checks require scheduled initial starts');
   if(fs.existsSync(output))throw new Error('Use a new output directory');fs.mkdirSync(output,{recursive:true});
   const media=path.join(output,'fixture.mp4'),root=path.resolve(__dirname,'..');
@@ -102,16 +101,16 @@ async function main() {
   app.watch.demoMedia={...app.watch.demoMedia,file:media,duration:40};
   app.hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=>'fixture-call',validVoiceChannel:()=>true,options:()=>({available:true})};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));config.publicUrl='https://localhost:'+app.server.address().port;
-  const report={browser:name,initialStart,sourceFps:fps,seconds,seed,repeats,comparison,policy:precision?'precision':'gentle',injectedGuestDriftSeconds:drift,results:[],limitations:'Two reused disposable headless software browsers, one machine; symmetric application WebSocket delays, including clock exchanges. Native protocol ping/pong is not delayed. Unit mode suppresses rate nudges only. Legacy mode uses the 4% gain/deadband with current recovery eligibility. All retain meaningful seeks. Optional guest drift is a local seek after startup. Trials are matched by round/RTT and counterbalanced, not physical output, motion quality or WAN certification.'};
+  const report={browser:name,initialStart,sourceFps:fps,seconds,seed,repeats,comparison,policy:'gentle',injectedGuestDriftSeconds:drift,results:[],limitations:'Two reused disposable headless software browsers, one machine; symmetric application WebSocket delays, including clock exchanges. Native protocol ping/pong is not delayed. Unit mode suppresses rate nudges only. Legacy mode uses the 4% gain/deadband with current recovery eligibility. All retain meaningful seeks. Optional guest drift is a local seek after startup. Trials are matched by round/RTT and counterbalanced, not physical output, motion quality or WAN certification.'};
   let host,guest;
   try {
     host=await playbackBrowser(name);guest=await playbackBrowser(name);report.versions=[host.version,guest.version];
     const h=await host.page(config.publicUrl+'/watch?demo=host'),g=await guest.page(config.publicUrl+'/watch?demo=guest'),clients=[[host,h],[guest,g]];
     for(const [browser,page]of clients){
       await browser.until(page,'typeof transport!=="undefined"&&transport?.ready','Fixture login');
-      await browser.evaluate(page,'('+installFixture.toString()+')(20,'+(policy==='gentle')+','+precision+')');
+      await browser.evaluate(page,'('+installFixture.toString()+')(20,true)');
       const activePolicy=await browser.evaluate(page,'sync?.driftCorrection?.policy');
-      assert.equal(activePolicy,policy,'Requested policy must be active on live controller');
+      assert.equal(activePolicy,'gentle','Requested policy must be active on live controller');
     }
     await host.evaluate(h,'document.getElementById("create").click();document.getElementById("room-create").click();true');await host.until(h,'!!state','Fixture room');
     const room=await host.evaluate(h,'selected');await guest.evaluate(g,'selectRoom('+JSON.stringify(room)+').then(()=>true)');await guest.until(g,'!!state','Guest room');
@@ -120,7 +119,7 @@ async function main() {
       await Promise.all(clients.map(([browser,page],i)=>browser.evaluate(page,`startupFixture.delay=${i?trial.rtt:20};startupFixture.unit=${trial.mode==='unit'};startupFixture.legacy=${trial.mode==='legacy'};sync.resetCorrection(true);startupFixture.attempts=0;startupFixture.states=[];playbackClock.reset();refreshState().then(()=>true)`)));
       for(const [browser,page]of clients){
         const activeMode=await browser.evaluate(page,'sync?.driftCorrection?.mode');
-        const expectedMode=trial.mode==='legacy'?'legacy':policy;
+        const expectedMode=trial.mode==='legacy'?'legacy':'gentle';
         assert.equal(activeMode,expectedMode,'Live controller mode must match requested mode');
       }
       for(const [browser,page]of clients)await browser.until(page,'playbackClock.read().valid','Fresh clock');

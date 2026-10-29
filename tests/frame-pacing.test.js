@@ -122,30 +122,57 @@ test('default uses proportional drift correction with persistence and recovery g
   assert.equal(jumps.update({now:92100,error:.3,eligible:true,context:'fixture',buffered:true,settled:true,frames:88,position:5,uncertaintyMs:10,stabilityMs:10}),true,'sharedSeek clears exhausted pending lock');
 
   ctx.document.visibilityState='visible';
-  ctx.video.currentTime=10;
-  ctx.lastPresentationSampleAt=30000;
-  ctx.lastPresentationErrorMs=-120;
+  ctx.expected=()=>10.3;
+  ctx.video.currentTime=10.15;
+  const syncKey=ctx.sync.contextKey();
+  // Behind frame: mediaTime 10.18 vs target 10.30 => presentationErrorMs = -120 ms => presentationControlError = +0.12 s
+  // Position error: 10.3 - 10.15 = +0.15 s => divergence = 30 ms <= 90 ms => presentation selected
+  ctx.presentationTiming.frame(30000,{mediaTime:10.18,expectedDisplayTime:30000,presentedFrames:100},{target:10.3,context:syncKey});
   now=30000;await ctx.synchronize();
-  now=30500;await ctx.synchronize();
-  now=31000;await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate,1.01,'steers playbackRate from fresh lastPresentationErrorMs');
-  now=31500;await ctx.synchronize();
-  assert.equal(ctx.video.playbackRate,1.025,'falls back to currentTime difference when lastPresentationErrorMs is stale');
+  now=30500;ctx.presentationTiming.frame(30500,{mediaTime:10.18+(30500-30000)/1000,expectedDisplayTime:30500,presentedFrames:112},{target:10.3+(30500-30000)/1000,context:syncKey});await ctx.synchronize();
+  now=31000;ctx.presentationTiming.frame(31000,{mediaTime:10.18+(31000-30000)/1000,expectedDisplayTime:31000,presentedFrames:124},{target:10.3+(31000-30000)/1000,context:syncKey});await ctx.synchronize();
+  assert.equal(ctx.sync.control.source,'presentation','selects presentation control signal');
+  assert.equal(ctx.video.playbackRate,1.01,'steers playbackRate to speed up from behind presentation error');
+
+  // Stale sample fallback: after > 1000 ms without frame updates, falls back to position difference
+  ctx.video.currentTime=10.0;
+  now=32500;await ctx.synchronize();
+  assert.equal(ctx.sync.control.source,'position','falls back to position when presentation sample is stale');
+  assert.equal(ctx.video.playbackRate,1.025,'falls back to currentTime difference when presentation sample is stale');
+
+  // Ahead frame: mediaTime 10.42 vs target 10.30 => presentationErrorMs = +120 ms => presentationControlError = -0.12 s (slows down)
+  ctx.video.currentTime=10.45;
+  ctx.presentationTiming.frame(33000,{mediaTime:10.42,expectedDisplayTime:33000,presentedFrames:150},{target:10.3,context:syncKey});
+  now=33000;await ctx.synchronize(); // exits previous positive direction burst
+  now=33500;ctx.presentationTiming.frame(33500,{mediaTime:10.42+(33500-33000)/1000,expectedDisplayTime:33500,presentedFrames:162},{target:10.3+(33500-33000)/1000,context:syncKey});await ctx.synchronize(); // sets since.at = 33500
+  now=34000;ctx.presentationTiming.frame(34000,{mediaTime:10.42+(34000-33000)/1000,expectedDisplayTime:34000,presentedFrames:174},{target:10.3+(34000-33000)/1000,context:syncKey});await ctx.synchronize();
+  now=34500;ctx.presentationTiming.frame(34500,{mediaTime:10.42+(34500-33000)/1000,expectedDisplayTime:34500,presentedFrames:186},{target:10.3+(34500-33000)/1000,context:syncKey});await ctx.synchronize(); // 1000ms sustained negative drift
+  assert.equal(ctx.sync.control.source,'presentation');
+  assert.equal(ctx.video.playbackRate,0.99,'steers playbackRate to slow down from ahead presentation error');
+
+  // Presentation error cannot independently trigger hard seeks or jumps
+  // Small position difference (0.05s) with large presentation error (-800ms)
+  ctx.video.currentTime=10.25;
+  ctx.presentationTiming.frame(35000,{mediaTime:9.5,expectedDisplayTime:35000,presentedFrames:190},{target:10.3,context:syncKey});
+  now=35000;await ctx.synchronize();
+  assert.equal(ctx.video.currentTime,10.25,'presentation error cannot trigger hard seek');
+
   ctx.syncCorrectionMode='jumps';
-  jumps.committed({now:32000,frames:10,target:5,context:':::fixture:'});
-  jumps.update({now:35500,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:15,position:10,uncertaintyMs:12,stabilityMs:12});
-  jumps.committed({now:66000,frames:20,target:5,context:':::fixture:'});
-  jumps.update({now:69500,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:25,position:10,uncertaintyMs:12,stabilityMs:12});
+  jumps.committed({now:35500,frames:10,target:5,context:':::fixture:'});
+  jumps.update({now:39000,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:15,position:10,uncertaintyMs:12,stabilityMs:12});
+  jumps.committed({now:70000,frames:20,target:5,context:':::fixture:'});
+  jumps.update({now:73500,error:.3,eligible:true,context:':::fixture:',buffered:true,settled:true,frames:25,position:10,uncertaintyMs:12,stabilityMs:12});
   assert.equal(jumps.suspended(),true);
-  now=70000;await ctx.synchronize();now=70500;await ctx.synchronize();now=71000;await ctx.synchronize();
+  ctx.video.currentTime=10;
+  now=74000;await ctx.synchronize();now=74500;await ctx.synchronize();now=75000;await ctx.synchronize();
   assert.equal(ctx.video.playbackRate,1.025,'suspended jump mode falls back to speed correction');
 
   assert.equal(typeof ctx.sync.driftCorrection?.update,'function');
-  const custom={updated:0,policy:'precision',update(){this.updated++;return 1.04;},reset(){}};
+  const custom={updated:0,policy:'custom',update(){this.updated++;return 1.04;},reset(){}};
   ctx.sync.driftCorrection=custom;
-  assert.equal(ctx.sync.driftCorrection.policy,'precision');
+  assert.equal(ctx.sync.driftCorrection.policy,'custom');
   ctx.syncCorrectionMode='speed';
-  now=72000;await ctx.synchronize();
+  now=75000;await ctx.synchronize();
   assert.equal(custom.updated,1);
   assert.equal(ctx.video.playbackRate,1.04,'swapped driftCorrection controller drives rate adjustment');
   ctx.sync.driftCorrection=undefined;

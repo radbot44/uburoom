@@ -115,29 +115,123 @@
     return {arm,cancel};
   }
   function presentation() {
-    let previous, intervals=[];
-    return {
-      reset(){previous=undefined;intervals=[];},
-      cadence(){return intervals.length>=8?[...intervals].sort((a,b)=>a-b)[Math.floor(intervals.length/2)]:0;},
-      frame(now,metadata) {
-        const {mediaTime,expectedDisplayTime,presentationTime,presentedFrames,processingDuration}=metadata;
-        if(![mediaTime,expectedDisplayTime,presentedFrames].every(Number.isFinite))return undefined;
-        const current={mediaTime,expectedDisplayTime,presentedFrames};
-        const advancing=previous && mediaTime>previous.mediaTime && expectedDisplayTime>previous.expectedDisplayTime && presentedFrames>previous.presentedFrames;
-        if(advancing && presentedFrames===previous.presentedFrames+1) {
-          const interval=mediaTime-previous.mediaTime;
-          if(interval>=1/120 && interval<=.1){intervals.push(interval);intervals=intervals.slice(-24);}
-        }
-        const result={frameMediaTime:mediaTime,frameDisplayMonoMs:expectedDisplayTime,framePresentationMonoMs:presentationTime,
-          frameCallbackLatenessMs:now-expectedDisplayTime,frameProcessingMs:Number.isFinite(processingDuration)?processingDuration*1000:undefined,
-          presentedFrames,frameIntervalMs:advancing?expectedDisplayTime-previous.expectedDisplayTime:undefined,
-          frameMediaIntervalMs:advancing?(mediaTime-previous.mediaTime)*1000:undefined,
-          // Gaps mean callbacks were missed; they do not prove repeated/dropped pixels.
-          frameCallbackGap:advancing?Math.max(0,presentedFrames-previous.presentedFrames-1):undefined,
-          frameRepeated:!!previous&&mediaTime===previous.mediaTime};
-        previous=current;return result;
+    let previous, intervals=[], sample, lastInterruptReason;
+    function reset() {
+      previous=undefined;intervals=[];sample=undefined;lastInterruptReason=undefined;
+    }
+    function interrupt(reason='interrupted') {
+      previous=undefined;
+      if(sample) {
+        sample.interrupted=true;sample.smoothedErrorMs=undefined;sample.samples=0;
+        if(reason==='stream')sample=undefined;
       }
-    };
+      lastInterruptReason=reason;
+    }
+    function cadence() {
+      return intervals.length>=8?[...intervals].sort((a,b)=>a-b)[Math.floor(intervals.length/2)]:0;
+    }
+    function frame(now,metadata,options) {
+      const {mediaTime,expectedDisplayTime,presentationTime,presentedFrames,processingDuration}=metadata||{};
+      if(![mediaTime,expectedDisplayTime,presentedFrames].every(Number.isFinite))return undefined;
+      const current={mediaTime,expectedDisplayTime,presentedFrames};
+      const advancing=previous && mediaTime>previous.mediaTime && expectedDisplayTime>previous.expectedDisplayTime && presentedFrames>previous.presentedFrames;
+      if(advancing && presentedFrames===previous.presentedFrames+1) {
+        const interval=mediaTime-previous.mediaTime;
+        if(interval>=1/120 && interval<=.1){intervals.push(interval);intervals=intervals.slice(-24);}
+      }
+      const result={frameMediaTime:mediaTime,frameDisplayMonoMs:expectedDisplayTime,framePresentationMonoMs:presentationTime,
+        frameCallbackLatenessMs:now-expectedDisplayTime,frameProcessingMs:Number.isFinite(processingDuration)?processingDuration*1000:undefined,
+        presentedFrames,frameIntervalMs:advancing?expectedDisplayTime-previous.expectedDisplayTime:undefined,
+        frameMediaIntervalMs:advancing?(mediaTime-previous.mediaTime)*1000:undefined,
+        // Gaps mean callbacks were missed; they do not prove repeated/dropped pixels.
+        frameCallbackGap:advancing?Math.max(0,presentedFrames-previous.presentedFrames-1):undefined,
+        frameRepeated:!!previous&&mediaTime===previous.mediaTime};
+
+      const {target,context,clockRevision}=options||{};
+      if(Number.isFinite(target)) {
+        const currentErrorMs=(mediaTime-target)*1000;
+        let reinit=false;
+        const currentCadenceSeconds=intervals.length>=8?[...intervals].sort((a,b)=>a-b)[Math.floor(intervals.length/2)]:0;
+        const cadenceMs=currentCadenceSeconds*1000;
+
+        if(!sample||sample.interrupted||!Number.isFinite(sample.smoothedErrorMs)) {
+          reinit=true;
+        } else if(!Number.isFinite(sample.at)||now<sample.at||now-sample.at>1000) {
+          reinit=true;
+        } else if(context!==undefined&&sample.context!==undefined&&context!==sample.context) {
+          reinit=true;
+        } else if(clockRevision!==undefined&&sample.clockRevision!==undefined&&clockRevision!==sample.clockRevision) {
+          reinit=true;
+        } else if(previous) {
+          if(expectedDisplayTime<previous.expectedDisplayTime||expectedDisplayTime-previous.expectedDisplayTime>250) {
+            reinit=true;
+          } else if(mediaTime<previous.mediaTime||presentedFrames<previous.presentedFrames) {
+            reinit=true;
+          } else {
+            const dMediaMs=(mediaTime-previous.mediaTime)*1000;
+            const dDisplayMs=expectedDisplayTime-previous.expectedDisplayTime;
+            if(Math.abs(dMediaMs-dDisplayMs)>Math.max(100,3*cadenceMs))reinit=true;
+          }
+        }
+
+        let smoothedErrorMs,sampleCount;
+        if(reinit) {
+          smoothedErrorMs=currentErrorMs;sampleCount=1;
+        } else {
+          smoothedErrorMs=0.35*currentErrorMs+0.65*sample.smoothedErrorMs;
+          sampleCount=(sample.samples||0)+1;
+        }
+        sample={at:now,errorMs:currentErrorMs,smoothedErrorMs,samples:sampleCount,context,clockRevision,interrupted:false};
+        lastInterruptReason=undefined;
+        result.presentationErrorMs=currentErrorMs;
+        result.smoothedPresentationErrorMs=smoothedErrorMs;
+        result.presentationReset=reinit;
+      }
+      previous=current;return result;
+    }
+    function read(now,options) {
+      const at=Number.isFinite(now)?now:(typeof performance==='object'&&performance.now?performance.now():0);
+      const reqContext=typeof options==='string'?options:options?.context;
+      const reqClockRevision=typeof options==='object'?options?.clockRevision:undefined;
+      const currentCadence=cadence();
+      if(!sample)return {valid:false,interrupted:false,errorMs:undefined,smoothedErrorMs:undefined,ageMs:undefined,cadenceSeconds:currentCadence,samples:0,reason:lastInterruptReason||'none'};
+      const ageMs=at-sample.at;
+      const base={errorMs:sample.errorMs,smoothedErrorMs:sample.smoothedErrorMs,ageMs:ageMs>=0?ageMs:undefined,cadenceSeconds:currentCadence,samples:sample.samples||0,interrupted:Boolean(sample.interrupted)};
+      if(sample.interrupted)return {...base,valid:false,smoothedErrorMs:undefined,interrupted:true,reason:lastInterruptReason||'interrupted'};
+      if(ageMs<0)return {...base,valid:false,reason:'discontinuity'};
+      if(reqContext!==undefined&&sample.context!==undefined&&reqContext!==sample.context)return {...base,valid:false,reason:'context'};
+      if(reqClockRevision!==undefined&&sample.clockRevision!==undefined&&reqClockRevision!==sample.clockRevision)return {...base,valid:false,reason:'clock'};
+      if(ageMs>1000)return {...base,valid:false,reason:'stale'};
+      return {...base,valid:true,reason:'fresh'};
+    }
+    return {reset,interrupt,cadence,frame,read};
+  }
+  function controlSignal({target,currentTime,presentation,clockValid=true,visible=true,eligible=true}={}) {
+    const positionError=Number.isFinite(target)&&Number.isFinite(currentTime)?target-currentTime:0;
+    const usable=!!(presentation&&presentation.valid&&Number.isFinite(presentation.smoothedErrorMs)&&
+      Number.isFinite(presentation.ageMs)&&presentation.ageMs<=1000&&presentation.ageMs>=0&&
+      clockValid&&visible&&eligible);
+    if(!usable) {
+      let reason='none';
+      if(!presentation||presentation.reason==='none')reason='none';
+      else if(presentation.interrupted||['interrupted','pause','waiting','seek','visibilitychange','stream'].includes(presentation.reason))reason='interrupted';
+      else if(presentation.reason==='context')reason='context';
+      else if(presentation.reason==='clock')reason='clock';
+      else if(presentation.reason==='discontinuity')reason='discontinuity';
+      else if(presentation.reason==='stale'||(presentation.ageMs!==undefined&&presentation.ageMs>1000))reason='stale';
+      else if(!clockValid)reason='clock-invalid';
+      else if(!visible)reason='hidden';
+      else if(!eligible)reason='ineligible';
+      else reason=presentation.reason||'fallback';
+      const divergenceMs=(presentation&&Number.isFinite(presentation.smoothedErrorMs))?
+        Math.round(Math.abs(-presentation.smoothedErrorMs/1000-positionError)*1000):undefined;
+      return {error:positionError,source:'position',divergenceMs,reason};
+    }
+    const presentationError=-presentation.smoothedErrorMs/1000;
+    const divergenceMs=Math.round(Math.abs(presentationError-positionError)*1000);
+    if(divergenceMs<=90)return {error:presentationError,source:'presentation',divergenceMs,reason:'fresh'};
+    if(divergenceMs<=180)return {error:0.5*presentationError+0.5*positionError,source:'blend',divergenceMs,reason:'blend'};
+    return {error:positionError,source:'position',divergenceMs,reason:'divergent'};
   }
   // Local drift correction only. Frame intervals widen tolerance; they never
   // authorize a shared action or imply that physical display cadence is known.
@@ -186,28 +280,6 @@
     }
     return { update, reset };
   }
-  // Candidate policy: require sustained, resolvable error and separate entry
-  // and exit thresholds. Clock uncertainty never authorizes a correction.
-  function precisionCorrection() {
-    let key, last, since, sign = 0, active = false;
-    function reset() { key = last = since = undefined; sign = 0; active = false; }
-    function update({now,error,eligible,context,uncertaintyMs}) {
-      if (key !== context || last !== undefined && (now < last || now - last > 3000)) reset();
-      key = context; last = now;
-      const magnitude = Math.abs(error), direction = Math.sign(error);
-      if (!eligible || !Number.isFinite(now) || !Number.isFinite(error) || !Number.isFinite(uncertaintyMs) ||
-          uncertaintyMs < 0 || uncertaintyMs > 50 || uncertaintyMs / 1000 >= magnitude / 2 || magnitude > .65 || magnitude <= .05) {
-        since = undefined; sign = 0; active = false; return 1;
-      }
-      if (direction !== sign) { since = undefined; active = false; sign = direction; }
-      if (active) return 1 + sign * .04;
-      if (magnitude <= .1) { since = undefined; return 1; }
-      since ??= now;
-      if (now - since < 1000) return 1;
-      active = true; return 1 + sign * .04;
-    }
-    return {update,reset};
-  }
   // Opt-in local seeks. Interruptions discard drift evidence, but never erase
   // an outstanding seek or its cooldown. Only a new source/context resets those.
   function jumpCorrection() {
@@ -255,6 +327,6 @@
     }
     return {update,committed,interrupt,reset,suspended:()=>suspended};
   }
-  const api={clock,target,presentation,alarm,correction,precisionCorrection,jumpCorrection};
+  const api={clock,target,presentation,controlSignal,alarm,correction,jumpCorrection};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomTiming=api;
 })(typeof globalThis==='object'?globalThis:this);

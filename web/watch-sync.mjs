@@ -29,8 +29,6 @@
  * @property {boolean} autoplayBlocked
  * @property {string} [readyVersion]
  * @property {string} syncCorrectionMode
- * @property {number} [lastPresentationSampleAt]
- * @property {number} [lastPresentationErrorMs]
  */
 /**
  * Local synchronization lifecycle; source anchoring stays fenced by the current HLS client.
@@ -48,15 +46,15 @@
  * startAlarm?:ReturnType<typeof import('./playback-timing.js').alarm>, pauseAlarm?:ReturnType<typeof import('./playback-timing.js').alarm>}} host
  */
 export function createSync(host) {
-  const {video,timing,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
+  const {video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample}=host;
   const now=host.now || (()=>globalThis.performance.now());
-  let driftCorrection=host.driftCorrection || timing.correction();
-  const jumpDriftCorrection=host.jumpDriftCorrection || timing.jumpCorrection();
-  const startAlarm=host.startAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
-  const pauseAlarm=host.pauseAlarm || timing.alarm({now:()=>playbackClock.read().serverTime});
+  let driftCorrection=host.driftCorrection || uburoomTiming.correction();
+  const jumpDriftCorrection=host.jumpDriftCorrection || uburoomTiming.jumpCorrection();
+  const startAlarm=host.startAlarm || uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
+  const pauseAlarm=host.pauseAlarm || uburoomTiming.alarm({now:()=>playbackClock.read().serverTime});
   let preparedStartKey, syncSeekPending=false, hlsPreparationUntil=0, hlsTimelinePending=false;
-  let correctionSuppressionUntil=0;
+  let correctionSuppressionUntil=0, lastControl;
   function resetDriftCorrection(full=false) {
     if(full)jumpDriftCorrection.reset();
     driftCorrection.reset();jumpDriftCorrection.interrupt();
@@ -131,6 +129,7 @@ export function createSync(host) {
     const canAlign=!syncSeekPending||state.state.paused||!playerWaiting&&video.readyState>=3&&targetBuffered;
     const jumpContext=syncCorrectionMode==='jumps'?[selected,state.mediaVersion,state.streamVersion,state.epoch,state.readinessVersion].join(':'):undefined;
     const align = (event='sync-seek') => {
+      presentationTiming.interrupt?.('seek');
       const destination=Math.max(0,Math.min(target,(Number.isFinite(video.duration)?video.duration:state.state.duration)-.05));
       const automaticCorrection=(event==='sync-seek'||event==='sync-jump')&&now()>=correctionSuppressionUntil&&clockValid&&!paused&&
         !state.waitingForReady&&readyVersion===state.mediaVersion&&!playerWaiting&&!video.paused&&!video.seeking&&video.readyState>=3&&decodedFrames()>0&&
@@ -148,12 +147,17 @@ export function createSync(host) {
     if ((clockValid || state.state.paused) && canAlign && (!video.seeking || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
       align();
     }
-    const presentationDifference = Number.isFinite(lastPresentationErrorMs) && Number.isFinite(lastPresentationSampleAt) && now() - lastPresentationSampleAt <= 1000 && Math.abs(-lastPresentationErrorMs / 1000 - difference) <= 0.25 ? -lastPresentationErrorMs / 1000 : difference;
-    const correctionInput={now:now(),error:presentationDifference,context:startKey(),
-      eligible:clockValid&&host.visibility()==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
-        uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1,
-      uncertaintyMs:timing.clockUncertaintyMs,stabilityMs:timing.clockStabilityMs ?? timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence()};
+    const eligible=clockValid&&host.visibility()==='visible'&&!paused&&!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3&&
+      uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=1;
+    const presentationSample=presentationTiming.read?presentationTiming.read(now(),{context:startKey(),clockRevision:timing.clockRevision}):undefined;
+    const signal=uburoomTiming.controlSignal?uburoomTiming.controlSignal({
+      target,currentTime:video.currentTime,presentation:presentationSample,clockValid,visible:host.visibility()==='visible',eligible
+    }):{error:difference,source:'position',divergenceMs:undefined,reason:'none'};
+    lastControl={...signal,presentationAgeMs:presentationSample?.ageMs};
+    const correctionInput={now:now(),error:signal.error,context:startKey(),eligible,
+      uncertaintyMs:timing.clockUncertaintyMs,stabilityMs:timing.clockStabilityMs ?? timing.clockUncertaintyMs,frameSeconds:presentationTiming.cadence?presentationTiming.cadence():0};
     if(syncCorrectionMode==='jumps' && jumpDriftCorrection.update({...correctionInput,
+      error:difference,
       context:jumpContext,
       eligible:correctionInput.eligible&&!state.waitingForReady,
       buffered:targetBuffered,settled:!video.paused&&!video.seeking&&!playerWaiting&&video.readyState>=3,
@@ -178,24 +182,27 @@ export function createSync(host) {
   function reset() {
     resetDriftCorrection(true);startAlarm.cancel();pauseAlarm.cancel();
     preparedStartKey=undefined;syncSeekPending=false;hlsPreparationUntil=0;hlsTimelinePending=false;
+    lastControl=undefined;presentationTiming.reset?.();
   }
   function event(name) {
     if(name==='playing'&&!hlsTimelinePending)syncSeekPending=false;
-    if(name==='seeking'||name==='emptied')presentationTiming.reset();
+    if(name==='seeking'||name==='emptied')presentationTiming.reset?.();
+    else if(['pause','waiting','visibilitychange'].includes(name))presentationTiming.interrupt?.(name);
     if(['pause','waiting','seeking','emptied'].includes(name)||name==='visibilitychange'&&host.visibility()!=='visible')resetDriftCorrection();
-    if(name==='offline'||name==='pagehide'){playbackClock.reset();startAlarm.cancel();pauseAlarm.cancel();resetDriftCorrection();}
+    if(name==='offline'||name==='pagehide'){playbackClock.reset();presentationTiming.interrupt?.(name);startAlarm.cancel();pauseAlarm.cancel();resetDriftCorrection();}
   }
   function prepare({until=hlsPreparationUntil,timeline=hlsTimelinePending}={}) {hlsPreparationUntil=until;hlsTimelinePending=timeline;}
   function anchor(target) {
     hlsTimelinePending=false;hlsPreparationUntil=now()+10000;
     if(target>.65){try{diagnosticSample('hls-anchor');video.currentTime=target;syncSeekPending=true;}catch{}}
   }
-  function sharedSeek() {syncSeekPending=false;jumpDriftCorrection.reset();correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+5000);if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
+  function sharedSeek() {syncSeekPending=false;jumpDriftCorrection.reset();presentationTiming.interrupt?.('seek');correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+5000);if(hlsPreparationUntil)hlsPreparationUntil=now()+10000;}
   function suppressCorrectionTelemetry(durationMs=5000) {correctionSuppressionUntil=Math.max(correctionSuppressionUntil,now()+Math.max(0,durationMs));}
   function transition(next) {if(startKey()!==startKey(next)){startAlarm.cancel();pauseAlarm.cancel();}}
   const interval=host.repeat(()=>{if(host.read().state)void synchronize();},500);
   function close() {host.cancelRepeat(interval);reset();}
   return {synchronize,reset,resetCorrection:resetDriftCorrection,event,prepare,anchor,sharedSeek,suppressCorrectionTelemetry,transition,close,
-    get driftCorrection(){return driftCorrection;},set driftCorrection(value){driftCorrection=value||timing.correction();},
+    contextKey:()=>startKey(),get control(){return lastControl;},
+    get driftCorrection(){return driftCorrection;},set driftCorrection(value){driftCorrection=value||uburoomTiming.correction();},
     get seekPending(){return syncSeekPending;},get preparationUntil(){return hlsPreparationUntil;},get timelinePending(){return hlsTimelinePending;}};
 }

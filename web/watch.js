@@ -79,7 +79,6 @@ const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.pres
 const syncQuality=uburoomSyncQuality.create();
 let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown',
   publishedSyncQualityConfidence, publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
-let lastPresentationSampleAt=0,lastPresentationErrorMs;
 let sync;
 let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let qualityPending=false;
@@ -128,7 +127,7 @@ function resetSyncQuality() {
   seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;
   const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
   syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
-  lastPresentationSampleAt=0;lastPresentationErrorMs=undefined;
+  presentationTiming.interrupt?.('stream');
   syncQualitySettleUntil=performance.now()+2000;
   if(wasActive)sendSyncQuality('stale',syncQuality.refresh({playbackStatus:'starting'}).score,'reduced','stream-changed');
 }
@@ -159,9 +158,17 @@ function sampleSyncQuality(timing,at) {
     syncQuality.breakSample(at);syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=at+2000;
   }
   const eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
-  const presentationFresh=Number.isFinite(lastPresentationErrorMs)&&at-lastPresentationSampleAt<=2500;
+  const presentationSample=presentationTiming.read?.(at,{context:sync?.contextKey(),clockRevision:timing.clockRevision});
+  const presentationInterrupted=Boolean(
+    presentationSample?.interrupted ||
+    (presentationSample?.reason && !['fresh','stale'].includes(presentationSample.reason))
+  );
+  const presentationFresh=!presentationInterrupted &&
+    Number.isFinite(presentationSample?.errorMs) &&
+    presentationSample.ageMs!==undefined &&
+    presentationSample.ageMs<=2500;
   let errorMs,source='position';
-  if(presentationFresh){errorMs=lastPresentationErrorMs;source='presentation';}
+  if(presentationFresh){errorMs=presentationSample.errorMs;source='presentation';}
   else if(eligible) {
     const target=uburoomTiming.target(state,timing.serverTime);
     if(Number.isFinite(target))errorMs=(video.currentTime-target)*1000;
@@ -201,7 +208,7 @@ function refreshSyncQuality() {
 const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
   sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
     read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
-      autoplayBlocked,readyVersion,syncCorrectionMode,lastPresentationSampleAt,lastPresentationErrorMs}),
+      autoplayBlocked,readyVersion,syncCorrectionMode}),
     expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
     correction:event=>syncQuality.recordCorrection({at:performance.now(),magnitudeMs:event.magnitudeMs,kind:event.kind}),
     correctionEligible:()=>performance.now()-lastPresentationBreak>=2000&&performance.now()>=syncQualitySettleUntil&&!sync?.timelinePending,
@@ -250,6 +257,7 @@ function diagnosticSample(event='sample',fields={}) {
   try {
     const quality=video.getVideoPlaybackQuality?.(), tracks=state?.tracks, rect=video.getBoundingClientRect(), timing=playbackClock.read();
     const sharedTarget=uburoomTiming.target(state,timing.serverTime);
+    const control=sync?.control;
     diagnostics.record(event,{position:video.currentTime,target:expected(),ready:video.readyState,network:video.networkState,
       ...timing,clockValid:timing.valid,sharedTarget,arrivalTarget:arrivalExpected(),timelineRevision:state?.revision,
       positionErrorMs:sharedTarget===undefined?undefined:(video.currentTime-sharedTarget)*1000,
@@ -263,7 +271,12 @@ function diagnosticSample(event='sample',fields={}) {
       viewportFraction:rect.width>0&&rect.height>0?Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top))/(rect.width*rect.height):0,
       format:state?.format,
       audio:tracks?.audio.findIndex(row=>row.id===tracks.audioId),subtitle:tracks?.subtitles.findIndex(row=>row.id===tracks.subtitleId),
-      delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',...fields});
+      delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',
+      controlSource:control?.source,
+      controlErrorMs:Number.isFinite(control?.error)?Math.round(control.error*1000):undefined,
+      presentationAgeMs:Number.isFinite(control?.presentationAgeMs)?control.presentationAgeMs:(presentationTiming.read?.(performance.now())?.ageMs),
+      presentationDivergenceMs:control?.divergenceMs,
+      presentationReason:control?.reason,...fields});
   } catch { /* A missing diagnostic sample must not change player behavior. */ }
 }
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
@@ -1059,14 +1072,17 @@ function watchFrames() {
   frameCallback = video.requestVideoFrameCallback((now,metadata) => {
     videoFrames++;
     try {
-      const frame=presentationTiming.frame(now,metadata), timing=playbackClock.read(metadata.expectedDisplayTime);
+      const timing=playbackClock.read(metadata.expectedDisplayTime);
       const target=uburoomTiming.target(state,timing.serverTime);
-      const presentationErrorMs=target===undefined?undefined:(metadata.mediaTime-target)*1000;
-      if(frame && Number.isFinite(presentationErrorMs)) {
-        lastPresentationSampleAt=now;lastPresentationErrorMs=presentationErrorMs;
-      }
+      const frame=presentationTiming.frame(now,metadata,{
+        target,
+        context:sync?.contextKey(),
+        clockRevision:timing.clockRevision
+      });
+      const presentationErrorMs=frame?.presentationErrorMs;
       if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
         timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs,
+        smoothedPresentationErrorMs:frame.smoothedPresentationErrorMs,
         paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
         settling:performance.now()-lastPresentationBreak<2000,
         visibility:document.visibilityState,bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)});

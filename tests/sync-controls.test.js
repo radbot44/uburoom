@@ -3,7 +3,7 @@ const {install}=require('./helpers/watch-sync');
 const test = require('node:test'), assert = require('node:assert/strict');
 const {randomUUID} = require('node:crypto');
 const {Hub} = require('../server/core'), {Watch} = require('../server/watch');
-const {target, precisionCorrection} = require('../web/playback-timing');
+const {target, correction} = require('../web/playback-timing');
 
 function fixture(t) {
   let now = 100000, mono = 1000;
@@ -180,18 +180,22 @@ test('wait extends by fifteen seconds, cancel stays paused, and superseded choic
   assert.equal((await f.dispatch('media.ready.wait',{readinessId:id})).status,'unavailable','replacement invalidates choices');
 });
 
-test('precision candidate requires sustained trustworthy drift and has a distinct exit threshold', () => {
-  const policy = precisionCorrection();
-  const update = (now,error,extra={}) => policy.update({now,error,eligible:true,context:'room',uncertaintyMs:10,...extra});
-  assert.equal(update(0,.12),1); assert.equal(update(999,.12),1); assert.equal(update(1000,.12),1.04);
-  assert.equal(update(1500,.08),1.04); assert.equal(update(2000,.05),1);
-  assert.equal(update(2500,.08),1); assert.equal(update(3000,.12),1);
-  assert.equal(update(4000,.12,{uncertaintyMs:80}),1,'uncertain clocks cannot drive corrections');
-  assert.equal(update(4500,.12),1); assert.equal(update(5500,.12),1.04);
-  assert.equal(update(6000,-.12),1,'direction changes require new sustained evidence');
-  assert.equal(update(7000,-.12),.96); assert.equal(update(7500,-.12,{eligible:false}),1);
-  assert.equal(update(8000,-.12),1); assert.equal(update(9000,-.12,{context:'replacement'}),1);
-  assert.equal(update(10000,-.7),1,'large errors belong to seek recovery');
+test('correction uses cadence-aware widening and enforces uncertainty and stability cutoffs', () => {
+  const c1 = correction();
+  assert.equal(c1.update({now: 0, error: .06, eligible: true, context: 'room', frameSeconds: 0, uncertaintyMs: 10}), 1);
+  assert.equal(c1.update({now: 1000, error: .06, eligible: true, context: 'room', frameSeconds: 0, uncertaintyMs: 10}), 1.01);
+
+  const c2 = correction();
+  assert.equal(c2.update({now: 0, error: .06, eligible: true, context: 'room', frameSeconds: 1/24, uncertaintyMs: 10}), 1);
+  assert.equal(c2.update({now: 1000, error: .06, eligible: true, context: 'room', frameSeconds: 1/24, uncertaintyMs: 10}), 1);
+
+  const c3 = correction();
+  assert.equal(c3.update({now: 0, error: .3, eligible: true, context: 'room', uncertaintyMs: 260}), 1);
+  assert.equal(c3.update({now: 1000, error: .3, eligible: true, context: 'room', uncertaintyMs: 260}), 1);
+
+  const c4 = correction();
+  assert.equal(c4.update({now: 0, error: .3, eligible: true, context: 'room', uncertaintyMs: 20, stabilityMs: 110}), 1);
+  assert.equal(c4.update({now: 1000, error: .3, eligible: true, context: 'room', uncertaintyMs: 20, stabilityMs: 110}), 1);
 });
 
 test('client pauses at the common deadline and cancels a superseded pause alarm', async () => {

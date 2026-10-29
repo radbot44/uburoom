@@ -23,7 +23,9 @@
     qualityReason:['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples','measurement-stale',
       'invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting','stream-changed','media-changed','room-changed',
       'awaiting-sync-interval','awaiting-measurements','position-timing-estimate','clock-warmup','measurement-interrupted','no-sessions'],
-    lastKnownQualityLevel:['excellent','good','fair','poor']
+    lastKnownQualityLevel:['excellent','good','fair','poor'],
+    controlSource:['presentation','blend','position'],
+    presentationReason:['fresh','none','stale','context','clock','interrupted','discontinuity','divergent','blend','hidden','ineligible','clock-invalid']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered','control-disconnected','control-reconnected',
@@ -37,12 +39,14 @@
     'clockUncertaintyMs','networkRttMs','networkMinRttMs','networkJitterMs','requestRttMs','serverProcessingMs','timelineRevision','sharedTarget','positionErrorMs',
     'frameMediaTime','frameDisplayMonoMs','framePresentationMonoMs','frameCallbackLatenessMs','frameProcessingMs','presentedFrames',
     'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode',
+    'smoothedPresentationErrorMs','controlErrorMs','presentationAgeMs','presentationDivergenceMs',
     'measuredPlaybackSeconds','outOfSync250Seconds','outOfSync500Seconds','automaticCorrectionCount','automaticCorrectionMagnitudeMs',
     'correctionDutyCycle','rateAdjustedSeconds','rateAdjustmentSeconds','bufferingSeconds','rawQualityScore','smoothedQualityScore','qualityMeasurementFreshnessMs',
     'presentationMeasuredSeconds','positionMeasuredSeconds','connectionId','connectionAttempt','connectionAgeMs','roomCount',
     'dropRatio','deltaTotal','deltaDropped','severeRatio','severeTotal','severeDropped','totalStallMs','stallCount','sampleGapMs',
     'hlsMaxBufferSize','hlsMaxBufferLength','hlsMaxMaxBufferLength','hlsBackBufferLength']);
   const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling','socketCloseClean','socketWasReady',
+    'presentationReset',
     'capabilitySupported','capabilitySmooth','capabilityPowerEfficient']);
   function requestKind(path) {
     const route = String(path).split('?')[0];
