@@ -302,6 +302,12 @@ class RoomQueue {
       if (changed) this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
       return { next: null, autoQueue, changed };
     }
+    if (!corpus.length) {
+      autoQueue.next = null;
+      const changed = JSON.stringify(room.autoQueue) !== JSON.stringify(autoQueue);
+      if (changed) this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(autoQueue), roomId);
+      return { next: null, autoQueue, changed };
+    }
     const pending = this.pending(roomId), current = this.current(roomId), lastHistory = this.lastHistory(roomId);
     const activeEntries = [...(current ? [current] : []), ...pending];
     if (autoQueue.mode === 'continue') {
@@ -450,13 +456,22 @@ class RoomQueue {
     if (!autoNext) throw error('Auto-queue item unavailable', 404);
     const pending = this.pending(roomId);
     if (pending.length >= this.maxPending) throw error('Queue is full (maximum ' + this.maxPending + ' upcoming items)');
-    const corpus = rawItems === undefined ? [] : this.validateCorpus(rawItems), at = this.now();
+    const corpus = rawItems === undefined ? undefined : this.validateCorpus(rawItems), at = this.now();
     let addedId, result;
     this.registry.transaction(() => {
       [addedId] = this.insertPending(roomId, [{ ...autoNext, position: 0, provenance: 'manual' }], pending.length, at);
-      const cleared = { ...room.autoQueue, next: null, ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue' ? { cursor: autoNext.mediaId } : {}) };
+      const cleared = {
+        ...room.autoQueue,
+        next: null,
+        ...(room.autoQueue.mode === 'following' || room.autoQueue.mode === 'continue' ? { cursor: autoNext.mediaId } : {}),
+        ...(room.autoQueue.mode === 'random' ? { used: [...new Set([...(room.autoQueue.used || []), autoNext.mediaId])] } : {})
+      };
       this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(cleared), roomId);
-      result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
+      if (corpus !== undefined) {
+        result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
+      } else {
+        result = { next: null, autoQueue: cleared };
+      }
       this.bumpQueueRevision(roomId, at);
     });
     await this.store.commit();

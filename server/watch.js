@@ -292,6 +292,7 @@ class Watch {
         // Preserve only personal playback settings for the same tab's short
         // reconnect. A fresh stream and observation epoch are always required.
         room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
+          readinessBypassedVersion:viewer.readinessBypassedVersion,
           trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
@@ -413,6 +414,7 @@ class Watch {
     this.settle(room);
     const viewer = room.viewers.get(viewerId);
     if (!viewer || viewer.userId !== actor.userId || room.mediaVersion !== version || typeof ready !== 'boolean' || room.readinessVersion !== readinessVersion) throw new Error('Invalid readiness');
+    if (ready === true) viewer.readinessBypassedVersion = undefined;
     viewer.ready = ready; viewer.version = version; viewer.at = Date.now();
     await this.maybeStart(room);
   }
@@ -457,6 +459,7 @@ class Watch {
     if (controller && !oldViewer) { room.hostViewerId = viewerId; room.s.hostId = actor.userId; room.s.hostName = actor.name; room.waitingForHost = false; }
     room.hadViewers = true;
     const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
+      readinessBypassedVersion: saved?.mediaVersion === room.mediaVersion ? saved?.readinessBypassedVersion : undefined,
       preferredQuality:saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
       volume:saved?.volume ?? preferences.volume ?? 30, muted:saved?.muted ?? preferences.muted ?? false,
       plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
@@ -1207,6 +1210,12 @@ class Watch {
       if (action === 'media.ready.start') {
         const ready = [...room.initialViewers].filter(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; });
         if (!ready.length) return { status:'unavailable', message:'No viewer is ready yet.' };
+        for (const id of room.initialViewers) {
+          const v = room.viewers.get(id);
+          if (v && (!v.ready || v.version !== room.mediaVersion)) {
+            v.readinessBypassedVersion = room.mediaVersion;
+          }
+        }
         // This host command is already in the validated Engine handler. Commit
         // the override without an awaited second dispatch or an expired choice.
         room.initialViewers = new Set(ready); room.initialGate = false; room.readinessTimedOut = false;
@@ -1315,7 +1324,9 @@ class Watch {
       // An explicit pause remains paused; seeking during playback resumes together.
       if (!s.state.paused || room.initialGate) {
         room.readinessVersion = randomUUID();
-        room.initialGate = true; this.beginReadiness(room, now); room.initialViewers = new Set(room.viewers.keys());
+        room.initialGate = true; this.beginReadiness(room, now);
+        const activeViewers = [...room.viewers.entries()].filter(([, v]) => v.readinessBypassedVersion !== room.mediaVersion).map(([id]) => id);
+        room.initialViewers = activeViewers.length ? new Set(activeViewers) : new Set(room.viewers.keys());
         s.state.paused = true;
         for (const viewer of room.viewers.values()) viewer.ready = false;
       }

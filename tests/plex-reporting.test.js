@@ -294,3 +294,85 @@ test('consent opt-out mid-stream: cleanly stops session on Plex', async () => {
     f.close();
   }
 });
+
+test('updateConsent({ activity: false }) immediately stops Plex timeline session', async () => {
+  const f = fixture();
+  try {
+    const viewer = f.createViewer(f.userWithPlex.id);
+    const obs = f.makeObserved(15, 'playing', 'baseline');
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, obs.data, obs.observed);
+    await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 1);
+    assert.equal(f.dispatchedRequests[0].params.state, 'playing');
+
+    // Call updateConsent with activity: false
+    await f.reporting.updateConsent(viewer, { activity: false });
+    assert.equal(f.reporting.sessions.has(viewer.viewerId), false);
+    assert.equal(f.dispatchedRequests.length, 2);
+    assert.equal(f.dispatchedRequests[1].params.state, 'stopped');
+    assert.equal(f.dispatchedRequests[1].params.time, '15000');
+  } finally {
+    f.close();
+  }
+});
+
+test('observe handles ended, error, subordinate watchState, and state mapping cleanly', async () => {
+  const f = fixture();
+  try {
+    const viewer = f.createViewer(f.userWithPlex.id);
+
+    // 1. Seeking and buffering map to 'buffering'
+    const obsSeek = f.makeObserved(20, 'seeking', 'not-playing');
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, obsSeek.data, obsSeek.observed);
+    await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 1);
+    assert.equal(f.dispatchedRequests[0].params.state, 'buffering');
+
+    // 2. Blocked maps to 'paused'
+    const obsBlocked = f.makeObserved(20, 'blocked', 'not-playing');
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, obsBlocked.data, obsBlocked.observed);
+    await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 2);
+    assert.equal(f.dispatchedRequests[1].params.state, 'paused');
+
+    // 3. Playback error ends session with 'playback-error' and sends state=stopped (never state=error)
+    const obsError = f.makeObserved(20, 'error', 'not-playing');
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, obsError.data, obsError.observed);
+    assert.equal(f.dispatchedRequests.length, 3);
+    assert.equal(f.dispatchedRequests[2].params.state, 'stopped');
+    assert.equal(f.reporting.sessions.has(viewer.viewerId), false);
+
+    // 4. Ended directly terminates with updated position and sends state=stopped exactly once
+    const viewer2 = f.createViewer(f.userWithPlex.id);
+    const obsPlay = f.makeObserved(50, 'playing', 'baseline');
+    await f.reporting.observe(f.room, viewer2, viewer2.viewerId, obsPlay.data, obsPlay.observed);
+    await f.reporting.sessions.get(viewer2.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 4);
+
+    const obsEnded = f.makeObserved(100, 'ended', 'baseline');
+    await f.reporting.observe(f.room, viewer2, viewer2.viewerId, obsEnded.data, obsEnded.observed);
+    assert.equal(f.dispatchedRequests.length, 5);
+    assert.equal(f.dispatchedRequests[4].params.state, 'stopped');
+    assert.equal(f.dispatchedRequests[4].params.time, '100000');
+    assert.equal(f.reporting.sessions.has(viewer2.viewerId), false);
+
+    // 5. plexWatchState cannot keep live timeline firing when plexReporting is false
+    const viewer3 = f.createViewer(f.userWithPlex.id, { plexReporting: true, plexWatchState: true });
+    const obsPlay3 = f.makeObserved(10, 'playing', 'baseline');
+    await f.reporting.observe(f.room, viewer3, viewer3.viewerId, obsPlay3.data, obsPlay3.observed);
+    await f.reporting.sessions.get(viewer3.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 6);
+
+    // Turn plexReporting off while leaving plexWatchState on
+    viewer3.plexReporting = false;
+    viewer3.plexWatchState = true;
+    const obsPlay4 = f.makeObserved(15, 'playing', 'credited');
+    await f.reporting.observe(f.room, viewer3, viewer3.viewerId, obsPlay4.data, obsPlay4.observed);
+    // Session should be stopped with opt-out
+    assert.equal(f.dispatchedRequests.length, 7);
+    assert.equal(f.dispatchedRequests[6].params.state, 'stopped');
+    assert.equal(f.reporting.sessions.has(viewer3.viewerId), false);
+  } finally {
+    f.close();
+  }
+});

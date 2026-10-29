@@ -147,3 +147,58 @@ test('startup and seek buffering consume the start lead; late readiness uses onl
     assert.equal(f.room.startAt,now+1750,'deliberate pause cancels the old countdown');
   } finally {f.watch.close();}
 });
+
+test('mid-playback seek triggers reportReadiness when readyVersion matches mediaVersion', async () => {
+  let readinessReported = 0, unlocked = 0;
+  const ctx = {
+    state: {
+      mediaUrl: 'fixture',
+      mediaVersion: 'v1',
+      streamVersion: 's1',
+      waitingForReady: true,
+      state: { paused: true, volume: 50, muted: false, duration: 120 }
+    },
+    selected: 'room',
+    mediaSource: 'source-1',
+    readyVersion: 'v1', // already matches current mediaVersion from prior playback
+    playbackClock: { read: () => ({ valid: true }) },
+    expected: () => 15,
+    hlsPreparationUntil: 0,
+    hlsTimelinePending: false,
+    syncSeekPending: false,
+    probing: false,
+    playbackError: '',
+    hlsNetworkFailure: undefined,
+    autoplayBlocked: false,
+    performance: { now: () => 0 },
+    document: { visibilityState: 'visible' },
+    syncCorrectionMode: 'speed',
+    pauseAlarm: { cancel() {} },
+    driftCorrection: require('../web/playback-timing').correction(),
+    startKey: () => 'fixture',
+    presentationTiming: require('../web/playback-timing').presentation(),
+    uburoomPlayback: require('../web/playback-policy'),
+    playerWaiting: false,
+    video: {
+      readyState: 4,
+      currentTime: 15,
+      seeking: false,
+      paused: true,
+      playbackRate: 1,
+      buffered: { length: 1, start: () => 0, end: () => 30 },
+      pause() {},
+      play: async () => {}
+    },
+    reportReadiness: () => { readinessReported++; },
+    unlockLocal: async () => { unlocked++; },
+    renderTransport() {},
+    checkVideoFrames() {}
+  };
+
+  const sync = await install(ctx);
+  await sync.synchronize();
+
+  // reportReadiness should be triggered without re-running unlockLocal
+  assert.equal(readinessReported, 1, 'reportReadiness triggered on mid-playback seek');
+  assert.equal(unlocked, 0, 'unlockLocal skipped when readyVersion already matches');
+});

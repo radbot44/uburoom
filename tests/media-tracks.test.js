@@ -293,6 +293,8 @@ test('browser subtitle resources enforce grants, selection generations and expli
   await snapshot();await command('media.load',{mediaId:'1',quality:'direct'});await command('media.tracks.set',{subtitleId:'22'});
   const state=await snapshot();assert.equal(state.tracks.subtitleDelivery,'ass');
   const descriptor=await request(state.subtitleUrl);assert.equal(descriptor.status,200);assert.equal(descriptor.body.format,'ass');
+  assert.equal(descriptor.body.window, undefined, 'ASS load manifest omits window property');
+  assert.equal((await request(state.subtitleUrl+'/window?atMs=1000')).status, 404, 'ASS rejects /window endpoint');
   const asset=await request(descriptor.body.data);assert.equal(asset.status,200);assert.match(asset.body,/Script Info/);assert.equal(asset.headers['cache-control'],'no-store');
   assert.equal((await request(state.subtitleUrl+'/font-0')).status,404);assert.equal((await request(state.subtitleUrl.replace(/media\/[a-f0-9]+/,'media/'+ '0'.repeat(48)))).status,403);
   const old=app.watch.rooms.get(room).viewers.get(viewerId).media;fixture.state.wrongBurn=true;
@@ -307,6 +309,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
   await command('media.tracks.set',{subtitleId:'23'});
   const pgsState=await snapshot();assert.equal(pgsState.tracks.subtitleDelivery,'pgs');
   const pgsDescriptor=await request(pgsState.subtitleUrl);assert.equal(pgsDescriptor.status,200);assert.equal(pgsDescriptor.body.format,'pgs');
+  assert.ok(pgsDescriptor.body.window, 'embedded PGS manifest includes window');
   assert.equal(pgsDescriptor.body.fonts.length,0);
   const pgsAsset=await request(pgsDescriptor.body.data);assert.equal(pgsAsset.status,200);
   assert.equal(pgsAsset.body,'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');

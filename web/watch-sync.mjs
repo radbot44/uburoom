@@ -164,6 +164,7 @@ export function createSync(host) {
     if (paused) {
       video.pause();
       if ((state.waitingForReady || state.readiness) && readyVersion !== state.mediaVersion && !autoplayBlocked && video.readyState >= 2) { await unlockLocal(); void reportReadiness(); }
+      else if ((state.waitingForReady || state.readiness) && readyVersion === state.mediaVersion && !autoplayBlocked && video.readyState >= 3 && !video.seeking) { void reportReadiness(); }
     } else if (video.paused && !autoplayBlocked) {
       const room=selected,version=state.mediaVersion,stream=state.streamVersion,source=mediaSource;
       const current=()=>{const value=host.read();return value.selected===room && value.state?.mediaVersion===version && value.state?.streamVersion===stream && value.mediaSource===source;};

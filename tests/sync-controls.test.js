@@ -148,6 +148,18 @@ test('timeout names blockers, latches despite late readiness, and only the host 
   f.advance(500); await f.ready(f.g,false);
   assert.equal(f.room.s.state.paused,false,'unready viewers recover independently after force-start');
   assert.equal((await f.dispatch('media.ready.start',{readinessId:id})).status,'unavailable');
+
+  // Verify Item 6: straggler bypass persists across mid-playback seeks
+  assert.equal(f.room.viewers.get(f.g).readinessBypassedVersion, f.room.mediaVersion);
+  await f.dispatch('media.seek.relative', { seconds: 15 });
+  assert.equal(f.room.initialViewers.has(f.g), false, 'seek gate excludes bypassed viewer');
+  assert.equal(f.room.initialViewers.has(f.h), true);
+  await f.ready(f.h);
+  assert.equal(f.room.initialGate, false, 'host ready resumes room immediately');
+  await f.ready(f.g, true);
+  assert.equal(f.room.viewers.get(f.g).readinessBypassedVersion, undefined, 'readiness clears bypass');
+  await f.dispatch('media.seek.relative', { seconds: 15 });
+  assert.equal(f.room.initialViewers.has(f.g), true, 'future seek includes caught-up viewer');
 });
 
 test('wait extends by fifteen seconds, cancel stays paused, and superseded choices cannot act', async t => {

@@ -63,15 +63,31 @@
     }
     function read(at) {
       const now=tick();at??=now;
-      const reliable=samples.filter(s=>!s.suspect && now-s.at<=WINDOW), best=reliable.reduce((a,b)=>!a||b.rtt<a.rtt?b:a,undefined);
-      const valid=mapping!==undefined && best && now-lastGood<=MAX_AGE && !uncertain;
-      const rtts=delays.filter(s=>now-s.at<=WINDOW).map(s=>s.rtt), jitter=rtts.length?Math.max(...rtts)-Math.min(...rtts):undefined;
-      const excessRtt = valid && rtts.length ? Math.max(0, rtts.at(-1) - best.rtt) : 0;
+      let best;
+      for(let i=0;i<samples.length;i++){
+        const s=samples[i];
+        if(!s.suspect && now-s.at<=WINDOW){
+          if(!best || s.rtt<best.rtt)best=s;
+        }
+      }
+      let rttCount=0,lastRtt,minRtt=Infinity,maxRtt=-Infinity;
+      for(let i=0;i<delays.length;i++){
+        const s=delays[i];
+        if(now-s.at<=WINDOW){
+          rttCount++;
+          lastRtt=s.rtt;
+          if(s.rtt<minRtt)minRtt=s.rtt;
+          if(s.rtt>maxRtt)maxRtt=s.rtt;
+        }
+      }
+      const valid=mapping!==undefined && best!==undefined && now-lastGood<=MAX_AGE && !uncertain;
+      const jitter=rttCount?maxRtt-minRtt:undefined;
+      const excessRtt=valid && rttCount ? Math.max(0,lastRtt-best.rtt) : 0;
       return {valid:!!valid,serverTime:valid?at+mapping:undefined,clockRevision:revision,clockAccepted:accepted,clockRejected:rejected,clockReason:reason,
         clockOffsetMs:valid?now+mapping-wall():undefined,clockAgeMs:lastGood===undefined?undefined:now-lastGood,
         clockUncertaintyMs:valid?best.rtt/2+2+Math.abs(desired-mapping)+(now-best.at)*.0001:undefined,
         clockStabilityMs: valid ? Math.min(25, best.rtt / 2) + 2 + excessRtt / 2 + Math.abs(desired - mapping) + (now - best.at) * .0001 : undefined,
-        networkRttMs:rtts.at(-1),networkMinRttMs:best?.rtt,networkJitterMs:jitter,networkRttSampleCount:rtts.length};
+        networkRttMs:lastRtt,networkMinRttMs:best?.rtt,networkJitterMs:jitter,networkRttSampleCount:rttCount};
     }
     return {begin,add,read,reset};
   }

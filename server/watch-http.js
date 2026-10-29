@@ -110,17 +110,17 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const check=setInterval(async()=>{try{if(!await validCaptionGrant(grant,match[1]))controller.abort();}catch{controller.abort();}},1000);
       try{
         const media=currentMedia();
-        if(!match[2] && media?.selection?.subtitle?.delivery==='pgs'){
+        if(!match[2] && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           res.setHeader('Cache-Control','no-store');
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
           return json(res,200,{format:'pgs',data:base+'data',window:base+'window',fonts:[]});
         }
-        if(match[2]==='window' && ['pgs','ass','vobsub'].includes(media?.selection?.subtitle?.delivery)){
+        if(match[2]==='window' && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
-          const atMs=url?.searchParams ? Number(url.searchParams.get('atMs')) : 0;
-          const beforeMs=url?.searchParams ? Number(url.searchParams.get('beforeMs')) : 15000;
-          const afterMs=url?.searchParams ? Number(url.searchParams.get('afterMs')) : 60000;
+          const atMs=url?.searchParams?.has('atMs') ? Number(url.searchParams.get('atMs')) : 0;
+          const beforeMs=url?.searchParams?.has('beforeMs') ? Number(url.searchParams.get('beforeMs')) : 15000;
+          const afterMs=url?.searchParams?.has('afterMs') ? Number(url.searchParams.get('afterMs')) : 60000;
           const win=await SubtitleResources.window(media.plexContext||watch.plex,media,{atMs,beforeMs,afterMs,signal:controller.signal});
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           res.writeHead(200,{
@@ -144,7 +144,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         res.setHeader('Cache-Control','no-store');
         if(!match[2]){
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
-          return json(res,200,{format:result.format,fileName:result.fileName,data:base+'data',window:base+'window',
+          return json(res,200,{format:result.format,fileName:result.fileName,data:base+'data',
             ...(result.assets.has('index')?{index:base+'index'}:{}),fonts:[...result.assets.keys()].filter(k=>k.startsWith('font-')).map(k=>base+k)});
         }
         const data=result.assets.get(match[2]);if(!data)return json(res,404,{error:'Subtitle resource unavailable.'});

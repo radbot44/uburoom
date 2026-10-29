@@ -657,3 +657,68 @@ test('auto-queue computeAutoNext performs fast O(N) preview selection with large
   assert.equal(f.queue.pending(room.id).length, 0);
   assert.ok(durationRandom < 500, `Random mode took ${durationRandom}ms, expected < 500ms`);
 });
+
+test('autoQueue preserves used and cursor on empty corpus in computeAutoNext and pinAuto', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator);
+
+  const corpus = [sampleItem(1), sampleItem(2), sampleItem(3)];
+
+  // 1. Continue mode: empty corpus preserves cursor
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'continue' });
+  await f.queue.add(room.id, f.creator, corpus[0]); // current/pending anchor
+  const gen1 = f.queue.computeAutoNext(room.id, corpus);
+  assert.equal(gen1.next.mediaId, '102');
+
+  // Skip to set a cursor
+  await f.queue.skipAuto(room.id, f.creator, corpus);
+  assert.equal(f.store.get(room.id).autoQueue.cursor, '102');
+
+  // computeAutoNext with empty corpus should set next: null but preserve cursor
+  const emptyRes = f.queue.computeAutoNext(room.id, []);
+  assert.equal(emptyRes.next, null);
+  assert.equal(emptyRes.autoQueue.cursor, '102');
+  assert.equal(f.store.get(room.id).autoQueue.cursor, '102');
+
+  // 2. Random mode: empty corpus preserves used history
+  await f.queue.clear(room.id, f.creator);
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'random', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
+  f.queue.randomIndex = () => 0;
+
+  const randGen = f.queue.computeAutoNext(room.id, corpus);
+  assert.ok(randGen.next);
+  assert.ok(randGen.autoQueue.used.includes(randGen.next.mediaId));
+  const usedBefore = [...randGen.autoQueue.used];
+
+  // computeAutoNext with empty corpus should set next: null but preserve used history (not wipe to [])
+  const randEmpty = f.queue.computeAutoNext(room.id, []);
+  assert.equal(randEmpty.next, null);
+  assert.deepEqual(randEmpty.autoQueue.used, usedBefore);
+  assert.deepEqual(f.store.get(room.id).autoQueue.used, usedBefore);
+
+  // 3. pinAuto with rawItems === undefined preserves cleared cursor and used history
+  // Test continue mode pinAuto(undefined)
+  await f.queue.clear(room.id, f.creator);
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'continue' });
+  await f.queue.add(room.id, f.creator, corpus[0]);
+  f.queue.computeAutoNext(room.id, corpus);
+  assert.ok(f.store.get(room.id).autoQueue.next);
+  const nextToPin = f.store.get(room.id).autoQueue.next.mediaId;
+
+  const pinContinue = await f.queue.pinAuto(room.id, f.creator, undefined);
+  assert.equal(pinContinue.next, null);
+  assert.equal(pinContinue.autoQueue.cursor, nextToPin);
+  assert.equal(f.store.get(room.id).autoQueue.cursor, nextToPin);
+
+  // Test random mode pinAuto(undefined)
+  await f.queue.clear(room.id, f.creator);
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'random', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
+  f.queue.randomIndex = () => 0;
+  f.queue.computeAutoNext(room.id, corpus);
+  const randToPin = f.store.get(room.id).autoQueue.next.mediaId;
+
+  const pinRandom = await f.queue.pinAuto(room.id, f.creator, undefined);
+  assert.equal(pinRandom.next, null);
+  assert.ok(pinRandom.autoQueue.used.includes(randToPin));
+  assert.ok(f.store.get(room.id).autoQueue.used.includes(randToPin));
+});

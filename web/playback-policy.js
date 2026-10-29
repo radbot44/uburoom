@@ -139,10 +139,7 @@
       }
       const isSettled = playingStartedAt > 0 && (now - playingStartedAt >= settleMs);
       if (waiting) {
-        if (!isSettled) {
-          interrupt();
-          return { choppy: false, interrupted: true, isSettled: false };
-        }
+        if (playingStartedAt === 0) return { choppy: false, warming: true, isSettled: false };
         if (currentStallStart === undefined) currentStallStart = now;
       } else {
         if (playingStartedAt === 0) playingStartedAt = now;

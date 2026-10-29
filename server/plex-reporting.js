@@ -62,7 +62,7 @@ class PlexReporting {
 
     const allowActivity = viewer.plexReporting !== false;
     const allowWatchState = !!(viewer.plexWatchState && this.config.plexReporting?.watchState !== false);
-    if (!allowActivity && !allowWatchState) {
+    if (!allowActivity) {
       if (this.sessions.has(viewerId)) await this.end(viewer, 'opt-out');
       return;
     }
@@ -77,6 +77,30 @@ class PlexReporting {
         session = undefined;
       }
     }
+
+    if (data.state === 'ended') {
+      if (session) {
+        session.lastPositionMs = Math.round(data.position * 1000);
+        return this.end(viewer, 'playback-ended');
+      }
+      return;
+    }
+    if (data.state === 'error') {
+      if (session) {
+        return this.end(viewer, 'playback-error');
+      }
+      return;
+    }
+
+    const stateMap = {
+      playing: 'playing',
+      buffering: 'buffering',
+      seeking: 'buffering',
+      paused: 'paused',
+      blocked: 'paused'
+    };
+    const mappedState = stateMap[data.state];
+    if (!mappedState) return;
 
     if (!session) {
       const plexAuth = this.plexAuth || this.hub?.plexAuth;
@@ -115,7 +139,7 @@ class PlexReporting {
     session.consent.watchState = allowWatchState;
 
     const currentMs = Math.round(data.position * 1000);
-    const stateChanged = data.state !== session.lastState;
+    const stateChanged = mappedState !== session.lastState;
     const advanced = observed.credit?.reason === 'credited' || observed.credit?.reason === 'baseline';
     const elapsedMs = this.now() - session.lastReportedAt;
     const positionDeltaMs = Math.abs(currentMs - session.lastPositionMs);
@@ -123,18 +147,17 @@ class PlexReporting {
     let shouldReport = false;
     if (stateChanged) {
       shouldReport = true;
-    } else if (data.state === 'playing') {
+    } else if (mappedState === 'playing') {
       shouldReport = advanced && (elapsedMs >= 10000 || positionDeltaMs >= 15000);
     }
 
     if (!shouldReport) return;
 
-    const reportedState = data.state === 'ended' ? 'stopped' : data.state;
     const query = new URLSearchParams({
       key: '/library/metadata/' + session.mediaId,
       ratingKey: session.mediaId,
       identifier: 'com.plexapp.plugins.library',
-      state: reportedState,
+      state: mappedState,
       time: String(currentMs),
       continuing: '0'
     });
@@ -148,7 +171,7 @@ class PlexReporting {
       'X-Plex-Session-Identifier': session.sessionId
     };
 
-    session.lastState = data.state;
+    session.lastState = mappedState;
     session.lastPositionMs = currentMs;
     session.lastReportedAt = this.now();
 
@@ -158,10 +181,6 @@ class PlexReporting {
         await session.scopedPlex.request('/:/timeline?' + query, { method: 'POST', headers });
       } catch {}
     });
-
-    if (data.state === 'ended') {
-      await this.end(viewer, 'playback-ended');
-    }
   }
 
   /**
@@ -172,6 +191,9 @@ class PlexReporting {
   updateConsent(viewer, consent) {
     const session = this._findSession(viewer);
     if (!session) return;
+    if (consent.activity === false) {
+      return this.end(session.viewerId, 'opt-out');
+    }
     if (typeof consent.activity === 'boolean') session.consent.activity = consent.activity;
     if (typeof consent.watchState === 'boolean') session.consent.watchState = consent.watchState;
   }

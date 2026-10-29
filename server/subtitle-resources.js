@@ -221,9 +221,12 @@ async function load(plex,media,signal){
 }
 async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}){
   const {track}=source(media),version=media.captionVersion;
-  const at=Math.max(0,Number(atMs)||0)/1000;
-  const before=Math.min(60,Math.max(0,Number(beforeMs)||15000)/1000);
-  const after=Math.min(180,Math.max(10,Number(afterMs)||60000)/1000);
+  const numAt=Number(atMs);
+  const at=Math.max(0,Number.isFinite(numAt)?numAt:0)/1000;
+  const numBefore=Number(beforeMs);
+  const before=Math.min(60,Math.max(0,Number.isFinite(numBefore)?numBefore:15000)/1000);
+  const numAfter=Number(afterMs);
+  const after=Math.min(180,Math.max(10,Number.isFinite(numAfter)?numAfter:60000)/1000);
   const startSeconds=Math.max(0,at-before),durationSeconds=before+after;
   const endSeconds=startSeconds+durationSeconds;
   const startMs=Math.round(startSeconds*1000),endMs=Math.round(endSeconds*1000);
@@ -235,7 +238,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   for(const item of media.windowCache.values()){
     if(item.startMs<=startMs&&item.endMs>=endMs){
       item.at=Date.now();
-      return {format:track.delivery,startMs,endMs,data:item.data,cues:item.cues};
+      return {format:track.delivery,startMs:item.startMs,endMs:item.endMs,data:item.data,cues:item.cues};
     }
   }
 

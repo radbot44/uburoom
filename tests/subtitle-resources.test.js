@@ -260,10 +260,21 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   assert.equal(cachedResult.data, mockSupData);
   assert.equal(ffmpegRuns.length, 1); // No new run!
 
-  // 3. Request contained inside existing coverage also uses windowCache
+  // 3. Request contained inside existing coverage also uses windowCache with superset bounds
   const innerResult = await window(plex, media, { atMs: 12000, beforeMs: 2000, afterMs: 5000 });
   assert.equal(innerResult.data, mockSupData);
+  assert.equal(innerResult.startMs, 5000); // returns superset startMs
+  assert.equal(innerResult.endMs, 30000);  // returns superset endMs
   assert.equal(ffmpegRuns.length, 1); // Still 1
+
+  // 3b. Request with explicit beforeMs: 0 is honored and not coerced to 15000
+  const zeroBefore = await window(plex, media, { atMs: 40000, beforeMs: 0, afterMs: 20000 });
+  assert.equal(zeroBefore.startMs, 40000);
+  assert.equal(zeroBefore.endMs, 60000);
+  assert.equal(ffmpegRuns.length, 2);
+  const zeroArgs = ffmpegRuns[1];
+  const ssZero = zeroArgs.indexOf('-ss');
+  assert.equal(zeroArgs[ssZero + 1], '40'); // at 40s - 0s = 40s (not 25s!)
 
   // 4. Quality transfer preserves windowCache
   const replacement = {
@@ -326,4 +337,139 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   const fIdxVobsub = vobsubRunArgs.indexOf('-f');
   assert.ok(fIdxVobsub >= 0);
   assert.equal(vobsubRunArgs[fIdxVobsub + 1], 'matroska');
+});
+
+test('uburoomSubtitleWindows parses "0" header correctly, overlaps lookahead by 5s, and merges intervals', async () => {
+  const { uburoomSubtitleWindows } = require('../web/watch-subtitles');
+
+  const appends = [];
+  const renderer = {
+    append: async bytes => appends.push(bytes),
+    destroy: () => {}
+  };
+
+  const originalFetch = global.fetch;
+  try {
+    let requestedUrls = [];
+    global.fetch = async (url) => {
+      requestedUrls.push(url);
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: {
+          'x-subtitle-start-ms': '0',
+          'x-subtitle-end-ms': '60000',
+          'x-subtitle-cues': '5'
+        }
+      });
+    };
+
+    let syncCount = 0;
+    const windows = new uburoomSubtitleWindows(renderer, 'https://example.com/sub/window', () => { syncCount++; });
+
+    // Fetch at target 50000ms: with '0' header, startMs must be 0 (not 35000)
+    windows.fetch(50000, false);
+    await new Promise(r => setTimeout(r, 20));
+
+    assert.equal(windows.intervals.length, 1);
+    assert.equal(windows.intervals[0].startMs, 0, '"0" header parsed as 0 instead of fallback 35000');
+    assert.equal(windows.intervals[0].endMs, 60000);
+    assert.equal(windows.intervals[0].cues, 5);
+    assert.equal(syncCount, 1);
+    assert.equal(windows.isCovered(25000), true);
+
+    // Lookahead test: at time 45s (45000ms), 45000+20000=65000 is not covered by [0, 60000]
+    // check(45) should trigger fetch(45000 + 30000) = fetch(75000) (overlapping lookahead)
+    requestedUrls = [];
+    global.fetch = async (url) => {
+      requestedUrls.push(url);
+      return new Response(new Uint8Array([4, 5]), {
+        status: 200,
+        headers: {
+          'x-subtitle-start-ms': '55000',
+          'x-subtitle-end-ms': '135000',
+          'x-subtitle-cues': '3'
+        }
+      });
+    };
+
+    windows.check(45);
+    assert.ok(requestedUrls.length > 0);
+    assert.ok(requestedUrls[0].includes('atMs=75000'), 'Lookahead fetches at targetMs + 30000ms for 5s overlap');
+
+    await new Promise(r => setTimeout(r, 20));
+    // Interval [0, 60000] and [55000, 135000] overlap and must merge into [0, 135000]
+    assert.equal(windows.intervals.length, 1);
+    assert.equal(windows.intervals[0].startMs, 0);
+    assert.equal(windows.intervals[0].endMs, 135000);
+    assert.equal(windows.intervals[0].cues, 8);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('uburoomSubtitles preserves loading status until window scheduler covers mediaTime', async () => {
+  const { uburoomSubtitles } = require('../web/watch-subtitles');
+
+  const statusEvents = [];
+  const mockVideo = {
+    currentTime: 10,
+    addTextTrack: () => ({ mode: 'disabled' }),
+    textTracks: { addEventListener: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  };
+
+  const originalFetch = global.fetch;
+  const originalRenderers = global.window?.uburoomSubtitleRenderers;
+  if (!global.window) global.window = {};
+
+  try {
+    global.window.uburoomSubtitleRenderers = {
+      create: async () => ({
+        offset: () => {},
+        picture: () => {},
+        append: async () => {},
+        destroy: () => {}
+      })
+    };
+
+    // Subtitle manifest advertising format 'pgs' with a window URL
+    global.fetch = async (url) => {
+      if (url.includes('subtitle-manifest')) {
+        return new Response(JSON.stringify({
+          format: 'pgs',
+          data: 'https://example.com/api/watch/media/123/subtitle-manifest/data',
+          window: 'https://example.com/api/watch/media/123/subtitle-manifest/window',
+          fonts: []
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      // Window endpoint returns window covering 0..20s
+      return new Response(new Uint8Array([1]), {
+        status: 200,
+        headers: {
+          'x-subtitle-start-ms': '0',
+          'x-subtitle-end-ms': '20000',
+          'x-subtitle-cues': '2'
+        }
+      });
+    };
+
+    const subs = new uburoomSubtitles(mockVideo, status => { statusEvents.push(status); });
+
+    subs.update({ subtitleUrl: 'https://example.com/api/watch/media/123/subtitle-manifest' });
+    await new Promise(r => setTimeout(r, 50));
+
+    // When window scheduler was initialized, streamSynced was set to undefined, and Loading subtitles was preserved
+    const loadingStates = statusEvents.filter(s => s.loading);
+    assert.ok(loadingStates.length > 0, 'Loading subtitles was dispatched');
+    assert.equal(subs.windowScheduler.synced(10), true);
+
+    // Status cleared only when window covered currentTime
+    const lastStatus = statusEvents[statusEvents.length - 1];
+    assert.equal(lastStatus.loading, false);
+    assert.equal(lastStatus.message, '');
+  } finally {
+    global.fetch = originalFetch;
+    global.window.uburoomSubtitleRenderers = originalRenderers;
+  }
 });

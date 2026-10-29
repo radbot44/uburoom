@@ -37,7 +37,7 @@ test('choppiness detector stays quiet when dropped frames are under threshold', 
   assert.ok(res.ratio < 0.10);
 });
 
-test('pauses, seeking, waiting, and hidden visibility reset the 10-second window', () => {
+test('pauses, seeking, and hidden visibility reset the 10-second window', () => {
   const detector = policy.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
   const healthy = { paused: false, seeking: false, waiting: false, visible: true, active: true };
 
@@ -64,10 +64,11 @@ test('pauses, seeking, waiting, and hidden visibility reset the 10-second window
   res = detector.update(16000, { totalVideoFrames: 480, droppedVideoFrames: 100 }, { ...healthy, seeking: true });
   assert.equal(res.interrupted, true);
 
-  // Waiting/buffering interrupt
+  // Waiting/buffering before 2.5s records stall without interrupt
   detector.update(17000, { totalVideoFrames: 500, droppedVideoFrames: 100 }, healthy);
   res = detector.update(18000, { totalVideoFrames: 500, droppedVideoFrames: 100 }, { ...healthy, waiting: true });
-  assert.equal(res.interrupted, true);
+  assert.equal(res.isSettled, false);
+  assert.equal(res.choppy, false);
 
   // Tab hidden interrupt
   detector.update(19000, { totalVideoFrames: 500, droppedVideoFrames: 100 }, healthy);
@@ -249,4 +250,39 @@ test('mid-stream buffering stalls trigger choppiness while initial load and seek
   assert.equal(res.stallCount, 2);
   assert.equal(res.choppy, true);
   assert.equal(res.stallChoppy, true);
+});
+
+test('sub-2.5s stalls do not reset playingStartedAt in a loop and record into stallHistory', () => {
+  const detector = policy.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50, maxStallMs: 1500, maxStallCount: 2, minMultiStallMs: 1000, settleMs: 2500 });
+  const cond = { paused: false, seeking: false, waiting: false, visible: true, active: true };
+
+  // Waiting before any playback has started returns warming
+  const preplay = detector.update(0, { totalVideoFrames: 0, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  assert.equal(preplay.choppy, false);
+  assert.equal(preplay.warming, true);
+  assert.equal(preplay.isSettled, false);
+
+  // Playback starts at t=1000
+  detector.update(1000, { totalVideoFrames: 0, droppedVideoFrames: 0 }, cond);
+
+  // Stall occurs at t=2000 (1000ms in, before settleMs 2500ms)
+  let res = detector.update(2000, { totalVideoFrames: 30, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  assert.equal(res.choppy, false);
+  assert.equal(res.isSettled, false);
+
+  // Stall ends at t=2600 (600ms stall)
+  res = detector.update(2600, { totalVideoFrames: 30, droppedVideoFrames: 0 }, cond);
+  // playingStartedAt was preserved at 1000, so now-playingStartedAt = 1600 < 2500 -> isSettled false
+  assert.equal(res.isSettled, false);
+
+  // Second stall occurs at t=3200 (2200ms since t=1000, still before 2500ms)
+  detector.update(3200, { totalVideoFrames: 50, droppedVideoFrames: 0 }, { ...cond, waiting: true });
+  // Stall ends at t=3800 (600ms stall, totalStallMs = 1200ms >= 1000ms, stallCount = 2)
+  res = detector.update(3800, { totalVideoFrames: 50, droppedVideoFrames: 0 }, cond);
+  // t=3800 is 2800ms since playingStartedAt (1000), so isSettled is now true!
+  assert.equal(res.isSettled, true);
+  assert.equal(res.stallCount, 2);
+  assert.equal(res.totalStallMs, 1200);
+  assert.equal(res.stallChoppy, true);
+  assert.equal(res.choppy, true);
 });

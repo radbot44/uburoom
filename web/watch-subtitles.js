@@ -17,7 +17,7 @@ class uburoomSubtitleWindows {
     if(this.disposed)return;
     const timeMs=Math.round(timeSeconds*1000);
     if(!this.isCovered(timeMs))this.fetch(timeMs,true);
-    else if(!this.isCovered(timeMs,20000))this.fetch(timeMs+35000,false);
+    else if(!this.isCovered(timeMs,20000))this.fetch(timeMs+30000,false);
   }
   fetch(targetMs,priority=false) {
     if(this.disposed||this.isCovered(targetMs))return;
@@ -25,7 +25,7 @@ class uburoomSubtitleWindows {
       if(priority)this.fetching.abort();
       else return;
     }
-    const controller=new AbortController(),signal=AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)]);
+    const controller=new AbortController(),signal=AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)].filter(Boolean));
     this.fetching=controller;
     const beforeMs=15000,afterMs=60000;
     const url=`${this.windowUrl}?atMs=${targetMs}&beforeMs=${beforeMs}&afterMs=${afterMs}`;
@@ -33,9 +33,15 @@ class uburoomSubtitleWindows {
       try{
         const response=await fetch(url,{signal});
         if(!response.ok)return;
-        const startMs=Number(response.headers.get('x-subtitle-start-ms'))||Math.max(0,targetMs-beforeMs);
-        const endMs=Number(response.headers.get('x-subtitle-end-ms'))||(targetMs+afterMs);
-        const cues=Number(response.headers.get('x-subtitle-cues'))||0;
+        const rawStart=response.headers.get('x-subtitle-start-ms');
+        const parsedStart=rawStart!==null && rawStart!=='' ? Number(rawStart) : NaN;
+        const startMs=Number.isFinite(parsedStart) ? parsedStart : Math.max(0,targetMs-beforeMs);
+        const rawEnd=response.headers.get('x-subtitle-end-ms');
+        const parsedEnd=rawEnd!==null && rawEnd!=='' ? Number(rawEnd) : NaN;
+        const endMs=Number.isFinite(parsedEnd) ? parsedEnd : (targetMs+afterMs);
+        const rawCues=response.headers.get('x-subtitle-cues');
+        const parsedCues=rawCues!==null && rawCues!=='' ? Number(rawCues) : NaN;
+        const cues=Number.isFinite(parsedCues) ? parsedCues : 0;
         const buffer=await response.arrayBuffer();
         if(signal.aborted||this.disposed)return;
         if(buffer.byteLength>0)await this.renderer.append(new Uint8Array(buffer));
@@ -97,7 +103,7 @@ class uburoomSubtitles {
     this.picture=state.state?.picture; if(this.picture)this.renderer?.picture(this.picture);
     if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError,loading:false}); return; }
     this.track.mode=this.renderer?'disabled':'showing';
-    if (this.streaming) this.syncStatus();
+    if (this.streaming || this.windowScheduler) this.syncStatus();
     if (!this.loaded && !this.loading && !this.timer && this.attempts<3) void this.load();
   }
   rebuild() {
@@ -155,6 +161,7 @@ class uburoomSubtitles {
         if(generation!==this.generation){renderer.destroy();return;}
         this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
         if(value.window && ['pgs','ass','vobsub'].includes(value.format)){
+          this.streamSynced=undefined;
           const scheduler=this.windowScheduler=new uburoomSubtitleWindows(renderer,value.window,()=>this.syncStatus(),abort.signal);
           this.syncStatus();
           scheduler.check(this.mediaTime());
@@ -200,7 +207,7 @@ class uburoomSubtitles {
         if (!Array.isArray(value.cues) || value.cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string')) throw new Error('Invalid subtitle response.');
         this.cues=value.cues; this.rebuild();
       }
-      this.loaded=true; this.status({message:'',error:false,loading:false});
+      this.loaded=true; if(!this.windowScheduler)this.status({message:'',error:false,loading:false});
     } catch (error) {
       if (generation!==this.generation || abort.signal.aborted) return;
       // Release this attempt's renderer and requests before retrying so a
@@ -220,4 +227,5 @@ class uburoomSubtitles {
     this.reset();
   }
 }
-window.uburoomSubtitles=uburoomSubtitles;
+if(typeof window!=='undefined')window.uburoomSubtitles=uburoomSubtitles;
+if(typeof module!=='undefined')module.exports={uburoomSubtitleWindows,uburoomSubtitles};

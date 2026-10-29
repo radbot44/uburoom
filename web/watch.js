@@ -1967,7 +1967,14 @@ $('timeline').addEventListener('change', () => {
 });
 $('timeline').addEventListener('pointercancel', () => { seekDragging = false; });
 video.addEventListener('loadedmetadata', () => { void sync.synchronize(); });
-video.addEventListener('canplay', () => { void sync.synchronize(); });
+video.addEventListener('canplay', () => {
+  void sync.synchronize();
+  if (state?.waitingForReady || state?.readiness) void reportReadiness();
+});
+video.addEventListener('seeked', () => {
+  void sync.synchronize();
+  if (state?.waitingForReady || state?.readiness) void reportReadiness();
+});
 video.addEventListener('error', () => {
   if (!video.getAttribute('src') || !state?.mediaUrl || !video.error || playbackError) return;
   const code = video.error?.code, message = video.error?.message || '';
