@@ -3,6 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const policy = require('../web/playback-policy');
 const toastsApi = require('../web/watch-toasts');
+const vm = require('node:vm');
+const source = require('node:fs').readFileSync(require('node:path').join(__dirname,'../web/watch.js'),'utf8');
 
 test('choppiness detector detects 10% dropped frames over 10 seconds of active playback', () => {
   const detector = policy.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
@@ -14,16 +16,17 @@ test('choppiness detector detects 10% dropped frames over 10 seconds of active p
   assert.equal(res.warming, true);
 
   // At t=5000: 150 frames, 15 dropped (10%), but only 5s elapsed
-  res = detector.update(5000, { totalVideoFrames: 150, droppedVideoFrames: 15 }, cond);
+  for (let t=500;t<=5000;t+=500) res = detector.update(t, {totalVideoFrames:t*.03,droppedVideoFrames:Math.floor(t*.003)},cond);
   assert.equal(res.choppy, false);
   assert.equal(res.warming, true);
 
   // At t=10000: 300 frames, 33 dropped (11%)
-  res = detector.update(10000, { totalVideoFrames: 300, droppedVideoFrames: 33 }, cond);
+  for (let t=5500;t<=10000;t+=500) res = detector.update(t, {totalVideoFrames:t*.03,droppedVideoFrames:15+Math.floor((t-5000)*.0036)},cond);
   assert.equal(res.choppy, true);
   assert.equal(res.deltaTotal, 300);
   assert.equal(res.deltaDropped, 33);
   assert.ok(res.ratio >= 0.10);
+  assert.equal(res.dropChoppy,true,'the existing long-window path remains active');
 });
 
 test('choppiness detector stays quiet when dropped frames are under threshold', () => {
@@ -31,7 +34,7 @@ test('choppiness detector stays quiet when dropped frames are under threshold', 
   const cond = { paused: false, seeking: false, waiting: false, visible: true, active: true };
 
   detector.update(0, { totalVideoFrames: 0, droppedVideoFrames: 0 }, cond);
-  detector.update(5000, { totalVideoFrames: 150, droppedVideoFrames: 5 }, cond);
+  for (let t=500;t<10000;t+=500) detector.update(t, {totalVideoFrames:t*.03,droppedVideoFrames:Math.floor(t*.001)},cond);
   const res = detector.update(10000, { totalVideoFrames: 300, droppedVideoFrames: 10 }, cond);
   assert.equal(res.choppy, false);
   assert.ok(res.ratio < 0.10);
@@ -82,7 +85,8 @@ test('insufficient frames (<50) over 10s does not trigger false positive', () =>
 
   detector.update(0, { totalVideoFrames: 0, droppedVideoFrames: 0 }, cond);
   // Only 10 frames total, 5 dropped (50%), but total frames < 50
-  const res = detector.update(10000, { totalVideoFrames: 10, droppedVideoFrames: 5 }, cond);
+  let res;
+  for (let t=500;t<=10000;t+=500) res = detector.update(t, {totalVideoFrames:Math.floor(t*.001),droppedVideoFrames:Math.floor(t*.0005)},cond);
   assert.equal(res.choppy, false);
   assert.equal(res.minFramesRequired, 50);
 });
@@ -121,7 +125,7 @@ test('deliberate dismissal permanently suppresses detection until session reset'
   assert.equal(res.warming, true);
 });
 
-test('toast with action renders container div and supports action and deliberate dismissal', () => {
+function toastFixture() {
   const mockDoc = {
     createElement(tag) {
       const el = {
@@ -162,7 +166,14 @@ test('toast with action renders container div and supports action and deliberate
   mockDoc.ownerDocument = mockDoc;
   const host = mockDoc.createElement('div');
 
-  const toasts = toastsApi.create(host, { icons: { icon: () => mockDoc.createElement('svg') } });
+  const timers = new Map(); let sequence = 0;
+  const toasts = toastsApi.create(host, { icons: { icon: () => mockDoc.createElement('svg') },
+    schedule:fn=>{const id=++sequence;timers.set(id,fn);return id;},cancel:id=>timers.delete(id) });
+  return {host,toasts,expire:()=>{for(const [id,fn] of [...timers]){timers.delete(id);fn();}}};
+}
+
+test('toast with action renders container div and supports action and deliberate dismissal', () => {
+  const {host,toasts} = toastFixture();
 
   let actionRan = false;
   let dismissedDeliberately = false;
@@ -285,4 +296,130 @@ test('sub-2.5s stalls do not reset playingStartedAt in a loop and record into st
   assert.equal(res.totalStallMs, 1200);
   assert.equal(res.stallChoppy, true);
   assert.equal(res.choppy, true);
+});
+
+function frameDriver(options) {
+  const detector=policy.choppinessDetector(options), warnings=[];
+  let now=0,total=0,dropped=0,result;
+  detector.update(now,{totalVideoFrames:total,droppedVideoFrames:dropped});
+  function step(drop=6,conditions={},gap=500) {
+    now+=gap;total+=12;dropped+=drop;
+    result=detector.update(now,{totalVideoFrames:total,droppedVideoFrames:dropped},conditions);
+    if(result.warning)warnings.push(now);
+    return result;
+  }
+  return {detector,warnings,step,until(time,drop=6){while(now<time)step(drop);return result;},
+    resetCounters(){total=0;dropped=0;return step(0);},get now(){return now;}};
+}
+
+test('two complete severe windows warn before the long detector, once per episode, and healthy playback rearms',()=>{
+  const f=frameDriver();f.until(6000);assert.deepEqual(f.warnings,[]);
+  const severe=f.step();assert.equal(severe.severeDropChoppy,true);assert.equal(severe.dropChoppy,false);
+  assert.deepEqual(f.warnings,[6500]);
+  f.until(30000);assert.deepEqual(f.warnings,[6500],'continuous degradation never repeats');
+  f.until(40000,0);assert.equal(f.warnings.length,1,'recovery itself never warns');
+  const recovered=f.until(42000,0);assert.equal(recovered.episodeActive,false);
+  f.until(48000);assert.equal(f.warnings.length,2,'a new degraded episode can warn');
+});
+
+test('one severe window and insufficient frame counts cannot establish sustained severe degradation',()=>{
+  const f=frameDriver();f.until(2500,0);f.until(4500,6);
+  assert.equal(f.until(6500,0).severeDropChoppy,false);assert.deepEqual(f.warnings,[]);
+  // Four drops per window meets the ratio gate but not the absolute-drop gate.
+  const g=frameDriver();g.until(16000,1);assert.deepEqual(g.warnings,[]);
+  const belowRatio=policy.choppinessDetector();let lowRatio;
+  // 60fps with eight drops per two seconds passes the count gate but stays below 8%.
+  for(let t=0;t<=15000;t+=500)lowRatio=belowRatio.update(t,{totalVideoFrames:t*.06,droppedVideoFrames:t*.004});
+  assert.equal(lowRatio.choppy,false);
+  const sparse=policy.choppinessDetector();let result;
+  for(let t=0;t<=15000;t+=500)result=sparse.update(t,{totalVideoFrames:Math.floor(t/1000),droppedVideoFrames:Math.floor(t/2000)});
+  assert.equal(result.choppy,false);assert.equal(result.warning,false);
+});
+
+test('interruptions, waiting, missing/reset counters and delayed samples invalidate short-window evidence',()=>{
+  for(const interrupt of [
+    f=>f.step(0,{paused:true}),f=>f.step(0,{seeking:true}),f=>f.step(0,{visible:false}),f=>f.step(0,{active:false}),
+    f=>f.step(0,{waiting:true}),f=>f.detector.buffering(),f=>f.detector.interrupt(),
+    f=>f.resetCounters(),f=>f.step(6,{},3000),
+    f=>f.detector.update(f.now+100,undefined)
+  ]) {
+    const f=frameDriver();f.until(4500);assert.equal(f.warnings.length,0);
+    interrupt(f);
+    for(let i=0;i<4;i++)assert.equal(f.step().warning,false,'old problematic window cannot combine with new samples');
+    assert.deepEqual(f.warnings,[]);
+  }
+  const stalled=frameDriver();stalled.until(3000,0);stalled.step(0,{waiting:true});
+  assert.equal(stalled.step(0,{waiting:true},5000).choppy,false,'unobserved time is not a measured stall');
+});
+
+test('pauses, absent counters and buffering never rearm a warning as healthy playback',()=>{
+  const f=frameDriver();f.until(7000);assert.equal(f.warnings.length,1);
+  for(let i=0;i<24;i++)f.step(0,{paused:true});
+  f.until(f.now+7000);assert.equal(f.warnings.length,1);
+  f.detector.interrupt();f.until(f.now+5000,0);
+  f.step(0,{waiting:true});f.until(f.now+6000,0);
+  f.until(f.now+4000);assert.equal(f.warnings.length,1,'interrupted healthy periods cannot be combined');
+  const healthy=frameDriver();healthy.until(6500);
+  assert.equal(healthy.until(16000,0).episodeActive,true,'less than ten healthy seconds cannot rearm');
+  assert.equal(healthy.step(0).rearmed,true,'five complete healthy windows rearm at ten seconds');
+});
+
+function watchFixture() {
+  const toast=toastFixture(),commands=[],events=[];
+  let now=0,total=0,dropped=0;
+  const ctx={...toast,uburoomPlayback:policy,uburoom:{qualityId:value=>value},preferredQuality:'direct',selected:'room',hls:undefined,
+    navigator:{},state:{id:'room',epoch:'epoch',mediaVersion:'movie',streamVersion:'a',mediaUrl:'/private-url',mediaId:'movie',quality:'direct',
+      qualities:[{id:'direct'},{id:'720p4'},{id:'720p2'}],state:{paused:false}},
+    video:{paused:false,seeking:false,currentTime:5,readyState:4,getVideoPlaybackQuality:()=>({totalVideoFrames:total,droppedVideoFrames:dropped})},
+    autoplayBlocked:false,playbackError:'',seekDragging:false,sync:{timelinePending:false},playerWaiting:false,pending:false,qualityPending:false,
+    document:{visibilityState:'visible'},performance:{now:()=>now},savePlayerPreferences(){},execute:async command=>{commands.push(command);},fail(){},
+    diagnostics:{record:(event,fields)=>events.push({event,...fields})},diagnosticSample:(event,fields)=>events.push({event,...fields})};
+  vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('const choppyDetector ='),source.indexOf('function decodedFrames(')),ctx);
+  ctx.checkChoppyPlayback();
+  return {ctx,commands,events,...toast,
+    run(ms,drop=6){for(let i=0;i<ms/500;i++){now+=500;total+=12;dropped+=drop;ctx.checkChoppyPlayback();}},
+    read:()=>vm.runInContext('({active:choppyToastActive,dismissed:choppyDetector.isDismissed,cooldown:choppyDetector.inCooldown(performance.now())})',ctx)};
+}
+
+test('toast expiry clears watch bookkeeping without deliberate dismissal or repeated warnings',()=>{
+  const f=watchFixture();f.run(7000);assert.equal(f.read().active,true);
+  f.expire();assert.equal(f.read().active,false);assert.equal(f.read().dismissed,false);
+  f.run(20000);assert.equal(f.read().active,false);assert.equal(f.events.filter(e=>e.event==='playback-degraded').length,1);
+  f.run(12000,0);f.run(6000);assert.equal(f.read().active,true);
+  const ordinary=toastFixture();let dismissed=0,closed=0;
+  ordinary.toasts.show('other',{title:'Other',duration:1000,onDismiss:()=>dismissed++,onClose:()=>closed++});
+  ordinary.expire();assert.equal(dismissed,0);assert.equal(closed,1);
+});
+
+test('same-media replacement preserves dismissal and cooldown; a new media/viewing session resets them',()=>{
+  const f=watchFixture();f.run(7000);
+  assert.deepEqual(f.commands,[],'runtime warnings never change quality automatically');
+  const root=f.host.children.at(-1),actions=root.children[1].children[2];
+  actions.children[1].listeners.click({stopPropagation(){}});assert.equal(f.read().dismissed,true);
+  f.ctx.state.streamVersion='replacement';f.ctx.resetChoppyPlayback(true);f.run(20000);
+  assert.equal(f.read().dismissed,true);assert.equal(f.read().active,false);
+  f.ctx.state.mediaVersion='new-movie';f.ctx.resetChoppyPlayback(false);f.run(7000);
+  assert.equal(f.read().active,true);
+  f.host.children.at(-1).children[1].children[2].children[0].listeners.click({stopPropagation(){}});
+  assert.equal(f.commands.length,1);assert.equal(f.commands[0].action,'media.quality.set');assert.equal(f.commands[0].args.quality,'720p4');
+  assert.equal(f.ctx.state.state.paused,false,'warning/action does not pause the room');
+  f.ctx.state.streamVersion='lower-quality';f.ctx.resetChoppyPlayback(true);
+  assert.equal(f.read().cooldown,true);f.run(9500);assert.equal(f.read().active,false);
+  f.ctx.resetChoppyPlayback(false);assert.equal(f.read().cooldown,false);assert.equal(f.read().dismissed,false);
+});
+
+test('capability probes fail safely, do not guess metadata, and cannot warn or change quality',async()=>{
+  const config={type:'media-source',video:{contentType:'video/mp4; codecs="avc1.640033"',width:3840,height:2160,bitrate:40000000,framerate:24}};
+  assert.equal((await policy.decodingCapability(config,undefined)).capabilityStatus,'unavailable');
+  let calls=0;const api={decodingInfo:async()=>{calls++;return {supported:true,smooth:false,powerEfficient:false};}};
+  assert.equal((await policy.decodingCapability({type:'file'},api)).capabilityStatus,'incomplete');assert.equal(calls,0);
+  assert.equal((await policy.decodingCapability(config,{decodingInfo:async()=>{throw new Error('Private URL');}})).capabilityStatus,'error');
+  assert.equal((await policy.decodingCapability(config,{decodingInfo:()=>new Promise(()=>{})},5)).capabilityStatus,'error');
+  const f=watchFixture();f.ctx.navigator.mediaCapabilities=api;
+  await f.ctx.probePlaybackCapabilities(config);
+  assert.equal(f.events.at(-1).capabilitySmooth,false);assert.equal(f.read().active,false);assert.deepEqual(f.commands,[]);
+  let resolve;f.ctx.resetChoppyPlayback(true);f.ctx.navigator.mediaCapabilities={decodingInfo:()=>new Promise(done=>{resolve=done;})};
+  const pending=f.ctx.probePlaybackCapabilities(config);f.ctx.state.streamVersion='superseded';
+  resolve({supported:true,smooth:false,powerEfficient:false});await pending;
+  assert.equal(f.events.filter(e=>e.event==='decode-capability').length,1,'superseded capability evidence is discarded');
 });

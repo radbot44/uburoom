@@ -129,6 +129,14 @@ test('frame diagnostics have their own bounded sanitized ring',()=>{
   const log=d.snapshot();assert.equal(log.discardedFrames,100);assert.equal(log.entries.filter(r=>r.event==='frame').length,7200);
   assert.equal(log.entries.filter(r=>r.event==='frame')[0].frameMediaTime,100);assert.ok(!JSON.stringify(log).includes('secret'));
 });
+
+test('degradation and capability diagnostics remain bounded and exclude media/credential/device identifiers',()=>{
+  const d=create();for(let i=0;i<400;i++)d.record('decode-capability',{capabilityStatus:'reported',capabilitySupported:true,capabilitySmooth:false,
+    capabilityPowerEfficient:false,roomId:'secret-room',mediaId:'secret-media',url:'https://secret-media',token:'secret-token',device:'secret-device',error:'secret-error'});
+  d.record('playback-degraded',{degradation:'severe-drops',severeRatio:.5,severeTotal:48,severeDropped:24,sampleGapMs:500});
+  const log=d.snapshot();assert.equal(log.entries.length,300);assert.equal(log.discardedEvents,102);
+  assert.equal(log.entries.at(-1).severeDropped,24);assert.ok(!JSON.stringify(log).includes('secret'));
+});
 test('sync-quality diagnostics retain bounded scoring contributors and sanitize device identity',()=>{
   const d=create();d.record('sync-quality',{qualityStatus:'playing',qualityConfidence:'reduced',qualityReason:'position-timing-estimate',rawQualityScore:.3,smoothedQualityScore:.8,
     measuredPlaybackSeconds:50,outOfSync250Seconds:12,outOfSync500Seconds:4,automaticCorrectionCount:3,

@@ -81,6 +81,8 @@ Reuse the shared toast, dialog, menu, permission and status systems. Preserve th
 
 Owner-approved 2026-10-29: bounded subtitle-window recovery uses the existing loading/error feedback and explicit Plex burn-in choice. A failed or unauthorized window must not clear its error as successful caption coverage; subtitle recovery remains independent of video playback.
 
+Owner-approved 2026-10-29: playback degradation extends the existing detector and unchanged Lower quality toast. Deliberate dismissal belongs to the current media/viewing session and survives same-media stream replacement; a new media item, room or session exit resets it. Runtime evidence alone drives warnings, once per continuous degradation episode with healthy playback required before rearming. Capability hints remain diagnostic context; quality changes remain explicit viewer actions. Buffer tuning requires measured justification.
+
 Keep existing draft/save/cancel boundaries explicit and report failures truthfully. Preserve independent personal preferences and shared room authority. Put technical details in existing diagnostics surfaces, never credentials or private playback URLs.
 
 ## Review and maintenance

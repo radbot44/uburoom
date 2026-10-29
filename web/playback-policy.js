@@ -104,22 +104,53 @@
     const quality=video.getVideoPlaybackQuality?.();
     return quality ? quality.totalVideoFrames-quality.droppedVideoFrames : 0;
   }
-  function choppinessDetector({ threshold = 0.10, windowMs = 10000, minFrames = 50, maxStallMs = 1500, maxStallCount = 2, minMultiStallMs = 1000, settleMs = 2500 } = {}) {
-    let samples = [], stallHistory = [], currentStallStart = undefined, playingStartedAt = 0;
-    let cooldownUntil = 0, deliberatelyDismissed = false;
+  function hlsErrorDetail(data, details) {
+    const error = data.error || data.err;
+    if (error?.name === 'QuotaExceededError' || error?.code === 22) return 'quota-exceeded';
+    if (details.BUFFER_FULL_ERROR && data.details === details.BUFFER_FULL_ERROR) return 'buffer-full';
+    if (details.BUFFER_APPEND_ERROR && data.details === details.BUFFER_APPEND_ERROR) return 'buffer-append';
+    if (details.MEDIA_SOURCE_REQUIRES_RESET && data.details === details.MEDIA_SOURCE_REQUIRES_RESET) return 'reset';
+    return /^frag/.test(data.details) ? 'fragment' : /^manifest/.test(data.details) ? 'manifest' : 'other';
+  }
+  async function decodingCapability(configuration, capabilities, timeoutMs = 2000) {
+    if (typeof capabilities?.decodingInfo !== 'function') return {capabilityStatus:'unavailable'};
+    const video = configuration?.video;
+    // Bare codec families, guessed frame rates and requested quality ceilings
+    // cannot describe the actual output. Missing metadata is inconclusive.
+    if (!['file','media-source'].includes(configuration?.type) || !video ||
+      !/^video\/mp4; codecs="avc[13]\.[a-f0-9]{6}"$/i.test(video.contentType || '') ||
+      !['width','height','bitrate','framerate'].every(key => Number.isFinite(video[key]) && video[key] > 0)) return {capabilityStatus:'incomplete'};
+    let timer;
+    try {
+      const info = await Promise.race([capabilities.decodingInfo(configuration),new Promise((resolve,reject) => {
+        timer = setTimeout(() => reject(new Error('Capability query timed out')),timeoutMs);
+      })]);
+      if (![info?.supported,info?.smooth,info?.powerEfficient].every(value => typeof value === 'boolean')) return {capabilityStatus:'incomplete'};
+      return {capabilityStatus:'reported',capabilitySupported:info.supported,capabilitySmooth:info.smooth,capabilityPowerEfficient:info.powerEfficient};
+    } catch { return {capabilityStatus:'error'}; }
+    finally { clearTimeout(timer); }
+  }
+  function choppinessDetector({ threshold = 0.10, windowMs = 10000, minFrames = 50, maxStallMs = 1500, maxStallCount = 2, minMultiStallMs = 1000, settleMs = 2500,
+    severeWindowMs = 2000, severeMinFrames = 20, severeMinDropped = 6, severeThreshold = 0.08, severeWindows = 2, maxSampleGapMs = 1500, healthyRearmMs = 10000 } = {}) {
+    let samples = [], stallHistory = [], currentStallStart, playingStartedAt, lastUpdateAt, previousQuality;
+    let shortStart, badWindows = 0, severeDropChoppy = false, severeRatio = 0, severeTotal = 0, severeDropped = 0;
+    let cooldownUntil = 0, deliberatelyDismissed = false, episodeActive = false, healthyMs = 0;
+    function clearDrops() {
+      samples = []; shortStart = undefined; previousQuality = undefined;
+      badWindows = 0; severeDropChoppy = false; severeRatio = severeTotal = severeDropped = 0;
+    }
     function reset() {
-      samples = [];
-      stallHistory = [];
-      currentStallStart = undefined;
-      playingStartedAt = 0;
+      interrupt();
       cooldownUntil = 0;
       deliberatelyDismissed = false;
+      episodeActive = false;
     }
     function interrupt() {
-      samples = [];
+      clearDrops();
       stallHistory = [];
       currentStallStart = undefined;
-      playingStartedAt = 0;
+      playingStartedAt = lastUpdateAt = undefined;
+      healthyMs = 0;
     }
     function triggerCooldown(cooldownMs = 10000, now = performance.now()) {
       cooldownUntil = now + cooldownMs;
@@ -129,6 +160,7 @@
       if (deliberate) deliberatelyDismissed = true;
       interrupt();
     }
+    function buffering() { clearDrops(); healthyMs = 0; }
     function update(now, quality, { paused = false, seeking = false, waiting = false, visible = true, active = true } = {}) {
       if (deliberatelyDismissed) return { choppy: false, dismissed: true };
       if (now < cooldownUntil) return { choppy: false, inCooldown: true };
@@ -137,12 +169,22 @@
         interrupt();
         return { choppy: false, interrupted: true };
       }
-      const isSettled = playingStartedAt > 0 && (now - playingStartedAt >= settleMs);
+      // A suspended event loop or counter discontinuity cannot supply evidence
+      // for the unobserved interval (including a waiting timer).
+      const hasQuality = quality && Number.isFinite(quality.totalVideoFrames) && Number.isFinite(quality.droppedVideoFrames) &&
+        quality.totalVideoFrames >= 0 && quality.droppedVideoFrames >= 0 && quality.droppedVideoFrames <= quality.totalVideoFrames;
+      const sampleGapMs = lastUpdateAt === undefined ? 0 : now - lastUpdateAt;
+      if (sampleGapMs < 0 || sampleGapMs > maxSampleGapMs || previousQuality && hasQuality &&
+        (quality.totalVideoFrames < previousQuality.total || quality.droppedVideoFrames < previousQuality.dropped ||
+        quality.droppedVideoFrames - previousQuality.dropped > quality.totalVideoFrames - previousQuality.total)) interrupt();
+      lastUpdateAt = now;
+      if (!waiting && playingStartedAt === undefined) playingStartedAt = now;
+      const isSettled = playingStartedAt !== undefined && now - playingStartedAt >= settleMs;
       if (waiting) {
-        if (playingStartedAt === 0) return { choppy: false, warming: true, isSettled: false };
+        clearDrops(); healthyMs = 0;
+        if (playingStartedAt === undefined) return { choppy: false, warming: true, isSettled: false };
         if (currentStallStart === undefined) currentStallStart = now;
       } else {
-        if (playingStartedAt === 0) playingStartedAt = now;
         if (currentStallStart !== undefined) {
           stallHistory.push({ start: currentStallStart, end: now });
           currentStallStart = undefined;
@@ -161,10 +203,10 @@
       }
       const stallChoppy = isSettled && (totalStallMs >= maxStallMs || (stallCount >= maxStallCount && totalStallMs >= minMultiStallMs));
       let dropChoppy = false, deltaTotal = 0, deltaDropped = 0, ratio = 0, minFramesRequired = undefined;
-      const hasQuality = quality && Number.isFinite(quality.totalVideoFrames) && Number.isFinite(quality.droppedVideoFrames);
+      let rearmed = false;
       if (hasQuality && !waiting) {
         const total = quality.totalVideoFrames, dropped = quality.droppedVideoFrames;
-        if (samples.length && (total < samples[samples.length - 1].total || dropped < samples[samples.length - 1].dropped)) samples = [];
+        previousQuality = {total,dropped};
         samples.push({ time: now, total, dropped });
         while (samples.length > 1 && samples[1].time <= cutoff) samples.shift();
         const oldest = samples[0];
@@ -179,20 +221,45 @@
             dropChoppy = ratio >= threshold;
           }
         }
+        if (isSettled) {
+          shortStart ??= {time:now,total,dropped};
+          const elapsed = now - shortStart.time;
+          if (elapsed >= severeWindowMs) {
+            severeTotal = total - shortStart.total; severeDropped = dropped - shortStart.dropped;
+            severeRatio = severeTotal > 0 ? severeDropped / severeTotal : 0;
+            const enoughFrames = severeTotal >= severeMinFrames;
+            const bad = enoughFrames && severeDropped >= severeMinDropped && severeRatio >= severeThreshold;
+            badWindows = bad ? badWindows + 1 : 0;
+            severeDropChoppy = badWindows >= severeWindows;
+            // Completed non-overlapping windows only: absent counters, low frame
+            // counts, waiting and interruptions never count as healthy playback.
+            healthyMs = enoughFrames && severeRatio < severeThreshold && currentStallStart === undefined ? healthyMs + elapsed : 0;
+            shortStart = {time:now,total,dropped};
+            if (episodeActive && healthyMs >= healthyRearmMs) {
+              episodeActive = false; healthyMs = 0; rearmed = true;
+              samples = [{time:now,total,dropped}]; dropChoppy = false;
+            }
+          }
+        }
+      } else if (!waiting) {
+        clearDrops(); healthyMs = 0;
       }
       const oldestSample = samples[0];
       const durationMs = oldestSample ? now - oldestSample.time : (isSettled ? windowMs : 0);
-      const choppy = stallChoppy || dropChoppy;
+      const choppy = stallChoppy || dropChoppy || severeDropChoppy;
+      const warning = choppy && !episodeActive;
+      if (warning) { episodeActive = true; healthyMs = 0; }
       const warming = !isSettled || (!choppy && (!oldestSample || durationMs < windowMs));
-      return { choppy, ratio, deltaTotal, deltaDropped, durationMs, minFramesRequired, totalStallMs, stallCount, stallChoppy, dropChoppy, warming, isSettled };
+      return { choppy, warning, rearmed, episodeActive, ratio, deltaTotal, deltaDropped, durationMs, minFramesRequired, totalStallMs, stallCount, stallChoppy, dropChoppy,
+        severeDropChoppy, severeRatio, severeTotal, severeDropped, badWindows, sampleGapMs, healthyMs, warming, isSettled };
     }
     return {
-      update, reset, interrupt, triggerCooldown, dismiss,
+      update, reset, interrupt, buffering, triggerCooldown, dismiss,
       get isDismissed() { return deliberatelyDismissed; },
       inCooldown: now => now < cooldownUntil
     };
   }
-  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
+  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

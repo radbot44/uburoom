@@ -34,7 +34,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 | ID | Area | Implemented | Remaining work |
 | --- | --- | --- | --- |
-| M1-P1 | Sustained playback | Recovery, diagnostics and scoped real two-hour playback evidence | Real Firefox/Activity and multi-viewer lifecycle coverage; unexplained unload/resource behavior and long-run accounting |
+| M1-P1 | Sustained playback | Recovery, diagnostics, early runtime degradation warnings and scoped real two-hour playback evidence | Representative Firefox 4K/device verification, evidence-based HLS tuning, Activity and multi-viewer lifecycle coverage; unexplained unload/resource behavior and long-run accounting |
 | M1-P2 | Automatic delivery | Direct file/HLS, proxy recovery, shared outputs, local codec selection and bounded capacity fallback | Complete source/version inventory, output validation, remux/audio-only selection, automatic quality and real cross-account/device coverage |
 | M1-P3 | Content fidelity | Personal tracks and initial decoded audio/caption evidence | Real track switching/restoration, downmix, A/V/caption alignment, source cadence and device coverage; subtitle renderer work is P9 |
 | M1-P4 | Plex viewing experience | Native viewer observations/history; decoupled session reporting, shared-producer stop safety, activity-only default with personal watch-state opt-in and sponsored isolation | Live PMS/Tautulli validation, multi-viewer stop/seek transitions and natural playback completion; later parity increments below |

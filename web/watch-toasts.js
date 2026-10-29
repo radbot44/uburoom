@@ -71,10 +71,13 @@
       const entry = entries.get(id);
       if (!entry || entry.exiting) return;
       cancel(entry.timer);
+      entry.exiting = true;
+      // Optional lifetime bookkeeping; deliberate-dismiss semantics for all
+      // existing callers remain unchanged.
+      try { entry.onClose?.(); } catch {}
       if (deliberate && entry.onDismiss) {
         try { entry.onDismiss(true); } catch {}
       }
-      entry.exiting = true;
       const remove = () => {
         entry.root.remove();
         entries.delete(id);
@@ -91,7 +94,7 @@
         motion.onfinish = () => { if (entry.motion === motion) remove(); };
       }
     }
-    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false, action, onDismiss } = {}) {
+    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false, action, onDismiss, onClose } = {}) {
       if (!enabled && type !== 'error') return;
       // A stable ID updates an existing notification rather than duplicating it.
       let entry = entries.get(id);
@@ -169,6 +172,7 @@
       entry.type = type;
       entry.actionCallback = action?.run;
       entry.onDismiss = onDismiss;
+      entry.onClose = onClose;
       entry.root.classList.toggle('normal', type !== 'error');
       entry.root.classList.toggle('error', type === 'error');
       entry.root.dataset.loading = String(loading);

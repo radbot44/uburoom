@@ -7,7 +7,9 @@
     request:['room-poll','rooms','observe','ready','command','identity','other'],
     failure:['http','network','timeout','abort','decode','other'],
     category:['network','media','other'],
-    detail:['reset','fragment','manifest','quota-exceeded','buffer-append','other'],
+    detail:['reset','fragment','manifest','quota-exceeded','buffer-full','buffer-append','other'],
+    degradation:['severe-drops','drops','stalls'],
+    capabilityStatus:['unavailable','incomplete','reported','error'],
     format:['hls','file','av1','vp9','vp8'], delivery:['text','image','burn','off'],syncMode:['speed','jumps'],
     visibility:['visible','hidden','prerender'],
     closeInitiator:['none','manual-close','interrupt','auth-timeout','protocol-error','heartbeat-timeout'],
@@ -28,7 +30,7 @@
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
     'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','sync-quality','start-prepare','start-timer','hls-anchor','hls-buffer-flushing',
-    'control-connected','room-list-unavailable','room-state-unavailable']);
+    'control-connected','room-list-unavailable','room-state-unavailable','playback-degraded','playback-rearmed','decode-capability']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
@@ -37,8 +39,11 @@
     'frameIntervalMs','frameMediaIntervalMs','frameCallbackGap','presentationErrorMs','arrivalTarget','frameServerTime','seekDeltaMs','socketCloseCode',
     'measuredPlaybackSeconds','outOfSync250Seconds','outOfSync500Seconds','automaticCorrectionCount','automaticCorrectionMagnitudeMs',
     'correctionDutyCycle','rateAdjustedSeconds','rateAdjustmentSeconds','bufferingSeconds','rawQualityScore','smoothedQualityScore','qualityMeasurementFreshnessMs',
-    'presentationMeasuredSeconds','positionMeasuredSeconds','connectionId','connectionAttempt','connectionAgeMs','roomCount']);
-  const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling','socketCloseClean','socketWasReady']);
+    'presentationMeasuredSeconds','positionMeasuredSeconds','connectionId','connectionAttempt','connectionAgeMs','roomCount',
+    'dropRatio','deltaTotal','deltaDropped','severeRatio','severeTotal','severeDropped','totalStallMs','stallCount','sampleGapMs',
+    'hlsMaxBufferSize','hlsMaxBufferLength','hlsMaxMaxBufferLength','hlsBackBufferLength']);
+  const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling','socketCloseClean','socketWasReady',
+    'capabilitySupported','capabilitySmooth','capabilityPowerEfficient']);
   function requestKind(path) {
     const route = String(path).split('?')[0];
     if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';

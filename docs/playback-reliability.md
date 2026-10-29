@@ -36,6 +36,18 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 - Account revocation/relink fences cached and in-flight credential work.
 - Verify real Plex manifests, backward segment availability, long pause/expiry and cleanup; synthetic VOD fixtures do not establish them.
 
+### Runtime degradation warnings
+
+The existing choppiness detector retains its 10-second dropped-frame and stall paths. An additional candidate path evaluates two consecutive non-overlapping windows of approximately 2 seconds after startup settling, each with at least 20 total frames, 6 dropped frames and an 8% drop ratio. These parameters are adjustable detector options, not device-validated limits. Waiting, visibility transitions, seeks, pauses, stream replacement, counter discontinuities and sampling gaps invalidate frame evidence; stalls remain a separate signal.
+
+Reuse the existing Playback seems choppy / Lower quality toast. Warn once per continuous degradation episode and require 10 seconds of consecutive, sufficiently sampled healthy playback before rearming. Deliberate dismissal survives stream/quality replacement for the current media/viewing session; a new media occurrence, room change or session exit resets it. Quality changes are explicit viewer actions and retain their cooldown across replacement. This feedback does not issue shared pause/seek commands or change synchronization policy.
+
+MediaCapabilities is best-effort diagnostic context only, using declared H.264 output metadata when complete. Missing profile, dimensions, bitrate or frame rate is inconclusive; direct-file metadata is not fabricated from quality presets. Unsupported, rejected, timed-out and superseded probes do not alter playback. Neither smoothness nor power-efficiency predictions alone trigger warnings or quality changes. Sanitized bounded exports distinguish runtime drops/stalls, quota exceptions, buffer-full/append errors and network failures without identifying media or credentials.
+
+Production HLS.js retains its 256MiB buffer-size target, 30-second forward minimum, 180-second forward ceiling and 30-second back buffer. Its byte target is not a SourceBuffer memory guarantee, and it does not govern direct-file caching. Smaller byte targets require actual quota and continuity measurements before adoption.
+
+HLS.js can recover a native quota exception internally before emitting an error event. Exported HLS errors therefore do not count every recovered append exception; zero exported quota errors is not proof of zero quota pressure. Explicit disposable browser experiments may instrument native appends to establish that distinction without changing production SourceBuffer behavior.
+
 ## Audio and subtitle completeness
 
 | Area | Contract / remaining evidence |

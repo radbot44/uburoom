@@ -13,6 +13,7 @@ async function load(context,name,next) {
   context.qualityPending ??= false;
   context.hlsTimelinePending ??= false;
   context.diagnostics ??= diagnosticLog();
+  context.uburoomPlayback ??= playback;
   context.diagnosticSample ??= (event,fields)=>context.diagnostics.record(event,fields);
   if(context.Hls)context.Hls.ErrorDetails ??= {};
   vm.runInNewContext(source.slice(source.indexOf('function '+name+'('),source.indexOf('function '+next+'(')),context);
@@ -312,4 +313,22 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   assert.equal(toast.hidden, true, 'toast is hidden on full clear');
   assert.equal(cleared, 1, 'player is cleared when buffer runs out');
   assert.equal(failedMessage, 'Disconnected. Reconnecting…');
+});
+
+test('HLS quota and append failures retain their cause independently of dropped frames and network errors',async()=>{
+  const client={config:playback.hlsConfig(40000)},details={MEDIA_SOURCE_REQUIRES_RESET:'reset',BUFFER_FULL_ERROR:'full',BUFFER_APPEND_ERROR:'append'};
+  const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'},ErrorDetails:details},
+    hlsRecoveryCount:0,video:{},state:{},performance:{now:()=>0}};
+  await load(context,'handleHlsError','unavailable');
+  for(const error of [
+    {details:'full',error:{name:'QuotaExceededError'},type:'media'},
+    {details:'full',error:{code:22},type:'media'},
+    {details:'full',type:'media'},
+    {details:'append',error:{name:'InvalidStateError'},type:'media'},
+    {details:'fragLoadError',type:'network'}
+  ])context.handleHlsError(client,{fatal:false,...error});
+  const rows=context.diagnostics.snapshot().entries.filter(row=>row.event==='hls-error');
+  assert.deepEqual(rows.map(row=>row.detail),['quota-exceeded','quota-exceeded','buffer-full','buffer-append','fragment']);
+  assert.equal(rows[4].category,'network');assert.equal(rows[0].hlsMaxBufferSize,256*1024*1024);
+  assert.equal(playback.hlsErrorDetail({dropped:100},details),'other','frame drops alone never establish quota pressure');
 });

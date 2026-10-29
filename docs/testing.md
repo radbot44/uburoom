@@ -15,6 +15,47 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1 — Early playback degradation and Firefox 4K diagnosis — 2026-10-29
+
+A/B on the working tree based on `da3a2f4b0bee90ae0ce1db1f1b8abb3480161baf`, Node v22.22.2 / Windows, Intel Core i9-14900KF. Owner-approved isolated generated media, synthetic provider responses, loopback servers and disposable Firefox 159.0 / Chrome 156.0.8078.49 profiles only. Browsers ran sequentially with default acceleration preferences in headless mode; the effective decoder/backend was not independently established. No production Plex data, service changes or deployment.
+
+- **A — passed in scope:** Extended the existing detector, action toast and quality flow. Two non-overlapping candidate severe-drop windows supplement the existing long-window/stall paths; stale evidence is invalidated on interruptions, waiting, stream changes, counter resets and sample gaps. Episodes rearm only after healthy eligible playback. Dismissal and quality cooldown survive same-media replacement, with new-media/room/exit reset boundaries. Optional toast-close bookkeeping preserves other callers' deliberate-dismiss semantics. Diagnostic exports remain bounded and allowlisted; capability hints never trigger quality changes or warnings. Shared synchronization policy and production HLS settings are unchanged.
+- **B — automated passed:** `node --test tests/choppiness.test.js tests/watch-recovery.test.js tests/playback-timing.test.js` passed **43 tests, zero failures/cancellations/skips**. `npm run test:full` passed **477 tests, zero failures/cancellations/skips**. Syntax checks and `git diff --check` passed. Regression coverage includes early/brief degradation, consecutive healthy rearming, stale/absent/reset counters, waiting/gaps/interruptions, automatic toast expiry, dismissal/cooldown across replacement, explicit Lower quality, capability failures/timeouts/supersession, and quota/append/network classification with bounded sanitized exports. An identical isolated 24fps/50%-drop trace first detected degradation at **10,000ms before / 6,500ms after**; these are logic measurements, not device calibration.
+- **B — watch-page recovery passed:** Actual watch UI and synthetic provider routes in both browsers; explicitly injected counters are separate from untouched decoder measurements. First warnings appeared approximately **6.90s Firefox / 7.31s Chrome** after injection. The existing Lower quality button selected the next server-offered quality, its cooldown survived actual stream replacement, deliberate dismissal survived another replacement for the same movie, and loading another movie reset dismissal. No automatic degradation-driven quality changes were added.
+
+**Synthetic watch-page measurements:** Separate 70-second generated 3840×2160 H.264 **High Level 5.1 with B-frames**, verified by FFprobe, 24fps / approximately 40.43Mbps video / AAC. Original used native direct-file playback; the 720p/4Mbps choice used a generated 1280×720 H.264/AAC HLS rendition through synthetic provider routes. Each row sampled approximately 20 seconds after startup. Counters were untouched during these measurements; warning-counter injection was a separate recovery check.
+
+| Browser | Quality / actual output | Dropped / total frames | Dropped percentage | Steady waiting / stalled events | Minimum forward buffer |
+| --- | --- | --- | --- | --- | --- |
+| Firefox | Original / 3840×2160 | 1 / 489 | 0.20% | 0 / 0 | 34.35s |
+| Firefox | 720p / 1280×720 | 0 / 484 | 0% | 0 / 0 | 29.89s |
+| Chrome | Original / 3840×2160 | 16 / 475 | 3.37% | 0 / 0 | 13.60s |
+| Chrome | 720p / 1280×720 | 14 / 485 | 2.89% | 0 / 0 | 29.98s |
+
+No degradation warnings were emitted in these measurements. Decoded 440Hz PCM matched 38/39 Firefox Original, 38/38 Chrome Original and 40/40 samples for each lower-quality run; this is not speaker-output acceptance. Existing speed corrections remained active (observed rates 1–1.04 across these runs); no causal conclusion about frame pacing follows. An earlier Constrained Baseline watch-page pass measured 0% Firefox / 0.63% Chrome Original drops and 0% for both lower-quality runs. These short runs do not reproduce severe Firefox stuttering or compare physical smoothness.
+
+**Rendered B — passed in scope:** Inspected the unchanged toast in both browsers before and after, including desktop dark, narrow light and a reduced layout viewport representing 200% zoom. Focus remained visible and native Enter activated its existing action. No CSS, artwork, layout, toast duration or action label changed. Reduced layout viewport is not actual browser-zoom or physical mobile evidence; perceptual acceptance remains open.
+
+**Synthetic HLS buffer experiment:** 70-second generated 3840×2160 H.264 Constrained Baseline Level 5.1 / AAC, 24fps, approximately 40.43Mbps video, 2-second MPEG-TS segments. Same vendored HLS.js 1.7.3 and production configuration, changing only the trial byte target before creation; 30-second forward minimum and back buffer retained. Each row sampled approximately 19.8 seconds of steady playback, followed by a 3-second paused-fill check. A disposable wrapper counted native append exceptions, including those HLS.js recovered without emitting an error event; native exceptions and HLS error events are separate counts, not summed.
+
+| Browser | Byte target | Dropped frames / sampled frames | Steady waiting count / duration | Native quota exceptions | Emitted HLS quota errors | Forward buffer observed |
+| --- | --- | --- | --- | --- | --- | --- |
+| Firefox | 256MiB | 0 / 476 | 0 / 0ms | 11 | 0 | 29.94–31.88s |
+| Firefox | 64MiB | 0 / 475 | 0 / 0ms | 11 | 0 | 29.81–31.88s |
+| Firefox | 45,000,000 bytes | 0 / 475 | 0 / 0ms | 11 | 0 | 29.86–31.87s |
+| Chrome | 256MiB | 0 / 476 | 0 / 0ms | 3 | 3 | 26.77–28.73s |
+| Chrome | 64MiB | 0 / 475 | 0 / 0ms | 3 | 3 | 26.75–28.50s |
+| Chrome | 45,000,000 bytes | 0 / 475 | 0 / 0ms | 3 | 3 | 26.76–28.50s |
+
+All six trials had zero steady `stalled` events and zero degradation warnings; the generated 440Hz signal matched all 40 sampled PCM observations per trial. Firefox recovered recurring native quota exceptions internally. Chrome's quota events occurred during startup and HLS.js reduced its effective forward ceiling to roughly 26.7–26.8 seconds. Firefox had a nonfatal startup `bufferSeekOverHole` event per trial. Neither smaller byte target reduced quota counts or improved observed continuity. **Buffer tuning was not justified; production values remain unchanged.** The 30-second minimum explains why lowering only the byte target did not establish a smaller memory bound.
+
+An additional **High-profile/B-frame HLS** check at the unchanged 256MiB target measured **0/477 dropped frames, zero steady waiting/stalled events and 40/40 matching PCM samples in each browser**, over approximately 19.9 seconds. Firefox again had 11 native quota exceptions and zero emitted quota errors, with 29.89–31.83s forward buffer. Chrome had three native quota exceptions and three emitted quota errors, with 26.77–28.83s forward buffer; nonfatal startup append-no-progress/abort events also recovered. This confirms the observed distinction between quota pressure and runtime degradation for both generated profiles, not for the original real-media failure.
+
+Capability queries using verified fixture parameters reported supported/smooth in both browsers; power efficiency was false in Firefox and true in Chrome. These predictions did not establish the actual decoding backend. Normal watch-file and single-playlist output metadata lacked sufficient parameters for a trustworthy query and was recorded as inconclusive instead of guessed.
+
+- **Measurement limitations and failures:** The initial uninstrumented HLS pass missed Firefox's internally recovered quota exceptions. Disposable-runner path/navigation mistakes were corrected before the six complete trials. A watch-flow assertion initially hard-coded the wrong next quality; checking the server-offered choice resolved it without changing the application. Early unit runs exposed the new warning-episode branch dismissing a still-choppy toast on its next poll; corrected and covered by regression. Low-frame fixtures were updated to use valid integer counter increments and continuous sampling. No assertion was weakened to accept application failure. Detailed generated media, private runners, raw reports and rendered evidence remain ignored.
+- **C — not run; D — not run. M1-P1 remains open:** Headless generated playback does not reproduce the reported real 4K failure or certify physical audio/video smoothness. Real High-profile titles and bitrate peaks, 30/60fps sources, weaker CPUs/GPUs, verified hardware/software decoder states, drivers, actual Plex direct/proxy HLS and direct-file delivery, WAN/Activity, multi-viewer independence and long-run recovery/endurance remain device/provider acceptance requirements. Quota pressure alone does not prove stuttering; absence of an exported quota event does not prove absence of quota pressure. No 4K playback-fix claim is made.
+
 ### M1-P9 — Bounded PGS extraction and seek recovery — 2026-10-29
 
 A/B on the working tree based on `0f7ee6169490606abe2b59d56047d13d558e6795`, Node v22.22.2 / Windows, FFmpeg and FFprobe `2024-08-18-git-7e5410eadb`. Generated media and disposable browser profiles only; not deployed.

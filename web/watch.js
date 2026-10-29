@@ -270,6 +270,7 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
   video.addEventListener(event,()=>{
     if(event==='waiting'&&disconnectExtended)fullPlayerClear();
     if(['pause','seeking','emptied'].includes(event))choppyDetector.interrupt();
+    if(event==='waiting')choppyDetector.buffering();
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
     sync?.event(event);
@@ -277,7 +278,7 @@ for(const event of ['playing','pause','waiting','stalled','seeking','seeked','en
     diagnosticSample(event);
   });
 for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{sync?.event(event);diagnosticSample(event);});
-document.addEventListener('visibilitychange',()=>{sync?.event('visibilitychange');diagnosticSample('visibilitychange');});
+document.addEventListener('visibilitychange',()=>{choppyDetector.interrupt();sync?.event('visibilitychange');diagnosticSample('visibilitychange');});
 setInterval(()=>{
   if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
   $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||!!controlProbe?.active();
@@ -1075,6 +1076,21 @@ function watchFrames() {
 }
 const choppyDetector = uburoomPlayback.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
 let choppyToastActive = false;
+let capabilityProbeVersion = 0, capabilityProbeKey;
+async function probePlaybackCapabilities(configuration, client = hls) {
+  const key = JSON.stringify(configuration);
+  if (key === capabilityProbeKey) return;
+  capabilityProbeKey = key;
+  const version = ++capabilityProbeVersion, room = selected, media = state?.mediaVersion, stream = state?.streamVersion;
+  const result = await uburoomPlayback.decodingCapability(configuration,navigator.mediaCapabilities);
+  if (version !== capabilityProbeVersion || hls !== client || selected !== room || state?.mediaVersion !== media || state?.streamVersion !== stream) return;
+  diagnostics.record('decode-capability',{format:state?.format,...result});
+}
+function resetChoppyPlayback(preserve = false) {
+  toasts.dismiss('choppy', false); choppyToastActive = false;
+  if (preserve) choppyDetector.interrupt(); else choppyDetector.reset();
+  capabilityProbeVersion++; capabilityProbeKey = undefined;
+}
 function dropPlaybackQuality() {
   const choices = state?.qualities || uburoom.QUALITIES;
   const current = uburoom.qualityId(state?.quality || preferredQuality);
@@ -1097,7 +1113,8 @@ function checkChoppyPlayback() {
   const choices = state?.qualities || uburoom.QUALITIES;
   const current = uburoom.qualityId(state?.quality || preferredQuality);
   const index = choices.findIndex(q => q.id === current);
-  if (index >= choices.length - 1) {
+  if (index < 0 || index >= choices.length - 1) {
+    choppyDetector.interrupt();
     if (choppyToastActive) {
       toasts.dismiss('choppy', false);
       choppyToastActive = false;
@@ -1107,18 +1124,23 @@ function checkChoppyPlayback() {
   const quality = video.getVideoPlaybackQuality?.();
   const conditions = {
     paused: video.paused || !!state?.state?.paused,
-    seeking: seekDragging || sync?.timelinePending,
+    seeking: video.seeking || seekDragging || sync?.timelinePending,
     waiting: playerWaiting || video.readyState < 3,
     visible: document.visibilityState === 'visible',
     active: !pending && !qualityPending && video.currentTime > 1
   };
   const result = choppyDetector.update(performance.now(), quality, conditions);
-  if (result.choppy) {
+  if (result.rearmed) diagnostics.record('playback-rearmed');
+  if (result.warning) {
+    diagnosticSample('playback-degraded',{degradation:result.severeDropChoppy?'severe-drops':result.dropChoppy?'drops':'stalls',
+      dropRatio:result.ratio,deltaTotal:result.deltaTotal,deltaDropped:result.deltaDropped,severeRatio:result.severeRatio,
+      severeTotal:result.severeTotal,severeDropped:result.severeDropped,totalStallMs:result.totalStallMs,stallCount:result.stallCount,sampleGapMs:result.sampleGapMs});
     if (!choppyToastActive && !choppyDetector.isDismissed) {
       choppyToastActive = true;
       toasts.show('choppy', {
         title: 'Playback seems choppy',
         duration: 15000,
+        onClose: () => { choppyToastActive = false; },
         action: {
           label: 'Lower quality',
           run: () => {
@@ -1133,7 +1155,7 @@ function checkChoppyPlayback() {
         }
       });
     }
-  } else if (choppyToastActive && !result.warming && !result.interrupted && !result.inCooldown) {
+  } else if (choppyToastActive && !result.choppy && !result.warming && !result.interrupted && !result.inCooldown) {
     toasts.dismiss('choppy', false);
     choppyToastActive = false;
   }
@@ -1149,15 +1171,14 @@ function checkVideoFrames() {
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
-function clearPlayer(reason, preserveSubtitles = false) {
+function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = false) {
   directProbe?.abort(); directProbe = undefined;
   directRecovery = undefined;
   clearTimeout(fallbackRetryTimer); fallbackRetryTimer = undefined;
   clearTimeout(directStartupTimer); clearTimeout(directStallTimer);
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
   disconnectExtended = false; hideDisconnectToast();
-  toasts.dismiss('choppy', false); choppyToastActive = false;
-  choppyDetector.reset();
+  resetChoppyPlayback(preserveChoppiness);
   toasts.dismiss('participant'); lastFeedback = undefined;
   if(reason!=='state-change')playerUI?.reset();
   sync.reset();
@@ -1259,14 +1280,11 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
-  const detail = data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET ? 'reset' :
-    data.error?.name === 'QuotaExceededError' ? 'quota-exceeded' :
-    data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR ? 'buffer-append' :
-    /^frag/.test(data.details) ? 'fragment' :
-    /^manifest/.test(data.details) ? 'manifest' : 'other';
+  const detail = uburoomPlayback.hlsErrorDetail(data,Hls.ErrorDetails);
   diagnosticSample('hls-error',{fatal:!!data.fatal,status:data.response?.code,
     category:data.type===Hls.ErrorTypes.NETWORK_ERROR?'network':data.type===Hls.ErrorTypes.MEDIA_ERROR?'media':'other',
-    detail});
+    detail,hlsMaxBufferSize:client.config?.maxBufferSize,hlsMaxBufferLength:client.config?.maxBufferLength,
+    hlsMaxMaxBufferLength:client.config?.maxMaxBufferLength,hlsBackBufferLength:client.config?.backBufferLength});
   if(state?.directHls && data.fatal && data.type===Hls.ErrorTypes.NETWORK_ERROR) {
     client.stopLoad();
     if((detail==='fragment' || [404,410].includes(data.response?.code)) && (hlsRefreshVersion!==state.mediaVersion || !hlsRefreshTimes.length)) {
@@ -1319,7 +1337,7 @@ function handleHlsError(client, data) {
     return;
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
-    void compatibleFallback('H.264 decoder failed.'); return;
+    void compatibleFallback(['quota-exceeded','buffer-full','buffer-append'].includes(detail)?'The browser could not append video data.':'The browser media pipeline failed.'); return;
   }
   stopHls('fatal');
   playbackError = data.type === Hls.ErrorTypes.MEDIA_ERROR ?
@@ -1700,7 +1718,8 @@ function applyState(next) {
   const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
   const changed = mediaChanged || mediaSource !== next.mediaUrl;
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
-  if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();}
+  const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
+  if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
   if(seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)){seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;}
   const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
@@ -1709,7 +1728,7 @@ function applyState(next) {
   unavailableToasts(next.unavailableMedia);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
-    clearPlayer('state-change', !mediaChanged); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
+    clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       stage.classList.remove('ending-active');
       $('ending-stage').hidden = true;
@@ -1737,6 +1756,14 @@ function applyState(next) {
         }
         const client = hls = new Hls(config);
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
+        client.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+          if (hls !== client) return;
+          const level = client.levels[data.level];
+          // Only declared output metadata, never source dimensions or a guessed
+          // profile/frame rate. Single media playlists commonly lack these.
+          void probePlaybackCapabilities({type:'media-source',video:{contentType:`video/mp4; codecs="${level?.videoCodec || ''}"`,
+            width:level?.width,height:level?.height,bitrate:level?.bitrate,framerate:level?.frameRate}},client);
+        });
         // Finish appending the anchor without requesting segment one before
         // the target seek; aborting that speculative load adds recovery noise.
         client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&sync.timelinePending)client.pauseBuffering();});
@@ -1751,6 +1778,7 @@ function applyState(next) {
       } else if (next.directHls) queueMicrotask(()=>{if(state===next)void proxyDirectFile();});
       else if (next.directDelivery) void attachDirectFile(next);
       else video.src = next.mediaUrl;
+      if (next.format === 'file') void probePlaybackCapabilities({type:'file'});
     }
   }
   const nextTarget=expected();
