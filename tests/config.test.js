@@ -424,3 +424,61 @@ test('installation doctor validates healthy configurations and reports actionabl
   assert.equal(configFail.status, 'fail');
   assert.match(configFail.remediation, /config\.example\.yaml/);
 });
+
+test('doctor validates database schema, envelope authentication, and cert-key pair match', async (t) => {
+  const { checkStorageAndKey, checkTlsCertificates } = require('../scripts/doctor');
+  const dir = temporary(t);
+  const dbFile = path.join(dir, 'test.sqlite');
+  const keyFile = path.join(dir, 'credentials.key');
+  const { DatabaseSync } = require('node:sqlite');
+  const crypto = require('node:crypto');
+
+  // 1. Unsupported PRAGMA user_version
+  const db1 = new DatabaseSync(dbFile);
+  db1.exec('PRAGMA user_version = 99; CREATE TABLE dummy(id TEXT);');
+  db1.close();
+  const schemaFail = checkStorageAndKey({ accountFile: dbFile, credentialKeyFile: keyFile });
+  const schemaCheck = schemaFail.find(c => c.name === 'Database schema compatibility');
+  assert.equal(schemaCheck?.status, 'fail');
+
+  // 2. Schema-valid db with mismatched 32-byte key vs matching key
+  fs.unlinkSync(dbFile);
+  const { initializeSchema } = require('../server/storage');
+  const { credentialVault } = require('../server/accounts');
+  const originalKey = crypto.randomBytes(32);
+  fs.writeFileSync(keyFile, originalKey);
+  const vault = credentialVault(keyFile);
+
+  const db2 = new DatabaseSync(dbFile);
+  initializeSchema(db2);
+  const sealed = vault.seal({ secret: 'supersecret' });
+  db2.prepare('INSERT INTO credentials(subject, value) VALUES (?, ?)').run('test-user', JSON.stringify(sealed));
+  db2.close();
+
+  // Test matching key
+  const matchPass = checkStorageAndKey({ accountFile: dbFile, credentialKeyFile: keyFile });
+  const matchCheck = matchPass.find(c => c.name === 'Credential key match');
+  assert.equal(matchCheck?.status, 'pass');
+
+  // Test mismatched 32-byte key
+  const wrongKeyFile = path.join(dir, 'wrong.key');
+  fs.writeFileSync(wrongKeyFile, crypto.randomBytes(32));
+  const mismatchFail = checkStorageAndKey({ accountFile: dbFile, credentialKeyFile: wrongKeyFile });
+  const mismatchCheck = mismatchFail.find(c => c.name === 'Credential key match');
+  assert.equal(mismatchCheck?.status, 'fail');
+
+  // 3. TLS cert-key pair check
+  const certFile = path.join(ROOT, 'certs', 'server-cert.pem');
+  const validKeyFile = path.join(ROOT, 'certs', 'server-key.pem');
+  const certPass = checkTlsCertificates({ publicUrl: 'https://localhost:5756', tlsCert: certFile, tlsKey: validKeyFile });
+  const certMatchPass = certPass.find(c => c.name === 'Certificate & key match');
+  assert.equal(certMatchPass?.status, 'pass');
+
+  // Generate mismatched private key
+  const { privateKey: wrongPrivateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const wrongKeyPath = path.join(dir, 'wrong-server-key.pem');
+  fs.writeFileSync(wrongKeyPath, wrongPrivateKey.export({ type: 'pkcs8', format: 'pem' }));
+  const certFail = checkTlsCertificates({ publicUrl: 'https://localhost:5756', tlsCert: certFile, tlsKey: wrongKeyPath });
+  const certMatchFail = certFail.find(c => c.name === 'Certificate & key match');
+  assert.equal(certMatchFail?.status, 'fail');
+});

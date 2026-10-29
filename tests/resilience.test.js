@@ -120,6 +120,51 @@ test('streaming response promptly cancels on caller disconnect or abort',async()
   assert.equal(upstreamCancelled,true,'caller abort promptly cancels streaming body');
 });
 
+test('streaming fetcher caller abort tags error.callerAborted and does not trip circuit breaker',async()=>{
+  const abort=new AbortController();
+  const callerAbortedFetcher=async(url,{signal})=>{
+    return new Promise((resolve,reject)=>{
+      if(signal.aborted)return reject(new Error('Underlying abort'));
+      signal.addEventListener('abort',()=>reject(new Error('Underlying abort')),{once:true});
+    });
+  };
+  const req=resilientFetch(callerAbortedFetcher,{timeoutMs:1000});
+  abort.abort();
+  await assert.rejects(req('https://stream.invalid',{streaming:true,signal:abort.signal}),err=>err.callerAborted===true);
+  // Verify breaker is not tripped
+  const okReq=resilientFetch(async()=>new Response('ok'));
+  assert.equal(await okReq('https://ok.invalid').then(r=>r.text()),'ok');
+});
+
+test('streaming response cleans up caller abort listeners and releases reader lock',async()=>{
+  const abort=new AbortController();
+  let listenerRemoved=false;
+  const origRemove=abort.signal.removeEventListener.bind(abort.signal);
+  abort.signal.removeEventListener=(type,...args)=>{
+    if(type==='abort')listenerRemoved=true;
+    return origRemove(type,...args);
+  };
+  const upstreamStream=new ReadableStream({
+    start(controller){controller.enqueue(new Uint8Array([1]));controller.close();}
+  });
+  const fetcher=async()=>new Response(upstreamStream);
+  const req=resilientFetch(fetcher);
+  const res=await req('https://stream.invalid',{streaming:true,signal:abort.signal});
+  const reader=res.body.getReader();
+  const first=await reader.read();
+  assert.equal(first.value[0],1);
+  const done=await reader.read();
+  assert.equal(done.done,true);
+  assert.equal(listenerRemoved,true,'abort listener removed after stream finishes');
+  assert.equal(upstreamStream.locked,false,'upstream reader lock released');
+
+  // HEAD method does not wrap reader
+  const headFetcher=async()=>new Response(null);
+  const headReq=resilientFetch(headFetcher);
+  const headRes=await headReq('https://stream.invalid',{streaming:true,method:'HEAD',signal:abort.signal});
+  assert.equal(headRes.status,200);
+});
+
 test('tool runner drains stderr, bounds output and kills timed-out or over-budget processes',async()=>{
   const binary=process.execPath;
   assert.equal((await run(binary,['-e','process.stderr.write("x".repeat(200000));process.stdout.write("ok")'],undefined,2000)).toString(),'ok');

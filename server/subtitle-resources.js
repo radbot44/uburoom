@@ -3,6 +3,7 @@
 // re-encodes video or receives a Plex credential in process arguments.
 const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {PlaybackError}=require('./av1');
+const Sources=require('./plex-source');
 const LIMIT=64*1024*1024,FONTS=16*1024*1024,TOTAL=96*1024*1024;
 const cache=new Map(),windows=new Map();let bytes=0,active=0;
 function classifyExtractionError(error){
@@ -56,7 +57,8 @@ async function read(response,signal,limit=LIMIT){
 function source(media){
   const track=media.selection?.subtitle;
   if(!track || !['ass','pgs','vobsub'].includes(track.delivery))throw new PlaybackError('No browser-rendered subtitle is selected.');
-  const row=media.source?.Media?.[0]?.Part?.[0]?.Stream?.find(s=>String(s.id)===track.id);
+  const part = media.sourceSelection ? Sources.select(media.source, media.sourceSelection).part : media.source?.Media?.[0]?.Part?.[0];
+  const row = part?.Stream?.find(s=>String(s.id)===track.id);
   if(!row)throw new PlaybackError('Subtitle selection no longer belongs to this file.');
   return {track,row};
 }

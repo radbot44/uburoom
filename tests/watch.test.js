@@ -714,3 +714,27 @@ test('viewer quality ceilings include fitting Original and survive lower outputs
   assert.deepEqual(attempted,['direct'],'Original never falls back to another quality');
 });
 
+test('dropMedia resets per-viewer settings on room-reset', async () => {
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { isMember: () => true, refresh: async () => true };
+  const watch = new Watch(hub, { stop: async () => {} });
+  const actor = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+  const id = watch.create(actor);
+  const room = watch.rooms.get(id);
+  const tab = randomUUID();
+  watch.snapshot(room, actor, tab);
+  const viewer = room.viewers.get(tab);
+  viewer.compatible = true;
+  viewer.fallback = '720p4';
+  viewer.subtitleOffset = 1.5;
+  viewer.trackChoice = { audioId: '12', subtitleId: '22' };
+
+  watch.dropMedia(room, 'room-reset');
+  assert.equal(viewer.compatible, false);
+  assert.equal(viewer.fallback, undefined);
+  assert.equal(viewer.subtitleOffset, 0);
+  assert.equal(viewer.trackChoice.audioId, 'auto');
+  assert.equal(viewer.trackChoice.subtitleId, 'auto');
+  watch.close();
+});
+

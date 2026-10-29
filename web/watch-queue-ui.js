@@ -730,7 +730,7 @@
         const autoSkipLabel = items.length === 0 ? 'Skip to' : ('Skip ' + items.length + (items.length === 1 ? ' item to' : ' items to'));
         action(actions, autoSkipLabel, 'player-track-next', async () => {
           if (!items.length) await execute({ action: 'media.next' });
-          else { await mutate('auto.playNow'); await changed(); }
+          else { await mutate('auto.playNow', { skipPrevious: true }); await changed(); }
         }, !canChoose, 'queue-action-skip');
       }
       updateUpcomingTimes();

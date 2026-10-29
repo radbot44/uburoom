@@ -62,7 +62,7 @@ class Plex {
         'X-Plex-Client-Identifier': url.searchParams.get('X-Plex-Client-Identifier') || url.searchParams.get('session') || this.clientId || 'uburoom-watch',
         'X-Plex-Platform': 'Firefox', ...options.headers
       } });
-    if (!response.ok && response.status !== 206) {const error=new Error(`Plex server request failed (HTTP ${response.status}); check server access and playback support`);error.status=response.status;throw error;}
+    if (!response.ok && response.status !== 206) {void response.body?.cancel().catch(()=>{});const error=new Error(`Plex server request failed (HTTP ${response.status}); check server access and playback support`);error.status=response.status;throw error;}
     return response;
   }
   async json(resource, options) { return (await (await this.request(resource, options)).json()).MediaContainer || {}; }
@@ -279,7 +279,7 @@ class Plex {
       const name = provider.includes('imdb') ? 'IMDb' : provider.includes('rottentomatoes') ? 'Rotten Tomatoes ' + label : provider.includes('themoviedb') ? 'TMDB' : undefined;
       const value = Number(source[field]); if (name && Number.isFinite(value) && value >= 0 && value <= 10) ratings.push({source:name,value});
     }
-    const media = source.Media?.[0];
+    const media = Sources.inventory(source).find(entry => entry.eligible && Sources.partAvailable(entry.part))?.media || source.Media?.[0];
     const mediaInfo = media ? [media.videoResolution ? String(media.videoResolution).toUpperCase() + (String(media.videoResolution).match(/^\d+$/) ? 'p' : '') : '',
       media.videoCodec, media.bitrate ? (Number(media.bitrate) / 1000).toFixed(1) + ' Mbps' : '', media.audioCodec,
       media.audioChannels ? media.audioChannels + ' channels' : '', media.container].filter(Boolean).map(x => String(x).slice(0,60)) : [];

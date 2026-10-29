@@ -159,7 +159,7 @@ class Watch {
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
-      if (reason === 'media-changed') {
+      if (reason === 'media-changed' || reason === 'room-reset') {
         viewer.compatible = false; viewer.fallback = undefined;
         viewer.subtitleOffset=0;
         if (viewer.trackChoice) { viewer.trackChoice.audioId='auto'; if (viewer.trackChoice.subtitleId!=='off') viewer.trackChoice.subtitleId='auto'; }
@@ -775,11 +775,11 @@ class Watch {
       } else if (action === 'queue.auto.playNow') {
         if (room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.auto.playNow',args:{}},actor,permitted);
+          return this.changeQueueMedia(room,{action:'queue.auto.playNow',args:{skipPrevious:!!args.skipPrevious}},actor,permitted);
         }
         const corpus = await this.autoCorpus(id,actor);
         await check();
-        value = await queue.playAutoNow(id,actor.userId,{expectedRevision:revision,autoCorpus:corpus});
+        value = await queue.playAutoNow(id,actor.userId,{expectedRevision:revision,autoCorpus:corpus,skipPrevious:!!args.skipPrevious});
         await this.verifyAutoNext(id,actor,corpus);
         value = {...value,queueRevision:this.roomState.store.get(id).queueRevision};
       } else if (action === 'queue.move') value = await queue.move(id,actor.userId,args.entryId,args.targetRank,revision);
@@ -1068,7 +1068,7 @@ class Watch {
         if (action === 'media.next' || advance) {
           if (queue.peekNext(id) && pendingItems.length > 1) postAnchor = pendingItems[pendingItems.length - 1];
         } else if (playAuto) {
-          if (pendingItems.length > 0) postAnchor = pendingItems[pendingItems.length - 1];
+          if (!args.skipPrevious && pendingItems.length > 0) postAnchor = pendingItems[pendingItems.length - 1];
         } else if (playEntry) {
           const remaining = pendingItems.filter(item => args.skipPrevious ? item.rank > target.rank : item.id !== target.id);
           if (remaining.length > 0) postAnchor = remaining[remaining.length - 1];
@@ -1085,7 +1085,7 @@ class Watch {
         if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid,discardCurrent:!!advance,initialAdd});
         else if (playAuto) saving = queue.playAutoNow(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
-          expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid});
+          expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,skipPrevious:!!args.skipPrevious});
         else if (removing) saving = queue.remove(id,actor.userId,args.entryId,record.queueRevision,{allowCurrent:true});
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
         else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,initialAdd});

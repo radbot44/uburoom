@@ -722,3 +722,34 @@ test('autoQueue preserves used and cursor on empty corpus in computeAutoNext and
   assert.ok(pinRandom.autoQueue.used.includes(randToPin));
   assert.ok(f.store.get(room.id).autoQueue.used.includes(randToPin));
 });
+
+test('playAutoNow with skipPrevious: true marks all pending items skipped and advances autoQueue', async t => {
+  const f = fixture(t);
+  const room = await f.store.create(f.creator, { name: 'Queue Room' });
+  const corpus = [
+    { ...sampleItem(1), mediaId: '201' },
+    { ...sampleItem(2), mediaId: '202' },
+    { ...sampleItem(3), mediaId: '203' },
+    { ...sampleItem(4), mediaId: '204' }
+  ];
+
+  await f.queue.playNow(room.id, f.creator, corpus[0]);
+  await f.queue.add(room.id, f.creator, corpus[1]);
+  await f.queue.add(room.id, f.creator, corpus[2]);
+  assert.equal(f.queue.pending(room.id).length, 2);
+
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'following', scope: { type: 'show', id: '100', serverId: 'plex-server-1' } });
+  f.queue.computeAutoNext(room.id, corpus);
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, '204');
+
+  // playAutoNow with skipPrevious = true
+  const played = await f.queue.playAutoNow(room.id, f.creator, { corpus, skipPrevious: true });
+  assert.equal(played.current.mediaId, '204');
+  assert.equal(f.queue.pending(room.id).length, 0, 'all pending items were skipped');
+
+  const history = f.queue.history(room.id);
+  const skipped202 = history.items.find(i => i.mediaId === '202');
+  const skipped203 = history.items.find(i => i.mediaId === '203');
+  assert.equal(skipped202.outcome, 'skipped');
+  assert.equal(skipped203.outcome, 'skipped');
+});

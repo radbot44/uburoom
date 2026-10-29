@@ -35,38 +35,73 @@ const LEVEL_COLORS = {
 /**
  * Sanitize strings or error messages by masking sensitive tokens and passwords.
  * @param {any} value
+ * @param {WeakSet<object>} [ancestors]
  * @returns {any}
  */
-function redact(value) {
+function redact(value, ancestors) {
   if (typeof value === 'string') {
     let result = value;
     result = result.replace(
       /((?:x-plex-token|token|password|entry_password|client_secret|bot_token)\s*[:=]\s*['"]?)([^'"&\s,;]+)(['"]?)/gi,
       (match, p1, p2, p3) => p1 + '[REDACTED]' + (typeof p3 === 'string' ? p3 : '')
     );
-    result = result.replace(/(uburoom=)([^;,\s]+)/gi, '$1[REDACTED]');
+    result = result.replace(/(uburoom(?:_[a-z0-9_]+)?=)([^;,\s"']+)/gi, '$1[REDACTED]');
     result = result.replace(/(Bearer\s+)([a-zA-Z0-9_\-\.]+)/gi, '$1[REDACTED]');
     return result;
   }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  }
+  if (value instanceof URL) {
+    return redact(value.href, ancestors);
+  }
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return `[Binary ${value.byteLength}B]`;
+  }
   if (value instanceof Error) {
-    const copy = new Error(redact(value.message));
-    if (value.stack) copy.stack = redact(value.stack);
-    if (value.code) copy.code = value.code;
-    return copy;
+    ancestors ||= new WeakSet();
+    if (ancestors.has(value)) return '[Circular]';
+    ancestors.add(value);
+    try {
+      const copy = new Error(redact(value.message, ancestors));
+      copy.name = value.name;
+      if (value.stack) copy.stack = redact(value.stack, ancestors);
+      if (value.code) copy.code = value.code;
+      if ('cause' in value && value.cause !== undefined) {
+        copy.cause = redact(value.cause, ancestors);
+      }
+      return copy;
+    } finally {
+      ancestors.delete(value);
+    }
   }
   if (Array.isArray(value)) {
-    return value.map(redact);
+    ancestors ||= new WeakSet();
+    if (ancestors.has(value)) return '[Circular]';
+    ancestors.add(value);
+    try {
+      return value.map(v => redact(v, ancestors));
+    } finally {
+      ancestors.delete(value);
+    }
   }
   if (value && typeof value === 'object') {
-    const sanitized = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (/token|secret|password|credential|cookie/i.test(k) && typeof v === 'string') {
-        sanitized[k] = '[REDACTED]';
-      } else {
-        sanitized[k] = redact(v);
+    ancestors ||= new WeakSet();
+    if (ancestors.has(value)) return '[Circular]';
+    ancestors.add(value);
+    try {
+      const sanitized = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (/token|secret|password|credential|cookie|authorization|csrf/i.test(k) && typeof v !== 'boolean') {
+          sanitized[k] = '[REDACTED]';
+        } else {
+          sanitized[k] = redact(v, ancestors);
+        }
       }
+      return sanitized;
+    } finally {
+      ancestors.delete(value);
     }
-    return sanitized;
   }
   return value;
 }
@@ -175,7 +210,7 @@ class Logger {
     const levelUpper = level.toUpperCase().padEnd(5);
 
     // Sanitize parameters
-    const sanitizedArgs = args.map(redact);
+    const sanitizedArgs = args.map(arg => redact(arg));
     const formattedMsg = util.format(...sanitizedArgs);
 
     // Format console output

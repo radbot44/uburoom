@@ -331,11 +331,11 @@ function checkStorageAndKey(config) {
 
   // 3. Existing SQLite integrity check
   if (fs.existsSync(dbFile)) {
+    let db;
     try {
       const { DatabaseSync } = require('node:sqlite');
-      const db = new DatabaseSync(dbFile, { readOnly: true });
+      db = new DatabaseSync(dbFile, { readOnly: true });
       const result = db.prepare('PRAGMA integrity_check;').get();
-      db.close();
       if (result && (result.integrity_check === 'ok' || Object.values(result)[0] === 'ok')) {
         checks.push({
           category: 'Storage & Keys',
@@ -343,6 +343,77 @@ function checkStorageAndKey(config) {
           status: 'pass',
           message: `SQLite database integrity verified (${path.basename(dbFile)})`
         });
+
+        // Read-only schema compatibility check
+        const version = db.prepare('PRAGMA user_version').get()?.user_version;
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+        let schemaValid = false;
+        if (tables.length > 0 || version !== 0) {
+          try {
+            const { initializeSchema } = require('../server/storage');
+            initializeSchema(db);
+            schemaValid = true;
+            const userCount = db.prepare('SELECT count(*) as count FROM users').get()?.count ?? 0;
+            const roomCount = db.prepare('SELECT count(*) as count FROM watch_rooms').get()?.count ?? 0;
+            checks.push({
+              category: 'Storage & Keys',
+              name: 'Database schema compatibility',
+              status: 'pass',
+              message: `Database schema verified (${userCount} active users, ${roomCount} rooms)`
+            });
+          } catch (schemaErr) {
+            checks.push({
+              category: 'Storage & Keys',
+              name: 'Database schema compatibility',
+              status: 'fail',
+              message: `Incompatible database schema: ${schemaErr.message}`,
+              remediation: 'Restore a matched database backup or run a migration script before starting.'
+            });
+          }
+        }
+
+        // When both a schema-valid dbFile and 32-byte keyFile exist, authenticate envelopes
+        if (schemaValid && fs.existsSync(keyFile)) {
+          try {
+            const keyStats = fs.statSync(keyFile);
+            if (keyStats.size === 32) {
+              const keyRaw = fs.readFileSync(keyFile);
+              const openEnvelope = (env) => {
+                if (!env?.encrypted) return;
+                const decipher = crypto.createDecipheriv('aes-256-gcm', keyRaw, Buffer.from(env.iv, 'base64'));
+                decipher.setAuthTag(Buffer.from(env.tag, 'base64'));
+                return Buffer.concat([decipher.update(Buffer.from(env.data, 'base64')), decipher.final()]);
+              };
+
+              const credRows = db.prepare('SELECT value FROM credentials').all();
+              for (const row of credRows) {
+                const env = JSON.parse(row.value);
+                openEnvelope(env);
+              }
+              const loginRows = db.prepare('SELECT record FROM browser_logins').all();
+              for (const row of loginRows) {
+                const rec = JSON.parse(row.record);
+                if (rec?.oauth?.encrypted === 1) {
+                  openEnvelope(rec.oauth);
+                }
+              }
+              checks.push({
+                category: 'Storage & Keys',
+                name: 'Credential key match',
+                status: 'pass',
+                message: 'Credential key authenticated encrypted database secrets'
+              });
+            }
+          } catch (cryptoErr) {
+            checks.push({
+              category: 'Storage & Keys',
+              name: 'Credential key match',
+              status: 'fail',
+              message: `Credential key failed to decrypt database secrets: ${cryptoErr.message}`,
+              remediation: 'Restore the exact 32-byte credential key that matches this database.'
+            });
+          }
+        }
       } else {
         checks.push({
           category: 'Storage & Keys',
@@ -359,6 +430,10 @@ function checkStorageAndKey(config) {
         status: 'warn',
         message: `Could not verify database integrity: ${err.message}`
       });
+    } finally {
+      if (db) {
+        try { db.close(); } catch {}
+      }
     }
   }
 
@@ -473,19 +548,29 @@ function checkTlsCertificates(config) {
 
     // Verify key matches cert public key
     try {
-      crypto.createSign('SHA256').update('test').sign(keyRaw);
-      checks.push({
-        category: 'TLS / Certificates',
-        name: 'Private key format',
-        status: 'pass',
-        message: 'Private key is valid and readable'
-      });
+      const privateKey = crypto.createPrivateKey(keyRaw);
+      if (!cert.checkPrivateKey(privateKey)) {
+        checks.push({
+          category: 'TLS / Certificates',
+          name: 'Certificate & key match',
+          status: 'fail',
+          message: 'TLS private key does not match the certificate public key.',
+          remediation: 'Ensure server.tls_cert and server.tls_key are a matching certificate and private key pair.'
+        });
+      } else {
+        checks.push({
+          category: 'TLS / Certificates',
+          name: 'Certificate & key match',
+          status: 'pass',
+          message: 'Certificate and private key match'
+        });
+      }
     } catch (keyErr) {
       checks.push({
         category: 'TLS / Certificates',
-        name: 'Private key format',
+        name: 'Certificate & key match',
         status: 'fail',
-        message: `Failed to parse private key: ${keyErr.message}`,
+        message: `Failed to inspect private key: ${keyErr.message}`,
         remediation: 'Ensure server.tls_key points to an unencrypted PEM private key.'
       });
     }

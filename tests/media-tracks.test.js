@@ -441,3 +441,83 @@ test('streaming media bodies complete with progressing chunks beyond header dead
   });
   assert.equal(upstreamAborted,true,'disconnect terminates streaming body upstream promptly');
 });
+
+test('multi-version Plex items resolve subtitles and metadata from the selected/eligible part', async () => {
+  const Sources = require('../server/plex-source');
+  assert.equal(typeof Sources.partAvailable, 'function');
+  assert.equal(Sources.partAvailable({ accessible: true, exists: true }), true);
+  assert.equal(Sources.partAvailable({ accessible: false }), false);
+
+  const multiItem = {
+    ratingKey: '100',
+    type: 'movie',
+    title: 'Multi-version movie',
+    duration: 120000,
+    Media: [
+      {
+        id: 1,
+        videoResolution: '4k',
+        videoCodec: 'hevc',
+        bitrate: 40000,
+        Part: [{ id: 10, key: '/library/parts/10/file', accessible: 0, exists: 0, duration: 120000, Stream: [] }]
+      },
+      {
+        id: 2,
+        videoResolution: '1080',
+        videoCodec: 'h264',
+        bitrate: 8000,
+        Part: [{
+          id: 20,
+          key: '/library/parts/20/file',
+          accessible: 1,
+          exists: 1,
+          duration: 120000,
+          Stream: [
+            { id: 31, streamType: 3, codec: 'srt', key: '/library/streams/31' },
+            { id: 32, streamType: 3, codec: 'ass', key: '/library/streams/32' }
+          ]
+        }]
+      }
+    ]
+  };
+
+  const selected = Sources.select(multiItem);
+  assert.equal(selected.part.id, 20, 'select picks the eligible available part 20');
+
+  // Test Plex.details picks eligible available media (Media[1])
+  const plex = new Plex({ plexUrl: 'https://plex.example.com', plexToken: 'tok' }, async () => {
+    return new Response(JSON.stringify({ MediaContainer: { Metadata: [multiItem] } }), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const details = await plex.details('100');
+  assert.ok(details.mediaInfo.some(m => m.includes('1080p') || m.includes('H264')), 'details picks 1080p eligible media');
+
+  // Test SubtitleResources.load with sourceSelection
+  const assPlex = {
+    request: async () => new Response('Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hello')
+  };
+  const assMedia = {
+    source: multiItem,
+    sourceSelection: selected.identity,
+    selection: { subtitle: { id: '32', delivery: 'ass', external: true } },
+    captionVersion: '1',
+    subtitleAbort: new AbortController()
+  };
+  const assResult = await SubtitleResources.load(assPlex, assMedia, new AbortController().signal);
+  assert.equal(assResult.format, 'ass');
+  assert.ok(assResult.assets.get('data').toString().includes('Dialogue:'));
+
+  // Test Subtitles.load with sourceSelection
+  const mockPlex = {
+    url: (k) => new URL('https://plex.example.com' + k),
+    request: async () => new Response('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello')
+  };
+  const textMedia = {
+    source: multiItem,
+    sourceSelection: selected.identity,
+    selection: { subtitle: { id: '31', delivery: 'text', available: true } },
+    subtitleAbort: new AbortController()
+  };
+  const cues = await Subtitles.load(mockPlex, textMedia, new AbortController().signal);
+  assert.equal(cues.length, 1);
+  assert.equal(cues[0].text, 'Hello');
+});

@@ -33,4 +33,4 @@ function select(item,pinned) {
   if(!found?.eligible)throw new PlaybackError(pinned?'The selected Plex source changed or is no longer available. Choose the title again.':'Media is not playable as one complete file. Split-file playback is not supported yet.');
   return found;
 }
-module.exports={inventory,select,available,unavailableError};
+module.exports={inventory,select,available,partAvailable,unavailableError};

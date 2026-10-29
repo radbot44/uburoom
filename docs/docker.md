@@ -20,29 +20,25 @@ Create a working directory for your uburoom instance or use the root of your rep
 uburoom/
 ├── docker-compose.yml
 ├── config.yaml
-├── credentials.key
 ├── certs/
 │   ├── server-cert.pem
 │   └── server-key.pem
-└── data/
+├── data/
+└── secrets/
 ```
 
-### 1. Persistent Data and Credentials Key
+### 1. Persistent Data and Secrets
 
 Docker will create directories for missing volume sources if they do not already exist on the host. To ensure files are mounted properly:
 
 ```sh
-# Create directories for persistent SQLite databases and TLS certificates:
-mkdir -p data certs
-
-# Pre-create the credentials key file if you do not already have one:
-touch credentials.key
-# (On Windows PowerShell: New-Item -ItemType File credentials.key)
+# Create directories for persistent SQLite databases, TLS certificates, and secrets:
+mkdir -p data certs secrets
 ```
 
 > [!IMPORTANT]
-> **Preserve `credentials.key` and `data/`:**
-> `credentials.key` is a 32-byte encryption key used to protect stored provider tokens in `data/accounts.sqlite`. If you lose `credentials.key`, encrypted credentials cannot be decrypted and will need to be re-authenticated. Back up `credentials.key` and `data/` together.
+> **Preserve `secrets/` and `data/`:**
+> `credentials.key` is a 32-byte encryption key generated automatically on first startup inside `secrets/` (persisted from `/var/lib/uburoom/uburoom/credentials.key`) and used to protect stored provider tokens in `data/accounts.sqlite`. If you lose this key, encrypted credentials cannot be decrypted and will need to be re-authenticated. Back up `secrets/` and `data/` together.
 
 ### 2. TLS Certificates
 
@@ -129,7 +125,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./certs:/app/certs:ro
-      - ./credentials.key:/app/credentials.key
+      - ./secrets:/var/lib/uburoom
     # Optional: Hardware transcoding acceleration for Intel / AMD GPUs (VAAPI/QSV)
     # devices:
     #   - /dev/dri:/dev/dri
@@ -179,7 +175,7 @@ curl -k https://localhost:5756/health
 docker compose down
 ```
 
-*Stopping or removing the container does not delete your database or encryption key as long as `./data` and `./credentials.key` are persisted on the host.*
+*Stopping or removing the container does not delete your database or encryption key as long as `./data` and `./secrets` are persisted on the host.*
 
 ---
 
@@ -218,7 +214,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./certs:/app/certs:ro
-      - ./credentials.key:/app/credentials.key
+      - ./secrets:/var/lib/uburoom
 
   caddy:
     image: caddy:2-alpine

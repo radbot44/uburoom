@@ -82,7 +82,13 @@
           args.scope = null;
         }
         break;
-      case 'queue.auto.skip': case 'queue.auto.pin': case 'queue.auto.playNow': break;
+      case 'queue.auto.skip': case 'queue.auto.pin': break;
+      case 'queue.auto.playNow':
+        if (a.skipPrevious !== undefined) {
+          if (typeof a.skipPrevious !== 'boolean') throw new Error('Choose whether to skip upcoming items');
+          args.skipPrevious = a.skipPrevious;
+        }
+        break;
       case 'queue.move': case 'queue.remove': case 'queue.history.replay':
       case 'queue.playEntry': case 'queue.skipTo': case 'queue.history.goBack':
         if (typeof a.entryId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.entryId)) throw new Error('Choose a queue entry');

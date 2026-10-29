@@ -12,7 +12,7 @@ class CircuitBreaker {
     try {const value=await action();this.failures=0;this.until=0;return value;}
     catch(error) {
       const status=error.status;
-      if(error.name!=='AbortError'&&(!status||status===429||status>=500)) {
+      if(!error.callerAborted&&error.name!=='AbortError'&&(!status||status===429||status>=500)) {
         if(++this.failures>=this.threshold||probe||status===429)this.until=this.now()+Math.max(this.cooldown,error.retryAfterMs||0);
       } else if(probe){this.until=0;this.failures=0;}
       throw error;
@@ -30,6 +30,7 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
         if(options.signal.aborted)onCallerAbort();
         else options.signal.addEventListener('abort',onCallerAbort,{once:true});
       }
+      const cleanupCallerAbort=()=>{options.signal?.removeEventListener('abort',onCallerAbort);};
       const headerTimeout=options.headerTimeoutMs||timeoutMs;
       const headerTimer=setTimeout(()=>{
         internalAbort.abort(Object.assign(new Error('Response header timeout'),{name:'TimeoutError'}));
@@ -37,16 +38,21 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
       let response;
       try {
         response=await fetcher(url,{...options,signal:internalAbort.signal});
+      } catch(err) {
+        cleanupCallerAbort();
+        if(aborted)err.callerAborted=true;
+        throw err;
       } finally {
         clearTimeout(headerTimer);
       }
       if(response.status===429||response.status>=500) {
+        cleanupCallerAbort();
         const error=new IntegrationUnavailable();error.status=response.status;
         const retry=response.headers.get('retry-after'),seconds=Number(retry);
         error.retryAfterMs=Math.min(60000,Math.max(0,Number.isFinite(seconds)?seconds*1000:Date.parse(retry)-Date.now()||0));
         void response.body?.cancel().catch(()=>{});throw error;
       }
-      if(response.body&&typeof response.body.getReader==='function') {
+      if(options.method!=='HEAD'&&response.body&&typeof response.body.getReader==='function') {
         const idle=options.idleTimeoutMs||idleTimeoutMs;
         const reader=response.body.getReader();
         let idleTimer;
@@ -64,17 +70,23 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
               const {done,value}=await reader.read();
               clearIdle();
               if(done){
+                reader.releaseLock();
+                cleanupCallerAbort();
                 controller.close();
               } else {
                 controller.enqueue(value);
               }
             } catch(err){
               clearIdle();
+              reader.releaseLock();
+              cleanupCallerAbort();
               try{controller.error(err);}catch{}
             }
           },
           cancel(reason){
             clearIdle();
+            reader.releaseLock();
+            cleanupCallerAbort();
             internalAbort.abort(reason);
             return reader.cancel(reason);
           }
@@ -84,6 +96,8 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
           statusText:response.statusText,
           headers:response.headers
         });
+      } else {
+        cleanupCallerAbort();
       }
       return response;
     }

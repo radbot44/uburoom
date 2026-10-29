@@ -8,7 +8,10 @@ class HLSPool {
     this.maxGroups=maxGroups;this.maxBytes=maxBytes;this.anchorBytes=anchorBytes;this.closed=false;
   }
   async anchor(media,timeoutMs) {
-    const plex=media.plexContext,signal=AbortSignal.timeout(timeoutMs);
+    const plex=media.plexContext;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
+    const signal = controller.signal;
     const options={signal,headers:{Accept:'*/*','X-Plex-Client-Identifier':media.transcodeId}};
     const wait=promise=>new Promise((resolve,reject)=>{
       const abort=()=>reject(signal.reason);if(signal.aborted){Promise.resolve(promise).catch(()=>{});abort();return;}
@@ -16,37 +19,45 @@ class HLSPool {
       Promise.resolve(promise).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
     });
     let url=media.start,text=media.initialManifest;
-    for(let depth=0;depth<3;depth++) {
-      if(!text)text=await wait((await wait(plex.request(url,options))).text());
-      if(text.length>2e6||!text.startsWith('#EXTM3U')||/#EXT-X-(?:KEY|MAP):/.test(text))return;
-      const first=text.split(/\r?\n/).map(line=>line.trim()).find(line=>line&&!line.startsWith('#'));
-      if(!first)return;
-      const target=plex.url(new URL(first.trim(),url).href).href;
-      if(!/#EXTINF:/.test(text)){url=target;text=undefined;continue;}
-      const sequence=/#EXT-X-MEDIA-SEQUENCE:([^\r\n]+)/.exec(text);
-      if(sequence&&Number(sequence[1])!==0)return;
-      const response=await wait(plex.request(target,{...options,streaming:true})),reader=response.body.getReader();
-      const chunks=[];let size=0;
-      try {
-        for(;;){const {done,value}=await wait(reader.read());if(done)break;
-          if(size+value.byteLength>this.anchorBytes||this.bytes+this.pendingBytes+value.byteLength>this.maxBytes)return;
-          size+=value.byteLength;this.pendingBytes+=value.byteLength;chunks.push(value);}
-        if(!size)return;
-        const bytes=Buffer.concat(chunks,size);
-        if(bytes[0]!==0x47||size<188||size>188&&bytes[188]!==0x47)return;
-        this.bytes+=size;
-        return {url:target,bytes,type:response.headers.get('content-type')||'video/mp2t'};
-      } finally {this.pendingBytes-=size;void reader.cancel().catch(()=>{});reader.releaseLock();}
+    try {
+      for(let depth=0;depth<3;depth++) {
+        if(!text)text=await wait((await wait(plex.request(url,options))).text());
+        if(text.length>2e6||!text.startsWith('#EXTM3U')||/#EXT-X-(?:KEY|MAP):/.test(text))return;
+        const first=text.split(/\r?\n/).map(line=>line.trim()).find(line=>line&&!line.startsWith('#'));
+        if(!first)return;
+        const target=plex.url(new URL(first.trim(),url).href).href;
+        if(!/#EXTINF:/.test(text)){url=target;text=undefined;continue;}
+        const sequence=/#EXT-X-MEDIA-SEQUENCE:([^\r\n]+)/.exec(text);
+        if(sequence&&Number(sequence[1])!==0)return;
+        const response=await wait(plex.request(target,{...options,streaming:true})),reader=response.body.getReader();
+        const chunks=[];let size=0;
+        try {
+          for(;;){const {done,value}=await wait(reader.read());if(done)break;
+            if(size+value.byteLength>this.anchorBytes||this.bytes+this.pendingBytes+value.byteLength>this.maxBytes)return;
+            size+=value.byteLength;this.pendingBytes+=value.byteLength;chunks.push(value);}
+          if(!size)return;
+          const bytes=Buffer.concat(chunks,size);
+          if(bytes[0]!==0x47||size<188||size>188&&bytes[188]!==0x47)return;
+          this.bytes+=size;
+          return {url:target,bytes,type:response.headers.get('content-type')||'video/mp2t'};
+        } finally {this.pendingBytes-=size;void reader.cancel().catch(()=>{});reader.releaseLock();}
+      }
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
     }
   }
   async alive(media,timeoutMs=3000) {
     const plex=media?.plexContext,first=media?.initialManifest?.split(/\r?\n/).map(line=>line.trim()).find(line=>line&&!line.startsWith('#'));
     if(!plex||!first||!media.start)return false;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
     try {
       const target=plex.url(new URL(first,media.start).href).href,id=media.transcodeId;
-      const response=await plex.request(target,{signal:AbortSignal.timeout(timeoutMs),headers:{Accept:'application/vnd.apple.mpegurl','X-Plex-Client-Identifier':id,'X-Plex-Session-Identifier':id}});
+      const response=await plex.request(target,{signal:controller.signal,headers:{Accept:'application/vnd.apple.mpegurl','X-Plex-Client-Identifier':id,'X-Plex-Session-Identifier':id}});
       return (await response.text()).startsWith('#EXTM3U');
     } catch {return false;}
+    finally {clearTimeout(timer);controller.abort();}
   }
   invalidate(lease) {
     const group=lease?.group;

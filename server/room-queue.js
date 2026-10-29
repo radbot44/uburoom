@@ -478,7 +478,7 @@ class RoomQueue {
     return { added: this.getEntry(addedId), next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
   }
 
-  async playAutoNow(roomId, userId, { currentPosition = 0, expectedRevision, autoCorpus, corpus, guard } = {}) {
+  async playAutoNow(roomId, userId, { currentPosition = 0, expectedRevision, autoCorpus, corpus, guard, skipPrevious = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
     const current = this.current(roomId);
@@ -506,6 +506,13 @@ class RoomQueue {
           SET state = 'history', rank = NULL, position = ?, outcome = 'interrupted', endedAt = ?, updatedAt = ?
           WHERE id = ?
         `).run(clamped, at, at, current.id);
+      }
+      if (skipPrevious) {
+        this.db.prepare(`
+          UPDATE watch_queue_entries
+          SET state = 'history', rank = NULL, outcome = 'skipped', endedAt = ?, updatedAt = ?
+          WHERE roomId = ? AND state = 'pending'
+        `).run(at, at, roomId);
       }
       this.db.prepare(`
         INSERT INTO watch_queue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)

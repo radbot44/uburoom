@@ -360,12 +360,11 @@ class WatchRooms {
     room.pauseAt = room.startAt = undefined; room.s.state.paused = true; room.manualPaused = true; room.revision++;
   }
   async ensureSingle(actor,current=async()=>true) {
-    await this.eligible(actor,current);
     if(!this.singleOpening){
       this.singleOpening=(async()=>{
         const config=this.watch.hub.config;
         const owner=await this.watch.hub.singleRoomLeader();
-        await this.eligible(actor,current);
+        await this.eligible(actor);
         let id=this.registry.meta('singleRoomId');
         let record;
         if(id){try{record=this.store.get(id);}catch(error){if(error.status!==404)throw error;}}
@@ -384,7 +383,7 @@ class WatchRooms {
         });
         this.store.db.prepare("UPDATE watch_rooms SET name='Room',keepEmpty=1 WHERE id=?").run(id);
         await this.registry.flush();record=this.store.get(id);
-        if(this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id,actor,current);
+        if(this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id,actor);
         for(const other of [...this.watch.rooms.keys()])if(other!==id)await this.watch.remove(other);
         if(this.watch.rooms.get(id)?.reconnecting){await this.watch.remove(id);record=this.store.get(id);}
         if(!this.watch.rooms.has(id)){
@@ -392,18 +391,32 @@ class WatchRooms {
           const room=this.watch.rooms.get(id);room.s.hostId=owner.id;room.s.hostName=owner.name;room.recovery=this.recoveries.get(id);
           if(record.bookmark){
             const saved=record.bookmark;
+            let media, adopted=false;
             try{
-              const plex=this.watch.hub.plexFor?await this.watch.hub.plexFor(actor):this.watch.plex;
-              const media=saved.mediaId==='demo'?this.watch.demoMedia&&{...this.watch.demoMedia,id:'demo',resources:new Map()}:await this.savedSource(plex,saved);
-              if(media&&await this.identify(saved)===saved.serverId){room.media=media;room.position=Math.min(saved.position,media.duration);media.roomServerId=saved.serverId;room.s.state.seekable=true;room.manualPaused=true;}
+              if(await this.identify(saved)===saved.serverId){
+                const plex=this.watch.hub.plexFor?await this.watch.hub.plexFor(actor):this.watch.plex;
+                media=saved.mediaId==='demo'?this.watch.demoMedia&&{...this.watch.demoMedia,id:'demo',resources:new Map()}:await this.savedSource(plex,saved);
+                if(!media || Math.abs(media.duration - saved.duration) > .5 || (media.source?.type && media.source.type !== saved.type)){
+                  room.saveError='The saved video could not be restored. Choose media after checking Plex access.';
+                } else {
+                  room.media=media;room.position=Math.min(saved.position,media.duration);media.roomServerId=saved.serverId;room.s.state.seekable=true;
+                  room.s.state.paused=true;room.manualPaused=true;room.initialGate=true;this.watch.beginReadiness(room);
+                  adopted=true;
+                }
+              } else {
+                room.saveError='The saved video could not be restored. Choose media after checking Plex access.';
+              }
             }catch{room.saveError='The saved video could not be restored. Choose media after checking Plex access.';}
+            finally{if(media&&!adopted)await this.watch.plex.stop(media);}
           }
         }else this.apply(this.watch.rooms.get(id),record);
         return id;
       })();
       this.singleOpening.finally(()=>{this.singleOpening=undefined;}).catch(()=>{});
     }
-    return this.singleOpening;
+    const opened=await this.singleOpening;
+    await this.eligible(actor,current);
+    return opened;
   }
   async resetSingle(id,actor,revision,current) {
     const record=this.store.get(id), room=this.watch.rooms.get(id);
@@ -413,20 +426,49 @@ class WatchRooms {
     if(room&&(room.mediaTransition||room.queueEditing))throw failure('Wait for the current queue or media operation before resetting');
     if(room)room.mediaTransition=true;
     try{
-    if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving?.catch(()=>{});}
-    this.registry.transaction(()=>{
-      this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
-      this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
-      this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
-      this.store.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
-      for(const provider of ['discord','plex'])for(const subject of this.watch.hub.config.roomAdministrators?.[provider]||[]){const host=this.registry.identity(provider,subject)?.userId;if(host&&host!==record.creatorId)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);}
-      this.store.db.prepare("UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,permissions=?,name=?,visibility='public' WHERE id=?")
-        .run(JSON.stringify(this.store.defaults),'Room',id);
-    });
-    await this.registry.flush();
-    if(room){this.watch.dropMedia(room,'room-reset');room.media=null;room.position=0;room.mediaVersion=require('node:crypto').randomUUID();room.initialGate=false;room.s.state.seekable=false;room.s.state.picture={...require('../shared/engine').DEFAULT};room.profiles={};}
-    if(room)this.apply(room,this.store.get(id));
-    return this.summary(id,actor);
+      if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving?.catch(()=>{});}
+      const hosts=[...new Set([
+        ...(this.watch.hub.config.roomAdministrators?.discord||[]).map(subject=>this.registry.resolve('discord',subject,'Assigned account',false).id),
+        ...(this.watch.hub.config.roomAdministrators?.plex||[]).map(subject=>this.registry.resolve('plex',subject,'Assigned account',false).id)
+      ])].filter(h=>h!==record.creatorId);
+      this.registry.transaction(()=>{
+        this.store.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
+        this.store.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
+        this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
+        this.store.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
+        for(const host of hosts)this.store.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id,host);
+        this.registry.meta('singleRoomDefaultHosts',JSON.stringify(hosts));
+        this.store.db.prepare("UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1,queueRevision=queueRevision+1,revision=revision+1,autoplay=1,autoQueue=NULL,liveState=NULL,maxMembers=NULL,permissions=?,name=?,visibility='public' WHERE id=?")
+          .run(JSON.stringify(this.store.defaults),'Room',id);
+      });
+      await this.registry.flush();
+      this.recoveries.delete(id);
+      if(room){
+        this.finishRecovery(room);
+        const old=room.media;
+        this.watch.dropMedia(room,'room-reset');
+        room.media=null;
+        void this.watch.plex.stop(old);
+        room.position=0;
+        room.mediaVersion=require('node:crypto').randomUUID();
+        room.initialGate=false;
+        room.s.state.seekable=false;
+        room.s.state.picture={...require('../shared/engine').DEFAULT};
+        room.profiles={};
+        room.readinessVersion=undefined;
+        room.readinessStartAt=undefined;
+        room.readinessTimedOut=undefined;
+        room.endedVersion=undefined;
+        room.endingOffer=undefined;
+        room.endingMeta=undefined;
+        room.autoplayError=undefined;
+        room.autoQueueError=undefined;
+        room.saveError=undefined;
+        this.apply(room,this.store.get(id));
+        this.watch.refresh(room);
+        await this.elect(room);
+      }
+      return this.summary(id,actor);
     }finally{if(room)room.mediaTransition=false;}
   }
   async elect(room) {
