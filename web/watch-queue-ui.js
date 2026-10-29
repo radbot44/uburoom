@@ -126,7 +126,7 @@
 
 
     const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
-    const autoplayLabel = node('label', continuation, undefined, 'queue-check watch-toggle-pill');
+    const autoplayLabel = node('label', continuation, undefined, 'watch-toggle-pill');
     autoplayLabel.setAttribute('for', 'queue-autoplay');
     const autoplayToggle = node('input', autoplayLabel);
     autoplayToggle.type = 'checkbox';
@@ -139,7 +139,7 @@
     const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
     root.uburoomControls.content(autoOpen,{label:'Queue settings',icon:'settings',iconOnly:true});
     autoOpen.id = 'queue-auto-open';
-    const autoLabel = node('label', continuation, undefined, 'queue-check watch-toggle-pill watch-toggle-secondary');
+    const autoLabel = node('label', continuation, undefined, 'watch-toggle-pill watch-toggle-secondary');
     autoLabel.setAttribute('for', 'queue-auto-toggle');
     const autoToggle = node('input', autoLabel); autoToggle.type = 'checkbox'; autoToggle.id = 'queue-auto-toggle';
     autoToggle.className = 'watch-toggle-input'; autoToggle.setAttribute('role','switch');

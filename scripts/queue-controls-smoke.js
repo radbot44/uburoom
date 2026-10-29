@@ -66,7 +66,7 @@ async function main() {
       assert.equal(await run('$("queue-content").dataset.view'),'list');
       assert.equal(await run('getComputedStyle($("queue-view-list")).outlineWidth'),'2px');
       assert.equal(await run('getComputedStyle($("queue-view-list")).outlineColor===getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()'),true);
-      assert.equal(await run('["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && Math.round($(id).closest("label").getBoundingClientRect().height)===32 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge").getBoundingClientRect().width)===28 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge svg").getBoundingClientRect().width)===24)'),true);
+      assert.equal(await run('["queue-autoplay","queue-auto-toggle"].every(id=>$(id).getAttribute("role")==="switch" && Math.round($(id).closest("label").getBoundingClientRect().height)===40 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge").getBoundingClientRect().width)===32 && Math.round($(id).closest("label").querySelector(".watch-toggle-badge svg").getBoundingClientRect().width)===24)'),true);
       const autoplay = await run('$("queue-autoplay").checked');
       await run(`globalThis.originalQueueRequest=transport.request.bind(transport);globalThis.queueWrites=0;
         transport.request=async(path,data,options)=>{if(data?.command?.action==='media.autoplay.set'){queueWrites++;await new Promise(resolve=>setTimeout(resolve,700));}return originalQueueRequest(path,data,options)};
