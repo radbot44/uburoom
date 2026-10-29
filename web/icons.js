@@ -151,8 +151,11 @@
     "rotate-clockwise": [["path",{"d":"M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5"}]],
     "loader-2": [["path",{"d":"M12 3a9 9 0 1 0 9 9"}]],
     "loader-4": [["path",{"d":"M12 21v-3m6.36 .36l-2.12 -2.12m4.76 -4.24h-3m.36 -6.36l-2.12 2.12m-4.24 -4.76v3m-6.36 -.36l2.12 2.12m-3.76 4.24h2m1 4.95l.71 -.71"}]],
-    "rotate": "\u003cpath d=\"M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
-    "shield": "\u003cpath d=\"M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "rotate": [["path",{"d":"M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5"}]],
+    "shield": [["path",{"d":"M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3"}]],
+    "users-group": [["path",{"d":"M10 13a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"}],["path",{"d":"M8 21v-1a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v1"}],["path",{"d":"M15 5a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"}],["path",{"d":"M17 10h2a2 2 0 0 1 2 2v1"}],["path",{"d":"M5 5a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"}],["path",{"d":"M3 13v-1a2 2 0 0 1 2 -2h2"}]],
+    "video": [["path",{"d":"M15 10l4.553 -2.276a1 1 0 0 1 1.447 .894v6.764a1 1 0 0 1 -1.447 .894l-4.553 -2.276v-4"}],["path",{"d":"M3 8a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -8"}]],
+    "armchair-2": "\u003cpath d=\"M5 10v-4a3 3 0 0 1 3 -3h8a3 3 0 0 1 3 3v4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M16 15v-2a3 3 0 1 1 3 3v3h-14v-3a3 3 0 1 1 3 -3v2\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M8 12h8\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M7 19v2\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M17 19v2\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {

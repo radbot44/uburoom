@@ -49,9 +49,9 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 
 ### Panel headings & quick toggles
 
-- Section heading icon badges: 40×40px solid orange (`var(--primary)`) square, 10px radius (`var(--watch-control-radius)`), with dark artwork (`var(--on-primary): #101217`, 24px icon).
+- Section heading icon badges: 40×40px solid orange (`var(--primary)`) square, 10px radius (`var(--watch-control-radius)`), with dark artwork (`var(--on-primary): #101217`, 24px icon) using `users-group` for Room, `player-track-next` for Queue, and `video` for Media.
 - Section toggle layout: The minimize chevron stays immediately adjacent to the heading title with an 8px gap (`var(--watch-control-gap)`). `#options-title` sizes to content and truncates with ellipsis for long room names rather than expanding to fill the header. Panel heading titles (`.watch-panel-title`) use a 2px vertical offset (`position: relative; top: 2px;`) to optically center uppercase glyphs with the 40×40px badge icon, while the minimize chevron remains vertically centered in the row.
-- Continuation toggles: Enlarged switches (42×24px track, 18×18px thumb, min 44px touch target) with embedded thumb icons. Auto-play displays a play icon when ON and pause icon when OFF (`var(--primary)`). Auto-queue displays the sparkle icon at all times (`var(--secondary)`). On narrow/compact widths, text labels hide to display icon-only switches while retaining accessible labels.
+- Continuation toggles: Compact split-style toggle pills (32px tall, rounded rectangle with subtle border) featuring an accented 28×28px left minibutton with 24×24px dark icon, and text label on the right. When ON, the pill receives a subtle accent tint, and the minibutton is filled with the accent color (orange `var(--primary)` with Play icon for Auto-play; pink `var(--secondary)` with Sparkle icon for Auto-queue). When OFF, the minibutton and label are neutral/muted. On narrow/compact widths, text labels hide to display compact icon-only badges while retaining accessible names. Queue settings gear button (`#queue-auto-open`) remains standalone beside Auto-queue.
 
 ## States and interaction
 

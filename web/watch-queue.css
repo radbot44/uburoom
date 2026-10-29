@@ -2,7 +2,7 @@
 #queue-panel{min-width:0;container-type:inline-size;container-name:queue}
 #queue-content{--queue-card-width:clamp(220px,30cqw,290px);min-width:0}
 #queue-content svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
-#queue-content :is(.queue-heading,.watch-control,.queue-view-switch)>svg,#queue-content .queue-view-button>svg{width:var(--watch-icon-size);height:var(--watch-icon-size)}
+#queue-content :is(.queue-heading,.watch-control,.queue-view-switch)>svg,#queue-content :is(.queue-view-button,#queue-symbol)>svg{width:var(--watch-icon-size);height:var(--watch-icon-size)}
 .queue-header,.queue-toolbar,.queue-heading,.queue-view-switch,.queue-navigation{display:flex;align-items:center}
 .queue-header,.queue-toolbar{justify-content:space-between;gap:var(--watch-group-gap)}
 .queue-header{margin-bottom:16px;flex-wrap:wrap}
@@ -106,8 +106,8 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 [data-view=list] .queue-history-status{padding:0;min-height:0}
 [data-view=list] .queue-rank{padding-top:0}
 [data-view=list] .queue-history-older{flex:none;font-size:12px}
-@container queue (max-width:560px){.queue-quick-controls .watch-switch-text{display:none}.queue-quick-controls .queue-check{font-size:11px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-header .queue-view-switch{flex-basis:auto}}
-@media(max-width:650px){.queue-quick-controls .watch-switch-text{display:none}}
+@container queue (max-width:560px){.queue-quick-controls :is(.watch-switch-text,.watch-toggle-label){display:none}.queue-quick-controls .watch-toggle-pill{padding-right:2px}.queue-quick-controls .queue-check{font-size:11px}.queue-view-button span{display:none}.queue-badge{font-size:10px}.queue-card-caption{font-size:10px}.queue-header .queue-view-switch{flex-basis:auto}}
+@media(max-width:650px){.queue-quick-controls :is(.watch-switch-text,.watch-toggle-label){display:none}.queue-quick-controls .watch-toggle-pill{padding-right:2px}}
 @container queue (max-width:370px){.queue-quick-controls{grid-row:2;grid-column:1/-1;justify-self:end}.queue-header .queue-view-switch{grid-row:1}.queue-toolbar{grid-row:3}}
 @media(pointer:coarse){.queue-navigation button,.queue-view-button{min-height:40px;min-width:40px}}
 

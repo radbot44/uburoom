@@ -661,6 +661,23 @@ input.watch-switch:not(.watch-switch-input){appearance:none;position:relative;wi
 input.watch-switch:not(.watch-switch-input)::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text)}
 input.watch-switch:not(.watch-switch-input):checked{background:var(--primary)}input.watch-switch:not(.watch-switch-input):checked::after{translate:14px;background:var(--on-primary)}
 input.watch-switch:not(.watch-switch-input):disabled{cursor:default;opacity:.55}
+:is(.watch-toggle-pill,.queue-check.watch-toggle-pill){position:relative;display:inline-flex;align-items:center;gap:8px;height:32px;min-height:32px;padding:2px 10px 2px 2px;border-radius:8px;background:var(--elevated);border:1px solid var(--border);color:var(--muted);cursor:pointer;user-select:none;box-sizing:border-box;font-size:13px;font-weight:600;line-height:1;transition:background 120ms ease,border-color 120ms ease,color 120ms ease}
+.watch-toggle-pill::before{content:'';position:absolute;top:-6px;bottom:-6px;left:0;right:0}
+.watch-toggle-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;z-index:2}
+.watch-toggle-badge{display:inline-grid;place-items:center;width:28px;height:28px;min-width:28px;min-height:28px;border-radius:6px;background:var(--border);color:var(--muted);flex:none;box-sizing:border-box;transition:background 120ms ease,color 120ms ease}
+:is(.watch-toggle-badge,#queue-content .watch-toggle-badge) svg{width:24px!important;height:24px!important;fill:currentColor;stroke:currentColor;stroke-width:1.2;stroke-linejoin:round;display:block;pointer-events:none}
+.watch-toggle-label{color:inherit;white-space:nowrap;pointer-events:none}
+.watch-toggle-pill:has(.watch-toggle-input:checked),.watch-toggle-pill.is-on{background:color-mix(in srgb,var(--primary) 12%,var(--elevated));border-color:color-mix(in srgb,var(--primary) 35%,var(--border));color:var(--text)}
+.watch-toggle-pill:has(.watch-toggle-input:checked) .watch-toggle-badge,.watch-toggle-pill.is-on .watch-toggle-badge{background:var(--primary);color:var(--on-primary)}
+.watch-toggle-pill.watch-toggle-secondary:has(.watch-toggle-input:checked),.watch-toggle-pill.watch-toggle-secondary.is-on{background:color-mix(in srgb,var(--secondary) 12%,var(--elevated));border-color:color-mix(in srgb,var(--secondary) 35%,var(--border));color:var(--text)}
+.watch-toggle-pill.watch-toggle-secondary:has(.watch-toggle-input:checked) .watch-toggle-badge,.watch-toggle-pill.watch-toggle-secondary.is-on .watch-toggle-badge{background:var(--secondary);color:var(--on-primary)}
+.watch-toggle-pill:not(:has(:disabled)):not(.is-disabled):hover{background:var(--hover);color:var(--text)}
+.watch-toggle-pill:has(.watch-toggle-input:checked):not(:has(:disabled)):not(.is-disabled):hover,.watch-toggle-pill.is-on:not(:has(:disabled)):not(.is-disabled):hover{background:color-mix(in srgb,var(--primary) 20%,var(--elevated))}
+.watch-toggle-pill.watch-toggle-secondary:has(.watch-toggle-input:checked):not(:has(:disabled)):not(.is-disabled):hover,.watch-toggle-pill.watch-toggle-secondary.is-on:not(:has(:disabled)):not(.is-disabled):hover{background:color-mix(in srgb,var(--secondary) 20%,var(--elevated))}
+.watch-toggle-pill:has(.watch-toggle-input:disabled),.watch-toggle-pill.is-disabled{opacity:.55;cursor:default}
+.watch-toggle-pill:has(.watch-toggle-input:disabled) .watch-toggle-input,.watch-toggle-pill.is-disabled .watch-toggle-input{cursor:default}
+.watch-toggle-pill:has(.watch-toggle-input:focus-visible){outline:2px solid var(--primary);outline-offset:2px}
+.watch-toggle-pill.watch-toggle-secondary:has(.watch-toggle-input:focus-visible){outline-color:var(--secondary)}
 .watch-control:focus-visible,.watch-focus:focus-visible,.watch-segmented button:focus-visible,.watch-switch:focus-visible,.watch-panel-heading button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 #options-panel{container-type:inline-size}
 @container(max-width:350px){.watch-control-responsive .watch-control-label{display:none}.watch-control-responsive{width:var(--watch-control-height);padding:0}}

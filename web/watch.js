@@ -319,9 +319,9 @@ const subtitleMode=$('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
 video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['room-symbol','door'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
+for (const pair of [['refresh','refresh'],['room-symbol','users-group'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','media'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
@@ -764,9 +764,7 @@ for (const [key, label, panel] of sections) {
   const tab = document.createElement('button');
   tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
-  if (key === 'room') {
-    tab.append(uburoomIcons.icon(document,'door'));
-  } else tab.append(uburoomIcons.icon(document, key === 'queue' ? 'queue' : 'media'));
+  tab.append(uburoomIcons.icon(document, key === 'room' ? 'users-group' : key === 'queue' ? 'player-track-next' : 'video'));
   tab.append(document.createTextNode(label));
   tab.addEventListener('click', () => selectSection(key));
   sectionTabs.append(tab);

@@ -82,7 +82,7 @@
     const symbol = node('span', heading, undefined, 'watch-panel-symbol');
     symbol.id = 'queue-symbol';
     symbol.setAttribute('aria-hidden', 'true');
-    symbol.append(root.uburoomIcons.icon(doc, 'queue'));
+    symbol.append(root.uburoomIcons.icon(doc, 'player-track-next'));
     const queueTitle = node('span', heading, 'Queue', 'watch-panel-title');
     queueTitle.id = 'queue-title';
     const views = node('div', header, undefined, 'queue-view-switch watch-segmented watch-segmented-view');
@@ -126,30 +126,27 @@
 
 
     const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
-    const autoplayLabel = node('label', continuation, undefined, 'queue-check watch-switch-label');
+    const autoplayLabel = node('label', continuation, undefined, 'queue-check watch-toggle-pill');
     autoplayLabel.setAttribute('for', 'queue-autoplay');
     const autoplayToggle = node('input', autoplayLabel);
     autoplayToggle.type = 'checkbox';
     autoplayToggle.id = 'queue-autoplay';
-    autoplayToggle.className = 'watch-switch watch-switch-input'; autoplayToggle.setAttribute('role','switch');
-    const autoplayTrack = node('span', autoplayLabel, undefined, 'watch-switch-track');
-    autoplayTrack.setAttribute('aria-hidden', 'true');
-    const autoplayThumb = node('span', autoplayTrack, undefined, 'watch-switch-thumb');
-    autoplayThumb.dataset.icon = 'play';
-    autoplayThumb.append(root.uburoomIcons.icon(doc, 'play'));
-    const autoplayText = node('span', autoplayLabel, 'Auto-play', 'watch-switch-text');
+    autoplayToggle.className = 'watch-toggle-input'; autoplayToggle.setAttribute('role','switch');
+    const autoplayBadge = node('span', autoplayLabel, undefined, 'watch-toggle-badge');
+    autoplayBadge.setAttribute('aria-hidden', 'true');
+    autoplayBadge.append(root.uburoomIcons.icon(doc, 'play'));
+    const autoplayText = node('span', autoplayLabel, 'Auto-play', 'watch-toggle-label');
     const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
     root.uburoomControls.content(autoOpen,{label:'Queue settings',icon:'settings',iconOnly:true});
     autoOpen.id = 'queue-auto-open';
-    const autoLabel = node('label', continuation, undefined, 'queue-check watch-switch-label');
+    const autoLabel = node('label', continuation, undefined, 'queue-check watch-toggle-pill watch-toggle-secondary');
     autoLabel.setAttribute('for', 'queue-auto-toggle');
     const autoToggle = node('input', autoLabel); autoToggle.type = 'checkbox'; autoToggle.id = 'queue-auto-toggle';
-    autoToggle.className = 'watch-switch watch-switch-input watch-switch-secondary'; autoToggle.setAttribute('role','switch');
-    const autoTrack = node('span', autoLabel, undefined, 'watch-switch-track');
-    autoTrack.setAttribute('aria-hidden', 'true');
-    const autoThumb = node('span', autoTrack, undefined, 'watch-switch-thumb');
-    autoThumb.append(root.uburoomIcons.icon(doc, 'sparkle'));
-    const autoText = node('span', autoLabel, 'Auto-queue', 'watch-switch-text');
+    autoToggle.className = 'watch-toggle-input'; autoToggle.setAttribute('role','switch');
+    const autoBadge = node('span', autoLabel, undefined, 'watch-toggle-badge');
+    autoBadge.setAttribute('aria-hidden', 'true');
+    autoBadge.append(root.uburoomIcons.icon(doc, 'sparkle'));
+    const autoText = node('span', autoLabel, 'Auto-queue', 'watch-toggle-label');
     continuation.append(autoOpen);
     let rememberedAuto = null, rememberedRoom, lastAutoNextKey = '';
     autoToggle.addEventListener('change', async () => {
@@ -165,9 +162,6 @@
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
       autoplayPending = true; autoplayToggle.disabled = true;
-      const playState = autoplayToggle.checked ? 'play' : 'pause';
-      autoplayThumb.dataset.icon = playState;
-      autoplayThumb.replaceChildren(root.uburoomIcons.icon(doc, playState));
       notice.textContent = 'Saving Auto-play…';
       try { await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } }); }
       catch (error) { notice.textContent = error.message; }
@@ -178,11 +172,8 @@
       const state = getState();
       if (!autoplayPending) autoplayToggle.checked = state?.autoplay?.enabled !== false;
       autoplayToggle.disabled = autoplayPending || !state?.capabilities?.autoplay;
-      const playState = autoplayToggle.checked ? 'play' : 'pause';
-      if (autoplayThumb.dataset.icon !== playState) {
-        autoplayThumb.dataset.icon = playState;
-        autoplayThumb.replaceChildren(root.uburoomIcons.icon(doc, playState));
-      }
+      autoplayLabel.classList.toggle('is-on', autoplayToggle.checked);
+      autoplayLabel.classList.toggle('is-disabled', autoplayToggle.disabled);
       autoOpen.disabled = !state?.durable;
       autoplayToggle.title = autoplayToggle.disabled ? (autoplayPending ? 'Saving Auto-play…' : 'Auto-play is unavailable for your role.') : 'Auto-play';
       autoplayLabel.title = autoplayToggle.title;
@@ -192,6 +183,8 @@
       if (auto?.mode && auto.mode !== 'off') rememberedAuto = { mode: auto.mode, scope: auto.scope, includeSpecials: auto.includeSpecials };
       if (!autoPending) autoToggle.checked = !!auto?.mode && auto.mode !== 'off';
       autoToggle.disabled = autoPending || !state?.capabilities?.editQueue;
+      autoLabel.classList.toggle('is-on', autoToggle.checked);
+      autoLabel.classList.toggle('is-disabled', autoToggle.disabled);
       autoToggle.title = autoToggle.disabled ? (autoPending ? 'Saving Auto-queue…' : 'Queue editing is unavailable for your role.') : 'Auto-queue';
       autoLabel.title = autoToggle.title;
       if (state?.autoplay?.error) notice.textContent = state.autoplay.error;
