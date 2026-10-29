@@ -601,7 +601,7 @@ body.idle-player #video{visibility:hidden}
 :is(.watch-control>svg,#options-panel .watch-control>svg,#room-dialog .watch-control>svg,#room-settings-dialog .watch-control>svg),.watch-segmented .group-button>svg{width:var(--watch-icon-size);height:var(--watch-icon-size);margin:0;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 :is(.watch-control,#options-panel .watch-control,#room-dialog .watch-control,#room-settings-dialog .watch-control):hover:not(:disabled),.watch-segmented button:hover:not(:disabled){background:var(--hover);color:var(--text)}
 .watch-panel-header{display:flex;align-items:center;justify-content:space-between;gap:var(--watch-group-gap)}
-.watch-panel-heading{font-size:24px;line-height:1.25;font-weight:400;min-width:0;margin:0}
+.watch-panel-heading{display:flex;align-items:center;gap:var(--watch-control-gap);font-size:24px;line-height:1.25;font-weight:400;min-width:0;margin:0}
 .watch-panel-heading .section-toggle{font:inherit;font-weight:400;gap:var(--watch-control-gap);min-height:var(--watch-control-height)}
 .watch-panel-heading #room-symbol .oomark-icon{width:22px;height:20px}
 .watch-panel-heading .section-toggle>span:not(.oomark-icon):not(.watch-panel-symbol){min-width:0;overflow-wrap:anywhere}
