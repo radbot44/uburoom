@@ -83,7 +83,8 @@
     symbol.id = 'queue-symbol';
     symbol.setAttribute('aria-hidden', 'true');
     symbol.append(root.uburoomIcons.icon(doc, 'queue'));
-    heading.append(doc.createTextNode('Queue'));
+    const title = node('span', heading, 'Queue', 'watch-panel-title');
+    title.id = 'queue-title';
     const views = node('div', header, undefined, 'queue-view-switch watch-segmented watch-segmented-view');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Queue layout');
     const viewButtons = ['cards', 'list'].map(value => {

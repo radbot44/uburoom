@@ -605,6 +605,7 @@ body.idle-player #video{visibility:hidden}
 .watch-panel-heading .section-toggle{font:inherit;font-weight:400;gap:var(--watch-control-gap);min-height:var(--watch-control-height)}
 .watch-panel-heading #room-symbol .oomark-icon{width:22px;height:20px}
 .watch-panel-heading .section-toggle>span:not(.oomark-icon):not(.watch-panel-symbol){min-width:0;overflow-wrap:anywhere}
+.watch-panel-heading .watch-panel-title,.watch-panel-heading .section-toggle>span:not(.oomark-icon):not(.watch-panel-symbol):not(#options-chevron){position:relative;top:2px}
 #options-panel .watch-panel-heading{flex:0 1 auto;min-width:0}
 #options-panel .watch-panel-heading .section-toggle{width:auto;min-width:0}
 #options-title{display:inline-block;min-width:0;max-width:min(240px,38vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
