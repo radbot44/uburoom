@@ -7,7 +7,7 @@ window.uburoomSubtitleRenderers={
   async create(video,format,assets,offset,signal,resolveMediaTime){
     const layer=document.createElement('div'),canvas=document.createElement('canvas');
     layer.className='subtitle-layer';layer.setAttribute('aria-hidden','true');canvas.className='subtitle-canvas';layer.append(canvas);video.parentElement.append(layer);
-    let renderer,disposed=false;
+    let renderer,disposed=false,renderError;
     const currentMediaTime=()=>typeof resolveMediaTime==='function'?resolveMediaTime(video.currentTime):video.currentTime;
     const dispose=()=>{if(disposed)return;disposed=true;layer.remove();try{Promise.resolve(renderer?.destroy?.() || renderer?.dispose?.()).catch(()=>{});}catch{}};
     signal.addEventListener('abort',dispose,{once:true});
@@ -42,7 +42,9 @@ window.uburoomSubtitleRenderers={
           const options={video,canvas,container:layer,
             ...(pushStream?{}:assets.subUrl?{subUrl:assets.subUrl,streamingLoad:true,rangeRequests:false}:{subContent:assets.data?assets.data.buffer.slice(assets.data.byteOffset,assets.data.byteOffset+assets.data.byteLength):new Uint8Array(0)}),
             ...(assets.index?{idxContent:new TextDecoder().decode(assets.index)}:{}),fileName:assets.fileName,timeOffset:-offset,
-            cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,onError:reject};
+            cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,
+            onError:error=>{renderError=error;reject(error);},
+            onWarning:warning=>{if(format==='pgs'&&['MISSING_PALETTE','INVALID_SUBTITLE_DATA'].includes(warning.code))renderError=new Error('PGS subtitle bitmap could not be rendered. Try Plex burn-in.');}};
           renderer=format==='pgs'?new PgsRenderer(options):new VobSubRenderer(options);
           renderer.resolveMediaTime=resolveMediaTime;
         }));
@@ -52,6 +54,7 @@ window.uburoomSubtitleRenderers={
       for(const event of ['seeked','loadedmetadata','pause','playing','ratechange'])video.addEventListener(event,repaint);
       const cleanup=()=>{signal.removeEventListener('abort',dispose);for(const event of ['seeked','loadedmetadata','pause','playing','ratechange'])video.removeEventListener(event,repaint);dispose();};
       return {destroy:cleanup,
+        error:()=>renderError,
         append:chunk=>renderer.append ? renderer.append(chunk) :
           format==='ass' ? (async()=>{
             const text=new TextDecoder().decode(chunk);
@@ -65,7 +68,7 @@ window.uburoomSubtitleRenderers={
             return 1;
           })() : undefined,
         flush:()=>renderer.flush?.(),
-        reset:()=>renderer.reset ? renderer.reset() : renderer.onSeek ? renderer.onSeek() : undefined,
+        reset:()=>{renderError=undefined;return renderer.reset ? renderer.reset() : renderer.onSeek ? renderer.onSeek() : undefined;},
         synced:(time=currentMediaTime())=>renderer.isSyncedAtMediaTime?renderer.isSyncedAtMediaTime(time):true,
         offset(value){renderer.timeOffset=-value;repaint();},picture(value){
         layer.style.scale=value.zoom*value.stretchX+' '+value.zoom*value.stretchY;layer.style.translate=value.x*100+'% '+value.y*100+'%';

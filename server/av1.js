@@ -16,7 +16,7 @@ const { processMemory } = require('./process-memory');
 const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
 class PlaybackError extends Error {}
 
-async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic, { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000 } = {}) {
+async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic, { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete } = {}) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
   const split = args.includes('pipe:3');
   const webm = args.includes('webm') && args.includes('pipe:1');
@@ -38,7 +38,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     const output = await new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
     const child = spawn(binary, args, { windowsHide:true, stdio:['ignore','pipe','pipe'] });
-    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer;
+    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer, complete=false;
     const finish = (error, output) => {
       if (settled) return; settled = true; clearTimeout(timer); clearTimeout(drainTimer); clearInterval(sizeCheck); clearInterval(memoryCheck); signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve(output);
@@ -65,7 +65,11 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     child.stdout.on('data', bytes => {
       size += bytes.length;
       if (size > maxOutput) stop(new PlaybackError('WebM output exceeded the supported limit.'));
-      else if(!failure)chunks.push(bytes);
+      else if(!failure){
+        chunks.push(bytes);
+        try{if(outputComplete?.(bytes)){complete=true;child.kill('SIGKILL');}}
+        catch(error){stop(error);}
+      }
     });
     // Drain, but never log stderr: FFmpeg may print its input URL.
     // Retain a bounded private tail solely to classify encoder initialization
@@ -77,7 +81,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     child.on('close', code => {
       diagnostic?.(code, stderr);
       const encoderFailure=/(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(stderr);
-      finish(failure || (code === 0 ? null : Object.assign(new PlaybackError('The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.'),{encoderFailure})), Buffer.concat(chunks));
+      finish(failure || (code === 0 || complete ? null : Object.assign(new PlaybackError('The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.'),{encoderFailure})), Buffer.concat(chunks));
     });
     });
     if (!webm) return output;
@@ -250,6 +254,13 @@ class AV1 {
           const response = await (entry.source.plexContext||this.plex).request(entry.source.start, { method:req.method, signal:abort.signal, streaming: true,
             headers:{Accept:'*/*', ...(req.headers.range ? {Range:req.headers.range} : {})} });
           clearTimeout(timer);
+          if(entry.source.subtitleWindow&&req.headers.range){
+            const requested=/^bytes=(\d+)-/.exec(req.headers.range),received=/^bytes (\d+)-\d+\/\d+$/.exec(response.headers.get('content-range')||'');
+            if(response.status!==206||!requested||!received||requested[1]!==received[1]){
+              await response.body?.cancel().catch(()=>{});
+              res.writeHead(502);res.end();return;
+            }
+          }
           const headers = {};
           for (const key of ['content-type','content-length','content-range','accept-ranges']) if (response.headers.has(key)) headers[key] = response.headers.get(key);
           res.writeHead(response.status, headers);

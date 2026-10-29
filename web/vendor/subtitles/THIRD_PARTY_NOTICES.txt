@@ -1112,6 +1112,9 @@ uburoom modifies libbitsub asset URLs and overlay geometry during bundling. See 
 uburoom exposes libbitsub initialization completion and an optional forced manual repaint that invalidates prior presentation work.
 -----
 
+uburoom removes obsolete PGS pending-render promises during bounded window reset/replay to prevent repeated stale repaint callbacks.
+-----
+
 uburoom bounds JASSUB worker disposal to one second if startup or worker IPC does not settle. See scripts/build-subtitle-vendor.js.
 -----
 

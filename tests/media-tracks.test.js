@@ -313,6 +313,23 @@ test('browser subtitle resources enforce grants, selection generations and expli
   assert.equal(pgsDescriptor.body.fonts.length,0);
   const pgsAsset=await request(pgsDescriptor.body.data);assert.equal(pgsAsset.status,200);
   assert.equal(pgsAsset.body,'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');
+  // Hold real window work across selection replacement and detected revocation.
+  let started,windowSignal;
+  app.watch.plex.av1.run=async(binary,args,signal)=>{
+    windowSignal=signal;started?.();
+    return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  };
+  const pgsMedia=app.watch.rooms.get(room).viewers.get(viewerId).media;pgsMedia.subtitleOrigin=0;
+  let waiting=new Promise(resolve=>started=resolve),pendingWindow=request(pgsDescriptor.body.window+'?atMs=3600000');
+  await waiting;await command('media.tracks.set',{subtitleId:'off'});
+  assert.notEqual((await pendingWindow).status,200);assert.equal(windowSignal.aborted,true);assert.equal(pgsMedia.windowJobs.size,0);
+  await command('media.tracks.set',{subtitleId:'23'});
+  const authorizedPgs=await snapshot(),windowManifest=await request(authorizedPgs.subtitleUrl);
+  waiting=new Promise(resolve=>started=resolve);pendingWindow=request(windowManifest.body.window+'?atMs=7190000');
+  await waiting;member=false;
+  assert.notEqual((await pendingWindow).status,200);assert.equal(windowSignal.aborted,true);assert.equal(pgsMedia.windowJobs.size,0);
+  assert.equal((await request(windowManifest.body.window+'?atMs=0')).status,403);
+
   member=false;assert.equal((await request(next.subtitleUrl)).status,403);
   const page=await request('/watch');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
 });

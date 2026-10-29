@@ -40,6 +40,12 @@ await bundle(path.join(root,'node_modules/libbitsub/dist/wrapper.js'),'libbitsub
     // Measure the original layout box so zoom/stretch is applied exactly once.
     contents=contents.replace(mount,'const videoRect = {left:this.video.offsetLeft,top:this.video.offsetTop};\n        const containerRect = {left:0,top:0};')
       .replace(bounds,'const rect = {width:this.video.clientWidth,height:this.video.clientHeight};');
+    const pending='renderTask.then(({ frame, renderIssue }) => {\n                    if (generation !== this.streamGeneration || this.disposed)';
+    if(!contents.includes(pending))throw new Error('Review libbitsub PGS pending-render cleanup after upstream update.');
+    // Reset can supersede a render while its promise is still in the pending
+    // map. Remove that exact promise even when its result is obsolete; watching
+    // an already resolved stale promise can otherwise spin the main thread.
+    contents=contents.replace(pending,'renderTask.then(({ frame, renderIssue }) => {\n                    if (this.state.pendingRenders.get(index) === renderPromise) this.state.pendingRenders.delete(index);\n                    if (generation !== this.streamGeneration || this.disposed)');
     const manual='renderAtMediaTime(mediaTime) {\n        this.renderSynchronizedFrame({ mediaTime, presentedFrames: null });\n    }';
     const indexed='emitIndexed(format, metadata, partial) {\n        this.emitEvent({ type: \'indexed\', format, metadata, partial });\n    }';
     const refresh='refreshStreamPresentation() {\n        this.invalidatePresentation();\n        this.lastRenderedIndex = -1;\n        this.lastRenderedTime = -1;\n        this.renderPausedFrame();\n    }';
@@ -77,6 +83,7 @@ notices.push(fs.readFileSync(path.join(root,'web/vendor/licenses/OFL-1.1.txt'),'
 notices.push('JASSUB native WASM components (jassub-worker.wasm, jassub-worker-modern.wasm): see ../licenses/JASSUB-components.txt and docs/third-party.md. Corresponding source is archived at https://github.com/radbot44/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3 (upstream https://github.com/ThaUnknown/jassub/tree/816f1dc536e9bface9bef82f7c214690b81aaee3).');
 notices.push('uburoom modifies libbitsub asset URLs and overlay geometry during bundling. See scripts/build-subtitle-vendor.js. Upstream copyright and licenses are retained.');
 notices.push('uburoom exposes libbitsub initialization completion and an optional forced manual repaint that invalidates prior presentation work.');
+notices.push('uburoom removes obsolete PGS pending-render promises during bounded window reset/replay to prevent repeated stale repaint callbacks.');
 notices.push('uburoom bounds JASSUB worker disposal to one second if startup or worker IPC does not settle. See scripts/build-subtitle-vendor.js.');
 notices.push('uburoom selects JASSUB transparent Canvas2D composition with synchronized presentation to avoid GPU overlays obscuring decoded video. libass layout and fonts are unchanged.');
 fs.writeFileSync(path.join(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n-----\n\n'));

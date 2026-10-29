@@ -79,6 +79,8 @@ Classes: `.primary` for primary actions, `.quiet` for secondary, `.icon-button` 
 
 Reuse the shared toast, dialog, menu, permission and status systems. Preserve their established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified. Toasts with interactive actions use a container element sharing `.watch-toast` styling; two-line action toasts present the message on the first line and compact action and Dismiss buttons on the second line. Deliberate dismissal suppresses repeat warnings for the session. Subtitle loading and progressive catch-up display a delayed (`250ms`) top-right spinning `loader-4` icon in orange (`var(--primary)`) over the subtitle button without showing a toast, keeping the button interactive so subtitles can be disabled during loading.
 
+Owner-approved 2026-10-29: bounded subtitle-window recovery uses the existing loading/error feedback and explicit Plex burn-in choice. A failed or unauthorized window must not clear its error as successful caption coverage; subtitle recovery remains independent of video playback.
+
 Keep existing draft/save/cancel boundaries explicit and report failures truthfully. Preserve independent personal preferences and shared room authority. Put technical details in existing diagnostics surfaces, never credentials or private playback URLs.
 
 ## Review and maintenance

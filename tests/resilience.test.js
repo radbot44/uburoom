@@ -127,5 +127,8 @@ test('tool runner drains stderr, bounds output and kills timed-out or over-budge
   await assert.rejects(run(binary,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],undefined,100),/timed out/);
   await assert.rejects(run(binary,['-e','setInterval(()=>{},1000)'],undefined,2000,1024,undefined,{memory:async()=>2048,memoryLimit:1024,memoryInterval:10}),/memory limit/);
   await assert.rejects(run(binary,['-e','setInterval(()=>{},1000)'],undefined,2000,1024,undefined,{memory:async()=>{throw new Error('Unavailable');},memoryInterval:10}),/monitoring unavailable/);
+  const completed=await run(binary,['-e','process.stdout.write("complete");setInterval(()=>{},1000)'],undefined,2000,1024,undefined,{outputComplete:bytes=>bytes.toString()==='complete'});
+  assert.equal(completed.toString(),'complete','validated output completion waits for child close without waiting for a future sparse packet');
+  await assert.rejects(run(binary,['-e','process.stdout.write("invalid");setInterval(()=>{},1000)'],undefined,2000,1024,undefined,{outputComplete:()=>{throw new Error('Invalid subtitle packets');}}),/Invalid subtitle packets/);
   assert.ok(await require('../server/process-memory').processMemory(process.pid)>0,'native process inspection reports actual memory');
 });
