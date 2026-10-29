@@ -41,8 +41,8 @@
     const sortWrap = node('div',toolControls,undefined,'sort-wrap');
     const sort = select(sortWrap,'Sort library'); sort.id = 'library-sort';
     sortWrap.append(uburoomIcons.icon(doc,'chevron'));
-    const direction = button(toolControls,'Ascending','sort','library-key library-direction'); direction.id = 'library-direction';
-    controls.content(direction,{label:'Ascending',icon:'sort',iconOnly:true}); direction.classList.add('watch-control-solid-disabled');
+    const direction = button(toolControls,'Ascending: switch to descending','sort','library-key library-direction'); direction.id = 'library-direction';
+    controls.content(direction,{label:'Ascending: switch to descending',icon:'sort',iconOnly:true}); direction.classList.add('watch-control-solid-disabled');
     const filterHolder = node('div',toolControls,undefined,'filter-holder');
     const filterButton = button(filterHolder,'Filters','filter','library-key watch-control watch-control-responsive watch-control-solid-disabled'); filterButton.id = 'library-filters-toggle'; filterButton.append(node('span',null,'Filters','filter-label watch-control-label')); filterButton.setAttribute('aria-expanded','false'); filterButton.setAttribute('aria-controls','library-filters');
     const views = node('div',toolControls,undefined,'library-views view-switch watch-segmented watch-segmented-view'); views.setAttribute('role','group'); views.setAttribute('aria-label','Library view');
