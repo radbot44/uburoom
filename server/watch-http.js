@@ -70,17 +70,27 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     const credential = req.headers.authorization || cookies(req).uburoom;
     for (const g of grants.values()) {
       if (g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion &&
-        g.credential === credential && g.media?.captionVersion && g.media.captionVersion === viewer.media.captionVersion) {
+        g.media?.captionVersion && g.media.captionVersion === viewer.media.captionVersion &&
+        (g.credential === credential || Boolean(req.headers.authorization) === Boolean(g.headers?.authorization))) {
+        g.credential = credential;
+        g.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
         g.expires = Date.now() + 15000;
       }
     }
     const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion);
-    if (existing?.credential === credential) { existing.expires = Date.now() + 15000; return existing.id; }
+    if (existing && (existing.credential === credential || Boolean(req.headers.authorization) === Boolean(existing.headers?.authorization))) {
+      existing.credential = credential;
+      existing.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
+      existing.expires = Date.now() + 15000;
+      return existing.id;
+    }
     if (existing) grants.delete(existing.id);
     const id = randomBytes(24).toString('hex');
-    const headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
-    grants.set(id, { id, room, media: viewer.media, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, credential, expires: Date.now() + 15000,
-      alive: async () => (await login({ headers }))?.userId === auth.actor.userId });
+    const grant = { id, room, media: viewer.media, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, credential,
+      headers: { cookie: req.headers.cookie, authorization: req.headers.authorization },
+      expires: Date.now() + 15000,
+      alive: async () => (await login({ headers: req.controlSocket?.watchHeaders || grant.headers }))?.userId === auth.actor.userId };
+    grants.set(id, grant);
     return id;
   }
   function resource(media, url) {
@@ -358,7 +368,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           if (!await alive() || !handoff.consume(attempt)) { json(res,410,{error:'Activity sign-in expired or was cancelled'}); return true; }
           if (existing?.userId !== attempt.source.userId) browserLogin(res,attempt.source);
           else res.setHeader('Set-Cookie','uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-          json(res,200,{destination:attempt.connectPlex?'/auth/plex':attempt.linkOnly?'/watch?account=1':'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
+          json(res,200,{destination:attempt.connectPlex?('/auth/plex' + (roomId ? '?return=' + encodeURIComponent('/watch?room=' + roomId) : '')):attempt.linkOnly?'/watch?account=1':'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {

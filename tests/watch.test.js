@@ -362,7 +362,7 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const replacementGuest = {Authorization:'Bearer '+replacementLogin.token};
   const replacementState = (await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`,'GET',undefined,replacementGuest)).body;
   assert.equal(replacementState.streamVersion,guestState.streamVersion,'identity renewal retains the personal stream');
-  assert.notEqual(replacementState.mediaUrl,guestState.mediaUrl,'identity renewal rotates the media grant');
+  assert.equal(replacementState.mediaUrl,guestState.mediaUrl,'identity renewal retains the media grant');
 
   // delivery=local validation, transcode bypass, readiness and observation tracking
   const badDelivery = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}&delivery=ftp`, 'GET', undefined, guest);
@@ -405,7 +405,7 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   const autoSwitched = (await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=auto`, 'GET', undefined, guest)).body;
   assert.ok(autoSwitched.mediaUrl, 'switching to auto allocates stream URL');
   assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, false);
-  assert.equal((await request(guestState.mediaUrl)).status,403,'old identity grant is revoked');
+  assert.equal((await request(guestState.mediaUrl)).status,200,'preserved media grant remains accessible');
   assert.equal((await request(replacementState.mediaUrl)).status,200);
   await command('room.visibility', {visibility:'private'}); assert.equal((await request(replacementState.mediaUrl)).status, 403);
   const privateState = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}`, 'GET', undefined, guest); assert.equal(privateState.status, 403);

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, PlaybackError, outputSpec } = require('../server/av1');
+const { AV1, PlaybackError, outputSpec, run } = require('../server/av1');
 const { Plex } = require('../server/plex');
 const Engine = require('../shared/engine');
 
@@ -195,4 +195,46 @@ test('AV1 retries the hardware probe after an initial transient failure',async (
     const chunk=await manager.chunk(lease,0,new AbortController().signal);
     assert.ok(chunk.video.length); assert.equal(probes,2);
   } finally {manager.release(lease);await manager.close();}
+});
+
+test('run does not fail or kill on process exit race during memoryCheck', async () => {
+  const res = await run(process.execPath, ['-e', 'process.stdout.write("ok"); process.exit(0)'], undefined, 5000, 1024, undefined, {
+    memoryInterval: 20,
+    memory: async () => {
+      await new Promise(r => setTimeout(r, 200));
+      throw new Error('ESRCH');
+    }
+  });
+  assert.equal(res.toString(), 'ok');
+});
+
+test('AV1 resets rejected bridgePromise so subsequent attempts can retry', async () => {
+  const manager = new AV1({}, { ffmpegPath: 'fixture' });
+  const http = require('node:http');
+  const originalCreateServer = http.createServer;
+  let attempts = 0;
+  http.createServer = function(...args) {
+    attempts++;
+    if (attempts === 1) {
+      return {
+        listen(_port, _host, cb) {
+          process.nextTick(() => cb(new Error('transient listen error')));
+        },
+        once(event, cb) {
+          if (event === 'error') process.nextTick(() => cb(new Error('transient listen error')));
+        },
+        unref() {}
+      };
+    }
+    return originalCreateServer.apply(this, args);
+  };
+  try {
+    await assert.rejects(manager.bridge(), /transient listen error/);
+    assert.equal(manager.bridgePromise, undefined, 'bridgePromise is reset on failure');
+    const port = await manager.bridge();
+    assert.ok(typeof port === 'number' && port > 0, 'subsequent bridge attempt succeeds');
+  } finally {
+    http.createServer = originalCreateServer;
+    await manager.close();
+  }
 });

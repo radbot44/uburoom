@@ -16,7 +16,7 @@ class WatchRooms {
     this.store = new RoomStore(registry, {
       limits:this.limits,
       defaults: watch.hub.config.roomPermissions,
-      isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord')?.subject })
+      isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord' && identity.verified)?.subject })
     });
     this.queue = new RoomQueue(registry, this.store);
     registry.transaction(() => {
@@ -154,7 +154,13 @@ class WatchRooms {
   async claimHosts(userId) {
     for (const id of await this.store.claimHosts(userId)) {
       const room = this.watch.rooms.get(id);
-      if (room) { this.apply(room,this.store.get(id)); room.revision++; }
+      if (room) {
+        this.apply(room, this.store.get(id));
+        room.revision++;
+        this.watch.invalidateControls(room);
+        this.watch.refresh(room);
+        await this.elect(room);
+      }
     }
   }
   apply(room, record) {
@@ -476,7 +482,9 @@ class WatchRooms {
     const candidates = [...room.viewers.entries()].sort((a, b) => Number(isHost(room.s, b[1].actor) || this.watch.hub.isAdmin(b[1].actor)) -
       Number(isHost(room.s, a[1].actor) || this.watch.hub.isAdmin(a[1].actor)) || a[1].joinedAt - b[1].joinedAt);
     const current = room.viewers.get(room.hostViewerId);
-    if (current && Date.now() - current.at < 10000 && (isHost(room.s, current.actor) || this.watch.hub.isAdmin(current.actor))) return;
+    const hasHostCandidate = candidates.some(([, viewer]) => isHost(room.s, viewer.actor) || this.watch.hub.isAdmin(viewer.actor));
+    if (current && Date.now() - current.at < 10000 && (isHost(room.s, current.actor) || this.watch.hub.isAdmin(current.actor) ||
+        !hasHostCandidate && this.watch.hub.canRoom(room.s, current.actor, 'continueWithoutHost'))) return;
     if (room.waitingForHost && !candidates.some(([,viewer]) => isHost(room.s,viewer.actor) || this.watch.hub.isAdmin(viewer.actor) ||
         this.watch.hub.canRoom(room.s,viewer.actor,'continueWithoutHost'))) return;
     // Freeze immediately; permission refresh/media authorization can take time.
@@ -502,18 +510,19 @@ class WatchRooms {
   save(room, { closing = false } = {}) {
     if (!room.saved) return Promise.resolve();
     if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room,{closing})));
-    const media = room.media;
-    const bookmark = media ? { serverId:media.roomServerId, mediaId:media.id, type:media.source?.type || 'movie',
-      title:media.title, duration:media.duration, position:this.watch.position(room) } : null;
-    const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>Date.now())].map(v => this.store.account(v.userId)))];
-    const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
     const saving = previous.then(async () => {
+      if (!closing && this.watch.rooms.get(room.s.roomId) !== room) return;
+      const media = room.media;
+      const bookmark = media ? { serverId:media.roomServerId, mediaId:media.id, type:media.source?.type || 'movie',
+        title:media.title, duration:media.duration, position:this.watch.position(room) } : null;
+      const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>Date.now())].map(v => this.store.account(v.userId)))];
+      const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
       const record = this.store.get(room.s.roomId);
       this.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(live ? JSON.stringify({viewers:live.viewers,wasPlaying:live.wasPlaying}) : null,record.id);
       if (room.viewers.size) this.store.touch(record.id);
-      this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
       if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
+      this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
       room.saveError = undefined;
     }).catch(error => { room.saveError = 'Room progress could not be saved. Check server storage.'; this.freeze(room); throw error; });
     room.saving = saving;

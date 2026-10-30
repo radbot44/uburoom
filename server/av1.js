@@ -38,7 +38,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     const output = await new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
     const child = spawn(binary, args, { windowsHide:true, stdio:['ignore','pipe','pipe'] });
-    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer, complete=false;
+    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer, complete=false, exited = false;
     const finish = (error, output) => {
       if (settled) return; settled = true; clearTimeout(timer); clearTimeout(drainTimer); clearInterval(sizeCheck); clearInterval(memoryCheck); signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve(output);
@@ -56,11 +56,17 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
       } finally { checking = false; }
     }, 250) : undefined;
     const memoryCheck = setInterval(async () => {
-      if(checkingMemory||settled||failure||!child.pid)return;checkingMemory=true;
-      try { if(await memory(child.pid)>memoryLimit)stop(new PlaybackError('WebM process exceeded the server memory limit.')); }
-      catch { if(!settled&&!failure)stop(new PlaybackError('WebM process resource monitoring unavailable.')); }
-      finally {checkingMemory=false;}
-    },memoryInterval);
+      if (checkingMemory || settled || exited || failure || !child.pid) return;
+      checkingMemory = true;
+      try {
+        const rss = await memory(child.pid);
+        if (!settled && !exited && !failure && rss > memoryLimit) stop(new PlaybackError('WebM process exceeded the server memory limit.'));
+      } catch {
+        if (!settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
+          stop(new PlaybackError('WebM process resource monitoring unavailable.'));
+        }
+      } finally { checkingMemory = false; }
+    }, memoryInterval);
     signal?.addEventListener('abort', cancel, {once:true});
     child.stdout.on('data', bytes => {
       size += bytes.length;
@@ -77,7 +83,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
     child.on('error', () => finish(new PlaybackError('WebM unavailable: configure an existing FFmpeg/FFprobe installation on the server.')));
     // An exited tool cannot keep shutdown waiting on inherited pipe handles.
-    child.on('exit',()=>{child.stdout.resume();child.stderr.resume();drainTimer=setTimeout(()=>{child.stdout.destroy();child.stderr.destroy();},250);});
+    child.on('exit',()=>{exited=true;clearInterval(memoryCheck);child.stdout.resume();child.stderr.resume();drainTimer=setTimeout(()=>{child.stdout.destroy();child.stderr.destroy();},250);});
     child.on('close', code => {
       diagnostic?.(code, stderr);
       const encoderFailure=/(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(stderr);
@@ -273,7 +279,7 @@ class AV1 {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       if (this.closed) { server.close(); throw new PlaybackError('Server is shutting down.'); }
       server.unref(); return server.address().port;
-    })();
+    })().catch(error => { this.bridgePromise = undefined; throw error; });
     return this.bridgePromise;
   }
   async input(source, signal, action) {

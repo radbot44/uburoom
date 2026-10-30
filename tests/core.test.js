@@ -91,3 +91,38 @@ test('live watch rooms use the shared engine and reject removed management actio
   assert.equal(Engine.parse,undefined);
   hub.close();
 });
+
+test('dispatch grants 30s deadline to personal track/stream refreshes and queue operations', async () => {
+  const hub = new Hub(config);
+  hub.access = { refresh: async () => true, isMember: () => true };
+  const host = { ...actor, surface: 'web' };
+  const roomId = randomUUID();
+  let capturedPermitted;
+  const room = {
+    kind: 'watch', roomId, epoch: randomUUID(), alias: 'livingroom', ownerId: 'owner',
+    hostId: 'owner', hostName: 'owner', ownerName: 'owner', visibility: 'public',
+    lastSeen: Date.now(), reachable: true, socket: { readyState: 1 },
+    permissions: { host: { playPause: true }, viewer: {} },
+    viewers: new Map([['viewer-1', { userId: 'owner', at: Date.now(), actor: host }]]),
+    controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false },
+    execute: async (command, actor, permitted) => {
+      capturedPermitted = permitted;
+      return { status: 'applied' };
+    }
+  };
+  hub.rooms.set(roomId, room);
+  await hub.dispatch({ ...host, watchViewerId: 'viewer-1' }, { roomId, action: 'media.tracks.set', args: { mediaVersion: randomUUID(), streamVersion: randomUUID(), audioId: '1' } });
+  assert.ok(capturedPermitted);
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 5000;
+    room.lastSeen = Date.now();
+    assert.equal(capturedPermitted(), true, 'personal track change is still permitted after 5s (exceeding default 2.5s)');
+    Date.now = () => now() + 31000;
+    room.lastSeen = Date.now();
+    assert.equal(capturedPermitted(), false, 'personal track change expires after 30s');
+  } finally {
+    Date.now = now;
+  }
+  hub.close();
+});

@@ -78,8 +78,15 @@ test('pending host grants create no account, require exact verified identity, ar
   assert.deepEqual(store.get(room.id).hosts,[viewer.id]);
   room=store.get(room.id);
   room=await store.edit(room.id,creator.id,room.revision,{action:'host.pending.add',provider:'plex',subject:'999',name:'Cancel me'});
-  await store.edit(room.id,creator.id,room.revision,{action:'host.pending.remove',provider:'plex',subject:'999'});
+  room=await store.edit(room.id,creator.id,room.revision,{action:'host.pending.remove',provider:'plex',subject:'999'});
   assert.deepEqual(store.pendingHosts(room.id),[]);
+  const futureSubject = '100000000000000077';
+  room=await store.edit(room.id,creator.id,room.revision,{action:'host.pending.add',provider:'discord',subject:futureSubject,name:'Future'});
+  assert.equal(store.pendingHosts(room.id).length,1);
+  const futureUser=registry.resolve('discord',futureSubject,'Future',false);
+  registry.resolve('discord',futureSubject,'Future',true);
+  room=await store.edit(room.id,creator.id,room.revision,{action:'host.add',userId:futureUser.id});
+  assert.deepEqual(store.pendingHosts(room.id),[],'host.add clears pending grants for that user');
 });
 test('directory ranks live room/uburoom/known/new users, deduplicates verified aliases, caches sources and excludes private profile data',async t=>{
   const {registry,creator,host,viewer}=fixture(t);

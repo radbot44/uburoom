@@ -61,7 +61,7 @@ class AccessPolicy {
     return allowed;
   }
   fresh(id, context) { return (this.allowed.get(this.admissionKey(id, context)) || 0) > Date.now(); }
-  entered(id) {this.entryUsers.set(id,Date.now()+12*3600000);}
+  entered(id) { const account = this.registry?.canonical(id); if (account) this.entryUsers.set(account.id, Date.now() + 12 * 3600000); }
   public() {
     return this.settings ? { discord:this.settings.discord, plex:this.settings.plex, requirePlex:this.settings.requirePlex, requirePlexInActivity:this.settings.requirePlexInActivity !== false,
       passwordRequired:this.passwordRequired, anonymous:this.anonymous, publicWeb:this.settings.publicWeb } : undefined;

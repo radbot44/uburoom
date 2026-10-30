@@ -37,6 +37,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if(data.subtitles==='browser')query.set('subtitles','browser');
         if(data.volume!==undefined)query.set('volume',String(data.volume));
         if(data.muted!==undefined)query.set('muted',String(data.muted));
+        if (data.plexReporting !== undefined) query.set('plexReporting', String(data.plexReporting));
+        if (data.plexWatchState !== undefined) query.set('plexWatchState', String(data.plexWatchState));
         const subscription='/api/watch/rooms/'+id+'?'+query;
         const joined=await execute(context,subscription);
         return joined.status===200?{status:200,value:{id,state:joined.value},subscription}:joined;
@@ -208,6 +210,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         // A per-viewer transport failure never converts media or changes room
         // playback. Fence pending readiness/observations from the old transport.
         watch.tracking.end(viewer,'delivery-changed');
+        void watch.reporting?.end(viewer, 'delivery-changed');
         viewer.directProxyVersion = room.mediaVersion; viewer.directDelivery = undefined;
         if(viewer.media?.directHls) {
           const previous=viewer.media;viewer.media=undefined;viewer.mediaVersion=undefined;
@@ -223,8 +226,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         try {
           const observed = watch.tracking.observe(room,viewer,data.viewerId,data);
-          await watch.observeEnd(room,viewer,data,observed);
           await watch.reporting?.observe(room,viewer,data.viewerId,data,observed);
+          await watch.observeEnd(room,viewer,data,observed);
           return result(200,observed);
         }
         catch(error) { return result(error instanceof ObservationError?409:503,{error:'Playback observation unavailable',rejection:error instanceof ObservationError?error.rejection:'storage-failure'}); }
@@ -238,7 +241,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
       if (url.searchParams.has('delivery') && !/^(?:auto|local)$/.test(url.searchParams.get('delivery') || '')) throw new Error('Invalid delivery mode');
       const headers = { cookie: context.headers.cookie, authorization: context.headers.authorization };
-      const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login({ headers }))?.userId === auth.actor.userId;
+      const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login({ headers: context.controlSocket?.watchHeaders || headers }))?.userId === auth.actor.userId;
       const preferences={};
       if(url.searchParams.has('volume'))preferences.volume=require('../shared/engine').validate({action:'media.volume.set',args:{percent:Number(url.searchParams.get('volume'))}}).args.percent;
       if(url.searchParams.has('muted')) {
@@ -261,6 +264,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       viewer.activity=!!auth.identity.activity;
       if(viewer.activity && viewer.media?.directHls) {
         watch.tracking.end(viewer,'delivery-changed');
+        void watch.reporting?.end(viewer, 'delivery-changed');
         const previous=viewer.media;viewer.media=undefined;viewer.mediaVersion=undefined;viewer.directDelivery=undefined;
         viewer.directProxyVersion=room.mediaVersion;viewer.streamVersion=randomUUID();viewer.ready=false;
         void watch.plex.stop(previous);

@@ -21,21 +21,21 @@ function discordAccess(client, guildId) {
       const g = guild(), epoch = generation;
       if (!g) return false;
       let timer;
-      const request = {};
-      members.set(userId, request);
       try {
-        const member = await Promise.race([
-          circuit.run(()=>g.members.fetch({ user: userId, force: true, cache: false })),
+        const member = await circuit.run(() => Promise.race([
+          g.members.fetch({ user: userId, force: true, cache: false }),
           new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('Membership timeout')), 2000); })
-        ]);
-        if (generation !== epoch || !guild() || members.get(userId) !== request) return false;
+        ]));
+        if (generation !== epoch || !guild()) return false;
         if (!member || member.user.bot) { members.delete(userId); return false; }
-        request.roles = new Set(member.roles?.cache?.keys() || []);
-        request.at = Date.now();
+        members.set(userId, { roles: new Set(member.roles?.cache?.keys() || []), at: Date.now() });
         for (const [id, value] of members) if (value.at && Date.now() - value.at >= COMMAND_MS) members.delete(id);
         return true;
       } catch {
-        if (members.get(userId) === request) members.delete(userId);
+        if (generation === epoch) {
+          const existing = members.get(userId);
+          if (!existing || !existing.at || Date.now() - existing.at >= COMMAND_MS) members.delete(userId);
+        }
         return false;
       } finally { clearTimeout(timer); }
   }

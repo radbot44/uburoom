@@ -30,9 +30,11 @@ function intent(track) {
 }
 function matchIntent(rows, wanted) {
   if (!wanted?.language) return;
-  const matches = rows.filter(row => row.language===wanted.language && ['forced','sdh','commentary','description'].every(key=>!!row[key]===!!wanted[key]));
+  const available = rows.filter(row => row.available);
+  const matches = available.filter(row => row.language===wanted.language && ['forced','sdh','commentary','description'].every(key=>!!row[key]===!!wanted[key]));
   const exact = matches.filter(row=>row.title===wanted.title);
-  return exact.length===1 ? exact[0] : matches.length===1 ? matches[0] : undefined;
+  if (exact.length > 0) return exact[0];
+  if (matches.length > 0) return matches.find(row => row.selected) || matches.find(row => row.default) || matches[0];
 }
 function select(tracks, options = {}) {
   const audioChoice = options.audioId ?? 'auto', subtitleChoice = options.subtitleId ?? 'auto';
@@ -55,4 +57,4 @@ function publicCatalog(tracks) {
   const publicRow = ({index,ordinal,...row}) => row;
   return {audio:tracks.audio.map(publicRow),subtitles:tracks.subtitles.map(publicRow)};
 }
-module.exports = {catalog,select,intent,publicCatalog};
+module.exports = {catalog,select,intent,publicCatalog,matchIntent};

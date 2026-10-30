@@ -44,7 +44,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   hub.ownerName = accounts.ownerName;
   hub.setOwnerName = name => {
     const owner = registry?.identity('discord',config.ownerId);
-    if (owner) name = registry.canonical(owner.userId)?.name || name;
+    if (owner?.verified) name = registry.canonical(owner.userId)?.name || name;
     if (typeof name !== 'string' || !name || name === accounts.ownerName) return;
     hub.ownerName = accounts.ownerName = name.slice(0, 100);
     accounts.save();
@@ -135,7 +135,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
-  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord')?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
+  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
   async function body(req) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
@@ -180,7 +180,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (!hub.canAdmin(actor)) hub.clearAdmin(actor);
     };
-    const discordId=id=>registry.canonical(id)?registry.identities(id).find(i=>i.provider==='discord')?.subject:id;
+    const discordId=id=>registry.canonical(id)?registry.identities(id).find(i=>i.provider==='discord' && i.verified)?.subject:id;
     const access={
       isMember:id=>{const discord=discordId(id);return !!discord&&!!rawAccess?.isMember(discord);},
       refresh:async id=>{const discord=discordId(id);return !!discord&&!!await rawAccess?.refresh(discord);},
@@ -196,7 +196,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
     hub.accountActor=actor=>registry.canonical(actor.userId)?{...actor,name:registry.canonical(actor.userId).name}:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
-      const identity=registry.identities(actor.userId).find(i=>i.provider==='plex');
+      const identity=registry.identities(actor.userId).find(i=>i.provider==='plex' && i.verified);
       const fallback=()=>{
         if(config.plexFallback?.enabled===false)throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
         return plexAuth.fallback();
@@ -461,7 +461,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const returnParam = url.searchParams.get('return');
-        const returnTo = (returnParam && /^\/auth\/native#[a-f0-9]{64}$/.test(returnParam)) ? returnParam : undefined;
+        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam))) ? returnParam : undefined;
         return discordStart(req,res,undefined,route==='/auth/owner',returnTo);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
@@ -491,7 +491,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
             oauth: { refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000 }
           } : {}) });
         accounts.save();
-        const destination = (attempt.returnTo && /^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo)) ? attempt.returnTo : '/watch';
+        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo))) ? attempt.returnTo : '/watch';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {

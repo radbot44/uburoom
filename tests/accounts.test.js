@@ -868,3 +868,24 @@ test('account assignment and merge revalidate active Admin mode and current logi
   assert.equal(revokedMerge.status,400);
   assert.match(revokedMerge.body.error,/Account sign-in changed/);
 });
+
+test('PlexAuth and administrator identity lookups ignore unverified assigned identities', async t => {
+  const accounts = new Accounts(undefined, credentialVault());
+  t.after(() => accounts.close());
+  const user = accounts.resolve('discord', '123456789012345678', 'Assigned user', false);
+  assert.equal(accounts.identity('discord', '123456789012345678').verified, 0);
+
+  const plexUser = accounts.resolve('plex', '101', 'Assigned Plex', false);
+  accounts.credential('101', { token: 'fixture-token' });
+  assert.equal(accounts.identity('plex', '101').verified, 0);
+
+  const plexAuth = new PlexAuth({}, accounts, { scoped: (token, clientId) => ({ token, clientId }) });
+  plexAuth.validate = async cred => cred;
+  assert.equal(await plexAuth.forUser(plexUser.id), undefined, 'unverified Plex identity cannot provide PlexAuth');
+
+  accounts.resolve('plex', '101', 'Verified Plex');
+  assert.equal(accounts.identity('plex', '101').verified, 1);
+  const auth = await plexAuth.forUser(plexUser.id);
+  assert.ok(auth, 'verified Plex identity provides PlexAuth');
+  assert.equal(auth.token, 'fixture-token');
+});

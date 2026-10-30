@@ -32,7 +32,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
   }
-  const request = (client, path, data) => routes.execute({ headers: client.headers, controlSocket: client.ws, remoteAddress: client.remoteAddress || client.socket?.remoteAddress }, path, data);
+  const request = (client, path, data) => routes.execute({
+    get headers() { return client.headers; },
+    controlSocket: client.ws,
+    remoteAddress: client.remoteAddress || client.socket?.remoteAddress
+  }, path, data);
   async function syncQuality(client,message) {
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
     if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
@@ -133,6 +137,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + req.socket.remoteAddress, 30) || clients.size >= 128) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => {
       const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set(),connectionId:++nextConnectionId,openedAt:Date.now() };
+      Object.defineProperty(ws, 'watchHeaders', { get() { return client.headers; }, configurable: true });
       clients.add(client);
       config.logger?.debug('Socket', `conn=${client.connectionId} opened from ${client.remoteAddress || 'local'} (total: ${clients.size})`);
       ws.watchKick = roomId => {

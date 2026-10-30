@@ -210,7 +210,7 @@ class Watch {
       if (room.saved && this.roomState.queue.room(room.s.roomId).queueRevision!==queueRevision) return;
       viewer.unavailableMedia = entries.filter(item=>availability.get(item.mediaId)===false).map(({id,mediaId,title})=>({id,mediaId,title}));
       if (room.media && availability.get(room.media.id)===false) {
-        if (!viewer.media?.unavailable) { this.tracking.end(viewer,'media-unavailable'); await this.plex.stop(viewer.media); }
+        if (!viewer.media?.unavailable) { this.tracking.end(viewer,'media-unavailable'); void this.reporting?.end(viewer, 'media-unavailable'); await this.plex.stop(viewer.media); }
         if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
         viewer.media = {id:room.media.id,title:room.media.title,duration:room.media.duration,kind:'plex',format:'unavailable',resources:new Map(),unavailable:true,playbackError:room.media.title+' is unavailable.'};
         viewer.mediaVersion = version; viewer.ready = false; return viewer.media;
@@ -221,6 +221,7 @@ class Watch {
     if (viewer.localDelivery) {
       if (viewer.media && viewer.mediaVersion === version && viewer.media.format === 'local' && (!viewer.media.principal || viewer.media.principal === plex.principal)) return viewer.media;
       this.tracking.end(viewer, 'stream-changed');
+      void this.reporting?.end(viewer, 'stream-changed');
       if (viewer.media) void this.plex.stop(viewer.media);
       viewer.directDelivery = undefined;
       viewer.media = { id: room.media.id, title: room.media.title, duration: room.media.duration, kind: room.media.kind, format: 'local', principal: plex.principal, resources: new Map() };
@@ -264,7 +265,7 @@ class Watch {
       }
       if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
       if(!accept(media))throw new PlaybackError('Plex could not refresh this stream.');
-      this.tracking.end(viewer,'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();adopted=true;
+      this.tracking.end(viewer,'stream-changed');void this.reporting?.end(viewer, 'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();adopted=true;
       if (media.unavailable) {
         const entry=room.saved && this.roomState.queue.current(room.s.roomId);
         viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
@@ -451,8 +452,11 @@ class Watch {
     if (!room.saved && room.reconnecting && (!saved || viewerId !== room.hostViewerId || actor.surface !== 'web' || actor.userId !== room.s.hostId || !viewEligible(room.s,actor,this.hub.config,now,this.hub.access))) throw new Error('Room unavailable');
     if (saved) room.disconnectedViewers.delete(viewerId);
     if (room.reconnecting) { room.reconnecting = false; this.hub.rooms.set(room.s.roomId, room.s); }
+    const currentHost = room.viewers.get(room.hostViewerId);
+    const hostPresent = currentHost && (isHost(room.s, currentHost.actor) || this.hub.isAdmin(currentHost.actor));
     const controller = !room.saved ? isHost(room.s, actor) : actor.userId === room.s.hostId ||
-      (isHost(room.s, actor) || this.hub.isAdmin(actor)) && !room.viewers.has(room.hostViewerId);
+      (isHost(room.s, actor) || this.hub.isAdmin(actor)) && !hostPresent ||
+      !room.viewers.has(room.hostViewerId) && this.hub.canRoom(room.s, actor, 'continueWithoutHost');
     if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
       room.s.epoch = randomUUID(); room.revision++;
     }
@@ -479,6 +483,12 @@ class Watch {
     room.transportSequence=(room.transportSequence||0)+1;
     const participants = room.saved ? syncQualityParticipants(room,this.roomState.participants(room.s.roomId),now) : undefined;
     return { id: room.s.roomId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
+      plexReporting: {
+        eligible: !!this.reporting?.isEligible(actor.userId),
+        activity: viewer.plexReporting !== false,
+        watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
+        watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false
+      },
       startAt:room.startAt, pauseAt:room.pauseAt,
       title: room.media?.title || 'Choose something to watch…', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
@@ -925,9 +935,11 @@ class Watch {
   async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
     const record = this.roomState?.store.get(room.s.roomId);
     if (!record || !record.autoplay || room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.manualPaused) return;
-    const controller = [...room.viewers.entries()].find(([, person]) =>
+    const hostConnected = [...room.viewers.values()].some(v => isHost(room.s, v.actor) || this.hub.isAdmin(v.actor));
+    const controller = !room.waitingForHost && [...room.viewers.entries()].find(([, person]) =>
       (this.hub.canRoom(room.s, person.actor, 'chooseMedia') || this.hub.canRoom(room.s, person.actor, 'playPause')) &&
-      this.hub.canRoom(room.s, person.actor, 'autoplay')
+      this.hub.canRoom(room.s, person.actor, 'autoplay') &&
+      (hostConnected || isHost(room.s, person.actor) || this.hub.isAdmin(person.actor) || this.hub.canRoom(room.s, person.actor, 'continueWithoutHost'))
     );
     if (!controller) return;
     const [viewerId, person] = controller;
@@ -1258,7 +1270,17 @@ class Watch {
         if (typeof args.activity === 'boolean') viewer.plexReporting = args.activity;
         if (typeof args.watchState === 'boolean') viewer.plexWatchState = args.watchState;
         this.reporting?.updateConsent(viewer, { activity: viewer.plexReporting, watchState: viewer.plexWatchState });
-        return { status: 'applied', message: 'Your reporting preferences updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
+        return {
+          status: 'applied',
+          message: 'Your reporting preferences updated.',
+          state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }),
+          plexReporting: {
+            eligible: !!this.reporting?.isEligible(actor.userId),
+            activity: viewer.plexReporting !== false,
+            watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
+            watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false
+          }
+        };
       }
       return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
     }

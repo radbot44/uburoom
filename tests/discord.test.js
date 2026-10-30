@@ -127,3 +127,39 @@ test('Discord startup distinguishes token, intent and network failures without e
     assert.equal(client.listenerCount(Events.ClientReady), 0);
   }
 });
+
+test('lookup preserves cached membership while in-flight fetch is pending and handles timeout failure', async () => {
+  const client = new EventEmitter();
+  let fetchCount = 0;
+  let delay = false;
+  const g = {
+    name: 'Guild',
+    available: true,
+    shard: { status: Status.Ready },
+    members: {
+      fetch: async () => {
+        fetchCount++;
+        if (delay) {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error('Fetch failed');
+        }
+        return { user: { bot: false }, roles: { cache: new Map() } };
+      }
+    }
+  };
+  client.guilds = { cache: new Map([['guild', g]]) };
+  client.isReady = () => true;
+  const access = discordAccess(client, 'guild');
+
+  assert.equal(await access.refresh('friend'), true);
+  assert.equal(access.isMember('friend'), true);
+  assert.equal(fetchCount, 1);
+
+  delay = true;
+  const inFlight = access.refresh('friend');
+  assert.equal(access.isMember('friend'), true, 'cached membership survives while lookup is in-flight');
+
+  const res = await inFlight;
+  assert.equal(res, false);
+  assert.equal(access.isMember('friend'), true, 'valid cached membership survives failed refresh');
+});

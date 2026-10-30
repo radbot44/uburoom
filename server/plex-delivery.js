@@ -100,6 +100,7 @@ class PlexDelivery {
     if (this.config.plexDelivery?.lanClientUrl) {
       return (this.discoveredLanOrigin = this.config.plexDelivery.lanClientUrl);
     }
+    if (Date.now() < (this.lanCheckedUntil || 0)) return;
     if (this.discoveryJob) return this.discoveryJob;
     const token = this.config.plexFallback?.token || this.config.plexToken;
     if (!token || !this.plexAuth) return;
@@ -110,7 +111,10 @@ class PlexDelivery {
         const server = Array.isArray(resources) ? resources.find(r => r.clientIdentifier === machine && String(r.provides).split(',').includes('server')) : undefined;
         if (server) this.rememberDiscoveredLan(server);
       } catch { return; }
-      finally { this.discoveryJob = undefined; }
+      finally {
+        if (!this.discoveredLanOrigin) this.lanCheckedUntil = Date.now() + 300000;
+        this.discoveryJob = undefined;
+      }
       return this.discoveredLanOrigin;
     })();
     return this.discoveryJob;
@@ -192,7 +196,7 @@ class PlexDelivery {
     const controller = new AbortController(); let timer;
     const timeout = new Promise(resolve => { timer = setTimeout(() => {
       controller.abort();
-      this.files.set(media, { job:Promise.resolve(undefined), until:Date.now() + 24 * 3600000 });
+      this.files.set(media, { job:Promise.resolve(undefined), until:Date.now() + 30000 });
       resolve(undefined);
     }, 5000); });
     try { return await Promise.race([timeout, this.candidate(media,auth,async()=>!controller.signal.aborted && await valid(),controller.signal,remoteAddress)]); }
@@ -202,9 +206,11 @@ class PlexDelivery {
     if (this.config.plexDelivery?.mode !== 'auto' || !this.config.plexDelivery.clientUrl || viewer.activity !== false ||
       viewer.directProxyVersion === room.mediaVersion || !scope || scope === this.plex || !this.resolve || !this.plexAuth) return;
     const existing = this.plans.get(viewer);
-    if (existing?.scope === scope && existing.version === room.mediaVersion && existing.remoteAddress === viewer.remoteAddress) {
+    if (existing?.scope === scope && existing.version === room.mediaVersion && existing.streamVersion === viewer.streamVersion && existing.remoteAddress === viewer.remoteAddress) {
       const plan=await existing.job;
-      return await valid() && await this.resolve(viewer.actor)===scope ? plan : undefined;
+      if (plan !== undefined) {
+        return await valid() && await this.resolve(viewer.actor)===scope ? plan : undefined;
+      }
     }
     const controller = new AbortController(); let timer;
     const current = async () => !controller.signal.aborted && await valid() && await this.resolve(viewer.actor) === scope;
@@ -219,7 +225,7 @@ class PlexDelivery {
         })().catch(()=>undefined)]);
       } finally {clearTimeout(timer);controller.abort();}
     })();
-    this.plans.set(viewer,{scope,version:room.mediaVersion,remoteAddress:viewer.remoteAddress,job});
+    this.plans.set(viewer,{scope,version:room.mediaVersion,streamVersion:viewer.streamVersion,remoteAddress:viewer.remoteAddress,job});
     return job;
   }
   async candidate(media, auth, valid, signal, remoteAddress) {
@@ -235,6 +241,10 @@ class PlexDelivery {
       const job = existing?.until > Date.now() && (!existing.origin || existing.origin === origin) ? existing.job : this.prepare(media, scope, valid, signal, origin);
       if (job !== existing?.job) this.files.set(media, { job, until: Date.now() + 24 * 3600000, origin });
       const url = await job;
+      if (!url) {
+        const current = this.files.get(media);
+        if (current?.job === job) current.until = Date.now() + 30000;
+      }
       return await valid() && await this.resolve(auth.actor) === scope ? url : undefined;
     } catch { return; } // The existing authorized proxy remains the recovery path.
   }

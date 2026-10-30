@@ -265,3 +265,33 @@ test('retired HTTP room controls and legacy library room queries cannot mutate r
   assert.equal((await host.call('/api/watch/rooms/'+roomId+'/command',{epoch:state.epoch,expiresAt:Date.now()+2500,command:{action:'session.enable'}})).value.status,'unsupported');
   assert.equal(Object.hasOwn(f.app.watch.rooms.get(roomId).s,'enabled'),false);
 });
+
+test('watch socket updates watchHeaders when client re-authenticates with renewed token', tls, async t => {
+  const f = await fixture(t), identity = await f.login('host');
+  const client = await f.connect(identity);
+  t.after(() => client.ws.close());
+
+  const roomId = (await client.call('/api/watch/rooms', {})).value.id;
+  const viewerId = randomUUID();
+  await client.call(`/api/watch/rooms/${roomId}?viewer=${viewerId}`);
+  const viewer = f.app.watch.rooms.get(roomId).viewers.get(viewerId);
+  assert.ok(viewer?.watchSocket);
+  assert.equal(viewer.watchSocket.watchHeaders.authorization, 'Bearer ' + identity.token);
+
+  const renewed = await f.login('host');
+  assert.notEqual(renewed.token, identity.token);
+
+  client.ws.send(JSON.stringify({ type: 'auth', token: renewed.token, csrf: renewed.csrf }));
+  await new Promise(resolve => {
+    const handler = raw => {
+      const msg = JSON.parse(raw);
+      if (msg.type === 'auth-ok') {
+        client.ws.off('message', handler);
+        resolve();
+      }
+    };
+    client.ws.on('message', handler);
+  });
+
+  assert.equal(viewer.watchSocket.watchHeaders.authorization, 'Bearer ' + renewed.token);
+});

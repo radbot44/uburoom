@@ -521,3 +521,19 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
   assert.equal(cues.length, 1);
   assert.equal(cues[0].text, 'Hello');
 });
+
+test('matchIntent resolves among multiple available tracks matching language without returning undefined', () => {
+  const tracks = [
+    { id: '1', language: 'eng', available: true, title: 'English Stereo', default: false, selected: false },
+    { id: '2', language: 'eng', available: true, title: 'English 5.1', default: true, selected: false },
+    { id: '3', language: 'eng', available: true, title: 'English Commentary', commentary: true, default: false, selected: false }
+  ];
+  const commentaryMatch = Tracks.matchIntent(tracks, { language: 'eng', commentary: true });
+  assert.equal(commentaryMatch.id, '3');
+
+  const regularMatch = Tracks.matchIntent(tracks, { language: 'eng', commentary: false });
+  assert.equal(regularMatch.id, '2');
+
+  const exactMatch = Tracks.matchIntent(tracks, { language: 'eng', title: 'English Stereo', commentary: false });
+  assert.equal(exactMatch.id, '1');
+});

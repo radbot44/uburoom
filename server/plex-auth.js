@@ -87,7 +87,7 @@ class PlexAuth {
     try{return await job;}finally{if(this.fallbackInflight?.job===job)this.fallbackInflight=undefined;}
   }
   async forUser(userId){
-    const user=this.accounts.canonical(userId),identity=user&&this.accounts.identities(user.id).find(i=>i.provider==='plex');
+    const user=this.accounts.canonical(userId),identity=user&&this.accounts.identities(user.id).find(i=>i.provider==='plex' && i.verified);
     if(!identity)return;
     const cached=this.cache.get(identity.subject);if(cached&&cached.until>Date.now())return cached.plex;
     if(this.inflight.has(identity.subject))return this.inflight.get(identity.subject);
@@ -99,7 +99,7 @@ class PlexAuth {
     }catch(error){if(generation===this.generation)this.cache.delete(identity.subject);throw error;}})();
     this.inflight.set(identity.subject,job);try{return await job;}finally{if(this.inflight.get(identity.subject)===job)this.inflight.delete(identity.subject);}
   }
-  fresh(userId){const identity=this.accounts.identities(userId).find(i=>i.provider==='plex');return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
+  fresh(userId){const identity=this.accounts.identities(userId).find(i=>i.provider==='plex' && i.verified);return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
   clear(){this.generation++;this.cache.clear();this.inflight.clear();this.fallbackCache=undefined;this.fallbackInflight=undefined;}
 }
 module.exports={PlexAuth,PlexAccessError};

@@ -78,68 +78,74 @@ class PlexReporting {
       }
     }
 
-    if (data.state === 'ended') {
+    const currentMs = Math.round(data.position * 1000);
+
+    if (data.state === 'ended' || data.state === 'error') {
       if (session) {
-        session.lastPositionMs = Math.round(data.position * 1000);
-        return this.end(viewer, 'playback-ended');
-      }
-      return;
-    }
-    if (data.state === 'error') {
-      if (session) {
-        return this.end(viewer, 'playback-error');
+        session.lastPositionMs = currentMs;
+        await this.end(viewer, data.state === 'ended' ? 'playback-ended' : 'playback-error');
       }
       return;
     }
 
-    const stateMap = {
-      playing: 'playing',
-      buffering: 'buffering',
-      seeking: 'buffering',
-      paused: 'paused',
-      blocked: 'paused'
-    };
-    const mappedState = stateMap[data.state];
-    if (!mappedState) return;
+    const reportedState = data.state === 'seeking' ? 'buffering' : data.state === 'blocked' ? 'paused' : data.state;
+    if (!['playing', 'buffering', 'paused'].includes(reportedState)) return;
 
     if (!session) {
-      const plexAuth = this.plexAuth || this.hub?.plexAuth;
-      let scoped;
-      try {
-        scoped = await (this.hub?.plexFor ? this.hub.plexFor(viewer.actor || { userId: viewer.userId }) : plexAuth?.forUser(viewer.userId));
-      } catch {
-        return;
+      this.creating ||= new Map();
+      let init = this.creating.get(viewerId);
+      if (!init) {
+        const mediaId = String(room.media.id);
+        const mediaVersion = room.mediaVersion;
+        const streamVersion = viewer.streamVersion;
+        const observationEpoch = viewer.observationEpoch;
+        init = (async () => {
+          const plexAuth = this.plexAuth || this.hub?.plexAuth;
+          let scoped;
+          try {
+            scoped = await (this.hub?.plexFor ? this.hub.plexFor(viewer.actor || { userId: viewer.userId }) : plexAuth?.forUser(viewer.userId));
+          } catch {
+            return;
+          }
+          if (!scoped) return;
+          if ((room.viewers && room.viewers.get(viewerId) !== viewer) || !room.media?.id || String(room.media.id) !== mediaId ||
+              room.mediaVersion !== mediaVersion || viewer.streamVersion !== streamVersion ||
+              viewer.observationEpoch !== observationEpoch || viewer.plexReporting === false) {
+            return;
+          }
+          const s = {
+            sessionId: randomUUID(),
+            clientId: scoped.clientId || 'uburoom-web-' + randomUUID(),
+            userId: viewer.userId,
+            viewerId,
+            viewer,
+            mediaId,
+            duration: room.media.duration,
+            mediaVersion,
+            streamVersion,
+            observationEpoch,
+            consent: { activity: allowActivity, watchState: allowWatchState },
+            scopedPlex: scoped,
+            lastState: undefined,
+            lastPositionMs: 0,
+            lastReportedAt: 0,
+            dispatched: Promise.resolve(),
+            stopped: false
+          };
+          this.sessions.set(viewerId, s);
+          return s;
+        })().finally(() => { this.creating?.delete(viewerId); });
+        this.creating.set(viewerId, init);
       }
-      if (!scoped) return;
-
-      session = {
-        sessionId: randomUUID(),
-        clientId: scoped.clientId || 'uburoom-web-' + randomUUID(),
-        userId: viewer.userId,
-        viewerId,
-        viewer,
-        mediaId: String(room.media.id),
-        duration: room.media.duration,
-        mediaVersion: room.mediaVersion,
-        streamVersion: viewer.streamVersion,
-        observationEpoch: viewer.observationEpoch,
-        consent: { activity: allowActivity, watchState: allowWatchState },
-        scopedPlex: scoped,
-        lastState: undefined,
-        lastPositionMs: 0,
-        lastReportedAt: 0,
-        dispatched: Promise.resolve(),
-        stopped: false
-      };
-      this.sessions.set(viewerId, session);
+      session = await init;
+      if (!session) return;
     }
 
     // Refresh consent if modified mid-session
     session.consent.activity = allowActivity;
     session.consent.watchState = allowWatchState;
 
-    const currentMs = Math.round(data.position * 1000);
-    const stateChanged = mappedState !== session.lastState;
+    const stateChanged = reportedState !== session.lastState;
     const advanced = observed.credit?.reason === 'credited' || observed.credit?.reason === 'baseline';
     const elapsedMs = this.now() - session.lastReportedAt;
     const positionDeltaMs = Math.abs(currentMs - session.lastPositionMs);
@@ -147,7 +153,7 @@ class PlexReporting {
     let shouldReport = false;
     if (stateChanged) {
       shouldReport = true;
-    } else if (mappedState === 'playing') {
+    } else if (reportedState === 'playing') {
       shouldReport = advanced && (elapsedMs >= 10000 || positionDeltaMs >= 15000);
     }
 
@@ -157,7 +163,7 @@ class PlexReporting {
       key: '/library/metadata/' + session.mediaId,
       ratingKey: session.mediaId,
       identifier: 'com.plexapp.plugins.library',
-      state: mappedState,
+      state: reportedState,
       time: String(currentMs),
       continuing: '0'
     });
@@ -171,7 +177,7 @@ class PlexReporting {
       'X-Plex-Session-Identifier': session.sessionId
     };
 
-    session.lastState = mappedState;
+    session.lastState = reportedState;
     session.lastPositionMs = currentMs;
     session.lastReportedAt = this.now();
 
@@ -189,11 +195,12 @@ class PlexReporting {
    * @param {{activity?: boolean, watchState?: boolean}} consent
    */
   updateConsent(viewer, consent) {
+    if (consent.activity === false) {
+      void this.end(viewer, 'opt-out');
+      return;
+    }
     const session = this._findSession(viewer);
     if (!session) return;
-    if (consent.activity === false) {
-      return this.end(session.viewerId, 'opt-out');
-    }
     if (typeof consent.activity === 'boolean') session.consent.activity = consent.activity;
     if (typeof consent.watchState === 'boolean') session.consent.watchState = consent.watchState;
   }

@@ -688,3 +688,15 @@ test('missing queue media remains removable, blocks raw additions and restores w
   assert.equal(removed.body.status,'applied');
   assert.deepEqual((await client.call(root+'?viewer='+viewer)).body.unavailableMedia,[]);
 });
+
+test('save checkpoints queue position and store snapshot atomically without stale pre-await state',tls,async t=>{
+  const f=await fixture(t,true),client=await f.login('host'),viewer=randomUUID();
+  const id=(await client.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
+  await client.call(root+'?viewer='+viewer);
+  const room=f.app.watch.rooms.get(id);
+  await command(client,id,viewer,'media.load',{mediaId:'demo',quality:'direct'});
+  room.position=42;
+  await f.app.watch.roomState.save(room);
+  const saved=f.app.watch.roomState.store.get(id);
+  assert.equal(saved.bookmark?.position,42,'bookmark is saved atomically');
+});

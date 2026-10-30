@@ -141,6 +141,11 @@ class RoomStore {
     if (capability === 'leader' ? userId !== room.creatorId : capability === 'self' ? !room.hosts.includes(userId) : this.isAdmin(userId) !== true && !Policy.allowed(room, userId, capability)) throw error('Room permission required', 403);
     if (!Number.isSafeInteger(revision) || revision !== room.revision) throw error('Room changed; refresh before editing', 409);
     const at = this.now();
+    const clearPendingForUser = targetId => {
+      for (const ident of this.registry.identities(targetId)) {
+        this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=? AND provider=? AND subject=?').run(id, ident.provider, ident.subject);
+      }
+    };
     this.registry.transaction(() => {
       switch (change.action) {
         case 'allHosts':
@@ -193,6 +198,7 @@ class RoomStore {
         case 'host.add': {
           const target = this.account(change.userId);
           if (target === room.creatorId) throw error('The room leader is already a host');
+          clearPendingForUser(target);
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, target);
           break;
         }
@@ -200,6 +206,7 @@ class RoomStore {
         case 'host.remove': {
           const target = change.action === 'host.leave' ? userId : this.account(change.userId);
           if (target === room.creatorId) throw error('Transfer room leadership before removing the room leader');
+          clearPendingForUser(target);
           for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
             if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
           }
@@ -208,6 +215,7 @@ class RoomStore {
         case 'creator.transfer': {
           const target = this.account(change.userId);
           if (target === room.creatorId || !room.hosts.includes(target)) throw error('Transfer room leadership to another assigned host');
+          clearPendingForUser(target);
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, room.creatorId);
           for (const entry of this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=?').all(id)) {
             if (this.account(entry.userId) === target) this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id, entry.userId);
@@ -236,6 +244,7 @@ class RoomStore {
   }
   pendingHosts(id) { return this.db.prepare('SELECT provider,subject,name FROM watch_room_host_grants WHERE roomId=? ORDER BY name,provider,subject').all(id); }
   async claimHosts(userId) {
+    userId = this.account(userId);
     const grants = this.db.prepare('SELECT g.* FROM watch_room_host_grants g JOIN identities i ON i.provider=g.provider AND i.subject=g.subject WHERE i.userId=? AND i.verified=1').all(userId);
     if (!grants.length) return [];
     this.healthy();

@@ -376,3 +376,20 @@ test('observe handles ended, error, subordinate watchState, and state mapping cl
     f.close();
   }
 });
+
+test('deduplicates concurrent observe session initialization per viewerId', async () => {
+  const f = fixture();
+  try {
+    const viewer = f.createViewer(f.userWithPlex.id);
+    const obs1 = f.makeObserved(1, 'playing', 'baseline');
+    const obs2 = f.makeObserved(2, 'playing', 'baseline');
+    await Promise.all([
+      f.reporting.observe(f.room, viewer, viewer.viewerId, obs1.data, obs1.observed),
+      f.reporting.observe(f.room, viewer, viewer.viewerId, obs2.data, obs2.observed)
+    ]);
+    assert.equal(f.reporting.sessions.size, 1);
+    assert.equal(f.reporting.creating?.size || 0, 0);
+  } finally {
+    f.close();
+  }
+});

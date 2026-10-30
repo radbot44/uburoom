@@ -29,11 +29,11 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
     registry.audit(login.userId,'self-link',{provider,subject});
     await invalidate([login.userId]);session(res,result.user,result.user.name);return {linked:true};
   }
-  async function startPlex(req,res,login){
+  async function startPlex(req,res,login,returnTo){
     if(!plexAuth.plex.configured)throw new Error('Configure Plex on the server first');
     if(attempts.size>=200)throw new Error('Plex sign-in is busy');
     const state=secret(),attempt=await plexAuth.start(config.publicUrl+'/auth/plex/callback?state='+state);
-    attempts.set(state,{...attempt,expires:Date.now()+300000,...(login?{sourceId:login.userId,sourceHash:sourceHash(req),revision:login.accountRevision}:{})});
+    attempts.set(state,{...attempt,expires:Date.now()+300000,...(login?{sourceId:login.userId,sourceHash:sourceHash(req),revision:login.accountRevision}:{}) , ...(returnTo ? { returnTo } : {})});
     res.setHeader('Set-Cookie',cookie('uburoom_plex',state,300));return config.demo&&plexAuth.demo?config.publicUrl+'/demo-plex?state='+state:attempt.url;
   }
   function pending(req,login){const merge=merges.get(sourceHash(req));return merge&&merge.expires>Date.now()&&merge.sourceId===login.userId?{id:merge.id,accounts:[registry.summary(merge.sourceId),registry.summary(merge.otherId)]}:undefined;}
@@ -48,7 +48,9 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
       }
       if(req.method==='GET'&&route==='/auth/plex'){
         if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');
-        const destination=await startPlex(req,res,await user(req));res.writeHead(302,{Location:destination});res.end();return true;
+        const returnParam = url.searchParams.get('return');
+        const returnTo = returnParam && /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) ? returnParam : undefined;
+        const destination=await startPlex(req,res,await user(req),returnTo);res.writeHead(302,{Location:destination});res.end();return true;
       }
       if(req.method==='GET'&&route==='/auth/plex/demo'){
         const state=url.searchParams.get('state'),attempt=attempts.get(state);
@@ -68,10 +70,16 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
         const login=attempt.sourceId?await user(req):undefined;
         if(attempt.sourceId&&(!login||login.userId!==attempt.sourceId||sourceHash(req)!==attempt.sourceHash||login.accountRevision!==attempt.revision))throw new Error('The account changed during Plex linking; start again');
         const identity=await plexAuth.finish(attempt);
-        if(login){if((await user(req))!==login)throw new Error('Account sign-in expired during linking');await verifiedLink(req,res,login,'plex',identity.subject,identity.name,identity.credential);}
+        let pendingMerge = false;
+        if(login){
+          if((await user(req))!==login)throw new Error('Account sign-in expired during linking');
+          const linkResult = await verifiedLink(req,res,login,'plex',identity.subject,identity.name,identity.credential);
+          if (linkResult?.pendingMerge) pendingMerge = true;
+        }
         else {const account=registry.resolve('plex',identity.subject,identity.name);registry.credential(identity.subject,identity.credential);plexAuth.clear();session(res,account,account.name);}
         const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(existing?Array.isArray(existing)?existing:[existing]:[]),cookie('uburoom_plex','',0)]);
-        res.writeHead(302,{Location:'/watch?account=1'});res.end();return true;
+        const destination = !pendingMerge && attempt.returnTo && /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) ? attempt.returnTo : '/watch?account=1';
+        res.writeHead(302,{Location:destination});res.end();return true;
       }
       const login=req.method==='GET'?await user(req):await protectedPost(req);
       if(!login){json(res,401,{error:'Sign in to manage your account'});return true;}
