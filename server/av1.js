@@ -62,7 +62,9 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
         const rss = await memory(child.pid);
         if (!settled && !exited && !failure && rss > memoryLimit) stop(new PlaybackError('WebM process exceeded the server memory limit.'));
       } catch {
-        if (!settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
+        let alive = false;
+        try { process.kill(child.pid, 0); alive = true; } catch (probeError) { alive = probeError?.code === 'EPERM'; }
+        if (alive && !settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
           stop(new PlaybackError('WebM process resource monitoring unavailable.'));
         }
       } finally { checkingMemory = false; }

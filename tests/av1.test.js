@@ -199,10 +199,14 @@ test('AV1 retries the hardware probe after an initial transient failure',async (
 
 test('run does not fail or kill on process exit race during memoryCheck', async () => {
   const res = await run(process.execPath, ['-e', 'process.stdout.write("ok"); process.exit(0)'], undefined, 5000, 1024, undefined, {
-    memoryInterval: 20,
-    memory: async () => {
-      await new Promise(r => setTimeout(r, 200));
-      throw new Error('ESRCH');
+    memoryInterval: 10,
+    memory: async pid => {
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        try { process.kill(pid, 0); } catch { break; }
+        await new Promise(r => setTimeout(r, 10));
+      }
+      throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     }
   });
   assert.equal(res.toString(), 'ok');

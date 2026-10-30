@@ -68,6 +68,8 @@ test('shared/sync imports cleanly in an isolated process without server modules,
         cancelRepeat: noop
       });
       clientSync.close();
+      // Allow Node's ESM loader FileHandleCloseReq (observed on Node 22.14 Windows) to settle.
+      await new Promise(resolve => setImmediate(resolve));
 
       const loadedServerModules = Object.keys(require.cache).filter(id =>
         id.replace(/\\\\/g, '/').includes('/server/')
