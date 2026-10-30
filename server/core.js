@@ -8,10 +8,11 @@
 const { createHash } = require('node:crypto');
 const Engine = require('../shared/engine');
 const RoomPolicy = require('./room-policy');
+const { COMMAND_TTL_MS, PRESENCE_TIMEOUT_MS, resolveCommandDeadlines } = require('../shared/sync/envelope.mjs');
 const hash = text => createHash('sha256').update(text).digest('hex');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const PRESENCE_MS = 10000;
-const COMMAND_MS = 3000;
+const PRESENCE_MS = PRESENCE_TIMEOUT_MS;
+const COMMAND_MS = COMMAND_TTL_MS;
 const isOwner = (actor,config) => (actor?.discordId||actor?.userId)===config.ownerId;
 const isHost = (room, actor) => room.creatorId ? RoomPolicy.role(room,actor.userId) !== 'viewer' : actor.userId===room.hostId;
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin;
@@ -120,9 +121,11 @@ class Hub {
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
-      const acceptedAt = Date.now(), admissionDeadline = Math.min(acceptedAt + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
-      if (acceptedAt >= admissionDeadline) return {status:'unavailable',message:'Room changed or command expired.'};
-      const deadline = acceptedAt + (['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.add','queue.playNow'].includes(command.action) ? 30000 : COMMAND_MS), adminEpoch = this.adminEpoch;
+      const acceptedAt = Date.now();
+      const extendedTtlMs = ['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.add','queue.playNow'].includes(command.action) ? 30000 : undefined;
+      const deadlines = resolveCommandDeadlines({ acceptedAt, expiresAt: input.expiresAt, commandTtlMs: COMMAND_MS, extendedTtlMs });
+      if (!deadlines.admitted) return {status:'unavailable',message:'Room changed or command expired.'};
+      const deadline = deadlines.executionDeadline, adminEpoch = this.adminEpoch;
       const permitted = () => Date.now() < deadline && this.adminEpoch === adminEpoch && !this.rooms.has(input.roomId) && canWatch(this.access,actor.userId,actor);
       try { return await this.savedQueueExecute(input.roomId, command, actor, permitted); }
       catch (error) { return { status:error.status === 403 ? 'forbidden' : 'failed', message:error.message, httpStatus:error.status || 400 }; }
@@ -145,8 +148,6 @@ class Hub {
     }
     if (s.execute) {
       const acceptedAt = Date.now();
-      const admissionDeadline = Math.min(acceptedAt + COMMAND_MS, Number.isFinite(input.expiresAt) ? input.expiresAt : Infinity);
-      if (acceptedAt >= admissionDeadline) return { status: 'unavailable', message: 'Room changed or command expired.' };
       // A fresh personal quality request starts immediately, but Plex room
       // preparation can take longer than the default command deadline.
       // Keep completion bounded and recheck the same live authorization below.
@@ -156,7 +157,9 @@ class Hub {
           ['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.auto.playNow','queue.offer.start','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','media.next','media.previous'].includes(command.action) ||
           ['media.play','media.toggle'].includes(command.action) && this.watchIdle?.(s.roomId)
         );
-      const deadline = preparing ? acceptedAt + 30000 : admissionDeadline;
+      const deadlines = resolveCommandDeadlines({ acceptedAt, expiresAt: input.expiresAt, commandTtlMs: COMMAND_MS, extendedTtlMs: preparing ? 30000 : undefined });
+      if (!deadlines.admitted) return { status: 'unavailable', message: 'Room changed or command expired.' };
+      const deadline = deadlines.executionDeadline;
       const epoch = s.epoch, adminEpoch = this.adminEpoch;
       const permitted = () => this.rooms.get(s.roomId) === s && s.epoch === epoch && Date.now() < deadline &&
         (s.permissions || this.isOwner(actor) ? this.adminEpoch === adminEpoch : true) &&

@@ -22,6 +22,15 @@ const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
+const SharedSync = require('../shared/sync');
+const SHARED_SYNC_MODULES = new Set([
+  'index.mjs', 'timing.mjs', 'player-adapter.mjs', 'client-sync.mjs',
+  'quality.mjs', 'protocol.mjs', 'policy.mjs', 'envelope.mjs',
+  'room-authority.mjs', 'subscriptions.mjs'
+]);
+const BROWSER_TIMING_SCRIPT = `'use strict';\nglobalThis.uburoomTiming=(${SharedSync.Timing.createTimingApi.toString()})();\n`;
+const BROWSER_QUALITY_SCRIPT = `'use strict';\nglobalThis.uburoomSyncQuality=(${SharedSync.Quality.createQualityApi.toString()})();\n`;
+const BROWSER_SYNC_PROTOCOL_PREFIX = `'use strict';\nglobalThis.uburoomSyncProtocol=(${SharedSync.Protocol.createProtocolApi.toString()})();\n`;
 
 function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {}) {
   // Browser-only installations do not need a Discord text-channel whitelist.
@@ -414,13 +423,28 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
         '/watch-queue.css':['watch-queue.css','text/css'],
         '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
-        '/playback-timing.js':['playback-timing.js','text/javascript'],
-        '/sync-quality.js':['sync-quality.js','text/javascript'],
         '/native-handoff.js':['native-handoff.js','text/javascript'],
         '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/server-settings.js':['server-settings.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
+      if (req.method === 'GET' && route === '/playback-timing.js') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+        return res.end(BROWSER_TIMING_SCRIPT);
+      }
+      if (req.method === 'GET' && route === '/sync-quality.js') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+        return res.end(BROWSER_QUALITY_SCRIPT);
+      }
+      if (req.method === 'GET' && route.startsWith('/shared/sync/')) {
+        const modName = route.slice('/shared/sync/'.length);
+        if (SHARED_SYNC_MODULES.has(modName)) {
+          const content = await readAsset(path.join(__dirname, '../shared/sync', modName));
+          res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+          return res.end(content);
+        }
+      }
       if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
-        const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)));
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
+        const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)), 'utf8');
+        const bodyOut = route === '/room-protocol.js' ? BROWSER_SYNC_PROTOCOL_PREFIX + content : content;
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); return res.end(bodyOut);
       }
       const diagnosticAssets = { '/__diagnostics/codec': ['codec.html', 'text/html'], '/__diagnostics/codec.js': ['codec.js', 'text/javascript'], '/__diagnostics/codec.css': ['codec.css', 'text/css'] };
       if (req.method === 'GET' && diagnosticAssets[route]) {

@@ -17,13 +17,21 @@ const SubtitleResources = require('./subtitle-resources');
 const { WatchRooms } = require('./watch-rooms');
 const RoomPolicy = require('./room-policy');
 const { observePlaybackEnd, clearPlaybackEnd } = require('./playback-end');
-const SyncQuality = require('../web/sync-quality');
-const RECONNECT_GRACE_MS = 60000;
-// Multiple viewing tabs share a startup/seek lead alongside buffering.
-// A sole tab retains readiness and clock tracking without coordination delays.
-// Late readiness retains a short delivery margin for a 300+ ms RTT.
-const INITIAL_START_LEAD_MS = 1750;
-const READY_START_MARGIN_MS = 400;
+const {
+  aggregateParticipantSyncQuality: syncQualityParticipants,
+  RECONNECT_GRACE_MS,
+  timelinePosition,
+  controlLead,
+  beginReadiness,
+  promoteGroupReadinessLead,
+  settleRoomTimeline,
+  invalidateEpoch,
+  recordViewerReadiness,
+  areInitialViewersReady,
+  snapshotReadiness,
+  applyReadinessDecision,
+  applyTimelineCommand
+} = require('../shared/sync');
 
 function formatEntrySubtitle(entry) {
   if (!entry) return '';
@@ -32,61 +40,6 @@ function formatEntrySubtitle(entry) {
     return [entry.grandparentTitle, entry.parentTitle].filter(Boolean).join(' · ');
   }
   return entry.parentTitle || '';
-}
-
-function syncQualityParticipants(room,participants,now=Date.now()) {
-  for (const person of participants || []) {
-    const sessions=[];
-    for (const [viewerId,viewer] of room.viewers) if(viewer.userId===person.id) {
-      sessions.push({viewerId,viewer,disconnected:false,joinedAt:viewer.joinedAt||0});
-    }
-    for (const [viewerId,viewer] of room.disconnectedViewers||[]) if(viewer.userId===person.id&&viewer.mediaVersion===room.mediaVersion&&viewer.expires>now) {
-      sessions.push({viewerId,viewer,disconnected:true,joinedAt:viewer.joinedAt||0});
-    }
-    sessions.sort((a,b)=>a.joinedAt-b.joinedAt||a.viewerId.localeCompare(b.viewerId));
-    const visible=sessions.map(({viewerId,viewer,disconnected})=>{
-      const measurement=viewer.syncQuality;
-      const age=measurement&&Number.isFinite(measurement.updatedAt)?Math.max(0,now-measurement.updatedAt):Infinity;
-      const contextMatches=measurement?.mediaVersion===room.mediaVersion&&measurement?.streamVersion===viewer.streamVersion;
-      let status=disconnected?'disconnected':!measurement?'unknown':measurement.status;
-      if(!disconnected&&viewer.watchSocket&&viewer.watchSocket.readyState!==1)status='disconnected';
-      else if(!disconnected&&measurement&&(!contextMatches||age>15000)&&status!=='error')status='stale';
-      const lastKnownScore=Number.isFinite(measurement?.lastKnownScore)?Math.max(0,Math.min(1,measurement.lastKnownScore)):
-        Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):1;
-      const score=Number.isFinite(measurement?.score)?Math.max(0,Math.min(1,measurement.score)):lastKnownScore;
-      const rememberedLevel=measurement?.lastKnownLevel||SyncQuality.level(lastKnownScore);
-      let confidence=['confident','reduced','provisional'].includes(measurement?.confidence)?measurement.confidence:'provisional';
-      const evidenceAge=Number.isFinite(measurement?.measuredAt)?Math.max(0,now-measurement.measuredAt):
-        Number.isFinite(measurement?.measurementFreshnessMs)?age+measurement.measurementFreshnessMs:Infinity;
-      const allowedAge=status==='paused'?SyncQuality.PAUSED_EVIDENCE_MS:SyncQuality.RECENT_EVIDENCE_MS;
-      if(disconnected||status==='disconnected'||status==='stale'||age>15000||evidenceAge>allowedAge||
-        ['starting','error','unknown'].includes(status))confidence=confidence==='provisional'?'provisional':'reduced';
-      return {status,score,level:SyncQuality.level(score,rememberedLevel),confidence,
-        lastKnownScore,lastKnownLevel:rememberedLevel,lastKnownAt:measurement?.lastKnownAt,
-        updatedAt:measurement?.updatedAt,measurementFreshnessMs:evidenceAge,
-        reason:status==='stale'?(contextMatches?'measurement-expired':'stream-changed'):measurement?.reason,
-        current:!disconnected&&contextMatches&&age<=15000&&['playing','buffering','paused','seeking','starting','error'].includes(status)};
-    });
-    // Scan once and compare the displayed-session priority in place. Sessions
-    // stay in `visible` for the participant tooltip regardless of selection.
-    let selected,selectedPriority=Infinity;
-    for(const session of visible) {
-      const active=session.current&&['playing','buffering'].includes(session.status);
-      const connected=session.current&&session.status!=='disconnected'&&session.status!=='stale';
-      const priority=active?(session.confidence==='confident'?0:1):connected?2:Number.isFinite(session.lastKnownAt)?3:4;
-      const better=priority<selectedPriority||priority===selectedPriority&&(
-        priority<3&&session.score<selected.score||priority===3&&session.lastKnownAt>selected.lastKnownAt);
-      if(!selected||better){selected=session;selectedPriority=priority;}
-    }
-    const score=selected&&Number.isFinite(selected.score)?selected.score:1;
-    const confidence=selected?.confidence||'provisional';
-    const reason=visible.length===0?'no-sessions':selected?.reason||
-      (confidence==='provisional'?'awaiting-measurements':confidence==='reduced'?'measurement-interrupted':undefined);
-    person.syncQuality={status:confidence==='confident'?'known':'unknown',score,level:SyncQuality.level(score,selected?.level||selected?.lastKnownLevel||'excellent'),
-      confidence,reason,lastKnownScore:score,lastKnownLevel:SyncQuality.level(score,selected?.level||selected?.lastKnownLevel||'excellent'),
-      measurementFreshnessMs:selected?.measurementFreshnessMs,sessions:visible};
-  }
-  return participants;
 }
 
 class Watch {
@@ -116,43 +69,20 @@ class Watch {
     return id;
   }
   position(room, now = Date.now()) {
-    if (room.pauseAt) now = Math.min(now, room.pauseAt);
-    const elapsed=room.startAt?Math.max(0,now-Math.max(room.changedAt,room.startAt)):now-room.changedAt;
-    return Math.min(room.media?.duration || 0, Math.max(0, room.position + (room.s.state.paused ? 0 : elapsed / 1000)));
+    return timelinePosition(room, now);
   }
   controlLead(room) {
-    if (room.viewers.size <= 1) return 0;
-    const now = performance.now();
-    let lead = READY_START_MARGIN_MS;
-    for (const viewer of room.viewers.values()) {
-      const samples = (viewer.watchSocket?.watchRtts || []).filter(sample => now - sample.at <= 30000 && now >= sample.at).map(sample => sample.ms).sort((a, b) => a - b);
-      if (samples.length) lead = Math.max(lead, samples[Math.ceil(samples.length * .95) - 1] + 100);
-    }
-    return Math.min(1000, Math.ceil(lead));
+    return controlLead(room);
   }
   beginReadiness(room, now = Date.now(), waitMs = 10000) {
-    room.readinessId = randomUUID();
-    room.readinessSince = performance.now();
-    room.readinessDeadline = room.readinessSince + waitMs;
-    room.readinessTimedOut = false;
-    room.readinessStartAt = now + (room.viewers.size > 1 ? INITIAL_START_LEAD_MS : 0);
+    beginReadiness(room, now, waitMs);
   }
   settle(room, now = Date.now()) {
-    if (room.viewers.size === 1) {
-      if (room.startAt > now) { room.startAt = now; room.changedAt = now; room.revision++; }
-      if (room.pauseAt > now) room.pauseAt = now;
-    }
-    if (room.pauseAt && now >= room.pauseAt) {
-      room.position = this.position(room, room.pauseAt); room.changedAt = room.pauseAt;
-      room.pauseAt = undefined; room.s.state.paused = true; room.revision++;
-    }
-    if (!room.recovery && room.initialGate && !room.manualPaused && !room.readinessTimedOut && performance.now() >= room.readinessDeadline) {
-      room.readinessTimedOut = true; room.readinessStartAt = undefined; room.revision++;
-    }
+    settleRoomTimeline(room, now);
   }
   invalidateControls(room) {
     this.cancelAutoplay(room);
-    room.s.epoch = randomUUID(); room.revision++;
+    invalidateEpoch(room);
   }
   dropMedia(room, reason = 'media-changed') {
     this.cancelAutoplay(room); clearPlaybackEnd(room);
@@ -412,27 +342,20 @@ class Watch {
     await this.maybeStart(room);
   }
   async ready(room, actor, viewerId, version, ready, readinessVersion) {
-    this.settle(room);
-    const viewer = room.viewers.get(viewerId);
-    if (!viewer || viewer.userId !== actor.userId || room.mediaVersion !== version || typeof ready !== 'boolean' || room.readinessVersion !== readinessVersion) throw new Error('Invalid readiness');
-    if (ready === true) viewer.readinessBypassedVersion = undefined;
-    viewer.ready = ready; viewer.version = version; viewer.at = Date.now();
+    recordViewerReadiness(room, { userId: actor.userId, viewerId, mediaVersion: version, ready, readinessVersion });
     await this.maybeStart(room);
   }
   async maybeStart(room) {
     if (room.recovery) return this.roomState.maybeRecover(room);
-    if (!room.initialGate || room.manualPaused || room.readinessTimedOut || room.starting || this.rooms.get(room.s.roomId) !== room) return;
-    const viewers = [...room.initialViewers].map(id => room.viewers.get(id)).filter(Boolean);
+    if (room.starting || this.rooms.get(room.s.roomId) !== room || !areInitialViewersReady(room)) return;
     const host = [...room.viewers.values()].find(v => v.userId === room.s.hostId);
-    if (!viewers.length || !host || viewers.some(v => !v.ready || v.version !== room.mediaVersion)) return;
+    if (!host) return;
     room.starting = true;
     const version = room.mediaVersion, readinessVersion = room.readinessVersion;
     try {
       if (host.alive && !await host.alive()) return;
       this.settle(room);
-      if (room.manualPaused || room.readinessTimedOut || room.mediaVersion !== version || room.readinessVersion !== readinessVersion || [...room.initialViewers].some(id => {
-        const viewer = room.viewers.get(id); return viewer && (!viewer.ready || viewer.version !== version);
-      })) return;
+      if (room.mediaVersion !== version || room.readinessVersion !== readinessVersion || !areInitialViewersReady(room)) return;
       room.initialGate = false;
       const result = await this.hub.dispatch({ ...host.actor, watchAutoplayVersion: version, watchReadinessVersion: readinessVersion }, { roomId: room.s.roomId, action: 'media.play' });
       if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion) room.initialGate = true;
@@ -475,13 +398,12 @@ class Watch {
     room.viewers.set(viewerId, viewer);
     if (!oldViewer) this.hub?.config?.logger?.info('Room', `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`);
     if (room.saved && !oldViewer) { this.roomState.store.touch(room.s.roomId); void this.roomState.save(room).catch(() => {}); }
-    if (!oldViewer && room.viewers.size === 2 && room.initialGate) {
-      room.readinessStartAt = Math.max(room.readinessStartAt || 0, now + INITIAL_START_LEAD_MS);
-    }
+    if (!oldViewer) promoteGroupReadinessLead(room, now);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
     room.transportSequence=(room.transportSequence||0)+1;
     const participants = room.saved ? syncQualityParticipants(room,this.roomState.participants(room.s.roomId),now) : undefined;
+    const { waitingForReady, readiness } = snapshotReadiness(room);
     return { id: room.s.roomId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
       plexReporting: {
         eligible: !!this.reporting?.isEligible(actor.userId),
@@ -562,10 +484,7 @@ class Watch {
       autoplay: room.saved ? { enabled:this.roomState.store.get(room.s.roomId).autoplay,
         countdown:room.autoplayCountdown ? {id:room.autoplayCountdown.id,title:room.autoplayCountdown.title,endsAt:room.autoplayCountdown.endsAt} : null,
         error:room.autoplayError || room.autoQueueError } : undefined,
-      readinessVersion: room.readinessVersion, waitingForReady: room.initialGate && !room.manualPaused && !room.readinessTimedOut,
-      readiness: room.initialGate && !room.manualPaused ? { id:room.readinessId, timedOut:!!room.readinessTimedOut,
-        blockers: performance.now() - room.readinessSince >= 3000 ? [...room.initialViewers].map(id => room.viewers.get(id)).filter(v => v && (!v.ready || v.version !== room.mediaVersion)).map(v => v.name) : [],
-        canStart:[...room.initialViewers].some(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; }) } : undefined,
+      readinessVersion: room.readinessVersion, waitingForReady, readiness,
       recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
       roomName:room.s.name, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
       participants,
@@ -1157,8 +1076,7 @@ class Watch {
       if (room.transitionCommit) await room.transitionCommit.catch(() => {});
       if (!room.saved || !permitted() || actor.watchCurrent && !await actor.watchCurrent() || !permitted()) return {status:'unavailable',message:'Room changed or command expired.'};
       const record = this.roomState.store.get(room.s.roomId), userId = args.userId;
-      if (!this.hub.canRoom(room.s,actor,'kickParticipants') || userId === actor.userId || userId === record.creatorId ||
-          RoomPolicy.role(record,userId) === 'host' && actor.userId !== record.creatorId && !this.hub.isAdmin(actor)) return {status:'forbidden',message:'You cannot kick this participant.'};
+      if (!this.hub.canRoom(room.s, actor, 'kickParticipants') || !RoomPolicy.canKickParticipant(record, actor.userId, userId, { isAdmin: this.hub.isAdmin(actor) })) return { status: 'forbidden', message: 'You cannot kick this participant.' };
       const viewers = [...room.viewers.entries()].filter(([,viewer]) => viewer.userId === userId);
       if (!viewers.length) return {status:'unavailable',message:'This participant has already left.'};
       const now = Date.now(); room.kickedViewers ||= new Map();
@@ -1218,28 +1136,12 @@ class Watch {
     if (['media.load','media.next','media.previous'].includes(action)) return this.changeQueueMedia(room,command,actor,permitted);
     this.settle(room);
     if (action.startsWith('media.ready.')) {
-      if (!(room.saved ? this.hub.canRoom(s,actor,'chooseMedia') : this.hub.canManage(s, actor)) || !room.initialGate || !room.readinessTimedOut || args.readinessId !== room.readinessId) return { status:'unavailable', message:'This readiness choice expired.' };
-      if (action === 'media.ready.start') {
-        const ready = [...room.initialViewers].filter(id => { const v = room.viewers.get(id); return v?.ready && v.version === room.mediaVersion; });
-        if (!ready.length) return { status:'unavailable', message:'No viewer is ready yet.' };
-        for (const id of room.initialViewers) {
-          const v = room.viewers.get(id);
-          if (v && (!v.ready || v.version !== room.mediaVersion)) {
-            v.readinessBypassedVersion = room.mediaVersion;
-          }
-        }
-        // This host command is already in the validated Engine handler. Commit
-        // the override without an awaited second dispatch or an expired choice.
-        room.initialViewers = new Set(ready); room.initialGate = false; room.readinessTimedOut = false;
-        room.readinessStartAt = undefined; room.changedAt = Date.now(); room.s.state.paused = false;
-        room.startAt = room.changedAt + this.controlLead(room);
-      } else if (action === 'media.ready.wait') {
-        this.beginReadiness(room, Date.now(), 15000); await this.maybeStart(room);
-      } else {
-        room.manualPaused = true; room.readinessTimedOut = false; room.readinessStartAt = undefined;
-      }
-      room.revision++; this.refresh(room);
-      return { status:'applied', message:'Readiness choice applied.' };
+      if (!(room.saved ? this.hub.canRoom(s, actor, 'chooseMedia') : this.hub.canManage(s, actor))) return { status: 'unavailable', message: 'This readiness choice expired.' };
+      const outcome = applyReadinessDecision(room, action, args.readinessId);
+      if (outcome.status !== 'applied') return { status: outcome.status, message: outcome.message };
+      if (outcome.checkAutoStart) await this.maybeStart(room);
+      this.refresh(room);
+      return { status: 'applied', message: outcome.message };
     }
     if (room.readinessTimedOut && ['media.play','media.toggle','media.pause'].includes(action)) return { status:'unavailable', message:'The host must choose whether to start, wait or cancel.' };
     if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute','media.reporting.set'].includes(action)) {
@@ -1293,64 +1195,22 @@ class Watch {
       if (!permitted() || room.mediaVersion!==version || !await this.canView(room,actor) || !permitted() || this.hub.plexFor && (await this.hub.plexFor(actor)).principal!==plex.principal) return {status:'unavailable',message:'Room changed or command expired.'};
     }
     if (room.recovery && (['media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) this.roomState.finishRecovery(room);
-    const now = Date.now(), pausePending = !!room.pauseAt, wasPlaying = !s.state.paused && !(room.startAt > now);
-    const oldPosition = this.position(room, now);
-    room.position = oldPosition; room.changedAt = now;
-    if (pausePending && action.startsWith('media.seek.')) s.state.paused = true;
-    if (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.')) room.pauseAt = undefined;
-    if(['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action)||action.startsWith('media.seek.'))room.startAt=undefined;
-    switch (action) {
-      case 'media.pause':
-        room.manualPaused = true; room.readinessStartAt = undefined; room.readinessTimedOut = false;
-        if (wasPlaying && !room.initialGate) room.pauseAt = now + this.controlLead(room);
-        else s.state.paused = true;
-        break;
-      case 'media.play':
-        if (room.recovery) this.roomState.finishRecovery(room);
-        if (room.position >= room.media.duration - .1) room.position = 0;
-        if (room.manualPaused && room.initialGate) this.beginReadiness(room, now);
-        room.manualPaused = false; s.state.paused = room.initialGate;
-        if(actor.watchAutoplayVersion===room.mediaVersion && !room.initialGate)room.startAt=Math.max(room.viewers.size > 1 ? room.readinessStartAt || 0 : 0, now + this.controlLead(room));
-        else if (!room.initialGate && !wasPlaying) room.startAt = now + this.controlLead(room);
-        break;
-      case 'media.toggle':
-        if (room.recovery) this.roomState.finishRecovery(room);
-        // A play intent at the end restarts even before the expiry sweep pauses it.
-        if (room.position >= room.media.duration - .1) { room.position = 0; s.state.paused = true; }
-        room.manualPaused = !pausePending && (!s.state.paused || room.initialGate && !room.manualPaused);
-        if (room.initialGate) {
-          if (room.manualPaused) room.readinessStartAt = undefined;
-          else this.beginReadiness(room, now);
-          s.state.paused = true;
-        } else if (room.manualPaused && wasPlaying) room.pauseAt = now + this.controlLead(room);
-        else { s.state.paused = room.manualPaused; if (!s.state.paused && !wasPlaying) room.startAt = now + this.controlLead(room); }
-        break;
-      case 'media.seek.relative': room.position = Math.max(0, Math.min(room.media.duration - .05, room.position + args.seconds)); break;
-      case 'media.seek.absolute': room.position = Math.max(0, Math.min(room.media.duration - .05, args.seconds)); break;
-      case 'media.seek.start': room.position = 0; break;
-      case 'media.seek.end': room.position = Math.max(0, room.media.duration - .05); break;
-      case 'room.visibility':
-        if (room.saved) {
-          const record = await this.roomState.store.edit(s.roomId,actor.userId,room.saved.revision,{action:'visibility',visibility:args.visibility});
-          this.roomState.apply(room,record);
-        } else s.visibility = args.visibility;
-        room.disconnectedViewers.clear();
-        this.refresh(room);
-        break;
-      case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
-      case 'profile.load': if (!room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' }; s.state.picture = { ...room.profiles[args.slot] }; break;
-      default: s.state.picture = Engine.picture(s.state.picture, command);
-    }
-    if (action.startsWith('media.seek.')) {
-      // Freeze the new target and discard acknowledgements from earlier seeks.
-      // An explicit pause remains paused; seeking during playback resumes together.
-      if (!s.state.paused || room.initialGate) {
-        room.readinessVersion = randomUUID();
-        room.initialGate = true; this.beginReadiness(room, now);
-        const activeViewers = [...room.viewers.entries()].filter(([, v]) => v.readinessBypassedVersion !== room.mediaVersion).map(([id]) => id);
-        room.initialViewers = activeViewers.length ? new Set(activeViewers) : new Set(room.viewers.keys());
-        s.state.paused = true;
-        for (const viewer of room.viewers.values()) viewer.ready = false;
+    if (action === 'profile.load' && !room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' };
+    const now = Date.now();
+    if (!applyTimelineCommand(room, command, { now, autoplayVersion: actor.watchAutoplayVersion })) {
+      room.position = this.position(room, now); room.changedAt = now;
+      switch (action) {
+        case 'room.visibility':
+          if (room.saved) {
+            const record = await this.roomState.store.edit(s.roomId, actor.userId, room.saved.revision, { action: 'visibility', visibility: args.visibility });
+            this.roomState.apply(room, record);
+          } else s.visibility = args.visibility;
+          room.disconnectedViewers.clear();
+          this.refresh(room);
+          break;
+        case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
+        case 'profile.load': s.state.picture = { ...room.profiles[args.slot] }; break;
+        default: s.state.picture = Engine.picture(s.state.picture, command);
       }
     }
     if (action.startsWith('room.')) s.epoch = randomUUID();

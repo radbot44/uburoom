@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-27.
+Updated: 2026-10-30.
 
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
@@ -38,12 +38,12 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P2 | Automatic delivery | Direct file/HLS, proxy recovery, shared outputs, local codec selection and bounded capacity fallback | Complete source/version inventory, output validation, remux/audio-only selection, automatic quality and real cross-account/device coverage |
 | M1-P3 | Content fidelity | Personal tracks and initial decoded audio/caption evidence | Real track switching/restoration, downmix, A/V/caption alignment, source cadence and device coverage; subtitle renderer work is P9 |
 | M1-P4 | Plex viewing experience | Native viewer observations/history; decoupled session reporting, shared-producer stop safety, activity-only default with personal watch-state opt-in and sponsored isolation | Live PMS/Tautulli validation, multi-viewer stop/seek transitions and natural playback completion; later parity increments below |
-| M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness, independent recovery, bounded sample expiry, and Stage 2 Hybrid EMA presentation sync | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
+| M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness, independent recovery, bounded sample expiry, Stage 2 Hybrid EMA presentation sync and reusable `shared/sync/` core | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
 | M1-P6 | Frame pacing | Default proportional correction with Hybrid EMA filtering, opt-in Occasional jumps, and removal of retired precision policy | Joint skew/smoothness acceptance |
 | M1-P7 | UI/UX | Layout split, Room/Queue/Media shared controls, sliding player menus, grouped two-column settings dialog with subtitle appearance controls, delayed subtitle loading indicator, full-stage ending interstitial, personal preferences and sync-module extraction | Current user-journey/accessibility review, physical mobile/Activity acceptance and bounded further modularization |
 | M1-P9 | Browser subtitles | ASS/SSA, bounded PGS window extraction/replay and progressive full-track streaming, VobSub rendering, truthful extraction errors, authorized resources and burn-in fallback | Original large-title PGS failure remains an open live retest; real Plex MKV seek/range/timing, complex authored content and Activity/mobile/resource acceptance |
 | M1-P10 | Room terminology | Canonical room names/protocol, removal of legacy aliases, and web/Activity terminology audit; “session” retained for technical contexts and “watch parties” preserved for public context | Final packaging review |
-| M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
+| M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, room-scoped state notifications, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
 | M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, single tail preview (`autoQueue.next`), `continue`/in-order/shuffle modes, `pin`/`skip`/`playNow` controls, cancellable autoplay, full-stage ending interstitial and explicit endpoint completion | Dual-browser rendered UI checks for tail preview/`continue` mode, real Plex/Activity continuity, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
 | M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Three-outcome A/B verification complete; real admission/revocation and independent operator recovery remain release gates |
@@ -105,7 +105,7 @@ Further directions: managed/project-hosted rooms and Live TV/DVR. Each needs a s
 
 - **This roadmap:** priorities, phase status, remaining outcomes and dependencies. Update the affected row after material work; delete superseded status.
 - **[Testing](docs/testing.md):** evidence, failures and open verification gates. Keep dated results and test counts out of this roadmap.
-- **[Playback](docs/playback-reliability.md), [delivery](docs/plex-hls-delivery.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
+- **[Playback](docs/playback-reliability.md), [sync core](docs/sync-core.md), [delivery](docs/plex-hls-delivery.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
 - **[Design](docs/design-guide.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [Docker](docs/docker.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
 
 Do not append work diaries, UI dimensions, commit narratives, repeated disclaimers or completed test reports here. Preserve substantive evidence in its owning document or history. Private suggestion audits stay in the ignored personal queue.

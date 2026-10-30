@@ -45,15 +45,13 @@
     }
     return result;
   }
+  const sharedTiming = typeof module !== 'undefined' && module.exports ? require('../shared/sync/timing.mjs') : undefined;
+  const timingApi = () => sharedTiming || root.uburoomTiming;
   function bufferedAhead(buffered,position) {
-    for (let i = 0; i < buffered.length; i++) if (position >= buffered.start(i) - .05 && position < buffered.end(i)) return buffered.end(i) - position;
-    return 0;
+    return timingApi().bufferedAhead(buffered,position);
   }
   function readinessBuffered(buffered,position,duration) {
-    // Muxed audio/video may start a few frames after zero. Only tolerate this
-    // bounded leading gap at the source origin, never holes elsewhere.
-    const start = position === 0 && buffered.length && buffered.start(0) <= .25 ? Math.max(0,buffered.start(0)) : position;
-    return bufferedAhead(buffered,start) >= Math.min(2,Math.max(0,duration-start));
+    return timingApi().readinessBuffered(buffered,position,duration);
   }
   function timeline(buffered,duration,position) {
     if (!(duration > 0) || !Number.isFinite(duration)) return 'var(--border)';
@@ -78,24 +76,8 @@
     } catch { /* Unknown capability keeps the normal observed-playback path. */ }
     return false;
   }
-  // Observation duration follows the monotonic clock, not Date.now() or a
-  // freshly jittering poll offset. A server clock step starts a new boundary.
-  // Slow polls cannot establish/rebase this clock or extend its freshness.
   function observationClock() {
-    let epoch,anchor,lastPoll,revision=0;
-    return {
-      update(nextEpoch,serverNow,sent,received) {
-        if(epoch!==nextEpoch){epoch=nextEpoch;anchor=undefined;lastPoll=undefined;revision++;}
-        const rtt=received-sent;
-        if(!Number.isFinite(serverNow)||!Number.isFinite(rtt)||rtt<0||rtt>1000)return revision;
-        const predicted=anchor && anchor.wall+received-anchor.mono;
-        if(!anchor || predicted<serverNow-250 || predicted>serverNow+rtt+250){
-          anchor={wall:serverNow+rtt/2,mono:received};revision++;
-        }
-        lastPoll=received;return revision;
-      },
-      sample(mono) {return anchor && mono>=lastPoll && mono-lastPoll<=3000 ? anchor.wall+mono-anchor.mono : undefined;}
-    };
+    return timingApi().observationClock();
   }
   function observationFrames(video,callbacks) {
     // Never switch to a different counter when the chosen one stops. Hidden

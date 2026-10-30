@@ -1,7 +1,12 @@
-/* Room and playback command validation. Authorization remains server-owned. */
+/* Room and playback command validation. Generic sync commands come from shared/sync;
+ * Plex media, track, quality and catalog queue extensions stay here.
+ */
 (function (root) {
   'use strict';
-  const CONTROLS = Object.freeze({ playback: true, transform: true });
+  const syncProtocol = typeof module !== 'undefined' && module.exports
+    ? require('./sync/protocol.mjs')
+    : root.uburoomSyncProtocol;
+  const { CONTROLS, controls, controlFor, controlAllowed, numeric, validateSyncCommand } = syncProtocol;
   const QUALITIES = Object.freeze([
     { id:'direct', label:'Original' },
     { id:'1080p20', label:'1080p · 20 Mbps', width:1920, height:1080, bitrate:20000 },
@@ -22,43 +27,18 @@
   }
   const validQuality = id => !!qualityDefinition(id);
   const MANAGEMENT = Object.freeze(['room.visibility', 'media.load', 'media.quality.set','media.tracks.set','media.stream.refresh','media.ready.start','media.ready.wait','media.ready.cancel']);
-  function controls(value = CONTROLS) {
-    if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') throw new Error('Invalid control permissions');
-    return { playback: value.playback, transform: value.transform };
-  }
-  function controlFor(command) {
-    if (command.action.startsWith('media.')) return 'playback';
-    if (/^(zoom|stretch|pan|reset|profile)\./.test(command.action)) return 'transform';
-  }
-  function controlAllowed(value, command) {
-    const category = controlFor(command);
-    return !category || controls(value)[category];
-  }
-  const numeric = (n, min, max) => {
-    if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Value outside supported range');
-    return n;
-  };
-  // Display metadata only. Identity and permissions continue to use Discord IDs.
+  // Display metadata only. Identity and permissions continue to use Discord/account IDs.
   function senderName(value, fallback = 'Discord user') {
-    const clean = typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 100) : '';
-    return clean || fallback;
+    return syncProtocol.senderName(value, fallback);
   }
   function validate(command) {
-    if (!command || typeof command !== 'object') throw new Error('Invalid command');
+    const syncValidated = validateSyncCommand(command);
+    if (syncValidated) return syncValidated;
     const action = command.action;
     const a = command.args || {};
     let args = {};
     switch (action) {
-      case 'room.kick':
-        if (typeof a.userId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(a.userId)) throw new Error('Choose a participant');
-        args.userId = a.userId; break;
-      case 'media.pause': case 'media.play': case 'media.mute': case 'media.unmute': case 'media.toggle':
-      case 'media.seek.start': case 'media.seek.end': break;
       case 'media.previous': case 'media.next': break;
-      case 'media.autoplay.cancel': break;
-      case 'media.autoplay.set':
-        if (typeof a.enabled !== 'boolean') throw new Error('Choose autoplay on or off');
-        args.enabled = a.enabled; break;
       case 'queue.add': case 'queue.playNow':
         if (!a.item || typeof a.item !== 'object' || Array.isArray(a.item)) throw new Error('Choose a queue item');
         args.item = a.item; break;
@@ -104,9 +84,6 @@
         }
         break;
       case 'queue.clear': case 'queue.shuffle': case 'queue.history.clear': break;
-      case 'media.ready.start': case 'media.ready.wait': case 'media.ready.cancel':
-        if (typeof a.readinessId !== 'string' || !/^[a-f0-9-]{36}$/.test(a.readinessId)) throw new Error('Readiness choice expired.');
-        args.readinessId = a.readinessId; break;
       case 'media.stream.refresh':
         for (const name of ['mediaVersion','streamVersion']) {
           if (typeof a[name]!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a[name])) throw new Error('Stream refresh expired.');
@@ -142,9 +119,6 @@
           args.fallback = a.fallback;
         }
         break;
-      case 'room.visibility':
-        if (!['public', 'private'].includes(a.visibility)) throw new Error('Choose Public or Private');
-        args.visibility = a.visibility; break;
       case 'media.reporting.set':
         if (a.activity !== undefined) {
           if (typeof a.activity !== 'boolean') throw new Error('Choose activity reporting on or off');
@@ -156,13 +130,10 @@
         }
         if (args.activity === undefined && args.watchState === undefined) throw new Error('Choose a reporting setting');
         break;
-      case 'media.volume.set': args.percent = numeric(a.percent, 0, 100); break;
       case 'media.load':
         if (typeof a.mediaId !== 'string' || !/^(?:demo|[0-9]{1,20})$/.test(a.mediaId)) throw new Error('Choose a library item');
         if (!validQuality(a.quality)) throw new Error('Choose a playback quality');
         args = { mediaId: a.mediaId, quality: a.quality }; break;
-      case 'media.seek.relative': args.seconds = numeric(a.seconds, -600, 600); break;
-      case 'media.seek.absolute': args.seconds = numeric(a.seconds, 0, 1e9); break;
       default: throw new Error('Unsupported command');
     }
     if (action.startsWith('queue.') && a.expectedRevision !== undefined) {

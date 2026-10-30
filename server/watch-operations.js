@@ -3,6 +3,7 @@
 const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
+const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
 const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
@@ -187,12 +188,13 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if(context.controlSocket&&context.controlSocket.readyState!==1){return result(409,{error:'Room connection changed; retry manually'});}
       if (write && match[2] === 'command') {
         if (!throttle('watch-command:' + auth.actor.userId, 120)) { return result(429, { error: 'Too many commands' }); }
-        if (data.epoch !== room.s.epoch || !Number.isFinite(data.expiresAt) || data.expiresAt <= Date.now() || data.expiresAt > Date.now() + 3000) {
+        const envelope = validateCommandEnvelope(data, { expectedEpoch: room.s.epoch, now: Date.now() });
+        if (!envelope.ok) {
           return result(409, { error: 'Room changed or command expired; retry manually' });
         }
-        const viewer = room.viewers.get(data.viewerId);
-        if (data.viewerId !== undefined && (!viewer || viewer.userId !== auth.actor.userId)) throw new Error('Invalid viewer');
-        const applied = await hub.dispatch({ ...auth.actor, watchCurrent:current, ...(viewer ? { watchViewerId: data.viewerId } : {}) }, { ...data.command, roomId: room.s.roomId, expiresAt: data.expiresAt }); return result(200, applied);
+        const viewer = room.viewers.get(envelope.coordination.viewerId);
+        if (envelope.coordination.viewerId !== undefined && (!viewer || viewer.userId !== auth.actor.userId)) throw new Error('Invalid viewer');
+        const applied = await hub.dispatch({ ...auth.actor, watchCurrent:current, ...(viewer ? { watchViewerId: envelope.coordination.viewerId } : {}) }, { ...envelope.payload, roomId: room.s.roomId, expiresAt: envelope.coordination.expiresAt }); return result(200, applied);
       }
       if (write && match[2] === 'close') {
         if (!(room.saved ? hub.canRoom(room.s,auth.actor,'closeRoom') : hub.canManage(room.s, auth.actor))) { return result(403, { error: 'Room close permission required' }); }

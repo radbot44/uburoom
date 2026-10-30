@@ -2,7 +2,13 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./plex-delivery');
-const SyncQuality = require('../web/sync-quality');
+const {
+  validateSyncQualityMessage,
+  reduceViewerSyncQuality,
+  createSubscriptionBroker,
+  isRoomLocalAction,
+  classifyMutationScope
+} = require('../shared/sync');
 /**
  * @typedef {Object} ControlRequest
  * @property {'request'} type
@@ -17,14 +23,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
   server.once('listening', () => watch.roomState?.startRecovery());
   const clockEpoch = routes.clockEpoch;
   const allowed = origin => origin === config.publicUrl || /^\d{17,20}$/.test(config.clientId || '') && origin === `https://${config.clientId}.discordsays.com`;
-  const clients = new Set();
+  const broker = createSubscriptionBroker({ publish: (client, ctx) => publish(client, ctx) });
+  const clients = broker.clients;
   let nextConnectionId=0;
-  const qualityStatuses=new Set(['playing','buffering','paused','seeking','starting','stale','unknown','error']);
-  const qualityReasons=new Set(['clock-unavailable','clock-stale','clock-low-confidence','insufficient-clock-samples','insufficient-sync-samples',
-    'measurement-stale','measurement-expired','invalid-measurements','invalid-measurement-time','playback-error','paused','seeking','starting',
-    'stream-changed','media-changed','room-changed','no-sessions','awaiting-sync-interval','awaiting-measurements',
-    'position-timing-estimate','clock-warmup','measurement-interrupted']);
-  const qualityConfidences=new Set(['confident','reduced','provisional']);
   function send(client, message) {
     if (client.ws.readyState !== 1) return;
     if (client.ws.bufferedAmount > 1024 * 1024) { client.terminationCause='backpressure';client.ws.terminate(); return; }
@@ -38,13 +39,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     remoteAddress: client.remoteAddress || client.socket?.remoteAddress
   }, path, data);
   async function syncQuality(client,message) {
-    const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-    if (![message.roomId,message.viewerId,message.mediaVersion,message.streamVersion].every(value => typeof value === 'string' && uuid.test(value)) ||
-        !qualityStatuses.has(message.status) || Object.hasOwn(message,'score')&&!Number.isFinite(message.score) ||
-        message.confidence!==undefined&&!qualityConfidences.has(message.confidence) ||
-        message.measurementFreshnessMs!==undefined&&(!Number.isFinite(message.measurementFreshnessMs)||message.measurementFreshnessMs<0) ||
-        message.reason!==undefined&&!qualityReasons.has(message.reason))
-      return client.ws.close(4002,'Invalid sync quality message');
+    if (!validateSyncQualityMessage(message)) return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
     if (!room || room.s.roomId !== message.roomId || !viewer || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
     let subscription;
@@ -59,36 +54,18 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     const confidenceChanged=client.lastSyncQualityConfidence!==message.confidence;
     const minimumInterval=statusChanged||confidenceChanged?500:4000;
     if(client.lastSyncQualityAt!==undefined&&now-client.lastSyncQualityAt<minimumInterval)return;
-    const previous=viewer.syncQuality||{};
-    const hasScore=Number.isFinite(message.score);
-    const score=hasScore?Math.max(0,Math.min(1,message.score)):
-      Number.isFinite(previous.score)?previous.score:Number.isFinite(previous.lastKnownScore)?previous.lastKnownScore:1;
-    const lastKnownScore=hasScore?score:previous.lastKnownScore??score;
-    const lastKnownLevel=hasScore?SyncQuality.level(score,previous.lastKnownLevel):previous.lastKnownLevel;
-    const confidence=message.confidence||(['playing','buffering'].includes(message.status)?previous.confidence||'reduced':
-      previous.confidence==='provisional'?'provisional':'reduced');
-    // Receiving a retained score is not a new playback measurement.
-    // Old paused measurements are stale telemetry, not grounds to tear down the control socket.
-    const reportAge=SyncQuality.reportableMeasurementFreshnessMs(message.measurementFreshnessMs);
-    const reportedAt=reportAge!==undefined&&confidence!=='provisional'?now-reportAge:undefined;
-    // A pause/seek may report an old score, but cannot manufacture a new
-    // measurement. Its first report can still carry the original evidence age.
-    const mayAdvance=['playing','buffering'].includes(message.status)||!Number.isFinite(previous.measuredAt);
-    const measuredAt=Number.isFinite(reportedAt)&&mayAdvance
-      ?Math.max(previous.measuredAt??-Infinity,reportedAt):previous.measuredAt;
-    const advanced=Number.isFinite(measuredAt)&&(!Number.isFinite(previous.measuredAt)||measuredAt-previous.measuredAt>=500);
-    const measurementFreshnessMs=Number.isFinite(measuredAt)?Math.max(0,now-measuredAt):undefined;
-    const next={status:message.status,score,lastKnownScore,lastKnownLevel,confidence,measurementFreshnessMs,
-      measuredAt,lastKnownAt:advanced?measuredAt:previous.lastKnownAt,updatedAt:now,mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,
-      reason:message.reason};
-    const displayChanged=SyncQuality.level(previous.score,previous.lastKnownLevel)!==SyncQuality.level(score,lastKnownLevel)||previous.confidence!==confidence;
+    const { next, displayChanged } = reduceViewerSyncQuality(viewer.syncQuality, message, {
+      now,
+      mediaVersion: room.mediaVersion,
+      streamVersion: viewer.streamVersion
+    });
     viewer.syncQuality=next;
     client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;client.lastSyncQualityConfidence=message.confidence;
-    if(displayChanged)changed();
+    if(displayChanged)broker.notify({roomId:message.roomId,includeLobby:false});
   }
-  async function publish(client) {
+  async function publish(client, { roomOnly = false } = {}) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
-    if(client.publishing){client.dirty=true;return;}
+    if(client.publishing){client.dirty=true;if(!roomOnly)client.dirtyFull=true;return;}
     client.publishing = true;
     const path = client.subscription;
     try {
@@ -100,21 +77,23 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         client.lastIdentityJson = identityJson;
         send(client, { type: 'identity', value: me.value });
       }
-      const rooms = await request(client, '/api/watch/rooms');
-      const roomsJson = JSON.stringify(rooms);
-      if (roomsJson !== client.lastRoomsJson) {
-        client.lastRoomsJson = roomsJson;
-        send(client, { type: 'rooms', ...rooms });
-      }
-      // Record only transitions in selected-room visibility, not every periodic publication.
-      const selectedRoom=/^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\?|$)/.exec(path||'')?.[1];
-      if(selectedRoom) {
-        const listed=rooms.status===200&&Array.isArray(rooms.value?.rooms)?rooms.value.rooms.find(room=>room.id===selectedRoom):undefined;
-        const availability=rooms.status!==200?'list-error-'+rooms.status:!listed?'missing':listed.locked?'locked':'available';
-        if(client.lastPublishedRoomId!==selectedRoom||client.lastPublishedRoomAvailability!==availability) {
-          const serverRoom=watch.rooms.get(selectedRoom);
-          config.logger?.debug('Socket',`conn=${client.connectionId} selected-room=${availability} serverExists=${!!serverRoom} viewers=${serverRoom?.viewers.size??0}`);
-          client.lastPublishedRoomId=selectedRoom;client.lastPublishedRoomAvailability=availability;
+      if (!roomOnly || client.lastRoomsJson === undefined) {
+        const rooms = await request(client, '/api/watch/rooms');
+        const roomsJson = JSON.stringify(rooms);
+        if (roomsJson !== client.lastRoomsJson) {
+          client.lastRoomsJson = roomsJson;
+          send(client, { type: 'rooms', ...rooms });
+        }
+        // Record only transitions in selected-room visibility, not every periodic publication.
+        const selectedRoom=/^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\?|$)/.exec(path||'')?.[1];
+        if(selectedRoom) {
+          const listed=rooms.status===200&&Array.isArray(rooms.value?.rooms)?rooms.value.rooms.find(room=>room.id===selectedRoom):undefined;
+          const availability=rooms.status!==200?'list-error-'+rooms.status:!listed?'missing':listed.locked?'locked':'available';
+          if(client.lastPublishedRoomId!==selectedRoom||client.lastPublishedRoomAvailability!==availability) {
+            const serverRoom=watch.rooms.get(selectedRoom);
+            config.logger?.debug('Socket',`conn=${client.connectionId} selected-room=${availability} serverExists=${!!serverRoom} viewers=${serverRoom?.viewers.size??0}`);
+            client.lastPublishedRoomId=selectedRoom;client.lastPublishedRoomAvailability=availability;
+          }
         }
       }
       if (path && client.subscription === path) {
@@ -122,16 +101,28 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
         if (client.subscription === path) send(client, { type: 'state', path, ...result });
       }
     } catch { send(client, { type: 'unavailable', value: { error: 'Room connection temporarily unavailable' } }); }
-    finally { client.publishing = false; if(client.dirty){client.dirty=false;queueMicrotask(()=>{void publish(client);});} }
+    finally {
+      client.publishing = false;
+      if(client.dirty){
+        const nextRoomOnly=!client.dirtyFull;
+        client.dirty=false;client.dirtyFull=false;
+        queueMicrotask(()=>{void publish(client,{roomOnly:nextRoomOnly});});
+      }
+    }
   }
-  let changeQueued=false;
-  function changed() {
-    if(changeQueued)return;changeQueued=true;
-    setImmediate(()=>{changeQueued=false;for(const client of clients)void publish(client);});
-  }
-  // Commands from Discord also wake subscriptions immediately.
+  // Commands from Discord or internal room timers wake only affected room subscribers when local.
   const dispatch = hub.dispatch.bind(hub);
-  hub.dispatch = async (...args) => { try { return await dispatch(...args); } finally { changed(); } };
+  hub.dispatch = async (...args) => {
+    const cmd = args[1];
+    const roomId = cmd?.roomId;
+    const hadMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
+    try { return await dispatch(...args); }
+    finally {
+      const hasMedia = Boolean(roomId && watch.rooms.get(roomId)?.media);
+      const roomOnly = Boolean(roomId && isRoomLocalAction(cmd?.action) && hadMedia === hasMedia);
+      broker.notify(roomOnly ? { roomId, includeLobby: false } : { includeLobby: true });
+    }
+  };
   server.on('upgrade', (req, socket, head) => {
     if (req.url !== '/watch-socket') return socket.destroy();
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + req.socket.remoteAddress, 30) || clients.size >= 128) return socket.destroy();
@@ -195,13 +186,20 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
           client.inflight.add(message.id);
           try {
+            const scope = message.data !== undefined && !message.path.endsWith('/observe')
+              ? classifyMutationScope(message.path, message.data)
+              : undefined;
+            const hadMedia = Boolean(scope?.roomId && watch.rooms.get(scope.roomId)?.media);
             const result = await request(client, message.path, message.data);
             if(result.status===200&&result.subscription)client.subscription=result.subscription;
             if (/^\/api\/watch\/rooms\/[a-f0-9-]{36}\?/.test(message.path) && result.status === 200) client.subscription = message.path;
             if (/\/(leave|close)$/.test(message.path) && client.subscription?.split('?')[0] === message.path.replace(/\/(leave|close)$/, '')) client.subscription = undefined;
             await flush();
             send(client, { type: 'response', id: message.id, status:result.status, value:result.value });
-            if (message.data !== undefined&&!message.path.endsWith('/observe')) changed();
+            if (scope) {
+              const hasMedia = Boolean(scope.roomId && watch.rooms.get(scope.roomId)?.media);
+              broker.notify(!scope.includeLobby && hadMedia === hasMedia ? scope : { includeLobby: true });
+            }
           } finally { client.inflight.delete(message.id); }
         })().catch(() => ws.close(4002, 'Request failed'));
       });
@@ -226,7 +224,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
           }
           watch.refresh(room);
         }
-        changed();
+        if (client.authenticated) broker.notify({ includeLobby: true });
       });
     });
   });
