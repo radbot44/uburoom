@@ -45,16 +45,28 @@ const COORDINATION_KEYS = Object.freeze([
 ]);
 
 /**
- * Validate server-visible command fencing (`epoch`, `expiresAt`, and optional routing IDs)
- * without inspecting or mutating the inner media/content payload.
+ * Validate server-visible command fencing (`epoch`, `expiresAt`, optional `expectedRevision`,
+ * and optional routing IDs) without inspecting or mutating the inner media/content payload.
+ *
+ * `expectedRevision` is an optional optimistic-concurrency precondition:
+ * - When omitted (`undefined`), commands are fenced by `epoch` and `expiresAt`.
+ * - When supplied, it must be a non-negative safe integer (`>= 0`); when `currentRevision`
+ *   is also provided, `expectedRevision` must strictly match `currentRevision`.
+ *
  * @param {any} input
  * @param {{
  *   expectedEpoch:string|number,
+ *   currentRevision?:number,
  *   now?:number,
  *   maxTtlMs?:number
  * }} context
  */
-export function validateCommandEnvelope(input, { expectedEpoch, now = Date.now(), maxTtlMs = COMMAND_TTL_MS }) {
+export function validateCommandEnvelope(input, {
+  expectedEpoch,
+  currentRevision,
+  now = Date.now(),
+  maxTtlMs = COMMAND_TTL_MS
+}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return {
       ok: false,
@@ -62,6 +74,16 @@ export function validateCommandEnvelope(input, { expectedEpoch, now = Date.now()
       reason: 'invalid-envelope',
       error: 'Invalid command data'
     };
+  }
+  if (input.expectedRevision !== undefined) {
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-revision',
+        error: 'Invalid expected revision'
+      };
+    }
   }
   if (input.epoch !== expectedEpoch) {
     return {
@@ -77,6 +99,14 @@ export function validateCommandEnvelope(input, { expectedEpoch, now = Date.now()
       status: 409,
       reason: Number.isFinite(input.expiresAt) && input.expiresAt <= now ? 'expired' : 'invalid-ttl',
       error: 'Room changed or command expired; retry manually'
+    };
+  }
+  if (input.expectedRevision !== undefined && currentRevision !== undefined && input.expectedRevision !== currentRevision) {
+    return {
+      ok: false,
+      status: 409,
+      reason: 'revision-mismatch',
+      error: 'Room revision changed; refresh and retry'
     };
   }
   const coordination = {

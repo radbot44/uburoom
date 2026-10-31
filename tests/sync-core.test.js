@@ -317,7 +317,7 @@ test('createRoomCoordinator enforces tenant isolation, generic role capabilities
   assert.equal((await coordinator.listRooms(outsiderBeta, { tenantId: 'tenant-beta' })).length, 0);
   await assert.rejects(
     () => coordinator.joinViewer(room.id, outsiderBeta, { viewerId: randomUUID(), tenantId: 'tenant-beta' }),
-    { status: 404 }
+    { status: 403 }
   );
 
   // Join viewer + host in tenant-alpha.
@@ -696,4 +696,424 @@ test('self-hosted Uburoom integration uses shared/sync and isolates room-local W
   assert.equal(serverRoomB.transportSequence, seqBBefore, 'Room A local actions do not trigger snapshot publications in Room B');
   assert.equal(second.events.length, eventsBBefore, 'Room B subscriber receives zero frames from Room A local playback mutations');
   assert.equal(second.events.some(e => e.type === 'state' && e.path?.includes(roomA)), false);
+});
+
+test('snapshot() enforces authorization, tenant isolation, revocation, kick eviction, non-leakage, and explicit internal boundaries', async () => {
+  let now = 300_000;
+  let monoNow = 20_000;
+  const revokedUsers = new Set();
+  const authAudit = [];
+
+  let coordinator;
+  const pushedMessages = [];
+  const broker = Sync.createSubscriptionBroker({
+    getTenantId: client => client.tenantId,
+    getRoomId: client => client.subscribedRoomId,
+    schedule: queueMicrotask,
+    async publish(client) {
+      if (!client.subscribedRoomId) return;
+      try {
+        const value = await coordinator.snapshot(client.subscribedRoomId, client.actor, {
+          viewerId: client.viewerId,
+          tenantId: client.tenantId,
+          envelopeOnly: true
+        });
+        pushedMessages.push({ userId: client.actor.userId, status: 200, value });
+      } catch (err) {
+        if (err?.status === 403) {
+          client.subscribedRoomId = undefined;
+          client.viewerId = undefined;
+          pushedMessages.push({ userId: client.actor.userId, status: 403, error: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+  });
+
+  coordinator = Sync.createRoomCoordinator({
+    now: () => now,
+    monoNow: () => monoNow,
+    isAdmin: actor => Boolean(actor?.isAdmin),
+    authorize: async ({ tenantId, room, actor, operation }) => {
+      authAudit.push({ tenantId, roomId: room.id, userId: actor.userId, operation });
+      return !revokedUsers.has(`${tenantId}:${actor.userId}`);
+    },
+    onPublish: event => broker.notify(event)
+  });
+
+  const creatorAlpha = { userId: randomUUID(), name: 'Alice', tenantId: 'tenant-alpha' };
+  const hostAlpha = { userId: randomUUID(), name: 'Bob', tenantId: 'tenant-alpha' };
+  const outsiderAlpha = { userId: randomUUID(), name: 'EveSameTenant', tenantId: 'tenant-alpha' };
+  const adminBeta = { userId: randomUUID(), name: 'BetaAdmin', tenantId: 'tenant-beta', isAdmin: true };
+  const defaultTenantActor = { userId: randomUUID(), name: 'NoTenantField' };
+
+  const privateRoom = coordinator.createRoom({
+    tenantId: 'tenant-alpha',
+    creatorId: creatorAlpha.userId,
+    creatorName: creatorAlpha.name,
+    name: 'Classified Room',
+    visibility: 'private',
+    hosts: [hostAlpha.userId],
+    content: { secretKey: 'classified-cipher-envelope-v1' }
+  });
+
+  const creatorViewerId = randomUUID();
+  const hostViewerId = randomUUID();
+  await coordinator.joinViewer(privateRoom.id, creatorAlpha, { viewerId: creatorViewerId });
+  await coordinator.joinViewer(privateRoom.id, hostAlpha, { viewerId: hostViewerId });
+  await coordinator.loadTimeline(privateRoom.id, creatorAlpha, {
+    duration: 900,
+    position: 42,
+    autoplay: false,
+    content: { secretKey: 'classified-cipher-envelope-v1' }
+  });
+
+  // 1. Authorized room members retrieve the expected snapshot (composed and envelopeOnly).
+  const authorizedSnap = await coordinator.snapshot(privateRoom.id, hostAlpha, {
+    viewerId: hostViewerId,
+    envelopeOnly: true
+  });
+  assert.equal(authorizedSnap.coordination.id, privateRoom.id);
+  assert.equal(authorizedSnap.coordination.timeline.position, 42);
+  assert.equal(authorizedSnap.content.secretKey, 'classified-cipher-envelope-v1');
+  assert.ok(authAudit.some(entry => entry.operation === 'snapshot' && entry.userId === hostAlpha.userId));
+
+  const seqBeforeUnauthorized = privateRoom.transportSequence;
+  const revBeforeUnauthorized = privateRoom.revision;
+
+  // 2 & 6. Unauthorized same-tenant user cannot read private room snapshot, does not mutate state,
+  // and receives the exact same error as for a nonexistent room ID (no existence oracle).
+  let privateErr;
+  let missingErr;
+  await assert.rejects(
+    async () => {
+      try {
+        await coordinator.snapshot(privateRoom.id, outsiderAlpha);
+      } catch (err) {
+        privateErr = err;
+        throw err;
+      }
+    },
+    { status: 403, message: 'Room unavailable or private' }
+  );
+  await assert.rejects(
+    async () => {
+      try {
+        await coordinator.snapshot(randomUUID(), outsiderAlpha);
+      } catch (err) {
+        missingErr = err;
+        throw err;
+      }
+    },
+    { status: 403, message: 'Room unavailable or private' }
+  );
+  assert.equal(privateErr.status, missingErr.status);
+  assert.equal(privateErr.message, missingErr.message);
+  assert.equal('secretKey' in privateErr, false);
+  assert.equal(privateRoom.transportSequence, seqBeforeUnauthorized, 'unauthorized snapshot never bumps transportSequence');
+  assert.equal(privateRoom.revision, revBeforeUnauthorized);
+
+  // 3. Cross-tenant callers cannot retrieve or list another tenant's room by supplying target tenantId
+  // (even when marked isAdmin in their own tenant, or when actor.tenantId is omitted).
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, adminBeta, { tenantId: 'tenant-alpha' }),
+    { status: 403, message: 'Room unavailable or private' }
+  );
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, defaultTenantActor, { tenantId: 'tenant-alpha' }),
+    { status: 403, message: 'Room unavailable or private' }
+  );
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, undefined, { tenantId: 'tenant-alpha' }),
+    { status: 403, message: 'Room unavailable or private' }
+  );
+  await assert.rejects(
+    () => coordinator.listRooms(adminBeta, { tenantId: 'tenant-alpha' }),
+    { status: 403 }
+  );
+  // Authorized member cannot impersonate another member's viewerId to read their streamVersion/observationEpoch.
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, hostAlpha, { viewerId: creatorViewerId }),
+    { status: 403, message: 'Viewer identity mismatch' }
+  );
+  assert.equal(privateRoom.transportSequence, seqBeforeUnauthorized);
+
+  // Delimiter collision safety: `tenant="a::b", room="c"` vs `tenant="a", room="b::c"` never alias.
+  const actorDelimitedA = { userId: randomUUID(), name: 'A', tenantId: 'org::alpha' };
+  const actorDelimitedB = { userId: randomUUID(), name: 'B', tenantId: 'org' };
+  coordinator.createRoom({
+    tenantId: 'org::alpha',
+    roomId: 'room-1',
+    creatorId: actorDelimitedA.userId,
+    visibility: 'private',
+    content: { tag: 'delimited-secret' }
+  });
+  await assert.rejects(
+    () => coordinator.snapshot('alpha::room-1', actorDelimitedB, { tenantId: 'org' }),
+    { status: 403 }
+  );
+
+  // 4 & 5. Revoked access and kicked/removed participants lose snapshot & subscription access immediately,
+  // while authorized subscribers and `inspectRoomInternal` continue working across explicit boundaries.
+  const publicRoom = coordinator.createRoom({
+    tenantId: 'tenant-alpha',
+    creatorId: creatorAlpha.userId,
+    creatorName: creatorAlpha.name,
+    visibility: 'public',
+    content: { topic: 'initial-public' }
+  });
+  const creatorPubViewer = randomUUID();
+  const guestPubViewer = randomUUID();
+  await coordinator.joinViewer(publicRoom.id, creatorAlpha, { viewerId: creatorPubViewer });
+  await coordinator.joinViewer(publicRoom.id, outsiderAlpha, { viewerId: guestPubViewer });
+
+  const creatorClient = {
+    tenantId: 'tenant-alpha',
+    actor: creatorAlpha,
+    subscribedRoomId: publicRoom.id,
+    viewerId: creatorPubViewer
+  };
+  const guestClient = {
+    tenantId: 'tenant-alpha',
+    actor: outsiderAlpha,
+    subscribedRoomId: publicRoom.id,
+    viewerId: guestPubViewer
+  };
+  broker.add(creatorClient);
+  broker.add(guestClient);
+
+  // Kick guest -> kicked viewerId cannot fetch snapshots during cooldown.
+  const snapBeforeKick = await coordinator.snapshot(publicRoom.id, creatorAlpha, { viewerId: creatorPubViewer });
+  const kickRes = await coordinator.executeCommand(publicRoom.id, creatorAlpha, {
+    epoch: snapBeforeKick.epoch,
+    expiresAt: now + 2000,
+    command: { action: 'room.kick', args: { userId: outsiderAlpha.userId } }
+  });
+  assert.equal(kickRes.status, 'applied');
+  await assert.rejects(
+    () => coordinator.snapshot(publicRoom.id, outsiderAlpha, { viewerId: guestPubViewer }),
+    { status: 403 }
+  );
+
+  // Re-subscribe hostAlpha to privateRoom, then revoke hostAlpha via `authorize` callback ->
+  // broker publication catches 403 and unsubscribes hostAlpha while creatorAlpha still receives updates!
+  const hostClient = {
+    tenantId: 'tenant-alpha',
+    actor: hostAlpha,
+    subscribedRoomId: privateRoom.id,
+    viewerId: hostViewerId
+  };
+  const creatorPrivClient = {
+    tenantId: 'tenant-alpha',
+    actor: creatorAlpha,
+    subscribedRoomId: privateRoom.id,
+    viewerId: creatorViewerId
+  };
+  broker.add(hostClient);
+  broker.add(creatorPrivClient);
+  pushedMessages.length = 0;
+
+  revokedUsers.add(`tenant-alpha:${hostAlpha.userId}`);
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, hostAlpha, { viewerId: hostViewerId }),
+    { status: 403, message: 'Room unavailable or private' }
+  );
+
+  const seekAfterRevoke = await coordinator.executeCommand(privateRoom.id, creatorAlpha, {
+    epoch: privateRoom.epoch,
+    expiresAt: now + 2000,
+    command: { action: 'media.seek.absolute', args: { seconds: 105 } }
+  });
+  assert.equal(seekAfterRevoke.status, 'applied');
+  await new Promise(resolve => queueMicrotask(resolve));
+  await new Promise(resolve => queueMicrotask(resolve));
+
+  const creatorPush = pushedMessages.find(m => m.userId === creatorAlpha.userId && m.status === 200);
+  const revokedPush = pushedMessages.find(m => m.userId === hostAlpha.userId);
+  assert.ok(creatorPush, 'authorized subscriber receives published snapshot');
+  assert.equal(creatorPush.value.coordination.timeline.position, 105);
+  assert.equal(revokedPush?.status, 403, 'revoked subscriber is denied snapshot publication');
+  assert.equal(revokedPush?.value, undefined);
+  assert.equal(hostClient.subscribedRoomId, undefined, 'revoked subscriber is unsubscribed on 403');
+
+  // Privileged internal inspection reads state without actor or mutating transportSequence.
+  const seqBeforeInternal = privateRoom.transportSequence;
+  const internalView = coordinator.inspectRoomInternal(privateRoom.id, { tenantId: 'tenant-alpha' });
+  assert.equal(internalView.coordination.id, privateRoom.id);
+  assert.equal(internalView.coordination.roomRole, undefined);
+  assert.equal(internalView.content.secretKey, 'classified-cipher-envelope-v1');
+  assert.equal(privateRoom.transportSequence, seqBeforeInternal, 'inspectRoomInternal does not increment transportSequence');
+});
+
+test('expectedRevision preconditions enforce optimistic concurrency without state mutation or async interleaving', async () => {
+  let now = 400_000;
+  let monoNow = 30_000;
+  let asyncAuthDelayMs = 0;
+  const persistedRevisions = [];
+
+  const coordinator = Sync.createRoomCoordinator({
+    now: () => now,
+    monoNow: () => monoNow,
+    authorize: async () => {
+      if (asyncAuthDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, asyncAuthDelayMs));
+      }
+      return true;
+    },
+    onPersist: async room => {
+      if (asyncAuthDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      persistedRevisions.push(room.revision);
+    }
+  });
+
+  const host = { userId: randomUUID(), name: 'Host', tenantId: 'tenant-rev' };
+  const secondHost = { userId: randomUUID(), name: 'CoHost', tenantId: 'tenant-rev' };
+  const room = coordinator.createRoom({
+    tenantId: 'tenant-rev',
+    creatorId: host.userId,
+    creatorName: host.name,
+    hosts: [secondHost.userId],
+    visibility: 'private'
+  });
+
+  const hostViewer = randomUUID();
+  const secondViewer = randomUUID();
+  await coordinator.joinViewer(room.id, host, { viewerId: hostViewer });
+  await coordinator.joinViewer(room.id, secondHost, { viewerId: secondViewer });
+
+  const loaded = await coordinator.loadTimeline(room.id, host, {
+    expectedRevision: room.revision,
+    duration: 600,
+    position: 20,
+    autoplay: false,
+    content: { mediaKey: 'ep-1' }
+  });
+  assert.equal(loaded.status, 'applied');
+  const revAfterLoad = room.revision;
+
+  // 1. Matching expectedRevision succeeds and increments revision.
+  const seekOk = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expectedRevision: revAfterLoad,
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.seek.absolute', args: { seconds: 60 } }
+  });
+  assert.equal(seekOk.status, 'applied');
+  assert.equal(seekOk.revision, revAfterLoad + 1);
+  assert.equal(room.position, 60);
+
+  // 2 & 3. Stale and malformed expectedRevision values are rejected and leave room state untouched.
+  const snapshotBeforeRejections = {
+    position: room.position,
+    paused: room.paused,
+    epoch: room.epoch,
+    revision: room.revision,
+    readinessVersion: room.readinessVersion,
+    transportSequence: room.transportSequence
+  };
+
+  const staleSeek = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expectedRevision: revAfterLoad, // stale: room.revision is revAfterLoad + 1
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.seek.absolute', args: { seconds: 240 } }
+  });
+  assert.equal(staleSeek.status, 'unavailable');
+  assert.equal(staleSeek.httpStatus, 409);
+  assert.equal(staleSeek.reason, 'revision-mismatch');
+
+  for (const badRev of [-1, 1.5, '2', null, NaN]) {
+    const malformed = await coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: badRev,
+      expiresAt: now + 2000,
+      command: { action: 'media.pause' }
+    });
+    assert.equal(malformed.status, 'unavailable');
+    assert.equal(malformed.httpStatus, 400);
+    assert.equal(malformed.reason, 'invalid-revision');
+  }
+
+  // 5. Expired commands and stale epochs remain rejected without mutating state.
+  const expiredCmd = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expectedRevision: room.revision,
+    expiresAt: now - 1,
+    command: { action: 'media.seek.absolute', args: { seconds: 300 } }
+  });
+  assert.equal(expiredCmd.status, 'unavailable');
+  assert.equal(expiredCmd.httpStatus, 409);
+  assert.equal(expiredCmd.reason, 'expired');
+
+  const wrongEpochCmd = await coordinator.executeCommand(room.id, host, {
+    epoch: '00000000-0000-4000-8000-000000000000',
+    expectedRevision: room.revision,
+    expiresAt: now + 2000,
+    command: { action: 'media.seek.absolute', args: { seconds: 300 } }
+  });
+  assert.equal(wrongEpochCmd.status, 'unavailable');
+  assert.equal(wrongEpochCmd.httpStatus, 409);
+  assert.equal(wrongEpochCmd.reason, 'epoch-mismatch');
+
+  assert.deepEqual({
+    position: room.position,
+    paused: room.paused,
+    epoch: room.epoch,
+    revision: room.revision,
+    readinessVersion: room.readinessVersion,
+    transportSequence: room.transportSequence
+  }, snapshotBeforeRejections, 'rejected commands never modify room position, pause state, epoch, revision, readiness, or sequence');
+
+  // 4. Commands omitting optional expectedRevision continue to work when epoch and expiresAt are valid.
+  const omittedRevSeek = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.seek.absolute', args: { seconds: 95 } }
+  });
+  assert.equal(omittedRevSeek.status, 'applied');
+  assert.equal(room.position, 95);
+
+  // 6. Concurrent conflicting updates with the same expectedRevision cannot bypass optimistic concurrency
+  // across async `authorize` and `onPersist` boundaries.
+  asyncAuthDelayMs = 15;
+  persistedRevisions.length = 0;
+  const contestedRevision = room.revision;
+  const [resA, resB, resC] = await Promise.all([
+    coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: contestedRevision,
+      expiresAt: now + 2500,
+      viewerId: hostViewer,
+      command: { action: 'media.seek.absolute', args: { seconds: 150 } }
+    }),
+    coordinator.executeCommand(room.id, secondHost, {
+      epoch: room.epoch,
+      expectedRevision: contestedRevision,
+      expiresAt: now + 2500,
+      viewerId: secondViewer,
+      command: { action: 'media.seek.absolute', args: { seconds: 250 } }
+    }),
+    coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: contestedRevision,
+      expiresAt: now + 2500,
+      viewerId: hostViewer,
+      command: { action: 'media.pause' }
+    })
+  ]);
+
+  const outcomes = [resA, resB, resC];
+  const appliedOutcomes = outcomes.filter(o => o.status === 'applied');
+  const conflictOutcomes = outcomes.filter(o => o.status === 'unavailable' && o.httpStatus === 409 && o.reason === 'revision-mismatch');
+  assert.equal(appliedOutcomes.length, 1, 'exactly one concurrent command with contested expectedRevision succeeds');
+  assert.equal(conflictOutcomes.length, 2, 'other concurrent commands with the same expectedRevision fail with 409 revision-mismatch');
+  assert.equal(room.revision, contestedRevision + 1);
+  assert.equal(room.position, 150);
+  assert.deepEqual(persistedRevisions, [contestedRevision + 1], 'onPersist fires once for the winning transition in monotonic revision order');
 });
