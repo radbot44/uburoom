@@ -27,7 +27,10 @@ class uburoomAV1 {
     return response;
   }
   async start() {
-    const manifest = await (await this.fetch(this.url)).json();
+    const response = await this.fetch(this.url);
+    let manifest;
+    try { manifest = await response.json(); }
+    catch (error) { error.retryable = true; throw error; }
     if (this.abort.signal.aborted) return;
     this.duration = manifest.duration; this.seconds = manifest.chunkSeconds;
     // This only validates the transport; playback/frame evidence chooses fallback.
@@ -78,7 +81,7 @@ class uburoomAV1 {
       // Remove any partially appended pair, then free old data for one retry.
       await this.evict([index]);
       if (index > first) {
-        this.pressureAhead = Math.max(0,(index-first-1) * this.seconds); this.pressured = true; return false;
+        this.pressureAhead = Math.max(this.seconds,(index-first-1) * this.seconds); this.pressured = true; return false;
       }
       await this.evict([...this.appended].filter(entry => entry !== first));
       await attempt();
@@ -89,10 +92,11 @@ class uburoomAV1 {
   async pump() {
     if (this.abort.signal.aborted || this.pumping || !this.buffer) return;
     this.pumping = true; clearTimeout(this.timer);
+    const version = this.seekVersion;
     try { await this.fill(); }
     finally {
       this.pumping = false;
-      if (!this.abort.signal.aborted) this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)),250);
+      if (!this.abort.signal.aborted) this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)), this.seekVersion !== version ? 0 : 250);
     }
   }
   async fill() {
@@ -129,8 +133,11 @@ class uburoomAV1 {
       let videoBytes, audioBytes;
       const request = this.request = new AbortController();
       try {
-        [videoBytes,audioBytes] = await Promise.all(['video','audio'].map(async track =>
-          (await this.fetch(this.url.replace(/\/start$/, '/chunk-' + track + '-' + index))).arrayBuffer()));
+        [videoBytes,audioBytes] = await Promise.all(['video','audio'].map(async track => {
+          const res = await this.fetch(this.url.replace(/\/start$/, '/chunk-' + track + '-' + index));
+          try { return await res.arrayBuffer(); }
+          catch (error) { error.retryable = true; throw error; }
+        }));
       } catch (error) {
         if (request.signal.aborted && !this.abort.signal.aborted) break;
         request.abort(); // Cancel the sibling track request as well.

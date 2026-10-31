@@ -11,7 +11,7 @@
 @media(prefers-reduced-motion:reduce){#captions-spinner svg{animation:none}}
 #captions-toggle[aria-pressed=true],#notifications-toggle[aria-pressed=true]{background:transparent;color:var(--text)}
 .center-play{opacity:0;pointer-events:none;transition:opacity .18s;width:72px;height:72px;top:50%}.center-play svg{width:40px;height:40px}
-.stage:focus-within .center-play,.stage.blocked .center-play,.stage.controls-visible .center-play{opacity:1;pointer-events:auto}
+.stage:has(:focus-visible) .center-play,.stage.blocked .center-play,.stage.controls-visible .center-play{opacity:1;pointer-events:auto}
 .stage.controls-visible .player-chrome,.stage.settings-open .player-chrome{opacity:1;pointer-events:auto}
 @media(hover:hover){.stage:not(.touch-controls):hover .player-chrome,.stage:not(.touch-controls):hover .center-play{opacity:1;pointer-events:auto}}
 .center-play:disabled,.stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}

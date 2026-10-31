@@ -28,7 +28,10 @@ class UserDirectory {
         const rows = await this[provider]();
         if (!Array.isArray(rows) || rows.length > 100000) throw new Error('Directory too large');
         entry.rows = rows.filter(row=>typeof row.subject === 'string' && (provider === 'discord' ? /^\d{17,20}$/ : /^\d{1,20}$/).test(row.subject))
-          .map(row=>({provider,subject:row.subject,name:String(row.name || row.subject).slice(0,100),alias:String(row.alias || '').slice(0,100)}));
+          .map(row=>{
+            const name = String(row.name || row.subject).slice(0,100), alias = String(row.alias || '').slice(0,100);
+            return {provider,subject:row.subject,name,alias,searchText: (name + '\0' + alias).normalize('NFC').toLocaleLowerCase()};
+          });
         entry.until = this.now()+60000; return entry.rows;
       } catch {
         entry.error = provider === 'discord' ? 'Discord directory unavailable; check the bot and Server Members Intent.' : 'Plex directory unavailable; check the configured server owner token.';
@@ -65,6 +68,7 @@ class UserDirectory {
     for (const entry of external) {
       const id = linked.get(entry.provider+':'+entry.subject), known = id && rowsByUserId.get(id);
       if (known) { known.aliases.push(entry.name,entry.alias); continue; }
+      if (!entry.searchText.includes(q)) continue;
       rows.push({...entry,aliases:[entry.alias],providers:[entry.provider],discord:entry.provider==='discord'?entry.subject:undefined,group:3});
     }
     const unique = new Map();

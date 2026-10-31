@@ -28,7 +28,7 @@
       if (value.switchRequired) { confirmSwitch(attempt.name); return; }
       if (value.destination) {
         // Server provides only its fixed watch path and an optional room UUID.
-        if (!/^\/watch(?:\?room=[a-f0-9-]{36})?$/.test(value.destination)) throw new Error('Invalid sign-in destination');
+        if (!/^(?:\/auth\/plex|\/watch(?:\?(?:account=1|room=[a-f0-9-]{36}))?)$/.test(value.destination)) throw new Error('Invalid sign-in destination');
         stopped = true; location.replace(value.destination); return;
       }
       timer = setTimeout(poll, 1000);

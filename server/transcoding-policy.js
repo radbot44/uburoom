@@ -31,7 +31,11 @@ class ConversionPolicy {
   acquire() {
     if(!this.settings)return ()=>{};
     if(this.jobs.size>=this.settings.maxJobs)throw Object.assign(this.failure('All conversion jobs are in use. A shared quality may be available; otherwise retry after a conversion stops.'),{conversionCapacity:true});
-    const job={};this.jobs.add(job);return ()=>{this.jobs.delete(job);this.waiters[0]?.();};
+    const job={};this.jobs.add(job);return ()=>{
+      this.jobs.delete(job);
+      const count = Math.max(1, this.settings.maxJobs - this.jobs.size);
+      for (let i = 0; i < count && i < this.waiters.length; i++) this.waiters[i]?.();
+    };
   }
   async wait({signal,authorized,timeoutMs=8000}={}) {
     if(signal?.aborted || authorized && !await authorized())throw this.failure('Conversion waiting cancelled: viewing access expired or selection changed.');
@@ -39,16 +43,28 @@ class ConversionPolicy {
     if(!this.waiters.length && this.jobs.size<this.settings.maxJobs)return this.acquire();
     if(this.waiters.length>=32)throw Object.assign(this.failure('Too many players are waiting for conversion. Try again shortly.'),{conversionCapacity:true});
     const until=Date.now()+timeoutMs;
-    let wake;
-    const turn=()=>wake?.();this.waiters.push(turn);
+    let wake, pendingWake = false;
+    const turn=()=>{ if (wake) wake(); else pendingWake = true; };
+    this.waiters.push(turn);
     try {
       for(;;) {
         if(signal?.aborted || authorized && !await authorized())throw this.failure('Conversion waiting cancelled: viewing access expired or selection changed.');
         if(this.waiters[0]===turn && this.jobs.size<this.settings.maxJobs)return this.acquire();
         if(Date.now()>=until)throw Object.assign(this.failure('All conversion jobs are in use. Try an available shared quality or wait for another conversion to stop.'),{conversionCapacity:true});
-        await new Promise(resolve=>{const timer=setTimeout(resolve,Math.min(200,Math.max(0,until-Date.now())));wake=()=>{clearTimeout(timer);resolve();};});
+        if(pendingWake) { pendingWake = false; continue; }
+        await new Promise(resolve=>{
+          let timer;
+          const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); wake = undefined; resolve(); };
+          timer = setTimeout(done, Math.min(200, Math.max(0, until - Date.now())));
+          wake = done;
+          signal?.addEventListener('abort', done, { once: true });
+        });
       }
-    } finally {this.waiters=this.waiters.filter(value=>value!==turn);this.waiters[0]?.();}
+    } finally {
+      this.waiters=this.waiters.filter(value=>value!==turn);
+      const count = Math.max(1, this.settings.maxJobs - this.jobs.size);
+      for (let i = 0; i < count && i < this.waiters.length; i++) this.waiters[i]?.();
+    }
   }
 }
 module.exports={ConversionPolicy};

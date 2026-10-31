@@ -152,7 +152,7 @@ test('native client handoff requires authenticated browser approval, enforces pr
   assert.equal(wrongProofPoll.status,410);
 
   // Approve in browser
-  const approved=await f.request('/api/watch/handoff/native/approve',{id:started.id},{Cookie:loginCookie});
+  const approved=await f.request('/api/watch/handoff/native/approve',{id:started.id,csrf:authedClaim.body.csrf},{Cookie:loginCookie});
   assert.equal(approved.status,200);
 
   // Poll after approval consumes the token and returns 7-day bearer credentials

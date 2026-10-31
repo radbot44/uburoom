@@ -12,7 +12,7 @@ function summarize(log) {
   let observedRateMs=0,nonUnitRateMs=0,unknownRateMs=0;
   for(let i=1;i<timed.length;i++) {
     const duration=timed[i].ms-timed[i-1].ms;
-    if(duration>1500){unknownRateMs+=duration;continue;}
+    if(duration>1500 || (timed[i].stream && timed[i-1].stream && timed[i].stream!==timed[i-1].stream) || timed[i-1].paused || timed[i].paused){unknownRateMs+=duration;continue;}
     observedRateMs+=duration;if(timed[i-1].rate!==1)nonUnitRateMs+=duration;
   }
   for(let i=1;i<samples.length;i++)if(samples[i].stream===samples[i-1].stream && Number.isFinite(samples[i].dropped)&&Number.isFinite(samples[i-1].dropped)){

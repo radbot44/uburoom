@@ -279,7 +279,7 @@ class Plex {
       const name = provider.includes('imdb') ? 'IMDb' : provider.includes('rottentomatoes') ? 'Rotten Tomatoes ' + label : provider.includes('themoviedb') ? 'TMDB' : undefined;
       const value = Number(source[field]); if (name && Number.isFinite(value) && value >= 0 && value <= 10) ratings.push({source:name,value});
     }
-    const media = Sources.inventory(source).find(entry => entry.eligible && Sources.partAvailable(entry.part))?.media || source.Media?.[0];
+    const media = Sources.inventory(source).find(entry => entry.eligible && Sources.partAvailable(entry.part))?.media || source.Media?.find(m => m.Part?.some(p => Sources.partAvailable(p))) || source.Media?.[0];
     const mediaInfo = media ? [media.videoResolution ? String(media.videoResolution).toUpperCase() + (String(media.videoResolution).match(/^\d+$/) ? 'p' : '') : '',
       media.videoCodec, media.bitrate ? (Number(media.bitrate) / 1000).toFixed(1) + ' Mbps' : '', media.audioCodec,
       media.audioChannels ? media.audioChannels + ' channels' : '', media.container].filter(Boolean).map(x => String(x).slice(0,60)) : [];
@@ -326,8 +326,8 @@ class Plex {
   }
   async neighbors(item) {
     if (item.type !== 'episode' || !/^\d+$/.test(String(item.grandparentRatingKey || ''))) return {};
-    const data = await this.json(`/library/metadata/${item.grandparentRatingKey}/allLeaves`);
-    const episodes = (data.Metadata || []).filter(x => x.type === 'episode' && /^\d+$/.test(String(x.ratingKey)))
+    const data = await this.catalog(`/library/metadata/${item.grandparentRatingKey}/allLeaves`);
+    const episodes = (data.Metadata || []).filter(x => x.type === 'episode' && /^\d+$/.test(String(x.ratingKey)) && (x.parentIndex == null || Number(x.parentIndex) !== 0))
       .sort((a, b) => (a.parentIndex || 0) - (b.parentIndex || 0) || (a.index || 0) - (b.index || 0));
     const index = episodes.findIndex(x => String(x.ratingKey) === String(item.ratingKey));
     if (index < 0) return {};
@@ -338,15 +338,20 @@ class Plex {
       const data = await this.catalog('/library/metadata/' + this.id(episodeMediaId));
       const source = data.Metadata?.[0];
       if (source?.type !== 'episode' || !source.grandparentRatingKey) return null;
-      const leavesData = await this.json(`/library/metadata/${source.grandparentRatingKey}/allLeaves`);
+      const leavesData = await this.catalog(`/library/metadata/${source.grandparentRatingKey}/allLeaves`);
       const episodes = (leavesData.Metadata || [])
         .filter(x => x.type === 'episode' && /^\d+$/.test(String(x.ratingKey)) && (x.parentIndex == null || Number(x.parentIndex) !== 0))
         .sort((a, b) => (Number(a.parentIndex) || 0) - (Number(b.parentIndex) || 0) || (Number(a.index) || 0) - (Number(b.index) || 0));
       const index = episodes.findIndex(x => String(x.ratingKey) === String(source.ratingKey));
       if (index < 0 || index + 1 >= episodes.length) return null;
-      const nextRaw = episodes[index + 1];
+      const candidates = episodes.slice(index + 1, index + 6);
+      if (this.availability) await this.availability(candidates.map(c => String(c.ratingKey)));
+      let nextRaw;
+      for (const candidate of candidates) {
+        const id = String(candidate.ratingKey);
+        if (await this.allows(id) && Sources.available(candidate)) { nextRaw = candidate; break; }
+      }
       if (!nextRaw) return null;
-      if (!await this.allows(String(nextRaw.ratingKey)) || !Sources.available(nextRaw)) return null;
       const item = this.items([nextRaw])[0];
       if (!item) return null;
       return {
@@ -471,7 +476,7 @@ class Plex {
       }
       } finally { try { await restoreSubtitle?.(); } finally { await restoreAudio?.(); } }
       };
-      try { await this.withPartLock(media.partId,prepare); }
+      try { await this.withPartLock((this.principal || 'global') + ':' + media.partId,prepare); }
       catch(error) {
         await this.stop(media);
         const failure=error instanceof PlaybackError ? error : new PlaybackError('Plex playback could not be prepared. Check server access and transcoding support.');
@@ -481,9 +486,10 @@ class Plex {
     return media;
   }
   async withPartLock(id,action) {
-    const previous=this.partQueues.get(id) || Promise.resolve();
-    const job=previous.catch(()=>{}).then(action); this.partQueues.set(id,job);
-    try { return await job; } finally { if(this.partQueues.get(id)===job)this.partQueues.delete(id); }
+    const key = String(id);
+    const previous=this.partQueues.get(key) || Promise.resolve();
+    const job=previous.catch(()=>{}).then(action); this.partQueues.set(key,job);
+    try { return await job; } finally { if(this.partQueues.get(key)===job)this.partQueues.delete(key); }
   }
   async selectAudioForTranscode(media,choices) {
     const requested=media.selection.audio?.id;

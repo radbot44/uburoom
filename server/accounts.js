@@ -80,11 +80,12 @@ class Accounts {
     if(provider==='plex')this.credentialCache.delete(subject);
     return this.canonical(user.id);
   }
-  merge(survivor,retired,actor,action='self-merge') {
+  merge(survivor,retired,actor,action='self-merge',verifiedIdentity) {
     survivor=this.canonical(survivor).id;retired=this.canonical(retired).id;if(survivor===retired)return survivor;
     const all=[...this.identities(survivor),...this.identities(retired)];if(new Set(all.map(i=>i.provider)).size!==all.length)throw new Error('Accounts have conflicting login identities');
     return this.transaction(()=>{
       this.db.prepare('UPDATE identities SET userId=? WHERE userId=?').run(survivor,retired);
+      if (verifiedIdentity?.provider && verifiedIdentity?.subject) this.db.prepare('UPDATE identities SET verified=1,name=COALESCE(?,name) WHERE userId=? AND provider=? AND subject=?').run(verifiedIdentity.name || null, survivor, verifiedIdentity.provider, String(verifiedIdentity.subject));
       this.db.prepare('UPDATE users SET retiredInto=?,revision=revision+1 WHERE id=?').run(survivor,retired);
       this.db.prepare('UPDATE users SET revision=revision+1,signedInAt=COALESCE(signedInAt,(SELECT signedInAt FROM users WHERE id=?)) WHERE id=?').run(retired,survivor);
       this.audit(actor,action,{survivor,retired,identities:all});return survivor;

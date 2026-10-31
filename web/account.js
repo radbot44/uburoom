@@ -126,7 +126,7 @@ $('account-close').addEventListener('click',()=>accountPopups.close(accountDialo
 for(const provider of ['discord','plex']){
   const button=$('remove-'+provider);button.append(uburoomIcons.icon(document,'close'));
   button.addEventListener('click',()=>{
-    if(activity){$('account-dialog').close();void openInBrowser();return;}
+    if(activity){$('account-dialog').close();void openInBrowser({ account: true });return;}
     removeProvider=provider;
     const label=provider==='discord'?'Discord':'Plex',identity=accountValue.identities.find(i=>i.provider===provider);
     $('account-remove-title').textContent='Remove '+label+'?';
@@ -144,7 +144,7 @@ $('account-remove-confirm').addEventListener('click',async()=>{
   finally{button.disabled=false;release();}
 });
 for(const provider of ['plex','discord'])$('connect-'+provider).addEventListener('click',async()=>{
-  if(activity){$('account-dialog').close();void openInBrowser();return;}
+  if(activity){$('account-dialog').close();void openInBrowser({ account: true, connectPlex: provider === 'plex' });return;}
   const release=accountPopups.hold(accountDialog);
   const button=$('connect-'+provider),label=button.textContent;button.disabled=true;button.textContent='Opening '+(provider==='plex'?'Plex':'Discord')+'…';accountError();
   try{const {url}=await api('/api/account/'+provider+'/connect',{});location.assign(url);}catch(error){accountError(error.message);}

@@ -205,14 +205,14 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if (media.kind === 'demo') {
       if (key !== 'start') return json(res, 404, { error: 'Media unavailable' });
-      const size = fs.statSync(media.file).size, range = req.headers.range;
+      const size = media.size || (media.size = (await fs.promises.stat(media.file)).size), range = req.headers.range;
       let start = 0, end = size - 1;
       if (range) {
         const match = /^bytes=(\d*)-(\d*)$/.exec(range);
         if (!match || !match[1] && !match[2]) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
         if (!match[1]) start = Math.max(0, size - Number(match[2]));
         else { start = Number(match[1]); if (match[2]) end = Math.min(end, Number(match[2])); }
-        if (start > end || start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
       }
       const headers = { 'Content-Type': 'video/mp4', 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes' };
       if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
@@ -238,15 +238,15 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       // The grant's own source access is checked before cached or producer bytes.
       response = (media.plexContext||watch.plex).hlsPool?.response(media.hlsLease,target,req.method,req.headers.range) || await (media.hlsContext||media.plexContext||watch.plex).request(target, { method: req.method, signal: abort.signal, streaming: true, headers: { Accept: '*/*',
         ...(media.transcodeId ? { 'X-Plex-Client-Identifier': media.transcodeId } : {}), ...(req.headers.range ? { Range: req.headers.range } : {}) } });
-      clearTimeout(timer);
-      if (!await validGrant(grant)) { abort.abort(); return json(res, 403, { error: 'Viewing access was revoked' }); }
+      if (!await validGrant(grant)) { abort.abort(); void response.body?.cancel().catch(() => {}); return json(res, 403, { error: 'Viewing access was revoked' }); }
       const type = response.headers.get('content-type') || 'application/octet-stream';
       if (req.method !== 'HEAD' && (new URL(target).pathname.endsWith('.m3u8') || /mpegurl/i.test(type))) {
-        const text = await response.text(); if (text.length > 2e6) throw new Error('Manifest too large');
-        if (!await validGrant(grant)) { abort.abort(); return json(res, 403, { error: 'Viewing access was revoked' }); }
+        const text = await response.text().finally(() => clearTimeout(timer)); if (text.length > 2e6) throw new Error('Manifest too large');
+        if (!await validGrant(grant)) { abort.abort(); void response.body?.cancel().catch(() => {}); return json(res, 403, { error: 'Viewing access was revoked' }); }
         res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
         return res.end(rewriteManifest(text, target, media, grant.id));
       }
+      clearTimeout(timer);
       const headers = { 'Content-Type': type };
       for (const name of ['content-length', 'content-range', 'accept-ranges']) if (response.headers.has(name)) headers[name] = response.headers.get(name);
       res.writeHead(response.status, headers); if (req.method === 'HEAD') return res.end();
@@ -263,7 +263,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
     if(config.accessPolicy && url.pathname==='/api/watch/entry' && req.method==='POST') {
-      if(!allowedOrigin(req)||!throttle('entry:'+req.socket.remoteAddress,10)){json(res,429,{error:'Entry is unavailable; wait a minute and try again'});return true;}
+      if(!allowedOrigin(req)||!throttle('entry:'+(clientAddress(req)||'local'),10)){json(res,429,{error:'Entry is unavailable; wait a minute and try again'});return true;}
       const identity=await rawLogin(req), data=await body(req);
       if(!config.accessPolicy.publicWeb&&!identity?.activity){json(res,403,{error:'Open uburoom through Discord Activity'});return true;}
       if(entryPolicy.passwordRequired){
@@ -293,10 +293,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       if (!match) { json(res, 404, { error: 'Media unavailable' }); return true; }
       await stream(req, res, grants.get(match[1]), match[2], url); return true;
     }
-    if (!throttle('watch:' + req.socket.remoteAddress, 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
+    if (!throttle('watch:' + (clientAddress(req) || 'local'), 600)) { json(res, 429, { error: 'Too many requests' }); return true; }
     try {
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/start') {
-        if (!throttle('handoff-native-start:' + req.socket.remoteAddress, 30)) { json(res, 429, { error: 'Too many requests' }); return true; }
+        if (!throttle('handoff-native-start:' + (clientAddress(req) || 'local'), 30)) { json(res, 429, { error: 'Too many requests' }); return true; }
         const attempt = handoff.issueNative();
         json(res, 200, {
           id: attempt.id,
@@ -309,6 +309,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/claim') {
+        if (req.headers.origin !== config.publicUrl || req.headers.authorization) { json(res, 403, { error: 'Forbidden' }); return true; }
         const identity = await login(req);
         if (!identity) { json(res, 401, { error: 'Sign in to approve native client', loginUrl: '/auth/discord' }); return true; }
         const data = await body(req);
@@ -318,11 +319,13 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/approve') {
+        if (req.headers.origin !== config.publicUrl || req.headers.authorization) { json(res, 403, { error: 'Forbidden' }); return true; }
         const identity = await login(req);
         if (!identity) { json(res, 401, { error: 'Sign in to approve native client' }); return true; }
         const data = await body(req);
+        if (typeof data.csrf !== 'string' || data.csrf !== identity.csrf) { json(res, 403, { error: 'Invalid CSRF token' }); return true; }
         const attempt = handoff.get(data.id);
-        if (!attempt || !attempt.native || attempt.claimedActor?.userId !== identity.userId) {
+        if (!attempt || !attempt.native || attempt.state !== 'claimed' || attempt.claimedActor?.userId !== identity.userId) {
           json(res, 403, { error: 'Authorization request unavailable or user mismatch' });
           return true;
         }
@@ -335,7 +338,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         return true;
       }
       if (req.method === 'POST' && url.pathname === '/api/watch/handoff/native/poll') {
-        if (!throttle('handoff-native-poll:' + req.socket.remoteAddress, 180)) { json(res, 429, { error: 'Too many requests' }); return true; }
+        if (!throttle('handoff-native-poll:' + (clientAddress(req) || 'local'), 180)) { json(res, 429, { error: 'Too many requests' }); return true; }
         const data = await body(req);
         const attempt = handoff.pollNative(data.id, data.proof);
         if (!attempt) { json(res, 410, { error: 'Authorization request expired or invalid proof' }); return true; }
@@ -348,7 +351,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         // These browser endpoints never accept an Activity bearer or a cross-origin request.
         const nonce = cookies(req).uburoom_handoff;
         if (req.headers.origin !== config.publicUrl || req.headers.authorization || !SECRET.test(nonce || '') ||
-          !throttle('handoff-browser:' + req.socket.remoteAddress, 120)) { json(res, 403, {error:'Browser sign-in unavailable; open a fresh link from the Activity'}); return true; }
+          !throttle('handoff-browser:' + (clientAddress(req) || 'local'), 120)) { json(res, 403, {error:'Browser sign-in unavailable; open a fresh link from the Activity'}); return true; }
         const data = await body(req);
         const attempt = url.pathname.endsWith('/claim') ? handoff.claim(data.code, data.proof, nonce) : handoff.browser(data.id, data.proof, nonce);
         if (!attempt || attempt.redeeming || !['claimed','approved'].includes(attempt.state)) { json(res, 410, {error:'Browser sign-in expired or was already used; open a fresh link from the Activity'}); return true; }
@@ -420,8 +423,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         if (data.roomId !== undefined && (!UUID.test(data.roomId) || !await watch.canView(room,auth.actor))) {json(res,403,{error:'Room unavailable or private'});return true;}
         const issued = handoff.issue(auth.identity,data.roomId);
         handoff.get(issued.id).authorization = req.headers.authorization;
-        handoff.get(issued.id).linkOnly=auth.pending||config.accessPolicy?.publicWeb===false;
-        handoff.get(issued.id).connectPlex=auth.pending&&config.accessPolicy?.requirePlex;
+        handoff.get(issued.id).linkOnly = Boolean(auth.pending || config.accessPolicy?.publicWeb === false || data.account);
+        handoff.get(issued.id).connectPlex = Boolean((auth.pending && config.accessPolicy?.requirePlex || data.connectPlex) && watch.plex.configured && config.accessPolicy?.plex !== false);
         json(res,200,{id:issued.id,expires:issued.expires,url:config.publicUrl+'/auth/handoff#'+issued.code});return true;
       }
       if (url.pathname === '/api/watch/handoff/status' && req.method === 'POST') {

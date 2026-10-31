@@ -348,10 +348,18 @@ function setSubtitleLoading(loading) {
     if (subtitleLoadingActive && cc) { cc.dataset.loading = 'true'; cc.setAttribute('aria-busy', 'true'); }
   }, 250);
 }
+let lastBurnFallbackKey = '';
 const captions = new uburoomSubtitles(video, value => {
   trackNotice = value.message; trackNoticeError = value.error;
   setSubtitleLoading(!!value.loading);
   renderTracks();
+  if (value.error && value.burnFallback && state?.tracks?.subtitleId && (state.tracks.subtitleMode || 'auto') === 'auto') {
+    const key = `${state.mediaVersion}:${state.tracks.subtitleId}`;
+    if (lastBurnFallbackKey !== key) {
+      lastBurnFallbackKey = key;
+      void changeTrack({ subtitleMode: 'burn' }, { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion });
+    }
+  }
 }, mediaTime => (sync.timelinePending || video.readyState < 1) ? expected() : (Number.isFinite(mediaTime) ? mediaTime : video.currentTime));
 const subtitleMode=$('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
@@ -945,15 +953,16 @@ async function pollBrowserHandoff() {
     if (browserHandoff === id) { stopBrowserHandoff(true); $('handoff-dialog').close('expired'); fail(error.message); }
   }
 }
-async function openInBrowser() {
+async function openInBrowser(options) {
   if (!activity || !me || browserHandoff || $('open-browser').disabled) return;
+  const opts = options && typeof options === 'object' && !('target' in options) ? options : {};
   $('open-browser').disabled = $('watch-website').disabled = true;
   // Only the isolated localhost demo uses window.open; live Discord always uses its SDK.
   const demoWindow = config.demo ? window.open('about:blank','_blank') : undefined;
   if (demoWindow) demoWindow.opener = null;
   try {
     if (config.demo && !demoWindow) throw new Error('Allow this localhost demo to open its browser tab, then retry.');
-    const value = await api('/api/watch/handoff',selected ? {roomId:selected} : {});
+    const value = await api('/api/watch/handoff',{...(selected ? {roomId:selected} : {}), ...(opts.account ? { account: true } : {}), ...(opts.connectPlex ? { connectPlex: true } : {})});
     browserHandoff = value.id;
     if (demoWindow) demoWindow.location.replace(value.url);
     else {
@@ -1037,7 +1046,7 @@ async function compatibleFallback(reason, preferHLS = false) {
       if(selected!==id || state?.mediaVersion!==version)return;
       if(codec)localFallbackAttempts.add(codec);else fallbackVersion=version;
       try {
-        await execute({action:'media.quality.set',args:{quality:state.quality,compatible:true,...(codec?{fallback:codec}:{})}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,compatible:true,...(codec?{fallback:codec}:{})}});
         return;
       } catch(error) {
         playbackError=reason+' '+(codec?.toUpperCase() || 'H.264')+' fallback failed: '+error.message;
@@ -1303,6 +1312,7 @@ function handleHlsFragmentBuffered(client) {
   // shared playback position can advance again.
   const target = expected(), ahead = uburoomPlayback.bufferedAhead(video.buffered,target);
   if (ahead <= .05 || ahead + .05 < Math.min(.5,Math.max(0,state.state.duration - target))) return;
+  if (state.waitingForReady || state.readiness) void reportReadiness();
   clearTimeout(hlsRecoveryTimer);
   const resume = !!hlsNetworkFailure && playbackError === hlsNetworkFailure;
   hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
@@ -1575,9 +1585,9 @@ function renderTransport() {
   renderVolumeIcon(); $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
   $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
   $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
-  const joinDisabled = !autoplayBlocked && (!playback || pending);
-  $('join-playback').disabled = joinDisabled;
-  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || joinDisabled;
+  const joinBlocked = !autoplayBlocked && (!playback || pending || !!state?.waitingForReady || !!state?.waitingForHost || !!state?.recovery);
+  $('join-playback').disabled = joinBlocked;
+  $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || joinBlocked;
   const centerLabel=autoplayBlocked?'Join playback':paused?'Play':'Pause';
   glyph('join-playback',autoplayBlocked||paused?'play':'pause');
   $('join-playback').setAttribute('aria-label',centerLabel); $('join-playback').title=centerLabel;
@@ -1784,7 +1794,7 @@ function applyState(next) {
   const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
   if(seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)){seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;}
-  const previousTarget = state ? expected() : undefined,previousRevision=state?.revision;
+  const previousTarget = state ? expected() : undefined,previousRevision=state?.revision,previousReadinessVersion=state?.readinessVersion;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
@@ -1847,11 +1857,20 @@ function applyState(next) {
   const nextTarget=expected();
   if(!changed&&previousRevision!==undefined&&previousRevision!==next.revision&&previousTarget!==undefined&&nextTarget!==undefined&&Math.abs(nextTarget-previousTarget)>.05)
     sync.suppressCorrectionTelemetry(5000);
-  if (!changed && !sync.timelinePending && previousTarget !== undefined && Math.abs(nextTarget-previousTarget) > 1.5) {
+  const sharedSeekRequested = !changed && !sync.timelinePending && (
+    (next.readinessVersion !== undefined && next.readinessVersion !== previousReadinessVersion) ||
+    (previousTarget !== undefined && Math.abs(nextTarget - previousTarget) > 1.5)
+  );
+  if (sharedSeekRequested) {
     choppyDetector.interrupt();
     sync.sharedSeek();
-    if(sync.preparationUntil&&hls){hls.startLoad(expected());}
-    else restartHlsForSeek(expected());
+    if (hls && uburoomPlayback.bufferedAhead(video.buffered, nextTarget) <= .05) {
+      hls.startLoad(nextTarget);
+    } else if (sync.preparationUntil && hls) {
+      hls.startLoad(expected());
+    } else {
+      restartHlsForSeek(expected());
+    }
   } else if (wasExtended && !changed && hls) {
     hls.startLoad(expected());
   }
@@ -2046,7 +2065,7 @@ $('quality').addEventListener('change', () => {
   savePlayerPreferences({quality:preferredQuality});
   choppyDetector.triggerCooldown(10000, performance.now());
   if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
-  if (state?.mediaId && state.mediaId !== 'demo') execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
+  execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
 });
 $('timeline').addEventListener('pointerdown', () => { seekDragging = true; });
 $('timeline').addEventListener('input', () => { $('time').textContent = clock($('timeline').value); });
@@ -2351,6 +2370,9 @@ async function start() {
   }
   if(config.access){
     let admission=await api('/api/watch/admission');
+    if (activity && token && !admission.identity) {
+      identityRenewAt = 0; identityRetryAt = 0; await renewIdentity(); admission = await api('/api/watch/admission');
+    }
     if(config.access.anonymous&&!admission.identity&&!admission.passwordNeeded&&!admission.activityOnly){await api('/api/watch/entry',{});admission=await api('/api/watch/admission');pageBootstrap=undefined;}
     if(!admission.admitted){
       $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
@@ -2440,7 +2462,7 @@ $('entry-form').addEventListener('submit',async event=>{
   catch(error){$('entry-status').textContent=error.message;}finally{button.disabled=false;}
 });
 $('entry-recheck').addEventListener('click',()=>{pageBootstrap=undefined;void start().catch(error=>fail(error.message));});
-$('entry-plex-activity').addEventListener('click',()=>void openInBrowser());
+$('entry-plex-activity').addEventListener('click',()=>void openInBrowser({ connectPlex: true }));
 $('room-recovery-start').addEventListener('click',() => void execute({action:'media.play'}).catch(error=>fail(error.message)));
 $('auth-retry').addEventListener('click', () => location.reload());
 renderVisibility();renderTransport();

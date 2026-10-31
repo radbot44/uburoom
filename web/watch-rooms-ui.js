@@ -121,7 +121,14 @@
       const self = value.actorId || getMe()?.account?.id, caps = value.capabilities || {};
       const canHost = !!(caps.addHosts || caps.manageHosts || people.some(person => person.id === self && person.explicitHost));
       const canKick = !!caps.kickParticipants, canKickHosts = (value.roomRole || value.role) === 'creator' || !!getMe()?.adminMode;
-      const signature = JSON.stringify([people,self,caps,rosterBusy,inSettings && busy,canKickHosts]);
+      const peopleView = people.map(p => {
+        const sq = p.syncQuality;
+        return [
+          p.id, p.name, p.role, p.explicitHost, p.pending, p.provider, p.present,
+          sq && typeof sq === 'object' ? [sq.status, sq.score, sq.level, sq.confidence, sq.lastKnownLevel, sq.sessions?.map(s => [s.score, s.level, s.lastKnownLevel, s.status])] : null
+        ];
+      });
+      const signature = JSON.stringify([peopleView,self,caps,rosterBusy,inSettings && busy,canKickHosts]);
       if (roster.dataset.signature === signature) return;
       roster.dataset.signature = signature;
       const focusId = roster.contains(document.activeElement) ? document.activeElement.id : undefined;
@@ -354,6 +361,7 @@
       people.push(...(value.pendingHosts || []).map(person => ({...person,id:'pending-' + person.provider + '-' + person.subject,role:'host',explicitHost:true,present:false,pending:true})));
       renderPeople(roster,people,value,true);
       updateRosterSize();
+      const previousTransfer = $('room-transfer-target').value;
       $('room-transfer-target').replaceChildren();
       const transferGroup = $('room-transfer-target-group');
       if (transferGroup) transferGroup.replaceChildren();
@@ -369,8 +377,9 @@
           });
         }
       }
+      if (value.hosts.some(h => h.id === previousTransfer)) $('room-transfer-target').value = previousTransfer;
+      else if (value.hosts.length) $('room-transfer-target').value = value.hosts[0].id;
       if (transferGroup && value.hosts.length) {
-        if (!$('room-transfer-target').value) $('room-transfer-target').value = value.hosts[0].id;
         for (const b of transferGroup.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.value === $('room-transfer-target').value));
       }
       $('room-transfer-target').disabled = busy || !value.capabilities.transferCreator || !value.hosts.length;
@@ -457,9 +466,9 @@
     async function edit(change) {
       if (!details || busy) return;
       if (details.draft) {
-        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name',false,true); return; } details.name = change.name.trim(); }
+        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name',false,true); return; } details.name = renameDraft = change.name.trim(); }
         else if (change.action === 'keepEmpty') details.keepEmpty = change.enabled;
-        else if (change.action === 'maxMembers') details.maxMembers = change.value;
+        else if (change.action === 'maxMembers') { details.maxMembers = change.value; capacityDraft = undefined; }
         else if (change.action === 'visibility') details.visibility = change.visibility;
         else if (change.action === 'allHosts') details.permissions.allHosts = change.enabled;
         else if (change.action === 'permissions.preset') details.permissions = {...presetPolicy(change.preset),allHosts:details.permissions.allHosts};

@@ -18,7 +18,8 @@ function dropWindow(entry){bytes-=entry.data.length;windows.delete(entry);entry.
 function reserve(size){
   while(bytes+size>TOTAL){
     if(windows.size)dropWindow(windows.keys().next().value);
-    else clearCached(cache.keys().next().value);
+    else if(cache.size)clearCached(cache.keys().next().value);
+    else break;
   }
 }
 function clearCached(media){
@@ -27,6 +28,7 @@ function clearCached(media){
   media.windowCache?.clear();
 }
 function clear(media){
+  if(!media)return;
   clearCached(media);
   for(const job of media.windowJobs?.values() || [])job.controller.abort();
 }
@@ -89,7 +91,7 @@ function startPgsJob(plex,media){
       const target=job.media;
       clearCached(target);
       abort.throwIfAborted();if(target.captionVersion!==version)throw new PlaybackError('Subtitle selection changed.');
-      while(cache.size>=8)clearCached(cache.keys().next().value);reserve(result.size);
+      while(cache.size&&cache.size>=8)clearCached(cache.keys().next().value);reserve(result.size);
       cache.set(target,result);bytes+=result.size;target.subtitleAssets=result.assets;
       for(const listener of job.listeners)try{listener(null,null);}catch{}
       return result;
@@ -147,8 +149,17 @@ async function pipe(plex,media,req,res,signal){
   }catch(error){if(!res.headersSent)throw error;res.destroy();}
   finally{
     job.listeners.delete(notify);res.off('close',close);signal?.removeEventListener('abort',cancel);
-    if(!job.complete&&job.listeners.size===0)job.controller?.abort();
+    if(!job.complete&&(!job.listeners||job.listeners.size===0))job.controller?.abort();
   }
+}
+function awaitJob(promise,signal){
+  if(!signal)return promise;
+  if(signal.aborted)return Promise.reject(signal.reason||new PlaybackError('Subtitle loading was cancelled.'));
+  return new Promise((resolve,reject)=>{
+    const cancel=()=>reject(signal.reason||new PlaybackError('Subtitle loading was cancelled.'));
+    signal.addEventListener('abort',cancel,{once:true});
+    promise.then(val=>{signal.removeEventListener('abort',cancel);resolve(val);},err=>{signal.removeEventListener('abort',cancel);reject(err);});
+  });
 }
 async function extract(plex,media,track,signal){
   const av1=plex.av1;
@@ -187,9 +198,9 @@ async function load(plex,media,signal){
   const {track,row}=source(media),version=media.captionVersion;
   const previous=cache.get(media);
   if(previous?.version===version){cache.delete(media);cache.set(media,previous);return previous;}
-  if(media.subtitleJob?.version===version)return media.subtitleJob.promise;
+  if(media.subtitleJob?.version===version)return awaitJob(media.subtitleJob.promise,signal);
   if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
-  const abort=AbortSignal.any([signal,media.subtitleAbort.signal,AbortSignal.timeout(85000)]);
+  const abort=AbortSignal.any([media.subtitleAbort.signal,AbortSignal.timeout(85000)]);
   const job={media,version};active++;
   job.promise=(async()=>{
     let result;
@@ -206,10 +217,10 @@ async function load(plex,media,signal){
     result.version=version;result.size=[...result.assets.values()].reduce((sum,value)=>sum+value.length,0);
     if(result.size>TOTAL)throw new PlaybackError('Subtitle resources exceed the cache limit.');
     clearCached(target);
-    while(cache.size>=8)clearCached(cache.keys().next().value);reserve(result.size);
+    while(cache.size&&cache.size>=8)clearCached(cache.keys().next().value);reserve(result.size);
     cache.set(target,result);bytes+=result.size;target.subtitleAssets=result.assets;return result;
   })().finally(()=>{active--;if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;});
-  media.subtitleJob=job;return job.promise;
+  media.subtitleJob=job;return awaitJob(job.promise,signal);
 }
 // Inspect all packet timestamps first: filtering ffprobe to a sparse subtitle
 // stream makes even its interval reader wait for the next selected packet.
@@ -254,9 +265,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   const startSeconds=Math.max(0,at-before),endSeconds=at+after,durationSeconds=endSeconds-startSeconds;
   const startMs=Math.round(startSeconds*1000),endMs=Math.round(endSeconds*1000);
   media.windowCache||=new Map();media.windowJobs||=new Map();
-  const cacheKey=JSON.stringify([version,track.id,track.delivery,startMs,endMs]);
+  const cacheKey=`${track.id}:${startMs}-${endMs}:`+JSON.stringify([version,track.id,track.delivery,startMs,endMs]);
   for(const item of media.windowCache.values()){
-    if(item.version===version&&item.trackId===track.id&&item.startMs<=startMs&&item.endMs>=endMs){
+    if(item.version===version&&(!item.trackId||item.trackId===track.id)&&item.startMs<=startMs&&item.endMs>=endMs){
       windows.delete(item);windows.set(item,media);
       return {format:track.delivery,startMs:item.startMs,endMs:item.endMs,data:item.data,cues:item.cues};
     }
@@ -339,7 +350,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
         const oldest=target.windowCache.values().next().value;if(!oldest)break;
         trackBytes-=oldest.data.length;dropWindow(oldest);
       }
-      while(windows.size>=128)dropWindow(windows.keys().next().value);
+      while(windows.size&&windows.size>=128)dropWindow(windows.keys().next().value);
       reserve(data.length);target.windowCache.set(cacheKey,entry);windows.set(entry,target);bytes+=data.length;
       return {format:track.delivery,startMs,endMs,data,cues};
     }catch(error){if(abort.aborted)throw error;throw classifyExtractionError(error);}

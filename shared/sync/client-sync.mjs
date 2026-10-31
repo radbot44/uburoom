@@ -96,7 +96,7 @@ export function createSync(host) {
   const jumpDriftCorrection = host.jumpDriftCorrection || makeJumpCorrection();
   const startAlarm = host.startAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
   const pauseAlarm = host.pauseAlarm || makeAlarm({ now: () => playbackClock.read().serverTime });
-  let preparedStartKey, syncSeekPending = false, hlsPreparationUntil = 0, hlsTimelinePending = false;
+  let preparedStartKey, syncSeekPending = false, sharedSeekPending = false, hlsPreparationUntil = 0, hlsTimelinePending = false;
   let correctionSuppressionUntil = 0, lastControl;
 
   const hasLoadedMedia = snapshot => host.mediaReady ? Boolean(host.mediaReady(snapshot)) : Boolean(snapshot.state?.mediaUrl);
@@ -205,7 +205,7 @@ export function createSync(host) {
       hlsPreparationUntil = 0;
     }
     if (state.waitingForReady) player.pause();
-    const bufferedTarget = isLocalFormat(state.format) && player.isBufferedAt(target, .05);
+    const bufferedTarget = player.bufferedAhead(target) > 0;
     // A shared seek/restart can supersede a native seek still waiting for old
     // chunks. Retarget it once the new source-time window is buffered.
     const targetBuffered = player.bufferedAhead(target) >= Math.min(.5, Math.max(0, state.state.duration - target));
@@ -224,14 +224,14 @@ export function createSync(host) {
       try {
         const seekDeltaMs = (destination - player.currentTime()) * 1000;
         const frames = syncCorrectionMode === 'jumps' ? decodedFrames() : undefined;
-        player.seek(destination); syncSeekPending = true;
+        player.seek(destination); syncSeekPending = true; sharedSeekPending = false;
         if (syncCorrectionMode === 'jumps') jumpDriftCorrection.committed({ now: now(), frames, target: destination, context: jumpContext });
         diagnosticSample(eventName, { seekDeltaMs });
         if (automaticCorrection) host.correction?.({ magnitudeMs: Math.abs(seekDeltaMs), kind: eventName === 'sync-jump' ? 'jump' : 'seek' });
       } catch { return false; }
       return true;
     };
-    if ((clockValid || state.state.paused) && canAlign && (!player.seeking() || bufferedTarget) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
+    if ((clockValid || state.state.paused) && canAlign && (!player.seeking() || bufferedTarget || sharedSeekPending) && Math.abs(difference) > (state.waitingForReady && state.readinessVersion ? .05 : .65)) {
       align();
     }
     const postAlignTime = player.currentTime();
@@ -298,6 +298,7 @@ export function createSync(host) {
     pauseAlarm.cancel();
     preparedStartKey = undefined;
     syncSeekPending = false;
+    sharedSeekPending = false;
     hlsPreparationUntil = 0;
     hlsTimelinePending = false;
     lastControl = undefined;
@@ -335,6 +336,7 @@ export function createSync(host) {
 
   function sharedSeek() {
     syncSeekPending = false;
+    sharedSeekPending = true;
     jumpDriftCorrection.reset();
     presentationTiming.interrupt?.('seek');
     correctionSuppressionUntil = Math.max(correctionSuppressionUntil, now() + 5000);

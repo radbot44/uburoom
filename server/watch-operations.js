@@ -278,6 +278,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!await watch.canView(room, auth.actor) || !await alive() || room.viewers.get(viewerId) !== viewer) { return result(403, { error: 'Viewing access was revoked' }); }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);
+      viewer.directDelivery = undefined;
       const grant = (!viewer.localDelivery && viewer.media?.format !== 'local') ? mediaGrant(room, auth, context, viewerId) : undefined;
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;

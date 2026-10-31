@@ -233,17 +233,21 @@ class AV1 {
     let group = this.groups.get(key);
     if (!group) {
       if (this.groups.size >= 8) throw Object.assign(new PlaybackError('WebM is busy; close an unused player or choose a shared quality.'),{conversionCapacity:true});
-      group = { key, source, quality, codec, refs:0, chunks:new Map(), controllers:new Set(), bytes:0 };
+      group = { key, source, quality, codec, refs:0, chunks:new Map(), controllers:new Set(), leases:new Set(), bytes:0 };
       this.groups.set(key, group);
     }
     group.refs++;
     // Each lease keeps its authorized source for future uncached chunk work.
     group.source = source;
-    return { group, source, released:false };
+    const lease = { group, source, released:false };
+    group.leases.add(lease);
+    return lease;
   }
   release(lease) {
     if (!lease || lease.released) return; lease.released = true;
     const group = lease.group;
+    group.leases?.delete(lease);
+    if (group.leases?.size) group.source = group.leases.values().next().value.source;
     if (--group.refs > 0) return;
     this.groups.delete(group.key);
     for (const controller of group.controllers) controller.abort();
@@ -328,8 +332,14 @@ class AV1 {
         const codec = group.codec;
         const encoder = await this.selectEncoder(codec);
         return await this.input(source, controller.signal, async url => {
-          if (!group.info) group.info = JSON.parse((await this.run(this.ffprobe, ['-v','error','-show_entries',
-            'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal)).toString());
+          if (!group.info) {
+            group.infoPromise ||= (async () => {
+              const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
+                'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal);
+              return JSON.parse(raw.toString());
+            })().catch(err => { group.infoPromise = undefined; throw err; });
+            group.info = await group.infoPromise;
+          }
           const spec = outputSpec(group.info, group.quality);
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
           const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];

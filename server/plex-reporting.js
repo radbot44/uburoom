@@ -31,7 +31,8 @@ class PlexReporting {
     if (!userId || this.config.plexReporting?.enabled === false) return false;
     if (!this.registry) return true;
     const identity = this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified);
-    return !!(identity && this.registry.hasCredential(identity.subject));
+    const cred = identity && (this.registry.credential ? this.registry.credential(identity.subject) : this.registry.hasCredential?.(identity.subject));
+    return !!(cred && (typeof cred !== 'object' || cred.serverToken || cred.authType !== 'traditional'));
   }
 
   /**
@@ -56,7 +57,14 @@ class PlexReporting {
   async observe(room, viewer, viewerId, data, observed) {
     if (this.config.plexReporting?.enabled === false) return;
     if (!room?.media || room.media.kind !== 'plex' || !room.media.id) return;
-    if (!this.isEligible(viewer.userId)) return;
+    if (!this.isEligible(viewer.userId)) {
+      const existing = this.sessions.get(viewerId);
+      if (existing) {
+        existing.stopped = true;
+        this.sessions.delete(viewerId);
+      }
+      return;
+    }
 
     if (viewer && !viewer.viewerId && viewerId) viewer.viewerId = viewerId;
 
@@ -103,19 +111,22 @@ class PlexReporting {
           const plexAuth = this.plexAuth || this.hub?.plexAuth;
           let scoped;
           try {
-            scoped = await (this.hub?.plexFor ? this.hub.plexFor(viewer.actor || { userId: viewer.userId }) : plexAuth?.forUser(viewer.userId));
+            scoped = await plexAuth?.forUser(viewer.userId);
           } catch {
             return;
           }
-          if (!scoped) return;
+          if (!scoped || scoped.principal === 'discord-shared' || scoped.clientId === 'configured-fallback') return;
           if ((room.viewers && room.viewers.get(viewerId) !== viewer) || !room.media?.id || String(room.media.id) !== mediaId ||
               room.mediaVersion !== mediaVersion || viewer.streamVersion !== streamVersion ||
               viewer.observationEpoch !== observationEpoch || viewer.plexReporting === false) {
             return;
           }
+          const baseClientId = scoped.clientId || 'uburoom-web-' + viewerId;
+          const hasActiveTab = [...this.sessions.values()].some(s => !s.stopped && s.userId === viewer.userId && s.viewerId !== viewerId && s.clientId === baseClientId);
+          const clientId = hasActiveTab ? `${baseClientId}-${String(viewerId).slice(0, 8)}` : baseClientId;
           const s = {
             sessionId: randomUUID(),
-            clientId: scoped.clientId || 'uburoom-web-' + randomUUID(),
+            clientId,
             userId: viewer.userId,
             viewerId,
             viewer,
@@ -185,7 +196,12 @@ class PlexReporting {
       if (session.stopped) return;
       try {
         await session.scopedPlex.request('/:/timeline?' + query, { method: 'POST', headers });
-      } catch {}
+      } catch (error) {
+        if (error?.status && [401, 403, 498].includes(error.status)) {
+          session.stopped = true;
+          if (this.sessions.get(viewerId) === session) this.sessions.delete(viewerId);
+        }
+      }
     });
   }
 

@@ -51,8 +51,12 @@ class PlexAuth {
       const renewed=await this.request('/auth/token',{clientId:credential.clientId,method:'POST',data:{jwt:this.jwt(credential,{nonce})}});
       if(typeof renewed.auth_token!=='string')throw new Error('Plex renewal unavailable');credential.token=renewed.auth_token;credential.expires=Date.now()+6*86400000;
     }
-    if(expectedSubject){const profile=await this.request('/user',{token:credential.token,clientId:credential.clientId});if(String(profile.id)!==expectedSubject)throw new PlexAccessError('Plex credential identity mismatch',true);}
-    const machine=await this.machine(),resources=await this.request('/resources?includeHttps=1&includeRelay=1',{token:credential.token,clientId:credential.clientId});
+    const [profile, machine, resources] = await Promise.all([
+      expectedSubject ? this.request('/user', { token: credential.token, clientId: credential.clientId }) : null,
+      this.machine(),
+      this.request('/resources?includeHttps=1&includeRelay=1', { token: credential.token, clientId: credential.clientId })
+    ]);
+    if (expectedSubject && String(profile?.id) !== expectedSubject) throw new PlexAccessError('Plex credential identity mismatch', true);
     const resource=Array.isArray(resources)&&resources.find(r=>r.clientIdentifier===machine&&String(r.provides).split(',').includes('server'));
     if(!resource||typeof resource.accessToken!=='string'||!resource.accessToken)throw Object.assign(new PlexAccessError('This Plex account does not have access to this server',true),{noServerAccess:true});
     credential.serverToken=resource.accessToken;
@@ -99,7 +103,7 @@ class PlexAuth {
     }catch(error){if(generation===this.generation)this.cache.delete(identity.subject);throw error;}})();
     this.inflight.set(identity.subject,job);try{return await job;}finally{if(this.inflight.get(identity.subject)===job)this.inflight.delete(identity.subject);}
   }
-  fresh(userId){const identity=this.accounts.identities(userId).find(i=>i.provider==='plex' && i.verified);return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
+  fresh(userId){const user=this.accounts.canonical(userId),identity=user&&this.accounts.identities(user.id).find(i=>i.provider==='plex' && i.verified);return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
   clear(){this.generation++;this.cache.clear();this.inflight.clear();this.fallbackCache=undefined;this.fallbackInflight=undefined;}
 }
 module.exports={PlexAuth,PlexAccessError};

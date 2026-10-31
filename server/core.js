@@ -80,7 +80,7 @@ class Hub {
   roomCommandAllowed(room, actor, command, personal = false) {
     if (personal) return true;
     const capability = RoomPolicy.commandCapability(command.action);
-    if (command.action === 'queue.auto.playNow') {
+    if (['queue.auto.playNow', 'media.next', 'queue.history.replay'].includes(command.action)) {
       if (!this.canRoom(room, actor, 'chooseMedia') && !(this.watchIdle?.(room.roomId) && this.canRoom(room, actor, 'playPause'))) return false;
     } else if (!capability || !this.canRoom(room, actor, capability)) return false;
     if (command.action === 'queue.offer.start' && !this.canRoom(room, actor, 'playPause')) return false;

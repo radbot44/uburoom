@@ -134,8 +134,14 @@ class RoomQueue {
     }
   }
 
-  bumpQueueRevision(roomId, at = this.now()) {
-    this.db.prepare('UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(at, at, roomId);
+  bumpQueueRevision(roomId, at = this.now(), { clearCursor = true } = {}) {
+    const room = this.room(roomId);
+    if (clearCursor && room?.autoQueue?.cursor) {
+      const autoQueue = { ...room.autoQueue, cursor: null };
+      this.db.prepare('UPDATE watch_rooms SET autoQueue = ?, queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(JSON.stringify(autoQueue), at, at, roomId);
+    } else {
+      this.db.prepare('UPDATE watch_rooms SET queueRevision = queueRevision + 1, updatedAt = ?, lastAccessedAt = ? WHERE id = ?').run(at, at, roomId);
+    }
   }
 
   getEntry(entryId) {
@@ -441,7 +447,7 @@ class RoomQueue {
         this.db.prepare('UPDATE watch_rooms SET autoQueue = ? WHERE id = ?').run(JSON.stringify(updated), roomId);
       }
       result = this.computeAutoNext(roomId, corpus, { forceAdvance: true });
-      this.bumpQueueRevision(roomId, at);
+      this.bumpQueueRevision(roomId, at, { clearCursor: false });
     });
     await this.store.commit();
     return { skipped: autoNext, next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
@@ -472,7 +478,7 @@ class RoomQueue {
       } else {
         result = { next: null, autoQueue: cleared };
       }
-      this.bumpQueueRevision(roomId, at);
+      this.bumpQueueRevision(roomId, at, { clearCursor: false });
     });
     await this.store.commit();
     return { added: this.getEntry(addedId), next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
@@ -650,11 +656,12 @@ class RoomQueue {
         serverId: item.serverId, mediaId: item.mediaId, type: item.type,
         title: item.title, duration: item.duration, position: item.position || 0
       };
+      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
       this.db.prepare(`
         UPDATE watch_rooms
-        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
         WHERE id = ?
-      `).run(JSON.stringify(bookmark), at, roomId);
+      `).run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
 
       this.pruneHistory(roomId);
     });
@@ -722,11 +729,12 @@ class RoomQueue {
         serverId: target.serverId, mediaId: target.mediaId, type: target.type,
         title: target.title, duration: target.duration, position: target.position || 0
       };
+      const autoQueue = room.autoQueue?.cursor ? { ...room.autoQueue, cursor: null } : room.autoQueue;
       this.db.prepare(`
         UPDATE watch_rooms
-        SET bookmark = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
+        SET bookmark = ?, autoQueue = ?, checkpointRevision = checkpointRevision + 1, queueRevision = queueRevision + 1, updatedAt = ?
         WHERE id = ?
-      `).run(JSON.stringify(bookmark), at, roomId);
+      `).run(JSON.stringify(bookmark), JSON.stringify(autoQueue), at, roomId);
 
       if (validatedCorpus) generated = this.computeAutoNext(roomId, validatedCorpus);
       this.pruneHistory(roomId);

@@ -50,7 +50,8 @@ function loginStore(context, vault, registry) {
   const db = registry.db;
   const matching = registry.meta('loginContext') === context;
   const entries = matching ? db.prepare('SELECT id,record FROM browser_logins').all().map(row => [row.id, JSON.parse(row.record)]) : [];
-  const logins = new Map(entries.map(([id, value]) => [id, { ...value, ...(value.oauth ? { oauth: vault.open(value.oauth) } : {}) }]).filter(([, value]) => value.expires === null || value.expires > Date.now()));
+  const now = Date.now();
+  const logins = new Map(entries.filter(([, value]) => value.expires === null || value.expires > now).map(([id, value]) => [id, { ...value, ...(value.oauth ? { oauth: vault.open(value.oauth) } : {}) }]));
   // Cache encrypted records so pruning expired logins never re-encrypts every
   // other user's OAuth credentials on the one-second lifecycle sweep.
   const encoded = new Map(entries.map(([id, value]) => [id, { plain: JSON.stringify(logins.get(id)), value: JSON.stringify(value) }]));

@@ -96,7 +96,11 @@ class Watch {
       }
     }
   }
-  async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized) {
+  async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized,extraOptions) {
+    const opts = (typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function')
+      ? { ...authorized, ...extraOptions }
+      : { authorized, ...extraOptions };
+    const authFn = opts.authorized;
     if (source.unavailable) source = await plex.prepare(source.id,'direct',false,undefined,undefined,{sourceOnly:true});
     const {candidates}=require('./quality-options');
     const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
@@ -104,7 +108,7 @@ class Watch {
     const options=candidates(choices,requested,source), quality=options[0]?.id;
     if(!quality)throw new PlaybackError('No available quality is at or below your preferred setting. Your preference has been kept.');
     const prepare=(value,sharedOnly=false)=>this.prepareOutput(room,viewer,plex,source,value,compatible,fallback,
-      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,authorized,sharedOnly});
+      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,...opts,authorized:authFn,sharedOnly});
     let media;
     try {media=await prepare(quality);}
     catch(error) {
@@ -115,7 +119,7 @@ class Watch {
       }
       if(!media)throw error;
     }
-    media.qualityNotice=media.quality!==Engine.qualityId(requested)?'Your requested quality is unavailable. Playing '+(choices.find(q=>q.id===media.quality)?.label || media.quality)+'. You can try your preferred quality again later.':'';
+    media.qualityNotice=media.quality!=='direct'&&media.quality!==Engine.qualityId(requested)?'Your requested quality is unavailable. Playing '+(choices.find(q=>q.id===media.quality)?.label || media.quality)+'. You can try your preferred quality again later.':'';
     return media;
   }
   prepareOutput(room,viewer,plex,source,quality,compatible,fallback,choices) {
@@ -195,7 +199,7 @@ class Watch {
       }
       if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
       if(!accept(media))throw new PlaybackError('Plex could not refresh this stream.');
-      this.tracking.end(viewer,'stream-changed');void this.reporting?.end(viewer, 'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();adopted=true;
+      this.tracking.end(viewer,'stream-changed');void this.reporting?.end(viewer, 'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();viewer.directDelivery=undefined;adopted=true;
       if (media.unavailable) {
         const entry=room.saved && this.roomState.queue.current(room.s.roomId);
         viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
@@ -216,7 +220,11 @@ class Watch {
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false, hostTimedOut = false, lastPresence = 0;
     for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion || room.saved && room.s.visibility === 'private' && !RoomPolicy.assigned(room.saved,saved.userId) && !this.hub.isAdmin({userId:saved.userId})) room.disconnectedViewers.delete(id);
-    for (const viewer of room.viewers.values()) this.tracking.expire(viewer);
+    for (const viewer of room.viewers.values()) {
+      const hadTracking = !!viewer.tracking;
+      this.tracking.expire(viewer);
+      if (hadTracking && !viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
+    }
     for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !(room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) && !this.hub.isAdmin(viewer.actor)) {
       lastPresence = Math.max(lastPresence, viewer.at);
       if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || (room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) || this.hub.isAdmin(viewer.actor))) {
@@ -228,6 +236,7 @@ class Watch {
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
           plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
+          directProxyVersion:viewer.directProxyVersion, browserSubtitles:viewer.browserSubtitles,
           localDelivery:viewer.localDelivery,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
@@ -392,6 +401,7 @@ class Watch {
       plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
       plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
+      directProxyVersion:saved?.directProxyVersion, browserSubtitles:saved?.browserSubtitles,
       syncQuality:saved?.syncQuality, localDelivery:saved?.localDelivery ?? false,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
@@ -447,9 +457,11 @@ class Watch {
             mediaId: next.mediaId,
             type: next.type,
             title: next.title,
-            subtitle: formatEntrySubtitle(next),
+            subtitle: room.endingMeta?.get(next.mediaId)?.subtitle || formatEntrySubtitle(next),
             duration: next.duration,
             summary: room.endingMeta?.get(next.mediaId)?.summary || '',
+            hasLandscape: Boolean(room.endingMeta?.get(next.mediaId)?.hasLandscape ?? next.hasLandscape),
+            hasPoster: Boolean(room.endingMeta?.get(next.mediaId)?.hasPoster ?? next.hasPoster),
             source: next.provenance === 'following' || next.provenance === 'random' || next.provenance === 'continue' || next.source === 'auto' ? 'auto' : 'queue'
           } : endingOffer ? {
             ...endingOffer,
@@ -570,7 +582,7 @@ class Watch {
       if (!await currentRequest() || this.rooms.get(id) !== room || room && !await this.canView(room,actor) || !await currentRequest()) {
         throw Object.assign(new Error('Room access changed; retry manually'),{status:403});
       }
-      if (action === 'queue.auto.playNow' && !room?.media && !queue.current(id)) {
+      if ((action === 'queue.auto.playNow' || action === 'media.next' || action === 'queue.history.replay') && !room?.media && !queue.current(id)) {
         const r = queue.room(id), canonical = queue.account(actor.userId);
         if (this.roomState.store.isAdmin(canonical) !== true && !RoomPolicy.allowed(r, canonical, 'chooseMedia') && !RoomPolicy.allowed(r, canonical, 'playPause')) {
           throw Object.assign(new Error('Room queue permission required'), { status: 403 });
@@ -585,7 +597,7 @@ class Watch {
     if (room?.mediaTransition || room?.queueEditing) throw Object.assign(new Error('Wait for the current queue operation'),{status:409});
     const priorCountdown = room?.autoplayCountdown;
     const hadMedia = !!room?.media;
-    const wasEmptyQueue = !queue.current(id) && !queue.pending(id).length;
+    const wasEmptyQueue = !priorCountdown && !queue.current(id) && !queue.pending(id).length;
     if (room) {
       room.queueEditing = true;
       if (hadMedia) {
@@ -618,7 +630,7 @@ class Watch {
         }
         if (action === 'queue.add' && room && !room.media && wasEmptyQueue) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
+          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
         }
         value = action === 'queue.add' ? await queue.add(id,actor.userId,item,{expectedRevision:revision}) : await queue.playNow(id,actor.userId,item);
       } else if (action === 'queue.offer.start') {
@@ -655,7 +667,7 @@ class Watch {
         value = await queue.addBulk(id,actor.userId,items.map(item => this.queueItem(item,serverId)),{expectedRevision:revision,unfinished:args.unfinished});
         if (room && !room.media && wasEmptyQueue && value.addedCount) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
+          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
         }
       } else if (action === 'queue.auto') {
         let scope = null, corpus;
@@ -683,7 +695,7 @@ class Watch {
         }
         if (room && !room.media && !queue.current(id) && !queue.pending(id).length && value.autoQueue?.next && this.roomState.store.get(id).autoplay) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.next',args:{}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
+          return this.changeQueueMedia(room,{action:'media.next',args:{}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
         }
       } else if (action === 'queue.auto.skip') {
         const corpus = await this.autoCorpus(id,actor) || [];
@@ -699,14 +711,16 @@ class Watch {
         value = {...value,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
         if (room && !room.media && wasEmptyQueue && value.added && this.roomState.store.get(id).autoplay) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:value.added.id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion});
+          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:value.added.id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
         }
       } else if (action === 'queue.auto.playNow') {
         if (room) {
           room.queueEditing = false;
           return this.changeQueueMedia(room,{action:'queue.auto.playNow',args:{skipPrevious:!!args.skipPrevious}},actor,permitted);
         }
-        const corpus = await this.autoCorpus(id,actor);
+        const pendingItems = queue.pending(id);
+        const postAnchor = !args.skipPrevious && pendingItems.length > 0 ? pendingItems[pendingItems.length - 1] : undefined;
+        const corpus = await this.autoCorpus(id,actor,this.roomState.store.get(id).autoQueue,postAnchor);
         await check();
         value = await queue.playAutoNow(id,actor.userId,{expectedRevision:revision,autoCorpus:corpus,skipPrevious:!!args.skipPrevious});
         await this.verifyAutoNext(id,actor,corpus);
@@ -723,7 +737,7 @@ class Watch {
         }
         value = await queue.historyReplay(id,actor.userId,args.entryId,{resume:args.resume,restore:action === 'queue.history.goBack',expectedRevision:revision});
       }
-      if (['queue.add','queue.playNow','queue.playEntry','queue.skipTo','queue.bulk','queue.move','queue.remove','queue.clear','queue.history.replay','queue.history.goBack'].includes(action) &&
+      if (['queue.add','queue.playNow','queue.playEntry','queue.skipTo','queue.bulk','queue.move','queue.remove','queue.clear','queue.shuffle','queue.history.clear','queue.history.replay','queue.history.goBack'].includes(action) &&
           this.roomState.store.get(id).autoQueue.mode !== 'off') {
         try {
           const corpus = await this.autoCorpus(id,actor);
@@ -784,6 +798,7 @@ class Watch {
       const needed = [summary.lastHistory, nextItem].filter(Boolean);
       const viewer = [...room.viewers.values()][0];
       const plex = viewer && this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex;
+      let changed = false;
       if (plex?.details) {
         for (const item of needed) {
           if (!room.endingMeta.has(item.mediaId)) {
@@ -791,23 +806,25 @@ class Watch {
               const details = await plex.details(item.mediaId, item.type);
               room.endingMeta.set(item.mediaId, {
                 summary: details?.summary || '',
-                subtitle: details?.subtitle || '',
-                hasLandscape: !!details?.hasLandscape,
-                hasPoster: !!details?.hasPoster
+                subtitle: details?.subtitle || item.subtitle || '',
+                hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
+                hasPoster: Boolean(details?.hasPoster || item.hasPoster)
               });
               while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
+              changed = true;
             } catch {
-              room.endingMeta.set(item.mediaId, { summary: '', subtitle: '', hasLandscape: false, hasPoster: false });
+              room.endingMeta.set(item.mediaId, { summary: '', subtitle: item.subtitle || '', hasLandscape: Boolean(item.hasLandscape), hasPoster: Boolean(item.hasPoster) });
             }
           }
         }
       } else {
         for (const item of needed) {
           if (!room.endingMeta.has(item.mediaId)) {
-            room.endingMeta.set(item.mediaId, { summary: '', subtitle: '', hasLandscape: false, hasPoster: false });
+            room.endingMeta.set(item.mediaId, { summary: '', subtitle: item.subtitle || '', hasLandscape: Boolean(item.hasLandscape), hasPoster: Boolean(item.hasPoster) });
           }
         }
       }
+      if (changed) { room.revision++; this.refresh(room); }
       if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
         const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
         if (!room.endingOffer || room.endingOffer.key !== offerKey) {
@@ -929,8 +946,23 @@ class Watch {
       room.mediaTransition = false;
     }
     await this.refreshEndingMeta(room);
-    const latestRecord = this.roomState.store.get(record.id);
-    const next = this.nextCandidate(record.id);
+    let latestRecord = this.roomState.store.get(record.id);
+    let next = this.nextCandidate(record.id);
+    if (!next && latestRecord.autoQueue.mode !== 'off') {
+      try {
+        const actor = room.viewers.get(room.hostViewerId)?.actor || [...room.viewers.values()][0]?.actor;
+        if (actor) {
+          const corpus = await this.autoCorpus(record.id, actor);
+          if (corpus) {
+            await this.roomState.queue.generate(record.id, actor.userId, corpus, { expectedRevision: latestRecord.queueRevision });
+            await this.verifyAutoNext(record.id, actor, corpus);
+            latestRecord = this.roomState.store.get(record.id);
+            this.roomState.apply(room, latestRecord);
+            next = this.nextCandidate(record.id);
+          }
+        }
+      } catch {}
+    }
     if (next && latestRecord.autoplay) {
       await this.startAutoplayCountdown(room, { intent: room.playbackIntent || 0, data });
     } else if (!next && current?.type === 'episode' && latestRecord.autoQueue.mode === 'off') {
@@ -1100,6 +1132,7 @@ class Watch {
       if (!this.hub.canRoom(s, actor, 'playPause')) return { status: 'forbidden', message: 'Pausing requires playback permission.' };
       this.cancelAutoplay(room);
       room.manualPaused = true;
+      room.endedVersion = undefined;
       return { status: 'applied', message: 'Autoplay paused.' };
     }
     if (!room.media && room.saved && room.endedVersion && (action === 'media.seek.end' || action.startsWith('media.seek.'))) {
@@ -1123,9 +1156,14 @@ class Watch {
     if (action.startsWith('media.autoplay.')) {
       if (!room.saved) return {status:'unsupported',message:'Autoplay requires a saved room.'};
       this.cancelAutoplay(room); clearPlaybackEnd(room);
+      if (action === 'media.autoplay.cancel') room.endedVersion = undefined;
       if (action === 'media.autoplay.set') {
         await this.roomState.queue.setAutoplay(s.roomId,actor.userId,args.enabled);
         this.roomState.apply(room,this.roomState.store.get(s.roomId));
+        if (args.enabled && !room.media) {
+          const next = this.nextCandidate(s.roomId);
+          if (next) await this.startAutoplayCountdown(room);
+        }
       }
       return {status:'applied',message:'Autoplay updated.'};
     }
@@ -1150,10 +1188,10 @@ class Watch {
       if (action === 'media.tracks.set') return this.changeTracks(room,viewer,args,actor,permitted);
       if (action === 'media.stream.refresh') return this.refreshStream(room,viewer,args,actor,permitted);
       if (action === 'media.quality.set') {
-        if (!room.media || room.media.kind === 'demo') return { status: 'unsupported', message: 'Quality is unavailable for this video.' };
+        if (!args.compatible && !args.fallback && args.quality) viewer.preferredQuality = Engine.qualityId(args.quality);
+        if (!room.media || room.media.kind === 'demo') return { status: 'applied', message: 'Preferred quality updated for future videos.' };
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
         const version = room.mediaVersion;
-        if(!args.compatible && !args.fallback)viewer.preferredQuality=Engine.qualityId(args.quality);
         const fallback = args.fallback || viewer.fallback;
         viewer.updating = true;
         try {
@@ -1240,7 +1278,7 @@ class Watch {
         (selection.subtitle?.id!==current.selection.subtitle?.id || selection.subtitle?.delivery!==current.selection.subtitle?.delivery);
       if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
         const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-          this.prepareOutput(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
+          this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
             {...choices,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],authorized}),{permitted});
         if(result.status!=='applied')return result;
         if(selection.subtitle?.delivery==='burn')viewer.fallback=undefined;
@@ -1269,7 +1307,7 @@ class Watch {
     viewer.updating=true;
     try {
       const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-        this.prepareOutput(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
+        this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
           {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],excludeLease:current.hlsLease,authorized}),
         {permitted,accept:media=>media.format==='hls'});
       return result.status==='applied'?{status:'applied',message:'Your stream refreshed.'}:result;

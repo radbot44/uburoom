@@ -2,6 +2,7 @@
 const {randomBytes}=require('node:crypto');
 const {hash}=require('./core');
 const {isServerOperator}=require('./operator-policy');
+const {clientAddress}=require('./plex-delivery');
 
 function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protectedPost,webActor,body,json,cookies,cookie,logins,loginStore,discordStart,throttle}) {
   const attempts=new Map(),previews=new Map(),merges=new Map(),errors=new Map();
@@ -15,19 +16,19 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
     loginStore.save();plexAuth.clear();
     await watchRoutes.invalidate(ids);
   }
-  function session(res,account,name){const token=secret();logins.set(hash(token),{userId:account.id,accountRevision:account.revision,name,csrf:secret(),expires:null});loginStore.save();res.setHeader('Set-Cookie',cookie('uburoom',token,31536000));}
+  function session(res,account,name,oauth){const token=secret();logins.set(hash(token),{userId:account.id,accountRevision:account.revision,name,csrf:secret(),expires:null,...(oauth?{oauth}:{})});loginStore.save();res.setHeader('Set-Cookie',cookie('uburoom',token,31536000));}
   function mergePreview(req,login,incoming){
     const source=registry.canonical(login.userId),other=registry.canonical(incoming.conflict.id),all=[...registry.identities(source.id),...registry.identities(other.id)];
     if(new Set(all.map(i=>i.provider)).size!==all.length)throw new Error('Accounts have conflicting identities; owner assistance is required');
-    const id=secret();merges.set(sourceHash(req),{id,sourceHash:sourceHash(req),sourceId:source.id,otherId:other.id,version:JSON.stringify([source.revision,other.revision]),credential:incoming.credential,subject:incoming.subject,expires:Date.now()+300000});
+    const id=secret();merges.set(sourceHash(req),{id,sourceHash:sourceHash(req),sourceId:source.id,otherId:other.id,version:JSON.stringify([source.revision,other.revision]),credential:incoming.credential,subject:incoming.subject,provider:incoming.provider,name:incoming.name,oauth:incoming.oauth||login.oauth,expires:Date.now()+300000});
     return {pendingMerge:true};
   }
-  async function verifiedLink(req,res,login,provider,subject,name,credential){
+  async function verifiedLink(req,res,login,provider,subject,name,credential,oauth){
     const result=registry.link(login.userId,provider,subject,name);
-    if(result.conflict)return mergePreview(req,login,{...result,credential,subject:credential?subject:undefined});
+    if(result.conflict)return mergePreview(req,login,{...result,provider,subject,name,credential,oauth:oauth||login.oauth});
     if(credential)registry.credential(subject,credential);plexAuth.clear();
     registry.audit(login.userId,'self-link',{provider,subject});
-    await invalidate([login.userId]);session(res,result.user,result.user.name);return {linked:true};
+    await invalidate([login.userId]);session(res,result.user,result.user.name,oauth||login.oauth);return {linked:true};
   }
   async function startPlex(req,res,login,returnTo){
     if(!plexAuth.plex.configured)throw new Error('Configure Plex on the server first');
@@ -41,7 +42,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
     if(!registry)return false;
     const route=url.pathname;
     if(!route.startsWith('/api/account')&&!route.startsWith('/auth/plex'))return false;
-    if(!throttle('account:'+req.socket.remoteAddress,120)){json(res,429,{error:'Too many account requests'});return true;}
+    if(!throttle('account:'+(clientAddress(req)||'local'),120)){json(res,429,{error:'Too many account requests'});return true;}
     try {
       if(req.method==='GET'&&route==='/api/account/auth-error'){
         const id=cookies(req).uburoom_auth_error,record=errors.get(id);errors.delete(id);json(res,200,{error:record&&record.expires>Date.now()?record.message:'Sign-in expired. Start again from uburoom.'});return true;
@@ -110,7 +111,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
         if(remaining.provider==='discord'&&!hub.access.isMember(login.userId))throw new Error('Discord access changed; keep Plex connected');
         if(busy([login.userId]))throw new Error('Leave your watch rooms before removing a connected account');
         const account=registry.unlink(login.userId,provider,data.subject);
-        await invalidate([account.id],ownerChanged);merges.delete(sourceHash(req));session(res,account,account.name);
+        await invalidate([account.id],ownerChanged);merges.delete(sourceHash(req));session(res,account,account.name,provider==='discord'?undefined:login.oauth);
         json(res,200,{removed:true});return true;
       }
       if(req.method==='POST'&&route==='/api/account/merge'){
@@ -123,8 +124,8 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
         if(!current||current!==login)throw new Error('Account sign-in changed; connect again');
         if(JSON.stringify([registry.canonical(a.id)?.revision,registry.canonical(b.id)?.revision])!==merge.version)throw new Error('Accounts changed; connect again');
         if(busy([a.id,b.id]))throw new Error('Leave all watch rooms for both accounts before merging');
-        registry.merge(a.id,b.id,a.id);if(merge.credential)registry.credential(merge.subject,merge.credential);
-        await invalidate([a.id,b.id]);merges.delete(sourceHash(req));session(res,registry.canonical(a.id),a.name);json(res,200,{merged:true});return true;
+        registry.merge(a.id,b.id,a.id,'self-merge',{provider:merge.provider,subject:merge.subject,name:merge.name});if(merge.credential)registry.credential(merge.subject,merge.credential);
+        await invalidate([a.id,b.id]);merges.delete(sourceHash(req));session(res,registry.canonical(a.id),a.name,merge.oauth||login.oauth);json(res,200,{merged:true});return true;
       }
       if(!hub.isOwner(webActor(login))||!hub.isAdmin(webActor(login))){json(res,403,{error:'Enable owner Admin mode to match accounts'});return true;}
       if(req.method==='GET'&&route==='/api/account/admin'){json(res,200,{accounts:registry.list()});return true;}
@@ -140,12 +141,14 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
         previews.set(id,{...preview,discordName,sourceHash:sourceHash(req),expires:Date.now()+300000});json(res,200,{id,discordId:data.discordId,discordName,plexId:data.plexId,plexName,accounts:preview.users});return true;
       }
       if(req.method==='POST'&&route==='/api/account/admin/assign'){
-        const data=await body(req),preview=previews.get(data.id);previews.delete(data.id);
+        const data=await body(req),preview=previews.get(data.id);
+        if(preview&&preview.expires<=Date.now())previews.delete(data.id);
         if(!preview||preview.sourceHash!==sourceHash(req)||preview.expires<=Date.now())throw new Error('Match preview expired; preview again');
         if(busy(preview.users.map(u=>u.id)))throw new Error('Both accounts must leave their watch rooms before matching');
         const current=await user(req);
         if(!current||current!==login||!hub.isOwner(webActor(current))||!hub.isAdmin(webActor(current))){json(res,403,{error:'Owner Admin permission changed; preview again'});return true;}
         if(busy(preview.users.map(u=>u.id)))throw new Error('Both accounts must leave their watch rooms before matching');
+        previews.delete(data.id);
         const id=registry.assign(preview,current.userId);await invalidate(preview.users.map(u=>u.id));json(res,200,{account:registry.summary(id)});return true;
       }
       json(res,404,{error:'Account action unavailable'});return true;

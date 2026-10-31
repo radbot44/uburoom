@@ -99,7 +99,14 @@ class uburoomSubtitleWindows {
     pending.promise=(async()=>{
       try{
         const response=await fetch(url,{signal});
-        if(!response.ok){const value=await response.json().catch(()=>({}));throw Object.assign(new Error(value.error||'Subtitles could not load. Try Plex burn-in.'),{terminal:response.status===403});}
+        if(!response.ok){
+          const value=await response.json().catch(()=>({}));
+          const error=Object.assign(new Error(value.error||'Subtitle window could not load. Try Plex burn-in.'),{terminal:response.status===403});
+          if(/(?:exceeded the supported|timed out|no usable data|failed during media demuxing|could not be extracted|needs configured FFmpeg)/i.test(error.message)){
+            error.burnFallback=true;
+          }
+          throw error;
+        }
         const header=name=>{const raw=response.headers.get(name);return raw!==null&&raw!==''?Number(raw):NaN;};
         const startMs=header('x-subtitle-start-ms'),endMs=header('x-subtitle-end-ms'),cues=header('x-subtitle-cues');
         if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||startMs<0||endMs<=startMs||endMs-startMs>240000||targetMs<startMs||targetMs>=endMs)throw new Error('Invalid subtitle coverage. Try Plex burn-in.');
@@ -153,6 +160,9 @@ class uburoomSubtitleWindows {
         await this.queue;
       }catch(error){
         if(!current())return;
+        if(/(?:exceeded the supported|timed out|no usable data|failed during media demuxing|could not be extracted|needs configured FFmpeg)/i.test(error.message)){
+          error.burnFallback=true;
+        }
         this.error=error;this.failures++;this.retryAt=Date.now()+1000*2**(this.failures-1);
         if(error.initialization)this.beforeMs=60000;
         this.onError(error,error.terminal||this.failures>=3);
@@ -267,7 +277,7 @@ class uburoomSubtitles {
           if(typeof value.window!=='string'||!value.window.startsWith(url+'/')||!value.window.endsWith('/window'))throw new Error('Invalid subtitle window.');
           const scheduler=this.windowScheduler=new uburoomSubtitleWindows(renderer,value.window,()=>{this.streamSynced=undefined;this.syncStatus();},abort.signal,(error,failed)=>{
             if(error.terminal)renderer.destroy();
-            this.status({message:failed?error.message:'Retrying subtitles…',error:!!failed,loading:!failed});
+            this.status({message:failed?error.message:'Retrying subtitles…',error:!!failed,loading:!failed,burnFallback:!!error.burnFallback});
           });
           this.syncStatus();
           scheduler.check(this.mediaTime()-(this.offset||0));
@@ -322,7 +332,7 @@ class uburoomSubtitles {
       this.streaming=false;this.streamSynced=false;
       this.attempts=error.terminal ? 3 : this.attempts+1;
       const failed=this.attempts>=3;
-      this.status({message:failed ? error.message : 'Retrying subtitles…',error:failed,loading:!failed});
+      this.status({message:failed ? error.message : 'Retrying subtitles…',error:failed,loading:!failed,burnFallback:!!error.burnFallback});
       if(!failed)this.timer=setTimeout(()=>{this.timer=undefined;void this.load();},1000*2**(this.attempts-1));
     } finally {
       if(generation===this.generation)this.loading=false;

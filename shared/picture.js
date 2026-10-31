@@ -52,7 +52,7 @@
       case 'stretch.set': s[a.axis] = a.value; break;
       case 'stretch.adjust': s[a.axis] = Math.max(.1, Math.min(16, s[a.axis] + a.delta)); break;
       case 'pan.set': s.x = a.x; s.y = a.y; break;
-      case 'pan.move': s.x += a.x; s.y += a.y; break;
+      case 'pan.move': s.x = Math.max(-PAN_MAX, Math.min(PAN_MAX, s.x + a.x)); s.y = Math.max(-PAN_MAX, Math.min(PAN_MAX, s.y + a.y)); break;
       case 'pan.step': case 'pan.edge': {
         const scale = s.zoom * (a.axis === 'x' ? s.stretchX : s.stretchY);
         const edge = Math.min(PAN_MAX, Math.max(1, (1 + scale) / 2 + .5));

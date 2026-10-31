@@ -22,6 +22,7 @@ const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
+const { clientAddress } = require('./plex-delivery');
 const SharedSync = require('../shared/sync');
 const SHARED_SYNC_MODULES = new Set([
   'index.mjs', 'timing.mjs', 'player-adapter.mjs', 'client-sync.mjs',
@@ -31,6 +32,45 @@ const SHARED_SYNC_MODULES = new Set([
 const BROWSER_TIMING_SCRIPT = `'use strict';\nglobalThis.uburoomTiming=(${SharedSync.Timing.createTimingApi.toString()})();\n`;
 const BROWSER_QUALITY_SCRIPT = `'use strict';\nglobalThis.uburoomSyncQuality=(${SharedSync.Quality.createQualityApi.toString()})();\n`;
 const BROWSER_SYNC_PROTOCOL_PREFIX = `'use strict';\nglobalThis.uburoomSyncProtocol=(${SharedSync.Protocol.createProtocolApi.toString()})();\n`;
+
+const BRANDING = {
+  '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
+  '/assets/branding/uburoom-oomark-brand.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
+  '/favicon.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
+  '/favicon.ico': ['uburoom-favicon.ico', 'image/vnd.microsoft.icon']
+};
+const DIAGNOSTIC_ASSETS = {
+  '/__diagnostics/codec': ['codec.html', 'text/html'],
+  '/__diagnostics/codec.js': ['codec.js', 'text/javascript'],
+  '/__diagnostics/codec.css': ['codec.css', 'text/css']
+};
+const STATIC_ASSETS = {
+  '/assets/fonts/UburoomSans-Regular.woff2': ['assets/fonts/UburoomSans-Regular.woff2', 'font/woff2'],
+  '/icons.js': ['icons.js', 'text/javascript'],
+  '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
+  '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
+  '/assets/branding/uburoom-oomark-mono.svg': ['assets/branding/uburoom-oomark-mono.svg', 'image/svg+xml'],
+  '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
+  '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
+  '/playback-policy.js':['playback-policy.js','text/javascript'],
+  '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
+  '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
+  '/watch-dialogs.js':['watch-dialogs.js','text/javascript'],
+  '/watch-player-ui.js':['watch-player-ui.js','text/javascript'],
+  '/watch-layout.js':['watch-layout.js','text/javascript'],
+  '/watch-player.css':['watch-player.css','text/css'],
+  '/watch-transport.js':['watch-transport.js','text/javascript'],
+  '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
+  '/watch-controls.js':['watch-controls.js','text/javascript'],
+  '/watch-toasts.js':['watch-toasts.js','text/javascript'],
+  '/watch-feedback.js':['watch-feedback.js','text/javascript'],
+  '/ubumfa.js':['ubumfa.js','text/javascript'],
+  '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
+  '/watch-queue.css':['watch-queue.css','text/css'],
+  '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
+  '/native-handoff.js':['native-handoff.js','text/javascript'],
+  '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/server-settings.js':['server-settings.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript']
+};
 
 function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authorize', oauthFetch = fetch, plexFetch = fetch, plexDemo } = {}) {
   // Browser-only installations do not need a Discord text-channel whitelist.
@@ -97,7 +137,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value));
   }
   function renewCookie(req, res, login, force = false) {
-    if (!login) return;
+    if (!login || login.expires !== null) return;
     const token = cookies(req).uburoom, now = Date.now();
     if (force || now - (cookieRenewedAt.get(hash(token)) || 0) >= 86400000) {
       res.setHeader('Set-Cookie', cookie('uburoom', token, loginSeconds));
@@ -112,6 +152,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     // Pending identities must remain usable for account linking when admission
     // requires Plex. Playback admission is enforced separately by watch routes.
     if (!config.accessPolicy && !(hub.access?.canWatch?hub.access.canWatch(login.userId):hub.access?.isMember(login.userId)) && !await (hub.access?.refreshWatch||hub.access?.refresh)?.(login.userId)) return;
+    if (logins.get(id) !== login || !validIdentity(login) || (login.expires !== null && login.expires <= Date.now())) return;
     if (login.oauth && login.oauth.expires <= Date.now()) {
       if (!renewals.has(id)) {
         const renewal = (async () => {
@@ -126,7 +167,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           const renewed = await response.json();
           if (typeof renewed.refresh_token !== 'string' || !Number.isFinite(renewed.expires_in) || renewed.expires_in <= 0) throw new Error('Invalid login renewal');
           // Logout may have removed this login while Discord was responding.
-          if (logins.get(id) !== login || !validIdentity(login)) return;
+          if (logins.get(id) !== login || !validIdentity(login) || (login.expires !== null && login.expires <= Date.now())) return;
           login.oauth = { refreshToken: renewed.refresh_token, expires: Date.now() + renewed.expires_in * 1000 };
           accounts.save(); return login;
         })().catch(() => { throw Object.assign(new Error('Discord login renewal temporarily unavailable'), { status: 503 }); })
@@ -135,7 +176,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       return renewals.get(id);
     }
-    return logins.get(id) === login && validIdentity(login) ? login : undefined;
+    return logins.get(id) === login && validIdentity(login) && (login.expires === null || login.expires > Date.now()) ? login : undefined;
   }
   async function protectedPost(req) {
     if (req.headers.origin !== config.publicUrl) return;
@@ -300,7 +341,21 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
-      if (!throttle(req.socket.remoteAddress || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
+      const branding = BRANDING, assets = STATIC_ASSETS, diagnosticAssets = DIAGNOSTIC_ASSETS;
+      const subtitleAsset = /^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
+      const isStaticAsset = ['GET', 'HEAD'].includes(req.method) && (
+        route === '/theme.js' ||
+        Boolean(branding[route]) ||
+        Boolean(assets[route] && assets[route][0] !== 'watch.html') ||
+        Boolean(subtitleAsset) ||
+        Boolean(diagnosticAssets[route]) ||
+        route === '/vendor/hls.js' ||
+        route === '/room-protocol.js' ||
+        route === '/picture.js' ||
+        route === '/engine.js' ||
+        route.startsWith('/shared/sync/')
+      );
+      if (!isStaticAsset && !throttle(clientAddress(req) || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
       if (await operatorRoutes.route(req, res, url, (status, value) => {
         operatorSettingsFlushed = true; json(res, status, value);
       })) return;
@@ -325,7 +380,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins(req) : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
       const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' ? plexDeliveryOrigins.map(origin => ' ' + origin).join('') : '';
       if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; font-src 'self'; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
-      const subtitleAsset=/^\/vendor\/subtitles\/(jassub(?:-worker(?:-modern)?)?\.(?:js|wasm)|libbitsub(?:-renderer)?\.js|libbitsub_bg\.wasm|default\.woff2)$/.exec(route);
       if(req.method==='GET' && subtitleAsset){
         const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
         if(name.endsWith('.js'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:");
@@ -374,12 +428,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(content);
       }
-      const branding = {
-        '/assets/branding/uburoom-wordmark-brand.svg': ['uburoom-wordmark-brand.svg', 'image/svg+xml; charset=utf-8'],
-        '/assets/branding/uburoom-oomark-brand.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
-        '/favicon.svg': ['uburoom-oomark-brand.svg', 'image/svg+xml; charset=utf-8'],
-        '/favicon.ico': ['uburoom-favicon.ico', 'image/vnd.microsoft.icon']
-      };
       if (req.method === 'GET' && branding[route]) {
         const [file, type] = branding[route];
         const content = await readAsset(path.join(publicDir, 'assets', file));
@@ -399,32 +447,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});
         return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+themeScript);
       }
-      const assets = {
-        '/assets/fonts/UburoomSans-Regular.woff2': ['assets/fonts/UburoomSans-Regular.woff2', 'font/woff2'],
-        '/icons.js': ['icons.js', 'text/javascript'],
-        '/assets/discord-symbol-white.svg': ['assets/discord-symbol-white.svg', 'image/svg+xml'],
-        '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
-        '/assets/branding/uburoom-oomark-mono.svg': ['assets/branding/uburoom-oomark-mono.svg', 'image/svg+xml'],
-        '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
-        '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
-        '/playback-policy.js':['playback-policy.js','text/javascript'],
-        '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
-        '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
-        '/watch-dialogs.js':['watch-dialogs.js','text/javascript'],
-          '/watch-player-ui.js':['watch-player-ui.js','text/javascript'],
-        '/watch-layout.js':['watch-layout.js','text/javascript'],
-        '/watch-player.css':['watch-player.css','text/css'],
-        '/watch-transport.js':['watch-transport.js','text/javascript'],
-        '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
-        '/watch-controls.js':['watch-controls.js','text/javascript'],
-        '/watch-toasts.js':['watch-toasts.js','text/javascript'],
-        '/watch-feedback.js':['watch-feedback.js','text/javascript'],
-        '/ubumfa.js':['ubumfa.js','text/javascript'],
-        '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
-        '/watch-queue.css':['watch-queue.css','text/css'],
-        '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
-        '/native-handoff.js':['native-handoff.js','text/javascript'],
-        '/auth/error':['auth-error.html','text/html'],'/auth-error.js':['auth-error.js','text/javascript'],'/demo-discord':['demo-discord.html','text/html'],'/demo-discord.js':['demo-discord.js','text/javascript'],'/demo-plex':['demo-plex.html','text/html'],'/demo-plex.js':['demo-plex.js','text/javascript'],'/server-settings.js':['server-settings.js','text/javascript'],'/account.js':['account.js','text/javascript'],'/handoff.js': ['handoff.js', 'text/javascript'], '/watch.js': ['watch.js', 'text/javascript'], '/watch-library.js': ['watch-library.js','text/javascript'], '/watch-library.css': ['watch-library.css','text/css'], '/watch-av1.js': ['watch-av1.js', 'text/javascript'], '/watch.css': ['watch.css', 'text/css'], '/watch-scrollbars.js': ['watch-scrollbars.js', 'text/javascript'], '/watch-sidebar.js': ['watch-sidebar.js', 'text/javascript'], '/watch-scrollbars.css': ['watch-scrollbars.css', 'text/css'], '/vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js': ['vendor/overlayscrollbars/overlayscrollbars.browser.es6.min.js', 'text/javascript'], '/vendor/overlayscrollbars/overlayscrollbars.css': ['vendor/overlayscrollbars/overlayscrollbars.css', 'text/css'], '/vendor/discord-sdk.js': ['vendor/discord-sdk.js', 'text/javascript'] };
       if (req.method === 'GET' && route === '/playback-timing.js') {
         res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
         return res.end(BROWSER_TIMING_SCRIPT);
@@ -446,7 +468,6 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const bodyOut = route === '/room-protocol.js' ? BROWSER_SYNC_PROTOCOL_PREFIX + content : content;
         res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); return res.end(bodyOut);
       }
-      const diagnosticAssets = { '/__diagnostics/codec': ['codec.html', 'text/html'], '/__diagnostics/codec.js': ['codec.js', 'text/javascript'], '/__diagnostics/codec.css': ['codec.css', 'text/css'] };
       if (req.method === 'GET' && diagnosticAssets[route]) {
         const [file, type] = diagnosticAssets[route];
         const content = await readAsset(path.join(__dirname, '../diagnostics', file));
@@ -464,6 +485,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
             watchRoutes.bootstrap(req),
             readAsset(path.join(publicDir,file),'utf8')
           ]);
+          const current = await user(req); if (current) renewCookie(req, res, current);
           const html=watchPage(template,initial,scrollbarStyleNonce);
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
         }
@@ -499,21 +521,22 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code', code,
             redirect_uri: config.publicUrl + '/auth/callback' }) });
         const identity = await discordFetch('https://discord.com/api/users/@me', { headers: { Authorization: 'Bearer ' + token.access_token } });
+        const name = String(identity.username || identity.global_name || 'Discord user').slice(0, 100);
+        const oauth = typeof token.refresh_token === 'string' && Number.isFinite(token.expires_in) && token.expires_in > 0 ? {
+          refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000
+        } : undefined;
         if(attempt.ownerOnly&&identity.id!==config.ownerId)return json(res,403,{error:'This sign-in is reserved for the configured installation owner'});
         if(linking){
           if((await user(req))!==linking)return json(res,403,{error:'Account sign-in expired during linking'});
-          await accountRoutes.verifiedLink(req,res,linking,'discord',identity.id,String(identity.username||identity.global_name||'Discord user').slice(0,100));
+          await accountRoutes.verifiedLink(req,res,linking,'discord',identity.id,name,undefined,oauth);
           const existing=res.getHeader('Set-Cookie');
           res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':[...(existing?[existing]:[]),cookie('uburoom_oauth','',0)]});return res.end();
         }
         if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
-        const name = String(identity.username || identity.global_name || 'Discord user').slice(0, 100);
         if (identity.id === config.ownerId) hub.setOwnerName(name);
         logins.set(hash(id), { ...discordIdentity({userId:identity.id,name}),csrf: randomBytes(32).toString('hex'), expires: null,
-          ...(typeof token.refresh_token === 'string' && Number.isFinite(token.expires_in) && token.expires_in > 0 ? {
-            oauth: { refreshToken: token.refresh_token, expires: Date.now() + token.expires_in * 1000 }
-          } : {}) });
+          ...(oauth ? { oauth } : {}) });
         accounts.save();
         const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo))) ? attempt.returnTo : '/watch';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
