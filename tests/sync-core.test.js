@@ -300,7 +300,7 @@ test('createRoomCoordinator enforces tenant isolation, generic role capabilities
   const viewerAlpha = { userId: randomUUID(), name: 'Cara', tenantId: 'tenant-alpha' };
   const outsiderBeta = { userId: creatorId, name: 'AliceOtherTenant', tenantId: 'tenant-beta' };
 
-  const room = coordinator.createRoom({
+  const room = await coordinator.createRoom({
     tenantId: 'tenant-alpha',
     creatorId: creatorAlpha.userId,
     creatorName: creatorAlpha.name,
@@ -364,8 +364,8 @@ test('createRoomCoordinator enforces tenant isolation, generic role capabilities
 
   monoNow += 5000;
   now += 5000;
-  coordinator.touchViewer(room.id, hostViewerId, { tenantId: 'tenant-alpha', rttMs: 420 });
-  coordinator.touchViewer(room.id, guestViewerId, { tenantId: 'tenant-alpha', rttMs: 80 });
+  assert.equal(await coordinator.touchViewer(room.id, hostAlpha, { viewerId: hostViewerId, tenantId: 'tenant-alpha', rttMs: 420 }), true);
+  assert.equal(await coordinator.touchViewer(room.id, viewerAlpha, { viewerId: guestViewerId, tenantId: 'tenant-alpha', rttMs: 80 }), true);
   monoNow += Sync.READINESS_WAIT_MS - 4900;
   now += Sync.READINESS_WAIT_MS - 4900;
   const timedOutSnap = await coordinator.snapshot(room.id, hostAlpha, { viewerId: hostViewerId });
@@ -426,7 +426,7 @@ test('stale commands and outdated epochs cannot mutate state, and coordination e
   });
 
   const host = { userId: 'host-1', name: 'Host', tenantId: 'cephalopod-t1' };
-  const room = coordinator.createRoom({
+  const room = await coordinator.createRoom({
     tenantId: 'cephalopod-t1',
     creatorId: host.userId,
     creatorName: host.name,
@@ -748,7 +748,7 @@ test('snapshot() enforces authorization, tenant isolation, revocation, kick evic
   const adminBeta = { userId: randomUUID(), name: 'BetaAdmin', tenantId: 'tenant-beta', isAdmin: true };
   const defaultTenantActor = { userId: randomUUID(), name: 'NoTenantField' };
 
-  const privateRoom = coordinator.createRoom({
+  const privateRoom = await coordinator.createRoom({
     tenantId: 'tenant-alpha',
     creatorId: creatorAlpha.userId,
     creatorName: creatorAlpha.name,
@@ -842,7 +842,7 @@ test('snapshot() enforces authorization, tenant isolation, revocation, kick evic
   // Delimiter collision safety: `tenant="a::b", room="c"` vs `tenant="a", room="b::c"` never alias.
   const actorDelimitedA = { userId: randomUUID(), name: 'A', tenantId: 'org::alpha' };
   const actorDelimitedB = { userId: randomUUID(), name: 'B', tenantId: 'org' };
-  coordinator.createRoom({
+  await coordinator.createRoom({
     tenantId: 'org::alpha',
     roomId: 'room-1',
     creatorId: actorDelimitedA.userId,
@@ -856,7 +856,7 @@ test('snapshot() enforces authorization, tenant isolation, revocation, kick evic
 
   // 4 & 5. Revoked access and kicked/removed participants lose snapshot & subscription access immediately,
   // while authorized subscribers and `inspectRoomInternal` continue working across explicit boundaries.
-  const publicRoom = coordinator.createRoom({
+  const publicRoom = await coordinator.createRoom({
     tenantId: 'tenant-alpha',
     creatorId: creatorAlpha.userId,
     creatorName: creatorAlpha.name,
@@ -971,7 +971,7 @@ test('expectedRevision preconditions enforce optimistic concurrency without stat
 
   const host = { userId: randomUUID(), name: 'Host', tenantId: 'tenant-rev' };
   const secondHost = { userId: randomUUID(), name: 'CoHost', tenantId: 'tenant-rev' };
-  const room = coordinator.createRoom({
+  const room = await coordinator.createRoom({
     tenantId: 'tenant-rev',
     creatorId: host.userId,
     creatorName: host.name,
@@ -1116,4 +1116,793 @@ test('expectedRevision preconditions enforce optimistic concurrency without stat
   assert.equal(room.revision, contestedRevision + 1);
   assert.equal(room.position, 150);
   assert.deepEqual(persistedRevisions, [contestedRevision + 1], 'onPersist fires once for the winning transition in monotonic revision order');
+});
+
+function createDeferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test('per-room serialization isolates sweeps, read-only snapshots, auto-starts, scheduled settlements, independent rooms, and nested callbacks', async () => {
+  let now = 500_000;
+  let monoNow = 40_000;
+  let authHook = null;
+  let persistHook = null;
+  const publishObservations = [];
+  const persistedLog = [];
+
+  let coordinator;
+  coordinator = Sync.createRoomCoordinator({
+    now: () => now,
+    monoNow: () => monoNow,
+    authorize: async ctx => {
+      if (authHook) await authHook(ctx);
+      return true;
+    },
+    onPersist: async (proposed, meta) => {
+      persistedLog.push({ roomId: proposed.id, revision: proposed.revision, reason: meta?.reason });
+      if (persistHook) await persistHook(proposed, meta);
+    },
+    onPublish: event => {
+      const inspected = coordinator.inspectRoomInternal(event.roomId, { tenantId: event.tenantId });
+      publishObservations.push({
+        roomId: event.roomId,
+        reason: event.reason,
+        revision: inspected?.coordination.revision,
+        position: inspected?.coordination.timeline.position
+      });
+    }
+  });
+
+  const host = { userId: randomUUID(), name: 'HostA', tenantId: 'tenant-conc' };
+  const guest = { userId: randomUUID(), name: 'GuestA', tenantId: 'tenant-conc' };
+  const hostB = { userId: randomUUID(), name: 'HostB', tenantId: 'tenant-conc' };
+
+  const roomA = await coordinator.createRoom({
+    tenantId: 'tenant-conc',
+    creatorId: host.userId,
+    creatorName: host.name,
+    hosts: [guest.userId],
+    visibility: 'public'
+  });
+  const roomB = await coordinator.createRoom({
+    tenantId: 'tenant-conc',
+    creatorId: hostB.userId,
+    creatorName: hostB.name,
+    visibility: 'public'
+  });
+
+  const hostViewerA = randomUUID();
+  const guestViewerA = randomUUID();
+  const hostViewerB = randomUUID();
+  await coordinator.joinViewer(roomA.id, host, { viewerId: hostViewerA, rtts: [{ at: monoNow - 50, ms: 300 }] });
+  await coordinator.joinViewer(roomA.id, guest, { viewerId: guestViewerA, rtts: [{ at: monoNow - 50, ms: 100 }] });
+  await coordinator.joinViewer(roomB.id, hostB, { viewerId: hostViewerB });
+
+  await coordinator.loadTimeline(roomA.id, host, {
+    duration: 900,
+    position: 10,
+    autoplay: true,
+    content: { chapter: 'intro' }
+  });
+  await coordinator.loadTimeline(roomB.id, hostB, {
+    duration: 400,
+    position: 5,
+    autoplay: false,
+    content: { chapter: 'room-b' }
+  });
+
+  // Start playback in Room A via both initial viewers becoming ready, then schedule a group pause (`pauseAt`).
+  const snapInitA = await coordinator.snapshot(roomA.id, host, { viewerId: hostViewerA });
+  await coordinator.reportReadiness(roomA.id, host, {
+    viewerId: hostViewerA,
+    mediaVersion: snapInitA.mediaVersion,
+    ready: true,
+    readinessVersion: snapInitA.readinessVersion
+  });
+  await coordinator.reportReadiness(roomA.id, guest, {
+    viewerId: guestViewerA,
+    mediaVersion: snapInitA.mediaVersion,
+    ready: true,
+    readinessVersion: snapInitA.readinessVersion
+  });
+  assert.equal(roomA.paused, false);
+  now += 2000;
+  monoNow += 2000;
+  await coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expiresAt: now + 2000,
+    viewerId: hostViewerA,
+    command: { action: 'media.pause' }
+  });
+  assert.ok(roomA.pauseAt > now, 'multi-viewer pause schedules future pauseAt');
+
+  // 1 & 6. Command awaits async `authorize` on Room A while `sweep()` attempts to settle `roomA.pauseAt`,
+  // and operations on unrelated Room B complete immediately without waiting for Room A's lock.
+  const authEntered = createDeferred();
+  const authGate = createDeferred();
+  authHook = async ctx => {
+    if (ctx.room.id === roomA.id && ctx.operation === 'command') {
+      authEntered.resolve();
+      await authGate.promise;
+    }
+  };
+
+  const revBeforeAuthBlockedCmd = roomA.revision;
+  const cmdDuringSweepPromise = coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expectedRevision: revBeforeAuthBlockedCmd,
+    expiresAt: now + 2500,
+    viewerId: hostViewerA,
+    command: { action: 'media.seek.absolute', args: { seconds: 120 } }
+  });
+  await authEntered.promise;
+
+  // Advance clock past `roomA.pauseAt` so `sweep()` wants to settle Room A.
+  now += 600;
+  monoNow += 600;
+  let sweepDone = false;
+  const sweepPromise = coordinator.sweep(now, monoNow).then(() => { sweepDone = true; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sweepDone, false, 'sweep waits behind Room A lock rather than mutating mid-command');
+  assert.equal(roomA.revision, revBeforeAuthBlockedCmd, 'sweep cannot bump revision while Room A command awaits authorize');
+
+  // Unrelated Room B executes commands, snapshots, and sweeps independently without blocking on Room A!
+  const roomBSeek = await coordinator.executeCommand(roomB.id, hostB, {
+    epoch: roomB.epoch,
+    expectedRevision: roomB.revision,
+    expiresAt: now + 2000,
+    viewerId: hostViewerB,
+    command: { action: 'media.seek.absolute', args: { seconds: 77 } }
+  });
+  assert.equal(roomBSeek.status, 'applied');
+  const roomBSnap = await coordinator.snapshot(roomB.id, hostB, { viewerId: hostViewerB });
+  assert.equal(roomBSnap.state.position, 77);
+
+  authHook = null;
+  authGate.resolve();
+  const cmdDuringSweepOutcome = await cmdDuringSweepPromise;
+  await sweepPromise;
+  assert.equal(cmdDuringSweepOutcome.status, 'applied', 'locked command preserves expectedRevision against concurrent sweep');
+  assert.equal(roomA.position, 120);
+
+  // 2 & 7. Command awaits `onPersist` while `snapshot()`, `listRooms()`, `inspectRoomInternal()`, and `touchViewer()` run:
+  // reads never deadlock, never expose uncommitted state, and mutating `proposed` in `onPersist` cannot corrupt `roomA`.
+  const persistEntered = createDeferred();
+  const persistGate = createDeferred();
+  let internalDuringPersist;
+  persistHook = async proposed => {
+    if (proposed.id === roomA.id) {
+      internalDuringPersist = coordinator.inspectRoomInternal(roomA.id, { tenantId: 'tenant-conc' });
+      // Deliberately mutate the isolated proposal passed to `onPersist`.
+      proposed.position = 999_999;
+      proposed.viewers.clear();
+      proposed.content.corruptedByCallback = true;
+      persistEntered.resolve();
+      await persistGate.promise;
+    }
+  };
+
+  const committedRevBeforePersist = roomA.revision;
+  const publishCountBeforePersist = publishObservations.length;
+  const seekAwaitingPersist = coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expectedRevision: committedRevBeforePersist,
+    expiresAt: now + 2500,
+    viewerId: hostViewerA,
+    command: { action: 'media.seek.absolute', args: { seconds: 240 } }
+  });
+  await persistEntered.promise;
+
+  assert.equal(internalDuringPersist.coordination.timeline.position, 120, 'inspectRoomInternal inside onPersist sees only committed state');
+  const snapWhilePersisting = await coordinator.snapshot(roomA.id, host, { viewerId: hostViewerA });
+  const listWhilePersisting = await coordinator.listRooms(host);
+  assert.equal(snapWhilePersisting.state.position, 120, 'snapshot() during pending onPersist never leaks uncommitted position');
+  assert.equal(snapWhilePersisting.revision, committedRevBeforePersist);
+  assert.equal(listWhilePersisting.find(r => r.id === roomA.id)?.viewers, 2);
+  assert.equal(publishObservations.length, publishCountBeforePersist, 'no publication occurs before onPersist resolves');
+
+  // Record a fresh RTT sample via `touchViewer` at the exact same timestamp while `onPersist` is in flight.
+  assert.equal(await coordinator.touchViewer(roomA.id, host, { viewerId: hostViewerA, rttMs: 64 }), true);
+
+  persistHook = null;
+  persistGate.resolve();
+  const seekCommitted = await seekAwaitingPersist;
+  assert.equal(seekCommitted.status, 'applied');
+  assert.equal(roomA.position, 240, 'isolated proposal mutation in onPersist never corrupts committed state');
+  assert.equal(roomA.viewers.size, 2);
+  assert.equal(roomA.content.corruptedByCallback, undefined);
+  assert.equal(roomA.viewers.get(hostViewerA).rtts.at(-1).ms, 64, 'concurrent touchViewer RTT sample is preserved across commit');
+  assert.equal(publishObservations.at(-1).position, 240, 'onPublish runs after commit and observes committed position without deadlock');
+
+  // 3. Automatic readiness/start transition competes with concurrent user commands.
+  await coordinator.loadTimeline(roomA.id, host, {
+    duration: 900,
+    position: 30,
+    autoplay: true,
+    content: { chapter: 'autostart-race' }
+  });
+  const gateSnap = await coordinator.snapshot(roomA.id, host, { viewerId: hostViewerA });
+  await coordinator.reportReadiness(roomA.id, host, {
+    viewerId: hostViewerA,
+    mediaVersion: gateSnap.mediaVersion,
+    ready: true,
+    readinessVersion: gateSnap.readinessVersion
+  });
+
+  const autoStartPersistEntered = createDeferred();
+  const autoStartPersistGate = createDeferred();
+  persistHook = async proposed => {
+    if (proposed.id === roomA.id) {
+      autoStartPersistEntered.resolve();
+      await autoStartPersistGate.promise;
+    }
+  };
+  const revBeforeAutoStart = roomA.revision;
+  const readyTriggeringAutoStart = coordinator.reportReadiness(roomA.id, guest, {
+    viewerId: guestViewerA,
+    mediaVersion: gateSnap.mediaVersion,
+    ready: true,
+    readinessVersion: gateSnap.readinessVersion
+  });
+  await autoStartPersistEntered.promise;
+
+  // Concurrent user command with stale `expectedRevision` + real-time pause without `expectedRevision`.
+  const competingPreconditionedSeek = coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expectedRevision: revBeforeAutoStart,
+    expiresAt: now + 2500,
+    viewerId: hostViewerA,
+    command: { action: 'media.seek.absolute', args: { seconds: 333 } }
+  });
+  const competingPause = coordinator.executeCommand(roomA.id, guest, {
+    epoch: roomA.epoch,
+    expiresAt: now + 2500,
+    viewerId: guestViewerA,
+    command: { action: 'media.pause' }
+  });
+
+  persistHook = null;
+  autoStartPersistGate.resolve();
+  const [readyOutcome, preconditionedOutcome, pauseOutcome] = await Promise.all([
+    readyTriggeringAutoStart,
+    competingPreconditionedSeek,
+    competingPause
+  ]);
+  assert.deepEqual(readyOutcome, { ok: true });
+  assert.equal(preconditionedOutcome.status, 'unavailable');
+  assert.equal(preconditionedOutcome.reason, 'revision-mismatch');
+  assert.equal(pauseOutcome.status, 'applied');
+  assert.equal(roomA.paused, true, 'pause arriving before scheduled startAt cancels pending start cleanly');
+
+  // 4. Scheduled `pauseAt` settlement occurs concurrently with a relative seek and `sweep()`.
+  await coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expiresAt: now + 2000,
+    viewerId: hostViewerA,
+    command: { action: 'media.play' }
+  });
+  now += 2000;
+  monoNow += 2000;
+  await coordinator.touchViewer(roomA.id, host, { viewerId: hostViewerA, rttMs: 120 });
+  await coordinator.touchViewer(roomA.id, guest, { viewerId: guestViewerA, rttMs: 90 });
+  await coordinator.executeCommand(roomA.id, host, {
+    epoch: roomA.epoch,
+    expiresAt: now + 2000,
+    viewerId: hostViewerA,
+    command: { action: 'media.pause' }
+  });
+  assert.ok(roomA.pauseAt > now);
+  const scheduledPauseAt = roomA.pauseAt;
+  const posAtScheduledPause = Sync.timelinePosition(roomA, scheduledPauseAt);
+  now = scheduledPauseAt + 250;
+  monoNow += 1000;
+
+  const [, relSeekAfterSettlement] = await Promise.all([
+    coordinator.sweep(now, monoNow),
+    coordinator.executeCommand(roomA.id, host, {
+      epoch: roomA.epoch,
+      expiresAt: now + 2000,
+      viewerId: hostViewerA,
+      command: { action: 'media.seek.relative', args: { seconds: 15 } }
+    })
+  ]);
+  assert.equal(relSeekAfterSettlement.status, 'applied');
+  assert.equal(roomA.paused, true);
+  assert.equal(roomA.pauseAt, undefined);
+  assert.ok(Math.abs(roomA.position - (posAtScheduledPause + 15)) < 1e-6, 'scheduled pauseAt settles once before relative seek');
+
+  const roomAPersistedRevs = persistedLog.filter(e => e.roomId === roomA.id && e.reason !== 'room-created').map(e => e.revision);
+  for (let i = 1; i < roomAPersistedRevs.length; i++) {
+    assert.ok(roomAPersistedRevs[i] > roomAPersistedRevs[i - 1], 'Room A persisted revisions strictly increase');
+  }
+});
+
+test('persistence failures leave committed state intact, suppress publication, prevent duplicate retry effects, and enforce create/close lifecycle contracts', async () => {
+  let now = 600_000;
+  let monoNow = 50_000;
+  let failCreate = false;
+  let failPersist = false;
+  let failPersistAmbiguous = false;
+  let failDelete = false;
+  const published = [];
+  const durableStore = new Map();
+  const persistedSequence = [];
+
+  const coordinator = Sync.createRoomCoordinator({
+    now: () => now,
+    monoNow: () => monoNow,
+    onCreateRoom: async room => {
+      if (failCreate) throw new Error('Simulated storage outage on create');
+      durableStore.set(`${room.tenantId}::${room.id}`, structuredClone({
+        id: room.id,
+        tenantId: room.tenantId,
+        creatorId: room.creatorId,
+        hosts: room.hosts,
+        visibility: room.visibility,
+        epoch: room.epoch,
+        revision: room.revision,
+        hasMedia: room.hasMedia,
+        paused: room.paused,
+        position: room.position,
+        duration: room.duration,
+        content: room.content
+      }));
+    },
+    onPersist: async (room, meta) => {
+      if (failPersistAmbiguous) {
+        throw Object.assign(new Error('Connection dropped after write sent'), { ambiguous: true });
+      }
+      if (failPersist) {
+        throw new Error(`Simulated storage write failure during ${meta?.operation}`);
+      }
+      persistedSequence.push({ revision: room.revision, operation: meta?.operation, reason: meta?.reason });
+      durableStore.set(`${room.tenantId}::${room.id}`, structuredClone({
+        id: room.id,
+        tenantId: room.tenantId,
+        creatorId: room.creatorId,
+        hosts: room.hosts,
+        visibility: room.visibility,
+        epoch: room.epoch,
+        mediaVersion: room.mediaVersion,
+        revision: room.revision,
+        hasMedia: room.hasMedia,
+        paused: room.paused,
+        position: room.position,
+        duration: room.duration,
+        seekable: room.seekable,
+        startAt: room.startAt,
+        pauseAt: room.pauseAt,
+        initialGate: room.initialGate,
+        manualPaused: room.manualPaused,
+        changedAt: room.changedAt,
+        content: room.content
+      }));
+    },
+    onDeleteRoom: async ({ tenantId, roomId, closedAt }) => {
+      if (failDelete) throw new Error('Simulated tombstone write failure');
+      durableStore.set(`${tenantId}::${roomId}`, { id: roomId, tenantId, closed: true, closedAt });
+    },
+    onPublish: event => published.push(event)
+  });
+
+  const host = { userId: randomUUID(), name: 'Host', tenantId: 'tenant-dur' };
+  const guest = { userId: randomUUID(), name: 'Guest', tenantId: 'tenant-dur' };
+  const targetRoomId = randomUUID();
+
+  // 1. Room creation failure leaves zero advertised or in-memory phantom rooms.
+  failCreate = true;
+  await assert.rejects(
+    () => coordinator.createRoom({
+      roomId: targetRoomId,
+      actor: host,
+      name: 'Durable Screening',
+      visibility: 'public',
+      content: { title: 'Initial' }
+    }),
+    /Simulated storage outage on create/
+  );
+  assert.equal(coordinator.rooms.size, 0);
+  assert.equal((await coordinator.listRooms(host)).length, 0);
+  assert.equal(published.length, 0, 'failed room creation never publishes room-created');
+
+  failCreate = false;
+  const room = await coordinator.createRoom({
+    roomId: targetRoomId,
+    actor: host,
+    name: 'Durable Screening',
+    visibility: 'public',
+    content: { title: 'Initial' }
+  });
+  assert.equal(coordinator.rooms.size, 1);
+  assert.deepEqual(published.map(e => e.reason), ['room-created']);
+
+  const hostViewer = randomUUID();
+  const guestViewer = randomUUID();
+  await coordinator.joinViewer(room.id, host, { viewerId: hostViewer });
+  await coordinator.joinViewer(room.id, guest, { viewerId: guestViewer });
+  const hostStreamBeforeLoad = room.viewers.get(hostViewer).streamVersion;
+  const revBeforeLoad = room.revision;
+  published.length = 0;
+
+  // 2. `onPersist` rejects during `loadTimeline()`: room remains unloaded with intact viewer streams and zero publications.
+  failPersist = true;
+  await assert.rejects(
+    () => coordinator.loadTimeline(room.id, host, {
+      expectedRevision: revBeforeLoad,
+      duration: 1200,
+      position: 50,
+      autoplay: false,
+      content: { mediaKey: 'movie-1' }
+    }),
+    /Simulated storage write failure/
+  );
+  assert.equal(room.hasMedia, false);
+  assert.equal(room.position, 0);
+  assert.equal(room.revision, revBeforeLoad);
+  assert.deepEqual(room.content, { title: 'Initial' });
+  assert.equal(room.viewers.get(hostViewer).streamVersion, hostStreamBeforeLoad);
+  assert.equal(published.length, 0);
+
+  failPersist = false;
+  const loadOk = await coordinator.loadTimeline(room.id, host, {
+    expectedRevision: revBeforeLoad,
+    duration: 1200,
+    position: 100,
+    autoplay: false,
+    content: { mediaKey: 'movie-1' }
+  });
+  assert.equal(loadOk.status, 'applied');
+  assert.equal(room.position, 100);
+
+  // 3. `onPersist` rejects during playback & visibility commands; retrying relative seek applies +30s once (not +60s).
+  const stateBeforeFailedCmds = {
+    position: room.position,
+    paused: room.paused,
+    epoch: room.epoch,
+    visibility: room.visibility,
+    revision: room.revision,
+    mediaVersion: room.mediaVersion
+  };
+  published.length = 0;
+  failPersist = true;
+
+  await assert.rejects(
+    () => coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: stateBeforeFailedCmds.revision,
+      expiresAt: now + 2000,
+      viewerId: hostViewer,
+      command: { action: 'media.seek.relative', args: { seconds: 30 } }
+    }),
+    /Simulated storage write failure/
+  );
+  await assert.rejects(
+    () => coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: stateBeforeFailedCmds.revision,
+      expiresAt: now + 2000,
+      viewerId: hostViewer,
+      command: { action: 'room.visibility', args: { visibility: 'private' } }
+    }),
+    /Simulated storage write failure/
+  );
+
+  assert.deepEqual({
+    position: room.position,
+    paused: room.paused,
+    epoch: room.epoch,
+    visibility: room.visibility,
+    revision: room.revision,
+    mediaVersion: room.mediaVersion
+  }, stateBeforeFailedCmds, 'failed commands leave committed room fields untouched');
+  assert.equal(room.viewers.has(guestViewer), true, 'failed visibility change does not evict public viewer');
+  assert.equal(published.length, 0, 'failed commands emit zero publications');
+  const snapAfterFailedSeek = await coordinator.snapshot(room.id, host, { viewerId: hostViewer });
+  assert.equal(snapAfterFailedSeek.state.position, 100);
+  assert.equal(snapAfterFailedSeek.revision, stateBeforeFailedCmds.revision);
+
+  // Retry the exact +30s relative seek once storage recovers -> position becomes 130 (never 160).
+  failPersist = false;
+  const retriedRelativeSeek = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expectedRevision: stateBeforeFailedCmds.revision,
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.seek.relative', args: { seconds: 30 } }
+  });
+  assert.equal(retriedRelativeSeek.status, 'applied');
+  assert.equal(room.position, 130);
+  assert.equal(room.revision, stateBeforeFailedCmds.revision + 1);
+  assert.equal(published.length, 1);
+
+  // 4. Ambiguous persistence failure (`err.ambiguous = true`) fences subsequent mutations until reconciled
+  // without exposing uncommitted state or reusing the ambiguous revision number.
+  const revBeforeAmbiguous = room.revision;
+  published.length = 0;
+  failPersistAmbiguous = true;
+  await assert.rejects(
+    () => coordinator.executeCommand(room.id, host, {
+      epoch: room.epoch,
+      expectedRevision: revBeforeAmbiguous,
+      expiresAt: now + 2000,
+      viewerId: hostViewer,
+      command: { action: 'media.seek.absolute', args: { seconds: 210 } }
+    }),
+    /Connection dropped/
+  );
+  failPersistAmbiguous = false;
+  assert.equal(room.position, 130, 'ambiguous write does not commit unconfirmed state');
+  assert.equal(room.persistenceUncertain, true);
+  assert.equal(published.length, 0);
+
+  const fencedAttempt = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.pause' }
+  });
+  assert.equal(fencedAttempt.status, 'unavailable');
+  assert.equal(fencedAttempt.httpStatus, 503);
+  assert.equal(fencedAttempt.reason, 'persistence-uncertain');
+
+  const authoritativeRecord = durableStore.get(`tenant-dur::${room.id}`);
+  await coordinator.reconcileRoomInternal(room.id, authoritativeRecord, { tenantId: 'tenant-dur' });
+  assert.equal(room.persistenceUncertain, false);
+  assert.ok(room.revision > revBeforeAmbiguous + 1, 'reconciliation advances past the ambiguous revision');
+
+  const postReconcileSeek = await coordinator.executeCommand(room.id, host, {
+    epoch: room.epoch,
+    expectedRevision: room.revision,
+    expiresAt: now + 2000,
+    viewerId: hostViewer,
+    command: { action: 'media.seek.absolute', args: { seconds: 175 } }
+  });
+  assert.equal(postReconcileSeek.status, 'applied');
+  assert.equal(room.position, 175);
+
+  // Startup restoration helper restores saved checkpoints in a safe paused state with bumped revision & fresh epoch.
+  const coordinatorAfterRestart = Sync.createRoomCoordinator({ now: () => now, monoNow: () => monoNow });
+  const savedCheckpoint = durableStore.get(`tenant-dur::${room.id}`);
+  const restored = coordinatorAfterRestart.restoreRoomInternal({ ...savedCheckpoint, paused: false });
+  assert.equal(restored.paused, true, 'crashed playing room restores safely paused');
+  assert.equal(restored.position, 175);
+  assert.equal(restored.revision, savedCheckpoint.revision + 1);
+  assert.notEqual(restored.epoch, savedCheckpoint.epoch);
+  assert.equal(restored.viewers.size, 0);
+
+  // 5. Room closure failure retains the durable room in memory without publishing `room-closed`.
+  published.length = 0;
+  failDelete = true;
+  await assert.rejects(
+    () => coordinator.closeRoom(room.id, host, { epoch: room.epoch, expectedRevision: room.revision }),
+    /Simulated tombstone write failure/
+  );
+  assert.equal(coordinator.getRoom(room.id, 'tenant-dur'), room, 'failed closeRoom retains live room');
+  assert.equal(published.length, 0, 'failed closeRoom never publishes room-closed');
+  assert.equal((await coordinator.snapshot(room.id, host, { viewerId: hostViewer })).state.position, 175);
+
+  failDelete = false;
+  const closedOk = await coordinator.closeRoom(room.id, host, { epoch: room.epoch, expectedRevision: room.revision });
+  assert.equal(closedOk.status, 'applied');
+  assert.equal(coordinator.getRoom(room.id, 'tenant-dur'), undefined);
+  assert.equal(durableStore.get(`tenant-dur::${room.id}`)?.closed, true);
+  assert.deepEqual(published.map(e => e.reason), ['room-closed']);
+
+  for (let i = 1; i < persistedSequence.length; i++) {
+    assert.ok(persistedSequence[i].revision > persistedSequence[i - 1].revision, 'committed persists remain strictly ordered');
+  }
+});
+
+test('revoked viewers lose heartbeat presence, telemetry, and snapshot access while legitimate viewers and disconnect grace remain intact', async () => {
+  let now = 700_000;
+  let monoNow = 60_000;
+  const revokedInStore = new Set();
+  const fastRevokedTokens = new Set();
+  const published = [];
+  let authorizeCalls = 0;
+
+  const coordinator = Sync.createRoomCoordinator({
+    now: () => now,
+    monoNow: () => monoNow,
+    presenceAuthIntervalMs: 4000,
+    isRevoked: ({ tenantId, actor }) => fastRevokedTokens.has(`${tenantId}:${actor.userId}`),
+    authorize: async ({ tenantId, actor }) => {
+      authorizeCalls++;
+      return !revokedInStore.has(`${tenantId}:${actor.userId}`);
+    },
+    onPublish: event => published.push(event)
+  });
+
+  const hostAlpha = { userId: randomUUID(), name: 'Host', tenantId: 'tenant-alpha' };
+  const guestAlpha = { userId: randomUUID(), name: 'RevokedViaTouch', tenantId: 'tenant-alpha' };
+  const telemGuestAlpha = { userId: randomUUID(), name: 'RevokedViaTelem', tenantId: 'tenant-alpha' };
+  const fastGuestAlpha = { userId: randomUUID(), name: 'FastRevoked', tenantId: 'tenant-alpha' };
+  const reconnectGuestAlpha = { userId: randomUUID(), name: 'Reconnector', tenantId: 'tenant-alpha' };
+  const outsiderBeta = { userId: randomUUID(), name: 'BetaOutsider', tenantId: 'tenant-beta' };
+
+  const publicRoom = await coordinator.createRoom({
+    actor: hostAlpha,
+    name: 'Public Lounge',
+    visibility: 'public'
+  });
+  const privateRoom = await coordinator.createRoom({
+    actor: hostAlpha,
+    name: 'Private Screening',
+    visibility: 'private'
+  });
+
+  const hostViewer = randomUUID();
+  const guestViewer = randomUUID();
+  const telemViewer = randomUUID();
+  const fastViewer = randomUUID();
+  const reconnectViewer = randomUUID();
+  const privHostViewer = randomUUID();
+
+  await coordinator.joinViewer(publicRoom.id, hostAlpha, { viewerId: hostViewer });
+  const guestSnap = await coordinator.joinViewer(publicRoom.id, guestAlpha, { viewerId: guestViewer });
+  await coordinator.joinViewer(publicRoom.id, telemGuestAlpha, { viewerId: telemViewer });
+  await coordinator.joinViewer(publicRoom.id, fastGuestAlpha, { viewerId: fastViewer });
+  await coordinator.joinViewer(publicRoom.id, reconnectGuestAlpha, { viewerId: reconnectViewer });
+  await coordinator.joinViewer(privateRoom.id, hostAlpha, { viewerId: privHostViewer });
+
+  await coordinator.loadTimeline(publicRoom.id, hostAlpha, {
+    duration: 600,
+    position: 15,
+    autoplay: false
+  });
+  const hostSnap = await coordinator.snapshot(publicRoom.id, hostAlpha, { viewerId: hostViewer });
+  const guestPostLoadSnap = await coordinator.snapshot(publicRoom.id, guestAlpha, { viewerId: guestViewer });
+  const telemPostLoadSnap = await coordinator.snapshot(publicRoom.id, telemGuestAlpha, { viewerId: telemViewer });
+  const reconnectPostLoadSnap = await coordinator.snapshot(publicRoom.id, reconnectGuestAlpha, { viewerId: reconnectViewer });
+  assert.notEqual(guestPostLoadSnap.streamVersion, guestSnap.streamVersion);
+
+  // 1. Rapid `touchViewer` clock/pong calls inside `presenceAuthIntervalMs` do NOT trigger DB `authorize` calls.
+  const authBeforeHeartbeats = authorizeCalls;
+  for (let step = 1; step <= 4; step++) {
+    now += 800;
+    monoNow += 800;
+    assert.equal(await coordinator.touchViewer(publicRoom.id, guestAlpha, { viewerId: guestViewer, rttMs: 45 + step }), true);
+    assert.equal(await coordinator.touchViewer(publicRoom.id, hostAlpha, { viewerId: hostViewer, rttMs: 30 }), true);
+  }
+  assert.equal(authorizeCalls, authBeforeHeartbeats, 'heartbeats within presenceAuthIntervalMs avoid redundant authorize lookups');
+
+  // 2. Externally revoked viewer cannot keep presence alive past `presenceAuthIntervalMs`, and loses telemetry & snapshot access.
+  revokedInStore.add(`tenant-alpha:${guestAlpha.userId}`);
+  now += 1000; // Total elapsed since guest's last auth verify >= 4000ms (< 10000ms PRESENCE_TIMEOUT_MS).
+  monoNow += 1000;
+  assert.equal(await coordinator.touchViewer(publicRoom.id, guestAlpha, { viewerId: guestViewer, rttMs: 50 }), false);
+  assert.equal(publicRoom.viewers.has(guestViewer), false, 'revoked viewer is evicted from active viewers');
+  assert.equal(publicRoom.disconnectedViewers.has(guestViewer), false, 'revoked viewer does not receive reconnect grace');
+
+  const deniedRevokedTelem = await coordinator.recordSyncQuality(publicRoom.id, guestAlpha, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: guestViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: guestPostLoadSnap.streamVersion,
+    status: 'playing',
+    confidence: 'confident',
+    score: 98,
+    driftMs: 4
+  });
+  assert.deepEqual(deniedRevokedTelem, { ok: false, code: 4003 });
+  await assert.rejects(
+    () => coordinator.snapshot(publicRoom.id, guestAlpha, { viewerId: guestViewer }),
+    { status: 403 }
+  );
+
+  // 3. Legitimate telemetry works, while external revocation before `presenceAuthIntervalMs` is caught on unthrottled telemetry.
+  const okTelem = await coordinator.recordSyncQuality(publicRoom.id, telemGuestAlpha, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: telemViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: telemPostLoadSnap.streamVersion,
+    status: 'playing',
+    confidence: 'confident',
+    score: 96,
+    driftMs: 8
+  });
+  assert.equal(okTelem.ok, true);
+
+  revokedInStore.add(`tenant-alpha:${telemGuestAlpha.userId}`);
+  now += 600; // Past the 500ms status-change rate limit, still well within 4000ms `presenceAuthIntervalMs`.
+  monoNow += 600;
+  published.length = 0;
+  const revokedTelem = await coordinator.recordSyncQuality(publicRoom.id, telemGuestAlpha, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: telemViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: telemPostLoadSnap.streamVersion,
+    status: 'buffering',
+    confidence: 'confident',
+    score: 40
+  });
+  assert.deepEqual(revokedTelem, { ok: false, code: 4003 });
+  assert.equal(publicRoom.viewers.has(telemViewer), false, 'revoked telemetry sender is evicted safely under lock');
+  assert.equal(published.some(e => e.reason === 'sync-quality'), false, 'revoked telemetry never publishes sync-quality');
+  assert.equal(await coordinator.touchViewer(publicRoom.id, telemGuestAlpha, { viewerId: telemViewer }), false);
+
+  // 4. Push `revokeActor` and synchronous `isRevoked` evict immediately without waiting for any interval.
+  fastRevokedTokens.add(`tenant-alpha:${fastGuestAlpha.userId}`);
+  const evictedCount = await coordinator.revokeActor({ userId: fastGuestAlpha.userId, tenantId: 'tenant-alpha' });
+  assert.equal(evictedCount, 1);
+  assert.equal(publicRoom.viewers.has(fastViewer), false);
+  assert.equal(await coordinator.touchViewer(publicRoom.id, fastGuestAlpha, { viewerId: fastViewer }), false);
+
+  // 5. Cross-tenant callers, private-room outsiders, and viewer-ownership spoofing remain forbidden.
+  assert.equal(await coordinator.touchViewer(publicRoom.id, outsiderBeta, { viewerId: hostViewer, tenantId: 'tenant-alpha' }), false);
+  assert.equal(await coordinator.touchViewer(publicRoom.id, reconnectGuestAlpha, { viewerId: hostViewer }), false);
+  assert.deepEqual(await coordinator.recordSyncQuality(publicRoom.id, outsiderBeta, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: hostViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: hostSnap.streamVersion,
+    status: 'playing',
+    confidence: 'confident',
+    score: 99
+  }, { tenantId: 'tenant-alpha' }), { ok: false, code: 4003 });
+  await assert.rejects(
+    () => coordinator.snapshot(privateRoom.id, reconnectGuestAlpha),
+    { status: 403 }
+  );
+
+  // 6. Disconnect cleanup via `leaveViewer(..., { reason: 'disconnected' })` preserves reconnect grace,
+  // whereas explicit `reason: 'left'` clears grace, and legitimate viewers continue operating normally.
+  await coordinator.recordSyncQuality(publicRoom.id, reconnectGuestAlpha, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: reconnectViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: reconnectPostLoadSnap.streamVersion,
+    status: 'playing',
+    confidence: 'confident',
+    score: 95,
+    driftMs: 6
+  });
+  const originalJoinedAt = publicRoom.viewers.get(reconnectViewer).joinedAt;
+  assert.equal(await coordinator.leaveViewer(publicRoom.id, reconnectGuestAlpha, {
+    viewerId: reconnectViewer,
+    reason: 'disconnected'
+  }), true);
+  assert.equal(publicRoom.viewers.has(reconnectViewer), false);
+  assert.equal(publicRoom.disconnectedViewers.has(reconnectViewer), true, 'unexpected disconnect retains reconnect grace');
+
+  now += 1500;
+  monoNow += 1500;
+  await coordinator.joinViewer(publicRoom.id, reconnectGuestAlpha, { viewerId: reconnectViewer });
+  assert.equal(publicRoom.viewers.get(reconnectViewer).joinedAt, originalJoinedAt, 'reconnect within grace restores joinedAt');
+  assert.equal(publicRoom.viewers.get(reconnectViewer).syncQuality?.status, 'disconnected');
+
+  assert.equal(await coordinator.leaveViewer(publicRoom.id, reconnectGuestAlpha, {
+    viewerId: reconnectViewer,
+    reason: 'left'
+  }), true);
+  assert.equal(publicRoom.viewers.has(reconnectViewer), false);
+  assert.equal(publicRoom.disconnectedViewers.has(reconnectViewer), false, 'explicit leave clears reconnect grace');
+
+  // Legitimate host continues functioning normally across both public and private rooms.
+  assert.equal(await coordinator.touchViewer(publicRoom.id, hostAlpha, { viewerId: hostViewer, rttMs: 28 }), true);
+  assert.equal(await coordinator.touchViewer(privateRoom.id, hostAlpha, { viewerId: privHostViewer, rttMs: 25 }), true);
+  const hostTelemOk = await coordinator.recordSyncQuality(publicRoom.id, hostAlpha, {
+    type: 'sync-quality',
+    roomId: publicRoom.id,
+    viewerId: hostViewer,
+    mediaVersion: publicRoom.mediaVersion,
+    streamVersion: hostSnap.streamVersion,
+    status: 'playing',
+    confidence: 'confident',
+    score: 99,
+    driftMs: 2
+  });
+  assert.equal(hostTelemOk.ok, true);
+  assert.equal((await coordinator.snapshot(privateRoom.id, hostAlpha, { viewerId: privHostViewer })).id, privateRoom.id);
 });

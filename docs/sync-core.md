@@ -61,10 +61,13 @@ All relative imports inside `shared/sync/` use explicit `.mjs` extensions so the
 
 ### `shared/sync/room-authority.mjs`
 - **Low-level primitives** (used directly by `server/watch.js` on Uburoom rooms): `position` (`timelinePosition`), `controlLead`, `beginReadiness`, `promoteGroupReadinessLead`, `settle` (`settleRoomTimeline`), `invalidateEpoch`, `recordViewerReadiness`, `areInitialViewersReady`, `snapshotReadiness`, `applyReadinessDecision`, `applyTimelineCommand`.
-- **`createRoomCoordinator(options)`** — Standalone, multi-tenant room coordinator managing `(tenantId, roomId)` namespaces with strict separation between actor-authorized request handlers and privileged server-internal APIs:
-  - **Actor-authorized methods** (`await snapshot`, `listRooms`, `joinViewer`, `leaveViewer`, `loadTimeline`, `reportReadiness`, `executeCommand`, `recordSyncQuality`, `closeRoom`, and `touchViewer` when `actor` is passed): Bind every operation to `actor.tenantId` (caller-supplied `tenantId` options never override `actor.tenantId`), enforce private-room membership (`creator`/`host`/admin) plus optional `options.authorize`, reject kicked `viewerId`s and viewer impersonation, and return uniform `403` errors across missing, cross-tenant, and private rooms without mutating state or revealing room existence.
-  - **Revision & epoch semantics:** Every room starts at `revision = 0` and increments `revision` monotonically on authoritative state changes (`loadTimeline`, `executeCommand`, `leaveViewer`, auto-start, and settled scheduled transitions). Mutations on a room are serialized through a per-room async queue so concurrent `authorize` / `onPersist` callbacks cannot interleave. When `expectedRevision` is supplied to `executeCommand`, `loadTimeline`, or `closeRoom`, it must match the room's current effective revision (`409` `revision-mismatch` otherwise, with zero state mutation). When `expectedRevision` is omitted (`undefined`), real-time playback commands (`media.play`, `media.pause`, `media.toggle`, `media.seek.*`) continue using `epoch` + `expiresAt` fencing so concurrent viewer presence or scheduled settlements do not cause false conflicts on live transport controls. (Self-hosted Uburoom durable queue commands continue using their separate `queueRevision` inside `command.args.expectedRevision`.)
-  - **Privileged server-internal methods** (`inspectRoomInternal`, `getRoom`, `rooms`, `createRoom` without `actor`, `sweep`): For trusted server-side persistence, health sweeps, or diagnostics only. `inspectRoomInternal(roomId, { tenantId, envelopeOnly })` reads coordination/content state without an `actor` and without incrementing `transportSequence`. Never wire internal methods directly to untrusted client inputs.
+- **`createRoomCoordinator(options)`** — Standalone, multi-tenant room coordinator managing `(tenantId, roomId)` namespaces with per-room serialized state transitions, copy-on-write persistence atomicity, and strict separation between actor-authorized request handlers and privileged server-internal APIs:
+  - **Actor-authorized async methods** (`await createRoom` with `actor`, `await snapshot`, `await listRooms`, `await joinViewer`, `await leaveViewer`, `await touchViewer`, `await reportReadiness`, `await executeCommand`, `await recordSyncQuality`, `await closeRoom`): Bind every operation to `actor.tenantId` (caller-supplied `tenantId` options never override `actor.tenantId`), enforce private-room membership (`creator`/`host`/admin) plus optional `options.authorize`, reject kicked `viewerId`s and viewer impersonation, and return uniform `403` errors across missing, cross-tenant, and private rooms without mutating state or revealing room existence.
+  - **Per-room serialization & read-only queries:** Every authoritative state transition (`createRoom`, `loadTimeline`, `joinViewer`, `leaveViewer`, `reportReadiness` + synchronous auto-start, `executeCommand`, `recordSyncQuality`, `closeRoom`, `revokeActor`, `reconcileRoomInternal`, and `await sweep`) executes inside an independent per-room FIFO lock (`withRoomLock`) so unrelated rooms never block one another and timers/sweeps/auto-starts never interleave with pending `authorize` or `onPersist` promises. `snapshot()`, `listRooms()`, and `inspectRoomInternal()` are genuinely read-only projections over committed room state: they never mutate `revision`, `paused`, `position`, `viewers`, or readiness gates, never expose in-flight uncommitted proposals, and never deadlock if called from `onPersist` or `onPublish`.
+  - **Persistence atomicity & lifecycle contract:** Durable transitions compute changes on a deep-cloned `draft` (`Map`, `Set`, viewer state, permissions, and `content`), pass an isolated clone to `onCreateRoom(room)`, `onPersist(room, meta)`, or `onDeleteRoom(context)` while holding the room lock, commit `draft` to live memory **only after** persistence resolves, and flush `onPublish` notifications **only after** releasing the room lock. Definite persistence failures leave prior committed state and `revision` intact with zero `onPublish` events. If a storage adapter throws an error marked `{ ambiguous: true }` (e.g., network drop after write submission), live state remains unmutated without publishing success, `room.persistenceUncertain` fences further mutations with `503` `persistence-uncertain` while reserving the attempted revision, and the host resolves the room via `await coordinator.reconcileRoomInternal(...)`. When `onCreateRoom`/`onPersist`/`onDeleteRoom` are omitted, the coordinator operates purely in memory.
+  - **Revocation-aware presence & telemetry:** `await touchViewer(roomId, actor, { viewerId, tenantId, rttMs })` enforces tenant isolation, viewer ownership, optional synchronous `options.isRevoked`, and bounded periodic `options.authorize` revalidation every `presenceAuthIntervalMs` (default `5000 ms`, half of `PRESENCE_TIMEOUT_MS`) so rapid clock/pong frames avoid per-message database lookups while externally revoked viewers are evicted before presence timeout without receiving reconnect grace. `await recordSyncQuality(roomId, actor, message, { tenantId })` checks per-viewer rate limits before calling `options.authorize` and evicts revoked senders under the room lock. `await leaveViewer(roomId, actor, { viewerId, tenantId, reason })` cleans up active presence immediately, preserving `RECONNECT_GRACE_MS` state when `reason === 'disconnected'` and clearing grace when `reason === 'left'`.
+  - **Revision & epoch semantics:** Every room starts at `revision = 0` and increments `revision` monotonically on committed authoritative transitions. When `expectedRevision` is supplied to `executeCommand`, `loadTimeline`, or `closeRoom`, it must match the room's committed `revision` (`409` `revision-mismatch` otherwise, with zero state mutation). When `expectedRevision` is omitted (`undefined`), real-time playback commands (`media.play`, `media.pause`, `media.toggle`, `media.seek.*`) continue using `epoch` + `expiresAt` fencing. (Self-hosted Uburoom durable queue commands continue using their separate `queueRevision` inside `command.args.expectedRevision`.)
+  - **Privileged server-internal methods** (`inspectRoomInternal`, `restoreRoomInternal`, `await reconcileRoomInternal`, `await revokeActor`, `await sweep`, `getRoom`, `rooms`, `createRoom` without `actor`): For trusted server-side diagnostics, startup rehydration, ambiguous-write reconciliation, push session revocation, and periodic maintenance only. Never wire internal methods directly to untrusted client inputs.
 
 ### `shared/sync/subscriptions.mjs`
 - `createSubscriptionBroker({ publish, getRoomId, getTenantId, onError, schedule })` — Coalesces bursts of mutations via `setImmediate` (or custom scheduler) and isolates async `publish` errors per subscriber. `notify({ tenantId, roomId, includeLobby: false })` wakes **only** subscribers of `(tenantId, roomId)`, preventing cross-room wakeups and cross-room/cross-tenant state leakage.
@@ -82,7 +85,7 @@ End-to-end encryption is **not** implemented in Uburoom today; self-hosted Uburo
 
 ## 4. Example: Initializing `shared/sync/` in Uburoom Cephalopod
 
-Below is a realistic Node.js ESM example showing how a multi-tenant **Uburoom Cephalopod** worker/server imports `shared/sync/index.mjs` and wires tenant-scoped authentication, authorized snapshot delivery, optimistic-concurrency command envelopes, and privileged internal checkpointing without importing `server/app.js` or any Plex/Discord/SQLite code:
+Below is a realistic Node.js ESM example showing how a multi-tenant **Uburoom Cephalopod** worker/server imports `shared/sync/index.mjs` and wires session validation, server-derived tenant identity, atomic room creation/closure persistence, revocation-aware heartbeats and telemetry, disconnect reconnect-grace cleanup, and periodic sweeps without importing `server/app.js` or any Plex/Discord/SQLite code:
 
 ```js
 import { WebSocketServer } from 'ws';
@@ -96,20 +99,23 @@ export function createCephalopodSyncNode({ authService, roomRepository, quotaSer
   let coordinator;
 
   // 1. Create the room-scoped & tenant-scoped publication broker.
-  //    Every subscriber push re-runs `await coordinator.snapshot(...)` with the client's
-  //    authenticated `actor` so kicked or revoked viewers immediately lose access.
+  //    Every subscriber push validates session liveness and re-runs `await coordinator.snapshot(...)`
+  //    with the client's server-verified `actor` so kicked or revoked viewers lose access immediately.
   const broker = createSubscriptionBroker({
     getTenantId: client => client.tenantId,
     getRoomId: client => client.subscribedRoomId,
     async publish(client, { roomOnly }) {
       if (client.ws.readyState !== 1) return;
       if (!await authService.isSessionActive(client.sessionId)) {
+        client.terminationCause = 'session-revoked';
         client.ws.close(4003, 'Session expired');
         return;
       }
       if (!roomOnly) {
         const rooms = await coordinator.listRooms(client.actor, { tenantId: client.tenantId });
-        client.ws.send(JSON.stringify({ type: 'rooms', status: 200, value: { rooms } }));
+        if (client.ws.readyState === 1) {
+          client.ws.send(JSON.stringify({ type: 'rooms', status: 200, value: { rooms } }));
+        }
       }
       const roomId = client.subscribedRoomId;
       if (roomId) {
@@ -126,12 +132,14 @@ export function createCephalopodSyncNode({ authService, roomRepository, quotaSer
           if (err?.status === 403) {
             client.subscribedRoomId = undefined;
             client.viewerId = undefined;
-            client.ws.send(JSON.stringify({
-              type: 'state',
-              roomId,
-              status: 403,
-              value: { error: 'Room unavailable or private' }
-            }));
+            if (client.ws.readyState === 1) {
+              client.ws.send(JSON.stringify({
+                type: 'state',
+                roomId,
+                status: 403,
+                value: { error: 'Room unavailable or private' }
+              }));
+            }
             return;
           }
           throw err;
@@ -141,40 +149,79 @@ export function createCephalopodSyncNode({ authService, roomRepository, quotaSer
   });
 
   // 2. Create the multi-tenant authoritative room coordinator.
+  //    Privileged methods (`inspectRoomInternal`, `restoreRoomInternal`, `reconcileRoomInternal`,
+  //    `revokeActor`, `sweep`) remain strictly inside trusted server callbacks.
   coordinator = createRoomCoordinator({
     idPattern: /^[a-zA-Z0-9_-]{8,64}$/,
+    presenceAuthIntervalMs: 5000,
     isAdmin: (actor, room) => actor.tenantRole === 'tenant-admin' && actor.tenantId === room.tenantId,
+    isRevoked: ({ tenantId, actor }) => authService.isRevokedCached(tenantId, actor.userId),
     async authorize({ tenantId, room, actor, operation }) {
       return quotaService.allowsOperation(tenantId, room.id, actor.userId, operation);
     },
-    async onPersist(room) {
-      // Trusted internal boundary: `onPersist` runs inside the per-room mutation lock
-      // in monotonic `room.revision` order; `inspectRoomInternal` can also read a room
-      // for server-side checkpointing without an end-user `actor`.
-      const internal = coordinator.inspectRoomInternal(room.id, {
-        tenantId: room.tenantId,
-        envelopeOnly: true
+    async onCreateRoom(proposedRoom) {
+      // Runs before the room enters `coordinator.rooms` or emits `room-created`.
+      await roomRepository.insertRoom({
+        tenantId: proposedRoom.tenantId,
+        roomId: proposedRoom.id,
+        creatorId: proposedRoom.creatorId,
+        hosts: proposedRoom.hosts,
+        visibility: proposedRoom.visibility,
+        permissions: proposedRoom.permissions,
+        epoch: proposedRoom.epoch,
+        revision: proposedRoom.revision,
+        content: proposedRoom.content
       });
-      if (!internal) return;
+    },
+    async onPersist(proposedRoom, meta) {
+      // `proposedRoom` is an isolated proposed snapshot inside the per-room lock;
+      // live memory commits and publishes ONLY after this promise resolves.
       await roomRepository.saveRoomCheckpoint({
-        tenantId: room.tenantId,
-        roomId: room.id,
-        epoch: internal.coordination.epoch,
-        revision: internal.coordination.revision,
-        visibility: internal.coordination.visibility,
-        timeline: internal.coordination.timeline,
-        content: room.content // Plaintext descriptor or opaque E2EE ciphertext blob
+        tenantId: proposedRoom.tenantId,
+        roomId: proposedRoom.id,
+        previousRevision: meta?.previousRevision,
+        epoch: proposedRoom.epoch,
+        revision: proposedRoom.revision,
+        mediaVersion: proposedRoom.mediaVersion,
+        visibility: proposedRoom.visibility,
+        hasMedia: proposedRoom.hasMedia,
+        paused: proposedRoom.paused,
+        position: proposedRoom.position,
+        duration: proposedRoom.duration,
+        seekable: proposedRoom.seekable,
+        startAt: proposedRoom.startAt,
+        pauseAt: proposedRoom.pauseAt,
+        initialGate: proposedRoom.initialGate,
+        manualPaused: proposedRoom.manualPaused,
+        changedAt: proposedRoom.changedAt,
+        content: proposedRoom.content
       });
+    },
+    async onDeleteRoom({ tenantId, roomId, epoch, revision, closedAt }) {
+      // Runs before the room is removed from `coordinator.rooms` or `room-closed` is published.
+      await roomRepository.recordRoomTombstone({ tenantId, roomId, epoch, revision, closedAt });
     },
     onPublish({ tenantId, roomId, includeLobby }) {
       broker.notify({ tenantId, roomId, includeLobby });
     }
   });
 
+  // Push immediate eviction when Cephalopod's auth tier revokes an account or tenant membership.
+  const unsubscribeRevocations = authService.onRevoke(({ tenantId, userId }) => {
+    void coordinator.revokeActor({ tenantId, userId }).catch(() => {});
+  });
+
+  async function reconcileIfUncertain(tenantId, roomId, err) {
+    if (!err?.ambiguous && !err?.persistenceUncertain) return;
+    const saved = await roomRepository.loadRoom(tenantId, roomId);
+    await coordinator.reconcileRoomInternal(roomId, saved || { closed: true }, { tenantId });
+  }
+
   // 3. Attach a transport (e.g. WebSocketServer) provided by Cephalopod.
-  //    `session` is verified by Cephalopod's HTTP upgrade authenticator; client messages
+  //    `session` is verified by Cephalopod's HTTP upgrade authenticator; client frames
   //    never supply or override `tenantId` or `actor`.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+  const clients = new Set();
 
   wss.on('connection', (ws, session) => {
     const client = {
@@ -188,176 +235,323 @@ export function createCephalopodSyncNode({ authService, roomRepository, quotaSer
         tenantRole: session.role
       }),
       subscribedRoomId: undefined,
-      viewerId: undefined
+      viewerId: undefined,
+      lastSeen: Date.now(),
+      pingSentMono: undefined,
+      terminationCause: undefined
     };
+    clients.add(client);
     broker.add(client);
 
-    ws.on('pong', () => {
-      if (client.subscribedRoomId && client.viewerId && client.pingSentMono !== undefined) {
-        coordinator.touchViewer(client.subscribedRoomId, client.viewerId, {
+    ws.on('pong', async () => {
+      client.lastSeen = Date.now();
+      const sentMono = client.pingSentMono;
+      client.pingSentMono = undefined;
+      if (client.subscribedRoomId && client.viewerId && sentMono !== undefined) {
+        const ok = await coordinator.touchViewer(client.subscribedRoomId, client.actor, {
+          viewerId: client.viewerId,
           tenantId: client.tenantId,
-          actor: client.actor,
-          rttMs: performance.now() - client.pingSentMono
+          rttMs: performance.now() - sentMono
         });
+        if (!ok && ws.readyState === 1) {
+          client.subscribedRoomId = undefined;
+          client.viewerId = undefined;
+          ws.close(4003, 'Room access revoked');
+        }
       }
     });
 
-    ws.on('message', async raw => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        ws.close(4002, 'Invalid JSON');
-        return;
-      }
-
-      if (msg.type === 'clock') {
-        const serverReceivedAt = Date.now(), receivedMono = performance.now();
-        if (client.subscribedRoomId && client.viewerId) {
-          coordinator.touchViewer(client.subscribedRoomId, client.viewerId, {
-            tenantId: client.tenantId,
-            actor: client.actor
-          });
+    ws.on('message', raw => {
+      void (async () => {
+        let msg;
+        try {
+          msg = JSON.parse(raw.toString());
+        } catch {
+          ws.close(4002, 'Invalid JSON');
+          return;
         }
-        ws.send(JSON.stringify({
-          type: 'clock',
-          id: msg.id,
-          serverNow: Date.now(),
-          timing: {
-            serverReceivedAt,
-            serverSentAt: Date.now(),
-            serverProcessingMs: performance.now() - receivedMono,
-            clockEpoch: coordinator.clockEpoch
+        if (!await authService.isSessionActive(client.sessionId)) {
+          client.terminationCause = 'session-revoked';
+          ws.close(4003, 'Session expired');
+          return;
+        }
+        client.lastSeen = Date.now();
+
+        if (msg.type === 'clock') {
+          const serverReceivedAt = Date.now(), receivedMono = performance.now();
+          if (client.subscribedRoomId && client.viewerId) {
+            const ok = await coordinator.touchViewer(client.subscribedRoomId, client.actor, {
+              viewerId: client.viewerId,
+              tenantId: client.tenantId
+            });
+            if (!ok) {
+              client.subscribedRoomId = undefined;
+              client.viewerId = undefined;
+              ws.close(4003, 'Room access revoked');
+              return;
+            }
           }
-        }));
-        return;
-      }
-
-      if (msg.type === 'join') {
-        try {
-          const snapshot = await coordinator.joinViewer(msg.roomId, client.actor, {
-            viewerId: msg.viewerId,
-            tenantId: client.tenantId,
-            envelopeOnly: true
-          });
-          // Subscribe the connection ONLY after `joinViewer` authorizes membership.
-          client.subscribedRoomId = msg.roomId;
-          client.viewerId = msg.viewerId;
-          ws.send(JSON.stringify({ type: 'joined', id: msg.id, roomId: msg.roomId, status: 200, value: snapshot }));
-        } catch (err) {
           ws.send(JSON.stringify({
-            type: 'response',
+            type: 'clock',
             id: msg.id,
-            status: err?.status || 403,
-            value: { error: 'Room unavailable or private' }
+            serverNow: Date.now(),
+            timing: {
+              serverReceivedAt,
+              serverSentAt: Date.now(),
+              serverProcessingMs: performance.now() - receivedMono,
+              clockEpoch: coordinator.clockEpoch
+            }
           }));
+          return;
         }
-        return;
-      }
 
-      if (msg.type === 'load-timeline') {
-        // Coordinates an abstract timeline; optional `expectedRevision` prevents lost updates.
-        const outcome = await coordinator.loadTimeline(msg.roomId, client.actor, {
-          tenantId: client.tenantId,
-          expectedRevision: msg.expectedRevision,
-          duration: msg.duration,
-          position: msg.position || 0,
-          autoplay: msg.autoplay !== false,
-          content: msg.content
-        });
-        ws.send(JSON.stringify({ type: 'response', id: msg.id, value: outcome }));
-        return;
-      }
+        if (msg.type === 'create-room') {
+          try {
+            const room = await coordinator.createRoom({
+              actor: client.actor,
+              tenantId: client.tenantId,
+              name: msg.name || '',
+              visibility: msg.visibility === 'private' ? 'private' : 'public',
+              content: msg.content || {}
+            });
+            ws.send(JSON.stringify({ type: 'response', id: msg.id, status: 201, value: { id: room.id } }));
+          } catch (err) {
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: err?.status || 503,
+              value: { error: err?.status === 403 ? 'Room creation not authorized' : 'Unable to persist new room' }
+            }));
+          }
+          return;
+        }
 
-      if (msg.type === 'ready') {
-        try {
-          const outcome = await coordinator.reportReadiness(msg.roomId, client.actor, {
-            viewerId: client.viewerId,
-            mediaVersion: msg.mediaVersion,
-            ready: msg.ready,
-            readinessVersion: msg.readinessVersion,
+        if (msg.type === 'join') {
+          try {
+            const snapshot = await coordinator.joinViewer(msg.roomId, client.actor, {
+              viewerId: msg.viewerId,
+              tenantId: client.tenantId,
+              envelopeOnly: true
+            });
+            // Subscribe the connection ONLY after `joinViewer` authorizes & commits membership.
+            client.subscribedRoomId = msg.roomId;
+            client.viewerId = msg.viewerId;
+            ws.send(JSON.stringify({ type: 'joined', id: msg.id, roomId: msg.roomId, status: 200, value: snapshot }));
+          } catch (err) {
+            await reconcileIfUncertain(client.tenantId, msg.roomId, err);
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: err?.status || 503,
+              value: { error: err?.status === 403 ? 'Room unavailable or private' : 'Room temporarily unavailable' }
+            }));
+          }
+          return;
+        }
+
+        if (msg.type === 'load-timeline') {
+          try {
+            const outcome = await coordinator.loadTimeline(msg.roomId, client.actor, {
+              tenantId: client.tenantId,
+              expectedRevision: msg.expectedRevision,
+              duration: msg.duration,
+              position: msg.position || 0,
+              autoplay: msg.autoplay !== false,
+              content: msg.content
+            });
+            ws.send(JSON.stringify({ type: 'response', id: msg.id, status: outcome.httpStatus || 200, value: outcome }));
+          } catch (err) {
+            await reconcileIfUncertain(client.tenantId, msg.roomId, err);
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: 503,
+              value: { status: 'unavailable', error: 'Timeline update could not be persisted' }
+            }));
+          }
+          return;
+        }
+
+        if (msg.type === 'ready') {
+          try {
+            const outcome = await coordinator.reportReadiness(msg.roomId, client.actor, {
+              viewerId: client.viewerId,
+              mediaVersion: msg.mediaVersion,
+              ready: msg.ready,
+              readinessVersion: msg.readinessVersion,
+              tenantId: client.tenantId
+            });
+            ws.send(JSON.stringify({ type: 'response', id: msg.id, status: 200, value: outcome }));
+          } catch (err) {
+            await reconcileIfUncertain(client.tenantId, msg.roomId, err);
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: err?.status || 400,
+              value: { error: 'Readiness update rejected' }
+            }));
+          }
+          return;
+        }
+
+        if (msg.type === 'command') {
+          const envelope = {
+            epoch: msg.envelope?.epoch,
+            expiresAt: msg.envelope?.expiresAt,
+            ...(msg.envelope?.expectedRevision !== undefined
+              ? { expectedRevision: msg.envelope.expectedRevision }
+              : {}),
+            ...(client.viewerId !== undefined ? { viewerId: client.viewerId } : {}),
+            command: msg.envelope?.command
+          };
+          try {
+            const outcome = await coordinator.executeCommand(msg.roomId, client.actor, envelope, {
+              tenantId: client.tenantId
+            });
+            ws.send(JSON.stringify({ type: 'response', id: msg.id, status: outcome.httpStatus || 200, value: outcome }));
+          } catch (err) {
+            await reconcileIfUncertain(client.tenantId, msg.roomId, err);
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: 503,
+              value: { status: 'unavailable', error: 'Command could not be durably committed' }
+            }));
+          }
+          return;
+        }
+
+        if (msg.type === 'close-room') {
+          try {
+            const outcome = await coordinator.closeRoom(msg.roomId, client.actor, {
+              tenantId: client.tenantId,
+              epoch: msg.epoch,
+              expectedRevision: msg.expectedRevision
+            });
+            ws.send(JSON.stringify({ type: 'response', id: msg.id, status: outcome.httpStatus || 200, value: outcome }));
+          } catch (err) {
+            await reconcileIfUncertain(client.tenantId, msg.roomId, err);
+            ws.send(JSON.stringify({
+              type: 'response',
+              id: msg.id,
+              status: 503,
+              value: { status: 'unavailable', error: 'Room closure could not be persisted' }
+            }));
+          }
+          return;
+        }
+
+        if (msg.type === 'leave') {
+          const roomId = client.subscribedRoomId;
+          const viewerId = client.viewerId;
+          client.subscribedRoomId = undefined;
+          client.viewerId = undefined;
+          if (roomId && viewerId) {
+            await coordinator.leaveViewer(roomId, client.actor, {
+              viewerId,
+              tenantId: client.tenantId,
+              reason: 'left'
+            }).catch(() => {});
+          }
+          ws.send(JSON.stringify({ type: 'response', id: msg.id, status: 200, value: { ok: true } }));
+          return;
+        }
+
+        if (msg.type === 'sync-quality') {
+          const outcome = await coordinator.recordSyncQuality(msg.roomId, client.actor, msg, {
             tenantId: client.tenantId
           });
-          ws.send(JSON.stringify({ type: 'response', id: msg.id, status: 200, value: outcome }));
-        } catch (err) {
-          ws.send(JSON.stringify({
-            type: 'response',
-            id: msg.id,
-            status: err?.status || 400,
-            value: { error: 'Readiness update rejected' }
-          }));
+          if (!outcome.ok) {
+            if (outcome.code === 4003) {
+              client.subscribedRoomId = undefined;
+              client.viewerId = undefined;
+            }
+            ws.close(outcome.code, 'Invalid or unauthorized sync quality');
+          }
         }
-        return;
-      }
-
-      if (msg.type === 'command') {
-        // Bind `viewerId` and `tenantId` to the authenticated connection; `epoch` and
-        // `expiresAt` are required, and `expectedRevision` is enforced whenever supplied.
-        const envelope = {
-          epoch: msg.envelope?.epoch,
-          expiresAt: msg.envelope?.expiresAt,
-          ...(msg.envelope?.expectedRevision !== undefined
-            ? { expectedRevision: msg.envelope.expectedRevision }
-            : {}),
-          ...(client.viewerId !== undefined ? { viewerId: client.viewerId } : {}),
-          command: msg.envelope?.command
-        };
-        const outcome = await coordinator.executeCommand(msg.roomId, client.actor, envelope, {
-          tenantId: client.tenantId
-        });
-        ws.send(JSON.stringify({ type: 'response', id: msg.id, value: outcome }));
-        return;
-      }
-
-      if (msg.type === 'leave') {
-        if (client.subscribedRoomId && client.viewerId) {
-          await coordinator.leaveViewer(client.subscribedRoomId, client.actor, {
-            viewerId: client.viewerId,
-            tenantId: client.tenantId
-          });
-        }
-        client.subscribedRoomId = undefined;
-        client.viewerId = undefined;
-        ws.send(JSON.stringify({ type: 'response', id: msg.id, status: 200, value: { ok: true } }));
-        return;
-      }
-
-      if (msg.type === 'sync-quality') {
-        const outcome = coordinator.recordSyncQuality(msg.roomId, client.actor, msg, {
-          tenantId: client.tenantId
-        });
-        if (!outcome.ok) ws.close(outcome.code, 'Invalid sync quality');
-      }
+      })().catch(() => ws.close(4002, 'Request failed'));
     });
 
-    ws.on('close', () => {
+    ws.on('close', code => {
+      const roomId = client.subscribedRoomId;
+      const viewerId = client.viewerId;
+      client.subscribedRoomId = undefined;
+      client.viewerId = undefined;
+      clients.delete(client);
       broker.delete(client);
+      if (roomId && viewerId) {
+        // Unexpected network drops (`1005`/`1006`) clean up active presence immediately while
+        // retaining `RECONNECT_GRACE_MS` reconnect state; clean/auth exits drop grace immediately.
+        const unexpectedDrop = (code === 1005 || code === 1006) && !client.terminationCause;
+        void coordinator.leaveViewer(roomId, client.actor, {
+          viewerId,
+          tenantId: client.tenantId,
+          reason: unexpectedDrop ? 'disconnected' : 'left'
+        }).catch(() => {});
+      }
     });
   });
 
-  return { coordinator, broker, wss, classifyMutationScope };
+  // 4. Periodic heartbeat ping/stale-socket eviction and serialized coordinator maintenance sweeps.
+  const maintenanceTimer = setInterval(() => {
+    const now = Date.now();
+    for (const client of clients) {
+      if (now - client.lastSeen >= 10_000) {
+        client.terminationCause = 'idle-timeout';
+        client.ws.terminate();
+      } else if (client.pingSentMono === undefined && client.ws.readyState === 1) {
+        client.pingSentMono = performance.now();
+        client.ws.ping();
+      }
+    }
+    void coordinator.sweep().catch(() => {});
+  }, 1000);
+  maintenanceTimer.unref?.();
+
+  return {
+    coordinator,
+    broker,
+    wss,
+    classifyMutationScope,
+    close() {
+      clearInterval(maintenanceTimer);
+      unsubscribeRevocations?.();
+      for (const client of clients) {
+        client.terminationCause = 'server-shutdown';
+        client.ws.terminate();
+      }
+      wss.close();
+    }
+  };
 }
 ```
 
+### Tenant identity, ownership/billing, and cross-tenant room invitations
+
+Future **Uburoom Cephalopod** development must keep three identity and authorization concepts distinct:
+
+1. **Global user identity (`userId`):** The authenticated person's canonical Cephalopod account identity across the service.
+2. **Tenant ownership and billing (`tenantId`):** The organization or subscriber namespace that owns a room, governs storage/concurrency quotas and billing, and partitions `(tenantId, roomId)` durability.
+3. **Individual room access:** Whether a specific authenticated `userId` is authorized to join, view, or control a particular room.
+
+In future Cephalopod invitation flows, a user whose personal account belongs to Tenant B must be able to join an invited room owned and billed under Tenant A **only through a server-verified room grant** (for example, a Cephalopod-redeemed invitation record or room-scoped session grant verified on the server that binds that room context's authorized `tenantId` and `roomId` and validates ongoing access in `options.authorize`). Room invitations are **not** implemented today: `createRoomCoordinator` strictly enforces tenant isolation, never relaxes cross-tenant boundaries, and never allows clients to select arbitrary `tenantId` values.
+
 ---
 
-## 5. Remaining Cephalopod persistence and recovery requirements
+## 5. Persistence contract and remaining Cephalopod host responsibilities
 
-`createRoomCoordinator` intentionally keeps room state in memory and delegates storage I/O to its host service. Today, `options.onPersist(room)` is awaited inside the per-room mutation lock in monotonic `room.revision` order when:
+`createRoomCoordinator` enforces in-process per-room serialization and copy-on-write commit ordering around `onCreateRoom`, `onPersist`, and `onDeleteRoom`, while intentionally delegating database technology and cluster topology to its host service. Specifically:
 
-- a timeline is loaded (`loadTimeline`),
-- room visibility changes (`room.visibility`),
-- initial readiness auto-starts playback (`maybeAutoStart`),
-- a timed-out readiness decision is applied (`media.ready.start`, `media.ready.wait`, `media.ready.cancel`), or
-- a timeline coordination command (`media.play`, `media.pause`, `media.toggle`, `media.seek.*`) is applied.
+- **Guaranteed by `createRoomCoordinator`:**
+  - `createRoom` awaits `onCreateRoom` (or `onPersist` with `{ operation: 'create' }`) under a `(tenantId, roomId)` key lock before inserting the room into `coordinator.rooms` or emitting `room-created`.
+  - Durable transitions (`loadTimeline`, `executeCommand`, `leaveViewer`, auto-start in `reportReadiness`/`joinViewer`, `revokeActor`, and `sweep` settlements) compute changes on an isolated deep copy, await `onPersist(proposedRoom, meta)` inside `withRoomLock`, commit in-memory state **only after** `onPersist` resolves, and emit `onPublish` **only after** releasing the room lock.
+  - `closeRoom` awaits `onDeleteRoom` (or `onPersist` with `{ operation: 'close', closed: true }`) inside `withRoomLock` before removing the room from `coordinator.rooms` or emitting `room-closed`.
+  - Definite persistence rejections leave the previously committed room state and `revision` intact and emit zero `onPublish` notifications; errors flagged `{ ambiguous: true }` fence subsequent mutations with `503` `persistence-uncertain` and reserve the uncertain revision until `reconcileRoomInternal` runs.
 
-Because `shared/sync/` does not prescribe a database engine or cluster topology, **Uburoom Cephalopod** must implement the following persistence and recovery behaviors around `createRoomCoordinator`:
-
-1. **Room creation and initial persistence:** `createRoom(...)` allocates an in-memory room at `revision = 0` and does not invoke `onPersist`. Cephalopod's room-creation handler must enforce per-tenant room quotas and durably persist initial room metadata (`tenantId`, `roomId`, `creatorId`, `hosts`, `visibility`, `permissions`, initial `epoch`, `revision`, and `content`) before returning or advertising the room to clients.
-2. **State checkpointing:** `onPersist` captures discrete state transitions, while elapsed wall-clock playback between commands is derived via `timelinePosition(room, now)` and natural-ending sweeps (`sweep()`). Cephalopod should guard checkpoint writes with monotonic revision preconditions (`WHERE tenant_id = ? AND room_id = ? AND revision < ?`) and add bounded periodic position bookmarks if crash-resume granularity finer than the last command is required.
-3. **Room closure and deletion:** `closeRoom(...)` removes the room from `coordinator.rooms` and emits `room-closed`, but does not call `onPersist`. Cephalopod must persist closure/deletion tombstones (and delete stored content payloads according to retention policy) before acknowledging closure so deleted rooms are never resurrected on restart.
-4. **Loading persisted rooms on startup:** `createRoomCoordinator` begins with an empty `rooms` map. Cephalopod must rehydrate active durable rooms on worker startup or lazy room access (`createRoom` + restoring saved timeline/permission fields) while leaving `viewers`, `disconnectedViewers`, and `initialViewers` empty until live clients authenticate and join.
-5. **Recovery after process crashes:** If a node crashes while `paused === false`, actual viewer playback progress during the outage is unknown and no viewers are initially connected. Consistent with self-hosted Uburoom's durable room recovery (`server/watch-rooms.js`), Cephalopod should restore crashed rooms in a safe paused or readiness-gated state at the last verified checkpoint position rather than extrapolating `now - changedAt` across server downtime.
-6. **Revision and epoch consistency during restoration:** Rehydrating a persisted room must set `room.revision` to at least `persistedRevision + 1` (never resetting `revision` to `0`) so pre-crash `expectedRevision` preconditions cannot collide with post-restore revisions, and must assign a fresh `room.epoch` and coordinator `clockEpoch` on process startup so pre-crash command envelopes and client clock mappings are invalidated.
-7. **Prevention of stale-command replay:** Cephalopod must never persist unapplied client commands or replay queued WebSocket mutations across reconnects or worker failovers. Stale commands must fail closed via `COMMAND_TTL_MS` (`expiresAt`), rotated `epoch`s on recovery/host/visibility transitions, and connection-local request correlation IDs.
-8. **Tenant isolation during persistence and recovery:** All durable tables, caches, and object keys must be partitioned by composite `(tenantId, roomId)` keys. Lazy room recovery and administrative queries must verify the authenticated session's `tenantId` before loading or exposing any persisted room record.
+- **Remaining Cephalopod host responsibilities:**
+  1. **Transactional storage & monotonic revision guards:** Cephalopod's `onCreateRoom`, `onPersist`, and `onDeleteRoom` implementations must execute atomic database writes partitioned by `(tenantId, roomId)` with optimistic revision guards (`WHERE tenant_id = ? AND room_id = ? AND revision < ?`) so split-brain or stale worker writes cannot overwrite newer checkpoints.
+  2. **Wall-clock position checkpointing:** `onPersist` fires on discrete transitions and settlements, whereas continuous wall-clock playback between commands is derived via `timelinePosition(room, now)`. If Cephalopod requires crash-resume granularity finer than the latest command or settlement, it can inspect rooms periodically via `inspectRoomInternal` and write bounded position bookmarks.
+  3. **Durable deletion tombstones & payload retention:** `onDeleteRoom` must persist a durable closure tombstone and purge any associated encrypted/plaintext `content` blobs before resolving so closed rooms cannot be resurrected from earlier checkpoints after a restart.
+  4. **Startup/lazy rehydration & safe crash recovery:** On worker startup or lazy room activation, Cephalopod must skip tombstoned rooms and pass active persisted checkpoints to `coordinator.restoreRoomInternal(checkpoint)`. `restoreRoomInternal` restores rooms in a safe `paused: true` state at the last verified checkpoint position with empty `viewers`/`disconnectedViewers`, `revision = persistedRevision + 1`, and a fresh `epoch` (paired with a fresh process `clockEpoch`) so pre-crash command envelopes, `expectedRevision` preconditions, and client clock mappings cannot collide or replay.
+  5. **Ambiguous-commit reconciliation:** If a database driver drops a connection after sending a write (so commit vs. rollback is unknown), the adapter should throw an error with `err.ambiguous = true`, query authoritative storage for `(tenantId, roomId)`, and invoke `await coordinator.reconcileRoomInternal(roomId, savedRecord, { tenantId })` before resuming mutations.
+  6. **Single-owner residency, quotas & E2EE:** Horizontal scaling must route each active `(tenantId, roomId)` to a single authoritative worker/shard owner; connection authentication, WebSocket frame rate limits, per-tenant quotas, end-to-end `content` key exchange, and future server-verified cross-tenant room invitation grants remain Cephalopod service responsibilities outside `shared/sync/`.
