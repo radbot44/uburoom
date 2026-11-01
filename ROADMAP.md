@@ -95,7 +95,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 | M2-P3 | Guest room passes | Approved for future work after P14 authorization, P4 attribution and P13 roles; revocable, bounded room passes never imply media or host authority |
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
-| M2-P6 | Dialogue Boost / Night Mode | Personal client-side audio compression compatible with volume/mute |
+| M2-P6 | Dialogue Boost / Night Mode | Implemented: personal client-side Web Audio dynamic range compression, speech peaking EQ and 3-choice selector (Normal/Dialogue/Night) in player dialog and sliding menu; live browser acceptance open |
 | M2-P9 | Discord presence and room invites | Discoverable room embeds with lifecycle updates; scope separately from removed bot commands |
 | M2-P10 | Native client integration (`plezy-uburoom`) | Companion Flutter/`libmpv` client using authenticated `/watch-socket` sync, expiring handoff bearer tokens, and `delivery=local` for downloaded Plex files without upstream transcode allocation |
 

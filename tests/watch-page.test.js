@@ -30,3 +30,12 @@ test('watch page threads the supplied CSP style nonce only to its scrollbar init
   assert.match(html, /<script src="\/watch-scrollbars\.js" data-os-style-nonce="testNonce1234=="><\/script>/);
   assert.ok(!html.includes('<style nonce="testNonce1234=="'), 'the nonce is not applied to arbitrary inline styles');
 });
+
+test('watch page includes audio mode controls and option captions', () => {
+  const html = watchPage(template, { config: {}, me: { status: 401, value: { error: 'Sign in' } } });
+  assert.ok(html.includes('id="audio-mode"'));
+  assert.ok(html.includes('id="audio-mode-group"'));
+  assert.ok(html.includes('data-caption="Original dynamic range"'));
+  assert.ok(html.includes('data-caption="Boosts speech clarity"'));
+  assert.ok(html.includes('data-caption="Levels peaks for quiet listening"'));
+});

@@ -20,7 +20,7 @@
     const options=document.createElement('div'); options.className='settings-options'; submenu.append(options);
     const badge=document.createElement('span'); badge.id='quality-badge'; badge.setAttribute('aria-hidden','true'); cog.append(badge);
     const spinner=document.createElement('span'); spinner.id='captions-spinner'; spinner.setAttribute('aria-hidden','true'); spinner.append(uburoomIcons.icon(document,'loader-4'));
-    const choices=[['quality','Quality'],['audio-track','Audio track'],['subtitle-track','Subtitle track']];
+    const choices=[['quality','Quality'],['audio-track','Audio track'],['audio-mode','Audio mode'],['subtitle-track','Subtitle track']];
     const rows=[]; let opened=false, activeChoice, choiceSignature, chromeTimer, tapTimer, feedbackTimer, press, taps, lastSubtitle, touching=false;
     function layoutCaptions() {
       const transport=stage.querySelector('.transport'), font=Math.max(14,Math.min(innerWidth*.024,32));
@@ -77,8 +77,8 @@
     }
     function renderChoices() {
       if(!activeChoice)return;
-      const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track';
-      const trackRows=activeChoice==='quality'?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
+      const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track', isAudioMode=activeChoice==='audio-mode';
+      const trackRows=activeChoice==='quality'||isAudioMode?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
       const resolved=audio?tracks?.audioId:tracks?.subtitleId;
       const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
       if(signature===choiceSignature)return; choiceSignature=signature;
@@ -87,7 +87,8 @@
       for(const option of select.options) {
         const track=trackRows.find(row=>row.id===option.value);
         const b=button(options,track?trackLabel(track):option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
-        if (track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; b.append(caption); }
+        const captionText = track?.title || option.dataset.caption;
+        if (captionText) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=captionText; b.append(caption); }
         if (select.value==='auto' && option.value===resolved) {
           const marker=document.createElement('span'); marker.className='settings-auto'; marker.textContent='Used by Automatic'; b.append(marker);
         }
@@ -114,11 +115,11 @@
       if(!enabled&&cc.dataset.loading==='true'){cc.dataset.loading='false';cc.removeAttribute('aria-busy');}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {
-        const select=$(id), audio=id==='audio-track';
-        const track=id==='quality'?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
-        const hasTracks=id==='quality'||(audio?tracks?.audio:tracks?.subtitles)?.some(track=>track.available);
+        const select=$(id), audio=id==='audio-track', isAudioMode=id==='audio-mode';
+        const track=id==='quality'||isAudioMode?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
+        const hasTracks=id==='quality'||isAudioMode||(audio?tracks?.audio:tracks?.subtitles)?.some(track=>track.available);
         row.disabled=select.disabled;
-        value.textContent=!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
+        value.textContent=isAudioMode?select.selectedOptions[0]?.textContent || 'Normal':!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
         if (hasTracks && track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
         value.title=value.textContent;
       }

@@ -38,7 +38,7 @@ let seekPendingValue = undefined, seekPendingUntil = 0, seekPendingRevision = un
 let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readyQueued = false, readinessSent, browseRoom, preferredQuality = '720p4';
 let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
 const playerPreferenceKey='uburoom.player';
-let playerPreferences={volume:30,muted:false,quality:'720p4',subtitleColor:'#ffffff',subtitleBg:'background',subtitleBrightness:100,plexReporting:true,plexWatchState:false};
+let playerPreferences={volume:30,muted:false,quality:'720p4',subtitleColor:'#ffffff',subtitleBg:'background',subtitleBrightness:100,plexReporting:true,plexWatchState:false,audioMode:'normal'};
 try {
   const saved=JSON.parse(localStorage.getItem(playerPreferenceKey)||'null');
   if(saved && typeof saved==='object') {
@@ -46,6 +46,7 @@ try {
     if(typeof saved.muted==='boolean')playerPreferences.muted=saved.muted;
     if(typeof saved.plexReporting==='boolean')playerPreferences.plexReporting=saved.plexReporting;
     if(typeof saved.plexWatchState==='boolean')playerPreferences.plexWatchState=saved.plexWatchState;
+    if(['normal','dialogue','night'].includes(saved.audioMode))playerPreferences.audioMode=saved.audioMode;
     if(uburoom.validQuality(saved.quality))playerPreferences.quality=uburoom.qualityId(saved.quality);
     if(['auto','burn'].includes(saved.subtitleMode))playerPreferences.subtitleMode=saved.subtitleMode;
     if(['auto','off'].includes(saved.subtitles?.choice))playerPreferences.subtitles={choice:saved.subtitles.choice};
@@ -136,6 +137,86 @@ function applySubtitleAppearance() {
   if (brightnessValue) brightnessValue.textContent = brightness + '%';
 }
 applySubtitleAppearance();
+let audioContext, audioSourceNode, speechFilterNode, compressorNode, makeupGainNode;
+const audioModeHints = {
+  normal: 'Original dynamic range and audio balance.',
+  dialogue: 'Boosts speech clarity and vocal frequencies.',
+  night: 'Compresses loud peaks and lifts quiet audio for night listening.'
+};
+function initAudioGraph() {
+  if (audioSourceNode) return true;
+  if (typeof window === 'undefined') return false;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx || !video || typeof AudioCtx !== 'function') return false;
+  try {
+    if (!audioContext) audioContext = new AudioCtx();
+    if (typeof audioContext.createMediaElementSource !== 'function') return false;
+    audioSourceNode = audioContext.createMediaElementSource(video);
+
+    speechFilterNode = audioContext.createBiquadFilter();
+    speechFilterNode.type = 'peaking';
+    speechFilterNode.frequency.value = 2500;
+    speechFilterNode.Q.value = 1.2;
+    speechFilterNode.gain.value = 0;
+
+    compressorNode = audioContext.createDynamicsCompressor();
+    compressorNode.threshold.value = 0;
+    compressorNode.knee.value = 30;
+    compressorNode.ratio.value = 1;
+    compressorNode.attack.value = 0.003;
+    compressorNode.release.value = 0.25;
+
+    makeupGainNode = audioContext.createGain();
+    makeupGainNode.gain.value = 1.0;
+
+    audioSourceNode.connect(speechFilterNode);
+    speechFilterNode.connect(compressorNode);
+    compressorNode.connect(makeupGainNode);
+    makeupGainNode.connect(audioContext.destination);
+    return true;
+  } catch (error) {
+    diagnostics?.record?.('failure', { category: 'media', detail: 'audio-enhancement', reason: error.message });
+    return false;
+  }
+}
+function resumeAudioContext() {
+  if (audioContext && audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {});
+  }
+}
+function applyAudioMode(mode) {
+  const targetMode = ['normal', 'dialogue', 'night'].includes(mode) ? mode : (playerPreferences.audioMode || 'normal');
+  const select = $('audio-mode');
+  const hint = $('audio-mode-hint');
+  if (select && select.value !== targetMode) select.value = targetMode;
+  if (hint) hint.textContent = audioModeHints[targetMode] || audioModeHints.normal;
+  if (targetMode === 'normal' && !audioSourceNode) return;
+  if (!initAudioGraph()) return;
+  resumeAudioContext();
+  const now = audioContext.currentTime;
+  if (targetMode === 'normal') {
+    speechFilterNode.gain.setValueAtTime(0, now);
+    compressorNode.threshold.setValueAtTime(0, now);
+    compressorNode.ratio.setValueAtTime(1, now);
+    makeupGainNode.gain.setValueAtTime(1.0, now);
+  } else if (targetMode === 'dialogue') {
+    speechFilterNode.gain.setValueAtTime(5.0, now);
+    compressorNode.threshold.setValueAtTime(-20, now);
+    compressorNode.knee.setValueAtTime(12, now);
+    compressorNode.ratio.setValueAtTime(4.0, now);
+    compressorNode.attack.setValueAtTime(0.005, now);
+    compressorNode.release.setValueAtTime(0.20, now);
+    makeupGainNode.gain.setValueAtTime(1.1, now);
+  } else if (targetMode === 'night') {
+    speechFilterNode.gain.setValueAtTime(0, now);
+    compressorNode.threshold.setValueAtTime(-28, now);
+    compressorNode.knee.setValueAtTime(24, now);
+    compressorNode.ratio.setValueAtTime(12.0, now);
+    compressorNode.attack.setValueAtTime(0.003, now);
+    compressorNode.release.setValueAtTime(0.25, now);
+    makeupGainNode.gain.setValueAtTime(1.35, now);
+  }
+}
 function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
   const freshness=uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
@@ -305,6 +386,7 @@ function diagnosticSample(event='sample',fields={}) {
 }
 for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
   video.addEventListener(event,()=>{
+    if(event==='playing')resumeAudioContext();
     if(event==='waiting'&&disconnectExtended)fullPlayerClear();
     if(['pause','seeking','emptied'].includes(event))choppyDetector.interrupt();
     if(event==='waiting')choppyDetector.buffering();
@@ -2212,7 +2294,14 @@ syncButtonGroup('room-create-preset', 'room-create-preset-group');
 syncButtonGroup('room-settings-visibility', 'room-settings-visibility-group');
 syncButtonGroup('room-permission-preset', 'room-permission-preset-group');
 syncButtonGroup('subtitle-bg', 'subtitle-bg-group');
+syncButtonGroup('audio-mode', 'audio-mode-group');
 applySubtitleAppearance();
+applyAudioMode(playerPreferences.audioMode);
+$('audio-mode')?.addEventListener('change', () => {
+  const next = $('audio-mode').value;
+  savePlayerPreferences({ audioMode: next });
+  applyAudioMode(next);
+});
 for (const btn of $('room-create-visibility-group')?.querySelectorAll('button') || []) {
   btn.prepend(uburoomIcons.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
