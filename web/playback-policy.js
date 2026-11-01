@@ -53,14 +53,24 @@
   function readinessBuffered(buffered,position,duration) {
     return timingApi().readinessBuffered(buffered,position,duration);
   }
-  function timeline(buffered,duration,position) {
+  function timeline(buffered,duration,position,chapters) {
     if (!(duration > 0) || !Number.isFinite(duration)) return 'var(--border)';
     const percent = value => (Math.min(100,Math.max(0,value * 100 / duration))).toFixed(3) + '%';
     const stops = ['var(--border) 0%'];
     for (const [start,end] of ranges(buffered,duration)) stops.push(`var(--border) ${percent(start)},var(--muted) ${percent(start)},var(--muted) ${percent(end)},var(--border) ${percent(end)}`);
     stops.push('var(--border) 100%');
     const progress = percent(Number.isFinite(position) ? position : 0);
-    return `linear-gradient(to right,var(--primary) 0%,var(--primary) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
+    const notchStops = [];
+    if (Array.isArray(chapters)) {
+      for (const ch of chapters) {
+        if (Number.isFinite(ch.startTime) && ch.startTime > 0 && ch.startTime < duration) {
+          const pct = (ch.startTime * 100 / duration).toFixed(3);
+          notchStops.push(`transparent calc(${pct}% - 1px),#101217 calc(${pct}% - 1px),#101217 calc(${pct}% + 1px),transparent calc(${pct}% + 1px)`);
+        }
+      }
+    }
+    const notchLayer = notchStops.length ? `linear-gradient(to right,transparent 0%,${notchStops.join(',')},transparent 100%),` : '';
+    return `${notchLayer}linear-gradient(to right,var(--primary) 0%,var(--primary) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
   }
   function needsCompatible(source,canPlayType) {
     // Positive answers remain only hints. Only an explicit negative for every

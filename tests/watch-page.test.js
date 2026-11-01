@@ -39,3 +39,11 @@ test('watch page includes audio mode controls and option captions', () => {
   assert.ok(html.includes('data-caption="Boosts speech clarity"'));
   assert.ok(html.includes('data-caption="Levels peaks for quiet listening"'));
 });
+
+test('watch page includes chapter selection, tooltip, and skip marker controls', () => {
+  const html = watchPage(template, { config: {}, me: { status: 401, value: { error: 'Sign in' } } });
+  assert.ok(html.includes('id="chapters"'));
+  assert.ok(html.includes('id="timeline-tooltip"'));
+  assert.ok(html.includes('id="skip-marker"'));
+  assert.ok(html.includes('id="skip-marker-label"'));
+});

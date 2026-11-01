@@ -229,3 +229,36 @@ test('slow file checks never hold catalog reads and overlapping requests reuse i
   assert.equal((await personal.browse({section:'1'})).items[0].available,true,'Private scopes do not reuse another scope status');
   await personal.availability(['1']);assert.equal(checks,2);
 });
+
+test('prepare parses and normalizes item chapters and markers chronologically', async t => {
+  const itemWithChapters = movie(1, {
+    duration: 120000,
+    Media: [{ id: 1, videoCodec: 'h264', Part: [{ id: 1, key: '/library/parts/1/file.mp4', Stream: [{ id: 10, streamType: 1, codec: 'h264' }] }] }],
+    Chapter: [
+      { id: 2, index: 2, tag: 'Chapter 2', startTimeOffset: 30000, endTimeOffset: 90000 },
+      { id: 1, index: 1, tag: 'Prologue', startTimeOffset: 0, endTimeOffset: 30000 }
+    ],
+    Marker: [
+      { id: 101, type: 'intro', startTimeOffset: 15000, endTimeOffset: 45000 },
+      { id: 102, type: 'credits', startTimeOffset: 100000, endTimeOffset: 120000 }
+    ]
+  });
+  const plex = fixture(async () => json({ Metadata: [itemWithChapters] }));
+  t.after(() => plex.close());
+  const media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
+  assert.equal(media.chapters.length, 2);
+  assert.equal(media.chapters[0].title, 'Prologue');
+  assert.equal(media.chapters[0].startTime, 0);
+  assert.equal(media.chapters[0].endTime, 30);
+  assert.equal(media.chapters[1].title, 'Chapter 2');
+  assert.equal(media.chapters[1].startTime, 30);
+  assert.equal(media.chapters[1].endTime, 90);
+
+  assert.equal(media.markers.length, 2);
+  assert.equal(media.markers[0].type, 'intro');
+  assert.equal(media.markers[0].startTime, 15);
+  assert.equal(media.markers[0].endTime, 45);
+  assert.equal(media.markers[1].type, 'credits');
+  assert.equal(media.markers[1].startTime, 100);
+  assert.equal(media.markers[1].endTime, 120);
+});

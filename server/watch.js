@@ -158,7 +158,7 @@ class Watch {
       void this.reporting?.end(viewer, 'stream-changed');
       if (viewer.media) void this.plex.stop(viewer.media);
       viewer.directDelivery = undefined;
-      viewer.media = { id: room.media.id, title: room.media.title, duration: room.media.duration, kind: room.media.kind, format: 'local', principal: plex.principal, resources: new Map() };
+      viewer.media = { id: room.media.id, title: room.media.title, duration: room.media.duration, kind: room.media.kind, format: 'local', principal: plex.principal, resources: new Map(), chapters: room.media.chapters || [], markers: room.media.markers || [] };
       viewer.mediaVersion = version; viewer.streamVersion = randomUUID(); viewer.ready = false;
       return viewer.media;
     }
@@ -423,6 +423,7 @@ class Watch {
       },
       startAt:room.startAt, pauseAt:room.pauseAt,
       title: room.media?.title || 'Choose something to watch…', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
+      chapters: room.media?.chapters || [], markers: room.media?.markers || [],
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,

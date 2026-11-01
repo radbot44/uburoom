@@ -14,8 +14,9 @@
 <div class="player-chrome title-bar"><div class="media-heading"><h1 id="title">Watch together</h1><p id="details"></p><p id="viewers"></p></div><div class="player-actions"><button id="drawer-open" class="solid-button" hidden title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="drawer"><span id="drawer-symbol"></span><span>Menu</span></button></div></div>
 <button id="join-playback" class="center-play" aria-label="Play" title="Play" hidden></button>
 <p id="ready-status" role="status"></p>
+<button id="skip-marker" class="skip-marker" type="button" aria-label="Skip intro" hidden><span id="skip-marker-icon" aria-hidden="true"></span><span id="skip-marker-label">Skip intro</span></button>
 <div class="player-chrome transport" role="group" aria-label="Playback controls">
-<div class="timeline-row" data-media-controls><span id="time" class="time">0:00</span><input id="timeline" type="range" min="0" max="60" step="0.1" value="0" aria-label="Playback position" disabled><span id="duration" class="time">0:00</span></div>
+<div id="timeline-row" class="timeline-row" data-media-controls><span id="time" class="time">0:00</span><input id="timeline" type="range" min="0" max="60" step="0.1" value="0" aria-label="Playback position" disabled><div id="timeline-tooltip" class="timeline-tooltip" hidden></div><span id="duration" class="time">0:00</span><select id="chapters" hidden></select></div>
 <div class="transport-row"><div class="playback-buttons" data-media-controls>
 <button id="player-play" class="player-button" aria-label="Play" title="Play"></button>
 <button id="previous" class="player-button" aria-label="Restart / previous episode" title="Restart / previous episode"></button>

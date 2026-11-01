@@ -449,7 +449,7 @@ video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['room-symbol','users-group'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],]) glyph(...pair);
+  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['skip-marker-icon','player-track-next'],]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
@@ -1976,6 +1976,19 @@ function applyState(next) {
   $('empty-browse').hidden = !isIdle || !next.canBrowse;
   $('close-room').hidden = !!config?.singleRoom;
   $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
+  const chaptersSelect = $('chapters');
+  if (chaptersSelect) {
+    const chapters = next.chapters || [];
+    chaptersSelect.disabled = !chapters.length;
+    chaptersSelect.replaceChildren(...chapters.map(ch => {
+      const opt = document.createElement('option');
+      opt.value = String(ch.startTime);
+      opt.textContent = ch.title;
+      const end = ch.endTime || next.state.duration || ch.startTime;
+      opt.dataset.caption = clock(ch.startTime) + ' – ' + clock(end);
+      return opt;
+    }));
+  }
   $('quality-notice').textContent=next.qualityNotice || '';
   renderMediaInformation(next);
   const choices = next.qualities || uburoom.QUALITIES;
@@ -2149,11 +2162,29 @@ $('quality').addEventListener('change', () => {
   if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
   execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
 });
-$('timeline').addEventListener('pointerdown', () => { seekDragging = true; });
+function updateTimelineTooltip(event) {
+  const tooltip = $('timeline-tooltip');
+  if (!tooltip || !state?.state?.duration) return;
+  const rect = $('timeline').getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const hoverSec = fraction * state.state.duration;
+  const chapters = state.chapters || [];
+  const chapter = chapters.find(ch => hoverSec >= ch.startTime && hoverSec < ch.endTime);
+  tooltip.textContent = (chapter ? (chapter.title + ' · ') : '') + clock(hoverSec);
+  tooltip.hidden = false;
+  const row = $('timeline-row') || $('timeline').parentElement;
+  const rowRect = row.getBoundingClientRect();
+  const left = event.clientX - rowRect.left;
+  tooltip.style.left = Math.max(24, Math.min(rowRect.width - 24, left)) + 'px';
+}
+$('timeline').addEventListener('pointerdown', event => { seekDragging = true; updateTimelineTooltip(event); });
+$('timeline').addEventListener('pointermove', updateTimelineTooltip);
+$('timeline').addEventListener('pointerleave', () => { if (!seekDragging && $('timeline-tooltip')) $('timeline-tooltip').hidden = true; });
 $('timeline').addEventListener('input', () => { $('time').textContent = clock($('timeline').value); });
 $('timeline').addEventListener('change', () => {
   const seconds = Number($('timeline').value);
   seekDragging = false;
+  if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true;
   seekPendingValue = seconds;
   seekPendingUntil = performance.now() + 1500;
   seekPendingRevision = state?.revision;
@@ -2164,7 +2195,20 @@ $('timeline').addEventListener('change', () => {
     fail(error.message);
   });
 });
-$('timeline').addEventListener('pointercancel', () => { seekDragging = false; });
+$('timeline').addEventListener('pointercancel', () => { seekDragging = false; if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true; });
+$('chapters')?.addEventListener('change', () => {
+  const seconds = Number($('chapters').value);
+  if (Number.isFinite(seconds)) {
+    execute({ action: 'media.seek.absolute', args: { seconds } }).catch(error => fail(error.message));
+  }
+});
+$('skip-marker')?.addEventListener('click', () => {
+  const seekTo = Number($('skip-marker').dataset.seekTo);
+  if (Number.isFinite(seekTo)) {
+    $('skip-marker').hidden = true;
+    execute({ action: 'media.seek.absolute', args: { seconds: seekTo } }).catch(error => fail(error.message));
+  }
+});
 video.addEventListener('loadedmetadata', () => { void sync.synchronize(); });
 video.addEventListener('canplay', () => {
   void sync.synchronize();
@@ -2430,7 +2474,27 @@ setInterval(() => {
     value = state ? expected() : 0;
   }
   if (!seekDragging) { timeline.value = value; $('time').textContent = clock(value); }
-  timeline.style.setProperty('--timeline-fill',uburoomPlayback.timeline(video.buffered,duration,value));
+  timeline.style.setProperty('--timeline-fill',uburoomPlayback.timeline(video.buffered,duration,value,state?.chapters));
+  const chapters = state?.chapters || [];
+  const currentChapter = chapters.find(ch => value >= ch.startTime && value < ch.endTime);
+  if ($('chapters') && !$('chapters').disabled && $('chapters').value !== String(currentChapter?.startTime ?? '')) {
+    $('chapters').value = String(currentChapter?.startTime ?? '');
+  }
+  const canSeek = state?.capabilities ? state.capabilities.seek !== false : !!state?.canPlayback;
+  const markers = state?.markers || [];
+  const activeMarker = canSeek && markers.find(m => value >= m.startTime && value < (m.endTime - 0.5));
+  const skipBtn = $('skip-marker');
+  if (skipBtn) {
+    if (activeMarker) {
+      skipBtn.hidden = false;
+      const label = activeMarker.type === 'credits' ? 'Skip credits' : 'Skip intro';
+      $('skip-marker-label').textContent = label;
+      skipBtn.setAttribute('aria-label', label);
+      skipBtn.dataset.seekTo = String(activeMarker.endTime);
+    } else {
+      skipBtn.hidden = true;
+    }
+  }
   const loaded = Math.floor(uburoomPlayback.bufferedAhead(video.buffered,video.currentTime));
   timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
   timeline.title = loaded + ' seconds buffered ahead';

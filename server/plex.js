@@ -11,6 +11,43 @@ const { resilientFetch } = require('./resilience');
 const { ConversionPolicy } = require('./transcoding-policy');
 const {localFormat} = require('../web/playback-policy');
 
+function parseChapters(item) {
+  if (!Array.isArray(item?.Chapter)) return [];
+  const durationSec = Number(item.duration || 0) / 1000;
+  return item.Chapter.map((ch, idx) => {
+    const start = Number(ch.startTimeOffset || 0) / 1000;
+    const rawEnd = Number(ch.endTimeOffset || 0) / 1000;
+    const end = rawEnd > start ? rawEnd : (durationSec > start ? durationSec : start);
+    return {
+      id: String(ch.id ?? idx + 1),
+      index: Number(ch.index ?? idx + 1),
+      title: String(ch.tag || ('Chapter ' + (ch.index ?? idx + 1))).slice(0, 100),
+      startTime: Math.max(0, Math.round(start * 1000) / 1000),
+      endTime: Math.max(0, Math.round(end * 1000) / 1000)
+    };
+  }).filter(ch => Number.isFinite(ch.startTime) && ch.startTime >= 0)
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
+function parseMarkers(item) {
+  if (!Array.isArray(item?.Marker)) return [];
+  return item.Marker.map((m, idx) => {
+    const type = String(m.type || '').toLowerCase();
+    const start = Number(m.startTimeOffset || 0) / 1000;
+    const end = Number(m.endTimeOffset || 0) / 1000;
+    return {
+      id: String(m.id ?? idx + 1),
+      type,
+      startTime: Math.max(0, Math.round(start * 1000) / 1000),
+      endTime: Math.max(0, Math.round(end * 1000) / 1000)
+    };
+  }).filter(m => ['intro', 'credits'].includes(m.type) &&
+                 Number.isFinite(m.startTime) &&
+                 Number.isFinite(m.endTime) &&
+                 m.endTime > m.startTime)
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
 // No arbitrary upstream URLs: callers select Plex IDs, and only Plex-produced
 // media paths on the configured server are eligible for proxying.
 class Plex {
@@ -388,6 +425,8 @@ class Plex {
       source:item,sourceSelection:selected.identity,principal:this.principal, plexContext:this, videoCodec: original.videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
       audioCodec:original.audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.neighbors(item)) };
+    media.chapters = parseChapters(item);
+    media.markers = parseMarkers(item);
     media.tracks = Tracks.catalog(part,{browserSubtitles:choices.browserSubtitles,extractSubtitles:!!this.av1.ffmpeg});
     media.selection = Tracks.select(media.tracks,choices);
     media.sourceStart = this.url(part.key).href; media.partId = String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key)[1]);

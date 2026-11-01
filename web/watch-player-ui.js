@@ -20,7 +20,7 @@
     const options=document.createElement('div'); options.className='settings-options'; submenu.append(options);
     const badge=document.createElement('span'); badge.id='quality-badge'; badge.setAttribute('aria-hidden','true'); cog.append(badge);
     const spinner=document.createElement('span'); spinner.id='captions-spinner'; spinner.setAttribute('aria-hidden','true'); spinner.append(uburoomIcons.icon(document,'loader-4'));
-    const choices=[['quality','Quality'],['audio-track','Audio track'],['audio-mode','Audio mode'],['subtitle-track','Subtitle track']];
+    const choices=[['quality','Quality'],['audio-track','Audio track'],['audio-mode','Audio mode'],['chapters','Chapters'],['subtitle-track','Subtitle track']];
     const rows=[]; let opened=false, activeChoice, choiceSignature, chromeTimer, tapTimer, feedbackTimer, press, taps, lastSubtitle, touching=false;
     function layoutCaptions() {
       const transport=stage.querySelector('.transport'), font=Math.max(14,Math.min(innerWidth*.024,32));
@@ -77,8 +77,8 @@
     }
     function renderChoices() {
       if(!activeChoice)return;
-      const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track', isAudioMode=activeChoice==='audio-mode';
-      const trackRows=activeChoice==='quality'||isAudioMode?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
+      const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track', isAudioMode=activeChoice==='audio-mode', isChapters=activeChoice==='chapters';
+      const trackRows=activeChoice==='quality'||isAudioMode||isChapters?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
       const resolved=audio?tracks?.audioId:tracks?.subtitleId;
       const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
       if(signature===choiceSignature)return; choiceSignature=signature;
@@ -115,11 +115,13 @@
       if(!enabled&&cc.dataset.loading==='true'){cc.dataset.loading='false';cc.removeAttribute('aria-busy');}
       if(enabled)lastSubtitle={media:state.mediaVersion,id:tracks.subtitleId};
       for(const {id,row,value} of rows) {
-        const select=$(id), audio=id==='audio-track', isAudioMode=id==='audio-mode';
-        const track=id==='quality'||isAudioMode?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
-        const hasTracks=id==='quality'||isAudioMode||(audio?tracks?.audio:tracks?.subtitles)?.some(track=>track.available);
-        row.disabled=select.disabled;
-        value.textContent=isAudioMode?select.selectedOptions[0]?.textContent || 'Normal':!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
+        const select=$(id), audio=id==='audio-track', isAudioMode=id==='audio-mode', isChapters=id==='chapters';
+        const track=id==='quality'||isAudioMode||isChapters?undefined:(audio?tracks?.audio:tracks?.subtitles)?.find(track=>track.id===(audio?tracks?.audioId:tracks?.subtitleId));
+        const chapters=state?.chapters || [];
+        const hasTracks=id==='quality'||isAudioMode?true:isChapters?chapters.length>0:(audio?tracks?.audio:tracks?.subtitles)?.some(track=>track.available);
+        const canSeek=state?.capabilities ? state.capabilities.seek !== false : !!state?.canPlayback;
+        row.disabled=isChapters?(chapters.length===0||!canSeek):select.disabled;
+        value.textContent=isChapters?(chapters.length===0?'None':select.selectedOptions[0]?.textContent || (chapters.length+' chapters')):isAudioMode?select.selectedOptions[0]?.textContent || 'Normal':!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
         if (hasTracks && track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
         value.title=value.textContent;
       }
