@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-10-30.
+Updated: 2026-11-01.
 
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
