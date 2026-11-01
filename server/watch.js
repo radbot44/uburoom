@@ -430,6 +430,7 @@ class Watch {
       mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [],
       qualityNotice:viewer.media?.qualityNotice, preferredQuality:viewer.preferredQuality,
       deliveryInfo:viewer.media?{format:viewer.media.format,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
+        videoDecision:viewer.media.output?.videoDecision,audioDecision:viewer.media.output?.audioDecision,
         width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
         encoder:viewer.media.av1Lease?.group.encoder,cpuFallback:!!viewer.media.av1Lease?.group.cpuFallback}:undefined,
       ...(viewer.media?.tracks ? {tracks:{...Tracks.publicCatalog(viewer.media.tracks),audioChoice:viewer.trackChoice?.audioId || 'auto',subtitleChoice:viewer.trackChoice?.subtitleId || 'auto',

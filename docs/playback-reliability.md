@@ -72,7 +72,7 @@ Full multichannel/lossless/Atmos guarantees and efficient audio-only conversion 
 
 ## Shared conversions
 
-Match output-affecting source, quality, audio, burned subtitles, color/timing and room/media generation. Browser captions remain personal. Every consumer has its own media authority; a producer credential never authorizes a consumer.
+Match output-affecting source, quality, audio, burned subtitles, color/timing, decoder fallback compatibility and room/media generation. Browser captions remain personal. Every consumer has its own media authority; a producer credential never authorizes a consumer.
 
 Proxy HLS uses a bounded timestamp-anchor cache; direct HLS anchors in the browser. Local WebM output can share chunks. Release on last reference, preserve other viewers on departure/replacement and fence producer credential failure. Real cross-account behavior and hardware throughput require their own evidence.
 

@@ -105,6 +105,8 @@ test('browser captions share video but burned subtitle IDs, audio, room and medi
     for(const choices of[{audioId:'12'},{shareKey:['other-room','media']},{shareKey:['room','other-media']}]){
       const next=await f.prepare(f.b,'1080p20',choices);media.push(next);assert.notEqual(next.transcodeId,off.transcodeId);
     }
+    const fallback=await f.b.prepare('1','1080p20',true,undefined,undefined,{shareKey:['room','media'],subtitleId:'off',authorized:async()=>true});
+    media.push(fallback);assert.notEqual(fallback.transcodeId,off.transcodeId);
   }finally{await Promise.all(media.map(m=>f.plex.stop(m)));await f.plex.close();}
 });
 

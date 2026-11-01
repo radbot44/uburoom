@@ -441,7 +441,7 @@ class Plex {
     if(directPlan)media.directHls=directPlan;
     if(choices.shareKey&&!choices.sourceOnly&&!localFormat(fallback)&&!(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)) {
       if(choices.authorized&&!await choices.authorized())throw new PlaybackError('Viewing access or stream selection expired.');
-      const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null,directHls]);
+      const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null,directHls,!!compatible]);
       let shared;
       try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,directPlan:undefined,directHls,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs,choices.sharedOnly,directHls);}
       catch(error){media.subtitleAbort.abort();if(error instanceof PlaybackError){const failure=Object.assign(new PlaybackError(error.message),{conversionCapacity:!!error.conversionCapacity,media});throw failure;}throw error;}
@@ -483,8 +483,9 @@ class Plex {
       try {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
+      const allowDirectStream = copyOnly || (!burn && !compatible);
       const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
-        protocol: 'hls', directPlay: '0', directStream: copyOnly?'1':'0', fastSeek: '1', hasMDE: '1',
+        protocol: 'hls', directPlay: '0', directStream: allowDirectStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
         offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
         'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
         maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',

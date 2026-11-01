@@ -23,7 +23,12 @@ function confirm(decision,{audio,burn,subtitle,ceiling}) {
     (s.decision==='burn' || output.subtitleDecision==='burn'))) {
     throw new PlaybackError('Plex did not confirm burning the requested subtitle. Your previous player is unchanged.');
   }
-  const result={videoCodec:'h264',audioCodec:chosen.length?'aac':undefined};
+  const result={
+    videoCodec:'h264',
+    audioCodec:chosen.length?'aac':undefined,
+    ...(videos[0].decision ? {videoDecision:videos[0].decision} : {}),
+    ...(chosen[0]?.decision ? {audioDecision:chosen[0].decision} : {})
+  };
   for(const field of ['width','height','bitrate']) {
     const reported=output[field] ?? (field!=='bitrate'?videos[0][field]:undefined);
     if(reported===undefined)continue;
