@@ -27,8 +27,11 @@ function inventory(item) {
 function select(item,pinned) {
   if(!available(item))throw unavailableError(item);
   const entries=inventory(item);
-  const found=pinned?entries.find(({identity})=>identity.mediaId===pinned.mediaId && identity.partId===pinned.partId &&
-    identity.partKey===pinned.partKey && identity.edition===pinned.edition && identity.duration===pinned.duration):entries.find(entry=>entry.eligible && partAvailable(entry.part));
+  const found=pinned?entries.find(({identity})=>
+    identity.mediaId===pinned.mediaId && (pinned.partId==null || identity.partId===pinned.partId) &&
+    (pinned.partKey==null || identity.partKey===pinned.partKey) && (pinned.edition==null || identity.edition===pinned.edition) &&
+    (pinned.duration==null || identity.duration===pinned.duration)
+  ):entries.find(entry=>entry.eligible && partAvailable(entry.part));
   if(found && !partAvailable(found.part))throw unavailableError(item);
   if(!found?.eligible)throw new PlaybackError(pinned?'The selected Plex source changed or is no longer available. Choose the title again.':'Media is not playable as one complete file. Split-file playback is not supported yet.');
   return found;

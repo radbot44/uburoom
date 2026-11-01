@@ -131,9 +131,18 @@
         if (args.activity === undefined && args.watchState === undefined) throw new Error('Choose a reporting setting');
         break;
       case 'media.load':
-        if (typeof a.mediaId !== 'string' || !/^(?:demo|[0-9]{1,20})$/.test(a.mediaId)) throw new Error('Choose a library item');
+        if (typeof a.mediaId !== 'string' || !/^(?:demo|[0-9]{1,20}(?::[0-9]{1,20})?)$/.test(a.mediaId)) throw new Error('Choose a library item');
         if (!validQuality(a.quality)) throw new Error('Choose a playback quality');
-        args = { mediaId: a.mediaId, quality: a.quality }; break;
+        args = { mediaId: a.mediaId, quality: a.quality };
+        if (a.position !== undefined) {
+          if (typeof a.position !== 'number' || !Number.isFinite(a.position) || a.position < 0) throw new Error('Invalid playback position');
+          args.position = a.position;
+        }
+        if (a.resume !== undefined) {
+          if (typeof a.resume !== 'boolean') throw new Error('Invalid resume setting');
+          args.resume = a.resume;
+        }
+        break;
       default: throw new Error('Unsupported command');
     }
     if (action.startsWith('queue.') && a.expectedRevision !== undefined) {

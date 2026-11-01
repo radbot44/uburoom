@@ -50,11 +50,11 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 ### M1-P4 — Plex viewing experience
 
-**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, sponsored viewer isolation, and chapter markers/intro-credit skip navigation are implemented and covered by unit/lifecycle tests on main.
+**Status:** Decoupled reporting architecture, shared-producer safety (preventing viewer teardowns from terminating pooled HLS transcode slots), activity-only default with explicit per-user personal watch-state opt-in, sponsored viewer isolation, chapter markers/intro-credit skip navigation, library watch progress with room-priority resume actions, multi-edition separation, and details drawer sibling edition navigation are implemented and covered by unit/lifecycle tests on main.
 
 **Next:** Complete live validation against physical PMS/Tautulli instances; verify multi-viewer stop/seek transitions and natural playback completion.
 
-**Later increments:** Content versions and split-file timelines; resume/start-over, previews/extras; subtitle search and supported presentation/audio controls. Episode continuation uses P13's queue transition, not a second advance path.
+**Later increments:** Split-file timelines, previews/extras; subtitle search and supported presentation/audio controls. Episode continuation uses P13's queue transition, not a second advance path.
 
 Details: [accounts and reporting](docs/accounts-and-access.md), [reporting investigation](docs/plex-reporting-investigation.md), [playback plan](docs/playback-reliability.md).
 

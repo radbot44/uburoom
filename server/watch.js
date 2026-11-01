@@ -1047,6 +1047,7 @@ class Watch {
         queue.assertRevision(queue.room(id),record.queueRevision);
         const position = this.position(room);
         let saving;
+        const startPosition = (Number.isFinite(Number(args.position)) && Number(args.position) > 0) ? Math.min(Number(args.position), prepared.duration) : 0;
         if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
           outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid,discardCurrent:!!advance,initialAdd});
         else if (playAuto) saving = queue.playAutoNow(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
@@ -1055,7 +1056,7 @@ class Watch {
         else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
         else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,initialAdd});
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
-        else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie'},prepared.roomServerId),position,{initialAdd});
+        else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie',position:startPosition},prepared.roomServerId),position,{initialAdd});
         room.transitionCommit = saving;
         await saving;
         this.roomState.apply(room,this.roomState.store.get(id));
@@ -1066,8 +1067,9 @@ class Watch {
       if (removing && !advance) {
         this.cancelAutoplay(room); clearPlaybackEnd(room); this.unloadQueueMedia(room);
       } else if (prepared) {
+        const startPosition = (Number.isFinite(Number(args.position)) && Number(args.position) > 0) ? Math.min(Number(args.position), prepared.duration) : 0;
         room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
-        room.position = record ? queue.current(id).position : 0; room.changedAt = Date.now();
+        room.position = record ? queue.current(id).position : startPosition; room.changedAt = Date.now();
         if (room.recovery) this.roomState.finishRecovery(room);
         this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
         this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;

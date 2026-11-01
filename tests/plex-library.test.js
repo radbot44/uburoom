@@ -183,6 +183,55 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
   } finally { routes.close(); }
 });
 
+test('room watch party history takes priority over personal Plex progress in library listings and details', async () => {
+  const room = {
+    s: { roomId: 'room-1' },
+    media: { id: '10', duration: 7200 }
+  };
+  const rooms = new Map([['room-1', room]]);
+  const hub = { access: { isMember: () => true }, canManage: () => true };
+  const mockItems = [
+    { id: '10', title: 'Live In Room', duration: 7200, viewOffset: 300 },
+    { id: '20', title: 'Personal Only', duration: 7200, viewOffset: 450 }
+  ];
+  const plex = {
+    configured: true,
+    principal: 'discord-shared',
+    browse: async () => ({ items: mockItems.map(x => ({ ...x })), total: 2 }),
+    details: async id => ({ ...mockItems.find(x => x.id === id) }),
+    visible: async () => true
+  };
+  const watch = {
+    rooms,
+    position: () => 1500,
+    canView: async () => true,
+    plex
+  };
+  const routes = watchHttp({
+    config: { publicUrl: 'https://localhost' },
+    hub,
+    watch,
+    user: async () => ({ userId: 'host' }),
+    webActor: id => id,
+    throttle: () => true,
+    json: (res, status, data) => { res.status = status; res.data = data; }
+  });
+  try {
+    const listRes = {};
+    await routes.route({ method: 'GET', headers: {}, socket: {} }, listRes, new URL('https://localhost/api/watch/library?room=room-1'));
+    assert.equal(listRes.status, 200);
+    assert.equal(listRes.data.items[0].viewOffset, 1500, 'room position took priority over personal viewOffset');
+    assert.equal(listRes.data.items[1].viewOffset, 450, 'personal viewOffset kept when room has no history');
+
+    const itemRes = {};
+    await routes.route({ method: 'GET', headers: {}, socket: {} }, itemRes, new URL('https://localhost/api/watch/library/item?room=room-1&item=10'));
+    assert.equal(itemRes.status, 200);
+    assert.equal(itemRes.data.item.viewOffset, 1500);
+  } finally {
+    routes.close();
+  }
+});
+
 
 test('file checks mark missing library entries and reject playback before subtitles or queue expansion', async t => {
   const rows = [movie(1),movie(2)], checked = rows.map((item,index)=>({...item,Media:[{id:index+1,Part:[{id:index+1,key:'/library/parts/'+(index+1)+'/file.mp4',exists:!index,accessible:!index}]}]}));
@@ -261,4 +310,78 @@ test('prepare parses and normalizes item chapters and markers chronologically', 
   assert.equal(media.markers[1].type, 'credits');
   assert.equal(media.markers[1].startTime, 100);
   assert.equal(media.markers[1].endTime, 120);
+});
+
+test('viewOffset extraction maps actionable progress in seconds and omits unstarted or credits progress', async t => {
+  const inProgress = movie(10, { duration: 6000000, viewOffset: 125000 }); // 125s of 6000s -> 125s
+  const justStarted = movie(11, { duration: 6000000, viewOffset: 5000 }); // 5s -> omitted (< 10s)
+  const inCredits = movie(12, { duration: 6000000, viewOffset: 5800000 }); // 5800s of 6000s (96.6%) -> omitted (> 92%)
+  const unstarted = movie(13, { duration: 6000000 });
+
+  const plex = fixture(async () => json({ Metadata: [inProgress, justStarted, inCredits, unstarted] }));
+  t.after(() => plex.close());
+
+  const items = plex.items([inProgress, justStarted, inCredits, unstarted]);
+  assert.equal(items[0].viewOffset, 125);
+  assert.equal(items[1].viewOffset, undefined);
+  assert.equal(items[2].viewOffset, undefined);
+  assert.equal(items[3].viewOffset, undefined);
+});
+
+test('multi-media movies expand into separate edition cards and details returns otherEditions', async t => {
+  const multiMediaMovie = movie(20, {
+    title: 'Blade Runner',
+    year: 1982,
+    duration: 7000000,
+    librarySectionID: '1',
+    Media: [
+      { id: 101, videoResolution: '4k', videoCodec: 'hevc', bitrate: 24000, container: 'mkv', Part: [{ id: 1, key: '/library/parts/1/file.mkv' }] },
+      { id: 102, videoResolution: '1080', videoCodec: 'h264', bitrate: 8000, container: 'mp4', Part: [{ id: 2, key: '/library/parts/2/file.mp4' }] }
+    ]
+  });
+  const siblingCut = movie(21, {
+    title: 'Blade Runner',
+    year: 1982,
+    duration: 7020000,
+    editionTitle: 'Director\'s Cut',
+    librarySectionID: '1',
+    Media: [{ id: 103, videoResolution: '1080', videoCodec: 'h264', bitrate: 8500, container: 'mp4', Part: [{ id: 3, key: '/library/parts/3/file.mp4' }] }]
+  });
+
+  const plex = fixture(async url => {
+    if (url.pathname === '/library/sections/1/all') {
+      return json({ Metadata: [multiMediaMovie, siblingCut] });
+    }
+    if (url.pathname === '/library/metadata/20') {
+      return json({ Metadata: [multiMediaMovie] });
+    }
+    if (url.pathname === '/library/metadata/21') {
+      return json({ Metadata: [siblingCut] });
+    }
+    return json({ Metadata: [] });
+  });
+  t.after(() => plex.close());
+
+  const expanded = plex.items([multiMediaMovie]);
+  assert.equal(expanded.length, 2);
+  assert.equal(expanded[0].id, '20:101');
+  assert.equal(expanded[0].edition, '4K HEVC');
+  assert.equal(expanded[0].subtitle, '1982 · 4K HEVC');
+  assert.equal(expanded[1].id, '20:102');
+  assert.equal(expanded[1].edition, '1080p H264');
+  assert.equal(expanded[1].subtitle, '1982 · 1080p H264');
+
+  const detail = await plex.details('20:101');
+  assert.equal(detail.id, '20:101');
+  assert.ok(Array.isArray(detail.otherEditions));
+  // Sibling internal Media (102) and sibling section item (21)
+  assert.equal(detail.otherEditions.length, 2);
+  assert.equal(detail.otherEditions[0].id, '20:102');
+  assert.equal(detail.otherEditions[0].edition, '1080p H264');
+  assert.equal(detail.otherEditions[1].id, '21');
+  assert.equal(detail.otherEditions[1].edition, 'Director\'s Cut');
+
+  const prepared = await plex.prepare('20:102', 'direct', false, undefined, undefined, { sourceOnly: true });
+  assert.equal(prepared.id, '20:102');
+  assert.equal(prepared.sourceSelection.mediaId, '102');
 });

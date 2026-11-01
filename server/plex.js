@@ -74,15 +74,17 @@ class Plex {
   }
   async allows(id) {
     if(this.allowedItems.get(id)>Date.now())return true;
-    const data=await this.json('/library/metadata/'+this.id(id));
-    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(id)&&['movie','episode'].includes(item.type)))return false;
+    const baseId = String(id).split(':')[0];
+    const data=await this.json('/library/metadata/'+this.id(baseId));
+    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(baseId)&&['movie','episode'].includes(item.type)))return false;
     this.allowedItems.set(id,Date.now()+3000);if(this.allowedItems.size>200)this.allowedItems.delete(this.allowedItems.keys().next().value);return true;
   }
   async visible(id,type) {
-    const key=(type==='collection'?'collection:':'item:')+this.id(id);
+    const baseId = String(id).split(':')[0];
+    const key=(type==='collection'?'collection:':'item:')+this.id(baseId);
     if(this.allowedItems.get(key)>Date.now())return true;
-    const data=await this.json((type==='collection'?'/library/collections/':'/library/metadata/')+this.id(id));
-    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(id)))return false;
+    const data=await this.json((type==='collection'?'/library/collections/':'/library/metadata/')+this.id(baseId));
+    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(baseId)))return false;
     this.allowedItems.set(key,Date.now()+3000);if(this.allowedItems.size>200)this.allowedItems.delete(this.allowedItems.keys().next().value);return true;
   }
   url(resource) {
@@ -116,7 +118,14 @@ class Plex {
   }
   catalog(resource) { return this.cached(this.catalogCache, resource, 96, () => this.json(resource)); }
   async availability(ids, budget, fresh = false) {
-    const unique=[...new Set(ids.filter(id=>id!=='demo').map(id=>this.id(id)))].sort(), result=new Map();
+    const rawIds = ids.filter(id => id !== 'demo').map(id => this.id(id));
+    const baseToRaw = new Map();
+    for (const raw of rawIds) {
+      const base = raw.split(':')[0];
+      if (!baseToRaw.has(base)) baseToRaw.set(base, []);
+      baseToRaw.get(base).push(raw);
+    }
+    const unique = [...baseToRaw.keys()].sort(), result = new Map();
     for(let start=0;start<unique.length;start+=80) {
       const batch=unique.slice(start,start+80), records=new Map(), missing=[];
       for (const id of batch) {
@@ -142,13 +151,15 @@ class Plex {
         }
       }
       const values=await Promise.all(batch.map(async id=>[id,await records.get(id).value]));
-      for(const [id,value] of values)result.set(id,value);
+      for(const [baseId,value] of values) {
+        for (const raw of (baseToRaw.get(baseId) || [])) result.set(raw, value);
+      }
     }
     return result;
   }
   cachedAvailability(items) {
     return items.map(item=>{
-      const record=this.fileCache.get(item.id);
+      const record=this.fileCache.get(item.id) || this.fileCache.get(String(item.id).split(':')[0]);
       return record?.until>Date.now() && typeof record.available==='boolean' ? {...item,available:record.available} : item;
     });
   }
@@ -158,12 +169,13 @@ class Plex {
     return items.map(item=>statuses.has(item.id)?{...item,available:statuses.get(item.id)}:item);
   }
   async playableItem(id) {
-    const data=await this.json('/library/metadata/'+this.id(id)+'?checkFiles=1'), source=data.Metadata?.[0];
+    const baseId = String(id).split(':')[0];
+    const data=await this.json('/library/metadata/'+this.id(baseId)+'?checkFiles=1'), source=data.Metadata?.[0];
     if(!source || !['movie','episode'].includes(source.type))throw new Error('Select a movie or episode');
     if(!Sources.available(source))throw Sources.unavailableError(source);
     return this.items([source])[0];
   }
-  id(value) { if (!/^\d{1,20}$/.test(String(value || ''))) throw new Error('Invalid Plex item'); return String(value); }
+  id(value) { if (!/^(?:\d{1,20}(?::\d{1,20})?|demo)$/.test(String(value || ''))) throw new Error('Invalid Plex item'); return String(value); }
   async allItems(resource, pageSize = 120, maxItems = 20000, budget) {
     const rows = [], seen = new Set(); let start = 0;
     for (;;) {
@@ -307,25 +319,86 @@ class Plex {
   }
   async details(id, type) {
     if (type && !['movie','show','season','episode','collection'].includes(type)) throw new Error('Invalid item type');
-    const data = await this.catalog(`/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.id(id)}`), item = this.cachedAvailability(this.items(data.Metadata))[0];
+    const [ratingKey, targetMediaId] = String(id).split(':');
+    const data = await this.catalog(`/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.id(ratingKey)}`);
+    const source = data.Metadata?.[0];
+    if (!source) throw new Error('Title unavailable');
+    const items = this.cachedAvailability(this.items([source]));
+    const item = (targetMediaId ? items.find(x => x.id === id) : items[0]) || items[0];
     if (!item) throw new Error('Title unavailable');
-    const source = data.Metadata[0], tags = name => (source[name] || []).map(x => String(x.tag || '').slice(0,120)).filter(Boolean).slice(0, name === 'Role' ? 8 : 12);
+    const tags = name => (source[name] || []).map(x => String(x.tag || '').slice(0,120)).filter(Boolean).slice(0, name === 'Role' ? 8 : 12);
     const ratings = [];
     for (const [field,image,label] of [['rating','ratingImage','Critics'],['audienceRating','audienceRatingImage','Audience']]) {
       const provider = String(source[image] || '').toLowerCase();
       const name = provider.includes('imdb') ? 'IMDb' : provider.includes('rottentomatoes') ? 'Rotten Tomatoes ' + label : provider.includes('themoviedb') ? 'TMDB' : undefined;
       const value = Number(source[field]); if (name && Number.isFinite(value) && value >= 0 && value <= 10) ratings.push({source:name,value});
     }
-    const media = Sources.inventory(source).find(entry => entry.eligible && Sources.partAvailable(entry.part))?.media || source.Media?.find(m => m.Part?.some(p => Sources.partAvailable(p))) || source.Media?.[0];
+    const pinnedMedia = targetMediaId ? source.Media?.find(m => String(m.id) === targetMediaId) : undefined;
+    const media = pinnedMedia || Sources.inventory(source).find(entry => entry.eligible && Sources.partAvailable(entry.part))?.media || source.Media?.find(m => m.Part?.some(p => Sources.partAvailable(p))) || source.Media?.[0];
     const mediaInfo = media ? [media.videoResolution ? String(media.videoResolution).toUpperCase() + (String(media.videoResolution).match(/^\d+$/) ? 'p' : '') : '',
       media.videoCodec, media.bitrate ? (Number(media.bitrate) / 1000).toFixed(1) + ' Mbps' : '', media.audioCodec,
       media.audioChannels ? media.audioChannels + ' channels' : '', media.container].filter(Boolean).map(x => String(x).slice(0,60)) : [];
-    return { ...item, summary:String(source.summary || '').slice(0,5000), directors:tags('Director'), cast:tags('Role'), ratings, mediaInfo };
+    const otherEditions = [];
+    if (source.Media && source.Media.length > 1) {
+      for (let idx = 0; idx < source.Media.length; idx++) {
+        const m = source.Media[idx];
+        const mId = String(m.id || idx);
+        const compoundId = ratingKey + ':' + mId;
+        if (compoundId === item.id) continue;
+        const res = m.videoResolution ? (String(m.videoResolution).toUpperCase() + (String(m.videoResolution).match(/^\d+$/) ? 'p' : '')) : '';
+        const codec = m.videoCodec ? m.videoCodec.toUpperCase() : '';
+        const mediaLabel = [res, codec].filter(Boolean).join(' ') || ('Version ' + (idx + 1));
+        const editionLabel = String(source.editionTitle || '').trim() ? (String(source.editionTitle || '').trim() + (idx > 0 ? ' · ' + mediaLabel : '')) : mediaLabel;
+        const year = source.year || source.originallyAvailableAt?.slice(0, 4);
+        const subtitle = [year, editionLabel].filter(Boolean).join(' · ').slice(0, 200);
+        const mInfo = [res, m.videoCodec, m.bitrate ? (Number(m.bitrate) / 1000).toFixed(1) + ' Mbps' : '', m.audioCodec, m.audioChannels ? m.audioChannels + ' channels' : '', m.container].filter(Boolean).map(x => String(x).slice(0, 60));
+        otherEditions.push({
+          id: compoundId,
+          type: source.type || 'movie',
+          title: String(source.title).slice(0, 200),
+          edition: editionLabel,
+          subtitle,
+          duration: Number(m.duration || source.duration || 0) / 1000,
+          mediaInfo: mInfo
+        });
+      }
+    }
+    if (source.librarySectionID && source.type === 'movie') {
+      try {
+        const query = new URLSearchParams({ title: source.title });
+        const sectionCatalog = await this.catalog(`/library/sections/${source.librarySectionID}/all?${query}`);
+        const siblings = (sectionCatalog.Metadata || []).filter(s =>
+          String(s.ratingKey) !== String(ratingKey) &&
+          String(s.title || '').trim().toLowerCase() === String(source.title || '').trim().toLowerCase()
+        );
+        for (const s of siblings) {
+          const sItems = this.items([s]);
+          for (const si of sItems) {
+            if (otherEditions.some(e => e.id === si.id)) continue;
+            const sMedia = s.Media?.[0];
+            const sInfo = sMedia ? [sMedia.videoResolution ? String(sMedia.videoResolution).toUpperCase() + (String(sMedia.videoResolution).match(/^\d+$/) ? 'p' : '') : '',
+              sMedia.videoCodec, sMedia.bitrate ? (Number(sMedia.bitrate) / 1000).toFixed(1) + ' Mbps' : '', sMedia.audioCodec,
+              sMedia.audioChannels ? sMedia.audioChannels + ' channels' : '', sMedia.container].filter(Boolean).map(x => String(x).slice(0, 60)) : [];
+            otherEditions.push({
+              id: si.id,
+              type: s.type || 'movie',
+              title: si.title,
+              edition: si.edition || 'Standard Edition',
+              subtitle: si.subtitle,
+              duration: si.duration,
+              mediaInfo: sInfo
+            });
+          }
+        }
+      } catch {}
+    }
+    return { ...item, summary:String(source.summary || '').slice(0,5000), directors:tags('Director'), cast:tags('Role'), ratings, mediaInfo, otherEditions };
   }
   async artwork(id, kind = 'poster', type) {
-    this.id(id); if (!['poster','landscape'].includes(kind)) throw new Error('Invalid artwork');
-    if (!this.artSources.has(id)) await this.details(id,type);
-    const source = this.artSources.get(id), resource = kind === 'landscape' ? source?.landscape : source?.poster;
+    const baseId = String(id).split(':')[0];
+    this.id(baseId); if (!['poster','landscape'].includes(kind)) throw new Error('Invalid artwork');
+    if (!this.artSources.has(id) && !this.artSources.has(baseId)) await this.details(id,type);
+    const source = this.artSources.get(id) || this.artSources.get(baseId), resource = kind === 'landscape' ? source?.landscape : source?.poster;
     if (!resource) throw new Error('Artwork unavailable');
     return this.cached(this.imageCache, resource + ':' + kind, 96, async () => {
       const query = new URLSearchParams({ width:kind === 'landscape' ? '400' : '300', height:kind === 'landscape' ? '225' : '450', minSize:'1', upscale:'0', url:resource });
@@ -339,21 +412,48 @@ class Plex {
   items(items = []) {
     const text = value => String(value || '').slice(0,200);
     const thumb = value => typeof value === 'string' && /^\/library\/(metadata|collections)\/\d{1,20}\/(thumb|art)(\/\d+)?$/.test(value) ? value : undefined;
-    return items.filter(x => ['movie', 'show', 'season', 'episode', 'collection'].includes(x.type) && /^\d{1,20}$/.test(String(x.ratingKey))).map(x => {
+    return items.filter(x => ['movie', 'show', 'season', 'episode', 'collection'].includes(x.type) && /^\d{1,20}$/.test(String(x.ratingKey))).flatMap(x => {
       const poster = thumb(x.type === 'episode' ? x.grandparentThumb || x.thumb : x.thumb), landscape = thumb(x.thumb || x.art);
       const id = String(x.ratingKey); this.artSources.delete(id);
       this.artSources.set(id, {poster,landscape}); while (this.artSources.size > 1200) this.artSources.delete(this.artSources.keys().next().value);
-      return {
-      id: String(x.ratingKey), type: x.type, title: String(x.title).slice(0, 200),
-      ...(['movie','episode'].includes(x.type)?{available:Sources.available(x)}:{}),
-      subtitle: this.subtitle(x), duration: Number(x.duration || 0) / 1000, year:x.year || Number(x.originallyAvailableAt?.slice(0,4)) || undefined, endYear:Number(x.endYear) || undefined,
-      edition:text(x.editionTitle), sortTitle:text(x.titleSort), contentRating:text(x.contentRating), addedAt:Number(x.addedAt || 0),
-      genres:(x.Genre || []).map(g => text(g.tag)).filter(Boolean).slice(0,12), genreIds:(x.Genre || []).map(g => String(g.id || '')).filter(Boolean),
-      count:Number(x.childCount || 0), episodeCount:Number(x.leafCount || 0), index:x.index, seasonIndex:x.parentIndex,
-      showTitle:text(x.grandparentTitle), parentTitle:text(x.parentTitle), parentId:x.parentRatingKey && String(x.parentRatingKey), showId:x.grandparentRatingKey && String(x.grandparentRatingKey),
-      hasPoster:!!poster, hasLandscape:!!landscape,
-      ...(['movie', 'episode'].includes(x.type) ? {summary:String(x.summary || '').slice(0,500)} : {})
-    }; });
+      const viewOffsetSec = Number(x.viewOffset || 0) > 0 ? Math.round(Number(x.viewOffset) / 1000) : undefined;
+      const durSec = Number(x.duration || 0) / 1000;
+      const hasValidProgress = viewOffsetSec && viewOffsetSec >= 10 && (!durSec || viewOffsetSec <= durSec * 0.92);
+      const baseItem = {
+        id: String(x.ratingKey), type: x.type, title: String(x.title).slice(0, 200),
+        ...(['movie','episode'].includes(x.type)?{available:Sources.available(x)}:{}),
+        subtitle: this.subtitle(x), duration: durSec, year:x.year || Number(x.originallyAvailableAt?.slice(0,4)) || undefined, endYear:Number(x.endYear) || undefined,
+        edition:text(x.editionTitle), sortTitle:text(x.titleSort), contentRating:text(x.contentRating), addedAt:Number(x.addedAt || 0),
+        genres:(x.Genre || []).map(g => text(g.tag)).filter(Boolean).slice(0,12), genreIds:(x.Genre || []).map(g => String(g.id || '')).filter(Boolean),
+        count:Number(x.childCount || 0), episodeCount:Number(x.leafCount || 0), index:x.index, seasonIndex:x.parentIndex,
+        showTitle:text(x.grandparentTitle), parentTitle:text(x.parentTitle), parentId:x.parentRatingKey && String(x.parentRatingKey), showId:x.grandparentRatingKey && String(x.grandparentRatingKey),
+        hasPoster:!!poster, hasLandscape:!!landscape,
+        ...(['movie', 'episode'].includes(x.type) ? {summary:String(x.summary || '').slice(0,500)} : {}),
+        ...(hasValidProgress ? { viewOffset: viewOffsetSec } : {})
+      };
+      if (x.type === 'movie' && Array.isArray(x.Media) && x.Media.length > 1) {
+        return x.Media.map((m, idx) => {
+          const mId = String(m.id || idx);
+          const compoundId = id + ':' + mId;
+          this.artSources.set(compoundId, {poster,landscape});
+          const res = m.videoResolution ? (String(m.videoResolution).toUpperCase() + (String(m.videoResolution).match(/^\d+$/) ? 'p' : '')) : '';
+          const codec = m.videoCodec ? m.videoCodec.toUpperCase() : '';
+          const mediaLabel = [res, codec].filter(Boolean).join(' ') || ('Version ' + (idx + 1));
+          const editionLabel = text(x.editionTitle) ? (text(x.editionTitle) + (idx > 0 ? ' · ' + mediaLabel : '')) : mediaLabel;
+          const year = x.year || x.originallyAvailableAt?.slice(0, 4);
+          const sub = [year, editionLabel].filter(Boolean).join(' · ').slice(0, 200);
+          return {
+            ...baseItem,
+            id: compoundId,
+            edition: editionLabel,
+            subtitle: sub,
+            duration: Number(m.duration || x.duration || 0) / 1000,
+            available: m.Part ? m.Part.some(p => Sources.partAvailable(p)) : baseItem.available
+          };
+        });
+      }
+      return [baseItem];
+    });
   }
   subtitle(item) {
     const year = item.year || item.originallyAvailableAt?.slice(0, 4);
@@ -418,9 +518,11 @@ class Plex {
     quality=qualityId(quality);
     if (!choices.sourceOnly && !this.qualityOptions.some(q=>q.id===quality)) throw new PlaybackError('This quality is not offered by the server.');
     const sameSource=source && (source.principal||'discord-shared')===this.principal;
-    const item = (await this.json(`/library/metadata/${id}?checkFiles=1`)).Metadata?.[0];
+    const [ratingKey, targetMediaId] = String(id).split(':');
+    const item = (await this.json(`/library/metadata/${ratingKey}?checkFiles=1`)).Metadata?.[0];
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
-    const selected=Sources.select(item,source?.sourceSelection),{media:original,part}=selected;
+    const pinned = targetMediaId ? { mediaId: targetMediaId } : source?.sourceSelection;
+    const selected=Sources.select(item,pinned),{media:original,part}=selected;
     const media = { title: String(item.title).slice(0, 200), subtitle: this.subtitle(item), duration: item.duration / 1000, quality, kind: 'plex', resources: new Map(), id,
       source:item,sourceSelection:selected.identity,principal:this.principal, plexContext:this, videoCodec: original.videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
       audioCodec:original.audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,

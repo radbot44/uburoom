@@ -783,7 +783,7 @@ playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,capt
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
   artwork: fetchArtwork,
-  load:item => selected ? loadLibraryItem(item) : chooseRoom(item),
+  load:(item, options) => selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options),
   addToQueue: async item => {
     if (!selected || !state?.durable) return;
     await queueUI.add(item);
@@ -2503,10 +2503,10 @@ document.addEventListener('pointerdown', event => {
 });
 $('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
 document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
-async function loadLibraryItem(item) {
-  return execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality}});
+async function loadLibraryItem(item, options = {}) {
+  return execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality,...options}});
 }
-let roomChoice;
+let roomChoice, roomChoiceOptions;
 function renderRoomChoices(rooms, container = $('room-choices')) {
   const key = JSON.stringify([selected,rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.maxMembers,room.recovering,room.locked])]);
   if (container.dataset.roomList === key) return;
@@ -2587,15 +2587,15 @@ function roomChooserSection(section) {
   $('room-show-saved').hidden = !me?.durableRooms;
   $('room-dialog-hint').textContent = roomChoice ? 'Create a room to watch ' + roomChoice.title + '. Joining follows current playback; reopening restores the saved video.' : section === 'new' ? 'Choose a name and who can join.' : 'Choose an active room or restore one of your saved rooms.';
 }
-async function chooseRoom(item, section = 'active') {
+async function chooseRoom(item, section = 'active', options = {}) {
   const dialog = $('room-dialog');
   if (dialog.open || creating) return {status:'cancelled'};
-  roomUI.clearDraft(); roomChoice = item;
+  roomUI.clearDraft(); roomChoice = item; roomChoiceOptions = options;
   $('room-dialog-error').textContent = ''; delete $('room-choices').dataset.roomList; $('room-choices').replaceChildren();
   $('room-name').value = roomNameDraft; $('room-create-visibility').value = roomVisibilityDraft; $('room-create-preset').value = roomPresetDraft;
   roomChooserSection(section);
   const closed = new Promise(resolve => dialog.addEventListener('close', () => {
-    roomChoice = undefined; resolve({status:dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied'});
+    roomChoice = undefined; roomChoiceOptions = undefined; resolve({status:dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied'});
   }, {once:true}));
   uburoomDialogs.open(dialog);
   (section === 'new' ? $('room-name') : section === 'saved' ? $('room-show-saved') : $('room-show-active')).focus();
@@ -2611,12 +2611,12 @@ async function createRoom(advanced = roomUI.draftOptions()) {
   try {
     const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || $('room-name').placeholder,...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
-    const item = roomChoice;
+    const item = roomChoice, opts = roomChoiceOptions;
     roomNameDraft = ''; roomVisibilityDraft = 'public'; roomPresetDraft = 'host-control'; $('room-name').value = '';
     $('room-name').placeholder = uburoomUbumfa.roomName();
     $('room-dialog').close('created'); roomUI.clearDraft(); renderLibrary();
     if (item) {
-      const result = await loadLibraryItem(item);
+      const result = await loadLibraryItem(item, opts);
       if (result?.status !== 'applied') throw new Error('Playback was not accepted; try again from the library.');
       returnToVideo();
     }

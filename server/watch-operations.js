@@ -8,6 +8,73 @@ const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
 
+function applyRoomProgress(watch, roomId, items = []) {
+  if (!roomId || !items.length) return;
+  const liveRoom = watch.rooms.get(roomId);
+  const saved = watch.roomState?.store.get(roomId);
+  let dbRows = new Map();
+  if (watch.roomState?.db) {
+    try {
+      const rows = watch.roomState.db.prepare(
+        "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC"
+      ).all(roomId);
+      for (const r of rows) {
+        dbRows.set(r.mediaId, r);
+        const base = String(r.mediaId).split(':')[0];
+        dbRows.set(base, r);
+      }
+    } catch {}
+  }
+  for (const item of items) {
+    if (!item) continue;
+    const baseId = String(item.id).split(':')[0];
+    let pos = null;
+    if (liveRoom?.media) {
+      const liveBase = String(liveRoom.media.id).split(':')[0];
+      if (liveRoom.media.id === item.id || liveBase === baseId) {
+        const p = watch.position(liveRoom);
+        const dur = liveRoom.media.duration || item.duration || 0;
+        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
+        else if (dur && p > dur * 0.92) pos = 0;
+      }
+    }
+    if (pos === null && saved?.bookmark) {
+      const bmBase = String(saved.bookmark.mediaId).split(':')[0];
+      if (saved.bookmark.mediaId === item.id || bmBase === baseId) {
+        const p = saved.bookmark.position;
+        const dur = saved.bookmark.duration || item.duration || 0;
+        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
+        else if (dur && p > dur * 0.92) pos = 0;
+      }
+    }
+    if (pos === null && dbRows.has(item.id)) {
+      const r = dbRows.get(item.id);
+      if (r.outcome === 'completed') pos = 0;
+      else {
+        const p = Number(r.position || 0), dur = Number(r.duration || item.duration || 0);
+        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
+        else if (dur && p > dur * 0.92) pos = 0;
+      }
+    } else if (pos === null && dbRows.has(baseId)) {
+      const r = dbRows.get(baseId);
+      if (r.outcome === 'completed') pos = 0;
+      else {
+        const p = Number(r.position || 0), dur = Number(r.duration || item.duration || 0);
+        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
+        else if (dur && p > dur * 0.92) pos = 0;
+      }
+    }
+    if (pos !== null) {
+      if (pos > 0) item.viewOffset = pos;
+      else delete item.viewOffset;
+    } else if (item.viewOffset !== undefined) {
+      if (item.viewOffset < 10 || (item.duration && item.viewOffset > item.duration * 0.92)) {
+        delete item.viewOffset;
+      }
+    }
+  }
+}
+
 // Transport-neutral operations return values; HTTP resources and socket framing
 // belong to their respective transports. Epochs and authorization stay here.
 function watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch, delivery, validGrant }) {
@@ -77,14 +144,18 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
           return { status: 200, resource: art };
         } else if (url.pathname.endsWith('/availability')) {
           const ids=(url.searchParams.get('items') || '').split(',');
-          if (ids.length>80 || ids.some(id=>!/^\d{1,20}$/.test(id))) return result(400,{error:'Select between 1 and 80 Plex items'});
+          if (ids.length>80 || ids.some(id=>!/^\d{1,20}(?::\d{1,20})?$/.test(id))) return result(400,{error:'Select between 1 and 80 Plex items'});
           data={items:[...await plex.availability(ids)].map(([id,available])=>({id,available}))};
-        } else if (url.pathname.endsWith('/item')) data = { item:await plex.details(url.searchParams.get('item'),url.searchParams.get('type')) };
+        } else if (url.pathname.endsWith('/item')) {
+          data = { item:await plex.details(url.searchParams.get('item'),url.searchParams.get('type')) };
+          if (data.item) applyRoomProgress(watch, url.searchParams.get('room'), [data.item]);
+        }
         else if (url.pathname.endsWith('/filters')) data = await plex.filters(url.searchParams.get('section'));
         else {
           const query = Object.fromEntries(['section','parent','collection','tab','q','genre','year','sort','order','offset','seed'].filter(key => url.searchParams.has(key)).map(key => [key,url.searchParams.get(key)]));
           data = plex.configured ? await plex.browse(query) : {items:[],total:0,offset:0,nextOffset:null};
           data.testVideo = !!watch.demoMedia;
+          if (data.items?.length) applyRoomProgress(watch, url.searchParams.get('room'), data.items);
         }
         if (!await eligible()||!await scopeCurrent()||url.pathname.endsWith('/item')&&!await itemVisible()) { return result(403, {error:'Library access was revoked'}); }
         return result(200, data);

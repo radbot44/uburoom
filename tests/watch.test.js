@@ -708,3 +708,19 @@ test('dropMedia resets per-viewer settings on room-reset', async () => {
   watch.close();
 });
 
+test('media.load with position initializes the room position to the resume offset', async () => {
+  const config = { ownerId: 'host', guildId: 'guild', channels: ['commands'] }, hub = new Hub(config, []);
+  hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
+  const plex = { stop: async () => {}, prepare: async (id, quality) => ({ id, title: 'Movie ' + id, subtitle: '2026', duration: 7200, quality, format: 'file' }) };
+  const watch = new Watch(hub, plex);
+  const host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web', name: 'host' };
+  const id = watch.create(host), room = watch.rooms.get(id), hostTab = randomUUID();
+  watch.snapshot(room, host, hostTab);
+  const result = await hub.dispatch(host, { roomId: id, action: 'media.load', args: { mediaId: '10', quality: 'direct', position: 1540, resume: true } });
+  assert.equal(result.status, 'applied');
+  assert.equal(room.position, 1540);
+  assert.equal(room.media.id, '10');
+  assert.equal(room.s.state.paused, true);
+  watch.close();
+});
+

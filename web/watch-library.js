@@ -223,6 +223,12 @@
         else if (images.has(key)) img.src = images.get(key);
         else imageObserver.observe(img);
       }
+      if (item.viewOffset > 0 && item.duration > 0) {
+        const pct = Math.min(100, Math.max(0, (item.viewOffset / item.duration) * 100));
+        const track = node('div',box,undefined,'library-progress');
+        const fill = node('div',track,undefined,'library-progress-fill');
+        fill.style.width = pct.toFixed(1) + '%';
+      }
       box.classList.toggle('unavailable',item.available === false);
       node('span',box,'Unavailable','library-unavailable').hidden = item.available !== false;
       return box;
@@ -240,22 +246,37 @@
       for (const b of root.querySelectorAll('[data-queue]')) b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
       for (const b of root.querySelectorAll('[data-auto-queue]')) b.disabled = busy || !room || !getPlayer()?.capabilities?.editQueue;
     }
-    async function play(item) {
+    function formatTimestamp(value) {
+      const seconds = Math.floor(value || 0), minutes = Math.floor(seconds / 60);
+      return (seconds >= 3600 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') : minutes) + ':' + String(seconds % 60).padStart(2, '0');
+    }
+    async function play(item, options = {}) {
       if (item.available === false || busy || playing || !room) return;
       const version = generation; playing = item.id; setBusy(busy); resetStatus(); note.textContent = 'Loading ' + identity(item) + '…';
       try {
-        const result = await load(item);
+        const result = await load(item, options);
         if (version !== generation) return;
         if (result?.status === 'cancelled') { note.textContent = ''; return; }
         if (result?.status !== 'applied') throw new Error('Playback was not accepted; try again.');
         note.textContent = ''; close();
-      } catch (error) { if (version === generation) signalError(error.message,() => play(item)); }
+      } catch (error) { if (version === generation) signalError(error.message,() => play(item, options)); }
       finally { if (version === generation) { playing = undefined; setBusy(busy); } }
     }
     function playButton(parent,item,large = false) {
       const b = button(parent,'Play ' + identity(item),'play',large ? 'library-play-now' : 'library-play'); b.dataset.play = item.id; b.dataset.action = 'play';
       b.dataset.unavailable = String(item.available === false); b.disabled = item.available === false;
       if (large) b.append(node('span',null,'Play now')); b.addEventListener('click',() => void play(item)); return b;
+    }
+    function resumeButton(parent, item) {
+      const timeStr = formatTimestamp(item.viewOffset);
+      const b = button(parent, 'Resume at ' + timeStr, 'play', 'library-resume library-play-now quiet');
+      b.dataset.play = item.id;
+      b.dataset.action = 'resume';
+      b.dataset.unavailable = String(item.available === false);
+      b.disabled = item.available === false || busy || !!playing || !room;
+      b.append(node('span', null, 'Resume at ' + timeStr));
+      b.addEventListener('click', () => void play(item, { position: item.viewOffset, resume: true }));
+      return b;
     }
     function queueButton(parent, item, large = false) {
       const b = button(parent, 'Add ' + identity(item) + ' to queue', 'queue', large ? 'library-queue-add library-play-now' : 'library-queue-add');
@@ -349,6 +370,7 @@
       if (playable(item)) {
         const actionRow = node('div', copy, undefined, 'library-detail-actions');
         playButton(actionRow, item, true);
+        if (item.viewOffset > 0) resumeButton(actionRow, item);
         if (addToQueue && getPlayer()?.durable) queueButton(actionRow, item, true);
         const warning = node('p',copy,'','library-replace'); warning.textContent = getPlayer()?.mediaId ? 'Replaces the current video for everyone.' : '';
       } else if (getPlayer()?.durable) {
@@ -367,6 +389,27 @@
         for (const [label,value] of rows) { node('dt',facts,label); node('dd',facts,value); }
       }
       if (item.mediaInfo?.length) { const info = node('details',body,undefined,'library-media-info'); node('summary',info,'Media info'); node('p',info,item.mediaInfo.join(' · '),'library-credit'); }
+      if (item.otherEditions?.length) {
+        const editionsSection = node('div', body, undefined, 'library-editions-section');
+        node('h4', editionsSection, 'Other editions', 'library-editions-heading');
+        const editionsList = node('div', editionsSection, undefined, 'library-editions-list');
+        for (const ed of item.otherEditions) {
+          const edBtn = button(editionsList, 'Switch to ' + (ed.edition || ed.title), undefined, 'library-edition-row');
+          const edInfo = node('div', edBtn, undefined, 'library-edition-info');
+          node('strong', edInfo, ed.edition || ed.title, 'library-edition-title');
+          if (ed.mediaInfo?.length) {
+            node('span', edInfo, ed.mediaInfo.slice(0, 3).join(' · '), 'library-edition-meta hint');
+          } else if (ed.subtitle) {
+            node('span', edInfo, ed.subtitle, 'library-edition-meta hint');
+          }
+          if (ed.duration) {
+            node('span', edBtn, runtime(ed.duration), 'library-edition-duration hint');
+          }
+          edBtn.addEventListener('click', () => {
+            void openItem(ed);
+          });
+        }
+      }
     }
     function renderTools() {
       if (!screen) return;
