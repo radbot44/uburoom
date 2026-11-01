@@ -44,7 +44,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | M1-P9 | Browser subtitles | ASS/SSA, bounded PGS window extraction/replay and progressive full-track streaming, VobSub rendering, truthful extraction errors, authorized resources and burn-in fallback | Original large-title PGS failure remains an open live retest; real Plex MKV seek/range/timing, complex authored content and Activity/mobile/resource acceptance |
 | M1-P10 | Room terminology | Canonical room names/protocol, removal of legacy aliases, and web/Activity terminology audit; “session” retained for technical contexts and “watch parties” preserved for public context | Final packaging review |
 | M1-P11 | Architecture hardening | SQLite worker/mirror, WebSocket-native room operations, room-scoped state notifications, compatibility removal, fault boundaries, bounded tools, installation validator (`npm run doctor`) and Docker/Compose packaging | Real proxy/container/resource checks and operator backup/restore/rollback |
-| M1-P12 | Viewer telemetry | Passive Room sync-quality indicator | Live accuracy/readability acceptance; richer telemetry and presence remain optional expansion |
+| M1-P12 | Viewer telemetry | Passive Room sync-quality indicator, detailed viewer telemetry cards, and voluntary host buffering notices | Live accuracy/readability acceptance; richer presence remains optional expansion |
 | M1-P13 | Persistent rooms and queues | Durable rooms, roles, reopen, manual/bulk queues, single tail preview (`autoQueue.next`), `continue`/in-order/shuffle modes, `pin`/`skip`/`playNow` controls, cancellable autoplay, full-stage ending interstitial and explicit endpoint completion | Dual-browser rendered UI checks for tail preview/`continue` mode, real Plex/Activity continuity, retained-state recovery, writer/load measurements and remaining UX acceptance; endpoint-seek fix owner-verified, broader device coverage open |
 | M1-P14 | Configuration and accounts | YAML policy, verified operator authorization, running/saved settings APIs, validated YAML saves and 19-key browser settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room controls, editable names and host discovery/assignment | Three-outcome A/B verification complete; real admission/revocation and independent operator recovery remain release gates |
 
@@ -60,7 +60,9 @@ Details: [accounts and reporting](docs/accounts-and-access.md), [reporting inves
 
 ### M1-P12 — Viewer telemetry
 
-Expansion candidates: timeline viewer indicators, detailed viewer cards, buffering notices with voluntary host pause, an operator resource HUD and optional presence cues. Select small increments after the current indicator is accepted; none may automatically interrupt healthy viewers.
+**Status:** Passive Room sync-quality indicator, interactive viewer telemetry cards (with live status pills, sync score %, diagnostic explanation, and freshness), and host-gated voluntary buffering notices (`Pause to wait` and `Resume playback`) are implemented and covered by unit/lifecycle tests on main.
+
+**Next:** Complete live accuracy and readability acceptance across multi-device viewing parties. Further expansions (timeline viewer indicators, operator resource HUD, optional presence cues) remain optional. None may automatically interrupt healthy viewers.
 
 ### M1-P13 — Persistent rooms and playback queues
 

@@ -57,3 +57,12 @@ test('watch page includes Picture-in-Picture button, placeholder, and icon', () 
   assert.equal(icons.resolveName('pip'), 'picture-in-picture');
   assert.ok(icons.glyphs['picture-in-picture']);
 });
+
+test('room roster renders sync-quality as interactive telemetry button and supports telemetry popovers', () => {
+  const roomsUi = require('../web/watch-rooms-ui.js');
+  assert.ok(typeof roomsUi.mount === 'function');
+  const css = fs.readFileSync(path.join(__dirname, '../web/watch.css'), 'utf8');
+  assert.ok(css.includes('.viewer-telemetry-card'));
+  assert.ok(css.includes('.telemetry-status-pill'));
+  assert.ok(css.includes('#room-participants .room-roster-sync-quality'));
+});

@@ -38,6 +38,149 @@
     }
     controls.content($('refresh'),{label:'Refresh rooms',icon:'refresh',iconOnly:true});
     let details, section = 'general', renameDraft = '', draftRoom, generation = 0, busy = false, offset = 0, total = 0, savedGeneration = 0;
+    let activeTelemetryPersonId = null, activeTelemetryAnchor = null, telemetryCardElement = null;
+
+    function humanReason(reason) {
+      switch (reason) {
+        case 'healthy': return 'Playback in sync with room timeline';
+        case 'buffer-stall': return 'Experiencing video buffer stall';
+        case 'rate-adjusted': return 'Fine speed adjustment applied';
+        case 'jump-correction': return 'Periodic sync jump applied';
+        case 'awaiting-measurements': return 'Calibrating playback clock';
+        case 'measurement-interrupted': return 'Playback interrupted';
+        case 'measurement-expired': return 'No recent telemetry received';
+        case 'stream-changed': return 'Video stream changed';
+        case 'no-sessions': return 'No active client connections';
+        case 'measurements-unavailable': return 'Measurements unavailable';
+        default: return reason || 'Normal playback';
+      }
+    }
+
+    function humanFreshness(freshnessMs) {
+      if (!Number.isFinite(freshnessMs)) return 'Freshness unknown';
+      const sec = Math.round(freshnessMs / 1000);
+      if (sec < 2) return 'Updated just now';
+      if (sec < 60) return 'Updated ' + sec + 's ago';
+      return 'Updated ' + Math.round(sec / 60) + 'm ago';
+    }
+
+    function closeTelemetryCard() {
+      if (activeTelemetryAnchor) {
+        activeTelemetryAnchor.setAttribute('aria-expanded', 'false');
+        activeTelemetryAnchor = null;
+      }
+      activeTelemetryPersonId = null;
+      if (telemetryCardElement) {
+        telemetryCardElement.remove();
+        telemetryCardElement = null;
+      }
+    }
+
+    function renderTelemetryCard(person, anchorBtn, roomState) {
+      if (telemetryCardElement) {
+        telemetryCardElement.remove();
+        telemetryCardElement = null;
+      }
+      if (!person || !anchorBtn) {
+        activeTelemetryPersonId = null;
+        activeTelemetryAnchor = null;
+        return;
+      }
+
+      activeTelemetryPersonId = person.id;
+      activeTelemetryAnchor = anchorBtn;
+      anchorBtn.setAttribute('aria-expanded', 'true');
+
+      const card = document.createElement('div');
+      card.className = 'viewer-telemetry-card';
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-label', 'Telemetry for ' + person.name);
+
+      const header = node('div', card, undefined, 'telemetry-card-header');
+      const userRow = node('div', header, undefined, 'telemetry-card-user');
+      const roleGlyph = person.role === 'creator' ? 'creator' : person.role === 'host' ? 'host' : 'user';
+      const roleIcon = root.uburoomIcons.icon(document, roleGlyph);
+      roleIcon.classList.add('telemetry-user-icon');
+      userRow.append(roleIcon);
+
+      node('strong', userRow, person.name, 'telemetry-user-name');
+      const roleTag = node('span', userRow, person.role === 'creator' ? 'Leader' : person.role === 'host' ? 'Host' : 'Viewer', 'telemetry-role-tag');
+      if (person.role === 'creator') roleTag.classList.add('leader');
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'icon-button telemetry-card-close';
+      closeBtn.setAttribute('aria-label', 'Close telemetry card');
+      closeBtn.append(root.uburoomIcons.icon(document, 'close'));
+      closeBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        closeTelemetryCard();
+        anchorBtn.focus();
+      });
+      header.append(closeBtn);
+
+      const sync = person.syncQuality && typeof person.syncQuality === 'object'
+        ? person.syncQuality
+        : { status: 'unknown', reason: 'measurements-unavailable', sessions: [] };
+      const score = Number.isFinite(sync.score) && sync.score >= 0 && sync.score <= 1 ? sync.score : 1;
+      const level = sync.level || root.uburoomSyncQuality.level(score, sync.lastKnownLevel) || 'excellent';
+      const scorePct = Math.round(score * 100);
+
+      const sessions = Array.isArray(sync.sessions) ? sync.sessions.filter(s => s && s.status !== 'disconnected') : [];
+      const primarySession = sessions[0] || {};
+      const status = primarySession.status || (person.present ? 'playing' : 'offline');
+
+      const statusRow = node('div', card, undefined, 'telemetry-status-row');
+      const statusPill = node('span', statusRow, status.toUpperCase(), 'telemetry-status-pill');
+      statusPill.dataset.status = status;
+
+      const scoreBadge = node('span', statusRow, scorePct + '% (' + (level.charAt(0).toUpperCase() + level.slice(1)) + ')', 'telemetry-score-badge');
+      scoreBadge.dataset.quality = level;
+
+      const detailsBox = node('div', card, undefined, 'telemetry-details-box');
+      node('p', detailsBox, humanReason(sync.reason || primarySession.reason), 'telemetry-reason-text');
+      node('p', detailsBox, humanFreshness(sync.measurementFreshnessMs || primarySession.measurementFreshnessMs), 'telemetry-freshness-text');
+
+      if (sessions.length > 1) {
+        const sessionList = node('div', card, undefined, 'telemetry-session-list');
+        node('p', sessionList, 'Connected devices (' + sessions.length + '):', 'telemetry-session-title');
+        sessions.forEach((s, idx) => {
+          const sRow = node('div', sessionList, undefined, 'telemetry-session-row');
+          const sScore = Math.round(Math.max(0, Math.min(1, s.score || 0)) * 100);
+          node('span', sRow, 'Device ' + (idx + 1) + ' · ' + (s.status || 'unknown'), 'telemetry-session-device');
+          const sBadge = node('span', sRow, sScore + '%', 'telemetry-session-score');
+          sBadge.dataset.quality = s.level || 'excellent';
+        });
+      }
+
+      document.body.append(card);
+      telemetryCardElement = card;
+
+      const rect = anchorBtn.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      let left = rect.right - cardRect.width;
+      if (left < 10) left = 10;
+      if (left + cardRect.width > window.innerWidth - 10) left = window.innerWidth - cardRect.width - 10;
+      let top = rect.bottom + 6;
+      if (top + cardRect.height > window.innerHeight - 10) {
+        top = rect.top - cardRect.height - 6;
+      }
+      card.style.left = Math.round(left) + 'px';
+      card.style.top = Math.round(top) + 'px';
+    }
+
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && telemetryCardElement) {
+        const anchor = activeTelemetryAnchor;
+        closeTelemetryCard();
+        anchor?.focus();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (telemetryCardElement && !telemetryCardElement.contains(event.target) && !activeTelemetryAnchor?.contains(event.target)) {
+        closeTelemetryCard();
+      }
+    });
     function node(tag, parent, text, className) {
       const element = document.createElement(tag);
       if (text !== undefined) element.textContent = text;
@@ -166,11 +309,24 @@
             return 'Sync quality: '+Math.round(value*100)+'% ('+levels[sessionLevel]+')';
           });
           const tooltip=scoreLines.join('\n');
-          const quality = node('span',row,undefined,'room-roster-sync-quality');
+          const quality = node('button',row,undefined,'room-roster-sync-quality');
+          quality.type = 'button';
           quality.dataset.quality = level; quality.dataset.confidence=sync.confidence==='confident'?'confident':sync.confidence==='provisional'?'provisional':'reduced';
-          quality.title = tooltip; quality.setAttribute('role','img'); quality.setAttribute('aria-label',tooltip);
+          quality.title = tooltip; quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g,', '));
+          quality.setAttribute('aria-haspopup','dialog');
+          quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
           const qualityIcon = root.uburoomIcons.icon(document,icons[level]||'wifi');
           qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
+          quality.addEventListener('click', event => {
+            event.stopPropagation();
+            if (activeTelemetryPersonId === person.id) closeTelemetryCard();
+            else renderTelemetryCard(person, quality, value);
+          });
+          if (activeTelemetryPersonId === person.id) {
+            queueMicrotask(() => {
+              if (activeTelemetryPersonId === person.id) renderTelemetryCard(person, quality, value);
+            });
+          }
         }
         const kickable = canKick && person.present && person.id !== self && person.role !== 'creator' && (person.role !== 'host' || canKickHosts);
         row.classList.toggle('has-kick',!!kickable);
@@ -633,7 +789,7 @@
     for (const id of ['reopen','lobby-reopen']) $(id).addEventListener('click',() => void showChooser('saved'));
     $('room-saved-previous').addEventListener('click',() => void loadSaved(Math.max(0,offset - 50)));
     $('room-saved-next').addEventListener('click',() => void loadSaved(offset + 50));
-    return { loadSaved, open, openDraft, draftOptions, clearDraft() { draftRecord = undefined; }, updateDraftPreset(name) { if (draftRecord) draftRecord.permissions = presetPolicy(name); }, playbackContext() { return dialog.open && details ? {...details,durable:true} : getState(); }, savePlayback, render() {
+    return { loadSaved, open, openDraft, draftOptions, closeTelemetryCard, clearDraft() { draftRecord = undefined; }, updateDraftPreset(name) { if (draftRecord) draftRecord.permissions = presetPolicy(name); }, playbackContext() { return dialog.open && details ? {...details,durable:true} : getState(); }, savePlayback, render() {
       $('reopen').hidden = !!getState() || !getMe()?.durableRooms; $('lobby-reopen').hidden = !getMe()?.durableRooms;
       renderQuick();
       renderLivePeople();
@@ -644,5 +800,7 @@
       $('room-save-error').textContent = getState()?.saveError || '';
     } };
   }
-  root.uburoomRoomUI = { mount, presetPolicy, presetName, sortPeople };
+  const api = { mount, presetPolicy, presetName, sortPeople };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.uburoomRoomUI = api;
 })(globalThis);

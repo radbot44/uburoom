@@ -624,13 +624,48 @@ body.idle-player #video{visibility:hidden}
 .room-roster .room-person.has-kick{grid-template-columns:var(--role-column) minmax(0,1fr) 40px}
 #room-participants .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 24px}
 #room-participants.can-kick .room-person{grid-template-columns:var(--role-column) minmax(0,1fr) 24px 40px}
-#room-participants .room-roster-sync-quality{display:grid;place-items:center;width:24px;height:24px;color:var(--muted)}
+#room-participants .room-roster-sync-quality{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;background:transparent;cursor:pointer;border-radius:6px;color:var(--muted)}
+#room-participants .room-roster-sync-quality:hover{background:var(--elevated)}
+#room-participants .room-roster-sync-quality:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 #room-participants .room-roster-sync-quality svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #room-participants .room-roster-sync-quality[data-quality=excellent]{color:var(--success)}
 #room-participants .room-roster-sync-quality[data-quality=good]{color:var(--good)}
 #room-participants .room-roster-sync-quality[data-quality=fair]{color:var(--warning)}
 #room-participants .room-roster-sync-quality[data-quality=poor]{color:var(--danger)}
 #room-participants .room-roster-sync-quality[data-confidence]:not([data-confidence=confident]){color:var(--muted)}
+.viewer-telemetry-card{position:fixed;z-index:35;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;box-shadow:0 12px 40px #000a;color:var(--text);font-size:13px;width:280px;max-width:calc(100vw - 20px);box-sizing:border-box}
+.telemetry-card-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.telemetry-card-user{display:flex;align-items:center;gap:8px;min-width:0}
+.telemetry-user-icon{width:20px;height:20px;flex:none;stroke:currentColor;fill:none}
+.telemetry-user-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.telemetry-role-tag{font-size:11px;font-weight:600;padding:2px 6px;border-radius:5px;background:var(--elevated);color:var(--muted);text-transform:uppercase}
+.telemetry-role-tag.leader{color:var(--accent-text);background:color-mix(in srgb,var(--primary) 15%,transparent)}
+.telemetry-card-close{width:28px;height:28px;padding:4px}
+.telemetry-card-close svg{width:16px;height:16px}
+.telemetry-status-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.telemetry-status-pill{font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:6px;background:var(--elevated);color:var(--muted)}
+.telemetry-status-pill[data-status=playing]{background:color-mix(in srgb,var(--success) 20%,transparent);color:var(--success)}
+.telemetry-status-pill[data-status=buffering]{background:color-mix(in srgb,var(--warning) 20%,transparent);color:var(--warning)}
+.telemetry-status-pill[data-status=paused]{background:var(--elevated);color:var(--muted)}
+.telemetry-status-pill[data-status=seeking]{background:color-mix(in srgb,var(--primary) 20%,transparent);color:var(--accent-text)}
+.telemetry-status-pill[data-status=error]{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
+.telemetry-score-badge{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.telemetry-score-badge[data-quality=excellent]{color:var(--success)}
+.telemetry-score-badge[data-quality=good]{color:var(--good)}
+.telemetry-score-badge[data-quality=fair]{color:var(--warning)}
+.telemetry-score-badge[data-quality=poor]{color:var(--danger)}
+.telemetry-details-box{display:grid;gap:4px;margin-bottom:6px}
+.telemetry-reason-text{margin:0;font-size:12px;color:var(--text);line-height:1.35}
+.telemetry-freshness-text{margin:0;font-size:11px;color:var(--muted)}
+.telemetry-session-list{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:6px}
+.telemetry-session-title{margin:0 0 4px;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase}
+.telemetry-session-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px}
+.telemetry-session-device{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.telemetry-session-score{font-weight:600;font-variant-numeric:tabular-nums}
+.telemetry-session-score[data-quality=excellent]{color:var(--success)}
+.telemetry-session-score[data-quality=good]{color:var(--good)}
+.telemetry-session-score[data-quality=fair]{color:var(--warning)}
+.telemetry-session-score[data-quality=poor]{color:var(--danger)}
 .room-roster .room-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .room-roster-role{display:flex;align-items:center;justify-content:center;min-width:0;color:var(--text)}
 .room-roster-role>svg{width:24px;height:24px;fill:none;stroke:currentColor;flex:none}

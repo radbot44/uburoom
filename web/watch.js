@@ -113,6 +113,8 @@ let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
 let qualityPending=false;
 let observationClockRevision=0;
 let lastPresentationBreak=performance.now(), stateRequestSequence=0;
+const bufferingViewers = new Map(), suppressedBuffering = new Set();
+let voluntarilyPausedFor = null;
 let browserHandoff, browserHandoffTimer, browserVerification;
 let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
 const video = $('video');
@@ -1421,6 +1423,11 @@ function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = fal
   if (document.pictureInPictureElement && reason !== 'state-change') {
     try { document.exitPictureInPicture().catch(() => {}); } catch {}
   }
+  if (reason !== 'state-change') {
+    roomUI?.closeTelemetryCard?.();
+    for (const id of bufferingViewers.keys()) toasts.dismiss('buffering-' + id);
+    bufferingViewers.clear(); suppressedBuffering.clear(); voluntarilyPausedFor = null;
+  }
   if (!preserveSubtitles) {
     captions.reset(); trackActionError='';
     setSubtitleLoading(false);
@@ -1745,7 +1752,87 @@ function renderVisibility() {
   }
   $('admin-end-room').hidden = true;
   updateSectionTabs();
+  checkBufferingViewers();
 }
+function checkBufferingViewers() {
+  if (!state?.mediaUrl || !state?.canPlayback) {
+    for (const id of bufferingViewers.keys()) toasts.dismiss('buffering-' + id);
+    bufferingViewers.clear();
+    voluntarilyPausedFor = null;
+    return;
+  }
+  const isPaused = !!state.pauseAt || state.state.paused !== false;
+  const participants = state.participants || [];
+  const activeIds = new Set();
+
+  for (const person of participants) {
+    if (person.id === me?.userId) continue;
+    activeIds.add(person.id);
+
+    const sessions = person.syncQuality?.sessions || [];
+    const isBuffering = sessions.some(s => s.current && s.status === 'buffering') ||
+      (person.syncQuality?.status === 'buffering');
+
+    if (isBuffering && !isPaused) {
+      if (!bufferingViewers.has(person.id)) {
+        bufferingViewers.set(person.id, Date.now());
+      } else {
+        const elapsed = Date.now() - bufferingViewers.get(person.id);
+        if (elapsed >= 3000 && !suppressedBuffering.has(person.id)) {
+          toasts.show('buffering-' + person.id, {
+            title: person.name + ' is buffering…',
+            hint: 'Playback continues for other viewers.',
+            symbol: 'loader-4',
+            loading: true,
+            action: {
+              label: 'Pause to wait',
+              run: () => {
+                voluntarilyPausedFor = person.id;
+                toasts.dismiss('buffering-' + person.id);
+                execute({ action: 'media.pause' }).catch(err => fail(err.message));
+              }
+            },
+            onDismiss: () => {
+              suppressedBuffering.add(person.id);
+            }
+          });
+        }
+      }
+    } else {
+      if (bufferingViewers.has(person.id)) {
+        bufferingViewers.delete(person.id);
+        suppressedBuffering.delete(person.id);
+        toasts.dismiss('buffering-' + person.id);
+
+        if (voluntarilyPausedFor === person.id) {
+          voluntarilyPausedFor = null;
+          toasts.show('recovered-' + person.id, {
+            title: person.name + ' is ready',
+            hint: 'Playback was paused to wait.',
+            symbol: 'check',
+            duration: 8000,
+            action: {
+              label: 'Resume playback',
+              run: () => {
+                execute({ action: 'media.play' }).catch(err => fail(err.message));
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+
+  for (const id of bufferingViewers.keys()) {
+    if (!activeIds.has(id)) {
+      bufferingViewers.delete(id);
+      suppressedBuffering.delete(id);
+      toasts.dismiss('buffering-' + id);
+      if (voluntarilyPausedFor === id) voluntarilyPausedFor = null;
+    }
+  }
+}
+setInterval(checkBufferingViewers, 1000);
 async function changeVisibility() {
   if (!state?.canManage || pending || $('privacy-dialog').open) return;
   const id = selected;
