@@ -91,7 +91,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 | ID | Capability | Boundary / prerequisite |
 | --- | --- | --- |
 | M2-P1 | HDR | Verify capable-client passthrough and HDR-to-SDR tone mapping; distinguish Dolby Vision profiles |
-| M2-P2 | Subtitle-aware Picture-in-Picture | Build on P9; evaluate Document PiP or compositing against actual browser support |
+| M2-P2 | Subtitle-aware Picture-in-Picture | Implemented: Document Picture-in-Picture with stage reparenting, full hover transport bar, and vector/bitmap subtitle canvas layers; native video PiP fallback with client-subtitle burn-in recommendation toast; live browser acceptance open |
 | M2-P3 | Guest room passes | Approved for future work after P14 authorization, P4 attribution and P13 roles; revocable, bounded room passes never imply media or host authority |
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |

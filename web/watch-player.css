@@ -83,4 +83,11 @@ body.mobile-player .center-play{width:48px;height:48px;top:45%}body.mobile-playe
 body.mobile-player #ready-status{top:calc(45% + 24px);font-size:10px}
 body.mobile-player .title-bar{padding:8px 10px 20px}body.mobile-player .media-heading h1{font-size:14px}
 body.mobile-player #empty-stage{max-height:calc(100% - 136px)}
+.pip-placeholder{position:relative;aspect-ratio:16/9;background:var(--card);border:1px solid var(--border);border-radius:10px;display:grid;place-items:center;text-align:center;padding:24px}
+.pip-placeholder[hidden]{display:none!important}
+.pip-placeholder-content{display:grid;gap:12px;place-items:center}
+.pip-placeholder-content p{margin:0;font-size:15px;font-weight:500;color:var(--muted)}
+body.pip-window{margin:0;padding:0;background:black;overflow:hidden;width:100vw;height:100vh}
+body.pip-window .stage{position:fixed;inset:0;width:100%;height:100%;aspect-ratio:auto;border-radius:0;background:black}
+body.pip-window :is(#theater,#drawer-open){display:none!important}
 @media(prefers-reduced-motion:reduce){.center-play,.settings-main,.settings-submenu{transition:none}}

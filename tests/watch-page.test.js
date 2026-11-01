@@ -47,3 +47,13 @@ test('watch page includes chapter selection, tooltip, and skip marker controls',
   assert.ok(html.includes('id="skip-marker"'));
   assert.ok(html.includes('id="skip-marker-label"'));
 });
+
+test('watch page includes Picture-in-Picture button, placeholder, and icon', () => {
+  const html = watchPage(template, { config: {}, me: { status: 401, value: { error: 'Sign in' } } });
+  assert.ok(html.includes('id="pip"'));
+  assert.ok(html.includes('id="pip-placeholder"'));
+  assert.ok(html.includes('id="pip-return"'));
+  const icons = require('../web/icons.js');
+  assert.equal(icons.resolveName('pip'), 'picture-in-picture');
+  assert.ok(icons.glyphs['picture-in-picture']);
+});

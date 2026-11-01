@@ -94,6 +94,10 @@ function viewerPreferences() {
 }
 
 let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, fallbackRetryTimer, frameStartedAt, videoFrames = 0, frameCallback;
+const supportsDocPiP = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
+const supportsVideoPiP = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function';
+const supportsPiP = supportsDocPiP || supportsVideoPiP;
+let pipWindow = null;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
@@ -449,7 +453,7 @@ video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
 for (const pair of [['refresh','refresh'],['room-symbol','users-group'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
-  ['theater','theater'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['skip-marker-icon','player-track-next'],]) glyph(...pair);
+  ['theater','theater'],['pip','pip'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['skip-marker-icon','player-track-next'],]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
@@ -1082,6 +1086,7 @@ function updateActivityLayout(event) {
   if(pip){playerUI?.reset();if($('tracks-dialog').open)$('tracks-dialog').close();}
 }
 document.body.classList.toggle('activity', activity); $('fullscreen').hidden = $('theater').hidden = activity;
+$('pip').hidden = activity || !supportsPiP;
 if (activity) {
   $('brand-link').href = '/watch' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
@@ -1095,6 +1100,106 @@ $('theater').addEventListener('click', async () => {
     else setTheater(!theater);
   } catch (error) { fail(error.message); }
 });
+
+async function togglePictureInPicture() {
+  if (activity || !supportsPiP) return;
+  if (pipWindow) {
+    pipWindow.close();
+    return;
+  }
+  if (document.pictureInPictureElement) {
+    await document.exitPictureInPicture();
+    return;
+  }
+  if (!state?.mediaUrl) return;
+
+  if (supportsDocPiP) {
+    const stage = $('stage'), viewingSection = $('viewing-section'), placeholder = $('pip-placeholder');
+    const width = Math.min(Math.max(video.videoWidth || stage.clientWidth || 640, 320), 1920);
+    const height = Math.min(Math.max(video.videoHeight || stage.clientHeight || 360, 180), 1080);
+    const win = await window.documentPictureInPicture.requestWindow({
+      width,
+      height,
+      preferInitialWindowPlacement: true,
+    });
+    for (const sheet of document.styleSheets) {
+      try {
+        if (sheet.href) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = sheet.href;
+          win.document.head.append(link);
+        } else if (sheet.cssRules) {
+          const rules = [...sheet.cssRules].map(r => r.cssText).join('\n');
+          const style = document.createElement('style');
+          style.textContent = rules;
+          win.document.head.append(style);
+        }
+      } catch {
+        if (sheet.href) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = sheet.href;
+          win.document.head.append(link);
+        }
+      }
+    }
+    win.document.title = document.title || 'uburoom';
+    win.document.documentElement.dataset.theme = document.documentElement.dataset.theme || 'dark';
+    win.document.body.className = 'pip-window ' + (document.body.classList.contains('theme-light') ? 'theme-light' : 'theme-dark');
+    placeholder.hidden = false;
+    win.document.body.append(stage);
+    pipWindow = win;
+    renderTransport();
+
+    win.addEventListener('keydown', event => {
+      const clone = new KeyboardEvent('keydown', {
+        code: event.code,
+        key: event.key,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        bubbles: true,
+        cancelable: true
+      });
+      document.dispatchEvent(clone);
+    });
+
+    win.addEventListener('pagehide', () => {
+      if (pipWindow === win) {
+        pipWindow = null;
+        viewingSection.insertBefore(stage, placeholder);
+        placeholder.hidden = true;
+        renderTransport();
+        stage.focus({ preventScroll: true });
+      }
+    }, { once: true });
+  } else if (supportsVideoPiP) {
+    await video.requestPictureInPicture();
+    const hasSubtitles = !!state?.tracks?.subtitleId;
+    const isBurned = (state?.tracks?.subtitleMode || 'auto') === 'burn';
+    if (hasSubtitles && !isBurned) {
+      toasts.show('pip-subtitles', {
+        title: 'Subtitles in Picture-in-Picture',
+        hint: 'Client subtitles require Document PiP or Plex burn-in.',
+        symbol: 'subtitles',
+        duration: 8000,
+        action: {
+          label: 'Burn-in settings',
+          run: () => {
+            $('tracks-open')?.click();
+            $('subtitle-mode')?.focus();
+          }
+        }
+      });
+    }
+  }
+}
+$('pip').addEventListener('click', () => { togglePictureInPicture().catch(error => fail(error.message)); });
+$('pip-return').addEventListener('click', () => { togglePictureInPicture().catch(error => fail(error.message)); });
+video.addEventListener('enterpictureinpicture', () => { renderTransport(); });
+video.addEventListener('leavepictureinpicture', () => { renderTransport(); });
 $('drawer-open').addEventListener('click', () => {
   if (!immersive) return;
   toggleDrawer(); if (!drawer.hidden) $('drawer-close').focus();
@@ -1310,6 +1415,12 @@ function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = fal
   sync.reset();
   resetSyncQuality();
   diagnosticSample('player-clear',{reason});
+  if (pipWindow && reason !== 'state-change') {
+    try { pipWindow.close(); } catch {}
+  }
+  if (document.pictureInPictureElement && reason !== 'state-change') {
+    try { document.exitPictureInPicture().catch(() => {}); } catch {}
+  }
   if (!preserveSubtitles) {
     captions.reset(); trackActionError='';
     setSubtitleLoading(false);
@@ -1660,6 +1771,11 @@ function renderTransport() {
   $('next').disabled = !playback || !state?.hasNext || pending;
   if (state?.durable) $('next').disabled = !available || !state.hasNext || !state.capabilities.chooseMedia || pending;
   $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
+  $('pip').disabled = !available;
+  const inPiP = !!pipWindow || document.pictureInPictureElement === video;
+  $('pip').setAttribute('aria-pressed', inPiP ? 'true' : 'false');
+  $('pip').title = inPiP ? 'Exit Picture-in-Picture' : 'Picture-in-Picture';
+  $('pip').setAttribute('aria-label', $('pip').title);
   const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
   $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
   glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
@@ -2251,6 +2367,11 @@ document.addEventListener('keydown', event => {
   if (event.code === 'KeyT' && !document.body.classList.contains('mobile-player')) {
     event.preventDefault();
     $('theater')?.click();
+    return;
+  }
+  if (event.code === 'KeyP' && state?.mediaUrl && !$('pip')?.disabled && !$('pip')?.hidden) {
+    event.preventDefault();
+    $('pip')?.click();
     return;
   }
   if (event.code === 'KeyC' && state?.mediaUrl) {
