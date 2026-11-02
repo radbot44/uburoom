@@ -165,6 +165,14 @@
     "download": "\u003cpath d=\"M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M7 11l5 5l5 -5\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M12 4l0 12\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
     "arrow-back-up": "\u003cpath d=\"M9 14l-4 -4l4 -4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M5 10h11a4 4 0 1 1 0 8h-1\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
     "share": "\u003cpath d=\"M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M8.7 10.7l6.6 -3.4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M8.7 13.3l6.6 3.4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "info-circle": "\u003cpath d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M12 9h.01\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M11 12h1v4h1\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "arrows-left-right": "\u003cpath d=\"M21 17l-18 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M6 10l-3 -3l3 -3\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M3 7l18 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M18 20l3 -3l-3 -3\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "arrow-narrow-right": "\u003cpath d=\"M5 12l14 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M15 16l4 -4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M15 8l4 4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "dots": "\u003cpath d=\"M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "arrows-sort": "\u003cpath d=\"M3 9l4 -4l4 4m-4 -4v14\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M21 15l-4 4l-4 -4m4 4v-14\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "help": "\u003cpath d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M12 17l0 .01\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e \u003cpath d=\"M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "chevron-left": "\u003cpath d=\"M15 6l-6 6l6 6\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
+    "chevron-right": "\u003cpath d=\"M9 6l6 6l-6 6\" xmlns=\"http://www.w3.org/2000/svg\" /\u003e",
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {
