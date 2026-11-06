@@ -10,7 +10,7 @@ const {HLSPool}=require('./hls-pool');
 const SubtitleResources=require('./subtitle-resources');
 const { resilientFetch } = require('./resilience');
 const { ConversionPolicy } = require('./transcoding-policy');
-const {localFormat} = require('../web/playback-policy');
+const { planDelivery } = require('./delivery-plan');
 const { mediaIdentity } = require('../shared/room-protocol');
 const { SharedTask, runOperation, currentSignal } = require('./operation');
 
@@ -577,11 +577,12 @@ class Plex {
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
-    const directPlan = !choices.sourceOnly && !localFormat(fallback) && !(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)
-      ? await choices.directPlan?.() : undefined;
+    const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly});
+    media.deliveryReason = plan.reason;
+    const directPlan = plan.route==='plex-hls' ? await choices.directPlan?.() : undefined;
     const directHls = !!(directPlan || choices.directHls);
     if(directPlan)media.directHls=directPlan;
-    if(choices.shareKey&&!choices.sourceOnly&&!localFormat(fallback)&&!(quality==='direct'&&!compatible&&!burn&&media.tracks.audio.length<=1)) {
+    if(choices.shareKey&&plan.route==='plex-hls') {
       if(choices.authorized&&!await choices.authorized())throw new PlaybackError('Viewing access or stream selection expired.');
       const key=JSON.stringify([choices.shareKey,media.sourceKey,qualityId(quality),audio?.id,burn?media.selection.subtitle.id:null,directHls,!!compatible]);
       let shared;
@@ -594,8 +595,8 @@ class Plex {
       else media.releaseConversion=shared.media.releaseConversion;
       return media;
     }
-    if (choices.sourceOnly) { media.format='file'; media.start=media.sourceStart; }
-    else if (localFormat(fallback)) {
+    if (plan.route==='file') { media.format='file'; media.start=media.sourceStart; }
+    else if (plan.route==='local') {
       try{await this.conversionPolicy.video('uburoom',fallback);}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
       if (burn) throw new PlaybackError('These subtitles require Plex video transcoding. This local WebM conversion cannot preserve them; try a browser that can play the Plex stream.');
       const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey };
@@ -609,7 +610,6 @@ class Plex {
       }
       media.av1Lease ||= this.av1.acquire(original, quality, choices.sharedOnly, fallback);
     }
-    else if (quality === 'direct' && !compatible && !burn && media.tracks.audio.length<=1) { media.format = 'file'; media.start = media.sourceStart; }
     else {
       const prepare = async () => {
       let copyOnly=false;

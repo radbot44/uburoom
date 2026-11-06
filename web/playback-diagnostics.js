@@ -10,6 +10,7 @@
     detail:['reset','fragment','manifest','quota-exceeded','buffer-full','buffer-append','audio-enhancement','other'],
     degradation:['severe-drops','drops','stalls'],
     capabilityStatus:['unavailable','incomplete','reported','error'],
+    deliveryReason:['source-only','original','local-fallback','burn-in','compatible','multiple-audio','quality-limit'],
     format:['hls','file','av1','vp9','vp8'], delivery:['text','image','burn','off'],syncMode:['speed','jumps'],audioMode:['normal','dialogue','night'],
     visibility:['visible','hidden','prerender'],
     closeInitiator:['none','manual-close','interrupt','auth-timeout','protocol-error','heartbeat-timeout'],
@@ -78,7 +79,7 @@
       const current={room:value.id,media:value.mediaVersion,stream:value.streamVersion,grant:value.mediaUrl,observation:value.observationEpoch}, changed={};
       for (const key of Object.keys(generations)) if (previous[key]!==current[key]) {generations[key]++;changed[key+'Changed']=true;}
       previous=current;
-      if(Object.keys(changed).length)record('state-change',changed);
+      if(Object.keys(changed).length)record('state-change',{...changed,deliveryReason:value.deliveryInfo?.reason});
     }
     record('start');
     return {record,state,snapshot:()=>JSON.parse(JSON.stringify({schema:2,startedAt,exportedAt:now(),limits,discardedEvents,discardedSamples,discardedFrames,

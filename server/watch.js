@@ -443,7 +443,7 @@ class Watch {
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
       mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [],
       qualityNotice:viewer.media?.qualityNotice, preferredQuality:viewer.preferredQuality,
-      deliveryInfo:viewer.media?{format:viewer.media.format,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
+      deliveryInfo:viewer.media?{format:viewer.media.format,reason:viewer.media.deliveryReason,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
         videoDecision:viewer.media.output?.videoDecision,audioDecision:viewer.media.output?.audioDecision,
         width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
         encoder:viewer.media.av1Lease?.group.encoder,cpuFallback:!!viewer.media.av1Lease?.group.cpuFallback}:undefined,

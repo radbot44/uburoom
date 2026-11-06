@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P2 — Delivery plan extraction — 2026-11-06
+
+A/B on the uncommitted working tree based on `57a93db`, Node v22.22.2 / Windows, Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. Route selection moved from repeated conditions in `Plex.prepare` to `server/delivery-plan.js`, with its reason added to `deliveryInfo` and diagnostics. No intended behavior change.
+
+A disposable comparison found the replaced conditions and the plan identical across 1,620 input combinations, including direct-plan and pool-sharing eligibility. Recovery harness: **13/13 passed in Chrome and Firefox**, with `multiple-audio` and `burn-in` reasons observed in browser diagnostics; the other reasons were not exercised there. First `node --test tests/*.test.js`: 530 of 531, failing the known locked-disk timer assertion; it passed three times alone and the full rerun passed **531, zero failures/cancellations/skips**. No assertion was changed.
+
+Not covered: live Plex/Discord, real networks and hardware decoding. Negotiation remains open: decode-failure memory and its verification are not implemented. No deployment or C/D acceptance claim.
+
 ### M1-P1/P13 — Recovery harness baseline and independent-viewer delivery loss — 2026-11-06
 
 B on the uncommitted working tree based on `363de22`, Node v22.22.2 / Windows, Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. `node scripts/playback-recovery.js --browser=chrome|firefox` had drifted out of routine use and failed at `363de22` in both browsers: Chrome ended when the server process exited, and Firefox stopped on a stale harness expectation.

@@ -8,7 +8,7 @@ A playback attempt includes edition/version/file, item timeline, video/color/cad
 
 1. Resolve current media authority and eligible source. Never silently replace an alternate cut; substitute encodes only when timing-compatible.
 2. Treat codec/MSE/MediaCapabilities hints as candidates, not decode proof.
-3. Prefer compatible direct output, then remux/audio-only conversion, then full conversion/burn-in. Complete automatic source/output negotiation remains unfinished.
+3. Prefer compatible direct output, then remux/audio-only conversion, then full conversion/burn-in. One delivery plan chooses the route and records why in diagnostics. Complete automatic source/output negotiation remains unfinished.
 4. Validate actual Plex output and requested track/quality ceilings.
 5. Confirm decoded picture; verify intended audio/captions independently.
 6. Recover through bounded candidates while preserving position, pause intent and personal choices. Fence superseded work by attempt/stream generation.
