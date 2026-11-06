@@ -192,20 +192,25 @@ function outputSpec(info, quality) {
   return { width, height, hdr, bitrate, frameRate, tonemap, sourceFormat:video.pix_fmt, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
 }
 
-// Decoding and scaling on the GPU removes the 4K cost; tonemapping stays on the
-// CPU because the GPU tonemappers crush shadows. Every route uses FFmpeg's own
-// decoder with -hwaccel. Never use wrapper decoders such as hevc_qsv: after a
+// Decoding and scaling on the GPU removes the 4K cost. Every route uses FFmpeg's
+// own decoder with -hwaccel. Never use wrapper decoders such as hevc_qsv: after a
 // seek it mislabels frames, so chunks start up to three frames early.
+// HDR tonemaps through libplacebo with peak detection off, the closest GPU match
+// to the CPU picture. vpp_qsv crushes shadows, and tonemap_opencl adapts per
+// process, so the first frame of every chunk flashes. Each chunk is a new process.
 // Sources without a listed surface format stay on the CPU path.
 const SURFACES = { yuv420p:'nv12', nv12:'nv12', yuv420p10le:'p010le', p010le:'p010le' };
 const VAAPI_DEVICE = '/dev/dri/renderD128';
-function decodeRoute(spec, encoder, platform = process.platform) {
+function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = true) {
   const surface = SURFACES[spec.sourceFormat];
   if (!surface) return;
   const size = `${spec.width}:${spec.height}`, vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
-  const route = (input, gpu, downloaded = true) => ({ input, filter:['setpts=PTS-STARTPTS', ...gpu,
-    ...(downloaded ? ['hwdownload',`format=${surface}`] : []), ...(gpu.length ? [] : [`scale=${size}`]),
-    ...spec.tonemap, `scale=${size}:out_color_matrix=bt709`, 'format=nv12'].join(',') });
+  const placebo = spec.hdr && gpuTonemap && platform !== 'darwin';
+  const route = (input, gpu, downloaded = true) => ({
+    input:placebo ? ['-init_hw_device','vulkan=v',...input.filter((_,i) => input[i] !== '-filter_hw_device' && input[i-1] !== '-filter_hw_device'),'-filter_hw_device','v'] : input,
+    filter:['setpts=PTS-STARTPTS', ...gpu, ...(downloaded ? ['hwdownload',`format=${surface}`] : []),
+      ...(placebo ? [`libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0`] :
+        [...(gpu.length ? [] : [`scale=${size}`]), ...spec.tonemap, `scale=${size}:out_color_matrix=bt709`, 'format=nv12'])].join(',') });
   if (encoder === 'nvenc') return route(['-hwaccel','cuda','-hwaccel_output_format','cuda'], [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`]);
   if (encoder === 'qsv') {
     const device = platform === 'win32' ? ['d3d11va=d,vendor_id=0x8086','d3d11va','d3d11'] : [`vaapi=d:${VAAPI_DEVICE}`,'vaapi','vaapi'];
@@ -409,17 +414,22 @@ class AV1 {
             '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
           // 4K jobs commit about 1 GiB on either path, and GPU surfaces add to that.
           const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024,undefined,{memoryLimit:2*1024*1024*1024});
-          const route = this.hardwareDecode && !group.cpuDecode ? decodeRoute(spec,encoder) : undefined;
+          const routes = this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : [];
+          routes.push(undefined);
           try {
-            let bytes;
-            try { bytes = await encode(encoder,route); }
-            catch (error) {
-              // A source the GPU cannot decode fails here. Only a CPU success proves
-              // that, so an upstream failure does not disable the route for the group.
-              if (!route || !error.exitFailure || controller.signal.aborted) throw error;
-              bytes = await encode(encoder);
-              group.cpuDecode = true;
-              this.logger?.warn('Conversion',`Hardware decode failed for ${spec.sourceFormat} source; using CPU decode for this stream.`);
+            let level = Math.min(group.decodeLevel || 0, routes.length - 1), bytes;
+            for (;;) {
+              try { bytes = await encode(encoder,routes[level]); break; }
+              catch (error) {
+                // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
+                // success proves the step, so upstream failures change nothing for the group.
+                if (level === routes.length - 1 || !error.exitFailure || controller.signal.aborted) throw error;
+                level++;
+              }
+            }
+            if (level > (group.decodeLevel || 0)) {
+              group.decodeLevel = level;
+              this.logger?.warn('Conversion',`${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`);
             }
             group.encoder=encoder;group.cpuFallback=encoder==='software'&&this.encoder!=='software'; return bytes;
           } catch (error) {

@@ -106,7 +106,7 @@ The `transcoding` section controls Plex conversion and uburoom's local encoder i
 | `plex` / `uburoom` | Enable either conversion provider. |
 | `formats` | Local codec preference, default `[av1]`; VP9/VP8 are alternatives and all use Opus audio. Empty disables local conversion. |
 | `encoder` / `cpu_fallback` | Automatic hardware-first probing (supported QSV/NVENC paths), explicit backend selection and optional CPU fallback for hardware setup failures. |
-| `hardware_decode` | Default on. Decodes and scales every source on the GPU that matches the encoder: CUDA for NVENC; D3D11VA (Windows) or VAAPI (Linux) mapped to QSV; for software encoders D3D11VA, VAAPI or VideoToolbox. A stream that fails falls back to CPU decode. HDR tonemapping stays on the CPU. FFmpeg wrapper decoders such as `hevc_qsv` are not used because they start chunks up to three frames early. |
+| `hardware_decode` | Default on. Decodes and scales every source on the GPU that matches the encoder: CUDA for NVENC; D3D11VA (Windows) or VAAPI (Linux) mapped to QSV; for software encoders D3D11VA, VAAPI or VideoToolbox. HDR tonemaps through libplacebo on Vulkan when FFmpeg has it. A stream that fails steps down to CPU tonemapping, then CPU decode. FFmpeg wrapper decoders such as `hevc_qsv` are not used because they start chunks up to three frames early. |
 | `max_jobs` | Shared Plex/local job limit: default 5, allowed 1–32. Compatible consumers may share one output. |
 | `qualities` / `allow_original` | Ordered height/Mbps pairs and separate Original option. Conversion does not upscale. |
 
