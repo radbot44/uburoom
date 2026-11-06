@@ -23,8 +23,8 @@
     const choices=[['quality','Quality'],['audio-track','Audio track'],['audio-mode','Audio mode'],['chapters','Chapters'],['subtitle-track','Subtitle track']];
     const rows=[]; let opened=false, activeChoice, choiceSignature, chromeTimer, tapTimer, feedbackTimer, press, taps, lastSubtitle, touching=false;
     function layoutCaptions() {
-      const transport=stage.querySelector('.transport'), font=Math.max(14,Math.min(innerWidth*.024,32));
-      captions.layout(getComputedStyle(transport).pointerEvents!=='none',Math.ceil(transport.offsetHeight/(font*1.2))+1);
+      const transport=stage.querySelector('.transport');
+      captions.layout(getComputedStyle(transport).pointerEvents!=='none'?transport.offsetHeight:0);
     }
     const captionLayoutObserver=new ResizeObserver(layoutCaptions); captionLayoutObserver.observe(stage.querySelector('.transport'));
     for(const event of ['pointerenter','pointerleave','focusin','focusout'])stage.addEventListener(event,()=>requestAnimationFrame(layoutCaptions));

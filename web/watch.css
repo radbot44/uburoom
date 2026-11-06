@@ -28,10 +28,11 @@ h1,h2,.watch-panel-heading{font-family:var(--font-heading);font-weight:400;lette
 .stage{position:relative;aspect-ratio:16/9;background:black;border-radius:10px;overflow:hidden;display:grid;place-items:center;isolation:isolate;container-type:inline-size}.stage:fullscreen{border-radius:0;background:black;aspect-ratio:auto;width:100%;height:100%}
 #identity{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;color:inherit;padding:6px 0}#identity:hover:not(:disabled){color:var(--text);text-decoration:underline;text-underline-offset:3px}#identity:disabled{opacity:1;cursor:default}
 video{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}#empty-stage{position:relative;text-align:center;color:var(--muted);padding:24px}#empty-stage h1{color:var(--text);font-size:20px}#empty-hint{margin:8px 0 16px;color:var(--muted);font-size:14px}#empty-hint:empty{display:none}
-video::cue{font-size:clamp(14px,2.4vw,32px);color:var(--subtitle-color,#ffffff);background-color:rgba(0,0,0,.75)}
-video[data-subtitle-bg=off]::cue{background-color:transparent;text-shadow:none}
-video[data-subtitle-bg=background]::cue{background-color:rgba(0,0,0,.75);text-shadow:none}
-video[data-subtitle-bg=shadow]::cue{background-color:transparent;text-shadow:0 0 2px #000,1px 1px 2px #000,-1px -1px 2px #000,1px -1px 2px #000,-1px 1px 2px #000}
+.subtitle-text-layer{position:absolute;pointer-events:none;z-index:1;filter:brightness(var(--subtitle-brightness,1))}
+.subtitle-text-lines{position:absolute;left:4%;right:4%;bottom:var(--subtitle-lift,24px);text-align:center;font:600 var(--subtitle-size,24px)/1.25 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--subtitle-color,#ffffff)}
+.subtitle-text-lines.top{top:var(--subtitle-lift,24px);bottom:auto}
+.stage[data-subtitle-bg=background] .subtitle-cue>span{background:rgba(0,0,0,.75);padding:0 .25em;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.stage[data-subtitle-bg=shadow] .subtitle-cue>span{-webkit-text-stroke:.13em #000;paint-order:stroke fill;text-shadow:0 .04em .08em #0009}
 .subtitle-layer{position:absolute;inset:0;pointer-events:none;z-index:1;transform-origin:center;filter:brightness(var(--subtitle-brightness,1))}.subtitle-canvas{position:absolute;pointer-events:none}
 .player-chrome{position:absolute;left:0;right:0;z-index:2;opacity:0;pointer-events:none;transition:opacity .18s}
 .stage:has(:focus-visible) .player-chrome,.stage.paused .player-chrome,.stage.blocked .player-chrome{opacity:1;pointer-events:auto}

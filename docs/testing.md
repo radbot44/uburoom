@@ -25,6 +25,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 Not covered: the viewer capability report and output order in a real room, a real Plex source, burned ASS using fonts attached to the file (libass uses system fonts), and owner review of burned subtitles. `scripts/local-webm-smoke.js` still fails as before.
 
+### M1-P3 — Text subtitle layer — 2026-11-06
+
+**B, real Chrome and Firefox, headless, synthetic media.** Text subtitles draw in their own layer: on the picture rectangle by default, on the whole player when chosen, sized from the player, in normal and fullscreen views. Native cues no longer touch the video. The fullscreen picture shift the owner saw was not reproduced in headless Chrome, so whether this removes it needs the owner's test, as does subtitles staying visible as controls hide on a real pointer. The browser's own floating PiP no longer shows text subtitles; Document PiP keeps them.
+
 ### M1-P1/P2/P14 — Plex outage continuity and live Vigrid findings — 2026-11-06
 
 **B, `85d0cea`,** Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. A simulated restart returns 503 for all Plex requests and kills every transcode session. Recovery harness: **15/15 passed in Chrome once and Firefox twice**. A ten-second restart with buffered viewers kept the room, streams and decoded playback, with no notice shown. An outage outlasting the buffer warned both viewers, kept them in the room and resumed the shared position about 15s after Plex returned, using new streams. `node --test tests/*.test.js`: **533 passed, zero failures/cancellations/skips**.

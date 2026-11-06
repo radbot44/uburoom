@@ -218,10 +218,32 @@ class uburoomTextWindows {
   retry() {this.failures=0;this.retryAt=0;this.onState();this.check((this.positionMs||0)/1000);}
   destroy() {this.disposed=true;this.fetching?.controller.abort();}
 }
+// Text subtitles draw in their own layer. Browser cues live inside the video box,
+// so they cannot follow the picture, and moving them disturbs native playback layout.
+const TEXT_SIZES={small:.035,medium:.045,large:.06};
+function appendCueText(parent,text) {
+  const stack=[parent];
+  for(const part of text.split(/(<[^>]*>|\n)/)){
+    if(!part)continue;
+    const tag=/^<(\/?)([ibu])(?:[.\s][^>]*)?>$/i.exec(part);
+    if(part==='\n')stack.at(-1).append(document.createElement('br'));
+    else if(tag&&!tag[1]){const element=document.createElement(tag[2].toLowerCase());stack.at(-1).append(element);stack.push(element);}
+    else if(tag){if(stack.length>1)stack.pop();}
+    else if(!part.startsWith('<'))stack.at(-1).append(part.replace(/&nbsp;/g,'\u00a0').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&'));
+  }
+}
 class uburoomSubtitles {
   constructor(video,status,resolveMediaTime) {
     this.video=video; this.status=status; this.resolveMediaTime=resolveMediaTime; this.cues=[]; this.generation=0; this.key='';
     this.track=video.addTextTrack('subtitles','uburoom subtitles'); this.track.mode='disabled';
+    this.position='video';this.size='medium';this.controlsHeight=0;
+    if(video.parentElement && typeof document!=='undefined'){
+      const layer=this.layer=document.createElement('div'),bottom=this.bottomCues=document.createElement('div'),top=this.topCues=document.createElement('div');
+      layer.className='subtitle-text-layer';bottom.className='subtitle-text-lines';top.className='subtitle-text-lines top';layer.append(top,bottom);video.parentElement.append(layer);
+      this.track.addEventListener?.('cuechange',()=>this.paint());
+      new ResizeObserver(()=>this.place()).observe(video.parentElement);
+      for(const event of ['loadedmetadata','resize'])video.addEventListener?.(event,()=>this.place());
+    }
     video.textTracks.addEventListener('addtrack',event=>{if(event.track!==this.track)event.track.mode='disabled';});
     this.onTimeChange=()=>{
       this.windowScheduler?.check(this.mediaTime()-(this.offset||0));
@@ -242,7 +264,7 @@ class uburoomSubtitles {
     this.streamSynced=synced;
     this.status({message:synced ? '' : 'Loading subtitles…',error:false,loading:!synced});
   }
-  clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); }
+  clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); this.paint(); }
   reset() {
     this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loading=false; this.loaded=false; this.streaming=false; this.streamSynced=false;this.renderFailed=false;
     this.windowScheduler?.destroy(); this.windowScheduler=undefined;
@@ -258,7 +280,7 @@ class uburoomSubtitles {
     if (this.offset!==offset) { this.offset=offset; this.rebuild();this.renderer?.offset(offset);this.windowScheduler?.check(this.mediaTime()-offset);this.textWindows?.check(this.mediaTime()-offset); }
     this.picture=state.state?.picture; if(this.picture)this.renderer?.picture(this.picture);
     if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError,loading:false}); return; }
-    this.track.mode=this.renderer?'disabled':'showing';
+    this.track.mode=this.renderer?'disabled':'hidden';
     if (this.streaming || this.windowScheduler) this.syncStatus();
     if (!this.loaded && !this.loading && !this.timer && this.attempts<3) void this.load();
   }
@@ -270,22 +292,34 @@ class uburoomSubtitles {
       const start=Math.max(0,item.start+(this.offset || 0)), end=item.end+(this.offset || 0);
       if (end<=start) return;
       const cue=new VTTCue(start,end,item.text);
-      if(!/(?:^|\s)line:/.test(item.settings || '')){cue.line=this.defaultLine ?? -1;cue.uburoomDefaultLine=true;}
-      for (const setting of (item.settings || '').split(/\s+/)) {
-        const [name,value]=setting.split(':');
-        if (name==='align' && ['start','center','end','left','right'].includes(value)) cue.align=value;
-        else if (name==='vertical' && ['rl','lr'].includes(value)) cue.vertical=value;
-        else if (['line','position','size'].includes(name) && /^\d{1,3}%$/.test(value) && Number(value.slice(0,-1))<=100) {
-          cue[name]=Number(value.slice(0,-1)); if(name==='line')cue.snapToLines=false;
-        } else if (name==='line' && /^-?\d{1,3}$/.test(value)) cue.line=Number(value);
-      }
+      const line=/(?:^|\s)line:(\d{1,3})(?:\.\d+)?%/.exec(item.settings || '');
+      cue.uburoomTop=!!line&&Number(line[1])<50;
       this.track.addCue(cue);
   }
-  layout(visible,lines=3) {
-    const line=visible ? -lines : -1;
-    if(this.defaultLine===line)return;this.defaultLine=line;
-    for(const cue of Array.from(this.track.cues || []))if(cue.uburoomDefaultLine)cue.line=line;
+  paint() {
+    if(!this.layer)return;
+    const cues=this.track.mode==='disabled'?[]:Array.from(this.track.activeCues || []);
+    for(const [box,top] of [[this.topCues,true],[this.bottomCues,false]])box.replaceChildren(...cues.filter(cue=>!!cue.uburoomTop===top).map(cue=>{
+      const row=document.createElement('div'),text=document.createElement('span');row.className='subtitle-cue';row.append(text);appendCueText(text,cue.text);return row;
+    }));
   }
+  // Follows the visible picture, or the whole player, and clears the controls only when they would cover the text.
+  place() {
+    if(!this.layer)return;
+    const width=this.video.clientWidth,height=this.video.clientHeight;
+    if(!width||!height)return;
+    let left=0,top=0,boxWidth=width,boxHeight=height;
+    if(this.position==='video'&&this.video.videoWidth&&this.video.videoHeight){
+      const scale=Math.min(width/this.video.videoWidth,height/this.video.videoHeight);
+      boxWidth=this.video.videoWidth*scale;boxHeight=this.video.videoHeight*scale;left=(width-boxWidth)/2;top=(height-boxHeight)/2;
+    }
+    const fontSize=Math.max(13,Math.min(height,width*9/16)*(TEXT_SIZES[this.size]||TEXT_SIZES.medium));
+    const lift=Math.max(fontSize*.8,this.controlsHeight+8-(height-top-boxHeight));
+    Object.assign(this.layer.style,{left:left+'px',top:top+'px',width:boxWidth+'px',height:boxHeight+'px'});
+    this.layer.style.setProperty('--subtitle-size',fontSize+'px');this.layer.style.setProperty('--subtitle-lift',lift+'px');
+  }
+  appearance({position,size}) {this.position=position;this.size=size;this.place();}
+  layout(controlsHeight) {if(this.controlsHeight===controlsHeight)return;this.controlsHeight=controlsHeight;this.place();}
   retry() { if(this.textWindows){this.textWindows.retry();return;} if(this.renderFailed){const url=this.url,key=this.key;this.reset();this.url=url;this.key=key;} if(this.windowScheduler){this.windowScheduler.retry();return;} clearTimeout(this.timer); this.timer=undefined; this.attempts=0; if(this.url && !this.loading)void this.load(); }
   async load() {
     const generation=this.generation, url=this.url; if(!url)return;
@@ -324,7 +358,7 @@ class uburoomSubtitles {
         this.status({message:'Preparing subtitles…',error:false,loading:true});
         const renderer=await window.uburoomSubtitleRenderers.create(this.video,value.format,{data,subUrl,index,fonts,fileName:value.fileName},this.offset||0,abort.signal,this.resolveMediaTime);
         if(generation!==this.generation){renderer.destroy();return;}
-        this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';if(this.picture)renderer.picture(this.picture);
+        this.renderer=renderer;renderer.offset(this.offset||0);this.track.mode='disabled';this.paint();if(this.picture)renderer.picture(this.picture);
         if(value.window && value.format==='pgs'){
           this.streamSynced=undefined;
           if(typeof value.window!=='string'||!value.window.startsWith(url+'/')||!value.window.endsWith('/window'))throw new Error('Invalid subtitle window.');
