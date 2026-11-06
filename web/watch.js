@@ -1242,7 +1242,7 @@ async function compatibleFallback(reason, preferHLS = false) {
       if(selected!==id || state?.mediaVersion!==version)return;
       localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason}});
         return;
       } catch(error) {
         playbackError=reason+' '+(['plex','audio'].includes(codec)?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;

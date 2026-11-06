@@ -1244,15 +1244,16 @@ class Watch {
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
         const version = room.mediaVersion;
         const fallback = args.fallback || viewer.fallback;
+        if(args.fallback)this.hub?.config?.logger?.info('Delivery',`Viewer "${viewer.name || actor.userId}" moving to ${args.fallback}: ${args.reason || 'no reason given'}`);
         viewer.updating = true;
         try {
           const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
             this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,args.quality,args.compatible===true || !!viewer.compatible,fallback,authorized),{permitted});
-          if(result.status!=='applied')return result;
+          if(result.status!=='applied'){this.hub?.config?.logger?.warn('Delivery',`Quality change not applied: ${result.message || result.status}`);return result;}
           viewer.quality=viewer.media.quality;
           viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
         } catch(error) {
-          if(error instanceof PlaybackError)return {status:'failed',message:error.message};
+          if(error instanceof PlaybackError){this.hub?.config?.logger?.warn('Delivery',`Quality change failed: ${error.message}`);return {status:'failed',message:error.message};}
           throw error;
         } finally {viewer.updating=false;}
       } else if (action === 'media.volume.set') { viewer.volume = args.percent; viewer.muted = false; }

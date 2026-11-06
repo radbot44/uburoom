@@ -111,7 +111,7 @@
           args.subtitleId=a.subtitleId;
         }
         if (a.subtitleOffset!==undefined) args.subtitleOffset=numeric(a.subtitleOffset,-30,30);
-        if(a.subtitleMode!==undefined){if(!['auto','burn'].includes(a.subtitleMode))throw new Error('Choose automatic subtitles or Plex burn-in.');args.subtitleMode=a.subtitleMode;}
+        if(a.subtitleMode!==undefined){if(!['auto','burn'].includes(a.subtitleMode))throw new Error('Choose automatic subtitles or burn-in.');args.subtitleMode=a.subtitleMode;}
         if (a.audioId===undefined && a.subtitleId===undefined && a.subtitleOffset===undefined && a.subtitleMode===undefined) throw new Error('Choose a track setting.');
         break;
       case 'media.quality.set':
@@ -125,6 +125,7 @@
           if (!['av1','vp8','vp9','plex','audio'].includes(a.fallback)) throw new Error('Invalid playback fallback');
           args.fallback = a.fallback;
         }
+        if (typeof a.reason === 'string') args.reason = a.reason.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,160);
         break;
       case 'media.reporting.set':
         if (a.activity !== undefined) {

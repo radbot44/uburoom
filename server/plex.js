@@ -580,6 +580,7 @@ class Plex {
     const conversion = !choices.sourceOnly && (!fallback || fallback === 'audio') && (burn || compatible || quality !== 'direct' || media.tracks.audio.length > 1);
     const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly,outputs:conversion?await this.usableOutputs(choices.localCodecs):undefined});
     media.deliveryReason = plan.reason;
+    this.av1.logger?.info('Delivery',`"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' '+plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested '+fallback : ''}`);
     const directPlan = plan.route==='plex-hls' ? await choices.directPlan?.() : undefined;
     const directHls = !!(directPlan || choices.directHls);
     if(directPlan)media.directHls=directPlan;
