@@ -6,6 +6,7 @@ const RoomPolicy = require('./room-policy');
 const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
 const { mediaIdentity } = require('../shared/room-protocol');
 const { PlaybackError } = require('./av1');
+const { localFormat } = require('../web/playback-policy');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
 
@@ -94,6 +95,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if(!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
         const query=new URLSearchParams({viewer:data.viewerId,quality:data.quality||'720p4'});if(data.delivery==='local')query.set('delivery','local');
         if(data.subtitles==='browser')query.set('subtitles','browser');
+        if(typeof data.codecs==='string')query.set('codecs',data.codecs);
         if(data.volume!==undefined)query.set('volume',String(data.volume));
         if(data.muted!==undefined)query.set('muted',String(data.muted));
         if (data.plexReporting !== undefined) query.set('plexReporting', String(data.plexReporting));
@@ -337,6 +339,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       }
       if(context.controlSocket)viewer.watchSocket=context.controlSocket;
       if(viewer.browserSubtitles===undefined)viewer.browserSubtitles=url.searchParams.get('subtitles')==='browser';
+      viewer.localCodecs=(url.searchParams.get('codecs')||'').split(',').filter(localFormat);
       viewer.localDelivery = url.searchParams.get('delivery') === 'local';
       room.viewers.get(viewerId).browserLoginHash=context.headers.authorization?undefined:cookies(context).uburoom&&hash(cookies(context).uburoom);
       await watch.prepareViewer(room, auth.actor, viewerId);

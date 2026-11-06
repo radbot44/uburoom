@@ -577,7 +577,8 @@ class Plex {
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
-    const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly});
+    const conversion = !choices.sourceOnly && !fallback && (burn || compatible || quality !== 'direct' || media.tracks.audio.length > 1);
+    const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly,outputs:conversion?await this.usableOutputs(choices.localCodecs):undefined});
     media.deliveryReason = plan.reason;
     const directPlan = plan.route==='plex-hls' ? await choices.directPlan?.() : undefined;
     const directHls = !!(directPlan || choices.directHls);
@@ -597,18 +598,18 @@ class Plex {
     }
     if (plan.route==='file') { media.format='file'; media.start=media.sourceStart; }
     else if (plan.route==='local') {
-      try{await this.conversionPolicy.video('uburoom',fallback);}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
-      if (burn) throw new PlaybackError('These subtitles require Plex video transcoding. This local WebM conversion cannot preserve them; try a browser that can play the Plex stream.');
-      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey };
-      media.format = fallback; media.videoCodec = fallback; media.audioCodec = 'opus'; media.compatible = true;
+      const codec=plan.codec;
+      try{await this.conversionPolicy.video('uburoom',codec);}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
+      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey,burn:burn?media.selection.subtitle:undefined };
+      media.format = codec; media.videoCodec = codec; media.audioCodec = 'opus'; media.compatible = true;
       if(!choices.sharedOnly && this.conversionPolicy.settings && this.conversionPolicy.jobs.size>=this.conversionPolicy.settings.maxJobs) {
-        try {media.av1Lease=this.av1.acquire(original,quality,true,fallback);}
+        try {media.av1Lease=this.av1.acquire(original,quality,true,codec);}
         catch(error) {
           if(!error.conversionCapacity)throw error;
           const release=await this.conversionPolicy.wait({authorized:choices.authorized});release();
         }
       }
-      media.av1Lease ||= this.av1.acquire(original, quality, choices.sharedOnly, fallback);
+      media.av1Lease ||= this.av1.acquire(original, quality, choices.sharedOnly, codec);
     }
     else {
       const prepare = async () => {
@@ -715,6 +716,20 @@ class Plex {
       if(!confirmed.explicit || confirmed.id!==requested)throw new PlaybackError('Plex did not select the requested audio.');
     } catch(error) { await restore();throw error; }
     return restore;
+  }
+  // Configured outputs this viewer can use, in priority order. Without a working
+  // hardware encoder, a local codec waits behind Plex rather than loading the CPU.
+  async usableOutputs(localCodecs=[]) {
+    const configured=this.conversionPolicy.settings?.outputs || ['plex'],usable=[];
+    for(const [index,output] of configured.entries()){
+      if(output==='plex'){usable.push(output);continue;}
+      if(!this.av1.ffmpeg || !localCodecs.includes(output))continue;
+      try{
+        const encoder=await this.av1.selectEncoder(output);
+        if(encoder!=='software' || this.av1.encoder==='software' || !configured.slice(index+1).includes('plex'))usable.push(output);
+      }catch{/* An output with no working encoder is skipped. */}
+    }
+    return usable;
   }
   async selectSubtitleForBurn(media,choices) {
     // PMS uses this user's stored part selection for burn-in. Hold the part

@@ -133,7 +133,7 @@ class Watch {
     const options=candidates(choices,requested,source), quality=options[0]?.id;
     if(!quality)throw new PlaybackError('No available quality is at or below your preferred setting. Your preference has been kept.');
     const prepare=(value,sharedOnly=false)=>this.prepareOutput(room,viewer,plex,source,value,compatible,fallback,
-      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,...opts,authorized:authFn,sharedOnly});
+      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,localCodecs:viewer.localCodecs,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,...opts,authorized:authFn,sharedOnly});
     let media;
     try {media=await prepare(quality);}
     catch(error) {
@@ -277,7 +277,7 @@ class Watch {
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
           plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
-          directProxyVersion:viewer.directProxyVersion, browserSubtitles:viewer.browserSubtitles,
+          directProxyVersion:viewer.directProxyVersion, browserSubtitles:viewer.browserSubtitles, localCodecs:viewer.localCodecs,
           localDelivery:viewer.localDelivery,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
@@ -448,7 +448,7 @@ class Watch {
       plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
       plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
       trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
-      directProxyVersion:saved?.directProxyVersion, browserSubtitles:saved?.browserSubtitles,
+      directProxyVersion:saved?.directProxyVersion, browserSubtitles:saved?.browserSubtitles, localCodecs:saved?.localCodecs,
       syncQuality:saved?.syncQuality, localDelivery:saved?.localDelivery ?? false,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
@@ -1328,17 +1328,16 @@ class Watch {
     viewer.updating = true;
     try {
       selection = Tracks.select(current.tracks,choices);
-      if (selection.subtitle?.delivery==='burn' && args.subtitleOffset!==undefined && args.subtitleOffset!==0) throw new PlaybackError('Plex burned subtitles cannot be shifted in this player.');
+      if (selection.subtitle?.delivery==='burn' && args.subtitleOffset!==undefined && args.subtitleOffset!==0) throw new PlaybackError('Burned subtitles cannot be shifted in this player.');
       if (args.audioId && args.audioId!=='auto') choices.audioIntent=Tracks.intent(selection.audio);
       if (args.subtitleId && !['auto','off'].includes(args.subtitleId)) choices.subtitleIntent=Tracks.intent(selection.subtitle);
       const burnChanged=(selection.subtitle?.delivery==='burn' || current.selection.subtitle?.delivery==='burn') &&
         (selection.subtitle?.id!==current.selection.subtitle?.id || selection.subtitle?.delivery!==current.selection.subtitle?.delivery);
       if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
         const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-          this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,selection.subtitle?.delivery==='burn'?undefined:viewer.fallback,
-            {...choices,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],authorized}),{permitted});
+          this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
+            {...choices,browserSubtitles:viewer.browserSubtitles,localCodecs:viewer.localCodecs,shareKey:[room.s.roomId,version],authorized}),{permitted});
         if(result.status!=='applied')return result;
-        if(selection.subtitle?.delivery==='burn')viewer.fallback=undefined;
       } else {
         const alive=!viewer.alive || await viewer.alive(),access=await this.canView(room,actor);
         if(!alive || !access || !permitted() || version!==room.mediaVersion || viewer.media!==current || room.viewers.get(actor.watchViewerId)!==viewer)

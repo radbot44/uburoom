@@ -9,9 +9,9 @@ const Engine=require('../shared/engine');
 const {accountFixture}=require('../scripts/account-fixture');
 
 test('local codec configuration and fallback commands are ordered, bounded allowlists',()=>{
-  assert.deepEqual(normalizeConfig({transcoding:{formats:['vp9','vp8','av1']}}).transcoding.formats,['vp9','vp8','av1']);
-  assert.deepEqual(normalizeConfig({}).transcoding.formats,['av1']);
-  for(const formats of [['h264'],['vp9','vp9'],['__proto__'],'vp8'])assert.throws(()=>normalizeConfig({transcoding:{formats}}));
+  assert.deepEqual(normalizeConfig({transcoding:{outputs:['vp9','plex','av1']}}).transcoding.formats,['vp9','av1']);
+  assert.deepEqual(normalizeConfig({}).transcoding.outputs,['av1','plex']);
+  for(const outputs of [['h264'],['vp9','vp9'],['__proto__'],'vp8'])assert.throws(()=>normalizeConfig({transcoding:{outputs}}));
   for(const codec of ['av1','vp9','vp8'])assert.equal(Engine.validate({action:'media.quality.set',args:{quality:'direct',fallback:codec}}).args.fallback,codec);
   assert.throws(()=>Engine.validate({action:'media.quality.set',args:{quality:'direct',fallback:'__proto__'}}));
   assert.deepEqual(Playback.fallbackCodecs(['vp9','vp8','av1'],new Set(['vp9']),mime=>!mime.includes('av01')),['vp8']);
@@ -71,7 +71,7 @@ test('simultaneous VP8 and VP9 requests cannot bypass the shared conversion limi
 });
 
 test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtitle boundaries',async()=>{
-  const fixture=accountFixture(),settings=normalizeConfig({transcoding:{policy:'override',plex:false,formats:['vp9','vp8']}}).transcoding;
+  const fixture=accountFixture(),settings=normalizeConfig({transcoding:{policy:'override',outputs:['vp9','vp8']}}).transcoding;
   const plex=new Plex({plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',ffmpegPath:'fixture',transcoding:settings},async(input,options)=>{
     const response=await fixture.fetch(input,options);
     if(new URL(input).pathname==='/library/metadata/1'){
@@ -85,6 +85,9 @@ test('local VP8/VP9 preparation enforces allowed formats, Plex policy and subtit
     settings.policy='follow_plex';plex.conversionPolicy.plex={json:async()=>({Setting:[{id:'TranscoderCanOnlyRemuxVideo',value:'1'}]})};
     await assert.rejects(plex.prepare('1','direct',true,undefined,'vp9'),/Plex disables/);
     settings.policy='override';
-    await assert.rejects(plex.prepare('1','direct',true,undefined,'vp8',{subtitleId:'42'}),/cannot preserve/);
+    const burned=await plex.prepare('1','direct',true,undefined,'vp8',{subtitleId:'42'});assert.equal(burned.av1Lease.group.source.burn.id,'42');await plex.stop(burned);
+    // With no fallback, the first output this viewer can decode wins.
+    plex.av1.selectEncoder=async()=>'qsv';
+    const first=await plex.prepare('1','720p4',false,undefined,undefined,{localCodecs:['vp8']});assert.equal(first.format,'vp8');await plex.stop(first);
   }finally{await plex.close();}
 });

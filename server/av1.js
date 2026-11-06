@@ -199,6 +199,11 @@ function outputSpec(info, quality) {
 // to the CPU picture. vpp_qsv crushes shadows, and tonemap_opencl adapts per
 // process, so the first frame of every chunk flashes. Each chunk is a new process.
 // Sources without a listed surface format stay on the CPU path.
+// Burned subtitles need cues that began before the chunk. Bitmap tracks decode a
+// short run-in, so GPU routes stay real time; text cues only need reading.
+const BITMAP_RUN_IN = 8, TEXT_RUN_IN = 15;
+const bitmapSubtitle = track => ['pgs','hdmv_pgs_subtitle','vobsub','dvd_subtitle'].includes(track.codec);
+const filterPath = file => file.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");
 const SURFACES = { yuv420p:'nv12', nv12:'nv12', yuv420p10le:'p010le', p010le:'p010le' };
 const VAAPI_DEVICE = '/dev/dri/renderD128';
 function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = true) {
@@ -268,7 +273,7 @@ class AV1 {
     if (!this.ffmpeg) throw new PlaybackError('WebM unavailable: install FFmpeg on the server PATH or set tools.ffmpeg in config.yaml, then run the encoder probe.');
     if (this.closed) throw new PlaybackError('Server is shutting down.');
     const scope=source.shareKey?[source.shareKey,source.sourceKey]:source.principal;
-    const key = createHash('sha256').update(JSON.stringify([scope,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality),codec])).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify([scope,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality),codec,source.burn?.id])).digest('hex');
     if(existingOnly && !this.groups.has(key))throw Object.assign(new PlaybackError('No matching shared output is available.'),{conversionCapacity:true});
     let group = this.groups.get(key);
     if (!group) {
@@ -337,6 +342,30 @@ class AV1 {
     this.inputs.set(key, {source, signal});
     try { return await action(`http://127.0.0.1:${port}${key}`); } finally { this.inputs.delete(key); }
   }
+  // Prepare what one chunk needs to burn the selected subtitle. Each process sees
+  // only its own window, so cue timing comes from the same source position.
+  async burnInput(source, url, start, duration, signal) {
+    const track = source.burn;
+    if (!track) return;
+    if (bitmapSubtitle(track)) {
+      if (track.external) throw new PlaybackError('External image subtitles cannot be burned by local conversion.');
+      return { bitmap:true, runIn:Math.min(BITMAP_RUN_IN,start) };
+    }
+    let data, offset = start;
+    if (track.external) {
+      const key = /\.[a-z0-9]+$/.test(track.key) ? track.key : track.key+'.'+({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec);
+      const response = await (source.plexContext||this.plex).request(key,{signal,headers:{Accept:'*/*'}});
+      if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
+      data = Buffer.from(await response.arrayBuffer());
+    } else {
+      offset = Math.min(TEXT_RUN_IN,start);
+      data = await this.run(this.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-ss',String(start-offset),'-i',url,'-t',String(offset+duration),'-map','0:'+track.index,'-c:s','ass','-f','ass','pipe:1'],signal,20000,4*1024*1024);
+    }
+    if (!data.length) return;
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(),'uburoom-burn-')), file = path.join(directory,'subtitle.'+(track.external ? ({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec) : 'ass'));
+    await fs.writeFile(file,data);
+    return { file, offset, cleanup:() => fs.rm(directory,{recursive:true,force:true}) };
+  }
   async slot(signal, action, owner, priority = { urgent: true }) {
     if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
     if (this.active >= this.maxActive) {
@@ -401,19 +430,28 @@ class AV1 {
           if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
           const audioMap = source.audioIndex !== undefined ? '0:'+source.audioIndex : '0:a:'+(source.audioOrdinal ?? 0);
           const duration = String(Math.min(CHUNK, source.duration - start));
+          const burn = await this.burnInput(source,url,start,Number(duration),controller.signal);
+          const runIn = burn?.runIn || 0;
+          const video = route => {
+            const filter = route?.filter || spec.filter;
+            if (burn?.bitmap) return ['-filter_complex',`[0:v:0]${filter.replace('setpts=PTS-STARTPTS,','')}[picture];[0:${source.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,'-map','[video]','-an'];
+            const text = burn?.file ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12` : '';
+            return ['-map','0:v:0','-an','-filter_threads','2','-vf',filter+text];
+          };
           const command = (selected, route) => [
-            '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start),'-i',url,
+            '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start-runIn),'-i',url,
             ...(spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']),
-            '-t',duration, '-map','0:v:0','-an',
-            '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',route?.filter || spec.filter,
+            '-t',duration,...video(route),
+            '-sn','-dn','-map_metadata','-1','-map_chapters','-1',
             ...encoderArgs(selected,codec),...rateArgs(selected,codec,spec.bitrate),
             ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
             '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
             '-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
-            '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
-          // 4K jobs commit about 1 GiB on either path, and GPU surfaces add to that.
-          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024,undefined,{memoryLimit:2*1024*1024*1024});
+            '-af',(runIn?`atrim=start=${runIn},`:'')+'asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
+          // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
+          // run-in for image subtitles adds about the same again.
+          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024,undefined,{memoryLimit:(burn?.bitmap?3:2)*1024*1024*1024});
           const routes = this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : [];
           routes.push(undefined);
           try {
@@ -438,7 +476,7 @@ class AV1 {
             if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted) throw error;
             const bytes = await encode('software');
             group.encoder='software'; group.cpuFallback=true; return bytes;
-          }
+          } finally { await burn?.cleanup?.(); }
         });
         } finally {releaseConversion?.();}
       }, group.key, entry.priority)).then(bytes => {

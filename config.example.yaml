@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2g
+# Config schema v2h
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -145,8 +145,10 @@ transcoding:
   # disabled: no conversion paths
   # override: allows regardless of Plex's setting
   policy: 'follow_plex' # follow_plex | disabled | override
-  plex: true
-  uburoom: true
+  # Tried in order when a viewer needs conversion. Leave one out to disable it.
+  # Use av1, vp9, vp8 and plex. AV1 goes first only with a working hardware encoder
+  # unless it is the last choice. [] disables conversion.
+  outputs: [av1, plex]
 
   # Settings are for the uburoom encoder. Plex controls its own.
   # Software encoders: libsvtav1 (AV1), libvpx-vp9 (VP9), libvpx (VP8).
@@ -156,9 +158,7 @@ transcoding:
   # Decode and scale on the GPU for every source. Falls back to the CPU if it fails.
   hardware_decode: true
 
-  # For alternatives use [av1, vp9, vp8].
-  # These are the 3 codecs that work in Discord with HW acceleration off
-  formats: [av1] # [] disables all uburoom video conversion
+  # AV1, VP9 and VP8 are the codecs that work in Discord with HW acceleration off.
   max_jobs: 5 # Total jobs; viewers at same quality share a job
 
   # Each pair is [maximum height, Mbps]. No upscaling. Original is separate.

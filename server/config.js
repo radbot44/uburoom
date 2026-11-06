@@ -22,7 +22,7 @@ const KEYS = [
   'rooms.admin_discord_role_ids', 'rooms.single_room', 'rooms.single_room_leader_plex_id',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.plex', 'transcoding.uburoom', 'transcoding.encoder',
-  'transcoding.formats', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
+  'transcoding.formats', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
   'logging.level', 'logging.requests', 'logging.file'];
 
@@ -156,15 +156,19 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId)) throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');
   const maxJobs = value.transcoding?.max_jobs ?? 5;
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32) throw new Error('transcoding.max_jobs must be an integer from 1 to 32');
-  const formats = list('transcoding.formats');
+  const legacyFormats = list('transcoding.formats');
+  const legacy = value.transcoding && ['plex','uburoom','formats'].some(key => value.transcoding[key] !== undefined);
+  const outputs = list('transcoding.outputs') ?? (legacy ? [...(boolean('transcoding.uburoom',true) ? legacyFormats ?? ['av1'] : []), ...(boolean('transcoding.plex',true) ? ['plex'] : [])] : ['av1','plex']);
+  const { localFormat } = require('../web/playback-policy');
+  if (outputs.some(output => output !== 'plex' && !localFormat(output))) throw new Error('transcoding.outputs supports av1, vp9, vp8 and plex');
+  if (new Set(outputs).size !== outputs.length) throw new Error('transcoding.outputs must not repeat an output');
+  const formats = outputs.filter(output => output !== 'plex');
   config.transcoding = { policy:choice('transcoding.policy','follow_plex',['follow_plex','disabled','override']),
-    plex:boolean('transcoding.plex',true), uburoom:boolean('transcoding.uburoom',true),
+    outputs, plex:outputs.includes('plex'), uburoom:formats.length>0,
     encoder:choice('transcoding.encoder','auto',['auto','hardware','qsv','nvenc','software']),
     cpuFallback:boolean('transcoding.cpu_fallback',true),
     hardwareDecode:boolean('transcoding.hardware_decode',true),
-    formats:formats === undefined ? ['av1'] : formats, maxJobs };
-  if (config.transcoding.formats.some(format => !require('../web/playback-policy').localFormat(format))) throw new Error('transcoding.formats supports av1, vp9 and vp8');
-  if(new Set(config.transcoding.formats).size!==config.transcoding.formats.length)throw new Error('transcoding.formats must not repeat a codec');
+    formats, maxJobs };
   const {QUALITIES,qualityDefinition} = require('../shared/room-protocol');
   const pairs = value.transcoding?.qualities;
   if (pairs !== undefined && (!Array.isArray(pairs) || pairs.length > 32 || pairs.some(pair => !Array.isArray(pair) || pair.length !== 2 || pair.some(n => typeof n !== 'number') || !qualityDefinition(pair[0]+'p'+pair[1])))) throw new Error('transcoding.qualities requires up to 32 [height, Mbps] pairs, even heights 144-4320 and 0.1-200 Mbps');

@@ -185,7 +185,7 @@ async function extract(plex,media,track,signal){
     }finally{checking=false;}},100):undefined;
     try{
       const args=['-hide_banner','-loglevel','error','-nostdin','-y',...fonts.flatMap((index,i)=>['-dump_attachment:'+index,files[i]]),
-        '-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',track.delivery==='ass'?'ass':track.delivery==='pgs'?'sup':'matroska','pipe:1'];
+        '-i',url,'-map','0:'+track.index,'-c:s',track.delivery==='ass'?'ass':'copy','-map_metadata','-1','-map_chapters','-1','-f',track.delivery==='ass'?'ass':track.delivery==='pgs'?'sup':'matroska','pipe:1'];
       const data=await av1.run(av1.ffmpeg,args,AbortSignal.any([signal,budget.signal]),60000,track.delivery==='ass'?4*1024*1024:LIMIT);
       const assets=new Map([['data',data]]);let fontSize=0;
       for(let i=0;i<files.length;i++){const stat=await fs.stat(files[i]);fontSize+=stat.size;if(fontSize>FONTS)throw new PlaybackError('Subtitle fonts exceed the supported size.');assets.set('font-'+i,await fs.readFile(files[i]));}

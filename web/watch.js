@@ -90,10 +90,11 @@ function savePlayerPreferences(change) {
 function viewerPreferences() {
   return {viewer:viewerId,quality:preferredQuality,volume:String(playerPreferences.volume),muted:String(playerPreferences.muted),
     plexReporting:String(playerPreferences.plexReporting),plexWatchState:String(playerPreferences.plexWatchState),
-    ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{})};
+    ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{}),
+    codecs:Object.keys(uburoomPlayback.LOCAL_CODECS).filter(codec=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[codec])).join(',')};
 }
 
-let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackVersion, fallbackPending = false, fallbackRetryTimer, frameStartedAt, videoFrames = 0, frameCallback;
+let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackPending = false, fallbackRetryTimer, frameStartedAt, videoFrames = 0, frameCallback;
 const supportsDocPiP = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 const supportsVideoPiP = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function';
 const supportsPiP = supportsDocPiP || supportsVideoPiP;
@@ -1210,7 +1211,8 @@ $('drawer-open').addEventListener('click', () => {
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
 async function compatibleFallback(reason, preferHLS = false) {
   if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
-  const useLocal = !preferHLS && (state.format !== 'file' || /^(h264|avc1)$/i.test(state.videoCodec || ''));
+  // Plex would hand a file the browser already failed on the same H.264 again.
+  const skipPlex = !preferHLS && state.format === 'file' && /^(h264|avc1)$/i.test(state.videoCodec || '');
   if (pending || qualityPending) {
     if (fallbackRetryTimer) return;
     const id = selected, version = state.mediaVersion, stream = state.streamVersion;
@@ -1222,9 +1224,10 @@ async function compatibleFallback(reason, preferHLS = false) {
   }
   if (localFallbackVersion !== state.mediaVersion) {localFallbackVersion=state.mediaVersion;localFallbackAttempts=new Set();}
   if (uburoomPlayback.localFormat(state.format)) localFallbackAttempts.add(state.format);
+  if (state.format === 'hls') localFallbackAttempts.add('plex');
   const localCandidates=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],localFallbackAttempts,
     mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
-  const candidates=useLocal || fallbackVersion===state.mediaVersion?localCandidates:[undefined,...localCandidates];
+  const candidates=(config.outputs || [...localCandidates,'plex']).filter(output=>output==='plex'?!skipPlex && !localFallbackAttempts.has('plex'):localCandidates.includes(output));
   if (!candidates.length) {
     av1?.destroy();av1=undefined;video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
     $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
@@ -1234,12 +1237,12 @@ async function compatibleFallback(reason, preferHLS = false) {
   try {
     for (const codec of candidates) {
       if(selected!==id || state?.mediaVersion!==version)return;
-      if(codec)localFallbackAttempts.add(codec);else fallbackVersion=version;
+      localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,compatible:true,...(codec?{fallback:codec}:{})}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,compatible:true,fallback:codec}});
         return;
       } catch(error) {
-        playbackError=reason+' '+(codec?.toUpperCase() || 'H.264')+' fallback failed: '+error.message;
+        playbackError=reason+' '+(codec==='plex'?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
       }
     }
     fail(playbackError);

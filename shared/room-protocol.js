@@ -122,7 +122,7 @@
           args.compatible = a.compatible;
         }
         if (a.fallback !== undefined) {
-          if (!['av1','vp8','vp9'].includes(a.fallback)) throw new Error('Invalid playback fallback');
+          if (!['av1','vp8','vp9','plex'].includes(a.fallback)) throw new Error('Invalid playback fallback');
           args.fallback = a.fallback;
         }
         break;

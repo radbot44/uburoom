@@ -217,14 +217,14 @@ test('direct-HLS joining protects the group across delayed liveness, prevents ad
   await pool2.close();
 });
 
-test('AV1 preparation pools by room across accounts, preserves independent text captions and rejects burn-in',async()=>{
+test('AV1 preparation pools by room across accounts, preserves independent text captions and separates burned subtitles',async()=>{
   const f=fixture();f.plex.av1.ffmpeg='fixture';
   const prepare=(scope,choices={})=>scope.prepare('1','720p4',false,undefined,'av1',{shareKey:['room','generation'],subtitleId:'off',...choices});
   try{
     const a=await prepare(f.a),b=await prepare(f.b,{subtitleId:'21'}),otherRoom=await prepare(f.b,{shareKey:['other-room','generation']});
     assert.equal(a.av1Lease.group,b.av1Lease.group);assert.notEqual(a.av1Lease.group,otherRoom.av1Lease.group);
     assert.equal(a.selection.subtitle,undefined);assert.equal(b.selection.subtitle.id,'21');
-    await assert.rejects(prepare(f.b,{subtitleId:'22'}),/cannot preserve/);
+    const burned=await prepare(f.b,{subtitleId:'22'});assert.notEqual(burned.av1Lease.group,a.av1Lease?.group);await f.plex?.stop?.(burned);
     await f.plex.stop(a);assert.equal(b.av1Lease.group.refs,1);
     await f.plex.stop(b);await f.plex.stop(otherRoom);assert.equal(f.plex.av1.groups.size,0);
   }finally{await f.plex.close();}

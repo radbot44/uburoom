@@ -107,8 +107,17 @@ function validate(bytes, file) {
     return normalizeConfig(parseConfig(source), { base: path.dirname(file), discoverTools: false });
   } catch { throw failure('CONFIG_INVALID'); }
 }
-function proposed(original, changes, file) {
-  validate(original, file);
+// The dialog's provider and codec fields edit the one ordered outputs list.
+function outputChanges(changes, transcoding) {
+  const { 'transcoding.plex':plex = transcoding.plex, 'transcoding.uburoom':uburoom = transcoding.uburoom, 'transcoding.formats':formats = transcoding.formats, ...rest } = changes;
+  if (Object.keys(rest).length === Object.keys(changes).length) return changes;
+  const local = uburoom ? (formats.length ? formats : ['av1']) : [];
+  const kept = transcoding.outputs.filter(output => output === 'plex' ? plex : local.includes(output));
+  const added = [...local.filter(output => !kept.includes(output)), ...(plex && !kept.includes('plex') ? ['plex'] : [])];
+  return { ...rest, 'transcoding.outputs':[...kept, ...added] };
+}
+function proposed(original, requested, file) {
+  const changes = outputChanges(requested, validate(original, file).transcoding);
   const source = original.toString('utf8');
   const doc = YAML.parseDocument(source, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
   for (const [key, value] of Object.entries(changes)) {
