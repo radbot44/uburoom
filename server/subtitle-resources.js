@@ -1,4 +1,5 @@
 'use strict';
+const Subtitles=require('./subtitles');
 const { runOperation } = require('./operation');
 // Original subtitle assets only. Rendering stays in the browser; extraction never
 // re-encodes video or receives a Plex credential in process arguments.
@@ -59,7 +60,7 @@ async function read(response,signal,limit=LIMIT){
 }
 function source(media){
   const track=media.selection?.subtitle;
-  if(!track || !['ass','pgs','vobsub'].includes(track.delivery))throw new PlaybackError('No browser-rendered subtitle is selected.');
+  if(!track || !['ass','pgs','vobsub','cues'].includes(track.delivery))throw new PlaybackError('No browser-rendered subtitle is selected.');
   const part = media.sourceSelection ? Sources.select(media.source, media.sourceSelection).part : media.source?.Media?.[0]?.Part?.[0];
   const row = part?.Stream?.find(s=>String(s.id)===track.id);
   if(!row)throw new PlaybackError('Subtitle selection no longer belongs to this file.');
@@ -284,9 +285,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   job={media,controller,users:0,complete:false};active++;
   job.promise=Promise.resolve().then(()=>runOperation(abort,async()=>{
     try{
-      const format=track.delivery==='ass'?'ass':track.delivery==='vobsub'?'matroska':'sup';
+      const format=track.delivery==='ass'?'ass':track.delivery==='vobsub'?'matroska':track.delivery==='cues'?'webvtt':'sup';
       let pgs;
-      let data=await av1.input({...media,start:media.sourceStart,plexContext:plex,subtitleWindow:track.delivery==='pgs'},abort,async url=>{
+      let data=await av1.input({...media,start:media.sourceStart,plexContext:plex,subtitleWindow:['pgs','cues'].includes(track.delivery)},abort,async url=>{
         if(track.delivery==='pgs'){
           const probe=av1.ffprobe;
           if(!probe)throw new PlaybackError('PGS window extraction needs configured FFprobe. Try burn-in.');
@@ -332,6 +333,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
           if(!pgs.data.length)throw new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
           return pgs.data;
         }
+        // With -copyts an input -t never ends a text window, which then reads the whole file.
+        if(track.delivery==='cues')return av1.run(av1.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-i',url,'-t',String(durationSeconds),
+          '-map','0:'+track.index,'-c:s','webvtt','-map_metadata','-1','-map_chapters','-1','-f','webvtt','pipe:1'],abort,25000,4*1024*1024);
         const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,
           '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',format,'pipe:1'];
         return av1.run(av1.ffmpeg,args,abort,25000,16*1024*1024);
@@ -341,7 +345,8 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       if(target.captionVersion!==version||target.selection?.subtitle?.id!==track.id)throw new PlaybackError('Subtitle selection changed.');
       data||=Buffer.alloc(0);
       let cues=0;
-      if(track.delivery==='pgs')cues=pgs.cues;
+      if(track.delivery==='cues'){const list=(data.length?Subtitles.parse(data.toString('utf8')):[]).map(cue=>({...cue,start:cue.start+startSeconds,end:cue.end+startSeconds}));cues=list.length;data=Buffer.from(JSON.stringify(list));}
+      else if(track.delivery==='pgs')cues=pgs.cues;
       else if(track.delivery==='ass')cues=(data.toString('utf8').match(/^Dialogue:/mg)||[]).length;
       else cues=data.length>500?1:0;
       const entry={media:target,key:cacheKey,version,trackId:track.id,startMs,endMs,data,cues};

@@ -121,13 +121,14 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const check=setInterval(async()=>{try{if(!await validCaptionGrant(grant,match[1]))controller.abort();}catch{controller.abort();}},1000);
       try{
         const media=currentMedia();
-        if(!match[2] && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
+        const windowed=['pgs','cues'].includes(media?.selection?.subtitle?.delivery) && !media?.selection?.subtitle?.external;
+        if(!match[2] && windowed){
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           res.setHeader('Cache-Control','no-store');
           const base=`/api/watch/media/${grant.id}/subtitle-${match[1]}/`;
-          return json(res,200,{format:'pgs',data:base+'data',window:base+'window',fonts:[]});
+          return json(res,200,{format:media.selection.subtitle.delivery,data:base+'data',window:base+'window',fonts:[]});
         }
-        if(match[2]==='window' && media?.selection?.subtitle?.delivery==='pgs' && !media?.selection?.subtitle?.external){
+        if(match[2]==='window' && windowed){
           if(controller.signal.aborted || !await validCaptionGrant(grant,match[1]))return json(res,403,{error:'Subtitle access expired or selection changed.'});
           const atMs=url?.searchParams?.has('atMs') ? Number(url.searchParams.get('atMs')) : 0;
           const beforeMs=url?.searchParams?.has('beforeMs') ? Number(url.searchParams.get('beforeMs')) : 15000;

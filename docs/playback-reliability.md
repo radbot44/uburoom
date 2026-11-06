@@ -65,7 +65,7 @@ HLS.js can recover a native quota exception internally before emitting an error 
 | Switching | Replace only the requesting viewer at shared position/pause; preserve or truthfully fail intended tracks |
 | Plex preference capture | Serialize part selection, confirm decision, capture output, restore prior preference without overwriting an observed newer choice |
 | Restoration limitation | Final check/restore are separate requests and can race external Plex apps; same-identity concurrent viewers need real checks |
-| Text | Authorized bounded extraction/fetch and native cues; retain timing/positioning, reject arbitrary HTML |
+| Text | Authorized bounded extraction/fetch and native cues; embedded text loads in windows; retain timing/positioning, reject arbitrary HTML |
 | Styled/bitmap | Lazy JASSUB ASS/SSA and libbitsub PGS/VobSub are implemented; preserve authored fonts/layout and explicit burn-in fallback |
 | Local conversion | Opus paths retain personal browser captions and burn required subtitles per chunk; a burned stream is shared only by viewers on that subtitle. External image subtitles fall to the next output |
 | Fidelity | Verify language, downmix/channel order/clipping, fonts/signs/karaoke, PGS/VobSub, forced/SDH, CJK/RTL and A/V/caption alignment |

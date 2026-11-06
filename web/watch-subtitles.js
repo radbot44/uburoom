@@ -176,6 +176,48 @@ class uburoomSubtitleWindows {
     this.items=[];this.intervals=[];
   }
 }
+// Embedded text cannot be read whole: that scans the entire file. Fetch cues in
+// windows around playback, which works for any delivery route, including Original.
+class uburoomTextWindows {
+  constructor(windowUrl,onCues,onState,signal) {
+    this.windowUrl=windowUrl;this.onCues=onCues;this.onState=onState;this.signal=signal;
+    this.intervals=[];this.seen=new Set();this.failures=0;this.retryAt=0;
+  }
+  covered(timeMs,aheadMs=0) {return this.intervals.some(i=>i.startMs<=timeMs&&i.endMs>timeMs+aheadMs);}
+  check(timeSeconds) {
+    if(this.disposed||!Number.isFinite(timeSeconds))return;
+    const timeMs=Math.max(0,Math.round(timeSeconds*1000));
+    if(Math.abs(timeMs-(this.positionMs??timeMs))>15000){this.failures=0;this.retryAt=0;}
+    this.positionMs=timeMs;
+    const current=this.covered(timeMs);
+    if(this.fetching&&!current&&(timeMs<this.fetching.startMs||timeMs>=this.fetching.endMs)){this.fetching.controller.abort();this.fetching=undefined;}
+    if(this.fetching||this.failures>=3||Date.now()<this.retryAt)return;
+    if(!current)void this.fetch(timeMs);
+    else if(!this.covered(timeMs,20000))void this.fetch(timeMs+30000);
+  }
+  synced(timeSeconds) {return this.covered(Math.max(0,Math.round(timeSeconds*1000)));}
+  async fetch(targetMs) {
+    const controller=new AbortController(),pending=this.fetching={controller,startMs:Math.max(0,targetMs-15000),endMs:targetMs+60000};
+    try{
+      const response=await fetch(this.windowUrl+'?atMs='+targetMs+'&beforeMs=15000&afterMs=60000',{signal:AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)].filter(Boolean))});
+      if(!response.ok){const value=await response.json().catch(()=>({}));throw Object.assign(new Error(value.error||'Subtitle window could not load. Try burn-in.'),{terminal:response.status===403});}
+      const startMs=Number(response.headers.get('X-Subtitle-Start-Ms')),endMs=Number(response.headers.get('X-Subtitle-End-Ms')),cues=await response.json();
+      if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs||!Array.isArray(cues)||cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string'))throw new Error('Invalid subtitle window. Try burn-in.');
+      if(this.disposed||this.fetching!==pending)return;
+      // Merge touching windows, or the look-ahead check never sees continuous coverage.
+      const merged=[];for(const item of [...this.intervals,{startMs,endMs}].sort((x,y)=>x.startMs-y.startMs)){const last=merged.at(-1);if(last&&item.startMs<=last.endMs)last.endMs=Math.max(last.endMs,item.endMs);else merged.push({...item});}
+      this.intervals=merged;
+      this.onCues(cues.filter(cue=>{const key=cue.end+'|'+cue.text;if(this.seen.has(key))return false;this.seen.add(key);return true;}));
+      this.failures=0;this.retryAt=0;this.onState();
+    }catch(error){
+      if(this.disposed||controller.signal.aborted||this.signal?.aborted)return;
+      this.failures=error.terminal?3:this.failures+1;this.retryAt=Date.now()+1000*2**this.failures;
+      this.onState(error,this.failures>=3);
+    }finally{if(this.fetching===pending)this.fetching=undefined;}
+  }
+  retry() {this.failures=0;this.retryAt=0;this.onState();this.check((this.positionMs||0)/1000);}
+  destroy() {this.disposed=true;this.fetching?.controller.abort();}
+}
 class uburoomSubtitles {
   constructor(video,status,resolveMediaTime) {
     this.video=video; this.status=status; this.resolveMediaTime=resolveMediaTime; this.cues=[]; this.generation=0; this.key='';
@@ -183,6 +225,7 @@ class uburoomSubtitles {
     video.textTracks.addEventListener('addtrack',event=>{if(event.track!==this.track)event.track.mode='disabled';});
     this.onTimeChange=()=>{
       this.windowScheduler?.check(this.mediaTime()-(this.offset||0));
+      this.textWindows?.check(this.mediaTime()-(this.offset||0));
       this.syncStatus();
     };
     for(const event of ['seeking','seeked','timeupdate'])video.addEventListener?.(event,this.onTimeChange);
@@ -203,6 +246,7 @@ class uburoomSubtitles {
   reset() {
     this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loading=false; this.loaded=false; this.streaming=false; this.streamSynced=false;this.renderFailed=false;
     this.windowScheduler?.destroy(); this.windowScheduler=undefined;
+    this.textWindows?.destroy(); this.textWindows=undefined;
     this.renderer?.destroy();this.renderer=undefined;
     this.clearCues(); this.track.mode='disabled'; this.status({message:'',error:false,loading:false});
   }
@@ -211,7 +255,7 @@ class uburoomSubtitles {
     if (key!==this.key) { this.reset(); this.key=key; }
     this.url=state.subtitleUrl;
     const offset=state.tracks?.subtitleOffset || 0;
-    if (this.offset!==offset) { this.offset=offset; this.rebuild();this.renderer?.offset(offset);this.windowScheduler?.check(this.mediaTime()-offset); }
+    if (this.offset!==offset) { this.offset=offset; this.rebuild();this.renderer?.offset(offset);this.windowScheduler?.check(this.mediaTime()-offset);this.textWindows?.check(this.mediaTime()-offset); }
     this.picture=state.state?.picture; if(this.picture)this.renderer?.picture(this.picture);
     if (!this.url) { this.status({message:state.tracks?.subtitleError || '',error:!!state.tracks?.subtitleError,loading:false}); return; }
     this.track.mode=this.renderer?'disabled':'showing';
@@ -220,9 +264,11 @@ class uburoomSubtitles {
   }
   rebuild() {
     this.clearCues();
-    for (const item of this.cues) {
+    for (const item of this.cues) this.addCue(item);
+  }
+  addCue(item) {
       const start=Math.max(0,item.start+(this.offset || 0)), end=item.end+(this.offset || 0);
-      if (end<=start) continue;
+      if (end<=start) return;
       const cue=new VTTCue(start,end,item.text);
       if(!/(?:^|\s)line:/.test(item.settings || '')){cue.line=this.defaultLine ?? -1;cue.uburoomDefaultLine=true;}
       for (const setting of (item.settings || '').split(/\s+/)) {
@@ -234,14 +280,13 @@ class uburoomSubtitles {
         } else if (name==='line' && /^-?\d{1,3}$/.test(value)) cue.line=Number(value);
       }
       this.track.addCue(cue);
-    }
   }
   layout(visible,lines=3) {
     const line=visible ? -lines : -1;
     if(this.defaultLine===line)return;this.defaultLine=line;
     for(const cue of Array.from(this.track.cues || []))if(cue.uburoomDefaultLine)cue.line=line;
   }
-  retry() { if(this.renderFailed){const url=this.url,key=this.key;this.reset();this.url=url;this.key=key;} if(this.windowScheduler){this.windowScheduler.retry();return;} clearTimeout(this.timer); this.timer=undefined; this.attempts=0; if(this.url && !this.loading)void this.load(); }
+  retry() { if(this.textWindows){this.textWindows.retry();return;} if(this.renderFailed){const url=this.url,key=this.key;this.reset();this.url=url;this.key=key;} if(this.windowScheduler){this.windowScheduler.retry();return;} clearTimeout(this.timer); this.timer=undefined; this.attempts=0; if(this.url && !this.loading)void this.load(); }
   async load() {
     const generation=this.generation, url=this.url; if(!url)return;
     this.loading=true; const abort=this.abort=new AbortController();
@@ -250,6 +295,14 @@ class uburoomSubtitles {
       const response=await fetch(url,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(90000)])}), value=await response.json();
       if (!response.ok) throw Object.assign(new Error(value.error || 'Subtitles could not load.'),{terminal:response.status===403});
       if (generation!==this.generation) return;
+      if(value.format==='cues'){
+        if(typeof value.window!=='string'||!value.window.startsWith(url+'/')||!value.window.endsWith('/window'))throw new Error('Invalid subtitle window.');
+        this.textWindows=new uburoomTextWindows(value.window,cues=>{for(const cue of cues){this.cues.push(cue);this.addCue(cue);}},(error,failed)=>{
+          this.status(error?{message:failed?error.message:'Retrying subtitles…',error:!!failed,loading:!failed,burnFallback:!!failed}:{message:'',error:false,loading:false});
+        },abort.signal);
+        this.textWindows.check(this.mediaTime()-(this.offset||0));
+        this.loaded=true;return;
+      }
       if(value.format){
         if(!['ass','pgs','vobsub'].includes(value.format)||!Array.isArray(value.fonts)||value.fonts.length>32)throw new Error('Invalid subtitle response.');
         const asset=async(name,limit)=>{

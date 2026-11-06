@@ -18,7 +18,7 @@ function catalog(part, {browserSubtitles=false,extractSubtitles=false}={}) {
       selected:flag(stream.selected),default:flag(stream.default),forced:flag(stream.forced),sdh:flag(stream.hearingImpaired),
       commentary:flag(stream.commentary),description:flag(stream.visualImpaired),channels:Number(stream.channels) || undefined,external,
       delivery:kind==='subtitles' ? external && plain.has(codec) ? 'text' : browserSubtitles && (external || extractSubtitles && index!==undefined) ?
-        ['ass','ssa'].includes(codec) ? 'ass' : ['pgs','hdmv_pgs_subtitle'].includes(codec) ? 'pgs' : ['vobsub','dvd_subtitle'].includes(codec) ? 'vobsub' : 'burn' : 'burn' : undefined,
+        plain.has(codec) ? 'cues' : ['ass','ssa'].includes(codec) ? 'ass' : ['pgs','hdmv_pgs_subtitle'].includes(codec) ? 'pgs' : ['vobsub','dvd_subtitle'].includes(codec) ? 'vobsub' : 'burn' : 'burn' : undefined,
       available:kind==='audio' || burnable.has(codec)};
     if (!track.available) track.reason = 'This subtitle format is not supported by the current player.';
     tracks[kind].push(track);

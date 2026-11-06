@@ -538,3 +538,10 @@ test('matchIntent resolves among multiple available tracks matching language wit
   const exactMatch = Tracks.matchIntent(tracks, { language: 'eng', title: 'English Stereo', commentary: false });
   assert.equal(exactMatch.id, '1');
 });
+
+test('embedded text stays client-rendered, so Original is not forced into a conversion',()=>{
+  const {planDelivery}=require('../server/delivery-plan');
+  const [track]=Tracks.catalog({Stream:[{id:1,streamType:3,codec:'srt',index:2}]},{browserSubtitles:true,extractSubtitles:true}).subtitles;
+  assert.equal(track.delivery,'cues');
+  assert.equal(planDelivery({quality:'direct',burn:track.delivery==='burn',audioTracks:1,outputs:['av1','plex']}).route,'file');
+});
