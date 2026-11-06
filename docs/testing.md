@@ -15,6 +15,16 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P2/P3 — Ordered outputs and local burn-in — 2026-11-06
+
+**B, full suite:** `node --test tests/*.test.js`: 534 passed. Recovery harness on this work: 15/15 in Chrome and Firefox.
+
+**C, real `AV1` class on Vigrid, loopback HTTP source, no Plex.** Text burn-in on a 4K HDR source: 2.3-2.4s per chunk after a 4.5s first chunk. PGS burn-in on the Dolby Vision source: 3.1s after a 4.1s first chunk, 144 frames and 6.008s audio per chunk, with a cue that began in the previous chunk still drawn. Image burn-in decodes an eight-second run-in and encodes audio in a separate process, because audio beside the overlay took 17.9s against 2s. Reading subtitles from a second input was faster but lost cues crossing a join, so it was rejected.
+
+**Rejected: embedded text in the browser.** Extracting one text track from a 13 GB source had not finished after 120 seconds, past the 60-second extraction budget, because the whole file must be read. Embedded plain text therefore stays burned until extraction works in windows, as PGS does.
+
+Not covered: the viewer capability report and output order in a real room, a real Plex source, burned ASS using fonts attached to the file (libass uses system fonts), and owner review of burned subtitles. `scripts/local-webm-smoke.js` still fails as before.
+
 ### M1-P1/P2/P14 — Plex outage continuity and live Vigrid findings — 2026-11-06
 
 **B, `85d0cea`,** Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. A simulated restart returns 503 for all Plex requests and kills every transcode session. Recovery harness: **15/15 passed in Chrome once and Firefox twice**. A ten-second restart with buffered viewers kept the room, streams and decoded playback, with no notice shown. An outage outlasting the buffer warned both viewers, kept them in the room and resumed the shared position about 15s after Plex returned, using new streams. `node --test tests/*.test.js`: **533 passed, zero failures/cancellations/skips**.
@@ -40,7 +50,7 @@ One earlier Firefox run failed the existing "frames decode after delivery return
 
 **Memory.** 4K jobs commit about 1 GB on the CPU path and 1.2 GB with GPU decode. The former 1 GiB limit killed GPU chunks in the first deployment of this work, found by the test above within minutes, and left CPU chunks with little margin once audio is added, which is another possible cause of the live stoppage. The limit is now 2 GiB per chunk job.
 
-Not covered: real Plex input, Linux VAAPI and macOS routes, and human acceptance on a real viewer. On a machine without working GPU decode, five parallel 4K CPU jobs still take about 39s per chunk, past the 30-second chunk limit.
+Not covered: real Plex input, Linux VAAPI and macOS routes. Owner live test at `e3fa82a`, Discord with acceleration off, 4K source: conversion started quickly and the picture was preferred over Plex's. Playback stayed choppy at 720p 4 Mbps and 2 Mbps, which the owner attributes to the client and set aside. On a machine without working GPU decode, five parallel 4K CPU jobs still take about 39s per chunk, past the 30-second chunk limit.
 
 ### M1-P2 — Delivery plan extraction — 2026-11-06
 
