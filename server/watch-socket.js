@@ -47,7 +47,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
   async function syncQuality(client,message) {
     if (!validateSyncQualityMessage(message)) return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
-    if (!room || room.s.roomId !== message.roomId || !viewer || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
+    // A report can cross the viewer's own leave. Only a foreign identity is misuse.
+    if (!room || !viewer) return;
+    if (room.s.roomId !== message.roomId || viewer.userId !== client.userId) return client.ws.close(4003,'Playback viewer unavailable');
     let subscription;
     try { subscription = new URL(client.subscription,'https://room.invalid'); } catch { return; }
     if (subscription.pathname !== '/api/watch/rooms/'+message.roomId || subscription.searchParams.get('viewer') !== message.viewerId ||

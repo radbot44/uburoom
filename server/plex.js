@@ -174,6 +174,9 @@ class Plex {
             record.versions=new Set((rows.get(id)?.Media || []).filter(media=>Sources.available({Media:[media]})).map(media=>String(media.id)));
             record.until=Date.now()+15000; return record.available;
           }).catch(error=>{if(this.fileCache.get(id)===record)this.fileCache.delete(id);throw error;});
+          // Callers reach this through task.join(), which skips it when the task
+          // fails. Left unobserved, that rejection would end the server process.
+          record.value.catch(()=>{});
           records.set(id,record); this.fileCache.delete(id); this.fileCache.set(id,record);
           while(this.fileCache.size>2000)this.fileCache.delete(this.fileCache.keys().next().value);
         }

@@ -400,3 +400,9 @@ test('cold item authorization coalesces consumers, cancels independently and fen
   await new Promise(setImmediate);plex.invalidateAccess();release();await staleRejected;
   assert.equal(plex.allowedItems.size,0,'an invalidated check cannot repopulate access cache');
 });
+test('a failed availability check rejects its callers without crashing the server on an unhandled rejection',async t=>{
+  const plex=fixture(async()=>new Response(null,{status:503})); t.after(()=>plex.close());
+  await assert.rejects(plex.availability(['1','2']),/temporarily unavailable/);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(plex.fileCache.size,0,'failed checks are not cached');
+});

@@ -98,7 +98,7 @@ const supportsDocPiP = typeof window !== 'undefined' && 'documentPictureInPictur
 const supportsVideoPiP = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function';
 const supportsPiP = supportsDocPiP || supportsVideoPiP;
 let pipWindow = null;
-let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
+let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsRecoveryAt = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
@@ -1572,9 +1572,9 @@ function handleHlsError(client, data) {
   }
   // hls.js also resets MediaSource internally on nonfatal reset events.
   if (data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET && !data.fatal) {
-    if (hlsRecoveryCount++ === 0) return;
+    if (spendHlsRecovery()) return;
   } else if (!data.fatal) return;
-  else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hlsRecoveryCount++ === 0) {
+  else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && spendHlsRecovery()) {
     // Retry the current authorized stream once. No shared command or timeline change.
     hlsRecoveryTimer = setTimeout(() => {
       if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(sync.timelinePending?0:expected()); }
@@ -1589,6 +1589,14 @@ function handleHlsError(client, data) {
     'The browser could not decode the video stream (' + data.details + '). Try enabling hardware acceleration or use the website.' :
     'The video stream could not load (' + data.details + '). Check the connection and try again.';
   fail(playbackError);
+}
+// One in-place recovery per quiet minute: failures this close together are one
+// problem, but an unrelated failure much later must not force a conversion.
+function spendHlsRecovery() {
+  const now = performance.now();
+  if (now - hlsRecoveryAt >= 60000) hlsRecoveryCount = 0;
+  hlsRecoveryAt = now;
+  return hlsRecoveryCount++ === 0;
 }
 function unavailable(message,reason='room-unavailable') {
   syncRoomUrl(null);

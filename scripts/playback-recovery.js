@@ -21,7 +21,7 @@ async function main(){
   if(manifest.kind!=='uburoom-synthetic-playback'||!manifest.trackRenditions||sourceDuration<Math.max(110,soak+35))
     throw new Error('Generate a track corpus at least 35 seconds longer than the soak.');
   fs.mkdirSync(output,{recursive:true});
-  const control={events:[],requests:[],expiredSessions:new Set(),blocked:false};
+  const control={events:[],requests:[],expiredSessions:new Set(),blockedSessions:new Set(),blocked:false};
   const config={cert:fs.readFileSync(path.join(root,'certs/server-cert.pem')),key:fs.readFileSync(path.join(root,'certs/server-key.pem')),
     publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'synthetic-guild',channels:['synthetic-commands'],
     plexUrl:'http://playback-fixture.invalid:32400',plexToken:'synthetic-playback-only'};
@@ -43,7 +43,7 @@ async function main(){
     await until(host,'!!me','Host login');
     await evaluate(host,'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');await until(host,'!!state','Room creation');
     await evaluate(host,'('+installMeter.toString()+')()');await evaluate(host,'playbackMeter.resumeAudio()');
-    const command=async(page,action,args)=>{await until(page,'!!state && !pending','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
+    const command=async(page,action,args)=>{await until(page,'!!state && !pending && playbackClock.read().valid','Available command');return evaluate(page,`execute({action:${JSON.stringify(action)},args:${JSON.stringify(args||{})}}).then(()=>true)`);};
     const choose=async(page,settings)=>{await until(page,'!!state && !pending','Available tracks');return evaluate(page,`execute({action:"media.tracks.set",args:{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,...${JSON.stringify(settings)}}}).then(()=>true)`);};
     const sample=page=>evaluate(page,'playbackMeter.sample();true');
     const snapshot=page=>evaluate(page,'JSON.stringify({position:video.currentTime,frames:video.getVideoPlaybackQuality().totalVideoFrames,error:playbackError,ready:video.readyState,buffered:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),stream:state?.streamVersion,observationEpoch:state?.observationEpoch,mediaUrl:state?.mediaUrl,tracks:state?.tracks,paused:video.paused,hlsRetries:hlsNetworkRetries,hlsFailure:hlsNetworkFailure,hlsRefreshes:hlsRefreshTimes.length,buffering:hls?.bufferingEnabled,maxBuffer:hls?.config.maxBufferLength,maxMaxBuffer:hls?.config.maxMaxBufferLength,fixtureHlsErrors:window.__fixtureHlsErrors})').then(JSON.parse);
@@ -131,7 +131,7 @@ async function main(){
       const before=await snapshot(host);
       const traceStart=await evaluate(host,'diagnostics.snapshot().entries.at(-1).sequence');
       await evaluate(host,'(()=>{const original=transport.onMessage;let fail=true;transport.onMessage=message=>{if(fail&&message.type==="state"){fail=false;window.__controlFailed=true;diagnostics.record("request-failed",{request:"room-poll",failure:"network"});unavailable("Fixture control interruption","room-poll");return;}original(message);};return true;})()');
-      await until(host,'window.__controlFailed && state===undefined && mediaSource===undefined','Control loss unloads player',6000);
+      await until(host,'window.__controlFailed','Control loss reaches the player',6000);
       await until(host,`state?.streamVersion===${JSON.stringify(before.stream)} && video.readyState>=2 && !video.seeking`,'Fresh state after control reconnect',15000);
       const after=await snapshot(host);
       assert.equal(after.mediaUrl,before.mediaUrl,'same captured master reloads');
@@ -173,7 +173,8 @@ async function main(){
       await evaluate(guest,'playbackMeter.reset("104","hls");true');
       const before=await snapshot(guest),hostBefore=await snapshot(host);
       await evaluate(guest,'transport.interrupt(12000);true');
-      await until(guest,'state===undefined && mediaSource===undefined','Long control outage unloads guest',6000);
+      // Buffered playback continues through the outage; the server still drops the viewer.
+      await until(guest,'reconnecting','Long control outage interrupts guest',6000);
       await until(guest,`state?.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Guest rejoins after viewer timeout',25000);
       const after=await snapshot(guest),hostAfter=await snapshot(host);
       assert.equal(after.tracks.audioId,'1042','guest selected audio survives rejoin');
@@ -196,7 +197,7 @@ async function main(){
       control.blocked=true;
       try { await pause(30000); } finally { control.blocked=false; }
       const interrupted=await snapshot(host);
-      assert.equal(interrupted.buffered,0,'the outage must actually exhaust buffered media');
+      assert.ok(interrupted.buffered<=.05,'the outage must actually exhaust buffered media');
       const returnedAt=Date.now();
       await until(host,'!video.paused && video.readyState>=3 && !playbackError && Math.abs(video.currentTime-expected())<1','Playback after buffer exhaustion',30000);
       const recoveryMs=Date.now()-returnedAt;
@@ -241,12 +242,49 @@ async function main(){
       await command(host,'media.pause');
       return {detail:'Actual failed fragments exhausted three quick restarts; a slow retry resumed decoded frames and French PCM without replacing the stream.',before,interrupted,recovered,after,events,recoveryMs,elapsedMs:Date.now()-started,tones};
     });
+    await check('one viewer loses delivery while the other keeps decoding',async()=>{
+      // The visible host stays healthy, because hidden tabs may suspend decoding.
+      const session=control.events.filter(e=>e.event==='start'&&e.audioId==='1042'&&e.subtitleId!=='1044').at(-1)?.session;
+      assert.ok(session,'guest output session exists');
+      await command(host,'media.seek.absolute',{seconds:10});
+      await until(host,'video.paused && !video.seeking && Math.abs(video.currentTime-10)<.7','Paused before single-viewer outage');
+      await pause(3000);
+      await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback before single-viewer outage');
+      const hostBefore=await snapshot(host),guestBefore=await snapshot(guest),startElapsed=await evaluate(host,'playbackMeter.sample().elapsedMs');
+      control.blockedSessions.add(session);
+      let guestInterrupted,hostInterrupted,guestLag=0;
+      try {
+        // Longer than the guest's roughly 30-second buffer, so it really falls behind.
+        // It may then recover early from data cached by earlier seeks, so keep the peak.
+        const outageEnds=Date.now()+38000;
+        while(Date.now()<outageEnds){guestLag=Math.max(guestLag,await evaluate(guest,'Math.abs(expected()-video.currentTime)'));await pause(250);}
+        guestInterrupted=await snapshot(guest);hostInterrupted=await snapshot(host);
+      } finally {control.blockedSessions.delete(session);}
+      assert.ok(guestLag>3,'the guest actually falls behind the shared position');
+      assert.ok(hostInterrupted.position-hostBefore.position>35,'shared playback keeps advancing for the healthy viewer');
+      assert.ok(hostInterrupted.frames-hostBefore.frames>35*17,'the healthy viewer keeps decoding frames');
+      assert.equal(await evaluate(host,'state.state.paused'),false,'the room is not paused for the struggling viewer');
+      const hostStalls=JSON.parse(await evaluate(host,'JSON.stringify(playbackMeter.report().events)')).filter(e=>['waiting','stalled'].includes(e.event)&&e.elapsedMs>startElapsed+1000).length;
+      assert.equal(hostStalls,0,'the healthy viewer does not rebuffer');
+      assert.equal(hostInterrupted.error,'');assert.equal(hostInterrupted.stream,hostBefore.stream,'the healthy viewer keeps its stream');
+      const returnedAt=Date.now();
+      await until(guest,'!video.paused && video.readyState>=3 && !playbackError && Math.abs(video.currentTime-expected())<1','Guest recovers the shared position',30000);
+      const recoveryMs=Date.now()-returnedAt,guestRecovered=await snapshot(guest);
+      assert.equal(guestRecovered.tracks.audioId,'1042');assert.equal(guestRecovered.tracks.subtitleChoice,'off');
+      await browser.activate(guest);await until(guest,'document.visibilityState==="visible"','Visible guest for decoded-frame checks');
+      const guestVisible=await snapshot(guest);await pause(3000);const guestAfter=await snapshot(guest);
+      let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(guest,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
+      await browser.activate(host);await until(host,'document.visibilityState==="visible"','Visible host after guest check');
+      assert.ok(guestAfter.frames-guestVisible.frames>35,'the recovered viewer decodes frames');assert.ok(tones>=5,'the recovered viewer decodes selected audio');
+      await command(host,'media.pause');
+      return {detail:'38-second outage for one output: host decoded throughout without stalling; guest fell '+guestLag.toFixed(1)+' s behind and recovered the shared position in '+recoveryMs+' ms with its own tracks.',hostBefore,hostInterrupted,guestBefore,guestInterrupted,guestRecovered,guestAfter,recoveryMs,tones};
+    });
     await check('sole host rejoins an empty room after timeout',async()=>{
-      await evaluate(guest,'selectRoom(undefined).then(()=>true)');
+      await evaluate(guest,'document.getElementById("close-room").click();true');
       await until(host,'state.viewers===1','Sole host');
             const before=await snapshot(host);
       await evaluate(host,'transport.interrupt(12000);true');
-      await until(host,'state===undefined && mediaSource===undefined','Host disconnect unloads playback',6000);
+      await until(host,'reconnecting','Host control outage',6000);
       await until(host,`!!state?.streamVersion && state.streamVersion!==${JSON.stringify(before.stream)} && video.readyState>=2`,'Host rejoins retained room',25000);
       const after=await snapshot(host);
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
@@ -266,15 +304,16 @@ async function main(){
       await until(host,'!document.getElementById("probe-control").disabled','Private single-viewer probe eligibility');
       const before=await snapshot(host);
       await evaluate(host,'document.getElementById("probe-control").click();true');
-      await until(host,'state===undefined && mediaSource===undefined','Probe unloads only this tab',6000);
+      // Shorter than the disconnect grace, so buffered playback stays attached.
+      await until(host,'reconnecting','Probe interrupts only this tab',6000);
       await until(host,'!!state?.mediaUrl && video.readyState>=2 && !controlProbe.active() && !probeRunning','Live control stream resumes',15000);
       const after=await snapshot(host);
-      assert.notEqual(after.stream,before.stream);assert.notEqual(after.mediaUrl,before.mediaUrl);
+      assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
       const trace=JSON.parse(await evaluate(host,'JSON.stringify(diagnostics.snapshot())'));
       assert.ok(trace.entries.some(row=>row.event==='probe-start'));
       assert.ok(trace.entries.some(row=>row.event==='probe-end'));
       fs.writeFileSync(path.join(output,'probe-diagnostics.json'),JSON.stringify(trace,null,2)+'\n');
-      return {detail:'Six-second opt-in WebSocket interruption rejoined with a new authorized stream; private tracks and off consent retained.',before,after};
+      return {detail:'Six-second opt-in WebSocket interruption reconnected with private tracks retained ('+(after.stream===before.stream?'same':'new')+' stream).',before,after};
     });
     await check('diagnostics developer export',async()=>{
       const downloaded=JSON.parse(await evaluate(host,'(async()=>{const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;let blob;try{URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};saveDiagnostics();return await blob.text();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}})()'));

@@ -89,6 +89,7 @@ function fixturePlex(directory, manifest, control = {}) {
       if(!session || sessions.get(session)?.rendition!==rendition[1] || control.expiredSessions?.has(session)){
         control.events?.push({event:'expired-fragment',session});return new Response(null,{status:404});
       }
+      if(control.blockedSessions?.has(session))return new Response(null,{status:503});
       return send(path.join(directory,rendition[1],rendition[2]),options,'video/mp2t');
     }
     const segment = /^\/video\/:\/transcode\/universal\/(segment-\d{3}\.ts)$/.exec(url.pathname);

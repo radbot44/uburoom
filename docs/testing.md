@@ -15,6 +15,24 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P13 — Recovery harness baseline and independent-viewer delivery loss — 2026-11-06
+
+B on the uncommitted working tree based on `363de22`, Node v22.22.2 / Windows, Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. `node scripts/playback-recovery.js --browser=chrome|firefox` had drifted out of routine use and failed at `363de22` in both browsers: Chrome ended when the server process exited, and Firefox stopped on a stale harness expectation.
+
+Product defects found and fixed, each with a regression test:
+
+- **Server exit on a provider failure (introduced in `363de22`).** A rejected `Plex.availability()` check left an unobserved derived promise. One 5xx on an uncached check ended the Node process even when the caller handled the error. Reproduced in a plain process before the fix.
+- **Control socket closed during a normal leave.** A sync-quality report crossing the viewer's own leave received `close(4003)`, failing the following room refresh. Stale viewers are now ignored; a foreign identity still closes the socket.
+- **HLS media recovery spent for the life of a stream.** A second media error at any later time skipped in-place recovery and moved the viewer to conversion, or ended playback when no conversion was available. Recovery now refills after a quiet minute; repeats inside that minute still reach compatible fallback. Reproduced with the real handlers and a fake hls.js client; not observed in real playback.
+
+Harness corrections: disconnects shorter than the grace period no longer unload buffered playback, so those checks wait for the reconnect state; transient teardown is proven by diagnostics rather than polled; commands wait for a valid clock; buffer exhaustion uses the player's .05s tolerance; the guest leaves through the real control instead of `selectRoom(undefined)`. The private probe no longer requires a new stream, because a six-second interruption keeps the same one.
+
+New check: a 38-second outage for one viewer's output. The visible host kept decoding without a stall, with no room pause and no stream change. The guest fell 5.3s (Chrome) / 5.5s (Firefox) behind and recovered the shared position in 1,836 / 1,506ms with its own tracks, then decoded frames and selected audio. Firefox can recover during the outage from data cached by earlier seeks, so the check records peak lag.
+
+Recovery harness: **13/13 passed in Chrome and Firefox**. `node --test tests/*.test.js`: **531 passed, zero failures/cancellations/skips**.
+
+Not covered: live Plex/Discord, real networks, hardware decoding, Safari/mobile and endurance load. Quota errors are non-fatal in hls.js 1.7.3, so append/quota routing was left unchanged. No deployment or C/D acceptance claim.
+
 ### M1-P1/P2/P4/P11/P13 — Optimization/hardening implementation — 2026-11-06
 
 A/B on the uncommitted working tree based on `645743d68c22e732b5513874ee5dddbddadb63ae`, Node v22.22.2 / Windows, plus isolated C-style browser runs on synthetic media with simulated Plex responses. Implements the audit below: canonical version identity, current-consent reporting, operation cancellation and shared-work ownership, separate room/lobby publication, coalesced item checks, storage-scoped response fences, worker history totals, encoded-byte budgets with near-position priority, learned software fallback and actual-buffer recovery.

@@ -164,6 +164,9 @@ test('watch socket accepts only a viewer\'s current ephemeral synchronization te
   await host.call(path+'?viewer='+hostViewer);
   assert.equal(hostPresence.syncQuality.score,1,'the current viewer retains its ephemeral score');
   assert.equal(Object.hasOwn(room.s,'syncQuality'),false,'the score is separate from durable room state');
+  // Telemetry already in flight when a viewer leaves must not cost the socket.
+  host.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:randomUUID(),mediaVersion,streamVersion,status:'paused',reason:'paused'}));
+  assert.equal((await host.call(path+'?viewer='+hostViewer)).status,200,'stale telemetry keeps the control socket');
   const guestClosed=once(guest.ws,'close');
   guest.ws.send(JSON.stringify({type:'sync-quality',roomId,viewerId:hostViewer,mediaVersion,streamVersion,status:'playing',score:.1}));
   assert.equal((await guestClosed)[0],4003,'a viewer cannot claim another viewer identity');

@@ -315,6 +315,19 @@ test('brief WebSocket disconnect does not tear down player, and extended disconn
   assert.equal(failedMessage, 'Disconnected. Reconnecting…');
 });
 
+test('HLS media recovery refills after a quiet period, while repeated failures still reach compatible fallback',async()=>{
+  let now=0;const recovered=[],fallbacks=[],client={recoverMediaError(){recovered.push(now);},startLoad(){}};
+  const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'},ErrorDetails:{}},hlsRecoveryCount:0,hlsRecoveryAt:0,hlsRecoveryTimer:undefined,
+    video:{},state:{mediaUrl:'/current'},mediaSource:'/current',sync:{timelinePending:false},expected:()=>12,performance:{now:()=>now},
+    clearTimeout(){},setTimeout:action=>{action();return 1;},compatibleFallback:async reason=>{fallbacks.push(reason);}};
+  await load(context,'handleHlsError','unavailable');
+  const failure={fatal:true,type:'media',details:'bufferAppendError'};
+  context.handleHlsError(client,failure);now=3600000;context.handleHlsError(client,failure);
+  assert.deepEqual(recovered,[0,3600000],'an unrelated failure an hour later retries the same stream');
+  assert.equal(fallbacks.length,0,'a healthy stream is not moved to conversion');
+  now+=1000;context.handleHlsError(client,failure);
+  assert.equal(recovered.length,2);assert.equal(fallbacks.length,1,'a repeat failure inside the window is not retried indefinitely');
+});
 test('HLS quota and append failures retain their cause independently of dropped frames and network errors',async()=>{
   const client={config:playback.hlsConfig(40000)},details={MEDIA_SOURCE_REQUIRES_RESET:'reset',BUFFER_FULL_ERROR:'full',BUFFER_APPEND_ERROR:'append'};
   const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network',MEDIA_ERROR:'media'},ErrorDetails:details},
