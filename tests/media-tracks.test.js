@@ -76,7 +76,7 @@ function provider() {
   const plex=new Plex({plexUrl:'http://fixture.invalid:32400',plexToken:'fixture',ffmpegPath:'fixture'},fetch);
   return {plex,state,streams};
 }
-test('track catalog distinguishes source IDs, selected flags, roles and text versus Plex burn-in',()=>{
+test('track catalog distinguishes source IDs, selected flags, roles and text versus burn-in',()=>{
   const {streams}=provider(), rows=Tracks.catalog({Stream:streams()});
   assert.equal(rows.audio[1].selected,false); assert.equal(Tracks.select(rows).audio.id,'11');
   assert.equal(rows.subtitles[0].delivery,'text'); assert.equal(rows.subtitles[1].delivery,'burn'); assert.equal(rows.subtitles[2].available,true);

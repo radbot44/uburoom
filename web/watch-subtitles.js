@@ -9,9 +9,9 @@ function pgsWindowBytes(items){
   for(let windowIndex=0;windowIndex<items.length;windowIndex++){
     const bytes=items[windowIndex].data,view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
     for(let offset=0;offset<bytes.length;){
-      if(offset+13>bytes.length||bytes[offset]!==0x50||bytes[offset+1]!==0x47)throw new Error('Invalid PGS subtitle window. Try Plex burn-in.');
+      if(offset+13>bytes.length||bytes[offset]!==0x50||bytes[offset+1]!==0x47)throw new Error('Invalid PGS subtitle window. Try burn-in.');
       const end=offset+13+view.getUint16(offset+11);
-      if(end>bytes.length)throw new Error('Incomplete PGS subtitle window. Try Plex burn-in.');
+      if(end>bytes.length)throw new Error('Incomplete PGS subtitle window. Try burn-in.');
       const data=bytes.subarray(offset,end),pts=view.getUint32(offset+2);
       let hash=2166136261;
       for(let i=10;i<data.length;i++)hash=Math.imul(hash^data[i],16777619);
@@ -26,13 +26,13 @@ function pgsWindowBytes(items){
   for(const {data} of segments){
     const payload=data.subarray(13),view=new DataView(payload.buffer,payload.byteOffset,payload.byteLength);
     if(data[10]===0x16){
-      if(payload.length<11)throw new Error('Invalid PGS composition. Try Plex burn-in.');
+      if(payload.length<11)throw new Error('Invalid PGS composition. Try burn-in.');
       if(payload[7]===0x80){palettes.clear();objects.clear();assembling.clear();}
       composition={palette:payload[9],objects:[]};let offset=11;
       for(let i=0;i<payload[10];i++){
-        if(offset+8>payload.length)throw new Error('Incomplete PGS composition. Try Plex burn-in.');
+        if(offset+8>payload.length)throw new Error('Incomplete PGS composition. Try burn-in.');
         const length=payload[offset+3]&0x80?16:8;
-        if(offset+length>payload.length)throw new Error('Incomplete PGS composition. Try Plex burn-in.');
+        if(offset+length>payload.length)throw new Error('Incomplete PGS composition. Try burn-in.');
         composition.objects.push(view.getUint16(offset));offset+=length;
       }
     }else if(data[10]===0x14&&payload.length>=2)palettes.add(payload[0]);
@@ -41,10 +41,10 @@ function pgsWindowBytes(items){
       if(payload[3]&0x80){assembling.add(id);objects.delete(id);}
       if(payload[3]&0x40&&assembling.has(id)){objects.add(id);assembling.delete(id);}
     }else if(data[10]===0x80&&composition?.objects.length){
-      if(!palettes.has(composition.palette)||composition.objects.some(id=>!objects.has(id)))throw Object.assign(new Error('PGS window is missing bitmap initialization. Try Plex burn-in.'),{initialization:true});
+      if(!palettes.has(composition.palette)||composition.objects.some(id=>!objects.has(id)))throw Object.assign(new Error('PGS window is missing bitmap initialization. Try burn-in.'),{initialization:true});
     }
   }
-  if(size&&!composition)throw new Error('PGS window has no usable composition. Try Plex burn-in.');
+  if(size&&!composition)throw new Error('PGS window has no usable composition. Try burn-in.');
   const output=new Uint8Array(size);let offset=0;
   for(const segment of segments){output.set(segment.data,offset);offset+=segment.data.length;}
   return output;
@@ -101,7 +101,7 @@ class uburoomSubtitleWindows {
         const response=await fetch(url,{signal});
         if(!response.ok){
           const value=await response.json().catch(()=>({}));
-          const error=Object.assign(new Error(value.error||'Subtitle window could not load. Try Plex burn-in.'),{terminal:response.status===403});
+          const error=Object.assign(new Error(value.error||'Subtitle window could not load. Try burn-in.'),{terminal:response.status===403});
           if(/(?:exceeded the supported|timed out|no usable data|failed during media demuxing|could not be extracted|needs configured FFmpeg)/i.test(error.message)){
             error.burnFallback=true;
           }
@@ -109,18 +109,18 @@ class uburoomSubtitleWindows {
         }
         const header=name=>{const raw=response.headers.get(name);return raw!==null&&raw!==''?Number(raw):NaN;};
         const startMs=header('x-subtitle-start-ms'),endMs=header('x-subtitle-end-ms'),cues=header('x-subtitle-cues');
-        if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||startMs<0||endMs<=startMs||endMs-startMs>240000||targetMs<startMs||targetMs>=endMs)throw new Error('Invalid subtitle coverage. Try Plex burn-in.');
+        if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||startMs<0||endMs<=startMs||endMs-startMs>240000||targetMs<startMs||targetMs>=endMs)throw new Error('Invalid subtitle coverage. Try burn-in.');
         const reader=response.body?.getReader(),chunks=[];let size=0;
-        if(!reader)throw new Error('Subtitle response was interrupted. Try Plex burn-in.');
+        if(!reader)throw new Error('Subtitle response was interrupted. Try burn-in.');
         try{for(;;){const {done,value}=await reader.read();if(done)break;
           // Reserve both incoming chunks and their assembled copy, alongside
           // retained windows and parser/replay data owned by this scheduler.
-          if(this.resourceUsage().totalBytes-pending.bytes+2*(size+value.length)>PGS_MEMORY_LIMIT)throw new Error('Subtitle windows exceeded the supported cache limit. Try Plex burn-in.');
+          if(this.resourceUsage().totalBytes-pending.bytes+2*(size+value.length)>PGS_MEMORY_LIMIT)throw new Error('Subtitle windows exceeded the supported cache limit. Try burn-in.');
           size+=value.length;pending.bytes=2*size;chunks.push(value);
         }}
         finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
         if(!current())return;
-        if(!size&&cues>0)throw new Error('Subtitle extraction produced no usable data. Try Plex burn-in.');
+        if(!size&&cues>0)throw new Error('Subtitle extraction produced no usable data. Try burn-in.');
         const data=new Uint8Array(size);let offset=0;for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.length;}
         chunks.length=0;pending.bytes=size;
         this.queue=this.queue.catch(()=>{}).then(async()=>{
@@ -134,7 +134,7 @@ class uburoomSubtitleWindows {
             let index=items.findIndex(i=>i.endMs<=this.positionMs);
             if(index<0)index=items.findIndex(i=>i.startMs>this.positionMs);
             if(index<0)index=0;
-            if(index===items.length-1)throw new Error('Subtitle windows exceeded the supported cache limit. Try Plex burn-in.');
+            if(index===items.length-1)throw new Error('Subtitle windows exceeded the supported cache limit. Try burn-in.');
             items.splice(index,1);
           }
           items.sort((a,b)=>a.startMs-b.startMs);
@@ -255,7 +255,7 @@ class uburoomSubtitles {
         const asset=async(name,limit)=>{
           if(typeof name!=='string'||!name.startsWith(url+'/')||!/(?:\/data|\/index|\/font-\d{1,2})$/.test(name))throw new Error('Invalid subtitle asset.');
           const result=await fetch(name,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(35000)])});
-          if(!result.ok)throw new Error('Subtitle resource could not load. Retry or choose Plex burn-in.');
+          if(!result.ok)throw new Error('Subtitle resource could not load. Retry or choose burn-in.');
           const reader=result.body.getReader(),chunks=[];let size=0;
           try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw new Error('Subtitle resource exceeds the supported size.');chunks.push(value);}}
           finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
@@ -287,16 +287,16 @@ class uburoomSubtitles {
           // abort only this request so the failure is reported and retried; the
           // shared controller stays reserved for reset/cancellation. Headers wait
           // for the first extracted packet, which can follow a long demux catch-up.
-          const stall=new AbortController(),stalled=()=>stall.abort(new Error('Subtitle stream timed out. Retry or choose Plex burn-in.'));
+          const stall=new AbortController(),stalled=()=>stall.abort(new Error('Subtitle stream timed out. Retry or choose burn-in.'));
           const signal=AbortSignal.any([abort.signal,stall.signal]);
           const interrupted=error=>abort.signal.aborted ? error : stall.signal.aborted ? stall.signal.reason :
-            error instanceof TypeError || error?.name==='AbortError' ? new Error('Subtitle stream was interrupted. Retry or choose Plex burn-in.') : error;
+            error instanceof TypeError || error?.name==='AbortError' ? new Error('Subtitle stream was interrupted. Retry or choose burn-in.') : error;
           const headerTimer=setTimeout(stalled,310000);
           let result;
           try{result=await fetch(subUrl,{signal});}
           catch(error){throw interrupted(error);}
           finally{clearTimeout(headerTimer);}
-          if(!result.ok || !result.body){const value=await result.json().catch(()=>({}));throw Object.assign(new Error(value.error || 'Subtitle resource could not load. Retry or choose Plex burn-in.'),{terminal:result.status===403});}
+          if(!result.ok || !result.body){const value=await result.json().catch(()=>({}));throw Object.assign(new Error(value.error || 'Subtitle resource could not load. Retry or choose burn-in.'),{terminal:result.status===403});}
           const reader=result.body.getReader(),limit=64*1024*1024;let size=0,idleTimer;
           const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(stalled,310000);};
           this.streaming=true;this.streamSynced=false;this.syncStatus();

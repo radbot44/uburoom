@@ -118,21 +118,21 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
     const cancel = () => stop(new PlaybackError('Subtitle loading was cancelled.'));
     const resetIdle = () => {
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => stop(new PlaybackError('Subtitle extraction timed out. Try Plex burn-in.')), idleTimeout);
+      idleTimer = setTimeout(() => stop(new PlaybackError('Subtitle extraction timed out. Try burn-in.')), idleTimeout);
     };
     signal?.addEventListener('abort', cancel, { once: true });
     resetIdle();
     child.stdout.on('data', chunk => {
       resetIdle(); size += chunk.length;
-      if (size > maxOutput) stop(new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.'));
+      if (size > maxOutput) stop(new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try burn-in.'));
       else if (!failure) onChunk?.(chunk);
     });
     child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
     child.on('error', () => finish(new PlaybackError('Subtitle extraction failed: FFmpeg unavailable on the server.')));
     child.on('close', code => {
       if (failure) return finish(failure);
-      if (code !== 0) return finish(new PlaybackError('Subtitle extraction failed during media demuxing. Try Plex burn-in.'));
-      if (size === 0) return finish(new PlaybackError('Subtitle extraction produced no usable data. Try Plex burn-in.'));
+      if (code !== 0) return finish(new PlaybackError('Subtitle extraction failed during media demuxing. Try burn-in.'));
+      if (size === 0) return finish(new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.'));
       finish(null);
     });
   });

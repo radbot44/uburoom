@@ -10,26 +10,26 @@ test('classifyExtractionError maps error messages and instances to standard Play
   // Timed out case
   const errTimeout = classifyExtractionError(new Error('Process timed out after 30s'));
   assert.ok(errTimeout instanceof PlaybackError);
-  assert.equal(errTimeout.message, 'Subtitle extraction timed out. Try Plex burn-in.');
+  assert.equal(errTimeout.message, 'Subtitle extraction timed out. Try burn-in.');
 
   // Exceeded limit case
   const errExceeded = classifyExtractionError(new Error('Subtitle font exceeded the supported limit.'));
   assert.ok(errExceeded instanceof PlaybackError);
-  assert.equal(errExceeded.message, 'Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.');
+  assert.equal(errExceeded.message, 'Subtitle resource or fonts exceeded the supported limits. Try burn-in.');
 
   const errExceed = classifyExtractionError(new Error('Data size exceed max capacity'));
   assert.ok(errExceed instanceof PlaybackError);
-  assert.equal(errExceed.message, 'Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.');
+  assert.equal(errExceed.message, 'Subtitle resource or fonts exceeded the supported limits. Try burn-in.');
 
   // No usable data case
   const errNoData = classifyExtractionError(new Error('Subtitle extraction produced no usable data.'));
   assert.ok(errNoData instanceof PlaybackError);
-  assert.equal(errNoData.message, 'Subtitle extraction produced no usable data. Try Plex burn-in.');
+  assert.equal(errNoData.message, 'Subtitle extraction produced no usable data. Try burn-in.');
 
   // Failed case
   const errFailed = classifyExtractionError(new Error('Extraction failed during demux'));
   assert.ok(errFailed instanceof PlaybackError);
-  assert.equal(errFailed.message, 'Subtitle extraction failed during media demuxing. Try Plex burn-in.');
+  assert.equal(errFailed.message, 'Subtitle extraction failed during media demuxing. Try burn-in.');
 
   // Already PlaybackError instance
   const originalPbError = new PlaybackError('Custom playback error');
@@ -39,15 +39,15 @@ test('classifyExtractionError maps error messages and instances to standard Play
   // Fallbacks: unknown error, empty error, null, undefined
   const errGeneric = classifyExtractionError(new Error('Uncategorized network error'));
   assert.ok(errGeneric instanceof PlaybackError);
-  assert.equal(errGeneric.message, 'Original subtitles could not be extracted. Try Plex burn-in.');
+  assert.equal(errGeneric.message, 'Original subtitles could not be extracted. Try burn-in.');
 
   const errNull = classifyExtractionError(null);
   assert.ok(errNull instanceof PlaybackError);
-  assert.equal(errNull.message, 'Original subtitles could not be extracted. Try Plex burn-in.');
+  assert.equal(errNull.message, 'Original subtitles could not be extracted. Try burn-in.');
 
   const errUndefined = classifyExtractionError(undefined);
   assert.ok(errUndefined instanceof PlaybackError);
-  assert.equal(errUndefined.message, 'Original subtitles could not be extracted. Try Plex burn-in.');
+  assert.equal(errUndefined.message, 'Original subtitles could not be extracted. Try burn-in.');
 });
 
 test('clear resets media.subtitleAssets and operates safely on any media object', () => {
@@ -582,7 +582,7 @@ test('quiet windows succeed, malformed bytes fail, transient failures recover, a
   try{
     global.fetch=async()=>windowResponse(new Uint8Array(0),0,60000);
     scheduler.check(10);await scheduler.fetching.promise;assert.equal(scheduler.synced(10),true);
-    global.fetch=async()=>new Response(JSON.stringify({error:'Fixture demux failure. Try Plex burn-in.'}),{status:503});
+    global.fetch=async()=>new Response(JSON.stringify({error:'Fixture demux failure. Try burn-in.'}),{status:503});
     scheduler.check(100);await scheduler.fetching.promise;assert.equal(errors.at(-1).failed,false);assert.equal(scheduler.synced(100),false);
     global.fetch=async()=>windowResponse(pgsAt(100),85000,160000);
     scheduler.retry();await scheduler.fetching.promise;assert.equal(scheduler.synced(100),true);assert.equal(scheduler.error,null);

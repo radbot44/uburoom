@@ -20,7 +20,7 @@ window.uburoomSubtitleRenderers={
       let settled=false;
       const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);error?reject(error):resolve(value);};
       const cancel=()=>finish(new Error('Subtitle loading was cancelled.'));
-      const timer=setTimeout(()=>finish(new Error('Subtitle renderer startup timed out. Try Plex burn-in.')),15000);
+      const timer=setTimeout(()=>finish(new Error('Subtitle renderer startup timed out. Try burn-in.')),15000);
       signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();
       Promise.resolve(promise).then(value=>finish(null,value),error=>finish(error));
     });
@@ -44,7 +44,7 @@ window.uburoomSubtitleRenderers={
             ...(assets.index?{idxContent:new TextDecoder().decode(assets.index)}:{}),fileName:assets.fileName,timeOffset:-offset,
             cacheLimit:12,devicePixelRatioCap:2,maxSubtitleBytes:64*1024*1024,onLoaded:resolve,
             onError:error=>{renderError=error;reject(error);},
-            onWarning:warning=>{if(format==='pgs'&&['MISSING_PALETTE','INVALID_SUBTITLE_DATA'].includes(warning.code))renderError=new Error('PGS subtitle bitmap could not be rendered. Try Plex burn-in.');}};
+            onWarning:warning=>{if(format==='pgs'&&['MISSING_PALETTE','INVALID_SUBTITLE_DATA'].includes(warning.code))renderError=new Error('PGS subtitle bitmap could not be rendered. Try burn-in.');}};
           renderer=format==='pgs'?new PgsRenderer(options):new VobSubRenderer(options);
           renderer.resolveMediaTime=resolveMediaTime;
         }));

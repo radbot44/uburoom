@@ -1186,7 +1186,7 @@ async function togglePictureInPicture() {
     if (hasSubtitles && !isBurned) {
       toasts.show('pip-subtitles', {
         title: 'Subtitles in Picture-in-Picture',
-        hint: 'Client subtitles require Document PiP or Plex burn-in.',
+        hint: 'Client subtitles require Document PiP or burn-in.',
         symbol: 'subtitles',
         duration: 8000,
         action: {
@@ -1945,8 +1945,8 @@ function renderTracks() {
   if(!subtitlesAvailable){$('subtitle-track-name').textContent='No subtitles available';$('subtitle-track-name').hidden=false;}
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
-  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed by Plex for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
-  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'Plex includes these subtitles in the video to preserve their appearance and saves the choice for this title.' : '');
+  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
+  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'These subtitles are included in the video to preserve their appearance. The choice is saved for this title.' : '');
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
   const subtitleError=tracks?.subtitleError || (trackNoticeError ? trackNotice || 'subtitle-renderer-error' : undefined);

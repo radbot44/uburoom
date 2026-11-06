@@ -8,12 +8,12 @@ const Sources=require('./plex-source');
 const LIMIT=64*1024*1024,FONTS=16*1024*1024,TOTAL=96*1024*1024;
 const cache=new Map(),windows=new Map();let bytes=0,active=0;
 function classifyExtractionError(error){
-  if(/timed out/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction timed out. Try Plex burn-in.');
-  if(/exceeded the.*limit|exceed/i.test(error?.message || ''))return new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try Plex burn-in.');
-  if(/no usable data/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction produced no usable data. Try Plex burn-in.');
-  if(/failed/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction failed during media demuxing. Try Plex burn-in.');
+  if(/timed out/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction timed out. Try burn-in.');
+  if(/exceeded the.*limit|exceed/i.test(error?.message || ''))return new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try burn-in.');
+  if(/no usable data/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
+  if(/failed/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction failed during media demuxing. Try burn-in.');
   if(error instanceof PlaybackError)return error;
-  return new PlaybackError('Original subtitles could not be extracted. Try Plex burn-in.');
+  return new PlaybackError('Original subtitles could not be extracted. Try burn-in.');
 }
 function dropWindow(entry){bytes-=entry.data.length;windows.delete(entry);entry.media.windowCache?.delete(entry.key);}
 function reserve(size){
@@ -51,9 +51,9 @@ function transfer(from,to){
   return true;
 }
 async function read(response,signal,limit=LIMIT){
-  if(!response.ok)throw new PlaybackError('The original subtitle resource is unavailable. Try Plex burn-in.');
+  if(!response.ok)throw new PlaybackError('The original subtitle resource is unavailable. Try burn-in.');
   const chunks=[];let size=0;
-  try{for await(const chunk of response.body){signal.throwIfAborted();size+=chunk.length;if(size>limit)throw new PlaybackError('Subtitle resource exceeds the supported size. Try Plex burn-in.');chunks.push(Buffer.from(chunk));}}
+  try{for await(const chunk of response.body){signal.throwIfAborted();size+=chunk.length;if(size>limit)throw new PlaybackError('Subtitle resource exceeds the supported size. Try burn-in.');chunks.push(Buffer.from(chunk));}}
   catch(error){await response.body.cancel?.().catch(()=>{});throw error;}
   return Buffer.concat(chunks,size);
 }
@@ -67,7 +67,7 @@ function source(media){
 }
 function startPgsJob(plex,media){
   const {track}=source(media),version=media.captionVersion;
-  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
+  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const controller=new AbortController();
   const abort=AbortSignal.any([media.subtitleAbort.signal,controller.signal,AbortSignal.timeout(300000)]);
   const job={media,version,controller,chunks:[],size:0,listeners:new Set(),complete:false,error:null};
@@ -75,7 +75,7 @@ function startPgsJob(plex,media){
   job.promise=runOperation(abort,async()=>{
     try{
       const av1=plex.av1;
-      if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
+      if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
       await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
         // Flush each packet so viewers receive cues as soon as demuxing reaches
         // them, instead of waiting for FFmpeg's pipe buffer to fill.
@@ -164,7 +164,7 @@ function awaitJob(promise,signal){
 }
 async function extract(plex,media,track,signal){
   const av1=plex.av1;
-  if(!av1?.ffmpeg || !Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
+  if(!av1?.ffmpeg || !Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   let directory;
   try{return await av1.input({...media,start:media.sourceStart,plexContext:plex},signal,async url=>{
     const fonts=[];
@@ -200,7 +200,7 @@ async function load(plex,media,signal){
   const previous=cache.get(media);
   if(previous?.version===version){cache.delete(media);cache.set(media,previous);return previous;}
   if(media.subtitleJob?.version===version)return awaitJob(media.subtitleJob.promise,signal);
-  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
+  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const abort=AbortSignal.any([media.subtitleAbort.signal,AbortSignal.timeout(85000)]);
   const job={media,version};active++;
   job.promise=runOperation(abort,async()=>{
@@ -229,9 +229,9 @@ async function load(plex,media,signal){
 function alignPgs(data,origin,endSeconds){
   const output=[];let cues=0;
   for(let offset=0;offset<data.length;){
-    if(offset+13>data.length||data[offset]!==0x50||data[offset+1]!==0x47)throw new PlaybackError('Invalid PGS extraction. Try Plex burn-in.');
+    if(offset+13>data.length||data[offset]!==0x50||data[offset+1]!==0x47)throw new PlaybackError('Invalid PGS extraction. Try burn-in.');
     const end=offset+13+data.readUInt16BE(offset+11);
-    if(end>data.length)throw new PlaybackError('Incomplete PGS extraction. Try Plex burn-in.');
+    if(end>data.length)throw new PlaybackError('Incomplete PGS extraction. Try burn-in.');
     const pts=Math.round(data.readUInt32BE(offset+2)-origin*90000);
     if(pts>=0&&pts<endSeconds*90000){
       const segment=Buffer.from(data.subarray(offset,end));segment.writeUInt32BE(pts,2);segment.writeUInt32BE(0,6);
@@ -276,9 +276,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   let job=media.windowJobs.get(cacheKey);
   if(job?.controller.signal.aborted)job=undefined;
   if(job)return waitWindow(job,signal);
-  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
+  if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose burn-in.');
   const av1=plex.av1;
-  if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
+  if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   const controller=new AbortController();
   const abort=AbortSignal.any([controller.signal,media.subtitleAbort?.signal,AbortSignal.timeout(30000)].filter(Boolean));
   job={media,controller,users:0,complete:false};active++;
@@ -289,23 +289,23 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       let data=await av1.input({...media,start:media.sourceStart,plexContext:plex,subtitleWindow:track.delivery==='pgs'},abort,async url=>{
         if(track.delivery==='pgs'){
           const probe=av1.ffprobe;
-          if(!probe)throw new PlaybackError('PGS window extraction needs configured FFprobe. Try Plex burn-in.');
+          if(!probe)throw new PlaybackError('PGS window extraction needs configured FFprobe. Try burn-in.');
           let origin=media.subtitleOrigin;
           if(!Number.isFinite(origin)){
             const info=JSON.parse((await av1.run(probe,['-v','error','-analyzeduration','1000000','-probesize','1048576','-read_intervals','%+0.1','-show_packets','-show_entries','format=start_time:stream=index,codec_name:packet=pts_time','-of','json',url],abort,10000,1024*1024)).toString());
-            if(!info.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try Plex burn-in.');
+            if(!info.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
             origin=Number(info.format?.start_time??info.packets?.[0]?.pts_time);
-            if(!Number.isFinite(origin))throw new PlaybackError('The source timeline could not be determined. Try Plex burn-in.');
+            if(!Number.isFinite(origin))throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
             abort.throwIfAborted();job.media.subtitleOrigin=origin;
           }
           const metadata=JSON.parse((await av1.run(probe,['-v','error','-analyzeduration','1000000','-probesize','1048576','-read_intervals',String(origin+startSeconds)+'%'+String(origin+endSeconds),
             '-show_packets','-show_entries','packet=stream_index,pts_time,size:stream=index,codec_name','-of','json',url],abort,25000,16*1024*1024)).toString());
-          if(!metadata.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try Plex burn-in.');
-          if(!Array.isArray(metadata.packets)||!metadata.packets.length)throw new PlaybackError('No media packets could be verified for the subtitle window. Try Plex burn-in.');
+          if(!metadata.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
+          if(!Array.isArray(metadata.packets)||!metadata.packets.length)throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
           const packets=metadata.packets.filter(packet=>packet.stream_index===track.index);
           const count=packets.length;
           const expected=packets.reduce((sum,packet)=>sum+Number(packet.size),0);
-          if(!Number.isSafeInteger(expected)||expected<0||expected>16*1024*1024)throw new PlaybackError('PGS window exceeded the supported limit. Try Plex burn-in.');
+          if(!Number.isSafeInteger(expected)||expected<0||expected>16*1024*1024)throw new PlaybackError('PGS window exceeded the supported limit. Try burn-in.');
           if(!count){pgs={data:Buffer.alloc(0),cues:0};return pgs.data;}
           const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-copyts','-analyzeduration','1000000','-probesize','1048576','-i',url,
             '-map','0:'+track.index,'-c:s','copy','-frames:s',String(count),'-flush_packets','1','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
@@ -313,13 +313,13 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
           const expectedTimes=new Map(),receivedTimes=new Map();
           for(const packet of packets){
             const pts=Math.round(Number(packet.pts_time)*90000);
-            if(!Number.isSafeInteger(pts)||pts<0||pts>0xffffffff)throw new PlaybackError('PGS source timestamps are unavailable or exceed the supported range. Try Plex burn-in.');
+            if(!Number.isSafeInteger(pts)||pts<0||pts>0xffffffff)throw new PlaybackError('PGS source timestamps are unavailable or exceed the supported range. Try burn-in.');
             expectedTimes.set(pts,(expectedTimes.get(pts)||0)+Number(packet.size));
           }
           const outputComplete=chunk=>{
             pending=Buffer.concat([pending,chunk]);let offset=0;
             while(offset+13<=pending.length){
-              if(pending[offset]!==0x50||pending[offset+1]!==0x47)throw new PlaybackError('Invalid PGS extraction. Try Plex burn-in.');
+              if(pending[offset]!==0x50||pending[offset+1]!==0x47)throw new PlaybackError('Invalid PGS extraction. Try burn-in.');
               const length=pending.readUInt16BE(offset+11);if(offset+13+length>pending.length)break;
               const pts=pending.readUInt32BE(offset+2);receivedTimes.set(pts,(receivedTimes.get(pts)||0)+3+length);
               rawBytes+=3+length;offset+=13+length;
@@ -327,9 +327,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
             pending=Buffer.from(pending.subarray(offset));return rawBytes>=expected;
           };
           const data=await av1.run(av1.ffmpeg,args,abort,25000,16*1024*1024,undefined,{outputComplete});
-          if(rawBytes!==expected||pending.length||expectedTimes.size!==receivedTimes.size||[...expectedTimes].some(([pts,size])=>receivedTimes.get(pts)!==size))throw new PlaybackError('PGS extraction did not match the requested packets. Try Plex burn-in.');
+          if(rawBytes!==expected||pending.length||expectedTimes.size!==receivedTimes.size||[...expectedTimes].some(([pts,size])=>receivedTimes.get(pts)!==size))throw new PlaybackError('PGS extraction did not match the requested packets. Try burn-in.');
           pgs=alignPgs(data,origin,endSeconds);
-          if(!pgs.data.length)throw new PlaybackError('Subtitle extraction produced no usable data. Try Plex burn-in.');
+          if(!pgs.data.length)throw new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
           return pgs.data;
         }
         const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,

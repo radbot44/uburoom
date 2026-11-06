@@ -160,7 +160,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         }
         const data=result.assets.get(match[2]);if(!data)return json(res,404,{error:'Subtitle resource unavailable.'});
         res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':data.length});return res.end(req.method==='HEAD'?undefined:data);
-      }catch(error){if(!res.headersSent&&!res.destroyed)json(res,503,{error:error instanceof PlaybackError?error.message:'Subtitles could not load. Try Plex burn-in.'});else if(!res.destroyed)res.destroy();}
+      }catch(error){if(!res.headersSent&&!res.destroyed)json(res,503,{error:error instanceof PlaybackError?error.message:'Subtitles could not load. Try burn-in.'});else if(!res.destroyed)res.destroy();}
       finally{clearInterval(check);res.off('close',cancel);}return;
     }
     if (key.startsWith('captions-')) {
