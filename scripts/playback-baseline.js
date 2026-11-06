@@ -41,6 +41,7 @@ function fixturePlex(directory, manifest, control = {}) {
   return async (input,options = {}) => {
     const url = new URL(input);
     if (url.origin !== 'http://playback-fixture.invalid:32400' || options.headers?.['X-Plex-Token'] !== 'synthetic-playback-only') throw new Error('Unexpected fixture upstream');
+    if (control.down) return new Response(null,{status:503});
     if (url.pathname === '/library/sections') return json({Directory:[]});
     const select=/^\/library\/parts\/(\d+)$/.exec(url.pathname);
     if(select && options.method==='PUT') {

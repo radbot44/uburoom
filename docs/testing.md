@@ -15,6 +15,16 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P2/P14 — Plex outage continuity and live Vigrid findings — 2026-11-06
+
+**B, uncommitted tree based on `a6ed2f9`,** Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. A simulated restart returns 503 for all Plex requests and kills every transcode session. Recovery harness: **15/15 passed in Chrome once and Firefox twice**. A ten-second restart with buffered viewers kept the room, streams and decoded playback, with no notice shown. An outage outlasting the buffer warned both viewers, kept them in the room and resumed the shared position about 15s after Plex returned, using new streams. `node --test tests/*.test.js`: **533 passed, zero failures/cancellations/skips**.
+
+One earlier Firefox run failed the existing "frames decode after delivery returns" assertion; it did not recur in the two final runs and its cause is unknown. Not covered: real Plex restarts of this build, personal Plex scopes in a browser, local WebM viewers during an outage, and outages long enough to exhaust HLS retries. A viewer who exhausts them may need to rejoin.
+
+**C, owner-run on Vigrid at `a6ed2f9`, previously `363de22`.** uburoom survived a real Plex restart, but before the change above viewers were evicted with "Room ended or was made private" while the room existed. Discord with acceleration off started AV1/QSV on two titles with no Plex transcode seen on the dashboard; a brief session could have been missed. That removed the evidence for per-title decode-failure memory, which the owner dropped. Delivery negotiation is closed as scoped in [playback reliability](playback-reliability.md#playback-decisions); automatic quality remains separate.
+
+**C, 4K conversion benchmark on Vigrid,** idle i5-11600KF and Arc A380, local file, 3840x2160 HEVC 10-bit Dolby Vision profile 7, 63 Mbps, 720p/4Mbps AV1 output. Six-second chunks: current command 10.2s (0.59x real time; 0.77x with five jobs). GPU decode and scale with CPU tonemap: 2.1s (4.89x with five jobs), matching picture, 144 frames per chunk. All-GPU tonemap: 1.8s but visibly crushed, rejected. Open defect: GPU decode started 4 of 8 tested chunks 1-3 frames early, cause unknown. Production reads through Plex over HTTP, so these local-file figures are not end-to-end results. Why conversion fully stopped during the live run remains unconfirmed.
+
 ### M1-P2 — Delivery plan extraction — 2026-11-06
 
 A/B on the uncommitted working tree based on `57a93db`, Node v22.22.2 / Windows, Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. Route selection moved from repeated conditions in `Plex.prepare` to `server/delivery-plan.js`, with its reason added to `deliveryInfo` and diagnostics. No intended behavior change.
@@ -321,7 +331,7 @@ Detailed measurements and repaired historical failures are retained in the [dige
 | --- | --- | --- |
 | Release | A/B/C, D UX | Independent install/origin/providers, operator restore/rollback, source/history/ZIP privacy and licensing |
 | P1 endurance | B/C/D | Real Firefox/Activity/multi-viewer endurance, hardware/resources, unload cause and physical fidelity |
-| P2 delivery | A/B/C | Source/output negotiation and real cross-account/codec/capacity matrix |
+| P2 delivery | A/B/C | Real-time frame-accurate 4K local conversion and real cross-account/codec/capacity matrix; negotiation closed as scoped in [playback reliability](playback-reliability.md#playback-decisions) |
 | P3 fidelity | B/C/D | Real languages/downmix/captions and switching |
 | P4 reporting | C/D (A/B on main) | Live PMS/Tautulli validation, multi-viewer shared-producer stop/seek transitions, natural completion, external AV1 telemetry and personal-state/sponsorship isolation |
 | P5/P6 sync/pacing | B/C/D | Physical/WAN ≤50ms p95 / ≤100ms p99, supported-policy disposition and joint smoothness acceptance |

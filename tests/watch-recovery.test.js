@@ -160,7 +160,7 @@ test('expired HLS session requests one personal refresh per stream with a bounde
   let proxied=0;
   const client={startLoad(){},stopLoad(){}};
   const context={hls:client,Hls:{ErrorTypes:{NETWORK_ERROR:'network'},ErrorDetails:{MEDIA_SOURCE_REQUIRES_RESET:'reset'}},state:{format:'hls',mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream'},
-    mediaSource:'/current',selected:'room',pending:false,hlsRefreshPending:false,hlsRefreshVersion:undefined,hlsRefreshTimes:[],
+    mediaSource:'/current',selected:'room',pending:false,hlsRefreshPending:false,hlsRefreshVersion:undefined,hlsRefreshTimes:[],video:{currentTime:0,buffered:{length:0}},
     hlsNetworkRetries:0,hlsRecoveryTimer:undefined,hlsNetworkFailure:undefined,proxyDirectFile:()=>{proxied++;},
     execute:async command=>{commands.push(command);},clearTimeout:()=>{},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
   vm.runInNewContext(source.slice(source.indexOf('async function refreshHlsSession('),source.indexOf('function handleHlsError(')),context);
@@ -344,4 +344,17 @@ test('HLS quota and append failures retain their cause independently of dropped 
   assert.deepEqual(rows.map(row=>row.detail),['quota-exceeded','quota-exceeded','buffer-full','buffer-append','fragment']);
   assert.equal(rows[4].category,'network');assert.equal(rows[0].hlsMaxBufferSize,256*1024*1024);
   assert.equal(playback.hlsErrorDetail({dropped:100},details),'other','frame drops alone never establish quota pressure');
+});
+test('a dead HLS session is replaced only when its buffered media is running out',async()=>{
+  const timers=[],commands=[];let ahead=60;
+  const client={};
+  const context={hls:client,state:{format:'hls',mediaUrl:'/current',mediaVersion:'media',streamVersion:'stream'},mediaSource:'/current',selected:'room',pending:false,qualityPending:false,
+    hlsRefreshPending:false,hlsRefreshVersion:undefined,hlsRefreshTimes:[],video:{currentTime:10,buffered:{length:1,start:()=>0,end:()=>10+ahead}},uburoomPlayback:playback,
+    diagnosticSample(){},execute:async command=>{commands.push(command);},clearTimeout(){},setTimeout:(action,delay)=>{timers.push({action,delay});return timers.length;}};
+  vm.runInNewContext(source.slice(source.indexOf('async function refreshHlsSession('),source.indexOf('function handleHlsFragmentBuffered(')),context);
+  await context.refreshHlsSession(client);
+  assert.equal(commands.length,0,'plenty of buffer keeps the stream attached');
+  assert.equal(timers.length,1);
+  ahead=5;client.refreshRetryTimer=undefined;await timers[0].action();
+  assert.equal(commands.length,1,'a low buffer replaces the dead session');
 });

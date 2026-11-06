@@ -100,6 +100,7 @@ const supportsPiP = supportsDocPiP || supportsVideoPiP;
 let pipWindow = null;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsRecoveryAt = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
+let providerNoticeTimer, providerNoticeShown = false;
 let av1, localFallbackVersion, localFallbackAttempts = new Set();
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
 let observationPending = false, observationQueued = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
@@ -1469,13 +1470,16 @@ function restartHlsForSeek(target) {
 }
 async function refreshHlsSession(client) {
   if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending) return;
-  if (pending || qualityPending) {
+  // A dead Plex session costs nothing until its buffered media is needed, and
+  // replacing it discards that media, so keep playing what is already here.
+  const buffered = uburoomPlayback.bufferedAhead(video.buffered,video.currentTime) >= 15;
+  if (pending || qualityPending || buffered) {
     if (client.refreshRetryTimer) return;
     const room = selected, version = state.mediaVersion, stream = state.streamVersion;
     client.refreshRetryTimer = setTimeout(() => {
       client.refreshRetryTimer = undefined;
       if (hls === client && selected === room && state?.mediaVersion === version && state?.streamVersion === stream) void refreshHlsSession(client);
-    }, 200);
+    }, buffered ? 2000 : 200);
     return;
   }
   if (hlsRefreshVersion !== state.mediaVersion) { hlsRefreshVersion = state.mediaVersion; hlsRefreshTimes = []; }
@@ -1598,7 +1602,21 @@ function spendHlsRecovery() {
   hlsRecoveryAt = now;
   return hlsRecoveryCount++ === 0;
 }
+// Waits as long as the host buffering notice, so a brief stream replacement stays quiet.
+function renderProviderNotice(active) {
+  if (!active) {
+    clearTimeout(providerNoticeTimer);providerNoticeTimer=undefined;
+    if(providerNoticeShown)toasts.dismiss('provider-problem');
+    providerNoticeShown=false;return;
+  }
+  if(providerNoticeShown||providerNoticeTimer)return;
+  providerNoticeTimer=setTimeout(()=>{
+    providerNoticeTimer=undefined;providerNoticeShown=true;
+    toasts.show('provider-problem',{type:'error',title:'Plex connection problem',hint:'Playback should resume once Plex recovers.',symbol:'refresh',persistent:true});
+  },3000);
+}
 function unavailable(message,reason='room-unavailable') {
+  renderProviderNotice(false);
   syncRoomUrl(null);
   unavailableToasts();
   clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
@@ -2092,6 +2110,7 @@ function applyState(next) {
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
   unavailableToasts(next.unavailableMedia);
+  renderProviderNotice(next.providerNotice);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (changed) {
     clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;

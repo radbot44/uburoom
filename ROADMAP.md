@@ -1,6 +1,6 @@
 # uburoom roadmap
 
-Updated: 2026-11-01.
+Updated: 2026-11-06.
 
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
@@ -35,7 +35,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 | ID | Area | Implemented | Remaining work |
 | --- | --- | --- | --- |
 | M1-P1 | Sustained playback | Recovery, diagnostics, early runtime degradation warnings and scoped real two-hour playback evidence | Representative Firefox 4K/device verification, evidence-based HLS tuning, Activity and multi-viewer lifecycle coverage; unexplained unload/resource behavior and long-run accounting |
-| M1-P2 | Automatic delivery | Direct file/HLS, opportunistic audio-only remuxing and video stream-copy, proxy recovery, shared outputs, local codec selection and bounded capacity fallback | Complete source/version inventory, automatic quality and real cross-account/device coverage |
+| M1-P2 | Automatic delivery | Direct file/HLS, opportunistic audio-only remuxing and video stream-copy, proxy recovery, shared outputs, local codec selection, bounded capacity fallback, and negotiation through one delivery plan with observed decode evidence | Real-time 4K local conversion with frame-accurate chunks, complete source/version inventory, automatic quality and real cross-account/device coverage |
 | M1-P3 | Content fidelity | Personal tracks and initial decoded audio/caption evidence | Real track switching/restoration, downmix, A/V/caption alignment, source cadence and device coverage; subtitle renderer work is P9 |
 | M1-P4 | Plex viewing experience | Native viewer observations/history; decoupled session reporting, shared-producer stop safety, activity-only default with personal watch-state opt-in, sponsored isolation, and chapters/intro/credits navigation | Live PMS/Tautulli validation, multi-viewer stop/seek transitions and natural playback completion; later parity increments below |
 | M1-P5 | Synchronization | Clock estimation, scheduled controls, readiness, independent recovery, bounded sample expiry, Stage 2 Hybrid EMA presentation sync and reusable `shared/sync/` core | Physical/WAN presentation-skew measurements and calibration with P6; targets remain ≤50 ms p95 / ≤100 ms p99, unverified |
@@ -82,7 +82,7 @@ Details: [rooms and queues](docs/rooms-and-queues.md).
 
 Provider detection retains existing cache/polling bounds; direct Plex delivery depends on PMS enforcement. Real-provider/device integration and independent installation recovery remain release checks, with limits recorded in [testing](docs/testing.md).
 
-Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
+Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed; during a provider outage admitted viewers keep their place while new admission fails closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
 
 Details: [accounts and access](docs/accounts-and-access.md), [names and host directory](docs/account-names-and-host-directory.md).
 

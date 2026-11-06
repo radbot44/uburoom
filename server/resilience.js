@@ -118,4 +118,10 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
     });
   };
 }
-module.exports={CircuitBreaker,resilientFetch,IntegrationUnavailable};
+// A provider that cannot answer, as opposed to one that answered with a denial.
+function isProviderOutage(error) {
+  if (!error || error.callerAborted) return false;
+  if (error.providerOutage || error instanceof IntegrationUnavailable || error.status === 429 || error.status >= 500) return true;
+  return !error.status && (error.name === 'TimeoutError' || error.name === 'TypeError' && error.message === 'fetch failed');
+}
+module.exports={CircuitBreaker,resilientFetch,IntegrationUnavailable,isProviderOutage};

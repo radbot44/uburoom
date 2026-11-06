@@ -7,6 +7,7 @@
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
 const { SharedTask, currentSignal } = require('./operation');
+const { isProviderOutage } = require('./resilience');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
 const { eligible, viewEligible, isHost, sameVoice, canWatch } = require('./core');
@@ -51,6 +52,28 @@ class Watch {
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
     this.autoplayDelayMs = 10000;
+    this.providerDownSince = undefined; this.providerRecoveredAt = 0;
+  }
+  providerFailed(error) {
+    if (!isProviderOutage(error)) return false;
+    this.providerDownSince ??= Date.now();
+    return true;
+  }
+  providerResponded() {
+    if (this.providerDownSince === undefined) return;
+    this.providerDownSince = undefined; this.providerRecoveredAt = Date.now();
+  }
+  // A viewer already watching keeps their place while Plex cannot answer. Nobody
+  // new is admitted, and the next answer from Plex applies any real denial.
+  retainedThroughOutage(room, actor, error) {
+    if (!this.providerFailed(error)) return false;
+    return [...room.viewers.values(),...room.disconnectedViewers.values()].some(viewer => viewer.userId === actor.userId);
+  }
+  // Silent unless someone is actually affected, including while recovering after Plex returns.
+  providerNotice(room) {
+    if (this.providerDownSince === undefined && Date.now() - this.providerRecoveredAt >= 60000) return false;
+    // A viewer retrying delivery reports seeking; a brief healthy seek stays below the client's delay.
+    return [...room.viewers.values()].some(viewer => ['buffering','seeking','starting','error'].includes(viewer.syncQuality?.status) || viewer.media?.playbackError || room.media && !viewer.media);
   }
   create(actor, visibility = 'public', saved) {
     if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
@@ -131,7 +154,9 @@ class Watch {
   async prepareViewer(room, actor, viewerId) {
     const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId) return;
-    const plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;
+    let plex;
+    try {plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;}
+    catch(error) {if(this.providerFailed(error))return viewer.media;throw error;}
     if(room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer)return;
     const queueRevision = room.saved ? this.roomState.queue.room(room.s.roomId).queueRevision : undefined;
     if (room.saved && room.queueEntriesRevision !== queueRevision) {
@@ -140,8 +165,12 @@ class Watch {
     }
     const entries = room.saved ? [...(room.queueEntries || [])] : [];
     if (room.media && !entries.some(item=>item.mediaId===room.media.id)) entries.unshift({id:room.media.id,mediaId:room.media.id,title:room.media.title});
+    let availability;
     if (plex.availability) {
-      const availability = await plex.availability(entries.map(item=>item.mediaId));
+      try {availability=await plex.availability(entries.map(item=>item.mediaId));if(entries.length)this.providerResponded();}
+      catch(error) {if(!this.providerFailed(error))throw error;}
+    }
+    if (availability) {
       if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
       if (room.saved && this.roomState.queue.room(room.s.roomId).queueRevision!==queueRevision) return;
       viewer.unavailableMedia = entries.filter(item=>availability.get(item.mediaId)===false).map(({id,mediaId,title})=>({id,mediaId,title}));
@@ -187,7 +216,7 @@ class Watch {
     try { await job.join(); }
     catch (error) {
       currentSignal()?.throwIfAborted();
-      if (!job.signal.aborted) throw error;
+      if (!job.signal.aborted && !this.providerFailed(error)) throw error;
     }
   }
   async replaceViewer(room,actor,viewerId,prepare,{permitted=()=>true,retainUnavailable=false,accept=()=>true}={}) {
@@ -287,9 +316,13 @@ class Watch {
     if (!room?.saved && room?.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
     if (!room || this.rooms.get(room.s.roomId) !== room) return false;
     if (!canWatch(this.hub.access,actor.userId,actor)) {
-      try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId,actor)) return false; } catch { return false; }
+      try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId,actor)) return false; }
+      catch (error) { if (!this.retainedThroughOutage(room,actor,error)) return false; }
     }
-    if(room.media?.kind==='plex'&&this.hub.plexFor){try{if(!await (await this.hub.plexFor(actor)).allows(room.media.id))return false;}catch{return false;}}
+    if(room.media?.kind==='plex'&&this.hub.plexFor){
+      try {const allowed=await (await this.hub.plexFor(actor)).allows(room.media.id);this.providerResponded();if(!allowed)return false;}
+      catch (error) { if (!this.retainedThroughOutage(room,actor,error)) return false; }
+    }
     return viewEligible(room.s, actor, this.hub.config, Date.now(), this.hub.access, this.hub.isAdmin(actor));
   }
   async list(actor, activity = false) {
@@ -441,7 +474,7 @@ class Watch {
       observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
       videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
       audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
-      mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [],
+      mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [], providerNotice:this.providerNotice(room),
       qualityNotice:viewer.media?.qualityNotice, preferredQuality:viewer.preferredQuality,
       deliveryInfo:viewer.media?{format:viewer.media.format,reason:viewer.media.deliveryReason,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
         videoDecision:viewer.media.output?.videoDecision,audioDecision:viewer.media.output?.audioDecision,
@@ -1246,9 +1279,15 @@ class Watch {
     if (!action.startsWith('room.') && action !== 'media.load' && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
     if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
     if (['media.play','media.toggle'].includes(action) && room.media?.kind !== 'demo') {
-      const version = room.mediaVersion, plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
-      if (plex.playableItem) await plex.playableItem(room.media.id);
-      if (!permitted() || room.mediaVersion!==version || !await this.canView(room,actor) || !permitted() || this.hub.plexFor && (await this.hub.plexFor(actor)).principal!==plex.principal) return {status:'unavailable',message:'Room changed or command expired.'};
+      const version = room.mediaVersion;
+      // An outage must not stop anyone resuming media already buffered. A file
+      // Plex confirms is missing still refuses, and access is checked below.
+      let plex, unconfirmed = false;
+      try {
+        plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+        if (plex.playableItem) await plex.playableItem(room.media.id);
+      } catch (error) { if (!this.providerFailed(error)) throw error; unconfirmed = true; }
+      if (!permitted() || room.mediaVersion!==version || !await this.canView(room,actor) || !permitted() || !unconfirmed && this.hub.plexFor && (await this.hub.plexFor(actor)).principal!==plex.principal) return {status:'unavailable',message:'Room changed or command expired.'};
     }
     if (room.recovery && (['media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) this.roomState.finishRecovery(room);
     if (action === 'profile.load' && !room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' };

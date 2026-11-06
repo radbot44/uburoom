@@ -87,6 +87,8 @@ Owner-approved 2026-10-29: bounded subtitle-window recovery uses the existing lo
 
 Owner-approved 2026-10-29: playback degradation extends the existing detector and unchanged Lower quality toast. Deliberate dismissal belongs to the current media/viewing session and survives same-media stream replacement; a new media item, room or session exit resets it. Runtime evidence alone drives warnings, once per continuous degradation episode with healthy playback required before rearming. Capability hints remain diagnostic context; quality changes remain explicit viewer actions. Buffer tuning requires measured justification.
 
+Owner-approved 2026-11-06: a Plex outage stays silent while buffered playback covers it. If anyone in the room is affected, including while recovering after Plex returns, everyone in the room sees one shared error toast after the established 3-second delay, and it clears once nobody is affected. Do not show "room ended" for an outage.
+
 Keep existing draft/save/cancel boundaries explicit and report failures truthfully. Preserve independent personal preferences and shared room authority. Put technical details in existing diagnostics surfaces, never credentials or private playback URLs.
 
 ## Review and maintenance

@@ -7,8 +7,8 @@ M1-P1/P2/P3/P5/P6/P9 technical contract. [Roadmap](../ROADMAP.md) owns prioritie
 A playback attempt includes edition/version/file, item timeline, video/color/cadence, selected audio/subtitles, container/transport, client support, network and server capacity.
 
 1. Resolve current media authority and eligible source. Never silently replace an alternate cut; substitute encodes only when timing-compatible.
-2. Treat codec/MSE/MediaCapabilities hints as candidates, not decode proof.
-3. Prefer compatible direct output, then remux/audio-only conversion, then full conversion/burn-in. One delivery plan chooses the route and records why in diagnostics. Complete automatic source/output negotiation remains unfinished.
+2. Treat codec/MSE/MediaCapabilities hints as candidates, not decode proof. Negotiation is therefore the delivery plan plus observed decode evidence and bounded fallback; clients do not pre-report capabilities, because positive hints proved false in Discord with acceleration off.
+3. Prefer compatible direct output, then remux/audio-only conversion, then full conversion/burn-in. One delivery plan chooses the route and records why in diagnostics.
 4. Validate actual Plex output and requested track/quality ceilings.
 5. Confirm decoded picture; verify intended audio/captions independently.
 6. Recover through bounded candidates while preserving position, pause intent and personal choices. Fence superseded work by attempt/stream generation.
@@ -29,6 +29,7 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 
 ## Buffering and recovery
 
+- A Plex outage is not a denial. Admitted viewers keep their room, stream and commands until Plex answers, when any real denial applies; new admission fails closed. A dead Plex session is replaced only when under 15s of buffer remains, because replacing it discards that media. Viewers are told only as the [design guide](design-guide.md#reuse-and-feedback) describes.
 - Managed output targets 60s ahead/30s behind under a 64MiB encoded-data budget. Bitrate/segment/quota pressure reduces windows; this does not cap total browser/server RAM. Native caching remains browser-managed.
 - Seek supersedes speculative work; partial audio/video pairs and late cancelled output cannot corrupt the new buffer. Preserve playable data during speculative failure.
 - Keep finite transport retries, stream refresh and terminal errors. A fresh seek supersedes irrelevant retry delay. Recover paused playback to the shared position without restarting healthy viewers.

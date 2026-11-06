@@ -1,6 +1,6 @@
 'use strict';
 const {randomUUID,sign}=require('node:crypto');
-const { resilientFetch } = require('./resilience');
+const { resilientFetch, isProviderOutage } = require('./resilience');
 const { runOperation, commitOperation } = require('./operation');
 class PlexAccessError extends Error {constructor(message,revoked=false){super(message);this.revoked=revoked;}}
 class PlexAuth {
@@ -38,7 +38,7 @@ class PlexAuth {
   }
   async machine(){
     const pinned=this.config.plexMachineIdentifier||this.accounts.meta('plexMachineIdentifier');
-    let root;try{root=await this.plex.json('/');}catch(error){throw new PlexAccessError(error.status?`Plex server identity check failed (HTTP ${error.status}); check the server's PLEX_TOKEN and access settings`:'Plex server identity check could not reach the configured server; check PLEX_URL and connectivity');}
+    let root;try{root=await this.plex.json('/');}catch(error){throw Object.assign(new PlexAccessError(error.status?`Plex server identity check failed (HTTP ${error.status}); check the server's PLEX_TOKEN and access settings`:'Plex server identity check could not reach the configured server; check PLEX_URL and connectivity'),{providerOutage:isProviderOutage(error)});}
     const id=root.machineIdentifier;
     if(typeof id!=='string'||!id)throw new Error('Plex server identity unavailable');
     if(pinned&&pinned!==id)throw new Error('Configured Plex server identity changed; check server configuration');
@@ -63,7 +63,7 @@ class PlexAuth {
     credential.serverToken=resource.accessToken;
     const scoped=this.plex.scope(resource.accessToken,credential.clientId);
     scoped.discoveryToken=credential.token;
-    let sections;try{sections=await scoped.json('/library/sections');}catch(error){const denied=[401,403,498].includes(error.status);throw new PlexAccessError(error.status?`Plex server library access check failed (HTTP ${error.status}); ${denied?'the server rejected this account token. Sign in or reconnect Plex again; check that this account has server access':'try again or check the Plex server'}`:'Plex server library access check could not reach the configured server; check PLEX_URL and connectivity',denied);}
+    let sections;try{sections=await scoped.json('/library/sections');}catch(error){const denied=[401,403,498].includes(error.status);throw Object.assign(new PlexAccessError(error.status?`Plex server library access check failed (HTTP ${error.status}); ${denied?'the server rejected this account token. Sign in or reconnect Plex again; check that this account has server access':'try again or check the Plex server'}`:'Plex server library access check could not reach the configured server; check PLEX_URL and connectivity',denied),{providerOutage:isProviderOutage(error)});}
     if(!Array.isArray(sections.Directory)||!sections.Directory.length)throw new PlexAccessError('This Plex account has no accessible libraries on this server',true);
     // A refreshed permission scope must not reuse data gathered before revalidation.
     for(const cache of [scoped.catalogCache,scoped.artSources,scoped.imageCache,scoped.randomCache])cache.clear();

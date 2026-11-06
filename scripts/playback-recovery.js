@@ -205,7 +205,7 @@ async function main(){
       await pause(3000);
       const after=await snapshot(host);
       assert.ok(after.position-recovered.position>2,'decoded playback advances after delivery returns');
-      assert.ok(after.frames-recovered.frames>35,'video frames decode after delivery returns');
+      assert.ok(after.frames-recovered.frames>35,'video frames decode after delivery returns: '+JSON.stringify({recovered:[recovered.position,recovered.frames,recovered.ready,recovered.paused],after:[after.position,after.frames,after.ready,after.paused]}));
       let tones=0;for(let i=0;i<15;i++){await pause(100);if(await evaluate(host,'(()=>{const s=playbackMeter.sample();return s&&s.audioDb>-65&&Math.abs(s.audioHz-880)<20;})()'))tones++;}
       assert.ok(tones>=5,'selected French PCM decodes after delivery returns');
       assert.equal(after.tracks.audioId,'1042');assert.equal(after.tracks.subtitleId,'1044');
@@ -278,6 +278,52 @@ async function main(){
       assert.ok(guestAfter.frames-guestVisible.frames>35,'the recovered viewer decodes frames');assert.ok(tones>=5,'the recovered viewer decodes selected audio');
       await command(host,'media.pause');
       return {detail:'38-second outage for one output: host decoded throughout without stalling; guest fell '+guestLag.toFixed(1)+' s behind and recovered the shared position in '+recoveryMs+' ms with its own tracks.',hostBefore,hostInterrupted,guestBefore,guestInterrupted,guestRecovered,guestAfter,recoveryMs,tones};
+    });
+    const restartPlex=()=>{control.down=true;for(const event of control.events)if(event.event==='start')control.expiredSessions.add(event.session);};
+    const notice='!!document.querySelector("[data-toast=provider-problem]")';
+    const playingFromBuffer=async()=>{
+      await command(host,'media.seek.absolute',{seconds:10});
+      await until(host,'video.paused && !video.seeking && Math.abs(video.currentTime-10)<.7','Paused before Plex restart');
+      await pause(5000);
+      await command(host,'media.play');await until(host,'!video.paused && video.readyState>=3','Playback before Plex restart');
+    };
+    await check('a brief Plex restart stays invisible to buffered viewers',async()=>{
+      await playingFromBuffer();
+      const before=await snapshot(host),guestBefore=await snapshot(guest);
+      assert.ok(before.buffered>=20,'the viewer has real buffered media');
+      restartPlex();
+      let warned=false;
+      try {for(let i=0;i<40;i++){await pause(250);warned=warned||await evaluate(host,notice)||await evaluate(guest,notice);}}
+      finally {control.down=false;}
+      const after=await snapshot(host),guestAfter=await snapshot(guest);
+      assert.equal(warned,false,'nobody is told about a problem that affected nobody');
+      assert.equal(after.stream,before.stream,'buffered playback keeps its stream');assert.equal(guestAfter.stream,guestBefore.stream);
+      assert.equal(after.error,'');assert.equal(await evaluate(host,'!!selected && !!state?.mediaUrl && !video.paused'),true,'the room stays intact');
+      assert.ok(after.position-before.position>8,'playback continues through the restart');
+      assert.ok(after.frames-before.frames>8*17,'picture keeps decoding through the restart');
+      await command(host,'media.pause');
+      return {detail:'Ten-second Plex restart with buffered viewers: room, streams and decoded playback continued with no notice.',before,after};
+    });
+    await check('a Plex outage warns the whole room once someone buffers',async()=>{
+      await playingFromBuffer();
+      restartPlex();
+      let hostWarned,guestWarned;
+      try {
+        await until(host,notice,'Room notice on the host',70000);await until(guest,notice,'Room notice on the guest',10000);
+        hostWarned=await snapshot(host);guestWarned=await snapshot(guest);
+        assert.equal(await evaluate(host,'!!selected'),true,'the room survives the outage');assert.equal(await evaluate(guest,'!!selected'),true);
+      } finally {control.down=false;}
+      const returnedAt=Date.now();
+      await until(host,'!video.paused && video.readyState>=3 && !playbackError && Math.abs(video.currentTime-expected())<1','Host recovers after Plex returns',110000);
+      await until(guest,'!video.paused && video.readyState>=3 && !playbackError && Math.abs(video.currentTime-expected())<1','Guest recovers after Plex returns',60000);
+      const recoveryMs=Date.now()-returnedAt;
+      // Hidden tabs can leave a dismissed toast waiting on its exit animation.
+      const cleared='!state.providerNotice && !providerNoticeShown';
+      await until(host,cleared,'Notice clears on the host',30000);await until(guest,cleared,'Notice clears on the guest',30000);
+      const resumed=await snapshot(host);await pause(3000);const after=await snapshot(host);
+      assert.ok(after.frames-resumed.frames>35,'picture decodes after Plex returns');
+      await command(host,'media.pause');
+      return {detail:'Outage outlasted the buffer: both viewers were warned, stayed in the room and resumed the shared position '+recoveryMs+' ms after Plex returned.',hostWarned,guestWarned,recoveryMs};
     });
     await check('sole host rejoins an empty room after timeout',async()=>{
       await evaluate(guest,'document.getElementById("close-room").click();true');

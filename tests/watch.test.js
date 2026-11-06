@@ -743,3 +743,30 @@ test('media.load with position initializes the room position to the resume offse
   watch.close();
 });
 
+test('a Plex outage keeps admitted viewers in the room, admits nobody new and never excuses a denial',async()=>{
+  const hub=new Hub({ownerId:'a',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true,options:()=>({available:true})};
+  let failure;
+  const plex={stop:async()=>{},allows:async()=>{if(failure)throw failure;return true;}};
+  hub.plexFor=async()=>plex;
+  const watch=new Watch(hub,plex),actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'}),a=actor('a'),b=actor('b');
+  const room=watch.rooms.get(watch.create(a)),viewerId=randomUUID();
+  room.media={id:'1',kind:'plex',title:'Movie',duration:60};
+  watch.snapshot(room,a,viewerId);
+  const viewer=room.viewers.get(viewerId);viewer.media={id:'1',kind:'plex'};
+  assert.equal(await watch.canView(room,b),true);
+  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false);
+  failure=Object.assign(new Error('Unavailable'),{status:503});
+  assert.equal(await watch.canView(room,a),true,'an admitted viewer stays through an outage');
+  assert.equal(await watch.canView(room,b),false,'an outage admits nobody new');
+  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false,'buffered viewers hear nothing');
+  viewer.syncQuality={status:'buffering'};
+  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,true,'one affected viewer warns the room');
+  failure=Object.assign(new Error('Revoked'),{status:403});
+  assert.equal(await watch.canView(room,a),false,'a confirmed denial is never treated as an outage');
+  failure=undefined;
+  assert.equal(await watch.canView(room,a),true);
+  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,true,'a viewer still recovering after Plex returns keeps the notice');
+  viewer.syncQuality={status:'playing'};
+  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false);
+});

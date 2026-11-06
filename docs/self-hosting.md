@@ -76,7 +76,7 @@ See [accounts and access](accounts-and-access.md) for the authorization model.
 - Leave it enabled only if you intend to share the fallback account's scope.
 - Set `plex.fallback_token` to a dedicated, restricted Plex account token to limit that scope. If blank, uburoom uses `plex.token`.
 
-Fallback does not bypass `access.require_plex: true`. Revoked/expired credentials, Plex errors or outages, and item-level restrictions fail closed. Personal entitlement takes priority. Shared access does not link the fallback identity to the viewer or write their personal Plex history.
+Fallback does not bypass `access.require_plex: true`. Revoked/expired credentials, Plex errors or outages, and item-level restrictions fail closed. Viewers already in a room keep their place during an outage, and the next answer from Plex applies any real denial; nobody new is admitted meanwhile. Personal entitlement takes priority. Shared access does not link the fallback identity to the viewer or write their personal Plex history.
 
 **Direct fallback** is a separate opt-in with stricter requirements; see [direct Plex delivery](#direct-plex-delivery).
 
