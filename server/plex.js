@@ -577,7 +577,7 @@ class Plex {
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
-    const conversion = !choices.sourceOnly && !fallback && (burn || compatible || quality !== 'direct' || media.tracks.audio.length > 1);
+    const conversion = !choices.sourceOnly && (!fallback || fallback === 'audio') && (burn || compatible || quality !== 'direct' || media.tracks.audio.length > 1);
     const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly,outputs:conversion?await this.usableOutputs(choices.localCodecs):undefined});
     media.deliveryReason = plan.reason;
     const directPlan = plan.route==='plex-hls' ? await choices.directPlan?.() : undefined;

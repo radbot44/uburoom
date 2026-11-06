@@ -6,7 +6,7 @@ const { localFormat } = require('../web/playback-policy');
  * @typedef {Object} DeliveryRequest
  * @property {string} quality - Normalized quality identifier.
  * @property {boolean} [compatible] - Viewer needs an output the browser can decode.
- * @property {string} [fallback] - Output this viewer fell back to: a local codec or 'plex'.
+ * @property {string} [fallback] - Output this viewer fell back to: a local codec, 'plex', or 'audio' for Plex keeping the video and converting only audio.
  * @property {boolean} [burn] - Selected subtitles must be burned into the video.
  * @property {number} audioTracks - Audio tracks offered by the selected source.
  * @property {boolean} [sourceOnly] - Resolve the source without preparing delivery.
@@ -17,7 +17,7 @@ const { localFormat } = require('../web/playback-policy');
  * @typedef {Object} DeliveryPlan
  * @property {'file'|'local'|'plex-hls'} route
  * @property {string} [codec] - Local output codec.
- * @property {'source-only'|'original'|'local-fallback'|'plex-fallback'|'burn-in'|'compatible'|'multiple-audio'|'quality-limit'} reason
+ * @property {'source-only'|'original'|'local-fallback'|'plex-fallback'|'audio-conversion'|'burn-in'|'compatible'|'multiple-audio'|'quality-limit'} reason
  */
 
 /**
@@ -30,6 +30,7 @@ function planDelivery({ quality, compatible, fallback, burn, audioTracks, source
   if (sourceOnly) return { route: 'file', reason: 'source-only' };
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
   if (fallback === 'plex') return { route: 'plex-hls', reason: 'plex-fallback' };
+  if (fallback === 'audio' && quality === 'direct' && !burn) return { route: 'plex-hls', reason: 'audio-conversion' };
   const reason = burn ? 'burn-in' : compatible ? 'compatible' : quality !== 'direct' ? 'quality-limit' : audioTracks > 1 ? 'multiple-audio' : undefined;
   if (!reason) return { route: 'file', reason: 'original' };
   // Choosing one audio track can keep the video untouched only through Plex.

@@ -544,4 +544,8 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
   const [track]=Tracks.catalog({Stream:[{id:1,streamType:3,codec:'srt',index:2}]},{browserSubtitles:true,extractSubtitles:true}).subtitles;
   assert.equal(track.delivery,'cues');
   assert.equal(planDelivery({quality:'direct',burn:track.delivery==='burn',audioTracks:1,outputs:['av1','plex']}).route,'file');
+  // Unplayable audio alone keeps the picture, unless another reason needs a conversion.
+  assert.equal(planDelivery({quality:'direct',fallback:'audio',audioTracks:1,outputs:['av1','plex']}).reason,'audio-conversion');
+  assert.equal(planDelivery({quality:'720p4',fallback:'audio',audioTracks:1,outputs:['av1','plex']}).route,'local');
+  assert.equal(planDelivery({quality:'direct',fallback:'audio',burn:true,audioTracks:1,outputs:['av1','plex']}).route,'local');
 });

@@ -1227,7 +1227,10 @@ async function compatibleFallback(reason, preferHLS = false) {
   if (state.format === 'hls') localFallbackAttempts.add('plex');
   const localCandidates=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],localFallbackAttempts,
     mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
-  const candidates=(config.outputs || [...localCandidates,'plex']).filter(output=>output==='plex'?!skipPlex && !localFallbackAttempts.has('plex'):localCandidates.includes(output));
+  const order=config.outputs || [...localCandidates,'plex'];
+  const candidates=order.filter(output=>output==='plex'?!skipPlex && !localFallbackAttempts.has('plex'):localCandidates.includes(output));
+  // H.264 with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
+  if(preferHLS && order.includes('plex') && /^(h264|avc1)$/i.test(state.videoCodec || '') && !localFallbackAttempts.has('audio') && !localFallbackAttempts.has('plex'))candidates.unshift('audio');
   if (!candidates.length) {
     av1?.destroy();av1=undefined;video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
     $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
@@ -1239,10 +1242,10 @@ async function compatibleFallback(reason, preferHLS = false) {
       if(selected!==id || state?.mediaVersion!==version)return;
       localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,compatible:true,fallback:codec}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec}});
         return;
       } catch(error) {
-        playbackError=reason+' '+(codec==='plex'?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
+        playbackError=reason+' '+(['plex','audio'].includes(codec)?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
       }
     }
     fail(playbackError);

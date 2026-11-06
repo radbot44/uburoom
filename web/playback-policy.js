@@ -8,10 +8,10 @@
     return [...new Set(allowed)].filter(codec=>localFormat(codec) && !attempted.has(codec) && supports(LOCAL_CODECS[codec]));
   }
   // Selecting Original can still mean a conversion, for example when subtitles are
-  // burned or the browser cannot decode the file. Plex choosing one audio track keeps the video.
+  // burned or the browser cannot decode the file. Plex changing only the audio keeps the video.
   function convertedOriginal(state) {
     const info=state?.deliveryInfo;
-    return state?.quality==='direct' && !!info && info.format!=='file' && info.reason!=='multiple-audio';
+    return state?.quality==='direct' && !!info && info.format!=='file' && !['multiple-audio','audio-conversion'].includes(info.reason);
   }
   function hlsConfig(bitrateKbps,direct=false) {
     // Establish transport timestamps from the first segment before any seek.
