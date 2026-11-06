@@ -60,7 +60,7 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
       checkingMemory = true;
       try {
         const rss = await memory(child.pid);
-        if (!settled && !exited && !failure && rss > memoryLimit) stop(new PlaybackError('WebM process exceeded the server memory limit.'));
+        if (!settled && !exited && !failure && rss > memoryLimit) stop(Object.assign(new PlaybackError('WebM process exceeded the server memory limit.'),{exitFailure:true}));
       } catch {
         let alive = false;
         try { process.kill(child.pid, 0); alive = true; } catch (probeError) { alive = probeError?.code === 'EPERM'; }
@@ -407,7 +407,8 @@ class AV1 {
             '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
             '-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
             '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
-          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024);
+          // 4K jobs commit about 1 GiB on either path, and GPU surfaces add to that.
+          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024,undefined,{memoryLimit:2*1024*1024*1024});
           const route = this.hardwareDecode && !group.cpuDecode ? decodeRoute(spec,encoder) : undefined;
           try {
             let bytes;
