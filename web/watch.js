@@ -980,6 +980,17 @@ function updateViewingLayout() {
 const viewingLayoutObserver = new ResizeObserver(updateViewingLayout);
 viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section'));
 window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
+// Keep the element exactly the size of the picture. Chrome can leave a paused frame
+// without its object-fit letterbox offset after a resize, drawing it at the top
+// until the next frame arrives. With no offset there is nothing to lose.
+function fitVideo() {
+  const stage=$('stage'),width=stage.clientWidth,height=stage.clientHeight,sourceWidth=video.videoWidth,sourceHeight=video.videoHeight;
+  if(!width||!height||!sourceWidth||!sourceHeight){for(const name of ['width','height','left','top','right','bottom'])video.style.removeProperty(name);return;}
+  const scale=Math.min(width/sourceWidth,height/sourceHeight),fitWidth=sourceWidth*scale,fitHeight=sourceHeight*scale;
+  Object.assign(video.style,{width:fitWidth+'px',height:fitHeight+'px',left:(width-fitWidth)/2+'px',top:(height-fitHeight)/2+'px',right:'auto',bottom:'auto'});
+}
+new ResizeObserver(fitVideo).observe($('stage'));
+for(const event of ['loadedmetadata','resize','emptied'])video.addEventListener(event,fitVideo);
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');
   const drawerOpen = !drawer.hidden;

@@ -306,7 +306,7 @@ class uburoomSubtitles {
   // Follows the visible picture, or the whole player, and clears the controls only when they would cover the text.
   place() {
     if(!this.layer)return;
-    const width=this.video.clientWidth,height=this.video.clientHeight;
+    const width=this.video.parentElement.clientWidth,height=this.video.parentElement.clientHeight;
     if(!width||!height)return;
     let left=0,top=0,boxWidth=width,boxHeight=height;
     if(this.position==='video'&&this.video.videoWidth&&this.video.videoHeight){

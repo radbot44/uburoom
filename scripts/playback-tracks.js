@@ -138,7 +138,7 @@ async function main() {
           assert.equal(await evaluate(guest,'!state.tracks.subtitleId'),true,'guest subtitles stay off');
           await evaluate(host,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');
           assert.equal(await evaluate(host,'document.getElementById("subtitle-offset").disabled'),true);
-          assert.equal(await evaluate(host,'document.getElementById("subtitle-delay-hint").textContent.includes("fixed by Plex")'),true);
+          assert.equal(await evaluate(host,'document.getElementById("subtitle-delay-hint").textContent.includes("Timing is fixed")'),true);
           await browser.screenshot(host,path.join(output,name+'-ass-dialog.png'));
           await evaluate(host,'document.getElementById("tracks-close").click();true');
           await choose(host,{subtitleId:'off'});await until(host,'video.readyState>=2 && !video.seeking','Burn off');
@@ -153,7 +153,7 @@ async function main() {
           const english=await tone(guest,440);assert.equal(await evaluate(host,'state.tracks.audioId'),'1042');
           await command(host,'media.pause');await evaluate(host,'setTheater(true);true');await browser.screenshot(host,path.join(output,name+'-theater.png'));
           await evaluate(host,'document.getElementById("tracks-open").click();if(!document.getElementById("tracks-dialog").open)document.getElementById("settings-more").click();true');await browser.viewport(host,390,1000);
-          await until(host,'captions.defaultLine<-1','Phone caption clearance');await pause(250);
+          await until(host,'captions.controlsHeight>0','Phone caption clearance');await pause(250);
           await browser.screenshot(host,path.join(output,name+'-phone-tracks.png'));
           assert.equal(await evaluate(host,'document.documentElement.scrollWidth<=innerWidth'),true);
           await evaluate(host,'document.getElementById("tracks-close").click();true');await browser.screenshot(host,path.join(output,name+'-phone-captions.png'));

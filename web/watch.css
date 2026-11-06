@@ -158,7 +158,7 @@ body.immersive{overflow:hidden;background:black}
 #account-logout{margin-top:24px}
 .activity-pip main{margin:0;padding:0;max-width:none}
 .activity-pip .stage{position:fixed;inset:0;width:100%;height:100dvh;aspect-ratio:auto;border-radius:0;background:black}
-.activity-pip .stage>:not(video):not(.subtitle-layer),.activity-pip #drawer,
+.activity-pip .stage>:not(video):not(.subtitle-layer):not(.subtitle-text-layer),.activity-pip #drawer,
 .activity-pip #account,.activity-pip #welcome,.activity-pip #room-bar,.activity-pip #room-column,.activity-pip #options-panel,.activity-pip #queue-panel,.activity-pip #library-panel,.activity-pip #status,.activity-pip #error,.activity-pip #acceleration-help{display:none!important}
 @media(max-width:700px){.title-bar{gap:8px;flex-wrap:wrap}.player-actions{margin-left:auto}.solid-button{font-size:12px;padding:8px;gap:5px}.media-heading{min-width:85px}.media-heading h1{max-width:100%}}
 #diagnostic-actions{display:flex;flex-wrap:wrap;gap:10px}
