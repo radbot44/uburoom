@@ -1939,6 +1939,8 @@ function renderTracks() {
   render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic'}],tracks?.audioChoice);
   render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic'},...(subtitlesAvailable?[{id:'off',label:'Off'}]:[])],tracks?.subtitleChoice);
   const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), delivery=tracks?.subtitleDelivery || subtitle?.delivery,burned=delivery==='burn';
+  const autoBurned=burned && (tracks?.subtitleMode || 'auto')==='auto';
+  subtitleMode.querySelector('option[value="auto"]').textContent=autoBurned?'Automatic (burned in)':'Automatic';
   subtitleMode.value=tracks?.subtitleMode || 'auto';subtitleMode.disabled=!available || pending || qualityPending || !subtitle;
   $('audio-track-status').textContent=!audioAvailable?'No audio available':audio ? [uburoomPlayerUI.trackLabel(audio),state.format!=='file' && audio.channels!==2 && 'Stereo playback'].filter(Boolean).join(' · ') : '';
   for (const [id,track] of [['audio-track-name',audio],['subtitle-track-name',subtitle]]) { $(id).textContent=track?.title || ''; $(id).hidden=!track?.title; }
@@ -1946,7 +1948,7 @@ function renderTracks() {
   if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
   $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
   $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
-  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (burned ? 'These subtitles are included in the video to preserve their appearance. The choice is saved for this title.' : '');
+  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (autoBurned ? 'These subtitles are burned into the video because they cannot be shown separately here.' : burned ? 'These subtitles are included in the video to preserve their appearance. The choice is saved for this title.' : '');
   const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
   $('track-status').classList.toggle('error',error);
   const subtitleError=tracks?.subtitleError || (trackNoticeError ? trackNotice || 'subtitle-renderer-error' : undefined);
@@ -2227,7 +2229,10 @@ function applyState(next) {
   }
   $('quality-notice').textContent=next.qualityNotice || '';
   renderMediaInformation(next);
-  const choices = next.qualities || uburoom.QUALITIES;
+  const maximum = uburoomPlayback.convertedOriginal(next);
+  const choices = (next.qualities || uburoom.QUALITIES).map(q => maximum && q.id === 'direct' ? {...q,label:q.label.replace(/^Original/,'Maximum')} : q);
+  $('quality-detail').textContent = maximum ? 'Converted to '+(next.deliveryInfo.videoCodec || 'another format').toUpperCase()+' at the highest quality available.' : '';
+  $('quality-detail').hidden = !maximum;
   if (JSON.stringify([...$('quality').options].map(o => [o.value,o.textContent])) !== JSON.stringify(choices.map(q => [q.id,q.label]))) {
     const previous=$('quality').value;
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));

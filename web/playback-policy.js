@@ -7,6 +7,12 @@
   function fallbackCodecs(allowed, attempted, supports) {
     return [...new Set(allowed)].filter(codec=>localFormat(codec) && !attempted.has(codec) && supports(LOCAL_CODECS[codec]));
   }
+  // Selecting Original can still mean a conversion, for example when subtitles are
+  // burned or the browser cannot decode the file. Plex choosing one audio track keeps the video.
+  function convertedOriginal(state) {
+    const info=state?.deliveryInfo;
+    return state?.quality==='direct' && !!info && info.format!=='file' && info.reason!=='multiple-audio';
+  }
   function hlsConfig(bitrateKbps,direct=false) {
     // Establish transport timestamps from the first segment before any seek.
     const config={enableWorker:true,startPosition:0,maxLiveSyncPlaybackRate:1,
@@ -251,7 +257,7 @@
       inCooldown: now => now < cooldownUntil
     };
   }
-  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
+  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

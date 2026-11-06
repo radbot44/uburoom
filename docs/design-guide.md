@@ -100,3 +100,5 @@ Add a rule here only when it guides future design or records a necessary excepti
 Owner-approved 2026-11-06: under the optimization/hardening task's blanket design discretion, local WebM recovery reconciles its append ledger against actual audio/video buffered coverage. Refill only missing chunks, tolerate codec boundary gaps, preserve useful buffered playback and existing feedback, and bound repeated eviction recovery. Request cancellation follows superseded work through the transport; no control or styling changes.
 
 Owner-approved 2026-11-06: the subtitle rendering option is named Burn-in, not Plex burn-in, because uburoom or Plex may do the work. Subtitle help and error text does not name a provider.
+
+Owner-approved 2026-11-06: Original means the viewer is getting the source. When Original is selected but the output is converted, the quality option reads Maximum with a line naming the output codec, and the player badge reads MAX instead of ORIG. Rendering stays Automatic when subtitles are burned without being chosen, and reads Automatic (burned in) with a status line saying why.

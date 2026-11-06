@@ -105,7 +105,7 @@
     function render() {
       const state=getState(), tracks=state?.tracks;
       cog.setAttribute('aria-haspopup',mobile()?'dialog':'menu'); cog.setAttribute('aria-controls',mobile()?dialog.id:menu.id);
-      badge.textContent=state?.quality==='direct'?'ORIG':state?.quality?.startsWith('1080p')?'HD':'';
+      badge.textContent=state?.quality==='direct'?(uburoomPlayback.convertedOriginal(state)?'MAX':'ORIG'):state?.quality?.startsWith('1080p')?'HD':'';
       badge.hidden=!badge.textContent;
       const enabled=!!tracks?.subtitleId, available=tracks?.subtitles.some(t=>t.available);
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
