@@ -34,6 +34,14 @@ One earlier Firefox run failed the existing "frames decode after delivery return
 
 **A/B, software AV1 defect.** `libsvtav1` rejects `-maxrate`, so every software AV1 chunk failed although the encoder probe passed. Chunks now use a plain bitrate target for that encoder. `node --test tests/*.test.js`: 534 passed. `scripts/local-webm-smoke.js` fails at "Shared source timed out" with and without this work (also on `85d0cea`), so it gave no evidence here.
 
+**C, real `AV1` class on Vigrid at `e3fa82a`, loopback bridge over a local HTTP Range source, no credentials or Plex.** Dolby Vision 4K source, QSV. 720p4 chunks took 1.8-2.8s against 10.5-11.8s for CPU decode, with 144 frames, no shift at nine chunks, video 6.006s and audio 6.008s. Joins matched the CPU path within 0.02 at seven joins. 1080p8 2.4s, 1080p20 2.3s, Original 4.6s (1.3x real time). Five parallel chunks: 5.28x at 720p4, 4.62x at 1080p8. MPEG-2 1080i fails in `vpp_qsv` and stepped down to CPU decode for that stream as designed; VC-1, 4K SDR and H.264 chunks showed no shift at four positions each. Image matching only for these encoded chunks.
+
+**Tonemapping choices, same hardware.** CPU tonemapping kept Original at 0.5x, and more filter threads gave only 11.7s to 9.6s. `tonemap_opencl` was fast but rejected: its first frame in every process differs from the rest, a visible step at each chunk join, even with a fixed peak. libplacebo with BT.2390 and peak detection off had no such step and stayed closest to the CPU picture: 34-46 dB against it on four stills, mean luma within 3%. Owner review of the picture is still open.
+
+**Memory.** 4K jobs commit about 1 GB on the CPU path and 1.2 GB with GPU decode. The former 1 GiB limit killed GPU chunks in the first deployment of this work, found by the test above within minutes, and left CPU chunks with little margin once audio is added, which is another possible cause of the live stoppage. The limit is now 2 GiB per chunk job.
+
+Not covered: real Plex input, Linux VAAPI and macOS routes, and human acceptance on a real viewer. On a machine without working GPU decode, five parallel 4K CPU jobs still take about 39s per chunk, past the 30-second chunk limit.
+
 ### M1-P2 — Delivery plan extraction — 2026-11-06
 
 A/B on the uncommitted working tree based on `57a93db`, Node v22.22.2 / Windows, Chrome 156 and Firefox 159, synthetic media with simulated Plex responses. Route selection moved from repeated conditions in `Plex.prepare` to `server/delivery-plan.js`, with its reason added to `deliveryInfo` and diagnostics. No intended behavior change.
@@ -340,7 +348,7 @@ Detailed measurements and repaired historical failures are retained in the [dige
 | --- | --- | --- |
 | Release | A/B/C, D UX | Independent install/origin/providers, operator restore/rollback, source/history/ZIP privacy and licensing |
 | P1 endurance | B/C/D | Real Firefox/Activity/multi-viewer endurance, hardware/resources, unload cause and physical fidelity |
-| P2 delivery | A/B/C | Real-time frame-accurate 4K local conversion and real cross-account/codec/capacity matrix; negotiation closed as scoped in [playback reliability](playback-reliability.md#playback-decisions) |
+| P2 delivery | A/B/C | Owner acceptance of real-time frame-accurate 4K local conversion on real Plex input, Linux/macOS decode routes, and real cross-account/codec/capacity matrix; negotiation closed as scoped in [playback reliability](playback-reliability.md#playback-decisions) |
 | P3 fidelity | B/C/D | Real languages/downmix/captions and switching |
 | P4 reporting | C/D (A/B on main) | Live PMS/Tautulli validation, multi-viewer shared-producer stop/seek transitions, natural completion, external AV1 telemetry and personal-state/sponsorship isolation |
 | P5/P6 sync/pacing | B/C/D | Physical/WAN ≤50ms p95 / ≤100ms p99, supported-policy disposition and joint smoothness acceptance |
