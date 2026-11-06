@@ -53,6 +53,23 @@ test('AV1 retries an isolated failed chunk after cooldown without losing good ca
   } finally { manager.release(lease); await manager.close(); }
 });
 
+test('hardware decode falls back to the CPU for the stream only when the CPU proves the GPU failed',async()=>{
+  let gpuFails=true,cpu=0,gpu=0;const warnings=[];
+  const manager=new AV1({}, {ffmpegPath:'fixture',logger:{warn:(_,message)=>warnings.push(message)},transcoding:{encoder:'nvenc',cpuFallback:false}},async(_binary,args)=>{
+    if(args.includes('-show_entries'))return Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:3840,height:2160,pix_fmt:'yuv420p10le',color_transfer:'smpte2084',r_frame_rate:'24000/1001'},{codec_type:'audio'}]}));
+    if(!args.includes('-ss'))return Buffer.alloc(200);
+    if(args.includes('-hwaccel')){gpu++;assert.match(args[args.indexOf('-vf')+1],/scale_cuda=3840:2160:format=p010le,hwdownload/);assert.ok(!args.includes('hevc_qsv'));
+      if(gpuFails)throw Object.assign(new PlaybackError('decode failed'),{exitFailure:true});}
+    else cpu++;
+    return {video:Buffer.alloc(200),audio:Buffer.alloc(50)};
+  });
+  const lease=manager.acquire({id:'1',duration:60,start:'http://fixture'},'direct'),signal=new AbortController().signal;
+  try{
+    await manager.chunk(lease,0,signal);assert.deepEqual([gpu,cpu],[1,1]);assert.equal(lease.group.cpuDecode,true);assert.equal(warnings.length,1);
+    await manager.chunk(lease,1,signal);assert.deepEqual([gpu,cpu],[1,2],'later chunks skip the failed route');
+  }finally{manager.release(lease);await manager.close();}
+});
+
 test('quality tiers respect source bitrate/resolution; AV1 clamps Original and tonemaps PQ/HLG', () => {
   const plex = new Plex({});
   assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:1080,bitrate:13000,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct','1080p12','1080p8','720p4','720p2']);

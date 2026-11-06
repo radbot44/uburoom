@@ -2122,7 +2122,10 @@ function applyState(next) {
       if (next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) {
         queueMicrotask(() => { if (state === next) void compatibleFallback('The browser does not support the original codecs.',true); });
       } else if (uburoomPlayback.localFormat(next.format)) {
-        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }); }
+        // With no other codec to try, giving up ends playback, so ride out a slow
+        // or briefly unavailable source for about 40 seconds instead of 7.
+        const alternatives=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],new Set([next.format]),mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
+        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }, alternatives.length ? 3 : 8); }
         catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});

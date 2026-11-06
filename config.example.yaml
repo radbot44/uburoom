@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2f
+# Config schema v2g
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -153,6 +153,8 @@ transcoding:
   # NVENC can only do AV1; Intel QSV can do AV1/VP9/VP8; software does all three.
   encoder: 'auto' # auto | qsv | nvenc | software
   cpu_fallback: true
+  # Decode and scale on the GPU for every source. Falls back to the CPU if it fails.
+  hardware_decode: true
 
   # For alternatives use [av1, vp9, vp8].
   # These are the 3 codecs that work in Discord with HW acceleration off

@@ -89,12 +89,12 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
     child.on('close', code => {
       diagnostic?.(code, stderr);
       const encoderFailure=/(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(stderr);
-      finish(failure || (code === 0 || complete ? null : Object.assign(new PlaybackError('The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.'),{encoderFailure})), Buffer.concat(chunks));
+      finish(failure || (code === 0 || complete ? null : Object.assign(new PlaybackError('The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.'),{encoderFailure,exitFailure:true})), Buffer.concat(chunks));
     });
     });
     if (!webm) return output;
     const sizes = await Promise.all(files.map(file => fs.stat(file).then(s => s.size)));
-    if (sizes.some(size => size < 100) || sizes.reduce((a,b) => a + b, 0) > maxOutput) throw new PlaybackError('WebM output is empty or exceeded the supported limit.');
+    if (sizes.some(size => size < 100) || sizes.reduce((a,b) => a + b, 0) > maxOutput) throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'),{exitFailure:true});
     const bytes = await Promise.all(files.map(file => fs.readFile(file)));
     return split ? {video:bytes[0],audio:bytes[1]} : bytes[0];
   } finally {
@@ -152,6 +152,11 @@ function encoderArgs(encoder = 'qsv', codec = 'av1') {
   if(codec==='vp8')throw new PlaybackError('VP8 requires the software backend. Enable CPU fallback or select software.');
   return ['-c:v',codec==='vp9'?'vp9_qsv':'av1_qsv','-preset','veryfast','-pix_fmt','nv12','-bf','0','-flags','+global_header'];
 }
+// SVT-AV1 rejects a maximum bitrate outside CRF mode, so it gets a plain target.
+function rateArgs(encoder, codec, bitrate) {
+  const target = ['-b:v',`${bitrate}k`];
+  return encoder === 'software' && codec === 'av1' ? target : [...target,'-maxrate',`${bitrate}k`,'-bufsize',`${bitrate * 2}k`];
+}
 async function probeEncoder(ffmpeg, signal, execute = run, encoder = 'hardware', codec = 'av1') {
   const output = await execute(ffmpeg, ['-hide_banner','-loglevel','error','-nostdin','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
     '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','0.5', ...encoderArgs(encoder,codec), '-b:v','500k','-c:a','libopus','-ac','2','-f','webm','-live','1','pipe:1'], signal, 15000);
@@ -170,9 +175,8 @@ function outputSpec(info, quality) {
   const hdr = ['smpte2084','arib-std-b67'].includes(video.color_transfer);
   // Keep constant-rate source cadence. Forcing 30 fps duplicates film frames and
   // discards half of a 60 fps source, even when both decoder and encoder keep up.
-  const filters = ['setpts=PTS-STARTPTS'];
-  if (hdr) filters.push('zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv');
-  filters.push(`scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12');
+  const tonemap = hdr ? ['zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv'] : [];
+  const filters = ['setpts=PTS-STARTPTS', ...tonemap, `scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12'];
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
   const bitrate = q.bitrate || Math.min(40000, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : 12000));
   // Carry the measured source rate through the encoder and WebM DefaultDuration.
@@ -185,7 +189,32 @@ function outputSpec(info, quality) {
       frameRate = rate; break;
     }
   }
-  return { width, height, hdr, bitrate, frameRate, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
+  return { width, height, hdr, bitrate, frameRate, tonemap, sourceFormat:video.pix_fmt, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
+}
+
+// Decoding and scaling on the GPU removes the 4K cost; tonemapping stays on the
+// CPU because the GPU tonemappers crush shadows. Every route uses FFmpeg's own
+// decoder with -hwaccel. Never use wrapper decoders such as hevc_qsv: after a
+// seek it mislabels frames, so chunks start up to three frames early.
+// Sources without a listed surface format stay on the CPU path.
+const SURFACES = { yuv420p:'nv12', nv12:'nv12', yuv420p10le:'p010le', p010le:'p010le' };
+const VAAPI_DEVICE = '/dev/dri/renderD128';
+function decodeRoute(spec, encoder, platform = process.platform) {
+  const surface = SURFACES[spec.sourceFormat];
+  if (!surface) return;
+  const size = `${spec.width}:${spec.height}`, vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
+  const route = (input, gpu, downloaded = true) => ({ input, filter:['setpts=PTS-STARTPTS', ...gpu,
+    ...(downloaded ? ['hwdownload',`format=${surface}`] : []), ...(gpu.length ? [] : [`scale=${size}`]),
+    ...spec.tonemap, `scale=${size}:out_color_matrix=bt709`, 'format=nv12'].join(',') });
+  if (encoder === 'nvenc') return route(['-hwaccel','cuda','-hwaccel_output_format','cuda'], [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`]);
+  if (encoder === 'qsv') {
+    const device = platform === 'win32' ? ['d3d11va=d,vendor_id=0x8086','d3d11va','d3d11'] : [`vaapi=d:${VAAPI_DEVICE}`,'vaapi','vaapi'];
+    return route(['-init_hw_device',device[0],'-init_hw_device','qsv=q@d','-hwaccel',device[1],'-hwaccel_device','d','-hwaccel_output_format',device[2],'-filter_hw_device','q'],
+      ['hwmap=derive_device=qsv','format=qsv',vpp]);
+  }
+  if (platform === 'win32') return route(['-hwaccel','d3d11va','-hwaccel_output_format','d3d11'], []);
+  if (platform === 'darwin') return route(['-hwaccel','videotoolbox'], [], false);
+  return route(['-hwaccel','vaapi','-hwaccel_device',VAAPI_DEVICE,'-hwaccel_output_format','vaapi'], [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`]);
 }
 
 const { SharedTask, runOperation } = require('./operation');
@@ -195,6 +224,8 @@ class AV1 {
     this.plex = plex; this.ffmpeg = config.ffmpegPath; this.jobs = new Set();
     this.encoder = config.transcoding?.encoder || 'auto';
     this.cpuFallback = config.transcoding?.cpuFallback ?? true;
+    this.hardwareDecode = config.transcoding?.hardwareDecode ?? true;
+    this.logger = config.logger;
     this.maxBytes = 256 * 1024 * 1024;
     this.jobBytes = 48 * 1024 * 1024; this.pendingBytes = 0;
     this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
@@ -350,7 +381,7 @@ class AV1 {
           if (!group.infoTask || group.infoTask.signal.aborted) {
             const task = new SharedTask(signal => this.input(source, signal, async url => {
               const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
-                'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
+                'stream=index,codec_type,width,height,pix_fmt,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
               return JSON.parse(raw.toString());
             }));
             group.infoTask = task;
@@ -364,27 +395,37 @@ class AV1 {
           const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];
           if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
           const audioMap = source.audioIndex !== undefined ? '0:'+source.audioIndex : '0:a:'+(source.audioOrdinal ?? 0);
-          const args = ['-hide_banner','-loglevel','error','-nostdin','-threads','2','-ss',String(start),'-i',url];
-          if (!spec.audio) args.push('-f','lavfi','-i','anullsrc=r=48000:cl=stereo');
           const duration = String(Math.min(CHUNK, source.duration - start));
-          args.push('-t',duration, '-map','0:v:0','-an',
-            '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',spec.filter,
-            ...encoderArgs(encoder,codec),'-b:v',`${spec.bitrate}k`,'-maxrate',`${spec.bitrate}k`,'-bufsize',`${spec.bitrate * 2}k`,
+          const command = (selected, route) => [
+            '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start),'-i',url,
+            ...(spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']),
+            '-t',duration, '-map','0:v:0','-an',
+            '-sn','-dn','-map_metadata','-1','-map_chapters','-1','-filter_threads','2','-vf',route?.filter || spec.filter,
+            ...encoderArgs(selected,codec),...rateArgs(selected,codec,spec.bitrate),
             ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
             '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
             '-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
-            '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3');
+            '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
+          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024);
+          const route = this.hardwareDecode && !group.cpuDecode ? decodeRoute(spec,encoder) : undefined;
           try {
-            const bytes = await this.run(this.ffmpeg,args,controller.signal,30000,48*1024*1024);
+            let bytes;
+            try { bytes = await encode(encoder,route); }
+            catch (error) {
+              // A source the GPU cannot decode fails here. Only a CPU success proves
+              // that, so an upstream failure does not disable the route for the group.
+              if (!route || !error.exitFailure || controller.signal.aborted) throw error;
+              bytes = await encode(encoder);
+              group.cpuDecode = true;
+              this.logger?.warn('Conversion',`Hardware decode failed for ${spec.sourceFormat} source; using CPU decode for this stream.`);
+            }
             group.encoder=encoder;group.cpuFallback=encoder==='software'&&this.encoder!=='software'; return bytes;
           } catch (error) {
             // Retry only an encoder process failure, under the same job lease.
             // Cancellation, limits and upstream failures never trigger CPU work.
             if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted) throw error;
-            const first=args.indexOf('-c:v'),last=args.indexOf('-b:v',first);
-            args.splice(first,last-first,...encoderArgs('software',codec));
-            const bytes = await this.run(this.ffmpeg,args,controller.signal,30000,48*1024*1024);
+            const bytes = await encode('software');
             group.encoder='software'; group.cpuFallback=true; return bytes;
           }
         });
@@ -398,6 +439,7 @@ class AV1 {
         else {
           // Keep failure local to this chunk and cool down before re-encoding.
           entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
+          this.logger?.warn('Conversion',`Chunk ${index} failed: ${entry.error.message}`);
           entry.failedAt = Date.now();
           this.prune(group,entry);
         }
@@ -442,4 +484,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };

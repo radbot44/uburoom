@@ -22,7 +22,7 @@ const KEYS = [
   'rooms.admin_discord_role_ids', 'rooms.single_room', 'rooms.single_room_leader_plex_id',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.plex', 'transcoding.uburoom', 'transcoding.encoder',
-  'transcoding.formats', 'transcoding.max_jobs', 'transcoding.cpu_fallback',
+  'transcoding.formats', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
   'logging.level', 'logging.requests', 'logging.file'];
 
@@ -161,6 +161,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     plex:boolean('transcoding.plex',true), uburoom:boolean('transcoding.uburoom',true),
     encoder:choice('transcoding.encoder','auto',['auto','hardware','qsv','nvenc','software']),
     cpuFallback:boolean('transcoding.cpu_fallback',true),
+    hardwareDecode:boolean('transcoding.hardware_decode',true),
     formats:formats === undefined ? ['av1'] : formats, maxJobs };
   if (config.transcoding.formats.some(format => !require('../web/playback-policy').localFormat(format))) throw new Error('transcoding.formats supports av1, vp9 and vp8');
   if(new Set(config.transcoding.formats).size!==config.transcoding.formats.length)throw new Error('transcoding.formats must not repeat a codec');

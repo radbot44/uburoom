@@ -620,6 +620,17 @@ function checkMediaTools(config) {
         const hasOpus = /libopus|opus/.test(encodersOutput);
         const hasQsv = /qsv/.test(encodersOutput);
         const hasNvenc = /nvenc/.test(encodersOutput);
+        if (config.transcoding?.hardwareDecode !== false) {
+          const accels = cp.execFileSync(ffmpeg, ['-hide_banner', '-hwaccels'], { timeout: 4000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+          const found = ['cuda', 'd3d11va', 'vaapi', 'videotoolbox'].filter(name => new RegExp(`^${name}$`, 'm').test(accels.replace(/\r/g, '')));
+          checks.push({
+            category: 'Media Tools',
+            name: 'Hardware decode',
+            status: found.length ? 'pass' : 'warn',
+            message: found.length ? `FFmpeg offers ${found.join(', ')}. uburoom uses the CPU when a source or device fails.` : 'FFmpeg offers no supported decode acceleration; conversion uses the CPU.',
+            ...(found.length ? {} : { remediation: 'Use an FFmpeg build with hardware acceleration, or set transcoding.hardware_decode to false.' })
+          });
+        }
 
         const hw = [hasQsv ? 'Intel QSV' : '', hasNvenc ? 'NVIDIA NVENC' : ''].filter(Boolean).join(', ');
 

@@ -2,8 +2,8 @@
 // AV1/VP9/VP8 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
 class uburoomAV1 {
-  constructor(video, url, target, failed) {
-    this.video = video; this.url = url; this.target = target; this.failed = failed;
+  constructor(video, url, target, failed, requiredAttempts = 3) {
+    this.video = video; this.url = url; this.target = target; this.failed = failed; this.requiredAttempts = requiredAttempts;
     this.abort = new AbortController(); this.appended = new Set();
     this.chunkBytes = new Map(); this.seekVersion = 0; this.endSignalled = false;
     this.onSeek = () => {
@@ -159,7 +159,7 @@ class uburoomAV1 {
         if (index === first && failure.error.retryable && !failure.required) {
           failure.required = true; failure.attempts = 0; failure.retryAt = 0;
         }
-        if (!failure.error.retryable || failure.attempts >= (failure.required ? 3 : 6)) {
+        if (!failure.error.retryable || failure.attempts >= (failure.required ? this.requiredAttempts ?? 3 : 6)) {
           if (index === first) throw failure.error;
           break;
         }
