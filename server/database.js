@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { DatabaseSync } = require('node:sqlite');
+const { observeStorage } = require('./operation');
 
 // Only startup touches disk here. Runtime SQL targets memory; atomic changesets
 // are written to the same accounts.sqlite by one bounded worker.
@@ -25,7 +26,7 @@ function openDatabase(file, initializeSchema) {
     }
     db.exec(`PRAGMA user_version=${Number(db.prepare('PRAGMA durable.user_version').get().user_version)}`);
   } finally { db.exec('DETACH DATABASE durable'); }
-  let session = db.createSession(), serial = Promise.resolve(), failure, closing = false, sequence = 0, pendingBytes = 0, batch;
+  let session = db.createSession(), serial = Promise.resolve(), failure, closing = false, sequence = 0, pendingBytes = 0, batch, revision = 0;
   const worker = new Worker(path.join(__dirname, 'storage-worker.js'), { workerData: { file } });
   const pending = new Map();
   function fail() {
@@ -38,13 +39,14 @@ function openDatabase(file, initializeSchema) {
   worker.on('message', message => {
     const request = pending.get(message.id); if (!request) return;
     pending.delete(message.id);
-    if (message.error) { request.reject(new Error(message.error)); fail(); } else request.resolve();
+    if (message.readError) { request.reject(Object.assign(new Error(message.readError), {status:503})); return; }
+    if (message.error) { request.reject(new Error(message.error)); fail(); } else request.resolve(message.value);
   });
-  function send(changes, close = false) {
+  function send(changes, close = false, history) {
     return new Promise((resolve, reject) => {
       if (failure) return reject(failure);
       const id = ++sequence; pending.set(id, { resolve, reject });
-      worker.postMessage({ id, changes, close });
+      worker.postMessage({ id, changes, close, history });
     });
   }
   function flush() {
@@ -52,6 +54,7 @@ function openDatabase(file, initializeSchema) {
     if (failure) return rejected();
     const changes = session.changeset(); session.close(); session = db.createSession();
     if (!changes.length) return serial;
+    revision++;
     pendingBytes += changes.byteLength;
     if (pendingBytes > 16 * 1024 * 1024) { fail(); return rejected(); }
     if(!batch){
@@ -66,13 +69,44 @@ function openDatabase(file, initializeSchema) {
     return serial;
   }
   const timer = setInterval(() => { void flush().catch(() => {}); }, 250); timer.unref();
-  return { db, flush, get error(){return failure;}, abort() {
+  // Read projections use the committed worker database. Bound/coalesce admission
+  // before crossing the worker boundary; only compact metadata returns here.
+  const histories = new Map();
+  async function history(ids) {
+    const receipt = flush();
+    await receipt;
+    const key = JSON.stringify([revision,ids]);
+    if (histories.has(key)) return histories.get(key);
+    if (histories.size >= 8) throw Object.assign(new Error('History is busy; retry shortly'), { status: 503 });
+    const job = send(undefined, false, ids).finally(() => histories.delete(key));
+    histories.set(key, job);
+    return job;
+  }
+  // Operations that touch speculative account/room state must acknowledge its
+  // commit before publishing it. Static/media-only responses acquire no fence.
+  const observed = new Proxy(db, { get(target, key) {
+    if (key === 'prepare') return (...args) => {
+      const statement = target.prepare(...args);
+      return new Proxy(statement, { get(stmt, method) {
+        const value = Reflect.get(stmt, method, stmt);
+        if (typeof value !== 'function') return value;
+        return (...values) => {
+          if (['run','get','all','iterate'].includes(method)) observeStorage(flush);
+          return value.apply(stmt, values);
+        };
+      } });
+    };
+    const value = Reflect.get(target, key, target);
+    if (typeof value !== 'function') return value;
+    return (...args) => { if (key === 'exec') observeStorage(flush); return value.apply(target, args); };
+  } });
+  return { db: observed, flush, history, get error(){return failure;}, abort() {
     clearInterval(timer);closing=true;failure||=new Error('Account startup cancelled');
     for(const request of pending.values())request.reject(failure);pending.clear();
     session.close();db.close();return worker.terminate();
   }, async close() {
     clearInterval(timer);
-    try { await flush(); closing = true; await send(undefined, true); }
+    try { await flush(); await Promise.allSettled([...histories.values()]); closing = true; await send(undefined, true); }
     finally { closing = true; session.close(); db.close(); await worker.terminate(); }
   } };
 }

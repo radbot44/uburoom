@@ -93,15 +93,10 @@ class PlaybackTracking {
     if (this.registry && !canonicalId) return {retentionDays:90,totals:[],sessions:[]};
     const ids = this.registry ? this.db.prepare("WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged").all(canonicalId).map(u=>u.id) : [userId];
     if (ids.length === 0) return {retentionDays:90,totals:[],sessions:[]};
-    const placeholders = ids.map(() => '?').join(',');
-    const records = this.db.prepare(`SELECT record FROM playback_history WHERE userId IN (${placeholders}) ORDER BY at DESC`).all(...ids).map(row=>JSON.parse(row.record)).sort((a,b)=>b.lastReceivedAt-a.lastReceivedAt);
-    const media = new Map();
-    for (const record of records) {
-      const item = media.get(record.mediaId) || {mediaId:record.mediaId,wall:[],source:[]};
-      item.wall.push(...record.wallIntervals); item.source.push(...record.sourceIntervals); media.set(record.mediaId,item);
-    }
-    return {retentionDays:90,totals:[...media.values()].map(item=>({mediaId:item.mediaId,watchedSeconds:length(union(item.wall))/1000,sourceSeconds:length(union(item.source))})),sessions:records.slice(0,100).map(({wallIntervals,sourceIntervals,...record})=>record)};
+    if (this.registry?.persistence?.history) return this.registry.persistence.history(ids);
+    return require('./history-projection').historyProjection(this.db, ids);
   }
+
   close() { if (this.owned) this.db.close(); }
 }
 module.exports = {PlaybackTracking,union,ObservationError};

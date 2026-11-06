@@ -5,6 +5,37 @@ const { randomUUID } = require('node:crypto');
 const { PlexReporting } = require('../server/plex-reporting');
 const { Accounts, credentialVault } = require('../server/accounts');
 
+test('reporting coalesces queued states, applies current consent and drains retired sessions', async () => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const sent = [];
+  const scope = { principal: 'personal', clientId: 'fixture', request: async resource => {
+    sent.push(new URL(resource, 'http://fixture').searchParams);
+    if (sent.length === 1) { entered(); await gate; }
+  } };
+  const reporting = new PlexReporting({ plexAuth: { forUser: async () => scope } });
+  const viewer = { userId: 'viewer', streamVersion: 'stream', observationEpoch: 'epoch', plexWatchState: true };
+  const room = { media: { kind: 'plex', id: '123:456', duration: 120 }, mediaVersion: 'media' };
+  const observe = (state, position) => reporting.observe(room, viewer, 'viewer', { state, position }, { credit: { reason: 'credited' } });
+  try {
+    await observe('playing', 1); await started;
+    for (let i = 2; i < 20; i++) await observe(i % 2 ? 'paused' : 'buffering', i);
+    viewer.plexWatchState = false;
+    reporting.updateConsent(viewer, { watchState: false });
+    release(); await reporting.sessions.get('viewer').dispatched;
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].get('time'), '19000');
+    assert.equal(sent[1].get('duration'), null);
+    assert.equal(sent[1].get('ratingKey'), '123');
+    assert.equal(sent[1].get('key'), '/library/metadata/123');
+    const retiring = reporting.end(viewer, 'left');
+    await reporting.close(); await retiring;
+    assert.equal(sent.at(-1).get('state'), 'stopped');
+    assert.equal(reporting.retiring.size, 0);
+  } finally { release(); await reporting.close(); }
+});
+
 function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
   let now = 100000;
   const dispatchedRequests = [];

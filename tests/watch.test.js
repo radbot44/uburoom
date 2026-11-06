@@ -622,6 +622,25 @@ test('slow personal quality preparation has a bounded completion budget and reta
   }
 });
 
+test('superseded preparation retries for its waiting viewer instead of failing room state',async()=>{
+  const {currentSignal}=require('../server/operation');
+  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
+  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
+  let calls=0,started;const preparing=new Promise(resolve=>{started=resolve;});
+  const replacement={kind:'plex',id:'12',duration:60,format:'hls',quality:'720p4'};
+  const plex={stop:async()=>{},prepare:async()=>{
+    if(++calls===1){started();await new Promise((_,reject)=>currentSignal().addEventListener('abort',()=>reject(new Error('Preparation cancelled')),{once:true}));}
+    return replacement;
+  }};
+  const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'};
+  const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
+  watch.snapshot(room,host,viewerId,async()=>true);room.media={kind:'plex',id:'12',duration:60};
+  const viewer=room.viewers.get(viewerId),pending=watch.prepareViewer(room,host,viewerId);
+  await preparing;room.mediaVersion=randomUUID();viewer.preparing.abort();
+  assert.equal(await pending,replacement,'someone else changing media is not this viewer losing the room');
+  assert.equal(calls,2);watch.close();hub.close();
+});
+
 test('shared seeks wait for fresh viewer buffers and reject superseded readiness', async () => {
   const hub = new Hub({ownerId:'host',guildId:'guild',channels:['commands']}, []);
   hub.access = {isMember:()=>true, refresh:async()=>true};

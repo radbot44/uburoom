@@ -94,3 +94,5 @@ Keep existing draft/save/cancel boundaries explicit and report failures truthful
 Inspect affected controls across themes (light and dark), narrow layouts, 200% zoom and keyboard use. Automated checks and screenshots do not replace owner acceptance.
 
 Add a rule here only when it guides future design or records a necessary exception. Do not append feature labels, roster layouts, scoring formulas, preference inventories, toast timings or implementation history already owned by an established system.
+
+Owner-approved 2026-11-06: under the optimization/hardening task's blanket design discretion, local WebM recovery reconciles its append ledger against actual audio/video buffered coverage. Refill only missing chunks, tolerate codec boundary gaps, preserve useful buffered playback and existing feedback, and bound repeated eviction recovery. Request cancellation follows superseded work through the transport; no control or styling changes.

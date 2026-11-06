@@ -126,3 +126,36 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
     assert.deepEqual(fs.readFileSync(copyKey),fs.readFileSync(key));
   } finally {await restored.close();}
 });
+
+
+test('operation durability fences preserve acknowledged state without blocking unrelated work',async t=>{
+  const {runOperation,commitOperation}=require('../server/operation');
+  const {file,vault}=fixture(t),accounts=new Accounts(file,vault);await accounts.flush();
+  const lock=new DatabaseSync(file);lock.exec('BEGIN EXCLUSIVE');let acknowledged=false;
+  try {
+    const mutation=runOperation(undefined,async()=>{accounts.resolve('plex','fenced','Fixture');await commitOperation();acknowledged=true;});
+    const read=runOperation(undefined,()=>{accounts.identity('plex','fenced');return commitOperation();});
+    assert.equal(runOperation(undefined,()=>commitOperation()),undefined,'work without storage reads/writes has no durability dependency');
+    await new Promise(resolve=>setTimeout(resolve,50));assert.equal(acknowledged,false);
+    lock.exec('COMMIT');await Promise.all([mutation,read]);assert.equal(acknowledged,true);
+  }finally{lock.close();await accounts.close();}
+});
+
+
+test('history projections preserve overlapping totals while the worker services concurrent writes',async t=>{
+  const {PlaybackTracking}=require('../server/playback-tracking');
+  const {file,vault}=fixture(t),accounts=new Accounts(file,vault),tracking=new PlaybackTracking(accounts);
+  const user=accounts.resolve('plex','history','Fixture');
+  try {
+    const intervals=Array.from({length:500},(_,i)=>[i*2,i*2+1]);
+    for(let i=0;i<300;i++)tracking.save({id:String(i),userId:user.id,mediaId:'1',lastReceivedAt:Date.now()-i,wallIntervals:intervals,sourceIntervals:intervals});
+    await accounts.flush();let ticked=false;const timer=setTimeout(()=>ticked=true,0);
+    const read=tracking.history(user.id);
+    await new Promise(resolve=>setTimeout(resolve,10));accounts.meta('during-history','committed');await accounts.flush();
+    const history=await read;clearTimeout(timer);
+    assert.ok(ticked);assert.equal(history.sessions.length,100);
+    assert.deepEqual(history.totals,[{mediaId:'1',watchedSeconds:.5,sourceSeconds:500}]);
+    assert.ok(!history.sessions.some(row=>row.wallIntervals || row.sourceIntervals));
+    assert.equal(accounts.meta('during-history'),'committed');
+  }finally{await accounts.close();}
+});

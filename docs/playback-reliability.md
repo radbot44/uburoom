@@ -34,6 +34,14 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 - Keep finite transport retries, stream refresh and terminal errors. A fresh seek supersedes irrelevant retry delay. Recover paused playback to the shared position without restarting healthy viewers.
 - Same-tab reconnect may preserve personal choices briefly, but needs fresh authorization, epochs, grants and decoded readiness. Leave, close, new tab or changed media cannot inherit old consent.
 - Account revocation/relink fences cached and in-flight credential work.
+- Local WebM recovery trusts actual audio/video buffered ranges over its append ledger: it refills only missing chunks within a bounded retry count and bounds each append to its source window, so an out-of-order refill cannot damage the next chunk.
+
+## Operation and durability boundaries
+
+- A request owns its work only until it settles. Cancellation reaches provider calls, queue waits and preparation while it runs; timers and detached work it started do not inherit it afterwards.
+- Shared work has its own lifetime and consumer count. One consumer leaving never cancels another's work, and preparation tolerates a short gap between polls so a slow start is not restarted by each one.
+- Selected-room publication runs independently of lobby discovery. A slow publication retries; it does not report a lost connection. Superseded preparation is not a room failure for the viewers waiting on it.
+- A response waits only for storage its own operation touched, so static and media-only responses never wait for unrelated writes. Mutations stay unacknowledged until committed. History totals are computed in the storage worker from committed rows.
 - Verify real Plex manifests, backward segment availability, long pause/expiry and cleanup; synthetic VOD fixtures do not establish them.
 
 ### Runtime degradation warnings
@@ -74,7 +82,7 @@ Full multichannel/lossless/Atmos guarantees and efficient audio-only conversion 
 
 Match output-affecting source, quality, audio, burned subtitles, color/timing, decoder fallback compatibility and room/media generation. Browser captions remain personal. Every consumer has its own media authority; a producer credential never authorizes a consumer.
 
-Proxy HLS uses a bounded timestamp-anchor cache; direct HLS anchors in the browser. Local WebM output can share chunks. Release on last reference, preserve other viewers on departure/replacement and fence producer credential failure. Real cross-account behavior and hardware throughput require their own evidence.
+Proxy HLS uses a bounded timestamp-anchor cache; direct HLS anchors in the browser. A slow first segment never fails a lone viewer: they keep the private output, while viewers already waiting stay on one encoder for a bounded time and then get a retryable error instead of each starting another. Local WebM output can share chunks. Release on last reference, preserve other viewers on departure/replacement and fence producer credential failure. Local WebM reserves encoded bytes against an aggregate budget, serves work near the shared position ahead of speculation, and keeps a learned software fallback for that output. Real cross-account behavior and hardware throughput require their own evidence.
 
 ## Content fidelity and playback UX
 

@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+const { mediaIdentity } = require('../shared/room-protocol');
 
 const { randomUUID, randomInt } = require('node:crypto');
 const Policy = require('./room-policy');
@@ -37,7 +38,7 @@ function cleanNumber(value, min, max, label) {
 function validateItem(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw error('Invalid queue item');
   const serverId = cleanText(raw.serverId, 200, 'Plex server identity');
-  const mediaId = typeof raw.mediaId === 'string' && /^(?:\d{1,20}(?::\d{1,20})?|demo)$/.test(raw.mediaId) ? raw.mediaId : null;
+  const mediaId = mediaIdentity(raw.mediaId)?.id;
   if (!mediaId) throw error('Invalid media identity');
   if (mediaId === 'demo' && serverId !== 'local-demo') throw error('Invalid demo media source');
   if (!['movie', 'episode'].includes(raw.type)) throw error('Invalid media type');

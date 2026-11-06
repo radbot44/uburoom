@@ -1,17 +1,18 @@
 'use strict';
+const { runOperation, waitFor, currentSignal } = require('./operation');
 const {PlaybackError}=require('./av1');
 // Only live, identical outputs in one authorized room/media generation are pooled.
 // A cached segment-zero anchor prevents a late join from rewinding Plex's encoder.
 class HLSPool {
   constructor(stop,{maxGroups=32,maxBytes=64*1024*1024,anchorBytes=16*1024*1024}={}) {
     this.stop=stop;this.groups=new Map();this.live=new Set();this.bytes=0;this.pendingBytes=0;
-    this.maxGroups=maxGroups;this.maxBytes=maxBytes;this.anchorBytes=anchorBytes;this.closed=false;
+    this.maxGroups=maxGroups;this.maxBytes=maxBytes;this.anchorBytes=anchorBytes;this.closed=false;this.warmLimitMs=12000;
   }
   async anchor(media,timeoutMs) {
     const plex=media.plexContext;
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
-    const signal = controller.signal;
+    const signal = currentSignal() ? AbortSignal.any([controller.signal, currentSignal()]) : controller.signal;
     const options={signal,headers:{Accept:'*/*','X-Plex-Client-Identifier':media.transcodeId}};
     const wait=promise=>new Promise((resolve,reject)=>{
       const abort=()=>reject(signal.reason);if(signal.aborted){Promise.resolve(promise).catch(()=>{});abort();return;}
@@ -64,6 +65,7 @@ class HLSPool {
     if(group&&this.groups.get(group.key)===group)this.groups.delete(group.key);
   }
   async dispose(group) {
+    if (!group.users.size && !group.settled) group.controller?.abort();
     if(group.users.size||group.disposed||!group.settled)return;
     group.disposed=true;this.live.delete(group);
     if(this.groups.get(group.key)===group)this.groups.delete(group.key);
@@ -98,26 +100,39 @@ class HLSPool {
       }
     }
     if(!group){
-      producer=true;group={key,users:new Set(),settled:false,direct,disposed:false};this.groups.set(key,group);this.live.add(group);
-      group.promise=Promise.resolve().then(async()=>{
+      producer=true;group={key,users:new Set(),settled:false,direct,disposed:false,controller:new AbortController()};this.groups.set(key,group);this.live.add(group);
+      group.promise=Promise.resolve().then(()=>runOperation(group.controller.signal,async()=>{
         try {
           // Source preparation always uses its producer's own authorization.
           group.media=await create(authorized);
-          if(!direct)try{group.anchor=await this.anchor(group.media,Math.min(8000,Math.max(1,warmMs)));}catch{/* Uncacheable outputs keep independent sessions. */}
+          if(!direct)try{group.anchor=await this.anchor(group.media,Math.min(8000,Math.max(1,warmMs)));}
+          catch{
+            currentSignal()?.throwIfAborted();
+            // A slow first segment is ordinary for a cold conversion, and its
+            // output still works: never fail a lone viewer for it. When others
+            // wait, keep them on this one encoder for a bounded time rather than
+            // starting a private encoder each. Unsupported anchors (undefined)
+            // retain the existing safe private path.
+            if(group.users.size>1)try{group.anchor=await this.anchor(group.media,this.warmLimitMs);}
+            catch{currentSignal()?.throwIfAborted();group.warmFailure=true;}
+          }
           if(!direct&&!group.anchor&&this.groups.get(key)===group)this.groups.delete(key);
           return group.media;
         } catch(error) {
           if(this.groups.get(key)===group)this.groups.delete(key);
           throw error;
         } finally {group.settled=true;void this.dispose(group).catch(()=>{});}
-      });
+      }));
+      group.promise.catch(()=>{});
     }
     const user=reservedUser||{authorized};if(!reservedUser)group.users.add(user);let retained=false;
     try {
       let media;
-      try{media=await group.promise;}
+      try{media=await waitFor(group.promise);
+        currentSignal()?.throwIfAborted();}
       catch(error){
-        if(!producer&&!this.closed&&(!authorized||await authorized()))return existingOnly?unavailable():{media:await create(authorized)};
+        currentSignal()?.throwIfAborted();
+        if(!producer&&!group.warmFailure&&!this.closed&&(!authorized||await authorized()))return existingOnly?unavailable():{media:await create(authorized)};
         throw error;
       }
       const live=!authorized||await authorized();
@@ -126,6 +141,7 @@ class HLSPool {
         // No anchor cache means a future join could restart the encoder at zero.
         // Transfer the first private output once; other callers prepare their own.
         if(!group.claimed){group.claimed=true;return {media};}
+        if(group.warmFailure)throw new PlaybackError('Shared playback is still warming up. Retry shortly.');
         return existingOnly?unavailable():{media:await create(authorized)};
       }
       retained=true;
@@ -151,7 +167,7 @@ class HLSPool {
   }
   async close() {
     this.closed=true;this.groups.clear();
-    await Promise.allSettled([...this.live].map(async group=>{group.users.clear();await group.promise.catch(()=>{});await this.dispose(group);}));
+    await Promise.allSettled([...this.live].map(async group=>{group.users.clear();group.controller?.abort();await group.promise.catch(()=>{});await this.dispose(group);}));
   }
 }
 module.exports={HLSPool};

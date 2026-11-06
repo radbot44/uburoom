@@ -1,4 +1,5 @@
 'use strict';
+const { CacheBudget } = require('./cache-budget');
 const { randomUUID, createHash } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../shared/engine');
 const { AV1, PlaybackError } = require('./av1');
@@ -10,6 +11,8 @@ const SubtitleResources=require('./subtitle-resources');
 const { resilientFetch } = require('./resilience');
 const { ConversionPolicy } = require('./transcoding-policy');
 const {localFormat} = require('../web/playback-policy');
+const { mediaIdentity } = require('../shared/room-protocol');
+const { SharedTask, runOperation, currentSignal } = require('./operation');
 
 function parseChapters(item) {
   if (!Array.isArray(item?.Chapter)) return [];
@@ -53,7 +56,7 @@ function parseMarkers(item) {
 class Plex {
   constructor(config, fetcher = fetch) {
     this.rawFetch = fetcher; this.fetch = resilientFetch(fetcher); this.token = config.plexToken; this.av1 = new AV1(this, config);
-    this.fileCache = new Map(); this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
+    this.cacheBudget = new CacheBudget(); this.fileCache = new Map(); this.catalogCache = new Map(); this.artSources = new Map(); this.imageCache = new Map(); this.randomCache = new Map();
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
     this.hlsPool=new HLSPool(media=>(media.plexContext||this).stop(media));
@@ -69,23 +72,45 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,scopes:new Map(),fileCache:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,cacheBudget:this.cacheBudget,scopes:new Map(),fileCache:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
-    if(this.allowedItems.get(id)>Date.now())return true;
-    const baseId = String(id).split(':')[0];
-    const data=await this.json('/library/metadata/'+this.id(baseId));
-    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(baseId)&&['movie','episode'].includes(item.type)))return false;
-    this.allowedItems.set(id,Date.now()+3000);if(this.allowedItems.size>200)this.allowedItems.delete(this.allowedItems.keys().next().value);return true;
+    const baseId = mediaIdentity(this.id(id)).ratingKey;
+    return this.checkItem('play:' + baseId, '/library/metadata/' + baseId,
+      item => String(item.ratingKey) === baseId && ['movie', 'episode'].includes(item.type));
   }
   async visible(id,type) {
     const baseId = String(id).split(':')[0];
     const key=(type==='collection'?'collection:':'item:')+this.id(baseId);
-    if(this.allowedItems.get(key)>Date.now())return true;
-    const data=await this.json((type==='collection'?'/library/collections/':'/library/metadata/')+this.id(baseId));
-    if(!data.Metadata?.some(item=>String(item.ratingKey)===String(baseId)))return false;
-    this.allowedItems.set(key,Date.now()+3000);if(this.allowedItems.size>200)this.allowedItems.delete(this.allowedItems.keys().next().value);return true;
+    return this.checkItem(key, (type==='collection'?'/library/collections/':'/library/metadata/')+this.id(baseId),
+      item => String(item.ratingKey) === String(baseId));
+  }
+  invalidateAccess() {
+    this.accessGeneration = (this.accessGeneration || 0) + 1;
+    this.allowedItems.clear();
+    for (const task of this.itemChecks?.values() || []) task.abort();
+    this.itemChecks?.clear();
+  }
+  async checkItem(key, resource, accepts) {
+    if (this.allowedItems.get(key) > Date.now()) return true;
+    this.itemChecks ||= new Map();
+    let task = this.itemChecks.get(key);
+    if (!task || task.signal.aborted) {
+      if (this.itemChecks.size >= 200) throw Object.assign(new Error('Media access checks are busy'), { status: 503 });
+      const generation = this.accessGeneration;
+      task = new SharedTask(async signal => {
+        const data = await this.json(resource, { signal });
+        signal.throwIfAborted();
+        if (generation !== this.accessGeneration) return false;
+        const allowed = !!data.Metadata?.some(accepts);
+        if (allowed) { this.allowedItems.set(key, Date.now() + 3000); if (this.allowedItems.size > 200) this.allowedItems.delete(this.allowedItems.keys().next().value); }
+        return allowed;
+      }, { timeoutMs: 12000 });
+      this.itemChecks.set(key, task);
+      task.promise.finally(() => { if (this.itemChecks.get(key) === task) this.itemChecks.delete(key); }).catch(() => {});
+    }
+    return task.join();
   }
   url(resource) {
     if (!this.configured) throw new Error('Configure plex.url and plex.token in private config.yaml; never share this file');
@@ -108,13 +133,15 @@ class Plex {
   // Small, short-lived in-process caches. Playback decisions never use these.
   cached(cache, key, limit, create, ttl = 60000) {
     const old = cache.get(key);
-    if (old && old.until > Date.now()) return old.value;
+    if (old && old.until > Date.now() && (!old.task || old.task.settled || !old.task.signal.aborted)) { this.cacheBudget?.touch(old); return old.task ? old.task.join() : old.value; }
     cache.delete(key);
     while (cache.size >= limit) cache.delete(cache.keys().next().value);
-    const value = Promise.resolve().then(create);
-    cache.set(key, { until: Date.now() + ttl, value });
+    const task = new SharedTask(create), value = task.promise;
+    const entry = { until: Date.now() + ttl, value, task };
+    cache.set(key, entry);
+    value.then(result => this.cacheBudget?.retain(cache,key,entry,result), () => {});
     value.catch(() => { if (cache.get(key)?.value === value) cache.delete(key); });
-    return value;
+    return task.join();
   }
   catalog(resource) { return this.cached(this.catalogCache, resource, 96, () => this.json(resource)); }
   async availability(ids, budget, fresh = false) {
@@ -134,25 +161,26 @@ class Plex {
         else missing.push(id);
       }
       if (missing.length) {
-        const request=Promise.resolve().then(async()=>{
+        const task=new SharedTask(async()=>{
           if(budget && --budget.requests<0)throw new Error('Plex selection exceeds the supported 200-request expansion limit');
           const data=await this.json('/library/metadata/'+missing.join(',')+'?checkFiles=1');
           return new Map((data.Metadata || []).map(item=>[String(item.ratingKey),item]));
         });
         for (const id of missing) {
           /** @type {{until:number,value?:Promise<boolean>,available?:boolean}} */
-          const record={until:Infinity};
-          record.value=request.then(rows=>{
+          const record={until:Infinity,task};
+          record.value=task.promise.then(rows=>{
             record.available=rows.has(id) && Sources.available(rows.get(id));
+            record.versions=new Set((rows.get(id)?.Media || []).filter(media=>Sources.available({Media:[media]})).map(media=>String(media.id)));
             record.until=Date.now()+15000; return record.available;
           }).catch(error=>{if(this.fileCache.get(id)===record)this.fileCache.delete(id);throw error;});
           records.set(id,record); this.fileCache.delete(id); this.fileCache.set(id,record);
           while(this.fileCache.size>2000)this.fileCache.delete(this.fileCache.keys().next().value);
         }
       }
-      const values=await Promise.all(batch.map(async id=>[id,await records.get(id).value]));
+      const values=await Promise.all(batch.map(async id=>[id,await (records.get(id).task?.join().then(()=>records.get(id).value) || records.get(id).value)]));
       for(const [baseId,value] of values) {
-        for (const raw of (baseToRaw.get(baseId) || [])) result.set(raw, value);
+        for (const raw of (baseToRaw.get(baseId) || [])) result.set(raw, value && (!mediaIdentity(raw).mediaId || records.get(baseId).versions?.has(mediaIdentity(raw).mediaId) === true));
       }
     }
     return result;
@@ -160,7 +188,7 @@ class Plex {
   cachedAvailability(items) {
     return items.map(item=>{
       const record=this.fileCache.get(item.id) || this.fileCache.get(String(item.id).split(':')[0]);
-      return record?.until>Date.now() && typeof record.available==='boolean' ? {...item,available:record.available} : item;
+      return record?.until>Date.now() && typeof record.available==='boolean' ? {...item,available:record.available && (!mediaIdentity(item.id)?.mediaId || record.versions?.has(mediaIdentity(item.id).mediaId)===true)} : item;
     });
   }
   async checkedItems(items,budget,fresh = false) {
@@ -169,13 +197,15 @@ class Plex {
     return items.map(item=>statuses.has(item.id)?{...item,available:statuses.get(item.id)}:item);
   }
   async playableItem(id) {
-    const baseId = String(id).split(':')[0];
+    const identity = mediaIdentity(this.id(id)), baseId = identity.ratingKey;
     const data=await this.json('/library/metadata/'+this.id(baseId)+'?checkFiles=1'), source=data.Metadata?.[0];
     if(!source || !['movie','episode'].includes(source.type))throw new Error('Select a movie or episode');
     if(!Sources.available(source))throw Sources.unavailableError(source);
-    return this.items([source])[0];
+    if (identity.mediaId) Sources.select(source, { mediaId: identity.mediaId });
+    const items = this.items([source]);
+    return { ...(identity.mediaId ? items.find(item => item.id === id) || items[0] : items[0]), id };
   }
-  id(value) { if (!/^(?:\d{1,20}(?::\d{1,20})?|demo)$/.test(String(value || ''))) throw new Error('Invalid Plex item'); return String(value); }
+  id(value) { const identity = mediaIdentity(String(value || '')); if (!identity) throw new Error('Invalid Plex item'); return identity.id; }
   async allItems(resource, pageSize = 120, maxItems = 20000, budget) {
     const rows = [], seen = new Set(); let start = 0;
     for (;;) {
@@ -319,12 +349,13 @@ class Plex {
   }
   async details(id, type) {
     if (type && !['movie','show','season','episode','collection'].includes(type)) throw new Error('Invalid item type');
-    const [ratingKey, targetMediaId] = String(id).split(':');
+    const { ratingKey, mediaId: targetMediaId } = mediaIdentity(this.id(id));
     const data = await this.catalog(`/library/${type === 'collection' ? 'collections' : 'metadata'}/${this.id(ratingKey)}`);
     const source = data.Metadata?.[0];
     if (!source) throw new Error('Title unavailable');
     const items = this.cachedAvailability(this.items([source]));
-    const item = (targetMediaId ? items.find(x => x.id === id) : items[0]) || items[0];
+    if (targetMediaId && !source.Media?.some(media => String(media.id) === targetMediaId)) throw new Error('Selected version unavailable');
+    const item = targetMediaId ? { ...(items.find(x => x.id === id) || items[0]), id } : items[0];
     if (!item) throw new Error('Title unavailable');
     const tags = name => (source[name] || []).map(x => String(x.tag || '').slice(0,120)).filter(Boolean).slice(0, name === 'Role' ? 8 : 12);
     const ratings = [];
@@ -405,7 +436,13 @@ class Plex {
       const response = await this.request('/photo/:/transcode?' + query, {headers:{Accept:'image/jpeg,image/png,image/webp'}});
       const type = response.headers.get('content-type')?.split(';')[0];
       if (!['image/jpeg','image/png','image/webp','image/gif'].includes(type) || Number(response.headers.get('content-length')) > 2000000) throw new Error('Artwork unavailable');
-      const bytes = Buffer.from(await response.arrayBuffer()); if (bytes.length > 2000000) throw new Error('Artwork unavailable');
+      const chunks = []; let size = 0;
+      for await (const chunk of response.body) {
+        size += chunk.byteLength;
+        if (size > 2000000) throw new Error('Artwork unavailable');
+        chunks.push(Buffer.from(chunk));
+      }
+      const bytes = Buffer.concat(chunks,size);
       return { type, bytes };
     });
   }
@@ -472,7 +509,7 @@ class Plex {
   }
   async nextEpisodeOffer(episodeMediaId) {
     try {
-      const data = await this.catalog('/library/metadata/' + this.id(episodeMediaId));
+      const data = await this.catalog('/library/metadata/' + mediaIdentity(this.id(episodeMediaId)).ratingKey);
       const source = data.Metadata?.[0];
       if (source?.type !== 'episode' || !source.grandparentRatingKey) return null;
       const leavesData = await this.catalog(`/library/metadata/${source.grandparentRatingKey}/allLeaves`);
@@ -518,7 +555,7 @@ class Plex {
     quality=qualityId(quality);
     if (!choices.sourceOnly && !this.qualityOptions.some(q=>q.id===quality)) throw new PlaybackError('This quality is not offered by the server.');
     const sameSource=source && (source.principal||'discord-shared')===this.principal;
-    const [ratingKey, targetMediaId] = String(id).split(':');
+    const { ratingKey, mediaId: targetMediaId } = mediaIdentity(this.id(id));
     const item = (await this.json(`/library/metadata/${ratingKey}?checkFiles=1`)).Metadata?.[0];
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
     const pinned = targetMediaId ? { mediaId: targetMediaId } : source?.sourceSelection;
@@ -586,7 +623,7 @@ class Plex {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       const allowDirectStream = copyOnly || (!burn && !compatible);
-      const params = new URLSearchParams({ path: `/library/metadata/${id}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
+      const params = new URLSearchParams({ path: `/library/metadata/${ratingKey}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
         protocol: 'hls', directPlay: '0', directStream: allowDirectStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
         offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
         'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
@@ -616,7 +653,7 @@ class Plex {
         if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested audio and subtitle transcode.');
         media.initialManifest=text;
       }
-      } finally { try { await restoreSubtitle?.(); } finally { await restoreAudio?.(); } }
+      } finally { await runOperation(undefined, async () => { try { await restoreSubtitle?.(); } finally { await restoreAudio?.(); } }); }
       };
       try { await this.withPartLock((this.principal || 'global') + ':' + media.partId,prepare); }
       catch(error) {
@@ -630,8 +667,10 @@ class Plex {
   async withPartLock(id,action) {
     const key = String(id);
     const previous=this.partQueues.get(key) || Promise.resolve();
-    const job=previous.catch(()=>{}).then(action); this.partQueues.set(key,job);
-    try { return await job; } finally { if(this.partQueues.get(key)===job)this.partQueues.delete(key); }
+    const signal = currentSignal();
+    const job=previous.catch(()=>{}).then(() => { signal?.throwIfAborted(); return action(); }); this.partQueues.set(key,job);
+    job.finally(() => { if(this.partQueues.get(key)===job)this.partQueues.delete(key); }).catch(() => {});
+    return job;
   }
   async selectAudioForTranscode(media,choices) {
     const requested=media.selection.audio?.id;
@@ -639,7 +678,7 @@ class Plex {
     // PMS chooses audio from the scoped user's part selection, ignoring the
     // universal audioStreamID hint on some versions. Capture a private session
     // under the part lock, then restore the preference before releasing it.
-    const read=async()=>Sources.select((await this.json('/library/metadata/'+media.id)).Metadata?.[0] || {},media.sourceSelection).part;
+    const read=async()=>Sources.select((await this.json('/library/metadata/'+mediaIdentity(media.id).ratingKey)).Metadata?.[0] || {},media.sourceSelection).part;
     const selected=(part,confirming=false)=>{
       const message=confirming?'Plex could not confirm its saved audio preference.':'Plex did not identify its current audio selection.';
       if(!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !Array.isArray(part.Stream))throw new PlaybackError(message);
@@ -678,7 +717,7 @@ class Plex {
     // PMS uses this user's stored part selection for burn-in. Hold the part
     // lock through decision AND session start so another viewer cannot replace
     // it before this conversion has captured its intended source stream.
-    const read=async()=>Sources.select((await this.json('/library/metadata/'+media.id)).Metadata?.[0] || {},media.sourceSelection).part;
+    const read=async()=>Sources.select((await this.json('/library/metadata/'+mediaIdentity(media.id).ratingKey)).Metadata?.[0] || {},media.sourceSelection).part;
     const part=await read(), requested=media.selection.subtitle.id;
     if (!part || String(part.id || /^\/library\/parts\/(\d+)\//.exec(part.key || '')?.[1])!==media.partId || !part.Stream?.some(s=>Number(s.streamType)===3 && String(s.id)===requested)) throw new PlaybackError('The requested subtitle no longer belongs to this source.');
     const selected=part=>{
@@ -701,10 +740,11 @@ class Plex {
     try {
       await set(requested);
       if (selected(await read())!==requested) throw new PlaybackError('Plex did not select the requested subtitle.');
-    } catch(error) { await restore(); throw error; }
+    } catch(error) { await runOperation(undefined, restore); throw error; }
     return restore;
   }
-  async stop(media) {
+  stop(media) { return runOperation(undefined, () => this.stopOwned(media)); }
+  async stopOwned(media) {
     media?.subtitleAbort?.abort(); media?.subtitleCache?.clear(); if(media)SubtitleResources.clear(media);
     if(media?.hlsLease){await media.hlsLease.release();return;}
     if (media?.av1Lease) this.av1.release(media.av1Lease);
@@ -720,6 +760,14 @@ class Plex {
     try { await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/ping?' + new URLSearchParams({ session: id, ...headers }), { headers }); return true; }
     catch { return false; }
   }
-  close() { this.fileCache.clear(); this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
+  close() {
+    for (const scope of [this,...this.scopes.values()]) {
+      for (const task of scope.itemChecks?.values() || []) task.abort();
+      for (const cache of [scope.fileCache,scope.catalogCache,scope.imageCache,scope.randomCache]) {
+        for (const entry of cache.values()) entry.task?.abort();
+        cache.clear();
+      }
+    }
+    this.cacheBudget.clear(); this.fileCache.clear(); this.catalogCache.clear(); this.artSources.clear(); this.imageCache.clear(); this.randomCache.clear(); return Promise.all([this.hlsPool.close(),this.av1.close()]); }
 }
 module.exports = { Plex };

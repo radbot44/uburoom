@@ -295,3 +295,56 @@ test('watch socket updates watchHeaders when client re-authenticates with renewe
 
   assert.equal(viewer.watchSocket.watchHeaders.authorization, 'Bearer ' + renewed.token);
 });
+
+
+test('a slow room publication retries without telling a healthy browser it disconnected',async()=>{
+  const http=require('node:http'),{watchSockets}=require('../server/watch-socket');
+  const WatchTransport=require('../web/watch-transport');
+  const server=http.createServer(),selected='/api/watch/rooms/11111111-1111-4111-8111-111111111111?viewer=22222222-2222-4222-8222-222222222222';
+  let calls=0;const messages=[];
+  const routes={clockEpoch:'fixture',authorized:async()=>({actor:{userId:'fixture'}}),execute:async(context,url)=>{
+    if(url===selected&&++calls===2)await new Promise((_,reject)=>context.signal.addEventListener('abort',()=>reject(context.signal.reason),{once:true}));
+    return url===selected?{status:200,value:{},subscription:selected}:{status:200,value:{}};
+  }};
+  const sockets=watchSockets({server,config:{publicUrl:'http://fixture.invalid'},routes,watch:{rooms:new Map(),refresh(){}},hub:{dispatch:async()=>{}},throttle:()=>true,publishTimeoutMs:50});
+  let transport;
+  try {
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    class Client extends WebSocket {constructor(url){super(url,{origin:'http://fixture.invalid'});}}
+    transport=new WatchTransport({url:'ws://127.0.0.1:'+server.address().port+'/watch-socket',identity:()=>({}),WebSocket:Client,onMessage:message=>messages.push(message)});
+    await transport.connect();await transport.request(selected);
+    await new Promise(resolve=>setTimeout(resolve,2300));
+    assert.equal(messages.filter(message=>message.type==='unavailable').length,0);
+    assert.ok(messages.some(message=>message.type==='state'),'the next publication delivers room state');
+    assert.ok(calls>=3);assert.equal(transport.socket.readyState,1);
+  }finally{transport?.close();sockets.close();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('cancelled library work releases admission and stalled discovery cannot block room publication',async()=>{
+  const http=require('node:http'),{watchSockets}=require('../server/watch-socket');
+  const WatchTransport=require('../web/watch-transport');
+  const server=http.createServer(),selected='/api/watch/rooms/11111111-1111-4111-8111-111111111111?viewer=22222222-2222-4222-8222-222222222222';
+  let cancelled=0,selectedCalls=0,releaseLobby;
+  const lobby=new Promise(resolve=>releaseLobby=resolve);
+  const routes={clockEpoch:'fixture',authorized:async()=>({actor:{userId:'fixture'}}),execute:async(context,url)=>{
+    if(url===selected){selectedCalls++;return {status:200,value:{},subscription:selected};}
+    if(url==='/api/watch/rooms')await lobby;
+    if(url.startsWith('/api/watch/library?q='))await new Promise((resolve,reject)=>context.signal.addEventListener('abort',()=>{cancelled++;reject(context.signal.reason);},{once:true}));
+    return {status:200,value:{}};
+  }};
+  const sockets=watchSockets({server,config:{publicUrl:'http://fixture.invalid'},routes,watch:{rooms:new Map(),refresh(){}},hub:{dispatch:async()=>{}},throttle:()=>true});
+  let transport;
+  try {
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    class Client extends WebSocket {constructor(url){super(url,{origin:'http://fixture.invalid'});}}
+    transport=new WatchTransport({url:'ws://127.0.0.1:'+server.address().port+'/watch-socket',identity:()=>({}),WebSocket:Client});
+    await transport.connect();await transport.request(selected);
+    for(let i=0;i<10;i++){
+      const abort=new AbortController(),request=transport.request('/api/watch/library?q='+i,undefined,{signal:abort.signal});
+      const rejected=assert.rejects(request);await new Promise(resolve=>setTimeout(resolve,20));abort.abort();await rejected;
+    }
+    assert.deepEqual(await transport.request('/api/watch/me'),{});
+    await new Promise(resolve=>setTimeout(resolve,2100));
+    assert.equal(cancelled,10);assert.ok(selectedCalls>=3);assert.equal(transport.socket.readyState,1);
+  }finally{transport?.close();releaseLobby();sockets.close();await new Promise(resolve=>server.close(resolve));}
+});

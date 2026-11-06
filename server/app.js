@@ -1,4 +1,5 @@
 'use strict';
+const { runOperation, commitOperation } = require('./operation');
 const https = require('node:https');
 const fs = require('node:fs');
 const fsp = fs.promises;
@@ -291,6 +292,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   const operatorRoutes = operatorHttp({ config, registry, editor: config.configFile ? createConfigEditor(config.configFile) : undefined,
     user, protectedPost, validIdentity, logins, cookies, body, json });
   const server = https.createServer({ cert: config.cert, key: config.key, minVersion: 'TLSv1.2' }, (req, res) => {
+    const lifetime = new AbortController();
+    req.once('aborted', () => lifetime.abort());
+    // Completed responses also close; only a lost client cancels remaining work.
+    res.once('close', () => { if (!res.writableFinished) lifetime.abort(); });
+    return runOperation(lifetime.signal, () => {
     const start = Date.now();
     const logger = config.logger;
     if (logger && config.logging?.requests) {
@@ -314,7 +320,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const end=res.end.bind(res);
       res.end=(...args)=>{
         if (operatorSettingsFlushed) return end(...args);
-        registry.flush().then(()=>end(...args),()=>res.destroy());return res;
+        const receipt = commitOperation();
+        if (!receipt) return end(...args);
+        receipt.then(()=>end(...args),()=>res.destroy());return res;
       };
     }
     res.setHeader('Cache-Control', 'no-store');
@@ -324,7 +332,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     // Enforce HTTPS via Strict-Transport-Security to defend against SSL/TLS stripping attacks.
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
-    (async () => {
+    return (async () => {
       const url = new URL(req.url, config.publicUrl), route = url.pathname;
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
       let activityContext = url.searchParams.has('frame_id');
@@ -555,9 +563,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     })().catch(error => { if (!res.headersSent) json(res, error.status === 503 ? 503 : 400, {
       error: error.status === 503 ? 'Discord login renewal temporarily unavailable; try again shortly' : 'Request failed; check configuration or try again'
     }); else res.end(); });
+    });
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;
-  const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle,flush:()=>registry?.flush()});
+  const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle});
   const sweep = setInterval(() => {
     watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();
     let expired = false;

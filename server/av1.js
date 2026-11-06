@@ -188,12 +188,16 @@ function outputSpec(info, quality) {
   return { width, height, hdr, bitrate, frameRate, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
 }
 
+const { SharedTask, runOperation } = require('./operation');
+
 class AV1 {
   constructor(plex, config, execute = run) {
     this.plex = plex; this.ffmpeg = config.ffmpegPath; this.jobs = new Set();
     this.encoder = config.transcoding?.encoder || 'auto';
     this.cpuFallback = config.transcoding?.cpuFallback ?? true;
-    this.maxActive = config.transcoding?.maxJobs || 2;
+    this.maxBytes = 256 * 1024 * 1024;
+    this.jobBytes = 48 * 1024 * 1024; this.pendingBytes = 0;
+    this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
     this.run = (...args) => {
       const job = Promise.resolve().then(() => execute(...args)); this.jobs.add(job);
       job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
@@ -250,10 +254,12 @@ class AV1 {
     if (group.leases?.size) group.source = group.leases.values().next().value.source;
     if (--group.refs > 0) return;
     this.groups.delete(group.key);
+    group.infoTask?.abort();
     for (const controller of group.controllers) controller.abort();
     group.chunks.clear(); group.bytes = 0;
   }
-  async bridge() {
+  bridge() { return runOperation(undefined, () => this.openBridge()); }
+  async openBridge() {
     if (this.bridgePromise) return this.bridgePromise;
     this.bridgePromise = (async () => {
       const server = this.server = http.createServer(async (req, res) => {
@@ -295,20 +301,25 @@ class AV1 {
     this.inputs.set(key, {source, signal});
     try { return await action(`http://127.0.0.1:${port}${key}`); } finally { this.inputs.delete(key); }
   }
-  async slot(signal, action) {
+  async slot(signal, action, owner, priority = { urgent: true }) {
     if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
     if (this.active >= this.maxActive) {
-      if (this.queue.length >= 12) throw new PlaybackError('WebM encoder is busy.');
+      if (this.queue.length >= (priority.urgent ? 12 : 10)) throw new PlaybackError('WebM encoder is busy.');
       await new Promise((resolve, reject) => {
-        const entry = { resolve:() => { signal.removeEventListener('abort', cancel); resolve(); } };
+        const entry = { owner, priority, at:Date.now(), resolve:() => { signal.removeEventListener('abort', cancel); resolve(); } };
         const cancel = () => { this.queue = this.queue.filter(x => x !== entry); reject(new PlaybackError('WebM preparation cancelled.')); };
         signal.addEventListener('abort', cancel, {once:true}); this.queue.push(entry);
       });
     } else this.active++;
     try { if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.'); return await action(); }
-    finally { const next = this.queue.shift(); if (next) next.resolve(); else this.active--; }
+    finally {
+      const now = Date.now();
+      this.queue.sort((a,b) => Number(b.priority.urgent || now-b.at>=2000)-Number(a.priority.urgent || now-a.at>=2000) ||
+        Number(a.owner===owner)-Number(b.owner===owner) || a.at-b.at);
+      const next = this.queue.shift(); if (next) next.resolve(); else this.active--;
+    }
   }
-  async chunk(lease, index, signal) {
+  async chunk(lease, index, signal, { urgent = true } = {}) {
     if (lease.released || this.closed) throw new PlaybackError('WebM stream was replaced.');
     const group = lease.group, source=lease.source||group.source, start = index * CHUNK;
     if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration) throw new PlaybackError('Invalid WebM chunk.');
@@ -324,22 +335,30 @@ class AV1 {
     }
     if (!entry) {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
-      entry = { users:0, at:Date.now(), controller };
-      entry.promise = this.slot(controller.signal, async () => {
+      // A seek can make an already queued prefetch imminent; joining raises it.
+      entry = { users:0, at:Date.now(), controller, priority:{urgent} };
+      entry.promise = runOperation(controller.signal, () => this.slot(controller.signal, async () => {
+        this.pruneAll(this.jobBytes);
+        if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes) throw new PlaybackError('Encoded video memory is busy; retry shortly.');
+        this.pendingBytes += this.jobBytes; entry.reserved = true;
         await this.conversionPolicy?.video('uburoom',group.codec);
         const releaseConversion=await this.conversionPolicy?.wait({signal:controller.signal});
         try {
         const codec = group.codec;
-        const encoder = await this.selectEncoder(codec);
-        return await this.input(source, controller.signal, async url => {
-          if (!group.info) {
-            group.infoPromise ||= (async () => {
+        const encoder = group.encoder || await this.selectEncoder(codec);
+        if (!group.info) {
+          if (!group.infoTask || group.infoTask.signal.aborted) {
+            const task = new SharedTask(signal => this.input(source, signal, async url => {
               const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
-                'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], controller.signal);
+                'stream=index,codec_type,width,height,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
               return JSON.parse(raw.toString());
-            })().catch(err => { group.infoPromise = undefined; throw err; });
-            group.info = await group.infoPromise;
+            }));
+            group.infoTask = task;
+            task.promise.catch(() => { if (group.infoTask === task) group.infoTask = undefined; });
           }
+          group.info = await group.infoTask.join(controller.signal);
+        }
+        return await this.input(source, controller.signal, async url => {
           const spec = outputSpec(group.info, group.quality);
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
           const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];
@@ -370,8 +389,9 @@ class AV1 {
           }
         });
         } finally {releaseConversion?.();}
-      }).then(bytes => {
+      }, group.key, entry.priority)).then(bytes => {
         if (controller.signal.aborted || group.chunks.get(index)!==entry) throw new PlaybackError('WebM preparation cancelled.');
+        if (entry.reserved) { this.pendingBytes -= this.jobBytes; entry.reserved = false; }
         entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry); return bytes;
       }).catch(error => {
         if (controller.signal.aborted) { if (group.chunks.get(index)===entry) group.chunks.delete(index); }
@@ -382,11 +402,11 @@ class AV1 {
           this.prune(group,entry);
         }
         throw entry.error || error;
-      }).finally(() => { group.controllers.delete(controller); this.controllers.delete(controller); });
+      }).finally(() => { if (entry.reserved) { this.pendingBytes -= this.jobBytes; entry.reserved = false; } group.controllers.delete(controller); this.controllers.delete(controller); });
       // Caller disconnects can stop waiting without leaving an unhandled rejection.
       entry.promise.catch(() => {}); group.chunks.set(index, entry);
     }
-    entry.at = Date.now(); entry.users++;
+    entry.at = Date.now(); entry.users++; if (urgent) entry.priority.urgent = true;
     try {
       return await new Promise((resolve, reject) => {
         const cancel = () => reject(new PlaybackError('WebM client disconnected.'));
@@ -398,7 +418,17 @@ class AV1 {
       if (--entry.users === 0 && !entry.bytes) entry.controller.abort();
     }
   }
+  get retainedBytes() { return [...this.groups.values()].reduce((sum,group)=>sum+group.bytes,0); }
+  pruneAll(reserve = 0, keep) {
+    const candidates = [...this.groups.values()].flatMap(group => [...group.chunks].map(([index,entry])=>({group,index,entry})))
+      .filter(({entry})=>entry!==keep && !entry.users && (entry.bytes || entry.error)).sort((a,b)=>a.entry.at-b.entry.at);
+    for (const {group,index,entry} of candidates) {
+      if (this.retainedBytes + this.pendingBytes + reserve <= this.maxBytes) break;
+      group.chunks.delete(index); group.bytes -= entry.size || 0;
+    }
+  }
   prune(group, keep) {
+    this.pruneAll(0, keep);
     for (const [index, entry] of [...group.chunks].sort((a,b) => a[1].at - b[1].at)) {
       if (group.chunks.size <= 12 && group.bytes <= 128 * 1024 * 1024) break;
       if (entry !== keep && (entry.bytes || entry.error) && !entry.users) { group.chunks.delete(index); group.bytes -= entry.size || 0; }
@@ -407,6 +437,7 @@ class AV1 {
   close() {
     this.closed = true; this.shutdownController?.abort();
     for (const controller of this.controllers) controller.abort();
+    for (const group of this.groups.values()) group.infoTask?.abort();
     this.groups.clear(); this.inputs.clear(); this.server?.closeAllConnections(); this.server?.close();
     return Promise.allSettled([...this.jobs]);
   }

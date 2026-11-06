@@ -12,6 +12,26 @@ async function checkBuffering({browser,page,source,mediaControl,output,label}) {
   await browser.until(page,`uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)>=${goal} && !playbackError`,'Paused ahead buffer',60000);
   const filled = await snapshot();
   assert.ok(filled.retainedBytes === null || filled.retainedBytes <= 64*1024*1024,'encoded AV1 cache respects its byte budget');
+  let eviction;
+  if (await evaluate('!!av1')) {
+    await browser.until(page,'!av1.pumping && !av1.buffer.updating && !av1.audio.updating','Idle append pair');
+    // Model a lost audio range through real SourceBuffer operations while the
+    // append ledger stays intact. This does not claim automatic OS eviction.
+    eviction = JSON.parse(await evaluate(`(async()=>{
+      const player=av1, index=Math.floor(video.currentTime/player.seconds), stream=state.streamVersion;
+      clearTimeout(player.timer); player.pumping=true;
+      try { await player.operation(player.audio,()=>player.audio.remove(index*player.seconds,(index+1)*player.seconds)); }
+      finally { player.pumping=false; }
+      const ledgerRetained=player.appended.has(index), original=player.fetch; let requests=0;
+      player.fetch=async function(...args){requests++;return original.apply(this,args);};
+      try { await player.pump(); }
+      finally { player.fetch=original; }
+      return JSON.stringify({index,ledgerRetained,requests,samePlayer:av1===player,sameStream:state.streamVersion===stream});
+    })()`));
+    assert.ok(eviction.ledgerRetained && eviction.requests >= 2,'missing real audio range is refilled despite retained ledger');
+    assert.ok(eviction.samePlayer && eviction.sameStream,'buffer recovery preserves the player and stream');
+    await browser.until(page,'video.readyState>=2 && !playbackError','Decoded buffer after audio refill');
+  }
   await browser.viewport(page,1360,1050); await pause(2800);
   await browser.screenshot(page,path.join(output,label+'-desktop.png'));
   await evaluate('setTheater(true); true'); await pause(150);
@@ -64,7 +84,7 @@ async function checkBuffering({browser,page,source,mediaControl,output,label}) {
   await browser.until(page,`!video.paused && video.currentTime>${destination+1}`,'Playback after distant seek',15000);
   const recovered = await snapshot();
   assert.equal(recovered.error,'');
-  return {goalSeconds:goal,filled,outageSeconds:10,outageStart,outageEnd,distantSeek:{destination,failedChunk,destinationWasBuffered,recoveryMs:Date.now()-started},recovered,
+  return {goalSeconds:goal,filled,eviction,outageSeconds:10,outageStart,outageEnd,distantSeek:{destination,failedChunk,destinationWasBuffered,recoveryMs:Date.now()-started},recovered,
     limitation:'Synthetic media delivery outage only. Control remains reachable; decoded PCM is not physical audio output.'};
 }
 module.exports = {checkBuffering};

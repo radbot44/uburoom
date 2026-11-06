@@ -48,7 +48,8 @@ function provider() {
     if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});state.onStart?.();await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');}
     if(url.pathname.endsWith('/child.m3u8')) {
       const body='#EXTM3U\n#EXTINF:6\nsegment.ts\n';
-      if(state.holdPlaylist)return new Response(new ReadableStream({start(controller){
+      if(state.holdPlaylist && (!state.heldClient || state.heldClient===options.headers['X-Plex-Client-Identifier']))return new Response(new ReadableStream({start(controller){
+        state.heldClient ||= options.headers['X-Plex-Client-Identifier'];
         const release=()=>{controller.enqueue(new TextEncoder().encode(body));controller.close();state.heldPlaylists.delete(release);};
         state.heldPlaylists.add(release);state.releasePlaylist=()=>{for(const resume of [...state.heldPlaylists])resume();};state.playlistStarted?.();
       }}),{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
@@ -277,7 +278,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
     onChunk(Buffer.from('PGS-RAW-CHUNK-1'));
     onChunk(Buffer.from('PGS-RAW-CHUNK-2'));
   };
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
   const control=require('./helpers/control-client').controlClient(t,config,cert);
   const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
@@ -343,7 +344,7 @@ test('media grants reject stale playlists, subtitles and revoked viewers during 
     return fixture.plex.fetch(input,options);
   }});
   app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
   const control=require('./helpers/control-client').controlClient(t,config,cert);
   const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
@@ -404,7 +405,7 @@ test('streaming media bodies complete with progressing chunks beyond header dead
     return fixture.plex.fetch(input,options);
   }});
   app.hub.access={isMember:()=>true,refresh:async()=>true,options:()=>({available:true})};
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());t.after(()=>fixture.plex.close());
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
   const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
   const control=require('./helpers/control-client').controlClient(t,config,cert);
   const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{

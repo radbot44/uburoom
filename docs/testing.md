@@ -15,6 +15,30 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P2/P4/P11/P13 — Optimization/hardening implementation — 2026-11-06
+
+A/B on the uncommitted working tree based on `645743d68c22e732b5513874ee5dddbddadb63ae`, Node v22.22.2 / Windows, plus isolated C-style browser runs on synthetic media with simulated Plex responses. Implements the audit below: canonical version identity, current-consent reporting, operation cancellation and shared-work ownership, separate room/lobby publication, coalesced item checks, storage-scoped response fences, worker history totals, encoded-byte budgets with near-position priority, learned software fallback and actual-buffer recovery.
+
+Review before closure found defects no existing test covered, each now fixed with a regression test: timers armed by a finished request inherited its expired cancellation signal; a timed-out room publication reported a lost connection; a superseded preparation failed its waiting viewer's room state with a 4xx; and a first segment slower than eight seconds failed a lone viewer instead of playing.
+
+`npm test`: **529 passed, zero failures/cancellations/skips**. `node scripts/playback-baseline.js --browsers=chrome,firefox`: `vp9-23976` with `--buffering=on` passed in Chrome 156 and Firefox 159, including paused fill, a ten-second delivery outage and distant seek (1,936 / 1,924ms); `hls-hevc` passed in both. Fragmented-history fixture: about 191ms in the worker with a 16ms event-loop maximum. Bounded batch encoding used about 12% less elapsed time than six-second chunks but delayed first output from about 545ms to 930ms, so no persistent producer was adopted.
+
+Not covered: live Plex/Tautulli/Discord, hardware encoding, real networks, endurance load and physical display/audio. Server-wide scheduling across conversion, subtitle and HLS work remains partial. No deployment or C/D acceptance claim.
+
+### M1-P1/P2/P4/P11/P13 — Architectural optimization/hardening audit — 2026-11-06
+
+A/B on `645743d68c22e732b5513874ee5dddbddadb63ae`, Node v22.22.2 / Windows; no runtime changes. Ten disposable injected-provider/in-memory/loopback probes reproduced or modelled: global durability blocking a static response while health succeeds; browser cancellation leaving eight server requests live and a ninth closing the socket; cancellation crossing a shared metadata-probe boundary; repeated per-chunk hardware failure before software success; missing actual buffered ranges not triggering refill; synchronous history reduction; explicit version IDs producing unreadable room bookmarks; aggregate per-group cache allowances; FIFO saturation; and queued reporting retaining a withdrawn watch-state parameter. Cache probes were accounting-only, browser range loss was injected, and real provider side effects were not tested.
+
+Fragmented history fixture (1,000 records, 500 disjoint intervals per kind) took 227-237ms synchronously. Synthetic software VP9/Opus comparison on 30 seconds of 640x360/30fps footage: five six-second processes took 2,713/2,680ms versus one process at 2,191/2,190ms (approximately 18.8% less elapsed time). The continuous comparison returned its first complete output later; it establishes neither a streaming replacement nor improved playback startup. No GPU or remote-media claim.
+
+`node --test --test-reporter=tap tests/av1.test.js tests/watch-av1.test.js tests/storage-worker.test.js tests/playback-tracking.test.js tests/room-queue.test.js tests/room-queue-races.test.js tests/plex-reporting.test.js tests/watch-recovery.test.js`: **95 passed, zero failures/cancellations/skips**. The ten disposable probes also passed, asserting current problematic/conditional behavior. Open work: canonical identity round trips, operation/shared-task lifetimes, mutation-scoped durability, bounded history projections, resource arbitration, producer/backend adaptation, actual-buffer reconciliation and reporting consent at dispatch. These remain proposals; no full-suite, live provider, rendered browser, hardware, endurance or C/D acceptance claim.
+
+### M1-P1/P2/P11 — Playback dependency audit — 2026-11-06
+
+A/B review at `645743d68c22e732b5513874ee5dddbddadb63ae`, Node v22.22.2 / Windows; no runtime changes. Disposable injected-provider/loopback probes reproduced: a held lobby publication prevented selected-room refreshes for 16 seconds while its socket remained open; 20 concurrent cold item-access checks under one scope caused 20 metadata requests; a stalled proxy HLS anchor caused four matching callers to receive four independent outputs after approximately eight seconds. The anchor probe did not run encoders or enforce conversion capacity. Media-grant expiry impact follows from the 15-second grant lifetime and renewal path; rendered playback interruption and real resource savings were not measured.
+
+`node --test --test-reporter=dot tests/hls-pool.test.js tests/watch-socket.test.js tests/resilience.test.js`: 30 passed, zero failures/skips. Open decisions: isolate selected-room publication from lobby discovery while preserving authorization; coalesce same-scope item checks with invalidation fencing; investigate safe shared warm-up for transient anchor failures. No implementation, full-suite, C/D integration or acceptance claim.
+
 ### M1-P5/P11 — Shared Synchronization Core (`shared/sync/`) & Cephalopod Hardening — 2026-10-30
 
 A/B on the uncommitted working tree based on `c4d664a0c5897edcfa8d914badfceaa7f3bc983b`, Node v22.22.2 / Windows. Isolated local fixtures, deterministic clocks/deferred-promise fault injection, and loopback HTTPS/WSS servers only; no live Plex Media Server, Discord guild/Activity, physical browser rendering, or production deployment.

@@ -2,6 +2,7 @@
 'use strict';
 const { WebSocketServer } = require('ws');
 const { clientAddress } = require('./plex-delivery');
+const { runOperation, waitFor, commitOperation } = require('./operation');
 const {
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
@@ -18,7 +19,7 @@ const {
  */
 
 // WebSocket framing calls shared operations directly; commands are never replayed.
-function watchSockets({ server, config, routes, watch, hub, throttle, flush = async () => {} }) {
+function watchSockets({ server, config, routes, watch, hub, throttle, publishTimeoutMs = 12000 }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   server.once('listening', () => watch.roomState?.startRecovery());
   const clockEpoch = routes.clockEpoch;
@@ -33,11 +34,16 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if(Buffer.byteLength(raw)>1024*1024){client.ws.close(4009,'Room response too large');return;}
     client.ws.send(raw);
   }
-  const request = (client, path, data) => routes.execute({
+  const request = (client, path, data, signal = client.lifetime.signal) => runOperation(signal, async () => {
+    const result = await routes.execute({
+    signal,
     get headers() { return client.headers; },
     controlSocket: client.ws,
     remoteAddress: client.remoteAddress || client.socket?.remoteAddress
   }, path, data);
+    await commitOperation();
+    return result;
+  });
   async function syncQuality(client,message) {
     if (!validateSyncQualityMessage(message)) return client.ws.close(4002,'Invalid sync quality message');
     const room = watch.rooms.get(message.roomId), viewer = room?.viewers.get(message.viewerId);
@@ -63,26 +69,24 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;client.lastSyncQualityConfidence=message.confidence;
     if(displayChanged)broker.notify({roomId:message.roomId,includeLobby:false});
   }
-  async function publish(client, { roomOnly = false } = {}) {
+  function publish(client, { roomOnly = false } = {}) {
+    void publishLane(client, 'room');
+    if (!roomOnly || client.lastRoomsJson === undefined) void publishLane(client, 'lobby');
+  }
+  async function publishLane(client, lane) {
     if (!client.authenticated || client.ws.readyState !== 1) return;
-    if(client.publishing){client.dirty=true;if(!roomOnly)client.dirtyFull=true;return;}
-    client.publishing = true;
+    const key = lane + 'Publication';
+    const previous = client[key];
+    if (previous) { previous.dirty = true; return; }
+    const job = client[key] = { dirty: false };
+    const signal = AbortSignal.any([client.lifetime.signal, AbortSignal.timeout(publishTimeoutMs)]);
     const path = client.subscription;
     try {
-      const me = await request(client, '/api/watch/me');
-      if (client.ws.readyState !== 1) return;
-      if (me.status !== 200) { send(client, { type: 'unavailable', ...me }); client.ws.close(4003, 'Sign in again'); return; }
-      const identityJson = JSON.stringify(me.value);
-      if (identityJson !== client.lastIdentityJson) {
-        client.lastIdentityJson = identityJson;
-        send(client, { type: 'identity', value: me.value });
-      }
-      if (!roomOnly || client.lastRoomsJson === undefined) {
-        const rooms = await request(client, '/api/watch/rooms');
-        const roomsJson = JSON.stringify(rooms);
-        if (roomsJson !== client.lastRoomsJson) {
-          client.lastRoomsJson = roomsJson;
-          send(client, { type: 'rooms', ...rooms });
+      if (lane === 'lobby') {
+        const rooms = await waitFor(request(client, '/api/watch/rooms', undefined, signal), signal);
+        const raw = JSON.stringify(rooms);
+        if (client.ws.readyState === 1 && raw !== client.lastRoomsJson) {
+          client.lastRoomsJson = raw; send(client, { type: 'rooms', ...rooms });
         }
         // Record only transitions in selected-room visibility, not every periodic publication.
         const selectedRoom=/^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\?|$)/.exec(path||'')?.[1];
@@ -95,19 +99,26 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
             client.lastPublishedRoomId=selectedRoom;client.lastPublishedRoomAvailability=availability;
           }
         }
+      } else {
+        const me = await waitFor(request(client, '/api/watch/me', undefined, signal), signal);
+        if (client.ws.readyState !== 1) return;
+        if (me.status !== 200) { send(client, { type: 'unavailable', ...me }); client.ws.close(4003, 'Sign in again'); return; }
+        const raw = JSON.stringify(me.value);
+        if (raw !== client.lastIdentityJson) { client.lastIdentityJson = raw; send(client, { type: 'identity', value: me.value }); }
+        if (path && client.subscription === path) {
+          const result = await waitFor(request(client, path, undefined, signal), signal);
+          if (client.subscription === path) send(client, { type: 'state', path, ...result });
+        }
       }
-      if (path && client.subscription === path) {
-        const result = await request(client, path);
-        if (client.subscription === path) send(client, { type: 'state', path, ...result });
-      }
-    } catch { send(client, { type: 'unavailable', value: { error: 'Room connection temporarily unavailable' } }); }
-    finally {
-      client.publishing = false;
-      if(client.dirty){
-        const nextRoomOnly=!client.dirtyFull;
-        client.dirty=false;client.dirtyFull=false;
-        queueMicrotask(()=>{void publish(client,{roomOnly:nextRoomOnly});});
-      }
+    } catch {
+      // Discovery failure must not invalidate a separately authorized stream. A
+      // slow preparation is not a lost connection either: publish again instead
+      // of making a healthy browser reconnect and clear its player.
+      if (signal.aborted) job.dirty = !client.lifetime.signal.aborted;
+      else if (lane === 'room' && !client.lifetime.signal.aborted) send(client, { type: 'unavailable', value: { error: 'Room connection temporarily unavailable' } });
+    } finally {
+      client[key] = undefined;
+      if (job.dirty) queueMicrotask(() => { void publishLane(client, lane); });
     }
   }
   // Commands from Discord or internal room timers wake only affected room subscribers when local.
@@ -127,7 +138,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
     if (req.url !== '/watch-socket') return socket.destroy();
     if (!allowed(req.headers.origin) || !throttle('watch-socket:' + (clientAddress(req) || 'local'), 30) || clients.size >= 128) return socket.destroy();
     wss.handleUpgrade(req, socket, head, ws => {
-      const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Set(),connectionId:++nextConnectionId,openedAt:Date.now() };
+      const client = { ws, socket: req.socket, remoteAddress: clientAddress(req), headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' }, lastSeen: Date.now(), inflight: new Map(), running: new Set(), lifetime: new AbortController(),connectionId:++nextConnectionId,openedAt:Date.now() };
       Object.defineProperty(ws, 'watchHeaders', { get() { return client.headers; }, configurable: true });
       clients.add(client);
       config.logger?.debug('Socket', `conn=${client.connectionId} opened from ${client.remoteAddress || 'local'} (total: ${clients.size})`);
@@ -174,36 +185,58 @@ function watchSockets({ server, config, routes, watch, hub, throttle, flush = as
           }
           client.lastSeen = Date.now();
           hub.directory?.connected(ws,client.userId);
+          if (message.type === 'cancel') {
+            if (!Number.isSafeInteger(message.id) || message.id < 0) return ws.close(4002, 'Invalid cancellation');
+            client.inflight.get(message.id)?.abort(); return;
+          }
           if (message.type === 'clock') {
+            if (client.clocking) return;
+            client.clocking = true;
+            try {
             if(!Number.isSafeInteger(message.id)||message.id<0)return ws.close(4002,'Invalid clock message');
             const serverReceivedAt = Date.now(), received = performance.now();
             if (!await routes.authorized({ headers: client.headers }, true)) return ws.close(4003, 'Sign in again');
             for(const room of watch.rooms.values())for(const viewer of room.viewers.values())if(viewer.watchSocket===ws)viewer.at=Date.now();
             send(client, { type: 'clock', id: message.id, serverNow: Date.now(), timing: { serverReceivedAt, serverSentAt: Date.now(), serverProcessingMs: performance.now() - received, clockEpoch } }); return;
+            } finally { client.clocking = false; }
           }
-          if (message.type === 'sync-quality') { await syncQuality(client,message); return; }
+          if (message.type === 'sync-quality') {
+            if (client.measuring) return; client.measuring = true;
+            try { await syncQuality(client,message); } finally { client.measuring = false; } return;
+          }
           if (message.type !== 'request' || !Number.isSafeInteger(message.id) || message.id < 0 || client.inflight.has(message.id) || client.inflight.size >= 8 ||
             typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
-          client.inflight.add(message.id);
+          if (client.running.size >= 16) { send(client, { type: 'response', id: message.id, status: 429, value: { error: 'Previous work is still retiring; retry shortly' } }); return; }
+          const controller = new AbortController();
+          const timeout = Number.isFinite(message.timeoutMs) ? Math.min(120000, Math.max(1000, message.timeoutMs)) : 12000;
+          const signal = AbortSignal.any([controller.signal, client.lifetime.signal, AbortSignal.timeout(timeout)]);
+          client.inflight.set(message.id, controller);
           try {
             const scope = message.data !== undefined && !message.path.endsWith('/observe')
               ? classifyMutationScope(message.path, message.data)
               : undefined;
             const hadMedia = Boolean(scope?.roomId && watch.rooms.get(scope.roomId)?.media);
-            const result = await request(client, message.path, message.data);
+            const operation = request(client, message.path, message.data, signal);
+            client.running.add(operation);
+            operation.finally(() => client.running.delete(operation)).catch(() => {});
+            const result = await waitFor(operation, signal);
             if(result.status===200&&result.subscription)client.subscription=result.subscription;
             if (/^\/api\/watch\/rooms\/[a-f0-9-]{36}\?/.test(message.path) && result.status === 200) client.subscription = message.path;
             if (/\/(leave|close)$/.test(message.path) && client.subscription?.split('?')[0] === message.path.replace(/\/(leave|close)$/, '')) client.subscription = undefined;
-            await flush();
+
             send(client, { type: 'response', id: message.id, status:result.status, value:result.value });
             if (scope) {
               const hasMedia = Boolean(scope.roomId && watch.rooms.get(scope.roomId)?.media);
               broker.notify(!scope.includeLobby && hadMedia === hasMedia ? scope : { includeLobby: true });
             }
+          } catch (error) {
+            if (!signal.aborted) throw error;
+            if (!controller.signal.aborted) send(client, { type: 'response', id: message.id, status: 503, value: { error: 'Operation timed out; refresh state before retrying a change' } });
           } finally { client.inflight.delete(message.id); }
         })().catch(() => ws.close(4002, 'Request failed'));
       });
       ws.on('close', (code,rawReason) => {
+        client.lifetime.abort();
         const reason=rawReason?.toString('utf8').slice(0,80).replace(/[^\x20-\x7e]/g,'')||'';
         const attached=[...watch.rooms.values()].reduce((n,room)=>n+[...room.viewers.values()].filter(viewer=>viewer.watchSocket===ws).length,0);
         config.logger?.debug('Socket', `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause||'peer-or-network'} account=${JSON.stringify(client.userName||client.userId||'unauthenticated')} ageMs=${Date.now()-client.openedAt} attachedViewers=${attached} (remaining: ${clients.size-1})`);

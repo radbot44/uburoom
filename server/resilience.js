@@ -1,4 +1,5 @@
 'use strict';
+const { currentSignal } = require('./operation');
 class IntegrationUnavailable extends Error {
   constructor() { super('External service temporarily unavailable; retry shortly'); this.status=503; }
 }
@@ -21,7 +22,10 @@ class CircuitBreaker {
 }
 function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
   const circuit=new CircuitBreaker();
-  return (url,options={})=>circuit.run(async()=>{
+  return (url,options={})=>{
+    const operationSignal = currentSignal();
+    if (operationSignal) options = { ...options, signal: options.signal ? AbortSignal.any([options.signal, operationSignal]) : operationSignal };
+    return circuit.run(async()=>{
     if(options.streaming) {
       const internalAbort=new AbortController();
       let aborted=false;
@@ -101,7 +105,9 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
       }
       return response;
     }
-    const response=await fetcher(url,{...options,signal:options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)});
+    let response;
+    try { response=await fetcher(url,{...options,signal:options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)}); }
+    catch (error) { if (options.signal?.aborted) throw Object.assign(new Error('Request cancelled'), { name:'AbortError', callerAborted:true }); throw error; }
     if(response.status===429||response.status>=500) {
       const error=new IntegrationUnavailable();error.status=response.status;
       const retry=response.headers.get('retry-after'),seconds=Number(retry);
@@ -109,6 +115,7 @@ function resilientFetch(fetcher,{timeoutMs=12000,idleTimeoutMs=12000}={}) {
       void response.body?.cancel().catch(()=>{});throw error;
     }
     return response;
-  });
+    });
+  };
 }
 module.exports={CircuitBreaker,resilientFetch,IntegrationUnavailable};

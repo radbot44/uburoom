@@ -3,6 +3,32 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {CircuitBreaker,resilientFetch}=require('../server/resilience');
 const {Plex}=require('../server/plex');
 const {run}=require('../server/av1');
+const {runOperation,currentSignal,SharedTask}=require('../server/operation');
+
+test('work armed by a finished operation outlives that operation and its cancellation',async()=>{
+  const lifetime=new AbortController();let timer;
+  const fired=new Promise(resolve=>{timer=resolve;});
+  await runOperation(lifetime.signal,async()=>{setTimeout(()=>timer(currentSignal()),20);assert.ok(currentSignal());});
+  lifetime.abort();
+  assert.equal(await fired,undefined,'a later autoplay timer must not inherit an expired request');
+  const cancelled=new AbortController();
+  const running=runOperation(cancelled.signal,async()=>{await new Promise(resolve=>setTimeout(resolve,10));return currentSignal().aborted;});
+  cancelled.abort();assert.equal(await running,true,'running work still observes cancellation');
+});
+
+test('shared work survives a gap between consumers but not their lasting absence',async t=>{
+  const keepAlive=setInterval(()=>{},1000);t.after(()=>clearInterval(keepAlive));
+  const gone=()=>new AbortController();
+  let finish;const task=new SharedTask(signal=>new Promise((resolve,reject)=>{finish=resolve;signal.addEventListener('abort',()=>reject(signal.reason),{once:true});}),{idleMs:40});
+  const first=gone(),waiting=assert.rejects(task.join(first.signal));
+  await new Promise(resolve=>setTimeout(resolve,5));first.abort();await waiting;
+  await new Promise(resolve=>setTimeout(resolve,10));assert.equal(task.signal.aborted,false,'a timed-out poller does not restart slow preparation');
+  const second=task.join();finish('ready');assert.equal(await second,'ready');
+  const idle=new SharedTask(signal=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})),{idleMs:10});
+  const leaving=gone(),left=assert.rejects(idle.join(leaving.signal));
+  await new Promise(resolve=>setTimeout(resolve,5));leaving.abort();await left;
+  await assert.rejects(idle.promise);assert.equal(idle.signal.aborted,true);
+});
 
 test('circuit breaker bounds failures, respects rate limits and allows exactly one recovery probe',async()=>{
   let now=0,calls=0;const circuit=new CircuitBreaker({threshold:2,cooldown:100,now:()=>now});

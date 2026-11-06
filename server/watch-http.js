@@ -193,7 +193,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const cancel = () => abort.abort(); res.on('close', cancel);
       const check = setInterval(async () => { try { if (!await validGrant(grant)) abort.abort(); } catch { abort.abort(); } }, 2000);
       try {
-        const chunk = await watch.plex.av1.chunk(media.av1Lease, index, abort.signal), bytes = chunk[match[1]];
+        const chunk = await watch.plex.av1.chunk(media.av1Lease, index, abort.signal, { urgent: Math.abs(index - Math.floor(watch.position(grant.room) / CHUNK)) <= 1 }), bytes = chunk[match[1]];
         if (abort.signal.aborted || !await validGrant(grant)) return;
         res.writeHead(200, {'Content-Type':'video/webm','Content-Length':bytes.length});
         if (req.method === 'HEAD') res.end(); else await pipeline(Readable.from([bytes]), res);

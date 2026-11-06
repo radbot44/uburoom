@@ -56,6 +56,38 @@ class uburoomAV1 {
     for (const index of indices) {
       await Promise.all([this.buffer,this.audio].map(buffer => this.operation(buffer,() => buffer.remove(index * this.seconds,(index + 1) * this.seconds))));
       this.appended.delete(index); this.chunkBytes.delete(index);
+      this.coverage?.delete(index); this.refills?.delete(index);
+    }
+  }
+  ranges(buffer, index) {
+    if (!buffer.buffered) return undefined;
+    const start = index * this.seconds, end = Math.min(this.duration, start + this.seconds), result = [];
+    for (let i = 0; i < buffer.buffered.length; i++) {
+      const a = Math.max(start, buffer.buffered.start(i)), b = Math.min(end, buffer.buffered.end(i));
+      if (b > a) result.push([a,b]);
+    }
+    return result;
+  }
+  reconcile(first, last) {
+    this.coverage ||= new Map(); this.refills ||= new Map();
+    for (const index of this.refills.keys()) if (index < first || index > last) this.refills.delete(index);
+    for (const index of this.appended) {
+      if (index < first || index > last) continue;
+      const actual = [this.ranges(this.buffer,index),this.ranges(this.audio,index)];
+      if (actual.some(ranges => ranges === undefined)) continue;
+      const expected = this.coverage.get(index) || actual.map(() => [[index*this.seconds+.15,Math.min(this.duration,(index+1)*this.seconds)-.15]]);
+      const covered = actual.every((ranges,track) => expected[track].every(([a,b]) => {
+        const needed = index === first ? Math.max(a,this.target()-.15) : a;
+        return b <= needed || ranges.some(([x,y]) => x <= needed+.08 && y >= b-.08);
+      }));
+      if (covered && actual.every(ranges => ranges.length)) continue;
+      const count = (this.refills.get(index) || 0) + 1;
+      if (count > 3) {
+        if (index === first) throw new Error('Converted playback buffer could not be retained.');
+        this.pressureAhead = this.seconds; this.pressured = true; continue;
+      }
+      this.refills.set(index,count);
+      this.appended.delete(index); this.chunkBytes.delete(index); this.endSignalled = false;
     }
   }
   get retainedBytes() { return [...this.chunkBytes.values()].reduce((a,b) => a+b,0); }
@@ -67,6 +99,10 @@ class uburoomAV1 {
   async append(index,videoBytes,audioBytes,first) {
     const attempt = async () => {
       this.buffer.timestampOffset = this.audio.timestampOffset = index * this.seconds + .01;
+      // A fractional last frame can overlap the next chunk's keyframe. During
+      // refill, MSE would then remove dependent frames from that good chunk.
+      // Bound each pair to its source window before any out-of-order append.
+      this.buffer.appendWindowEnd = this.audio.appendWindowEnd = Math.min(this.duration + .1,(index + 1) * this.seconds + .01);
       const results = await Promise.allSettled([
         this.operation(this.buffer,() => this.buffer.appendBuffer(videoBytes)),
         this.operation(this.audio,() => this.audio.appendBuffer(audioBytes))
@@ -86,6 +122,9 @@ class uburoomAV1 {
       await this.evict([...this.appended].filter(entry => entry !== first));
       await attempt();
     }
+    this.coverage ||= new Map();
+    const coverage = [this.ranges(this.buffer,index),this.ranges(this.audio,index)];
+    if (coverage.every(ranges => ranges?.length)) this.coverage.set(index,coverage);
     this.appended.add(index); this.chunkBytes.set(index,videoBytes.byteLength + audioBytes.byteLength);
     return true;
   }
@@ -110,6 +149,7 @@ class uburoomAV1 {
     const earliest = Math.max(0,Math.floor((target - (this.pressured ? 0 : policy.behind)) / this.seconds));
     await this.evict([...this.appended].filter(index => index < earliest || index > last));
     if (superseded()) return;
+    this.reconcile(first,last);
     for (let index = first; index <= last && index * this.seconds < this.duration; index++) {
       if (this.appended.has(index)) continue;
       if (this.prefetchFailure?.index === index) {
@@ -186,7 +226,7 @@ class uburoomAV1 {
   destroy() {
     clearTimeout(this.timer); this.abort.abort(); this.request?.abort();
     this.video.removeEventListener('seeking',this.onSeek);
-    this.chunkBytes.clear(); this.appended.clear();
+    this.chunkBytes.clear(); this.appended.clear(); this.coverage?.clear(); this.refills?.clear();
     URL.revokeObjectURL(this.objectUrl);
   }
 }

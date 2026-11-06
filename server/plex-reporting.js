@@ -1,6 +1,8 @@
 // @ts-check
 'use strict';
+const { runOperation } = require('./operation');
 const { randomUUID } = require('node:crypto');
+const { mediaIdentity } = require('../shared/room-protocol');
 
 class PlexReporting {
   /**
@@ -19,6 +21,8 @@ class PlexReporting {
     this.now = now;
     /** @type {Map<string, Object>} */
     this.sessions = new Map();
+    this.retiring = new Set();
+    this.closed = false;
   }
 
   /**
@@ -55,12 +59,12 @@ class PlexReporting {
    * @param {Object} observed Accepted tracking result
    */
   async observe(room, viewer, viewerId, data, observed) {
-    if (this.config.plexReporting?.enabled === false) return;
+    if (this.closed || this.config.plexReporting?.enabled === false) return;
     if (!room?.media || room.media.kind !== 'plex' || !room.media.id) return;
     if (!this.isEligible(viewer.userId)) {
       const existing = this.sessions.get(viewerId);
       if (existing) {
-        existing.stopped = true;
+        existing.stopped = true; existing.desired = undefined;
         this.sessions.delete(viewerId);
       }
       return;
@@ -116,7 +120,7 @@ class PlexReporting {
             return;
           }
           if (!scoped || scoped.principal === 'discord-shared' || scoped.clientId === 'configured-fallback') return;
-          if ((room.viewers && room.viewers.get(viewerId) !== viewer) || !room.media?.id || String(room.media.id) !== mediaId ||
+          if (this.closed || (room.viewers && room.viewers.get(viewerId) !== viewer) || !room.media?.id || String(room.media.id) !== mediaId ||
               room.mediaVersion !== mediaVersion || viewer.streamVersion !== streamVersion ||
               viewer.observationEpoch !== observationEpoch || viewer.plexReporting === false) {
             return;
@@ -130,6 +134,7 @@ class PlexReporting {
             userId: viewer.userId,
             viewerId,
             viewer,
+            room,
             mediaId,
             duration: room.media.duration,
             mediaVersion,
@@ -153,8 +158,8 @@ class PlexReporting {
     }
 
     // Refresh consent if modified mid-session
-    session.consent.activity = allowActivity;
-    session.consent.watchState = allowWatchState;
+    session.consent.activity = viewer.plexReporting !== false;
+    session.consent.watchState = !!(viewer.plexWatchState && this.config.plexReporting?.watchState !== false);
 
     const stateChanged = reportedState !== session.lastState;
     const advanced = observed.credit?.reason === 'credited' || observed.credit?.reason === 'baseline';
@@ -170,39 +175,53 @@ class PlexReporting {
 
     if (!shouldReport) return;
 
-    const query = new URLSearchParams({
-      key: '/library/metadata/' + session.mediaId,
-      ratingKey: session.mediaId,
-      identifier: 'com.plexapp.plugins.library',
-      state: reportedState,
-      time: String(currentMs),
-      continuing: '0'
-    });
-
-    if (session.consent.watchState && Number.isFinite(session.duration) && session.duration > 0) {
-      query.set('duration', String(Math.round(session.duration * 1000)));
-    }
-
-    const headers = {
-      'X-Plex-Client-Identifier': session.clientId,
-      'X-Plex-Session-Identifier': session.sessionId
-    };
-
     session.lastState = reportedState;
     session.lastPositionMs = currentMs;
     session.lastReportedAt = this.now();
+    this.enqueue(session, { state: reportedState, position: currentMs });
+  }
 
-    session.dispatched = session.dispatched.then(async () => {
-      if (session.stopped) return;
-      try {
-        await session.scopedPlex.request('/:/timeline?' + query, { method: 'POST', headers });
-      } catch (error) {
-        if (error?.status && [401, 403, 498].includes(error.status)) {
-          session.stopped = true;
-          if (this.sessions.get(viewerId) === session) this.sessions.delete(viewerId);
+  // One in-flight request and one latest desired state. Payloads are built at
+  // dispatch, never before an authorization/consent wait or as an unbounded log.
+  enqueue(session, desired) {
+    session.desired = desired;
+    if (session.dispatching) return session.dispatched;
+    session.dispatching = true;
+    session.dispatched = Promise.resolve().then(() => runOperation(undefined, async () => {
+      while (session.desired) {
+        let scoped;
+        try { scoped = await (this.plexAuth || this.hub?.plexAuth)?.forUser(session.userId); }
+        catch { session.desired = undefined; break; }
+        const next = session.desired; session.desired = undefined;
+        if (!next || !scoped || !this.isEligible(session.userId) || scoped.principal === 'discord-shared' || scoped.clientId === 'configured-fallback') continue;
+        const terminal = next.state === 'stopped';
+        if (!terminal && (session.stopped || !session.consent.activity ||
+            session.viewer.plexReporting === false || session.room.mediaVersion !== session.mediaVersion ||
+            session.viewer.streamVersion !== session.streamVersion || session.viewer.observationEpoch !== session.observationEpoch)) continue;
+        const identity = mediaIdentity(session.mediaId);
+        if (!identity?.ratingKey) continue;
+        const query = new URLSearchParams({ key: '/library/metadata/' + identity.ratingKey,
+          ratingKey: identity.ratingKey, identifier: 'com.plexapp.plugins.library',
+          state: next.state, time: String(next.position), continuing: '0' });
+        if (session.consent.watchState && session.viewer.plexWatchState && this.config.plexReporting?.watchState !== false &&
+            Number.isFinite(session.duration) && session.duration > 0) query.set('duration', String(Math.round(session.duration * 1000)));
+        try {
+          await scoped.request('/:/timeline?' + query, { method: 'POST',
+            signal: AbortSignal.timeout(12000), headers: {
+              'X-Plex-Client-Identifier': session.clientId, 'X-Plex-Session-Identifier': session.sessionId
+            } });
+        } catch (error) {
+          if ([401, 403, 498].includes(error?.status)) {
+            session.stopped = true; session.desired = undefined;
+            if (this.sessions.get(session.viewerId) === session) this.sessions.delete(session.viewerId);
+          }
         }
       }
+    })).finally(() => {
+      session.dispatching = false;
+      if (session.desired) this.enqueue(session, session.desired);
     });
+    return session.dispatched;
   }
 
   /**
@@ -212,8 +231,7 @@ class PlexReporting {
    */
   updateConsent(viewer, consent) {
     if (consent.activity === false) {
-      void this.end(viewer, 'opt-out');
-      return;
+      return this.end(viewer, 'opt-out');
     }
     const session = this._findSession(viewer);
     if (!session) return;
@@ -233,39 +251,19 @@ class PlexReporting {
     session.stopped = true;
     this.sessions.delete(session.viewerId);
 
-    const query = new URLSearchParams({
-      key: '/library/metadata/' + session.mediaId,
-      ratingKey: session.mediaId,
-      identifier: 'com.plexapp.plugins.library',
-      state: 'stopped',
-      time: String(session.lastPositionMs || 0),
-      continuing: '0'
-    });
-
-    if (session.consent.watchState && Number.isFinite(session.duration) && session.duration > 0) {
-      query.set('duration', String(Math.round(session.duration * 1000)));
-    }
-
-    const headers = {
-      'X-Plex-Client-Identifier': session.clientId,
-      'X-Plex-Session-Identifier': session.sessionId
-    };
-
-    session.dispatched = session.dispatched.then(async () => {
-      try {
-        await session.scopedPlex.request('/:/timeline?' + query, { method: 'POST', headers });
-      } catch {}
-    });
-
-    return session.dispatched;
+    const retired = this.enqueue(session, { state: 'stopped', position: session.lastPositionMs || 0 });
+    this.retiring.add(retired);
+    try { await retired; } finally { this.retiring.delete(retired); }
   }
 
   /**
    * Close all active reporting sessions cleanly.
    */
   async close() {
+    this.closed = true;
+    await Promise.allSettled([...(this.creating?.values() || [])]);
     const pending = [...this.sessions.values()].map(session => this.end(session, 'server-closing'));
-    await Promise.all(pending);
+    await Promise.allSettled([...pending, ...this.retiring]);
   }
 }
 

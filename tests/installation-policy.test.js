@@ -236,15 +236,15 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
   const plex=new (require('../server/plex').Plex)({plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',transcoding:{policy:'follow_plex',plex:true,uburoom:true,formats:['av1'],maxJobs:2}},async(input,options)=>{
     const url=new URL(input);
     if(url.pathname==='/:/prefs')return new Response(JSON.stringify({MediaContainer:{Setting:[{id:'TranscoderCanOnlyRemuxVideo',value:'0'}]}}));
-    if(url.pathname==='/library/metadata/multi-audio'){
-      return new Response(JSON.stringify({MediaContainer:{Metadata:[{ratingKey:'multi-audio',type:'movie',title:'Multi audio movie',duration:60000,Media:[{videoCodec:'h264',bitrate:4000,width:640,height:360,Part:[{id:98,key:'/library/parts/98/file.mkv',Stream:[
+    if(url.pathname==='/library/metadata/901'){
+      return new Response(JSON.stringify({MediaContainer:{Metadata:[{ratingKey:'901',type:'movie',title:'Multi audio movie',duration:60000,Media:[{videoCodec:'h264',bitrate:4000,width:640,height:360,Part:[{id:98,key:'/library/parts/98/file.mkv',Stream:[
         {id:10,streamType:1,codec:'h264'},
         {id:11,index:1,streamType:2,codec:'dts',selected:true},
         {id:12,index:2,streamType:2,codec:'ac3'}
       ]}]}]}]}}));
     }
-    if(url.pathname==='/library/metadata/burn-item'){
-      return new Response(JSON.stringify({MediaContainer:{Metadata:[{ratingKey:'burn-item',type:'movie',title:'Burn movie',duration:60000,Media:[{videoCodec:'h264',bitrate:4000,width:640,height:360,Part:[{id:99,key:'/library/parts/99/file.mp4',Stream:[
+    if(url.pathname==='/library/metadata/902'){
+      return new Response(JSON.stringify({MediaContainer:{Metadata:[{ratingKey:'902',type:'movie',title:'Burn movie',duration:60000,Media:[{videoCodec:'h264',bitrate:4000,width:640,height:360,Part:[{id:99,key:'/library/parts/99/file.mp4',Stream:[
         {id:10,streamType:1,codec:'h264'},
         {id:22,index:1,streamType:3,codec:'pgs',selected:true}
       ]}]}]}]}}));
@@ -264,7 +264,7 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
     return provider.fetch(input,options);
   });
   try{
-    const normal=await plex.prepare('multi-audio','direct',false,undefined,undefined,{subtitleId:'off'});
+    const normal=await plex.prepare('901','direct',false,undefined,undefined,{subtitleId:'off'});
     assert.equal(decisions.at(-1).directStream,'1');
     assert.equal(normal.output.videoDecision,'copy');
     assert.equal(normal.output.audioDecision,'transcode');
@@ -274,11 +274,11 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
     assert.equal(decisions.at(-1).directStream,'1');
     await plex.stop(downscaled);
 
-    const fallback=await plex.prepare('multi-audio','direct',true,undefined,undefined,{subtitleId:'off'});
+    const fallback=await plex.prepare('901','direct',true,undefined,undefined,{subtitleId:'off'});
     assert.equal(decisions.at(-1).directStream,'0');
     await plex.stop(fallback);
 
-    const burned=await plex.prepare('burn-item','direct',false,undefined,undefined,{subtitleId:'22',subtitleMode:'burn'});
+    const burned=await plex.prepare('902','direct',false,undefined,undefined,{subtitleId:'22',subtitleMode:'burn'});
     assert.equal(decisions.at(-1).directStream,'0');
     assert.equal(decisions.at(-1).subtitles,'burn');
     await plex.stop(burned);

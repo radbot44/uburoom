@@ -16,6 +16,13 @@
     { id:'720p2', label:'720p · 2 Mbps', width:1280, height:720, bitrate:2000 }
   ]);
   const qualityId = id => ({'720p':'720p4','1080p':'1080p8'}[id] || id);
+  // A selector retains its explicit version. Only provider API adapters use
+  // ratingKey; equality of rating keys alone never establishes timeline identity.
+  function mediaIdentity(value) {
+    if (value === 'demo') return { id: value, demo: true };
+    const match = typeof value === 'string' && /^(\d{1,20})(?::(\d{1,20}))?$/.exec(value);
+    return match ? { id: value, ratingKey: match[1], mediaId: match[2], demo: false } : undefined;
+  }
   function qualityDefinition(id) {
     id = qualityId(id);
     if (id === 'direct') return QUALITIES[0];
@@ -131,7 +138,7 @@
         if (args.activity === undefined && args.watchState === undefined) throw new Error('Choose a reporting setting');
         break;
       case 'media.load':
-        if (typeof a.mediaId !== 'string' || !/^(?:demo|[0-9]{1,20}(?::[0-9]{1,20})?)$/.test(a.mediaId)) throw new Error('Choose a library item');
+        if (!mediaIdentity(a.mediaId)) throw new Error('Choose a library item');
         if (!validQuality(a.quality)) throw new Error('Choose a playback quality');
         args = { mediaId: a.mediaId, quality: a.quality };
         if (a.position !== undefined) {
@@ -151,7 +158,7 @@
     }
     return { action, args };
   }
-  const api = { CONTROLS, QUALITIES, qualityId, qualityDefinition, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, senderName, validate };
+  const api = { CONTROLS, QUALITIES, qualityId, mediaIdentity, qualityDefinition, validQuality, MANAGEMENT, controls, controlFor, controlAllowed, senderName, validate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomRoomProtocol = api;
 })(globalThis);

@@ -4,6 +4,7 @@ const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
+const { mediaIdentity } = require('../shared/room-protocol');
 const { PlaybackError } = require('./av1');
 const { ObservationError } = require('./playback-tracking');
 const { clientAddress } = require('./plex-delivery');
@@ -13,25 +14,21 @@ function applyRoomProgress(watch, roomId, items = []) {
   const liveRoom = watch.rooms.get(roomId);
   const saved = watch.roomState?.store.get(roomId);
   let dbRows = new Map();
-  if (watch.roomState?.db) {
+  if (watch.roomState?.store?.db) {
     try {
-      const rows = watch.roomState.db.prepare(
+      const rows = watch.roomState.store.db.prepare(
         "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC"
       ).all(roomId);
       for (const r of rows) {
         dbRows.set(r.mediaId, r);
-        const base = String(r.mediaId).split(':')[0];
-        dbRows.set(base, r);
       }
     } catch {}
   }
   for (const item of items) {
     if (!item) continue;
-    const baseId = String(item.id).split(':')[0];
     let pos = null;
     if (liveRoom?.media) {
-      const liveBase = String(liveRoom.media.id).split(':')[0];
-      if (liveRoom.media.id === item.id || liveBase === baseId) {
+      if (liveRoom.media.id === item.id) {
         const p = watch.position(liveRoom);
         const dur = liveRoom.media.duration || item.duration || 0;
         if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
@@ -39,8 +36,7 @@ function applyRoomProgress(watch, roomId, items = []) {
       }
     }
     if (pos === null && saved?.bookmark) {
-      const bmBase = String(saved.bookmark.mediaId).split(':')[0];
-      if (saved.bookmark.mediaId === item.id || bmBase === baseId) {
+      if (saved.bookmark.mediaId === item.id) {
         const p = saved.bookmark.position;
         const dur = saved.bookmark.duration || item.duration || 0;
         if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
@@ -55,15 +51,8 @@ function applyRoomProgress(watch, roomId, items = []) {
         if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
         else if (dur && p > dur * 0.92) pos = 0;
       }
-    } else if (pos === null && dbRows.has(baseId)) {
-      const r = dbRows.get(baseId);
-      if (r.outcome === 'completed') pos = 0;
-      else {
-        const p = Number(r.position || 0), dur = Number(r.duration || item.duration || 0);
-        if (p >= 10 && (!dur || p <= dur * 0.92)) pos = Math.round(p);
-        else if (dur && p > dur * 0.92) pos = 0;
-      }
     }
+
     if (pos !== null) {
       if (pos > 0) item.viewOffset = pos;
       else delete item.viewOffset;
@@ -88,16 +77,18 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
     const url = new URL(path, config.publicUrl), write = data !== undefined;
     const serverReceivedAt = Date.now(), receivedMono = performance.now();
     try {
+      context.signal?.throwIfAborted();
       if (write && (!data || typeof data !== 'object' || Array.isArray(data) || Buffer.byteLength(JSON.stringify(data)) > 4096)) return result(400, { error: 'Invalid command data' });
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
+      context.signal?.throwIfAborted();
       watch.roomState?.people.enter(auth.actor.userId);
       if (registry) {
         if (context.controlSocket) hub.directory?.connected(context.controlSocket,auth.actor.userId);
         await watch.roomState?.claimHosts(auth.actor.userId);
       }
       await hub.refreshAdmin?.(auth.actor);
-      const current = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
+      const current = async () => !context.signal?.aborted && (!context.controlSocket || context.controlSocket.readyState === 1) && (await login(context))?.userId === auth.actor.userId;
       const opened = async id => {
         if(data.viewerId===undefined)return result(200,{id});
         if(!UUID.test(data.viewerId))return result(400,{error:'Invalid viewer'});
@@ -132,7 +123,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!write && ['/api/watch/library','/api/watch/library/item','/api/watch/library/availability', '/api/watch/library/filters','/api/watch/library/art'].includes(url.pathname)) {
         const room = watch.rooms.get(url.searchParams.get('room'));
         const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
-        const eligible = async () => (lobby || room && watch.rooms.get(room.s.roomId) === room && await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
+        const eligible = async () => !context.signal?.aborted && (lobby || room && watch.rooms.get(room.s.roomId) === room && await watch.canView(room, auth.actor)) && (await login(context))?.userId === auth.actor.userId;
         if (!await eligible()) { return result(403, { error: 'Library access requires room access' }); }
         const plex=hub.plexFor?await hub.plexFor(auth.actor):watch.plex;
         const scopeCurrent=async()=>!hub.plexFor||(await hub.plexFor(auth.actor)).principal===plex.principal;
@@ -144,7 +135,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
           return { status: 200, resource: art };
         } else if (url.pathname.endsWith('/availability')) {
           const ids=(url.searchParams.get('items') || '').split(',');
-          if (ids.length>80 || ids.some(id=>!/^\d{1,20}(?::\d{1,20})?$/.test(id))) return result(400,{error:'Select between 1 and 80 Plex items'});
+          if (ids.length>80 || ids.some(id=>id==='demo'||!mediaIdentity(id))) return result(400,{error:'Select between 1 and 80 Plex items'});
           data={items:[...await plex.availability(ids)].map(([id,available])=>({id,available}))};
         } else if (url.pathname.endsWith('/item')) {
           data = { item:await plex.details(url.searchParams.get('item'),url.searchParams.get('type')) };
@@ -161,7 +152,9 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, data);
       }
       if (url.pathname === '/api/watch/playback' && !write) {
-        return result(200,watch.tracking.history(auth.actor.userId));
+        const history = await watch.tracking.history(auth.actor.userId);
+        if (!await current()) return result(403,{error:'Playback history access expired'});
+        return result(200,history);
       }
       if (url.pathname === '/api/watch/rooms/saved' && !write) {
         if (!watch.roomState) return result(200,{rooms:[],total:0});

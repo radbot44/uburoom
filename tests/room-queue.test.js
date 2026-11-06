@@ -51,6 +51,21 @@ const sampleItem = (n = 1) => ({
   thumb: `/library/metadata/${100 + n}/thumb`
 });
 
+test('explicit source versions round-trip through current queue, checkpoint and disk restart', async t => {
+  const f = fixture(t, { disk: true });
+  const room = await f.store.create(f.creator);
+  await f.queue.playNow(room.id, f.creator, { ...sampleItem(), mediaId: '123:456' });
+  const saved = f.store.get(room.id);
+  assert.equal(saved.bookmark.mediaId, '123:456');
+  await f.store.checkpoint(room.id, saved.checkpointRevision, { ...saved.bookmark, position: 45 });
+  await f.restart();
+  assert.equal(f.store.get(room.id).bookmark.mediaId, '123:456');
+  assert.equal(f.store.get(room.id).bookmark.position, 45);
+  assert.equal(f.queue.current(room.id).mediaId, '123:456');
+  await assert.rejects(f.queue.playNow(room.id, f.creator, { ...sampleItem(), mediaId: '123:456:789' }));
+  assert.equal(f.store.get(room.id).bookmark.mediaId, '123:456');
+});
+
 test('add appends to queue, updates queueRevision, and rejects exceeding MAX_PENDING', async t => {
   const f = fixture(t);
   const room = await f.store.create(f.creator, { name: 'Queue Room' });

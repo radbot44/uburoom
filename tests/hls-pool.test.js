@@ -271,3 +271,19 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     app.watch.remove(id);assert.equal(root.hlsPool.bytes,0);
   }finally{await app.close();await f.plex.close();}
 });
+
+
+test('a slow first segment keeps a lone viewer playing and never multiplies encoders for waiting viewers',async()=>{
+  let creates=0,stops=0;
+  const pool=new HLSPool(async()=>{stops++;});pool.warmLimitMs=40;
+  const create=async()=>{creates++;return {start:'http://fixture/start',initialManifest:'#EXTM3U\n#EXTINF:4,\n0.ts\n',plexContext:{url:value=>new URL(value),request:async(_,options)=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}))}};};
+  const keepAlive=setInterval(()=>{},1000);
+  try {
+    const solo=await pool.acquire('solo',create,async()=>true,undefined,40);
+    assert.ok(solo.media,'slow Plex startup is not a playback failure');assert.equal(creates,1);assert.equal(stops,0);
+    creates=0;
+    const results=await Promise.allSettled(Array.from({length:4},()=>pool.acquire('same',create,async()=>true,undefined,40)));
+    assert.equal(results.filter(result=>result.status==='fulfilled').length,1,'the one encoder keeps its viewer');
+    assert.equal(results.filter(result=>result.status==='rejected').length,3);assert.equal(creates,1);assert.equal(stops,0);
+  }finally{clearInterval(keepAlive);await pool.close();}
+});

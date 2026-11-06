@@ -1,6 +1,7 @@
 'use strict';
 const {randomUUID,sign}=require('node:crypto');
 const { resilientFetch } = require('./resilience');
+const { runOperation, commitOperation } = require('./operation');
 class PlexAccessError extends Error {constructor(message,revoked=false){super(message);this.revoked=revoked;}}
 class PlexAuth {
   constructor(config,accounts,plex,fetcher=fetch){this.config=config;this.accounts=accounts;this.plex=plex;this.fetch=resilientFetch(fetcher,{timeoutMs:10000});this.cache=new Map();this.inflight=new Map();this.generation=0;}
@@ -65,7 +66,8 @@ class PlexAuth {
     let sections;try{sections=await scoped.json('/library/sections');}catch(error){const denied=[401,403,498].includes(error.status);throw new PlexAccessError(error.status?`Plex server library access check failed (HTTP ${error.status}); ${denied?'the server rejected this account token. Sign in or reconnect Plex again; check that this account has server access':'try again or check the Plex server'}`:'Plex server library access check could not reach the configured server; check PLEX_URL and connectivity',denied);}
     if(!Array.isArray(sections.Directory)||!sections.Directory.length)throw new PlexAccessError('This Plex account has no accessible libraries on this server',true);
     // A refreshed permission scope must not reuse data gathered before revalidation.
-    for(const cache of [scoped.catalogCache,scoped.artSources,scoped.imageCache,scoped.randomCache,scoped.allowedItems])cache.clear();
+    for(const cache of [scoped.catalogCache,scoped.artSources,scoped.imageCache,scoped.randomCache])cache.clear();
+    scoped.invalidateAccess?.();
     return scoped;
   }
   async fallback() {
@@ -74,7 +76,7 @@ class PlexAuth {
     if(this.fallbackCache?.token===token && this.fallbackCache.until>Date.now())return this.fallbackCache.plex;
     if(this.fallbackInflight?.token===token)return this.fallbackInflight.job;
     const generation=this.generation;
-    const job=(async()=>{
+    const job=runOperation(undefined,async()=>{
       let scoped=this.plex.scope(token,'configured-fallback'),sections;
       try {sections=await scoped.json('/library/sections');}
       catch(error) {
@@ -86,7 +88,7 @@ class PlexAuth {
       if(sections && (!Array.isArray(sections.Directory)||!sections.Directory.length))throw new PlexAccessError('The configured fallback account has no accessible libraries');
       if(generation!==this.generation)throw new PlexAccessError('Plex scope changed during validation');
       this.fallbackCache={token,plex:scoped,until:Date.now()+30000};return scoped;
-    })();
+    });
     this.fallbackInflight={token,job};
     try{return await job;}finally{if(this.fallbackInflight?.job===job)this.fallbackInflight=undefined;}
   }
@@ -96,14 +98,14 @@ class PlexAuth {
     const cached=this.cache.get(identity.subject);if(cached&&cached.until>Date.now())return cached.plex;
     if(this.inflight.has(identity.subject))return this.inflight.get(identity.subject);
     const generation=this.generation;
-    const job=(async()=>{const credential=this.accounts.credential(identity.subject);if(!credential)return;try{
+    const job=runOperation(undefined,async()=>{const credential=this.accounts.credential(identity.subject);if(!credential)return;try{
       const scoped=await this.validate(credential,identity.subject);
       if(generation!==this.generation)throw new PlexAccessError('Plex scope changed during validation');
-      this.accounts.credential(identity.subject,credential);this.cache.set(identity.subject,{plex:scoped,until:Date.now()+30000});return scoped;
-    }catch(error){if(generation===this.generation)this.cache.delete(identity.subject);throw error;}})();
+      this.accounts.credential(identity.subject,credential);await commitOperation();this.cache.set(identity.subject,{plex:scoped,until:Date.now()+30000});return scoped;
+    }catch(error){if(generation===this.generation)this.cache.delete(identity.subject);throw error;}});
     this.inflight.set(identity.subject,job);try{return await job;}finally{if(this.inflight.get(identity.subject)===job)this.inflight.delete(identity.subject);}
   }
   fresh(userId){const user=this.accounts.canonical(userId),identity=user&&this.accounts.identities(user.id).find(i=>i.provider==='plex' && i.verified);return !!identity&&!!this.cache.get(identity.subject)&&this.cache.get(identity.subject).until>Date.now();}
-  clear(){this.generation++;this.cache.clear();this.inflight.clear();this.fallbackCache=undefined;this.fallbackInflight=undefined;}
+  clear(){this.plex.invalidateAccess?.();for(const scope of this.plex.scopes?.values() || [])scope.invalidateAccess?.();this.generation++;this.cache.clear();this.inflight.clear();this.fallbackCache=undefined;this.fallbackInflight=undefined;}
 }
 module.exports={PlexAuth,PlexAccessError};

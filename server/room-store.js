@@ -4,6 +4,7 @@
 const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
 const { validateAuto } = require('./room-queue');
+const { mediaIdentity } = require('../shared/room-protocol');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
@@ -24,7 +25,7 @@ function visibility(value) {
 function bookmark(value) {
   if (value === null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      typeof value.mediaId !== 'string' || !/^(?:\d{1,20}|demo)$/.test(value.mediaId) ||
+      !mediaIdentity(value.mediaId) ||
       value.mediaId === 'demo' && value.serverId !== 'local-demo' ||
       !['movie', 'episode'].includes(value.type) || !Number.isFinite(value.duration) ||
       value.duration <= 0 || value.duration > 1e9 || !Number.isFinite(value.position) || value.position < 0) {

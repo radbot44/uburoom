@@ -122,8 +122,8 @@ test('AV1 room outputs share across principals and each new chunk uses its reque
   try{
     assert.equal(a.group,b.group);for(const lease of[otherRoom,otherSource,otherAudio])assert.notEqual(lease.group,a.group);
     const [first,second]=await Promise.all([manager.chunk(a,0,signal),manager.chunk(b,0,signal)]);
-    assert.equal(first,second);assert.equal(encodes,1);assert.deepEqual(inputs,['alice'],'later acquisition cannot switch the first requesting lease credential');
-    manager.release(a);await manager.chunk(b,1,signal);assert.deepEqual(inputs,['alice','bob']);assert.equal(encodes,2);
+    assert.equal(first,second);assert.equal(encodes,1);assert.deepEqual(inputs,['alice','alice'],'later acquisition cannot switch the first requesting lease credential');
+    manager.release(a);await manager.chunk(b,1,signal);assert.deepEqual(inputs,['alice','alice','bob']);assert.equal(encodes,2);
   }finally{for(const lease of[a,b,otherRoom,otherSource,otherAudio])manager.release(lease);await manager.close();}
 });
 
@@ -241,4 +241,31 @@ test('AV1 resets rejected bridgePromise so subsequent attempts can retry', async
     http.createServer = originalCreateServer;
     await manager.close();
   }
+});
+
+
+test('shared probe survives one cancelled chunk and source fallback is learned across chunks',async()=>{
+  let releaseProbe, entered; const started=new Promise(resolve=>entered=resolve);
+  let probes=0, hardware=0, software=0;
+  const manager=new AV1({}, {ffmpegPath:'fixture',transcoding:{encoder:'qsv',cpuFallback:true,maxJobs:2}},async(_,args,signal)=>{
+    if(args.includes('-show_entries')) {
+      probes++; entered();
+      await new Promise((resolve,reject)=>{releaseProbe=resolve;signal.addEventListener('abort',()=>reject(signal.reason),{once:true});});
+      return Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:640,height:360}]}));
+    }
+    if(!args.includes('-ss'))return Buffer.alloc(200);
+    if(args[args.indexOf('-c:v')+1]==='av1_qsv'){hardware++;throw Object.assign(new PlaybackError('Source encoder failure'),{encoderFailure:true});}
+    software++;return {video:Buffer.alloc(200),audio:Buffer.alloc(50)};
+  });
+  manager.input=async(_,signal,action)=>action('http://fixture');
+  const lease=manager.acquire({id:'1',duration:60,start:'http://fixture'},'direct'), firstAbort=new AbortController();
+  try {
+    const first=manager.chunk(lease,0,firstAbort.signal), rejected=assert.rejects(first,/disconnected/);
+    await started;
+    const second=manager.chunk(lease,1,new AbortController().signal);
+    await new Promise(setImmediate);firstAbort.abort();await rejected;releaseProbe();
+    assert.ok((await second).video.length);assert.equal(probes,1);
+    for(let index=2;index<5;index++)await manager.chunk(lease,index,new AbortController().signal);
+    assert.equal(hardware,1);assert.equal(software,4);assert.equal(manager.pendingBytes,0);
+  }finally{releaseProbe?.();manager.release(lease);await manager.close();}
 });

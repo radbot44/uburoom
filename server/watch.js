@@ -6,6 +6,7 @@
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
+const { SharedTask, currentSignal } = require('./operation');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
 const { eligible, viewEligible, isHost, sameVoice, canWatch } = require('./core');
@@ -88,6 +89,7 @@ class Watch {
     this.cancelAutoplay(room); clearPlaybackEnd(room);
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
+      viewer.preparing?.abort();
       this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
       if (reason === 'media-changed' || reason === 'room-reset') {
         viewer.compatible = false; viewer.fallback = undefined;
@@ -166,23 +168,33 @@ class Watch {
     if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) {
-      await viewer.preparing;
+      await this.joinPreparation(viewer.preparing);
       return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
     }
-    const prepare = (async () => {
+    const job = new SharedTask(async () => {
       await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
         this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
       if(viewer.media?.quality)viewer.quality=viewer.media.quality;
-    })();
-    const job = prepare.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; });
+    }, { timeoutMs: 120000, idleMs: 15000 });
+    job.promise.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; }).catch(() => {});
     viewer.preparing = job;
-    await job;
-    return viewer.media;
+    await this.joinPreparation(job);
+    return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
+  }
+  // Superseded preparation is not a failed request. A 4xx here would tell this
+  // viewer the room is gone merely because someone else changed the media.
+  async joinPreparation(job) {
+    try { await job.join(); }
+    catch (error) {
+      currentSignal()?.throwIfAborted();
+      if (!job.signal.aborted) throw error;
+    }
   }
   async replaceViewer(room,actor,viewerId,prepare,{permitted=()=>true,retainUnavailable=false,accept=()=>true}={}) {
     const viewer=room.viewers.get(viewerId),version=room.mediaVersion,current=viewer?.media,stream=viewer?.streamVersion,source=room.media;
     if(!viewer || viewer.userId!==actor.userId)return {status:'unavailable',message:'Room changed or command expired.'};
-    const matches=()=>room.mediaVersion===version && room.viewers.get(viewerId)===viewer && viewer.media===current && viewer.streamVersion===stream;
+    const signal = currentSignal();
+    const matches=()=>!signal?.aborted && room.mediaVersion===version && room.viewers.get(viewerId)===viewer && viewer.media===current && viewer.streamVersion===stream;
     const authorized=async()=>matches() && permitted() && await this.canView(room,actor) && (!viewer.alive || await viewer.alive()) && matches() && permitted();
     let media,adopted=false;
     try {
@@ -242,6 +254,7 @@ class Watch {
         if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
       }
       if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
+      viewer.preparing?.abort();
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, 'disconnected'); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
     if (hostTimedOut) this.invalidateControls(room);
@@ -336,6 +349,7 @@ class Watch {
     const hostLeft = actor.userId === room.s.hostId;
     const viewer = room.viewers.get(viewerId);
     this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason);
+    viewer.preparing?.abort();
     room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
     this.hub?.config?.logger?.info('Room', `Viewer "${viewer?.name || viewerId}" left "${room.s.alias || room.s.roomId}" (remaining: ${room.viewers.size})`);
     if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);

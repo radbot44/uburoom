@@ -385,3 +385,18 @@ test('multi-media movies expand into separate edition cards and details returns 
   assert.equal(prepared.id, '20:102');
   assert.equal(prepared.sourceSelection.mediaId, '102');
 });
+
+
+test('cold item authorization coalesces consumers, cancels independently and fences invalidated results',async t=>{
+  const {runOperation}=require('../server/operation');
+  let calls=0,release;
+  const plex=fixture(async()=>{calls++;await new Promise(resolve=>release=resolve);return json({Metadata:[movie(1)]});});
+  t.after(()=>plex.close());
+  const cancel=new AbortController(),first=runOperation(cancel.signal,()=>plex.allows('1'));
+  const rejected=assert.rejects(first);const others=Array.from({length:19},()=>plex.allows('1'));
+  await new Promise(setImmediate);cancel.abort();await rejected;release();
+  assert.ok((await Promise.all(others)).every(Boolean));assert.equal(calls,1);
+  plex.invalidateAccess();const stale=plex.allows('1');const staleRejected=assert.rejects(stale);
+  await new Promise(setImmediate);plex.invalidateAccess();release();await staleRejected;
+  assert.equal(plex.allowedItems.size,0,'an invalidated check cannot repopulate access cache');
+});

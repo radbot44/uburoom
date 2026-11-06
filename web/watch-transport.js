@@ -122,10 +122,10 @@
       if(signal?.aborted)return Promise.reject(signal.reason);
       return new Promise((resolve,reject)=>{
         const id=++this.sequence;
-        const cancel=()=>{const entry=this.pending.get(id);if(!entry)return;this.pending.delete(id);clearTimeout(entry.timer);entry.cleanup?.();reject(signal?.reason||new DOMException('Request timed out','TimeoutError'));};
+        const cancel=()=>{const entry=this.pending.get(id);if(!entry)return;if(this.socket?.readyState===1)this.socket.send(JSON.stringify({type:'cancel',id}));this.pending.delete(id);clearTimeout(entry.timer);entry.cleanup?.();reject(signal?.reason||new DOMException('Request timed out','TimeoutError'));};
         const timer=setTimeout(cancel,timeoutMs),cleanup=()=>signal?.removeEventListener('abort',cancel);
         this.pending.set(id,{resolve,reject,timer,cleanup});signal?.addEventListener('abort',cancel,{once:true});
-        this.socket.send(JSON.stringify({type:'request',id,path,...(data===undefined?{}:{data})}));
+        this.socket.send(JSON.stringify({type:'request',id,path,timeoutMs,...(data===undefined?{}:{data})}));
       });
     }
     interrupt(milliseconds=6000) {this.resumeAt=Date.now()+milliseconds;this.closeInitiator='interrupt';this.socket?.close();}

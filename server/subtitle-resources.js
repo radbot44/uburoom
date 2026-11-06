@@ -1,4 +1,5 @@
 'use strict';
+const { runOperation } = require('./operation');
 // Original subtitle assets only. Rendering stays in the browser; extraction never
 // re-encodes video or receives a Plex credential in process arguments.
 const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
@@ -71,7 +72,7 @@ function startPgsJob(plex,media){
   const abort=AbortSignal.any([media.subtitleAbort.signal,controller.signal,AbortSignal.timeout(300000)]);
   const job={media,version,controller,chunks:[],size:0,listeners:new Set(),complete:false,error:null};
   active++;
-  job.promise=(async()=>{
+  job.promise=runOperation(abort,async()=>{
     try{
       const av1=plex.av1;
       if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or Plex burn-in.');
@@ -103,7 +104,7 @@ function startPgsJob(plex,media){
       active--;job.listeners.clear();
       if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;
     }
-  })();
+  });
   job.promise.catch(()=>{});
   media.subtitleJob=job;
   return job;
@@ -202,7 +203,7 @@ async function load(plex,media,signal){
   if(active>=2)throw new PlaybackError('Subtitle extraction is busy. Retry shortly or choose Plex burn-in.');
   const abort=AbortSignal.any([media.subtitleAbort.signal,AbortSignal.timeout(85000)]);
   const job={media,version};active++;
-  job.promise=(async()=>{
+  job.promise=runOperation(abort,async()=>{
     let result;
     if(track.external){
       if(!/^\/library\/streams\/\d{1,20}(?:\.[a-z0-9]+)?$/.test(row.key))throw new PlaybackError('Invalid subtitle resource.');
@@ -219,7 +220,7 @@ async function load(plex,media,signal){
     clearCached(target);
     while(cache.size&&cache.size>=8)clearCached(cache.keys().next().value);reserve(result.size);
     cache.set(target,result);bytes+=result.size;target.subtitleAssets=result.assets;return result;
-  })().finally(()=>{active--;if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;});
+  }).finally(()=>{active--;if(job.media.subtitleJob===job)job.media.subtitleJob=undefined;});
   media.subtitleJob=job;return awaitJob(job.promise,signal);
 }
 // Inspect all packet timestamps first: filtering ffprobe to a sparse subtitle
@@ -281,7 +282,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
   const controller=new AbortController();
   const abort=AbortSignal.any([controller.signal,media.subtitleAbort?.signal,AbortSignal.timeout(30000)].filter(Boolean));
   job={media,controller,users:0,complete:false};active++;
-  job.promise=Promise.resolve().then(async()=>{
+  job.promise=Promise.resolve().then(()=>runOperation(abort,async()=>{
     try{
       const format=track.delivery==='ass'?'ass':track.delivery==='vobsub'?'matroska':'sup';
       let pgs;
@@ -358,7 +359,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       active--;job.complete=true;
       if(job.media.windowJobs?.get(cacheKey)===job)job.media.windowJobs.delete(cacheKey);
     }
-  });
+  }));
   media.windowJobs.set(cacheKey,job);
   return waitWindow(job,signal);
 }
