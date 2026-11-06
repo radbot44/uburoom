@@ -21,8 +21,7 @@ const KEYS = [
   'rooms.host_permissions', 'rooms.viewer_permissions', 'rooms.admin_discord_ids', 'rooms.admin_plex_ids',
   'rooms.admin_discord_role_ids', 'rooms.single_room', 'rooms.single_room_leader_plex_id',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
-  'transcoding.policy', 'transcoding.plex', 'transcoding.uburoom', 'transcoding.encoder',
-  'transcoding.formats', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
+  'transcoding.policy', 'transcoding.encoder', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
   'logging.level', 'logging.requests', 'logging.file'];
 
@@ -156,9 +155,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   if (config.singleRoomLeaderPlexId && !/^\d{1,20}$/.test(config.singleRoomLeaderPlexId)) throw new Error('rooms.single_room_leader_plex_id must be a quoted Plex account ID');
   const maxJobs = value.transcoding?.max_jobs ?? 5;
   if (!Number.isSafeInteger(maxJobs) || maxJobs < 1 || maxJobs > 32) throw new Error('transcoding.max_jobs must be an integer from 1 to 32');
-  const legacyFormats = list('transcoding.formats');
-  const legacy = value.transcoding && ['plex','uburoom','formats'].some(key => value.transcoding[key] !== undefined);
-  const outputs = list('transcoding.outputs') ?? (legacy ? [...(boolean('transcoding.uburoom',true) ? legacyFormats ?? ['av1'] : []), ...(boolean('transcoding.plex',true) ? ['plex'] : [])] : ['av1','plex']);
+  const outputs = list('transcoding.outputs') ?? ['av1','plex'];
   const { localFormat } = require('../web/playback-policy');
   if (outputs.some(output => output !== 'plex' && !localFormat(output))) throw new Error('transcoding.outputs supports av1, vp9, vp8 and plex');
   if (new Set(outputs).size !== outputs.length) throw new Error('transcoding.outputs must not repeat an output');

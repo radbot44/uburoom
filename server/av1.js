@@ -438,20 +438,28 @@ class AV1 {
             const text = burn?.file ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12` : '';
             return ['-map','0:v:0','-an','-filter_threads','2','-vf',filter+text];
           };
+          const silence = spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo'];
+          const audio = ['-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
+            '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000'];
           const command = (selected, route) => [
             '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start-runIn),'-i',url,
-            ...(spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']),
+            ...(burn?.bitmap ? [] : silence),
             '-t',duration,...video(route),
             '-sn','-dn','-map_metadata','-1','-map_chapters','-1',
             ...encoderArgs(selected,codec),...rateArgs(selected,codec,spec.bitrate),
             ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
-            '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',
-            '-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
-            '-af',(runIn?`atrim=start=${runIn},`:'')+'asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000','pipe:3'];
+            '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',...(burn?.bitmap ? [] : [...audio,'pipe:3'])];
           // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
           // run-in for image subtitles adds about the same again.
-          const encode = (selected, route) => this.run(this.ffmpeg,command(selected,route),controller.signal,30000,48*1024*1024,undefined,{memoryLimit:(burn?.bitmap?3:2)*1024*1024*1024});
+          const encode = async (selected, route) => {
+            const job = args => this.run(this.ffmpeg,args,controller.signal,30000,48*1024*1024,undefined,{memoryLimit:(burn?.bitmap?3:2)*1024*1024*1024});
+            if (!burn?.bitmap) return job(command(selected,route));
+            // Audio in the same process as an image overlay runs about ten times slower.
+            const [video,sound] = await Promise.all([job(command(selected,route)),
+              job(['-hide_banner','-loglevel','error','-nostdin','-ss',String(start),'-i',url,...silence,...audio,'pipe:1'])]);
+            return {video,audio:sound};
+          };
           const routes = this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : [];
           routes.push(undefined);
           try {
