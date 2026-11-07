@@ -334,6 +334,14 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if(!['true','false'].includes(url.searchParams.get('plexWatchState')))throw new Error('Invalid watch-state preference');
         preferences.plexWatchState=url.searchParams.get('plexWatchState')==='true';
       }
+      // A new viewer's saved subtitle choice shapes their first stream; their own later
+      // choices in the room always win.
+      if(url.searchParams.has('subtitlePreference')||url.searchParams.has('subtitleMode')) {
+        const value=url.searchParams.get('subtitlePreference')||'auto',mode=url.searchParams.get('subtitleMode')||'auto';
+        const language=/^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(value)?.[1];
+        if(!language&&!['auto','off'].includes(value)||!['auto','burn'].includes(mode))throw new Error('Invalid subtitle preference');
+        preferences.trackChoice={audioId:'auto',subtitleId:value==='off'?'off':'auto',subtitleMode:mode,...(language?{subtitleIntent:{language}}:{})};
+      }
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'),preferences);
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);

@@ -115,6 +115,13 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   assert.equal(history.items[0].outcome, 'completed'); assert.equal(history.items[0].position, 100);
   assert.equal(f.store.get(f.id).bookmark.mediaId, '101'); assert.equal(f.store.get(f.id).bookmark.position, 0);
   assert.equal(f.room.autoplayCountdown, undefined);
+  // The countdown prepared the viewer's next stream; the switch adopts it instead of starting cold.
+  const preloaded = f.prepared.filter(media => media.id === '101');
+  assert.equal(preloaded.length, 2, 'one metadata load and one viewer stream, both during the countdown');
+  await f.watch.prepareViewer(f.room, f.creator, f.creator.watchViewerId);
+  assert.equal(f.room.viewers.get(f.creator.watchViewerId).media, preloaded[1]);
+  assert.equal(f.prepared.filter(media => media.id === '101').length, 2, 'no second stream was prepared');
+  assert.ok(!f.stopped.includes(preloaded[1]));
 });
 
 test('Cancel, pause, seek, queue edits and disabling autoplay immediately cancel countdowns without consuming entries', async t => {
@@ -229,9 +236,9 @@ test('next media preparation failure preserves the occurrence and reports one tr
 test('revoked host permissions during media preparation invalidate autoplay before consumption', async t => {
   const f = await fixture(t), held = gate(), prepare = f.plex.prepare;
   await f.hostController();
-  f.plex.prepare = async (...args) => { held.enter(); await held.held; return prepare(...args); };
+  f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { held.enter(); await held.held; } return prepare(...args); };
   const before = f.queue.current(f.id);
-  await f.end(); await waitFor(() => held.started);
+  await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
   const record = f.store.get(f.id);
   f.watch.roomState.apply(f.room, await f.store.edit(f.id, f.creator.userId, record.revision, { action: 'host.remove', userId: f.guest.userId }));
   held.release();
@@ -256,9 +263,9 @@ test('a failed durable commit cannot adopt prepared media in the live room', asy
 test('manual Next during an autoplay prepare cancels that attempt and a retry consumes exactly one entry', async t => {
   const f = await fixture(t), held = gate(), prepare = f.plex.prepare;
   let attempts = 0;
-  f.plex.prepare = async (...args) => { attempts++; held.enter(); await held.held; return prepare(...args); };
+  f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { attempts++; held.enter(); await held.held; } return prepare(...args); };
   const before = f.queue.current(f.id);
-  await f.end(); await waitFor(() => held.started);
+  await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
   assert.equal((await f.command('media.next')).status, 'unavailable');
   held.release();
   await waitFor(() => !f.room.mediaTransition && !f.room.autoplayCountdown);
@@ -271,9 +278,9 @@ test('manual Next during an autoplay prepare cancels that attempt and a retry co
 test('pause, Cancel and closing while the next item is preparing release it without adopting or consuming it', async t => {
   for (const action of ['media.pause', 'media.autoplay.cancel', 'close']) await t.test(action, async sub => {
     const f = await fixture(sub), held = gate(), prepare = f.plex.prepare;
-    f.plex.prepare = async (...args) => { held.enter(); await held.held; return prepare(...args); };
+    f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { held.enter(); await held.held; } return prepare(...args); };
     const before = f.queue.current(f.id);
-    await f.end(); await waitFor(() => held.started);
+    await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
     if (action === 'close') await f.watch.remove(f.id);
     else assert.equal((await f.command(action)).status, 'applied');
     held.release(); await waitFor(() => !f.room.mediaTransition);

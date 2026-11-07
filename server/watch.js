@@ -123,6 +123,78 @@ class Watch {
       }
     }
   }
+  /**
+   * Prepare-then-adopt for autoplay. During the countdown the next video's metadata, its
+   * video check and every viewer's stream are prepared through the normal paths; when the
+   * room switches, each viewer adopts theirs instead of starting cold. Anything not adopted
+   * is stopped.
+   */
+  preloadNext(room, countdown, next, actor) {
+    this.dropPreload(room);
+    if (!next?.mediaId || next.mediaId === 'demo') return;
+    const preload = room.preload = { countdown: countdown.id, mediaId: next.mediaId, startAt: Number(next.position) || 0, viewers: new Map() };
+    preload.source = (async () => {
+      const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+      const source = await plex.prepare(next.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
+      if (preload.dropped) { void this.plex.stop(source); return; }
+      this.mediaChecks.start(source);
+      preload.media = source;
+      return source;
+    })();
+    preload.source.catch(() => {});
+    void preload.source.then(source => {
+      if (!source || preload.dropped) return;
+      for (const [viewerId, viewer] of room.viewers) if (!viewer.localDelivery) preload.viewers.set(viewerId, this.preloadViewer(room, preload, source, viewerId, viewer));
+    }, () => {});
+  }
+  /**
+   * Start a viewer's first text subtitle window as soon as their stream exists, with the
+   * same bounds the player asks for first, so its request finds it ready. Image and ASS
+   * subtitles load differently and are left alone; extraction stays capped by its module.
+   */
+  warmSubtitles(media, seconds) {
+    if (media?.selection?.subtitle?.delivery !== 'cues' || media.unavailable) return;
+    void SubtitleResources.window(media.plexContext || this.plex, media, { atMs: Math.max(0, seconds || 0) * 1000, beforeMs: 5000, afterMs: 15000 }).catch(() => {});
+  }
+  // What a viewer's stream depends on; a preload is adopted only if none of it changed.
+  streamChoices(viewer) {
+    return JSON.stringify([viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, viewer.trackChoice, viewer.browserSubtitles, viewer.localCodecs]);
+  }
+  preloadViewer(room, preload, source, viewerId, viewer) {
+    const current = () => !preload.dropped && room.viewers.get(viewerId) === viewer;
+    const task = (async () => {
+      const plex = this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex, choices = this.streamChoices(viewer);
+      const authorized = async () => current() && (!viewer.alive || await viewer.alive()) && await this.canView(room, viewer.actor) && current();
+      if (!await authorized()) return;
+      const media = await this.prepareQuality(room, viewer, plex, source, viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, authorized,
+        { shareKey: [room.s.roomId, 'next', preload.countdown] });
+      if (!current()) { void this.plex.stop(media); return; }
+      this.warmSubtitles(media, preload.startAt);
+      return { media, choices, principal: plex.principal };
+    })();
+    task.catch(() => {});
+    return task;
+  }
+  /** A viewer's preloaded stream for the room's current video, if it still fits them. */
+  takePreload(room, viewerId, viewer, source, plex) {
+    const preload = room.adoptable, task = preload?.media && preload.media === source ? preload.viewers.get(viewerId) : undefined;
+    if (!task) return;
+    preload.viewers.delete(viewerId);
+    return task.then(result => {
+      if (result?.principal === plex.principal && result.choices === this.streamChoices(viewer)) { result.adopted = true; return result.media; }
+      if (result?.media) void this.plex.stop(result.media);
+    }, () => undefined);
+  }
+  dropPreload(room, preload = room.preload) {
+    if (!preload) return;
+    preload.dropped = true;
+    if (room.preload === preload) room.preload = undefined;
+    if (room.adoptable === preload) room.adoptable = undefined;
+    clearTimeout(preload.expiry);
+    for (const task of preload.viewers.values()) void task.then(result => { if (result?.media && !result.adopted) void this.plex.stop(result.media); }, () => {});
+    preload.viewers.clear();
+    if (!preload.sourceAdopted) void preload.source.then(source => source && this.plex.stop(source), () => {});
+  }
   async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized,extraOptions) {
     const opts = (typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function')
       ? { ...authorized, ...extraOptions }
@@ -203,9 +275,11 @@ class Watch {
       return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
     }
     const job = new SharedTask(async () => {
-      await this.replaceViewer(room,actor,viewerId,(authorized,source)=>source.kind==='demo'?source:
+      await this.replaceViewer(room,actor,viewerId,async (authorized,source)=>source.kind==='demo'?source:
+        await this.takePreload(room,viewerId,viewer,source,plex) ||
         this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
       if(viewer.media?.quality)viewer.quality=viewer.media.quality;
+      if(room.mediaVersion===version && room.s.state.paused)this.warmSubtitles(viewer.media,this.position(room));
     }, { timeoutMs: 120000, idleMs: 15000 });
     job.promise.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; }).catch(() => {});
     viewer.preparing = job;
@@ -452,7 +526,7 @@ class Watch {
       volume:saved?.volume ?? preferences.volume ?? 30, muted:saved?.muted ?? preferences.muted ?? false,
       plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
       plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
-      trackChoice:saved?.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
+      trackChoice:saved?.trackChoice ?? preferences.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
       directProxyVersion:saved?.directProxyVersion, browserSubtitles:saved?.browserSubtitles, localCodecs:saved?.localCodecs,
       syncQuality:saved?.syncQuality, localDelivery:saved?.localDelivery ?? false,
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
@@ -567,6 +641,7 @@ class Watch {
       feedback: room.feedback };
   }
   cancelAutoplay(room) {
+    this.dropPreload(room);
     clearTimeout(room.autoplayTimer); room.autoplayTimer = undefined;
     if (room.autoplayCountdown) { room.autoplayCountdown = undefined; room.revision++; }
     room.playbackIntent = (room.playbackIntent || 0) + 1;
@@ -962,6 +1037,7 @@ class Watch {
     room.autoplayCountdown = countdown;
     room.autoplayError = undefined;
     room.revision++;
+    this.preloadNext(room, countdown, next, person.actor);
     room.autoplayTimer = setTimeout(() => {
       const advance = this.hub.dispatch({ ...person.actor, watchViewerId: viewerId, watchQueueAdvance: countdown }, { roomId: record.id, action: 'media.next' }).then(result => {
         if (result.status !== 'applied' && room.autoplayCountdown === countdown) {
@@ -1038,6 +1114,9 @@ class Watch {
     if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
     if (!room.viewers.size && command.action !== 'media.load' && !(command.action === 'queue.remove' && !command.args.advance)) return {status:'unavailable',message:'No viewer is connected.'};
     const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
+    // Detach the countdown's preload so cancelling the countdown cannot stop what this load adopts.
+    const preload = countdown && room.preload?.countdown === countdown.id ? room.preload : undefined;
+    if (preload) room.preload = undefined;
     const version = room.mediaVersion, epoch = room.s.epoch, intent = room.playbackIntent || 0;
     const record = room.saved ? this.roomState.store.get(id) : null, current = record && queue.current(id), next = record && this.nextCandidate(id);
     const valid = () => permitted() && this.rooms.get(id) === room && room.mediaVersion === version && room.s.epoch === epoch &&
@@ -1070,8 +1149,11 @@ class Watch {
       await room.saving?.catch(() => {});
       if (target) {
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+        // A failed preload is this load's failure; preparing again would only repeat it.
+        const preloaded = preload?.mediaId === target.mediaId ? await preload.source : undefined;
+        if (preloaded && preloaded.principal === plex.principal) preload.sourceAdopted = true;
         prepared = target.mediaId === 'demo' ? this.demoMedia && {...this.demoMedia,id:'demo',resources:new Map()} :
-          await plex.prepare(target.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
+          preload?.sourceAdopted ? preloaded : await plex.prepare(target.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
         if (!prepared) return {status:'failed',message:'Test video is unavailable.'};
         if (record) {
           prepared.roomServerId = await this.roomState.identify(prepared);
@@ -1129,6 +1211,10 @@ class Watch {
         this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
         this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;
         void this.plex.stop(old); adopted = true;
+        // Viewers adopt their preloaded streams on their next poll; leftovers are stopped.
+        if (preload?.sourceAdopted && preload.source && prepared === await preload.source.catch(() => undefined)) {
+          room.adoptable = preload; preload.expiry = setTimeout(() => this.dropPreload(room, preload), 60000); preload.expiry.unref?.();
+        }
       } else {
         this.cancelAutoplay(room); clearPlaybackEnd(room); room.position = 0; room.changedAt = Date.now();
         if (!room.s.state.paused || room.initialGate) {
@@ -1158,6 +1244,7 @@ class Watch {
     } finally {
       room.transitionCommit = undefined; room.mediaTransition = false;
       if (prepared && !adopted) await this.plex.stop(prepared);
+      if (preload && room.adoptable !== preload) { if (!adopted) preload.sourceAdopted = false; this.dropPreload(room, preload); }
     }
   }
   async execute(room, input, actor, permitted) {
@@ -1395,7 +1482,7 @@ class Watch {
     }
     room.s.state.paused = true; room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
-    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media);
+    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media); this.dropPreload(room); this.dropPreload(room, room.adoptable);
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
     return saved;
   }

@@ -92,6 +92,9 @@ function savePlayerPreferences(change) {
 function viewerPreferences() {
   return {viewer:viewerId,quality:preferredQuality,volume:String(playerPreferences.volume),muted:String(playerPreferences.muted),
     plexReporting:String(playerPreferences.plexReporting),plexWatchState:String(playerPreferences.plexWatchState),
+    // The saved subtitle choice goes with the join, so the first stream already has it.
+    ...(playerPreferences.subtitles?{subtitlePreference:playerPreferences.subtitles.choice==='language'?'language:'+playerPreferences.subtitles.language:playerPreferences.subtitles.choice}:{}),
+    ...(playerPreferences.subtitleMode?{subtitleMode:playerPreferences.subtitleMode}:{}),
     ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{}),
     codecs:Object.keys(uburoomPlayback.LOCAL_CODECS).filter(codec=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[codec])).join(',')};
 }

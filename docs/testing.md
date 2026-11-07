@@ -15,6 +15,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P3/P13 — Faster starts — 2026-11-07
+
+**B:** `npm test` passed (exit 0). Autoplay scenario extended: during the countdown the next video's metadata and the viewer's stream are prepared once each, and after the switch the viewer holds that preloaded stream with no second preparation and nothing stopped. Existing countdown cases (cancel, pause, close, manual Next, preparation failure with exactly one attempt) still pass; three gated cases now wait for the advance itself because preparation starts earlier. Saved subtitle language in Chrome: after a reload the first stream already had the English track and no track change was sent; Firefox control with a language the file lacks started without subtitles. **Not run:** start-time measurement against real Plex (fixture rooms have no queue), the first-window warm-up timing, C on Vigrid.
+
 ### M1-P2/P4 — Video check and Plex session cleanup — 2026-11-07
 
 **B:** `npm test` passed (exit 0). Fixture rooms: the check finished while the video loaded (tracks match, Plex would play Original and 360p, sessions listed). A 90 s file with audio starting 5 s late and a wrong track list: late audio, track mismatch, image subtitle and bitrate peak reported. Disk check on this PC read the drive's free space through a stub Plex; a remote Plex address reports that space can't be checked. Session cleanup with a fake Plex ended only a session uburoom started and no longer held, leaving in-use, new and other apps' sessions alone. Host screen in Chrome, dark and light: items most serious first, toast once per video, View opens Player settings at the check, Check again restarts it. **Not run:** real Plex answers for `/transcode/sessions`, `/:/prefs` and the playback decision (C on Vigrid), Firefox for the host screen.
