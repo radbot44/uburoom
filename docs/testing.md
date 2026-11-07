@@ -27,6 +27,10 @@ Not covered: the viewer capability report and output order in a real room, a rea
 
 ### M1-P1/P2 — Seamless quality change on local conversion — 2026-11-06
 
+**B, simulated providers.** Admission on 2026-11-06, based on `3f439e0` plus uncommitted changes: a confirmed viewer is not rechecked for five minutes, keeps their place when the provider gives no answer, and is removed by its denial; nobody new is admitted without an answer. Not tested against real Discord or Plex, so the live disconnects are not yet shown to stop.
+
+**B, real Chrome and Firefox, real AV1 conversion, synthetic media, simulated Plex.** Chunk joins on a 23.976 fps source with a 440 Hz tone. Before: every join had an audio discontinuity about 2,700 times the normal sample residual in both browsers, and Chrome lost the last frame of each chunk, because that frame ended past the append window. After: no audio spike at either join in either browser, and no frame jump in Chrome. Headless Firefox skips frame callbacks throughout, so its video result is weak. A source frame can still repeat at a join about every seven chunks on fractional frame rates, by reading the timing, not measured. Not covered: real film audio, real Plex input, QSV.
+
 **B, real Chrome and Firefox, real AV1 conversion, synthetic media, simulated Plex.** Changing quality during playback kept the same player and MediaSource: the picture changed resolution exactly at the next chunk join (6.02-6.05s), with no waiting, stalled, emptied or error events and zero dropped frames. Coverage is same-codec uburoom output with the same audio and burned subtitle. Moves between Plex and uburoom, or to Original as a file, still reload. Not covered: real viewers, real 4K sources and a live room.
 
 ### M1-P3 — Text subtitle layer — 2026-11-06

@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const { Events, Status } = require('discord.js');
 const { startBot, connectBot } = require('../server/discord');
 const { discordAccess } = require('../server/sharing');
+const { AccessPolicy } = require('../server/access-policy');
 
 test('optional host-directory intents follow application flags without breaking ordinary bot login',async t=>{
   t.mock.method(console,'log',()=>{});t.mock.method(console,'warn',()=>{});
@@ -82,7 +83,7 @@ test('Discord membership is fetched per request and voice permissions fail close
     voiceStates: { cache: new Map([['friend', { channelId: voice }]]) },
     members: { fetch: async options => {
       calls++; assert.deepEqual(options, { user: 'friend', force: true, cache: false });
-      if (!present) throw new Error('Unknown member'); return { user: { bot: false }, roles: { cache: new Map(role ? [['moderator', {}]] : []) } };
+      if (!present) throw Object.assign(new Error('Unknown Member'), { code: 10007 }); return { user: { bot: false }, roles: { cache: new Map(role ? [['moderator', {}]] : []) } };
     } } };
   client.guilds = { cache: new Map([['guild', g]]) }; client.isReady = () => true;
   const access = discordAccess(client, 'guild');
@@ -97,7 +98,7 @@ test('Discord membership is fetched per request and voice permissions fail close
   g.shard.status = Status.Reconnecting; client.emit(Events.ShardReconnecting);
   assert.equal(access.isMember('friend'), false); assert.equal(access.validVoiceChannel(voice), false);
   assert.equal(access.hasRole('friend', 'moderator'), false);
-  assert.equal(access.options().available, false); assert.equal(await access.refresh('friend'), false);
+  assert.equal(access.options().available, false); assert.equal(await access.refresh('friend'), undefined);
   g.shard.status = Status.Ready; present = false;
   assert.equal(await access.refresh('friend'), false); assert.equal(access.isMember('friend'), false);
   assert.equal(access.hasRole('friend', 'moderator'), false);
@@ -160,6 +161,29 @@ test('lookup preserves cached membership while in-flight fetch is pending and ha
   assert.equal(access.isMember('friend'), true, 'cached membership survives while lookup is in-flight');
 
   const res = await inFlight;
-  assert.equal(res, false);
+  assert.equal(res, undefined, 'a failed lookup is no answer, not a denial');
   assert.equal(access.isMember('friend'), true, 'valid cached membership survives failed refresh');
+});
+
+test('admission survives a provider that gives no answer, but not its denial', async () => {
+  let answer = true, asked = 0;
+  const account = { id: 'viewer', name: 'Viewer' }, other = { id: 'other', name: 'Other' };
+  const registry = { canonical: id => id === 'viewer' ? account : id === 'other' ? other : undefined,
+    identities: id => [{ provider: 'discord', subject: id, verified: true }] };
+  const config = { ownerId: 'owner', accessPolicy: { discord: true, plex: false } };
+  const policy = new AccessPolicy(config, registry, {}, () => ({ isMember: () => false, refresh: async () => { asked++; return answer; } }));
+  const due = () => { policy.confirmed.get('viewer').recheck = 0; };
+
+  assert.equal(await policy.admit('viewer'), true);
+  assert.equal(await policy.admit('viewer'), true);
+  assert.equal(asked, 1, 'a confirmed viewer is not asked about again before the recheck');
+
+  answer = undefined; due();
+  assert.equal(await policy.admit('viewer'), true, 'an admitted viewer keeps their place');
+  assert.equal(await policy.admit('other'), false, 'nobody new is admitted without an answer');
+
+  answer = false; due();
+  assert.equal(await policy.admit('viewer'), false, 'the provider denial still removes them');
+  answer = undefined;
+  assert.equal(await policy.admit('viewer'), false, 'and nothing is left to keep');
 });

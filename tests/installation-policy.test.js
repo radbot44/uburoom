@@ -332,7 +332,8 @@ test('Plex exemption belongs only to verified Activity requests and survives bro
   assert.equal((await browser.request('/api/watch/handoff/redeem',{id:handoff.id,proof})).status,200);
   assert.equal((await browser.request('/api/watch/me')).status,401,'an approved browser handoff still requires personal Plex access');
   f.members.clear();
-  assert.equal((await activity.request('/api/watch/me',undefined,headers)).status,401,'Activity still needs current Discord membership');
+  const now=Date.now();t.mock.method(Date,'now',()=>now+301000);
+  assert.equal((await activity.request('/api/watch/me',undefined,headers)).status,401,'Activity still needs current Discord membership at its recheck');
 });
 
 test('Activity Plex exemption keeps the extra password and default Plex requirement',async t=>{

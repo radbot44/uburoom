@@ -52,7 +52,7 @@ async function startBot(config, hub, { createClient = options => new Client(opti
       else log.warn('Host search cannot show Discord availability: enable Presence Intent in the Developer Portal.');
     } catch { log.warn('Could not check optional directory intents. Known uburoom account search remains available.'); }
   }
-  hub.access = discordAccess(client, config.guildId);
+  hub.access = discordAccess(client, config.guildId, log);
   client.on(Events.ClientReady, () => log.info('Connected to the configured guild.'));
   client.on(Events.Error, error => log.error(loginFailure(error).message));
   client.on(Events.ShardError, error => log.error(loginFailure(error).message));

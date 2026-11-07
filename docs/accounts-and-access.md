@@ -16,6 +16,8 @@ Current: YAML configuration, admission/password policies, verified server-operat
 
 **Approved sharing policy:** Fallback is enabled by default for eligible viewers without an attached Plex account or with confirmed server nonmembership when personal access is not required. Removing a Plex link can therefore permit configured sponsorship. This is an explicit operator choice, not personal entitlement. Revoked/expired credentials, provider errors and item denials fail closed. Dedicated non-owner direct delegation is a separate opt-in. See [operator settings](self-hosting.md#shared-plex-fallback).
 
+Provider-confirmed admission lasts five minutes between checks, so a removed viewer can stay up to that long. After that only the provider's own denial removes an admitted viewer; one that gives no answer is asked again every 30 seconds, for up to 12 hours since the last confirmation. Nobody new is admitted without an answer, and a linked-provider or Plex-requirement change starts over.
+
 Recheck authority around awaited work across sockets, catalogs, artwork, captions, queues and media. Planned canonical deny/revocation rules must take precedence over alternate providers and passes. Finer-grained source/library/item/audience grants remain future work; do not describe them as implemented.
 
 ## Configuration and administration

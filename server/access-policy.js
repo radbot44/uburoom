@@ -1,6 +1,11 @@
 'use strict';
 const { randomBytes, createHash, timingSafeEqual } = require('node:crypto');
 
+// A viewer the providers confirmed stays admitted without asking them again until
+// the recheck. After that only a provider's own no removes them: one that gives no
+// answer is asked again shortly, and someone not yet confirmed is still refused.
+const RECHECK_MS = 5 * 60000, UNANSWERED_RECHECK_MS = 30000, CONFIRMED_MS = 12 * 3600000;
+
 class AccessPolicy {
   constructor(config, registry, plexAuth, discordAccess) {
     this.config = config;
@@ -9,6 +14,7 @@ class AccessPolicy {
     this.plexAuth = plexAuth;
     this.discordAccess = discordAccess;
     this.allowed = new Map();
+    this.confirmed = new Map();
     this.passwordGrants = new Map();
     this.entryUsers = new Map();
   }
@@ -40,25 +46,51 @@ class AccessPolicy {
     if (!account) return false;
     if(this.passwordRequired && (this.entryUsers.get(account.id)||0)<=Date.now())return false;
     const identities = this.registry.identities(account.id).filter(identity => identity.verified);
-    const discord = identities.find(identity => identity.provider === 'discord');
-    const plex = identities.find(identity => identity.provider === 'plex');
-    let allowed = false;
-    if (this.requiresPlex(context)) {
-      try { allowed = !!plex && !!await this.plexAuth.forUser(account.id); } catch { allowed = false; }
-    } else if (this.anonymous || discord?.subject === this.config.ownerId) allowed = true;
-    else {
-      if ((this.settings.discord || context?.activity === true) && discord) {
-        const access = this.discordAccess();
-        try { allowed = !!access?.isMember(discord.subject) || !!await access?.refresh(discord.subject); } catch { allowed = false; }
-      }
-      if (!allowed && this.settings.plex && plex) {
-        try { allowed = !!await this.plexAuth.forUser(account.id); } catch(error) { allowed = error.noServerAccess === true; }
-      }
+    const key = this.admissionKey(account.id, context), now = Date.now();
+    // Linking a provider or changing the rule changes who has to vouch for this account.
+    const proof = [this.requiresPlex(context),...identities.map(identity => identity.provider + ':' + identity.subject).sort()].join();
+    let held = this.confirmed.get(key);
+    if (held?.proof !== proof || held.expires <= now) held = undefined;
+    let allowed = held?.recheck > now;
+    if (!allowed) {
+      const answer = await this.answer(account, identities, context);
+      allowed = answer === true || answer === undefined && !!held;
+      if (answer === true) this.confirmed.set(key, { proof, recheck: Date.now() + RECHECK_MS, expires: Date.now() + CONFIRMED_MS });
+      else if (allowed) {
+        held.recheck = Date.now() + UNANSWERED_RECHECK_MS;
+        this.config.logger?.warn('Access', `Keeping ${account.name || account.id} admitted: no provider answer`);
+      } else this.confirmed.delete(key);
     }
-    const key = this.admissionKey(account.id, context);
     if (allowed) this.allowed.set(key, Date.now() + 1000);
     else this.allowed.delete(key);
     return allowed;
+  }
+  // True or false is the providers' answer; undefined means one that matters gave none.
+  async answer(account, identities, context) {
+    const discord = identities.find(identity => identity.provider === 'discord');
+    const plex = identities.find(identity => identity.provider === 'plex');
+    if (this.requiresPlex(context)) return plex ? this.plexAnswer(account.id, false) : false;
+    if (this.anonymous || discord?.subject === this.config.ownerId) return true;
+    let answer = false;
+    if ((this.settings.discord || context?.activity === true) && discord) {
+      const access = this.discordAccess();
+      try { answer = access?.isMember(discord.subject) || await access?.refresh(discord.subject); } catch { answer = undefined; }
+      if (answer) return true;
+    }
+    if (this.settings.plex && plex) {
+      const viaPlex = await this.plexAnswer(account.id, true);
+      if (viaPlex || viaPlex === undefined) return viaPlex;
+    }
+    return answer;
+  }
+  async plexAnswer(id, withoutServerAccess) {
+    try { return !!await this.plexAuth.forUser(id); }
+    catch (error) {
+      if (error.noServerAccess) return withoutServerAccess;
+      if (error.revoked) return false;
+      this.config.logger?.warn('Access', `Plex check got no answer: ${error.message}`);
+      return undefined;
+    }
   }
   fresh(id, context) { return (this.allowed.get(this.admissionKey(id, context)) || 0) > Date.now(); }
   entered(id) { const account = this.registry?.canonical(id); if (account) this.entryUsers.set(account.id, Date.now() + 12 * 3600000); }
@@ -66,7 +98,10 @@ class AccessPolicy {
     return this.settings ? { discord:this.settings.discord, plex:this.settings.plex, requirePlex:this.settings.requirePlex, requirePlexInActivity:this.settings.requirePlexInActivity !== false,
       passwordRequired:this.passwordRequired, anonymous:this.anonymous, publicWeb:this.settings.publicWeb } : undefined;
   }
-  sweep() { for(const map of [this.passwordGrants,this.entryUsers,this.allowed])for(const [key,expires]of map)if(expires<=Date.now())map.delete(key); }
+  sweep() {
+    for(const map of [this.passwordGrants,this.entryUsers,this.allowed])for(const [key,expires]of map)if(expires<=Date.now())map.delete(key);
+    for(const [key,held]of this.confirmed)if(held.expires<=Date.now())this.confirmed.delete(key);
+  }
 }
 
 module.exports = { AccessPolicy };

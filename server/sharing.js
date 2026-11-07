@@ -5,7 +5,7 @@ const { CircuitBreaker } = require('./resilience');
 
 // Gateway voice state is authoritative only while this guild's shard is ready.
 // Guild membership is fetched afresh for each friend command and acknowledgement.
-function discordAccess(client, guildId) {
+function discordAccess(client, guildId, log) {
   const members = new Map(), inflight = new Map();
   const circuit = new CircuitBreaker();
   let generation = 0;
@@ -17,26 +17,29 @@ function discordAccess(client, guildId) {
   client.on(Events.ShardDisconnect, invalidate);
   client.on(Events.ShardReconnecting, invalidate);
   client.on(Events.GuildUnavailable, g => { if (g.id === guildId) invalidate(); });
+  // True or false is Discord's answer; undefined means it gave none.
   async function lookup(userId) {
       const g = guild(), epoch = generation;
-      if (!g) return false;
+      if (!g) return undefined;
       let timer;
       try {
         const member = await circuit.run(() => Promise.race([
           g.members.fetch({ user: userId, force: true, cache: false }),
           new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('Membership timeout')), 2000); })
         ]));
-        if (generation !== epoch || !guild()) return false;
+        if (generation !== epoch || !guild()) return undefined;
         if (!member || member.user.bot) { members.delete(userId); return false; }
         members.set(userId, { roles: new Set(member.roles?.cache?.keys() || []), at: Date.now() });
         for (const [id, value] of members) if (value.at && Date.now() - value.at >= COMMAND_MS) members.delete(id);
         return true;
-      } catch {
+      } catch (error) {
         if (generation === epoch) {
           const existing = members.get(userId);
           if (!existing || !existing.at || Date.now() - existing.at >= COMMAND_MS) members.delete(userId);
         }
-        return false;
+        if (error.code === 10007 || error.code === 10013) return false;
+        log?.warn(`Membership check got no answer: ${error.message}`);
+        return undefined;
       } finally { clearTimeout(timer); }
   }
   return {
