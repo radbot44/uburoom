@@ -41,6 +41,10 @@ Commands/results: `node --test --test-reporter=tap tests/plex-reporting.test.js 
 
 **Not run (C/D):** Vigrid or live Plex, GPU/A380 and multi-room resource/load measurements, real networks/devices, and watch-night acceptance. Synthetic playback does not establish those claims. The fallback still requires readable authorized source bytes; a Plex source outage cannot be repaired by avoiding its transcoder.
 
+### M1-P4 — Plex reporting on a real watch night — 2026-11-06
+
+**D, owner acceptance:** The owner reviewed Tautulli's history for the 2026-11-06 watch night (Vigrid's Plex) and confirmed reporting works. uburoom sessions appear under each viewer's own linked Plex account (radbot, moofish7, radTVtester) as product uburoom, platform Firefox, with the right titles, play and pause durations, and watched state for Hope (2026). Viewers without a linked Plex account were not reported. The address shows as 127.0.0.1 because Plex sees the uburoom server, not the viewer. Grouped Tautulli rows span several sessions, which explains their long or reversed start and stop times. **Not covered:** deliberate multi-viewer stop/seek transitions, natural completion under test, personal watch-state sync.
+
 ### M1-P1/P13 — Reconnects and fullscreen errors — 2026-11-07
 
 **B:** `npm test` passed (exit 0). Chrome and Firefox: after choosing 180p, volume 55, French audio and English subtitles, a second tab joining the same room as a new viewer started with all four and sent no track change. In real fullscreen an error showed as a toast inside the player, Open menu opened the drawer over fullscreen without leaving it, and outside fullscreen no toast appeared. A first version that dismissed the toast whenever the error line cleared hid real errors within a second, because every command start clears that line; the toast now stays its full time. **Not run:** iPhone, a real dropped connection beyond the server's grace period, C on Vigrid.
