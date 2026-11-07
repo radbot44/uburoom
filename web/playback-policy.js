@@ -80,7 +80,8 @@
             const parts=chunks.length?chunks:[new Uint8Array(response.data)];
             const bytes=join(parts),found=transportAudio(bytes),hasAudio=found?.audioAt!==undefined;
             if(hasAudio)audioFrom=Math.min(audioFrom,frag.start);
-            const missing=hasAudio?(found.audioPts-found.pts)/90000:frag.duration;
+            // A segment runs slightly past its listed length; the player trims any overlap.
+            const missing=hasAudio?(found.audioPts-found.pts)/90000:frag.duration+.05;
             const silence=found?.audioPid!==undefined && found.pts!==undefined && missing>.05 ? silentAudioPackets(found.audioPid,found.pts,missing) : undefined;
             const at=found?.audioAt??bytes.length,data=silence?join([bytes.subarray(0,at),silence,bytes.subarray(at)]).buffer:bytes.buffer;
             callbacks.onProgress?.(stats,loaded,data,details);
