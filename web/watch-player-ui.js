@@ -155,6 +155,7 @@
       if(event.key==='Escape'&&opened){event.preventDefault();event.stopImmediatePropagation(); if(activeChoice)backToSettings();else closeSettings(true);}
       if(event.key==='Tab')stage.classList.remove('touch-controls');
     },true);
+    let mouseTimer;
     function showChrome() {
       clearTimeout(chromeTimer); stage.classList.add('controls-visible');
       layoutCaptions();
@@ -164,6 +165,17 @@
         layoutCaptions();
       },2500);
     }
+    // In fullscreen a resting mouse hides the controls and pointer, as in other players.
+    function wakeMouse() {
+      clearTimeout(mouseTimer); stage.classList.remove('mouse-idle'); layoutCaptions();
+      if(document.fullscreenElement!==stage)return;
+      mouseTimer=setTimeout(()=>{
+        if(opened||dialog.open||stage.querySelector('.player-chrome:hover'))return wakeMouse();
+        stage.classList.add('mouse-idle'); layoutCaptions();
+      },2500);
+    }
+    for(const event of ['pointermove','pointerdown'])stage.addEventListener(event,value=>{if(value.pointerType==='mouse')wakeMouse();});
+    document.addEventListener('fullscreenchange',wakeMouse);
     function finishTaps() {
       clearTimeout(tapTimer); const sequence=taps; taps=undefined;
       const state=getState();
