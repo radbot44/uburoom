@@ -153,7 +153,7 @@
         });
       }
 
-      document.body.append(card);
+      (document.fullscreenElement || document.body).append(card);
       telemetryCardElement = card;
 
       const rect = anchorBtn.getBoundingClientRect();

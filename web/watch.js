@@ -462,7 +462,7 @@ const subtitleMode=$('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
 video.muted = playerPreferences.muted;
 function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['room-symbol','users-group'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
+for (const pair of [['refresh','refresh'],['room-symbol','armchair-2'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
   ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
   ['theater','theater'],['pip','pip'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['skip-marker-icon','player-track-next'],]) glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
@@ -902,7 +902,7 @@ for (const [key, label, panel] of sections) {
   const tab = document.createElement('button');
   tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
-  tab.append(uburoomIcons.icon(document, key === 'room' ? 'users-group' : key === 'queue' ? 'player-track-next' : 'video'));
+  tab.append(uburoomIcons.icon(document, key === 'room' ? 'armchair-2' : key === 'queue' ? 'player-track-next' : 'video'));
   tab.append(document.createTextNode(label));
   tab.addEventListener('click', () => selectSection(key));
   sectionTabs.append(tab);
@@ -2554,7 +2554,7 @@ document.addEventListener('keydown', event => {
   }
 });
 document.addEventListener('pointerdown', event => {
-  if (!drawer.hidden && !event.composedPath().some(node => ['drawer','drawer-open','drawer-close'].includes(node.id)) && !event.composedPath().some(node => node instanceof HTMLDialogElement || node.classList?.contains('player-settings-menu'))) {
+  if (!drawer.hidden && !event.composedPath().some(node => ['drawer','drawer-open','drawer-close'].includes(node.id)) && !event.composedPath().some(node => node instanceof HTMLDialogElement || node.matches?.('.player-settings-menu, .viewer-telemetry-card'))) {
     toggleDrawer(false);
     $('stage').focus({preventScroll:true});
   }
