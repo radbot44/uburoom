@@ -103,4 +103,6 @@ Owner-approved 2026-11-06: the subtitle rendering option is named Burn-in, not P
 
 Owner-approved 2026-11-06: Original means the viewer is getting the source. When Original is selected but the output is converted, the quality option reads Maximum with a line naming the output codec, and the player badge reads MAX instead of ORIG. Rendering stays Automatic when subtitles are burned without being chosen, and reads Automatic (burned in) with a status line saying why.
 
+Owner-approved 2026-11-07: the watch page declares `darkreader-lock` so Dark Reader cannot recolour the subtitle outline. uburoom has its own dark and light themes.
+
 Owner-approved 2026-11-06: text subtitles draw in their own layer over the player, not as browser cues. They default to a solid VLC-style outline (labelled Shadow), scale with the player through Small, Medium and Large, and stay on the visible picture unless Text position is On player. They remain visible when controls hide and lift only when the controls would cover them. ASS and bitmap subtitles keep their authored placement.
