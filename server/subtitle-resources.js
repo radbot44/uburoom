@@ -333,8 +333,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
           if(!pgs.data.length)throw new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.');
           return pgs.data;
         }
-        // With -copyts an input -t never ends a text window, which then reads the whole file.
-        if(track.delivery==='cues')return av1.run(av1.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-i',url,'-t',String(durationSeconds),
+        // Without -copyts cue times are relative to the keyframe the seek landed on, so they
+        // shift between windows. With it, only an output -to ends the window at the right place.
+        if(track.delivery==='cues')return av1.run(av1.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-copyts','-i',url,'-to',String(endSeconds),
           '-map','0:'+track.index,'-c:s','webvtt','-map_metadata','-1','-map_chapters','-1','-f','webvtt','pipe:1'],abort,25000,4*1024*1024);
         const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,
           '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',format,'pipe:1'];
@@ -345,7 +346,7 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       if(target.captionVersion!==version||target.selection?.subtitle?.id!==track.id)throw new PlaybackError('Subtitle selection changed.');
       data||=Buffer.alloc(0);
       let cues=0;
-      if(track.delivery==='cues'){const list=(data.length?Subtitles.parse(data.toString('utf8')):[]).map(cue=>({...cue,start:cue.start+startSeconds,end:cue.end+startSeconds}));cues=list.length;data=Buffer.from(JSON.stringify(list));}
+      if(track.delivery==='cues'){const list=data.length?Subtitles.parse(data.toString('utf8')):[];cues=list.length;data=Buffer.from(JSON.stringify(list));}
       else if(track.delivery==='pgs')cues=pgs.cues;
       else if(track.delivery==='ass')cues=(data.toString('utf8').match(/^Dialogue:/mg)||[]).length;
       else cues=data.length>500?1:0;

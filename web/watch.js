@@ -1413,7 +1413,8 @@ function decodedFrames() {
 }
 function checkVideoFrames() {
   checkChoppyPlayback();
-  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending) { frameStartedAt = undefined; return; }
+  // Hidden or minimized pages may stop producing frames while audio continues.
+  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending || document.visibilityState !== 'visible') { frameStartedAt = undefined; return; }
   frameStartedAt ??= performance.now();
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
@@ -1696,7 +1697,7 @@ async function unlockLocal() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (state?.mediaVersion !== version || mediaSource !== source) return false;
-    if (decodedFrames() === 0 || !video.videoWidth) { void compatibleFallback('No video frames were decoded.'); return false; }
+    if ((decodedFrames() === 0 || !video.videoWidth) && document.visibilityState === 'visible') { void compatibleFallback('No video frames were decoded.'); return false; }
     readyVersion = version; autoplayBlocked = false;
     if (state.state.paused) video.pause();
     return true;
