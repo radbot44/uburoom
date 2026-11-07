@@ -125,6 +125,7 @@
           if (!['av1','vp8','vp9','plex','audio'].includes(a.fallback)) throw new Error('Invalid playback fallback');
           args.fallback = a.fallback;
         }
+        if (a.reset === true) args.reset = true;
         if (typeof a.reason === 'string') args.reason = a.reason.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,160);
         break;
       case 'media.reporting.set':

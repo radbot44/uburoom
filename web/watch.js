@@ -2421,7 +2421,9 @@ $('quality').addEventListener('change', () => {
   savePlayerPreferences({quality:preferredQuality});
   choppyDetector.triggerCooldown(10000, performance.now());
   if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
-  execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
+  // Choosing a quality starts over, so a fallback from earlier cannot pin this viewer.
+  localFallbackAttempts = new Set();
+  execute({ action: 'media.quality.set', args: { quality: preferredQuality, reset: true } }).catch(error => fail(error.message));
 });
 function updateTimelineTooltip(event) {
   const tooltip = $('timeline-tooltip');
