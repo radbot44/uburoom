@@ -734,6 +734,8 @@ input.watch-switch:not(.watch-switch-input):disabled{cursor:default;opacity:.55}
 
 /* Standard icon surfaces apply across headers; nonclickable controls are indicators. */
 :is(button:disabled,button[aria-disabled=true],.watch-control:disabled,#options-panel .watch-control:disabled,#room-dialog .watch-control:disabled,#room-settings-dialog .watch-control:disabled){background:transparent;cursor:default}
+:is(.primary,.solid-button):disabled{background:var(--primary)!important}
+:is(.primary,.solid-button)[aria-disabled=true]{color:var(--text)}
 :is(#queue-panel,#library-panel) .watch-control.watch-control-solid-disabled:disabled{background:var(--elevated);color:var(--muted);opacity:1}
 .watch-permission-pill:is(.is-readonly,.is-disabled){background:transparent}
 .room-permission-table th,.room-permission-table td{padding:2px 5px}
