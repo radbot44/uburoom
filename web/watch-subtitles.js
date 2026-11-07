@@ -192,14 +192,16 @@ class uburoomTextWindows {
     const current=this.covered(timeMs);
     if(this.fetching&&!current&&(timeMs<this.fetching.startMs||timeMs>=this.fetching.endMs)){this.fetching.controller.abort();this.fetching=undefined;}
     if(this.fetching||this.failures>=3||Date.now()<this.retryAt)return;
-    if(!current)void this.fetch(timeMs);
-    else if(!this.covered(timeMs,20000))void this.fetch(timeMs+30000);
+    // A window reads every track of the video, so a short one brings up the first cues
+    // soonest. Later windows continue from the end of what is already covered.
+    if(!current)void this.fetch(timeMs,5000,15000);
+    else if(!this.covered(timeMs,20000))void this.fetch(this.intervals.find(item=>item.startMs<=timeMs&&item.endMs>timeMs).endMs,0,60000);
   }
   synced(timeSeconds) {return this.covered(Math.max(0,Math.round(timeSeconds*1000)));}
-  async fetch(targetMs) {
-    const controller=new AbortController(),pending=this.fetching={controller,startMs:Math.max(0,targetMs-15000),endMs:targetMs+60000};
+  async fetch(targetMs,beforeMs,afterMs) {
+    const controller=new AbortController(),pending=this.fetching={controller,startMs:Math.max(0,targetMs-beforeMs),endMs:targetMs+afterMs};
     try{
-      const response=await fetch(this.windowUrl+'?atMs='+targetMs+'&beforeMs=15000&afterMs=60000',{signal:AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)].filter(Boolean))});
+      const response=await fetch(this.windowUrl+'?atMs='+targetMs+'&beforeMs='+beforeMs+'&afterMs='+afterMs,{signal:AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)].filter(Boolean))});
       if(!response.ok){const value=await response.json().catch(()=>({}));throw Object.assign(new Error(value.error||'Subtitle window could not load. Try burn-in.'),{terminal:response.status===403});}
       const startMs=Number(response.headers.get('X-Subtitle-Start-Ms')),endMs=Number(response.headers.get('X-Subtitle-End-Ms')),cues=await response.json();
       if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs||!Array.isArray(cues)||cues.some(c=>!Number.isFinite(c.start)||!Number.isFinite(c.end)||typeof c.text!=='string'))throw new Error('Invalid subtitle window. Try burn-in.');
