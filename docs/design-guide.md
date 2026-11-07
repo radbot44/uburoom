@@ -107,6 +107,8 @@ Owner-approved 2026-11-07: in desktop fullscreen a mouse at rest for 2.5 seconds
 
 Owner-approved 2026-11-07: a quality change between stream types keeps the current stream playing until the new one is ready, and the last frame stays on screen through the swap.
 
+Owner-approved 2026-11-07: hosts get a Video check in Player settings under Media information, listing the server's file and Plex checks most serious first (problem, warning, information, fine) with an icon each, and a quiet Check again button. When a check finds a problem or warning, hosts get one two-line action toast per video with View, which opens Player settings at the check. Viewers never see it.
+
 Owner-approved 2026-11-07: hosts see viewer health. In the room roster, a guest's sync icon becomes `alert-triangle` while they have an issue (warning color; danger for a player error), held 15 seconds after it clears. Their telemetry card adds one issue line and a details list: quality and format, buffered seconds, stalls in the last minute, dropped frames, sync offset, reconnects and device. Only hosts receive these details. Issues and limits are defined once in the shared sync core: error; 2 stalls or 3 seconds stuck per minute; under 2 seconds buffered while playing; 10% dropped frames; Poor sync.
 
 Owner-approved 2026-11-07: Copy diagnostic report is a quiet button with the `copy` icon inside Technical details in the player settings Media information section, with a one-line hint. It copies a recent player report and confirms with the shared toast; if the clipboard is blocked, the toast says so and the report downloads as a file. When the server keeps diagnostics, its hint adds how many days they are kept; there is no separate privacy notice.

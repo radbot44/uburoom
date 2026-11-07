@@ -208,7 +208,7 @@
     const reset=()=>{clearTimeout(tapTimer);taps=press=undefined;touching=false;closeSettings();if(dialog.open)dialog.close();};
     window.addEventListener('resize',()=>{if(opened&&mobile())closeSettings();else placeMenu();});
     document.addEventListener('fullscreenchange',()=>{if(opened)closeSettings();});
-    return {render,closeSettings,reset,settingsOpen:()=>opened||dialog.open,showChrome};
+    return {render,closeSettings,openDialog,reset,settingsOpen:()=>opened||dialog.open,showChrome};
   }
   global.uburoomPlayerUI={mount,trackLabel};
   if(typeof module==='object')module.exports=global.uburoomPlayerUI;

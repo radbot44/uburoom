@@ -34,6 +34,12 @@
 #tracks-dialog h3{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px}
 #tracks-dialog h4{font-size:13px;font-weight:600;margin:0}
 #tracks-dialog .player-media-columns>div,#tracks-dialog details{min-width:0;overflow-wrap:anywhere}
+#tracks-dialog .video-check{margin-top:16px}#tracks-dialog .video-check h4{margin:0 0 8px}
+#video-check-items{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:8px}
+#video-check-items li{display:flex;gap:10px;align-items:flex-start}#video-check-items li>svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;color:var(--muted)}
+#video-check-items li[data-level=problem]>svg{color:var(--danger)}#video-check-items li[data-level=warning]>svg{color:var(--warning)}#video-check-items li[data-level=ok]>svg{color:var(--success)}
+#video-check-items p{margin:0}#video-check-items li:is([data-level=problem],[data-level=warning]) .video-check-title{font-weight:600}#video-check-items .hint{margin:2px 0 0}
+#video-check-refresh{display:inline-flex;align-items:center;gap:8px}#video-check-refresh svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #tracks-dialog .diagnostic-report{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}#tracks-dialog .diagnostic-report .hint{margin:0}#copy-diagnostics{display:inline-flex;align-items:center;gap:8px}#copy-diagnostics svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #tracks-dialog .player-media-columns summary{font-size:13px;font-weight:600;cursor:pointer}
 #tracks-dialog :is(#quality-notice,#audio-track-status):empty{display:none}

@@ -170,7 +170,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
@@ -252,6 +252,16 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (room?.saved && write && match[2] === 'close') return result(200,await watch.roomState.closeRoom(match[1],auth.actor,data.epoch,current));
       if (!await watch.canView(room, auth.actor)) { return result(403, { error: 'Room unavailable or private' }); }
       if(context.controlSocket&&context.controlSocket.readyState!==1){return result(409,{error:'Room connection changed; retry manually'});}
+      // The video check is for the people who run the room; it names server details like free space.
+      if (!write && match[2] === 'check') {
+        if (!hub.canManage(room.s, auth.actor)) return result(403, { error: 'Only hosts can see the video check' });
+        if (!room.media || room.media.kind !== 'plex') return result(200, { items: [], level: 'ok', title: room.media?.title });
+        if (url.searchParams.get('refresh') === '1') {
+          if (!throttle('video-check:' + auth.actor.userId, 6)) return result(429, { error: 'Wait a moment before checking again' });
+          watch.mediaChecks.forget(room.media);
+        }
+        return result(200, await watch.mediaChecks.report(room.media));
+      }
       if (write && match[2] === 'command') {
         if (!throttle('watch-command:' + auth.actor.userId, 120)) { return result(429, { error: 'Too many commands' }); }
         const envelope = validateCommandEnvelope(data, { expectedEpoch: room.s.epoch, now: Date.now() });

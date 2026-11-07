@@ -487,6 +487,42 @@ $('copy-diagnostics').addEventListener('click',async()=>{
     toasts.show('diagnostic-report',{type:'error',title:"Couldn't copy",hint:'Saved the report as a file instead.',symbol:'copy',duration:6000});
   }
 });
+// The server checks each video for hosts. They read it in Player settings and get one
+// toast per video when it finds a problem or warning. Viewers never request it.
+const videoCheck={media:undefined,report:undefined,toasted:undefined,timer:undefined};
+const VIDEO_CHECK_ICONS={problem:'alert-triangle',warning:'alert-triangle',info:'info-circle',ok:'check'};
+async function loadVideoCheck(refresh=false) {
+  clearTimeout(videoCheck.timer);
+  const room=selected,media=state?.mediaVersion;
+  if(!state?.canManage || !state.mediaId || !room)return renderVideoCheck();
+  let report;
+  try { report=await api('/api/watch/rooms/'+room+'/check'+(refresh?'?refresh=1':'')); } catch { return; }
+  if(selected!==room || state?.mediaVersion!==media)return;
+  videoCheck.report=report; renderVideoCheck();
+  if(report.checking)videoCheck.timer=setTimeout(()=>void loadVideoCheck(),5000);
+  else if(['problem','warning'].includes(report.level) && videoCheck.toasted!==media) {
+    videoCheck.toasted=media;
+    toasts.show('video-check',{type:report.level==='problem'?'error':'normal',symbol:'alert-triangle',duration:15000,
+      title:report.level==='problem'?'Video check found a problem':'Video check found a warning',hint:report.items[0]?.title||'',
+      action:{label:'View',run:()=>{playerUI.openDialog();$('video-check').scrollIntoView({block:'center'});}}});
+  }
+}
+function renderVideoCheck() {
+  const report=state?.canManage && state.mediaVersion===videoCheck.media ? videoCheck.report : undefined;
+  $('video-check').hidden=!report;
+  if(!report)return;
+  const list=$('video-check-items');list.replaceChildren();
+  for(const item of report.items) {
+    const row=document.createElement('li');row.dataset.level=item.level;
+    const icon=uburoomIcons.icon(document,VIDEO_CHECK_ICONS[item.level]||'info-circle');icon.setAttribute('aria-hidden','true');
+    const text=document.createElement('div'),title=document.createElement('p');title.className='video-check-title';title.textContent=item.title;text.append(title);
+    if(item.detail){const detail=document.createElement('p');detail.className='hint';detail.textContent=item.detail;text.append(detail);}
+    row.append(icon,text);list.append(row);
+  }
+  $('video-check-refresh').disabled=!!report.checking;
+}
+$('video-check-refresh').prepend(uburoomIcons.icon(document,'refresh'));
+$('video-check-refresh').addEventListener('click',()=>{videoCheck.toasted=state?.mediaVersion;void loadVideoCheck(true);});
 let subtitleLoadingTimer, subtitleLoadingActive = false;
 function setSubtitleLoading(loading) {
   const cc = $('captions-toggle');
@@ -847,7 +883,7 @@ function renderEnding(next) {
 }
 
 playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
-  beforeSettings:()=>{renderMediaInformation(state);trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
+  beforeSettings:()=>{renderMediaInformation(state);renderVideoCheck();trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
   afterSettings:()=>{trackContext=undefined;}});
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
@@ -2317,6 +2353,7 @@ function applyState(next) {
   if(seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)){seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;}
   const previousTarget = state ? expected() : undefined,previousRevision=state?.revision,previousReadinessVersion=state?.readinessVersion;
   if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
+  if(next.canManage && next.mediaId && next.mediaVersion!==videoCheck.media){videoCheck.media=next.mediaVersion;videoCheck.report=undefined;queueMicrotask(()=>void loadVideoCheck());}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
   unavailableToasts(next.unavailableMedia);

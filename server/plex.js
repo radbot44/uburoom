@@ -60,6 +60,8 @@ class Plex {
     this.scopes = new Map(); this.principal = 'discord-shared'; this.allowedItems = new Map();
     this.partQueues = new Map();
     this.hlsPool=new HLSPool(media=>(media.plexContext||this).stop(media));
+    /** @type {Map<string,{context:any,at:number,stoppedAt?:number}>} Plex transcode sessions uburoom started */
+    this.sessions=new Map();
     this.conversionPolicy=new ConversionPolicy(config.transcoding,this);
     this.qualityOptions=config.transcoding?.qualities || QUALITIES;
     this.av1.conversionPolicy=this.conversionPolicy;
@@ -72,7 +74,7 @@ class Plex {
   scope(token,principal) {
     const key=principal+':'+createHash('sha256').update(token).digest('hex');
     let scoped=this.scopes.get(key);
-    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,cacheBudget:this.cacheBudget,scopes:new Map(),fileCache:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
+    if(!scoped){scoped=Object.create(Plex.prototype);Object.assign(scoped,{rawFetch:this.rawFetch,fetch:resilientFetch(this.rawFetch),token,clientId:principal,base:this.base,av1:this.av1,hlsPool:this.hlsPool,sessions:this.sessions,conversionPolicy:this.conversionPolicy,qualityOptions:this.qualityOptions,principal:key,partQueues:this.partQueues,cacheBudget:this.cacheBudget,scopes:new Map(),fileCache:new Map(),catalogCache:new Map(),artSources:new Map(),imageCache:new Map(),randomCache:new Map(),allowedItems:new Map()});this.scopes.set(key,scoped);if(this.scopes.size>64)this.scopes.delete(this.scopes.keys().next().value);}
     return scoped;
   }
   async allows(id) {
@@ -554,6 +556,36 @@ class Plex {
       (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)))
       .map(q => q.id === 'direct' && original?.bitrate > 0 ? {...q,label:'Original · '+Math.round(original.bitrate / 1000)+' Mbps'} : q);
   }
+  // The one recipe for a Plex HLS session, used to start playback and to ask Plex
+  // beforehand whether it would.
+  transcodeParams({ ratingKey, selected, original, quality, session, audio, burn, directStream }) {
+    const params = new URLSearchParams({ path: `/library/metadata/${ratingKey}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
+      protocol: 'hls', directPlay: '0', directStream: directStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
+      offset: '0', session, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
+      'X-Plex-Client-Identifier': session, 'X-Plex-Session-Identifier': session,
+      maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
+      'X-Plex-Client-Profile-Name': 'Generic',
+      'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
+    if (audio) params.set('audioStreamID',audio.id);
+    params.set('audioChannelCount','2');
+    if (burn) { params.set('advancedSubtitles','burn'); params.set('subtitleSize','100'); }
+    if (quality !== 'direct') {
+      const q = this.qualityOptions.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
+    }
+    return params;
+  }
+  /**
+   * Ask Plex whether it would play this item at a quality, without starting a session.
+   * @returns {Promise<{ok:boolean, reason?:string}>}
+   */
+  async startDecision(media, quality) {
+    const { ratingKey } = mediaIdentity(this.id(media.id)), selected = Sources.select(media.source, media.sourceSelection);
+    const params = this.transcodeParams({ ratingKey, selected, original: selected.media, quality, session: randomUUID(), directStream: quality === 'direct' });
+    const decision = await (media.plexContext || this).json('/video/:/transcode/universal/decision?' + params);
+    const code = Number(decision.generalDecisionCode), playable = !!decision.Metadata?.[0]?.Media?.[0]?.Part?.length;
+    if (playable && !(code >= 2000)) return { ok: true };
+    return { ok: false, reason: String(decision.transcodeDecisionText || decision.generalDecisionText || 'Plex gave no reason.').slice(0, 300) };
+  }
   async prepare(id, quality, compatible = false, source, fallback, choices = {}) {
     quality=qualityId(quality);
     if (!choices.sourceOnly && !this.qualityOptions.some(q=>q.id===quality)) throw new PlaybackError('This quality is not offered by the server.');
@@ -627,20 +659,9 @@ class Plex {
       try {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
-      const allowDirectStream = copyOnly || (!burn && !compatible);
-      const params = new URLSearchParams({ path: `/library/metadata/${ratingKey}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
-        protocol: 'hls', directPlay: '0', directStream: allowDirectStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
-        offset: '0', session: media.transcodeId, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
-        'X-Plex-Client-Identifier': media.transcodeId, 'X-Plex-Session-Identifier': media.transcodeId,
-        maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
-        'X-Plex-Client-Profile-Name': 'Generic',
-        'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
-      if (audio) params.set('audioStreamID',audio.id);
-      params.set('audioChannelCount','2');
-      if (burn) { params.set('advancedSubtitles','burn'); params.set('subtitleSize','100'); }
-      if (quality !== 'direct') {
-        const q = this.qualityOptions.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
-      }
+      this.sessions.set(media.transcodeId,{context:this,at:Date.now()});
+      const params = this.transcodeParams({ ratingKey, selected, original, quality, session: media.transcodeId, audio, burn,
+        directStream: copyOnly || (!burn && !compatible) });
       const decision = await this.json('/video/:/transcode/universal/decision?' + params);
       if(copyOnly && (burn || !decision.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream?.some(stream=>Number(stream.streamType)===1 && stream.decision==='copy') ||
         decision.Metadata.some(item=>item.Media?.some(output=>output.Part?.some(part=>part.Stream?.some(stream=>Number(stream.streamType)===1&&stream.decision!=='copy')))))) {
@@ -790,9 +811,35 @@ class Plex {
     if (media?.av1Lease) this.av1.release(media.av1Lease);
     if (media?.transcodeId) {
       const id = media.transcodeId, headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
+      const entry = this.sessions.get(id); if (entry) entry.stoppedAt = Date.now();
       await (media.hlsContext||media.plexContext||this).request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers }).catch(() => {});
     }
     media?.releaseConversion?.();if(media)media.releaseConversion=undefined;
+  }
+  /**
+   * Desired state for Plex sessions: every transcode uburoom started and no longer uses
+   * is ended, whichever path dropped it. Plex keeps a session's files on its transcode
+   * drive until the session ends, so a leak fills the disk.
+   * @param {Set<string>} inUse transcode IDs that rooms, viewers or shared streams hold
+   */
+  async reconcileSessions(inUse, now = Date.now()) {
+    const data = await this.json('/transcode/sessions');
+    const listed = (data?.TranscodeSession || []).map(session => String(session.key || '').split('/').pop()).filter(Boolean);
+    const present = new Set(listed), ended = [];
+    for (const id of listed) {
+      const entry = this.sessions.get(id);
+      // Never touch other apps' sessions or one still being prepared.
+      if (!entry || inUse.has(id) || now - entry.at < 120000) continue;
+      const headers = { 'X-Plex-Client-Identifier': id, 'X-Plex-Session-Identifier': id };
+      await entry.context.request('/video/:/transcode/universal/stop?' + new URLSearchParams({ session: id, ...headers }), { headers }).catch(() => {});
+      ended.push({ id, stopped: !!entry.stoppedAt });
+      entry.stoppedAt = now;
+    }
+    for (const [id, entry] of this.sessions) {
+      if (!present.has(id) && !inUse.has(id) && (entry.stoppedAt || now - entry.at > 86400000)) this.sessions.delete(id);
+    }
+    if (ended.length) this.av1.logger?.warn('Plex', `Ended ${ended.length} Plex transcode ${ended.length === 1 ? 'session' : 'sessions'} that uburoom no longer used (${ended.filter(item => item.stopped).length} had already been asked to stop).`);
+    return { plexSessions: listed.length, uburoomSessions: listed.filter(id => this.sessions.has(id)).length, ended: ended.length };
   }
   async ping(media) {
     if (!media?.transcodeId) return false;

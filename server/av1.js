@@ -568,4 +568,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };

@@ -6,6 +6,7 @@
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
+const { MediaChecks } = require('./media-check');
 const { SharedTask, currentSignal } = require('./operation');
 const { isProviderOutage } = require('./resilience');
 const { randomUUID } = require('node:crypto');
@@ -53,6 +54,7 @@ class Watch {
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
     this.autoplayDelayMs = 10000;
     this.providerDownSince = undefined; this.providerRecoveredAt = 0;
+    this.mediaChecks = new MediaChecks({ plex, config: hub?.config || {}, sessions: () => this.plexSessions });
   }
   providerFailed(error) {
     if (!isProviderOutage(error)) return false;
@@ -1121,6 +1123,7 @@ class Watch {
       } else if (prepared) {
         const startPosition = (Number.isFinite(Number(args.position)) && Number(args.position) > 0) ? Math.min(Number(args.position), prepared.duration) : 0;
         room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
+        this.mediaChecks.start(prepared);
         room.position = record ? queue.current(id).position : startPosition; room.changedAt = Date.now();
         if (room.recovery) this.roomState.finishRecovery(room);
         this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
@@ -1396,7 +1399,28 @@ class Watch {
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
     return saved;
   }
-  sweep() { for (const room of this.rooms.values()) this.refresh(room); }
+  sweep() {
+    for (const room of this.rooms.values()) this.refresh(room);
+    if (this.plex.configured && !this.shuttingDown && Date.now() - (this.sessionsCheckedAt || 0) >= 60000) {
+      this.sessionsCheckedAt = Date.now();
+      void this.reconcilePlexSessions().catch(() => {});
+    }
+  }
+  /** Transcode sessions that something in uburoom still holds. */
+  plexSessionsInUse() {
+    const ids = new Set(), add = media => { if (media?.transcodeId) ids.add(media.transcodeId); };
+    for (const room of this.rooms.values()) {
+      add(room.media);
+      for (const viewer of room.viewers.values()) add(viewer.media);
+      for (const viewer of room.disconnectedViewers.values()) add(viewer.media);
+    }
+    for (const group of this.plex.hlsPool?.groups?.values() || []) add(group.media);
+    return ids;
+  }
+  async reconcilePlexSessions() {
+    this.plexSessions = { ...await this.plex.reconcileSessions(this.plexSessionsInUse()), checkedAt: Date.now() };
+    return this.plexSessions;
+  }
   async close() {
     this.shuttingDown = true;
     await Promise.all([...this.rooms.keys()].map(id => this.remove(id)));

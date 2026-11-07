@@ -15,6 +15,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P2/P4 — Video check and Plex session cleanup — 2026-11-07
+
+**B:** `npm test` passed (exit 0). Fixture rooms: the check finished while the video loaded (tracks match, Plex would play Original and 360p, sessions listed). A 90 s file with audio starting 5 s late and a wrong track list: late audio, track mismatch, image subtitle and bitrate peak reported. Disk check on this PC read the drive's free space through a stub Plex; a remote Plex address reports that space can't be checked. Session cleanup with a fake Plex ended only a session uburoom started and no longer held, leaving in-use, new and other apps' sessions alone. Host screen in Chrome, dark and light: items most serious first, toast once per video, View opens Player settings at the check, Check again restarts it. **Not run:** real Plex answers for `/transcode/sessions`, `/:/prefs` and the playback decision (C on Vigrid), Firefox for the host screen.
+
 ### M1-P1/P11 — Viewer health for hosts — 2026-11-07
 
 **B:** `npm test` passed (exit 0). Health on the existing sync report: Chrome and Firefox players sent valid reports at 360p AV1 (about 4.7 s buffered, offsets under 50 ms, no stalls, coarse browser and device). Shared core checked directly: unknown fields and out-of-range values rejected; stalls, low buffer and dropped frames each raised an issue; an issue held 15 s after clearing, then cleared; paused raised nothing; the roster took the worst device's issue. Rendered with sample guests in Chrome (dark and light) and Firefox: amber triangle for stalling, red for a player error, card issue line and details as approved. **Not run:** a saved room with real guests (fixture rooms carry no roster), C on Vigrid.
