@@ -108,6 +108,7 @@
  * @property {import('./operation').SharedTask & {bootstrap?:Promise<void>}} [preparing] - One chosen-output preparation lifetime, optionally publishing authorized fallback metadata first.
  * @property {number} [fallbackRetryAt] - Next allowed retry of an unavailable chosen output while fallback plays.
  * @property {Function} [alive] - Optional liveness check callback.
+ * @property {() => Promise<boolean>} [reportingAuthorized] - Current login check independent of control-socket liveness, for bounded reporting continuity.
  * @property {{watchRtts?: Array<{at:number,ms:number}>,watchKick?: (roomId: string) => void}} [watchSocket] - Active socket's bounded round trips and subscription-removal notification.
  */
 

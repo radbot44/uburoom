@@ -70,6 +70,8 @@ test('abnormal socket close retains viewer media and grant for prompt reconnect,
   first.ws.terminate();await Promise.all([disconnected,serverDisconnected]);
   assert.equal(room.viewers.get(viewerId),viewer,'abnormal closure does not evict the viewer');
   assert.equal(viewer.media,media,'output survives unexpected close');
+  assert.equal(await viewer.alive(),false,'the old socket is no longer a live control transport');
+  assert.equal(await viewer.reportingAuthorized(),true,'a closed socket does not revoke reporting credentials during grace');
   assert.equal(room.disconnectedViewers.has(viewerId),false,'no cold-rejoin record was created');
   const replacement=await f.connect(identity);t.after(()=>replacement.ws.terminate());
   const after=(await replacement.call(route+'?viewer='+viewerId)).value;

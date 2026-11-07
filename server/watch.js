@@ -49,7 +49,11 @@ function formatEntrySubtitle(entry) {
 class Watch {
   constructor(hub, plex, demoMedia, registry, plexAuth) {
     this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map();
-    this.reporting = new PlexReporting({ config: hub?.config, hub, plexAuth, registry });
+    this.reporting = new PlexReporting({ config: hub?.config, hub, plexAuth, registry,
+      authorize: async (room, viewer) => {
+        const authenticated = viewer.reportingAuthorized || viewer.alive;
+        return (!authenticated || await authenticated()) && await this.canView(room, viewer.actor);
+      } });
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
@@ -112,6 +116,7 @@ class Watch {
     invalidateEpoch(room);
   }
   dropMedia(room, reason = 'media-changed') {
+    void this.reporting?.endRoom(room);
     room.fallbackStream?.close(); room.fallbackStream=undefined;
     this.cancelAutoplay(room); clearPlaybackEnd(room);
     room.disconnectedViewers.clear();
@@ -387,6 +392,7 @@ class Watch {
           quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
           volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
           plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
+          browserLoginHash:viewer.browserLoginHash,
           directProxyVersion:viewer.directProxyVersion, browserSubtitles:viewer.browserSubtitles, localCodecs:viewer.localCodecs,
           localDelivery:viewer.localDelivery,
           syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
@@ -396,6 +402,7 @@ class Watch {
       viewer.preparing?.abort();
       this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, 'disconnected'); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
     }
+    this.reporting?.refresh(room, now);
     if (hostTimedOut) this.invalidateControls(room);
     if (pruned) this.settle(room, now);
     this.reconcileFallback(room);
@@ -512,6 +519,7 @@ class Watch {
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.transitionCommit) await room.transitionCommit.catch(() => {});
     if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
+      void this.reporting?.endViewer(room, viewerId, reason);
       room.disconnectedViewers.delete(viewerId);
       if (room.reconnecting && viewerId === room.hostViewerId) { this.remove(room.s.roomId); return; }
     }
@@ -590,6 +598,7 @@ class Watch {
       joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
     Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
     room.viewers.set(viewerId, viewer);
+    if (saved) this.reporting?.reconnect(room, viewer, saved);
     if (!oldViewer) this.hub?.config?.logger?.info('Room', `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`);
     if (room.saved && !oldViewer) { this.roomState.store.touch(room.s.roomId); void this.roomState.save(room).catch(() => {}); }
     if (!oldViewer) promoteGroupReadinessLead(room, now);

@@ -549,9 +549,17 @@ test('logout checks CSRF, revokes only this browser login and its viewers, retai
   await host.post('/api/watch/admin-mode',{enabled:true});
   const roomId=(await host.post('/api/watch/rooms',{})).body.id,first=randomUUID(),second=randomUUID();await host.request(`/api/watch/rooms/${roomId}?viewer=${first}`);await other.request(`/api/watch/rooms/${roomId}?viewer=${second}`);
   const room=f.app.watch.rooms.get(roomId);assert.equal(room.viewers.size,2);
+  const disconnected=randomUUID(),otherDisconnected=randomUUID();
+  await host.request(`/api/watch/rooms/${roomId}?viewer=${disconnected}`);
+  await other.request(`/api/watch/rooms/${roomId}?viewer=${otherDisconnected}`);
+  room.viewers.get(disconnected).at=Date.now()-11000;room.viewers.get(otherDisconnected).at=Date.now()-11000;
+  f.app.watch.refresh(room);
+  assert.equal(room.disconnectedViewers.size,2);
   assert.equal((await host.request('/api/logout',{})).status,403);assert.equal((await host.request('/api/logout',{}, {'X-CSRF-Token':csrf,Origin:'https://elsewhere.invalid'})).status,403);assert.equal(room.viewers.size,2);
   const result=await host.request('/api/logout',{}, {'X-CSRF-Token':csrf});assert.equal(result.status,200);assert.ok(result.headers['set-cookie'].some(cookie=>cookie.startsWith('uburoom=;')&&cookie.includes('Max-Age=0')));
   assert.equal(room.viewers.has(first),false);assert.equal(room.viewers.has(second),true);assert.equal(f.app.hub.adminMode,false);assert.equal((await other.request('/api/watch/me')).status,200);
+  assert.equal(room.disconnectedViewers.has(disconnected),false,'logout also removes this login from reconnect grace');
+  assert.equal(room.disconnectedViewers.has(otherDisconnected),true,'another login retains its own reconnect grace');
   assert.equal((await host.request('/api/watch/me',undefined,{Cookie:'uburoom='+oldCookie})).status,401,'the old cookie cannot be replayed');assert.equal(f.app.registry.summary(account.id).identities.length,2);assert.ok(f.app.registry.credential('101'));
   await host.plex('alice');assert.equal((await host.request('/api/account')).body.account.id,account.id);
   const bobCsrf=(await bob.request('/api/watch/me')).body.csrf;f.provider.revoked.add('102');f.app.plexAuth.clear();assert.equal((await bob.request('/api/watch/me')).status,401);assert.equal((await bob.request('/api/logout',{}, {'X-CSRF-Token':bobCsrf})).status,200,'provider eligibility is not needed to revoke your existing browser session');

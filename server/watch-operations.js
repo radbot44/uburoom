@@ -319,7 +319,8 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       if (!UUID.test(viewerId || '')) throw new Error('Invalid viewer');
       if (url.searchParams.has('delivery') && !/^(?:auto|local)$/.test(url.searchParams.get('delivery') || '')) throw new Error('Invalid delivery mode');
       const headers = { cookie: context.headers.cookie, authorization: context.headers.authorization };
-      const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && (await login({ headers: context.controlSocket?.watchHeaders || headers }))?.userId === auth.actor.userId;
+      const authenticated = async () => (await login({ headers: context.controlSocket?.watchHeaders || headers }))?.userId === auth.actor.userId;
+      const alive = async () => (!context.controlSocket || context.controlSocket.readyState === 1) && await authenticated();
       const preferences={};
       if(url.searchParams.has('volume'))preferences.volume=require('../shared/engine').validate({action:'media.volume.set',args:{percent:Number(url.searchParams.get('volume'))}}).args.percent;
       if(url.searchParams.has('muted')) {
@@ -346,6 +347,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'),preferences);
       // Capability is set before the first source preparation and never grants access.
       const viewer=room.viewers.get(viewerId);
+      viewer.reportingAuthorized = authenticated;
       const remoteAddress = clientAddress(context);
       if (remoteAddress) viewer.remoteAddress = remoteAddress;
       viewer.activity=!!auth.identity.activity;

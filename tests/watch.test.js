@@ -115,16 +115,32 @@ test('host heartbeat expiry invalidates pending controls before a guest takes ov
 });
 
 
-test('a timed-out viewer can rejoin the same media with personal tracks but a fresh stream', () => {
+test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the same reporting occurrence', async () => {
   const hub = new Hub({ ownerId:'host', guildId:'guild', channels:['commands'] }, []);
   hub.access = { refresh:async()=>true, isMember:()=>true, voiceChannel:()=> 'call', validVoiceChannel:()=>true, options:()=>({available:true}) };
   const watch = new Watch(hub,{stop:async()=>{}});
   const actor = userId => ({userId,guildId:'guild',channelId:'commands',surface:'web',name:userId});
   const host=actor('host'),guest=actor('guest'),room=watch.rooms.get(watch.create(host)),hostId=randomUUID(),guestId=randomUUID();
+  const reports=[];
+  watch.reporting.plexAuth={forUser:async()=>({principal:'personal',clientId:'fixture',request:async(resource,options)=>{
+    reports.push({state:new URL(resource,'http://fixture.invalid').searchParams.get('state'),id:options.headers['X-Plex-Session-Identifier']});
+  }})};
+  room.media={kind:'plex',id:'123',duration:120};
+  const report=async(viewer,position)=>{
+    viewer.media={kind:'plex',format:'file'};viewer.mediaVersion=room.mediaVersion;viewer.streamVersion ||= randomUUID();
+    const data={mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,observationEpoch:viewer.observationEpoch,sequence:1,
+      sampleAt:1,observedAt:Date.now(),position,rate:1,frames:1,discontinuity:0,state:'playing'};
+    const accepted=watch.tracking.observe(room,viewer,guestId,data);
+    await watch.reporting.observe(room,viewer,guestId,data,accepted);
+    await watch.reporting.sessions.get(guestId)?.dispatched;
+  };
   watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
   const previous=room.viewers.get(guestId);
   previous.trackChoice={audioId:'1042',subtitleId:'off',audioIntent:{language:'fr'}};
   previous.quality='1080p';previous.subtitleOffset=2;previous.streamVersion=randomUUID();
+  previous.alive=async()=>false;previous.reportingAuthorized=async()=>true;
+  await report(previous,10);
+  const occurrence=reports[0].id;
   previous.at=Date.now()-11000;
   const oldEpoch=previous.observationEpoch;
   watch.refresh(room);
@@ -138,6 +154,9 @@ test('a timed-out viewer can rejoin the same media with personal tracks but a fr
   assert.equal(restored.quality,'1080p');assert.equal(restored.subtitleOffset,2);
   assert.notEqual(restored.observationEpoch,oldEpoch,'old playback observations cannot resume');
   assert.equal(restored.streamVersion,undefined,'a new personal stream must be prepared');
+  await report(restored,20);
+  assert.equal(reports.at(-1).id,occurrence,'fresh decoded observations resume the same reporting identity');
+  assert.ok(reports.every(report=>report.state!=='stopped'));
   restored.at=Date.now()-11000;watch.refresh(room);
   room.mediaVersion=randomUUID();watch.refresh(room);
   watch.snapshot(room,guest,guestId);
@@ -147,12 +166,15 @@ test('a timed-out viewer can rejoin the same media with personal tracks but a fr
   room.disconnectedViewers.get(guestId).expires=Date.now()-1;
   watch.snapshot(room,guest,guestId);
   assert.equal(room.viewers.get(guestId).trackChoice,undefined,'expired reconnect state is ignored');
+  await report(room.viewers.get(guestId),30);
+  assert.notEqual(reports.at(-1).id,occurrence,'a new media occurrence cannot reuse reporting');
   room.viewers.get(guestId).trackChoice={audioId:'1042'};
   room.viewers.get(guestId).at=Date.now()-11000;watch.refresh(room);
-  watch.leave(room,guest,guestId);
+  await watch.leave(room,guest,guestId);
+  assert.equal(watch.reporting.sessions.has(guestId),false,'explicit leave ends suspended reporting');
   watch.snapshot(room,guest,guestId);
   assert.equal(room.viewers.get(guestId).trackChoice,undefined,'explicit leave does not restore personal choices');
-  watch.close();
+  await watch.close();
 });
 
 

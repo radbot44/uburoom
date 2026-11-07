@@ -469,11 +469,13 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   async function logout(loginHash){
     for(const [id,grant]of grants)if(grant.credential&&!grant.credential.startsWith('Bearer ')&&hash(grant.credential)===loginHash)grants.delete(id);
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(viewer.browserLoginHash===loginHash){viewer.watchSocket?.close(4003,'Sign in again');await watch.leave(room,viewer.actor,id,'logout');}
+    for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.disconnectedViewers])if(viewer.browserLoginHash===loginHash)await watch.leave(room,{userId:viewer.userId},id,'logout');
   }
   async function invalidate(ids){
     for(const [token,identity]of identities)if(ids.includes(identity.userId))identities.delete(token);
     for(const [id,grant]of grants)if(ids.includes(grant.actor.userId))grants.delete(id);
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(ids.includes(viewer.userId)){viewer.watchSocket?.close(4003,'Sign in again');await watch.leave(room,viewer.actor,id,'account-changed');}
+    for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.disconnectedViewers])if(ids.includes(viewer.userId))await watch.leave(room,{userId:viewer.userId},id,'account-changed');
   }
   async function bootstrap(req) {
     const initial = {config:publicConfig()};

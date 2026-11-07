@@ -87,10 +87,13 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
   const room = {
     s: { roomId: randomUUID() },
     media: { kind: 'plex', id: '13159', duration: 720 },
-    mediaVersion: randomUUID()
+    mediaVersion: randomUUID(),
+    viewers: new Map(),
+    disconnectedViewers: new Map()
   };
 
-  const createViewer = (userId, overrides = {}) => ({
+  const createViewer = (userId, overrides = {}) => {
+    const viewer = {
     userId,
     viewerId: randomUUID(),
     observationEpoch: randomUUID(),
@@ -99,8 +102,11 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
     plexReporting: true,
     plexWatchState: false, // default per owner decision
     media: { kind: 'plex', format: 'hls', transcodeId: 'shared-transcode-' + randomUUID() },
-    ...overrides
-  });
+      ...overrides
+    };
+    room.viewers.set(viewer.viewerId, viewer);
+    return viewer;
+  };
 
   const makeObserved = (pos, state = 'playing', reason = 'credited') => ({
     data: {
@@ -209,6 +215,8 @@ test('activity-only vs watch-state: duration is omitted by default and included 
 
     const req2 = f.dispatchedRequests[1];
     assert.equal(req2.params.duration, '720000', 'duration must be included when watch-state is enabled');
+    assert.notEqual(req1.headers['X-Plex-Client-Identifier'], req2.headers['X-Plex-Client-Identifier'], 'duplicate tabs must stay distinct');
+    assert.notEqual(req1.headers['X-Plex-Session-Identifier'], req2.headers['X-Plex-Session-Identifier']);
   } finally {
     f.close();
   }
@@ -229,7 +237,7 @@ test('sponsored viewer isolation: users without personal Plex credentials are ne
   }
 });
 
-test('fencing: mediaVersion, streamVersion, or observationEpoch changes tear down previous session', async () => {
+test('viewing identity survives stream/delivery/observation changes but ends at media occurrence and leave boundaries', async () => {
   const f = fixture();
   try {
     const viewer = f.createViewer(f.userWithPlex.id);
@@ -239,22 +247,182 @@ test('fencing: mediaVersion, streamVersion, or observationEpoch changes tear dow
 
     const firstSessionId = f.dispatchedRequests[0].headers['X-Plex-Session-Identifier'];
 
-    // Stream version rotates (e.g. quality change or seek)
-    viewer.streamVersion = randomUUID();
-    const obs2 = f.makeObserved(50, 'playing', 'baseline');
-    await f.reporting.observe(f.room, viewer, viewer.viewerId, obs2.data, obs2.observed);
-    await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    for (const reason of ['stream-changed', 'delivery-changed', 'observation-timeout']) {
+      await f.reporting.end(viewer, reason);
+      viewer.streamVersion = randomUUID();
+      viewer.observationEpoch = randomUUID();
+      const obs2 = f.makeObserved(50, 'playing', 'baseline');
+      await f.reporting.observe(f.room, viewer, viewer.viewerId, obs2.data, obs2.observed);
+      await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    }
+    // Epoch changes need no special handling by individual recovery paths.
+    viewer.observationEpoch = randomUUID();
+    const next = f.makeObserved(51);
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, next.data, next.observed);
+    await f.reporting.sessions.get(viewer.viewerId).dispatched;
+    assert.ok(f.dispatchedRequests.every(r => r.params.state !== 'stopped'));
+    assert.ok(f.dispatchedRequests.every(r => r.headers['X-Plex-Session-Identifier'] === firstSessionId));
 
-    // A stopped report was dispatched for the old session, and a new session started
-    assert.equal(f.dispatchedRequests.length, 3);
-    assert.equal(f.dispatchedRequests[1].params.state, 'stopped');
-    assert.equal(f.dispatchedRequests[1].headers['X-Plex-Session-Identifier'], firstSessionId);
+    f.room.mediaVersion = randomUUID();
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, next.data, next.observed);
+    await f.reporting.sessions.get(viewer.viewerId).dispatched;
+    assert.equal(f.dispatchedRequests.at(-2).params.state, 'stopped');
+    const secondSessionId = f.dispatchedRequests.at(-1).headers['X-Plex-Session-Identifier'];
+    assert.notEqual(firstSessionId, secondSessionId, 'even the same title in a new occurrence starts again');
 
-    const secondSessionId = f.dispatchedRequests[2].headers['X-Plex-Session-Identifier'];
-    assert.notEqual(firstSessionId, secondSessionId, 'New stream version must start a distinct Plex session');
+    await f.reporting.end(viewer, 'left');
+    await f.reporting.observe(f.room, viewer, viewer.viewerId, next.data, next.observed);
+    await f.reporting.sessions.get(viewer.viewerId).dispatched;
+    assert.notEqual(f.dispatchedRequests.at(-1).headers['X-Plex-Session-Identifier'], secondSessionId);
   } finally {
     f.close();
   }
+});
+
+test('reconnect keeps the reporting occurrence only within grace; missing viewers have bounded activity-only cleanup', async () => {
+  const f = fixture();
+  try {
+    let viewer = f.createViewer(f.userWithPlex.id, { plexWatchState: true });
+    const observe = async position => {
+      const obs = f.makeObserved(position);
+      await f.reporting.observe(f.room, viewer, viewer.viewerId, obs.data, obs.observed);
+      await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
+    };
+    const disconnect = async () => {
+      const saved = { userId: viewer.userId, mediaVersion: f.room.mediaVersion, expires: f.reporting.now() + 60000 };
+      f.room.disconnectedViewers.set(viewer.viewerId, saved);
+      await f.reporting.end(viewer, 'disconnected');
+      f.room.viewers.delete(viewer.viewerId);
+      return saved;
+    };
+    await observe(10);
+    const original = f.dispatchedRequests[0].headers;
+    await f.reporting.end(viewer, 'observation-timeout');
+    const deadline = f.reporting.sessions.get(viewer.viewerId).suspendedUntil;
+    f.tick(1000);
+    await f.reporting.end(viewer, 'observation-timeout');
+    assert.equal(f.reporting.sessions.get(viewer.viewerId).suspendedUntil, deadline, 'repeated suspension cannot extend recovery indefinitely');
+    const saved = await disconnect();
+    f.tick(55000);
+    f.reporting.refresh(f.room);
+    await f.reporting.sessions.get(viewer.viewerId).dispatched;
+    const gap = f.dispatchedRequests.at(-1);
+    assert.equal(gap.params.state, 'buffering');
+    assert.equal(gap.params.time, '10000');
+    assert.equal(gap.params.duration, undefined, 'gap heartbeats cannot write personal watch progress');
+    const old = viewer;
+    viewer = f.createViewer(viewer.userId, { viewerId: viewer.viewerId, plexWatchState: true });
+    f.room.disconnectedViewers.delete(viewer.viewerId);
+    f.reporting.reconnect(f.room, viewer, saved);
+    await observe(65);
+    assert.deepEqual(f.dispatchedRequests.at(-1).headers, original);
+    assert.ok(f.dispatchedRequests.every(r => r.params.state !== 'stopped'));
+    await f.reporting.end(old, 'left');
+    assert.equal(f.reporting.sessions.size, 1, 'old viewer object cannot end the reattached viewer');
+
+    const expired = await disconnect();
+    f.tick(60000);
+    f.room.disconnectedViewers.delete(viewer.viewerId);
+    f.reporting.refresh(f.room);
+    await Promise.all([...f.reporting.retiring]);
+    assert.equal(f.reporting.sessions.size, 0);
+    assert.equal(f.dispatchedRequests.at(-1).params.state, 'stopped');
+    assert.equal(f.dispatchedRequests.at(-1).params.duration, undefined);
+    viewer = f.createViewer(viewer.userId, { viewerId: viewer.viewerId });
+    f.reporting.reconnect(f.room, viewer, expired);
+    await observe(70);
+    assert.notEqual(f.dispatchedRequests.at(-1).headers['X-Plex-Session-Identifier'], original['X-Plex-Session-Identifier']);
+    await disconnect();
+    await f.reporting.endViewer(f.room, viewer.viewerId, 'left');
+    assert.equal(f.reporting.sessions.size, 0, 'explicit leave ends a saved disconnected viewer');
+    viewer = f.createViewer(viewer.userId, { viewerId: viewer.viewerId });
+    await observe(75);
+    await disconnect();
+    await f.reporting.endRoom(f.room);
+    assert.equal(f.reporting.sessions.size, 0, 'room closure ends disconnected occurrences too');
+    viewer = f.createViewer(viewer.userId, { viewerId: viewer.viewerId });
+    await observe(80);
+    await disconnect();
+    await f.reporting.close();
+    assert.equal(f.dispatchedRequests.at(-1).params.state, 'stopped');
+    assert.equal(f.reporting.sessions.size + f.reporting.retiring.size, 0, 'shutdown drains suspended reporting too');
+  } finally { await f.reporting.close(); f.close(); }
+});
+
+test('reporting fences delayed attachment work, serializes terminal replacement, and pins personal subject/server', async () => {
+  let subject = 'subject', releaseAuth, holdAuth, releaseStop, holdStop, permitted = true;
+  const sent = [];
+  const scope = { principal: 'personal', clientId: 'fixture', base: new URL('http://fixture.invalid'), request: async (resource, options) => {
+    const params = new URL(resource, 'http://fixture.invalid').searchParams;
+    sent.push({ state: params.get('state'), time: params.get('time'), id: options.headers['X-Plex-Session-Identifier'] });
+    if (params.get('state') === 'stopped') await holdStop;
+  } };
+  const reporting = new PlexReporting({
+    plexAuth: { forUser: async () => { await holdAuth; return scope; } },
+    registry: { identities: () => [{ provider: 'plex', verified: true, subject }], credential: () => ({ serverToken: 'fixture' }) },
+    authorize: async () => permitted
+  });
+  const viewer = { viewerId: 'tab', userId: 'user', streamVersion: 's1', observationEpoch: 'o1', plexWatchState: true };
+  const room = { media: { kind: 'plex', id: '123', duration: 120 }, mediaVersion: 'm1', viewers: new Map([['tab', viewer]]) };
+  const observe = (state, position) => reporting.observe(room, viewer, 'tab', { state, position }, { credit: { reason: 'baseline' } });
+  try {
+    await observe('playing', 1); await reporting.sessions.get('tab').dispatched;
+    holdAuth = new Promise(resolve => { releaseAuth = resolve; });
+    await observe('paused', 2);
+    await Promise.resolve();
+    await observe('buffering', 3);
+    void reporting.end(viewer, 'stream-changed');
+    viewer.streamVersion = 's2'; viewer.observationEpoch = 'o2';
+    await observe('playing', 4);
+    releaseAuth(); holdAuth = undefined;
+    await reporting.sessions.get('tab').dispatched;
+    assert.deepEqual(sent.map(r => [r.state, r.time]), [['playing', '1000'], ['playing', '4000']]);
+    assert.equal(sent[0].id, sent[1].id);
+
+    let releasePermission;
+    const permission = new Promise(resolve => { releasePermission = resolve; });
+    reporting.authorize = async () => { reporting.authorize = async () => true; return permission; };
+    await observe('paused', 4);
+    await new Promise(resolve => setImmediate(resolve));
+    void reporting.end(viewer, 'delivery-changed');
+    viewer.observationEpoch = 'o3';
+    await observe('playing', 4.5);
+    releasePermission(false);
+    await reporting.sessions.get('tab').dispatched;
+    assert.equal(sent.at(-1).time, '4500', 'a delayed denial for an old attachment cannot retire its replacement');
+    assert.equal(sent.at(-1).id, sent[0].id);
+    reporting.authorize = async () => permitted;
+
+    holdStop = new Promise(resolve => { releaseStop = resolve; });
+    const stopped = reporting.end(viewer, 'left');
+    const rejoined = observe('playing', 5);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sent.at(-1).state, 'stopped', 'new activity waits for terminal dispatch to settle');
+    releaseStop(); holdStop = undefined; await stopped; await rejoined;
+    await reporting.sessions.get('tab').dispatched;
+    assert.notEqual(sent.at(-1).id, sent[0].id);
+
+    scope.base = new URL('http://different-fixture.invalid');
+    const before = sent.length;
+    await observe('paused', 6); await reporting.sessions.get('tab')?.dispatched;
+    assert.equal(sent.length, before, 'no report can move to another server');
+    assert.equal(reporting.sessions.size, 0);
+    await observe('playing', 7); await reporting.sessions.get('tab').dispatched;
+    subject = 'different-subject';
+    await reporting.end(viewer, 'left');
+    assert.equal(sent.at(-1).state, 'playing', 'terminal report cannot be attributed to a replacement subject');
+
+    holdAuth = new Promise(resolve => { releaseAuth = resolve; });
+    const pending = observe('playing', 8);
+    await reporting.end(viewer, 'left');
+    releaseAuth(); holdAuth = undefined; await pending;
+    assert.equal(reporting.sessions.size, 0, 'leave cancels pending initialization');
+    await observe('playing', 9); await reporting.sessions.get('tab').dispatched;
+    permitted = false;
+    await reporting.end(viewer, 'observation-timeout');
+    assert.equal(reporting.sessions.size, 0, 'a denied heartbeat cannot retain or report the occurrence');
+    assert.equal(sent.at(-1).time, '9000');
+  } finally { releaseAuth?.(); releaseStop?.(); await reporting.close(); }
 });
 
 test('rate limiting & state transitions: immediate on state change, throttled during continuous play', async () => {
