@@ -245,6 +245,9 @@ class Watch {
         const entry=room.saved && this.roomState.queue.current(room.s.roomId);
         viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
       }
+      // A viewer with no stream can never report ready, so the room stops waiting for them
+      // until they have one again.
+      if(room.initialGate){if(media.format==='unavailable')room.initialViewers.delete(viewerId);else room.initialViewers.add(viewerId);void this.maybeStart(room);}
       if(current && current!==media){SubtitleResources.transfer(current,media);void this.plex.stop(current);}
       return {status:'applied'};
     } finally {

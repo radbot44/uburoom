@@ -258,6 +258,7 @@ test('Plex requests opportunistic directStream when burn and fallback compatible
         ...(burned?[{streamType:3,id:22,decision:'burn'}]:[])
       ]}]}]}]}}));
     }
+    if(url.pathname==='/streams/child.m3u8')return new Response('#EXTM3U');
     if(url.pathname.endsWith('/start.m3u8')){
       return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=20000000\n/streams/child.m3u8\n');
     }

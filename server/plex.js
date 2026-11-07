@@ -601,7 +601,7 @@ class Plex {
     else if (plan.route==='local') {
       const codec=plan.codec;
       try{await this.conversionPolicy.video('uburoom',codec);}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
-      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,shareKey:choices.shareKey,burn:burn?media.selection.subtitle:undefined };
+      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,audioTrack:audio,shareKey:choices.shareKey,burn:burn?media.selection.subtitle:undefined };
       media.format = codec; media.videoCodec = codec; media.audioCodec = 'opus'; media.compatible = true;
       if(!choices.sharedOnly && this.conversionPolicy.settings && this.conversionPolicy.jobs.size>=this.conversionPolicy.settings.maxJobs) {
         try {media.av1Lease=this.av1.acquire(original,quality,true,codec);}
@@ -657,6 +657,7 @@ class Plex {
         const text=await response.text();
         if (!text.startsWith('#EXTM3U') || text.length>2e6) throw new PlaybackError('Plex could not start the requested audio and subtitle transcode.');
         media.initialManifest=text;
+        await this.confirmStarted(media,text);
       }
       } finally { await runOperation(undefined, async () => { try { await restoreSubtitle?.(); } finally { await restoreAudio?.(); } }); }
       };
@@ -668,6 +669,26 @@ class Plex {
       }
     }
     return media;
+  }
+  // Plex can accept a session and then refuse to run it, for example when its transcode
+  // drive is nearly full. Without this the viewer gets a black screen and no error.
+  async confirmStarted(media,manifest) {
+    const first=manifest.split(/\r?\n/).map(line=>line.trim()).find(line=>line&&!line.startsWith('#'));
+    if(!first?.split('?')[0].endsWith('.m3u8'))return;
+    const target=this.url(new URL(first,media.start).href).href,id=media.transcodeId;
+    for(let attempt=0;;attempt++) {
+      try {
+        const response=await this.request(target,{headers:{Accept:'application/vnd.apple.mpegurl','X-Plex-Client-Identifier':id,'X-Plex-Session-Identifier':id}});
+        await response.body?.cancel().catch(()=>{});return;
+      } catch(error) {
+        if(![404,500].includes(error.status))return;
+        if(attempt) {
+          this.av1.logger?.warn('Plex',`Plex accepted a session for "${media.title}" and then refused it (HTTP ${error.status}). Check Plex's log and its transcode drive's free space.`);
+          throw new PlaybackError("Plex couldn't start this video. Try a lower quality.");
+        }
+        await new Promise(resolve=>setTimeout(resolve,750));
+      }
+    }
   }
   async withPartLock(id,action) {
     const key = String(id);

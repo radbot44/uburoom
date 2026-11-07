@@ -1926,7 +1926,7 @@ function renderTransport() {
   if (state?.recovery) $('room-recovery-message').textContent = 'Waiting for ' + state.recovery.missing + ' people / ' + Math.max(0,Math.ceil((state.recovery.until - (Date.now() + offset))/1000)) + ' seconds remaining. Playback is paused.';
   $('room-recovery-start').hidden = !state?.canPlayback;
   $('room-recovery-start').disabled = pending || !state?.mediaUrl;
-  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !(state.durable ? state.capabilities?.chooseMedia : state.canManage);
+  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !!state.mediaError && !state.readiness.canStart || !(state.durable ? state.capabilities?.chooseMedia : state.canManage);
   $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
   $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
   $('ready-start').disabled = pending || !state?.readiness?.canStart;
