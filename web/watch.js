@@ -2562,7 +2562,15 @@ document.addEventListener('pointerdown', event => {
     $('stage').focus({preventScroll:true});
   }
 });
-$('fullscreen').addEventListener('click', () => { (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message)); });
+$('fullscreen').addEventListener('click', () => {
+  // iPhones allow fullscreen only on the video itself, never on the player around it.
+  if (!$('stage').requestFullscreen) return video.webkitEnterFullscreen ? video.webkitEnterFullscreen() : fail('This browser cannot go fullscreen.');
+  (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message));
+});
+video.addEventListener('webkitbeginfullscreen', () => {
+  if (captions.nativeFullscreen(true)) toasts.show('native-fullscreen-subtitles', { title: 'Subtitles need burn-in here', hint: 'Choose Burn-in in Subtitle settings to see them in iPhone fullscreen.', symbol: 'subtitles' });
+});
+video.addEventListener('webkitendfullscreen', () => { captions.nativeFullscreen(false); });
 document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
 async function loadLibraryItem(item, options = {}) {
   return execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality,...options}});

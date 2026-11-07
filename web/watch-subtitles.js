@@ -264,6 +264,13 @@ class uburoomSubtitles {
     this.streamSynced=synced;
     this.status({message:synced ? '' : 'Loading subtitles…',error:false,loading:!synced});
   }
+  // Native fullscreen shows only the video, so text cues move to the browser's own
+  // captions there. Other subtitle formats draw in the page and cannot follow.
+  nativeFullscreen(active) {
+    if (active && this.track.mode === 'hidden') this.track.mode = 'showing';
+    if (!active && this.track.mode === 'showing') this.track.mode = 'hidden';
+    return !!this.renderer;
+  }
   clearCues() { for (const cue of Array.from(this.track.cues || [])) this.track.removeCue(cue); this.paint(); }
   reset() {
     this.generation++; this.abort?.abort(); clearTimeout(this.timer); this.timer=undefined; this.key=''; this.url=undefined; this.cues=[]; this.attempts=0; this.loading=false; this.loaded=false; this.streaming=false; this.streamSynced=false;this.renderFailed=false;
