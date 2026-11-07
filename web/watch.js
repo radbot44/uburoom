@@ -2120,7 +2120,11 @@ function applyState(next) {
   sync.transition(next);
   diagnostics.state(next);
   const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
-  const changed = mediaChanged || mediaSource !== next.mediaUrl;
+  // A new quality of the same converted stream keeps the player and buffer.
+  const burned=value=>value?.tracks?.subtitleDelivery==='burn'?value.tracks.subtitleId:undefined;
+  const seamless = !mediaChanged && !!av1 && mediaSource !== next.mediaUrl && uburoomPlayback.localFormat(next.format) && state?.format === next.format &&
+    state.tracks?.audioId === next.tracks?.audioId && burned(state) === burned(next);
+  const changed = !seamless && (mediaChanged || mediaSource !== next.mediaUrl);
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
@@ -2132,6 +2136,7 @@ function applyState(next) {
   unavailableToasts(next.unavailableMedia);
   renderProviderNotice(next.providerNotice);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
+  if (seamless) { mediaSource = next.mediaUrl; av1.switchStream(next.mediaUrl); }
   if (changed) {
     clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {

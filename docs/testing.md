@@ -25,6 +25,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 Not covered: the viewer capability report and output order in a real room, a real Plex source, burned ASS using fonts attached to the file (libass uses system fonts), and owner review of burned subtitles. `scripts/local-webm-smoke.js` still fails as before.
 
+### M1-P1/P2 — Seamless quality change on local conversion — 2026-11-06
+
+**B, real Chrome and Firefox, real AV1 conversion, synthetic media, simulated Plex.** Changing quality during playback kept the same player and MediaSource: the picture changed resolution exactly at the next chunk join (6.02-6.05s), with no waiting, stalled, emptied or error events and zero dropped frames. Coverage is same-codec uburoom output with the same audio and burned subtitle. Moves between Plex and uburoom, or to Original as a file, still reload. Not covered: real viewers, real 4K sources and a live room.
+
 ### M1-P3 — Text subtitle layer — 2026-11-06
 
 **B, real Chrome and Firefox, headless, synthetic media.** Text subtitles draw in their own layer: on the picture rectangle by default, on the whole player when chosen, sized from the player, in normal and fullscreen views. Native cues no longer touch the video. The fullscreen picture shift happens with subtitles off, only while paused, and not in headless Chrome: Chrome only, with a grey backdrop until controls appear, which points to its hardware video overlay rather than page layout. Sizing the element to the picture did not help and was removed. A paused fullscreen video now carries a near-neutral filter to stay off that path; the owner confirmed in Chrome that the shift is gone and saw no visible change or flicker. Subtitles staying visible as controls hide on a real pointer also needs the owner's test. The browser's own floating PiP no longer shows text subtitles; Document PiP keeps them.
