@@ -4,7 +4,7 @@ const { runOperation } = require('./operation');
 // Original subtitle assets only. Rendering stays in the browser; extraction never
 // re-encodes video or receives a Plex credential in process arguments.
 const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
-const {PlaybackError}=require('./av1');
+const {PlaybackError,fileIndex}=require('./av1');
 const Sources=require('./plex-source');
 const LIMIT=64*1024*1024,FONTS=16*1024*1024,TOTAL=96*1024*1024;
 const cache=new Map(),windows=new Map();let bytes=0,active=0;
@@ -15,6 +15,12 @@ function classifyExtractionError(error){
   if(/failed/i.test(error?.message || ''))return new PlaybackError('Subtitle extraction failed during media demuxing. Try burn-in.');
   if(error instanceof PlaybackError)return error;
   return new PlaybackError('Original subtitles could not be extracted. Try burn-in.');
+}
+// Extraction reads the real file, so it uses the file's own number for the track.
+async function fileTrack(av1,media,track,url,signal){
+  if(!av1.ffprobe||!media.tracks?.subtitles?.length)return track;
+  media.fileStreams ||= JSON.parse((await av1.run(av1.ffprobe,['-v','error','-show_entries','stream=index,codec_type,codec_name','-of','json',url],signal,20000,1024*1024)).toString()).streams || [];
+  return {...track,index:fileIndex(media.tracks?.subtitles,track,media.fileStreams,'subtitle')};
 }
 function dropWindow(entry){bytes-=entry.data.length;windows.delete(entry);entry.media.windowCache?.delete(entry.key);}
 function reserve(size){
@@ -78,9 +84,10 @@ function startPgsJob(plex,media){
       const av1=plex.av1;
       if(!av1?.ffmpeg||!Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
       await av1.input({...media,start:media.sourceStart,plexContext:plex},abort,async url=>{
+        const {index}=await fileTrack(av1,media,track,url,abort);
         // Flush each packet so viewers receive cues as soon as demuxing reaches
         // them, instead of waiting for FFmpeg's pipe buffer to fill.
-        const args=['-hide_banner','-loglevel','error','-nostdin','-y','-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-flush_packets','1','-f','sup','pipe:1'];
+        const args=['-hide_banner','-loglevel','error','-nostdin','-y','-i',url,'-map','0:'+index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-flush_packets','1','-f','sup','pipe:1'];
         await av1.stream(av1.ffmpeg,args,abort,chunk=>{
           job.chunks.push(chunk);job.size+=chunk.length;
           for(const listener of job.listeners)try{listener(chunk,null);}catch{}
@@ -168,6 +175,7 @@ async function extract(plex,media,track,signal){
   if(!av1?.ffmpeg || !Number.isSafeInteger(track.index))throw new PlaybackError('This embedded subtitle needs configured FFmpeg extraction or burn-in.');
   let directory;
   try{return await av1.input({...media,start:media.sourceStart,plexContext:plex},signal,async url=>{
+    const {index}=await fileTrack(av1,media,track,url,signal);
     const fonts=[];
     if(track.delivery==='ass'){
       const info=JSON.parse((await av1.run(av1.ffprobe,['-v','error','-show_entries','stream=index,codec_type:stream_tags=mimetype,filename','-of','json',url],signal,20000,1024*1024)).toString());
@@ -186,7 +194,7 @@ async function extract(plex,media,track,signal){
     }finally{checking=false;}},100):undefined;
     try{
       const args=['-hide_banner','-loglevel','error','-nostdin','-y',...fonts.flatMap((index,i)=>['-dump_attachment:'+index,files[i]]),
-        '-i',url,'-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',track.delivery==='ass'?'ass':track.delivery==='pgs'?'sup':'matroska','pipe:1'];
+        '-i',url,'-map','0:'+index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',track.delivery==='ass'?'ass':track.delivery==='pgs'?'sup':'matroska','pipe:1'];
       const data=await av1.run(av1.ffmpeg,args,AbortSignal.any([signal,budget.signal]),60000,track.delivery==='ass'?4*1024*1024:LIMIT);
       const assets=new Map([['data',data]]);let fontSize=0;
       for(let i=0;i<files.length;i++){const stat=await fs.stat(files[i]);fontSize+=stat.size;if(fontSize>FONTS)throw new PlaybackError('Subtitle fonts exceed the supported size.');assets.set('font-'+i,await fs.readFile(files[i]));}
@@ -288,28 +296,29 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
       const format=track.delivery==='ass'?'ass':track.delivery==='vobsub'?'matroska':track.delivery==='cues'?'webvtt':'sup';
       let pgs;
       let data=await av1.input({...media,start:media.sourceStart,plexContext:plex,subtitleWindow:['pgs','cues'].includes(track.delivery)},abort,async url=>{
+        const {index}=await fileTrack(av1,job.media,track,url,abort);
         if(track.delivery==='pgs'){
           const probe=av1.ffprobe;
           if(!probe)throw new PlaybackError('PGS window extraction needs configured FFprobe. Try burn-in.');
           let origin=media.subtitleOrigin;
           if(!Number.isFinite(origin)){
             const info=JSON.parse((await av1.run(probe,['-v','error','-analyzeduration','1000000','-probesize','1048576','-read_intervals','%+0.1','-show_packets','-show_entries','format=start_time:stream=index,codec_name:packet=pts_time','-of','json',url],abort,10000,1024*1024)).toString());
-            if(!info.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
+            if(!info.streams?.some(stream=>stream.index===index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
             origin=Number(info.format?.start_time??info.packets?.[0]?.pts_time);
             if(!Number.isFinite(origin))throw new PlaybackError('The source timeline could not be determined. Try burn-in.');
             abort.throwIfAborted();job.media.subtitleOrigin=origin;
           }
           const metadata=JSON.parse((await av1.run(probe,['-v','error','-analyzeduration','1000000','-probesize','1048576','-read_intervals',String(origin+startSeconds)+'%'+String(origin+endSeconds),
             '-show_packets','-show_entries','packet=stream_index,pts_time,size:stream=index,codec_name','-of','json',url],abort,25000,16*1024*1024)).toString());
-          if(!metadata.streams?.some(stream=>stream.index===track.index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
+          if(!metadata.streams?.some(stream=>stream.index===index&&stream.codec_name==='hdmv_pgs_subtitle'))throw new PlaybackError('The selected PGS stream could not be verified. Try burn-in.');
           if(!Array.isArray(metadata.packets)||!metadata.packets.length)throw new PlaybackError('No media packets could be verified for the subtitle window. Try burn-in.');
-          const packets=metadata.packets.filter(packet=>packet.stream_index===track.index);
+          const packets=metadata.packets.filter(packet=>packet.stream_index===index);
           const count=packets.length;
           const expected=packets.reduce((sum,packet)=>sum+Number(packet.size),0);
           if(!Number.isSafeInteger(expected)||expected<0||expected>16*1024*1024)throw new PlaybackError('PGS window exceeded the supported limit. Try burn-in.');
           if(!count){pgs={data:Buffer.alloc(0),cues:0};return pgs.data;}
           const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-copyts','-analyzeduration','1000000','-probesize','1048576','-i',url,
-            '-map','0:'+track.index,'-c:s','copy','-frames:s',String(count),'-flush_packets','1','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
+            '-map','0:'+index,'-c:s','copy','-frames:s',String(count),'-flush_packets','1','-map_metadata','-1','-map_chapters','-1','-f','sup','pipe:1'];
           let pending=Buffer.alloc(0),rawBytes=0;
           const expectedTimes=new Map(),receivedTimes=new Map();
           for(const packet of packets){
@@ -336,9 +345,9 @@ async function window(plex,media,{atMs=0,beforeMs=15000,afterMs=60000,signal}={}
         // Without -copyts cue times are relative to the keyframe the seek landed on, so they
         // shift between windows. With it, only an output -to ends the window at the right place.
         if(track.delivery==='cues')return av1.run(av1.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-copyts','-i',url,'-to',String(endSeconds),
-          '-map','0:'+track.index,'-c:s','webvtt','-map_metadata','-1','-map_chapters','-1','-f','webvtt','pipe:1'],abort,25000,4*1024*1024);
+          '-map','0:'+index,'-c:s','webvtt','-map_metadata','-1','-map_chapters','-1','-f','webvtt','pipe:1'],abort,25000,4*1024*1024);
         const args=['-hide_banner','-loglevel','error','-nostdin','-y','-ss',String(startSeconds),'-t',String(durationSeconds),'-copyts','-i',url,
-          '-map','0:'+track.index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',format,'pipe:1'];
+          '-map','0:'+index,'-c:s','copy','-map_metadata','-1','-map_chapters','-1','-f',format,'pipe:1'];
         return av1.run(av1.ffmpeg,args,abort,25000,16*1024*1024);
       });
       abort.throwIfAborted();

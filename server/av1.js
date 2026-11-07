@@ -109,6 +109,19 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
   }
 }
 
+const STREAM_CODECS = {srt:'subrip',vtt:'webvtt',ssa:'ass',pgs:'hdmv_pgs_subtitle',vobsub:'dvd_subtitle',dca:'dts'};
+// Plex's track list can be out of date for the file it serves. Its number counts only
+// when the file agrees; otherwise the track is found by its order among its codec.
+function fileIndex(rows = [], track, streams = [], type) {
+  if (!rows.length || !streams.some(stream => stream.codec_name)) return track.index;
+  const codec = STREAM_CODECS[track.codec] || track.codec, same = streams.filter(stream => stream.codec_name === codec);
+  const at = streams.find(stream => stream.index === track.index);
+  if (at?.codec_type === type && (at.codec_name === codec || !same.length)) return track.index;
+  const order = rows.filter(row => !row.external && (STREAM_CODECS[row.codec] || row.codec) === codec).findIndex(row => row.id === track.id);
+  if (!same[order]) throw new PlaybackError('This track is not in the video file. Refresh its metadata in Plex or choose another track.');
+  return same[order].index;
+}
+
 function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('Subtitle loading was cancelled.'));
@@ -419,7 +432,7 @@ class AV1 {
           if (!group.infoTask || group.infoTask.signal.aborted) {
             const task = new SharedTask(signal => this.input(source, signal, async url => {
               const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
-                'stream=index,codec_type,width,height,pix_fmt,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
+                'stream=index,codec_type,codec_name,width,height,pix_fmt,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
               return JSON.parse(raw.toString());
             }));
             group.infoTask = task;
@@ -430,15 +443,18 @@ class AV1 {
         return await this.input(source, controller.signal, async url => {
           const spec = outputSpec(group.info, group.quality);
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
-          const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];
+          const chosen = {...source};
+          if (source.audioTrack && source.audioIndex !== undefined) chosen.audioIndex = fileIndex(source.tracks?.audio,source.audioTrack,group.info.streams,'audio');
+          if (source.burn && !source.burn.external && source.burn.index !== undefined) chosen.burn = {...source.burn,index:fileIndex(source.tracks?.subtitles,source.burn,group.info.streams,'subtitle')};
+          const selectedAudio = chosen.audioIndex !== undefined ? audioStreams.find(s=>s.index===chosen.audioIndex) : audioStreams[chosen.audioOrdinal ?? 0];
           if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
-          const audioMap = input => source.audioIndex !== undefined ? input+':'+source.audioIndex : input+':a:'+(source.audioOrdinal ?? 0);
+          const audioMap = input => chosen.audioIndex !== undefined ? input+':'+chosen.audioIndex : input+':a:'+(chosen.audioOrdinal ?? 0);
           const duration = String(Math.min(CHUNK, source.duration - start));
-          const burn = await this.burnInput(source,url,start,Number(duration),controller.signal);
+          const burn = await this.burnInput(chosen,url,start,Number(duration),controller.signal);
           const runIn = burn?.runIn || 0;
           const video = route => {
             const filter = route?.filter || spec.filter;
-            if (burn?.bitmap) return ['-filter_complex',`[0:v:0]${filter.replace('setpts=PTS-STARTPTS,','')}[picture];[0:${source.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,'-map','[video]','-an'];
+            if (burn?.bitmap) return ['-filter_complex',`[0:v:0]${filter.replace('setpts=PTS-STARTPTS,','')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,'-map','[video]','-an'];
             const text = burn?.file ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12` : '';
             return ['-map','0:v:0','-an','-filter_threads','2','-vf',filter+text];
           };
@@ -547,4 +563,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
