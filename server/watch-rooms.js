@@ -507,20 +507,25 @@ class WatchRooms {
       room.waitingForHost = room.viewers.size > 0;
     } finally { room.electing = false; void this.save(room); }
   }
-  save(room, { closing = false } = {}) {
+  capture(room, { closing = false, at = Date.now() } = {}) {
+    const media = room.media;
+    const bookmark = media ? { serverId:media.roomServerId, mediaId:media.id, type:media.source?.type || 'movie',
+      title:media.title, duration:media.duration, position:this.watch.position(room, at) } : null;
+    const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>at)].map(v => v.userId))];
+    const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
+    return { bookmark, live:live ? {viewers:[...live.viewers],wasPlaying:live.wasPlaying} : null, active:!!room.viewers.size };
+  }
+  save(room, { closing = false, final = false } = {}) {
     if (!room.saved) return Promise.resolve();
-    if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room,{closing})));
+    if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room,{closing,final})));
+    const captured = final ? this.capture(room,{closing,at:room.removalAt ?? Date.now()}) : undefined;
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
     const saving = previous.then(async () => {
-      if (!closing && this.watch.rooms.get(room.s.roomId) !== room) return;
-      const media = room.media;
-      const bookmark = media ? { serverId:media.roomServerId, mediaId:media.id, type:media.source?.type || 'movie',
-        title:media.title, duration:media.duration, position:this.watch.position(room) } : null;
-      const viewers = [...new Set([...room.viewers.values(), ...[...room.disconnectedViewers.values()].filter(v=>v.expires>Date.now())].map(v => this.store.account(v.userId)))];
-      const live = closing ? null : room.recovery || { viewers, wasPlaying:!room.s.state.paused || room.initialGate && !room.manualPaused || room.reconnecting && !!room.disconnectedWasPlaying };
+      if (!final && this.watch.rooms.get(room.s.roomId) !== room) return;
+      const {bookmark,live,active} = captured || this.capture(room,{closing});
       const record = this.store.get(room.s.roomId);
-      this.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(live ? JSON.stringify({viewers:live.viewers,wasPlaying:live.wasPlaying}) : null,record.id);
-      if (room.viewers.size) this.store.touch(record.id);
+      this.store.db.prepare('UPDATE watch_rooms SET liveState=? WHERE id=?').run(live ? JSON.stringify({viewers:live.viewers.map(id=>this.store.account(id)),wasPlaying:live.wasPlaying}) : null,record.id);
+      if (active) this.store.touch(record.id);
       if (bookmark) this.queue.checkpoint(record.id, bookmark.position);
       this.apply(room, await this.store.checkpoint(record.id, record.checkpointRevision, bookmark));
       room.saveError = undefined;

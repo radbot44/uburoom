@@ -2,6 +2,8 @@
 
 P13-1–P13-5 are implemented. P13-6 acceptance and P13-7 real Plex/Activity, load and retained-state verification remain open. See [roadmap](../ROADMAP.md#m1-p13--persistent-rooms-and-playback-queues) and [testing](testing.md).
 
+Owner-approved fixes from the bounded [recovery/writer investigation](room-recovery-investigation.md) are implemented locally: final shutdown checkpoint capture, retained preload ownership and bounded preparation/cleanup draining. Passing fixture, atomic-commit/restart and short load checks do not close the broader verification gates.
+
 ## Room lifecycle
 
 | Action | Contract |
@@ -63,6 +65,8 @@ Prepare the successor under current authority, recheck fences, then atomically c
 Use existing SQLite tables/mirror/writer; no separate database or persistence framework. Room, checkpoint and queue revisions are independent. Enforce one current occurrence, contiguous pending ranks and canonical memberships.
 
 Checkpoint shared progress outside the sync tick and on lifecycle changes. Durable edits/Close acknowledge only after commit; shutdown waits for transitions. Fence awaits with live epoch, media/stream generation, occurrence IDs and expected revisions. Stale operations refresh rather than replay.
+
+Final removal captures the resulting occurrence at the removal cutoff, before pausing/detaching its runtime state, and serializes that allowlisted snapshot behind earlier checkpoints. Explicit Close clears restart participation/intent; server shutdown retains those existing fields. Ordinary deferred saves cannot resurrect detached rooms. Operation ownership covers preparation and cleanup independently of the durable commit receipt, so Close can cancel uncommitted work and wait for outputs to be released without creating a checkpoint cycle. Shutdown uses one 35-second drain deadline and attempts provider/reporting/database closure on failure; an operation ignoring cancellation beyond it makes shutdown fail rather than claim complete cleanup.
 
 Page queue/history separately from frequent playback snapshots. Bound catalog expansion and socket messages; send show/season IDs rather than thousands of client entries. Protect saved metadata/artwork with current access checks.
 

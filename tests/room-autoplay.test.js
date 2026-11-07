@@ -301,9 +301,16 @@ test('pause, Cancel and closing while the next item is preparing release it with
     f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { held.enter(); await held.held; } return prepare(...args); };
     const before = f.queue.current(f.id);
     await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
-    if (action === 'close') await f.watch.remove(f.id);
-    else assert.equal((await f.command(action)).status, 'applied');
-    held.release(); await waitFor(() => !f.room.mediaTransition);
+    let closing;
+    try {
+      if (action === 'close') {
+        let closed = false;
+        closing = f.watch.remove(f.id).then(() => { closed = true; });
+        await delay(5);
+        assert.equal(closed, false, 'Close waits for the canceled preparation to release its output');
+      } else assert.equal((await f.command(action)).status, 'applied');
+    } finally { held.release(); }
+    await closing; await waitFor(() => !f.room.mediaTransition);
     assert.equal(f.queue.current(f.id), null); assert.equal(f.queue.history(f.id).total, 1);
     assert.equal(f.room.media, undefined); assert.ok(f.stopped.some(media => media.id === '101'));
   });

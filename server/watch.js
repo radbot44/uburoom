@@ -5,10 +5,11 @@
 /** @typedef {import('./types').Actor} Actor */
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
+/** @typedef {{room: Room, kind: 'preload'|'transition'|'cleanup', controller: AbortController, signal: AbortSignal, committing: boolean, promise: Promise<any>}} MediaWork */
 
 const { MediaChecks } = require('./media-check');
 const { FallbackStream } = require('./fallback-stream');
-const { SharedTask, currentSignal } = require('./operation');
+const { SharedTask, currentSignal, runOperation, waitFor } = require('./operation');
 const { isProviderOutage } = require('./resilience');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
@@ -58,6 +59,9 @@ class Watch {
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
     this.autoplayDelayMs = 10000;
+    /** @type {Set<MediaWork>} */
+    this.mediaWork = new Set();
+    this.mediaDrainMs = 35000;
     this.providerDownSince = undefined; this.providerRecoveredAt = 0;
     this.mediaChecks = new MediaChecks({ plex, config: hub?.config || {}, sessions: () => this.plexSessions });
   }
@@ -83,6 +87,7 @@ class Watch {
     return [...room.viewers.values()].some(viewer => ['buffering','seeking','starting','error'].includes(viewer.syncQuality?.status) || viewer.media?.playbackError || room.media && !viewer.media);
   }
   create(actor, visibility = 'public', saved) {
+    if (this.shuttingDown) throw new Error('Server is closing');
     if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
     if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))) throw new Error('Only authenticated eligible users can create a viewing room');
     if (this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen && !this.roomState?.recoveries.has(saved?.id)) throw new Error('Close an existing viewing room first');
@@ -122,13 +127,53 @@ class Watch {
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       viewer.preparing?.abort();
-      this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
+      this.tracking.end(viewer, reason); void this.stopMedia(room, viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
       if (reason === 'media-changed' || reason === 'room-reset') {
         viewer.compatible = false; viewer.fallback = undefined;
         viewer.subtitleOffset=0;
         if (viewer.trackChoice) { viewer.trackChoice.audioId='auto'; if (viewer.trackChoice.subtitleId!=='off') viewer.trackChoice.subtitleId='auto'; }
       }
     }
+  }
+  // Work ownership includes preparation and cleanup, not just the durable
+  // commit receipt. Preloads have their own lifetime rather than their caller's.
+  /**
+   * @param {Room} room
+   * @param {(work: MediaWork) => any} action
+   * @param {{kind?: MediaWork['kind'], signal?: AbortSignal}} [options]
+   * @returns {MediaWork}
+   */
+  startMediaWork(room, action, { kind = 'preload', signal } = {}) {
+    const controller = new AbortController();
+    const work = { room, kind, controller, committing: false,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]), promise: Promise.resolve() };
+    this.mediaWork.add(work);
+    try {
+      work.promise = Promise.resolve(runOperation(work.signal, () => {
+        work.signal.throwIfAborted(); return action(work);
+      }));
+    } catch (error) { work.promise = Promise.reject(error); }
+    const done = () => this.mediaWork.delete(work);
+    work.promise.then(done, done);
+    return work;
+  }
+  stopMedia(room, media) {
+    if (!media) return Promise.resolve();
+    return this.startMediaWork(room, () => this.plex.stop(media), { kind: 'cleanup' }).promise;
+  }
+  async drainMedia(room) {
+    const deadline = this.shutdownDeadline || AbortSignal.timeout(this.mediaDrainMs);
+    let failure;
+    for (;;) {
+      const pending = [...this.mediaWork].filter(work => !room || work.room === room);
+      if (!pending.length) break;
+      for (const work of pending) if (work.kind !== 'cleanup' && !work.committing) work.controller.abort();
+      const results = await waitFor(Promise.allSettled(pending.map(work => work.promise)), deadline);
+      for (const [index, result] of results.entries()) {
+        if (result.status === 'rejected' && (pending[index].kind === 'cleanup' || !pending[index].signal.aborted)) failure ||= result.reason;
+      }
+    }
+    if (failure) throw failure;
   }
   /**
    * Prepare-then-adopt for autoplay. During the countdown the next video's metadata, its
@@ -138,12 +183,12 @@ class Watch {
    */
   preloadNext(room, countdown, next, actor) {
     this.dropPreload(room);
-    if (!next?.mediaId || next.mediaId === 'demo') return;
+    if (this.shuttingDown || room.removing || !next?.mediaId || next.mediaId === 'demo') return;
     const preload = room.preload = { countdown: countdown.id, mediaId: next.mediaId, startAt: Number(next.position) || 0, viewers: new Map() };
-    preload.source = (async () => {
+    preload.work = this.startMediaWork(room, async work => {
       const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
       const source = await plex.prepare(next.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
-      if (preload.dropped) { void this.plex.stop(source); return; }
+      if (preload.dropped || work.signal.aborted) { await this.stopMedia(room, source); return; }
       this.mediaChecks.start(source);
       preload.media = source;
       const settings=this.hub.config.transcoding;
@@ -153,8 +198,8 @@ class Watch {
         preload.fallbackStream.reconcile(preload.startAt,true);
       }
       return source;
-    })();
-    preload.source.catch(() => {});
+    });
+    preload.source = preload.work.promise;
     void preload.source.then(source => {
       if (!source || preload.dropped) return;
       for (const [viewerId, viewer] of room.viewers) if (!viewer.localDelivery) preload.viewers.set(viewerId, this.preloadViewer(room, preload, source, viewerId, viewer));
@@ -174,19 +219,17 @@ class Watch {
     return JSON.stringify([viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, viewer.trackChoice, viewer.browserSubtitles, viewer.localCodecs]);
   }
   preloadViewer(room, preload, source, viewerId, viewer) {
-    const current = () => !preload.dropped && room.viewers.get(viewerId) === viewer;
-    const task = (async () => {
+    const current = () => !this.shuttingDown && !room.removing && !preload.dropped && room.viewers.get(viewerId) === viewer;
+    return this.startMediaWork(room, async work => {
       const plex = this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex, choices = this.streamChoices(viewer);
       const authorized = async () => current() && (!viewer.alive || await viewer.alive()) && await this.canView(room, viewer.actor) && current();
       if (!await authorized()) return;
       const media = await this.prepareQuality(room, viewer, plex, source, viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, authorized,
         { shareKey: [room.s.roomId, 'next', preload.countdown] });
-      if (!current()) { void this.plex.stop(media); return; }
+      if (!current() || work.signal.aborted) { await this.stopMedia(room, media); return; }
       this.warmSubtitles(media, preload.startAt);
       return { media, choices, principal: plex.principal };
-    })();
-    task.catch(() => {});
-    return task;
+    }, { signal: preload.work?.signal }).promise;
   }
   /** A viewer's preloaded stream for the room's current video, if it still fits them. */
   takePreload(room, viewerId, viewer, source, plex) {
@@ -195,19 +238,27 @@ class Watch {
     preload.viewers.delete(viewerId);
     return task.then(result => {
       if (result?.principal === plex.principal && result.choices === this.streamChoices(viewer)) { result.adopted = true; return result.media; }
-      if (result?.media) void this.plex.stop(result.media);
+      if (result?.media) void this.stopMedia(room, result.media);
     }, () => undefined);
   }
   dropPreload(room, preload = room.preload) {
-    if (!preload) return;
+    if (!preload || preload.dropped) return;
     preload.dropped = true;
+    preload.work?.controller.abort();
     preload.fallbackStream?.close(); preload.fallbackStream=undefined;
     if (room.preload === preload) room.preload = undefined;
     if (room.adoptable === preload) room.adoptable = undefined;
     clearTimeout(preload.expiry);
-    for (const task of preload.viewers.values()) void task.then(result => { if (result?.media && !result.adopted) void this.plex.stop(result.media); }, () => {});
+    const viewers = [...preload.viewers.values()];
     preload.viewers.clear();
-    if (!preload.sourceAdopted) void preload.source.then(source => source && this.plex.stop(source), () => {});
+    // Register cleanup before yielding, even when all preparation promises have
+    // already settled, so shutdown cannot miss their deferred continuations.
+    this.startMediaWork(room, async () => {
+      const results = await Promise.allSettled(viewers);
+      for (const result of results) if (result.status === 'fulfilled' && result.value?.media && !result.value.adopted) await this.plex.stop(result.value.media);
+      const source = await preload.source.catch(() => undefined);
+      if (!preload.sourceAdopted && source) await this.plex.stop(source);
+    }, {kind:'cleanup'});
   }
   async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized,extraOptions) {
     const opts = (typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function')
@@ -367,6 +418,7 @@ class Watch {
     }
   }
   refresh(room, now = Date.now()) {
+    if (room.removing) return;
     // A durable transition has committed its in-memory queue transaction but
     // still owns the old live media until the writer acknowledges it.
     room.s.lastSeen = now;
@@ -563,6 +615,7 @@ class Watch {
     } finally { room.starting = false; }
   }
   snapshot(room, actor, viewerId, alive, quality = '720p', preferences = {}) {
+    if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
     if ((room.kickedViewers?.get(viewerId) || 0) > Date.now()) throw Object.assign(new Error('You were removed from this room. You may rejoin.'),{status:403});
     room.kickedViewers?.delete(viewerId);
     const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
@@ -1067,6 +1120,7 @@ class Watch {
     }
   }
   async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
+    if (this.shuttingDown || room.removing) return;
     const record = this.roomState?.store.get(room.s.roomId);
     if (!record || !record.autoplay || room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.manualPaused) return;
     const hostConnected = [...room.viewers.values()].some(v => isHost(room.s, v.actor) || this.hub.isAdmin(v.actor));
@@ -1115,7 +1169,11 @@ class Watch {
     }, this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
   }
-  async finishQueueMedia(room, data) {
+  finishQueueMedia(room, data) {
+    if (this.shuttingDown || room.removing) return Promise.resolve();
+    return this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), { kind: 'transition', signal: currentSignal() }).promise;
+  }
+  async finishQueueMediaOwned(room, data, work) {
     if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
     const intent = room.playbackIntent || 0;
     const endedVersion = room.mediaVersion;
@@ -1129,6 +1187,8 @@ class Watch {
     try {
       const completing = (async () => {
         await room.saving?.catch(() => {});
+        work.signal.throwIfAborted();
+        work.committing = true;
         if (current) await this.roomState.queue.completeCurrent(record.id);
         this.unloadQueueMedia(room);
         room.endedVersion = endedVersion;
@@ -1175,18 +1235,21 @@ class Watch {
     room.initialGate = false; room.manualPaused = true; room.readinessTimedOut = false; room.endedVersion = undefined;
     room.s.state.paused = true; room.s.state.position = 0; room.s.state.duration = 0; room.s.state.seekable = false;
     this.dropMedia(room, 'end');
-    if (old) void this.plex.stop(old);
+    if (old) void this.stopMedia(room, old);
   }
-  async changeQueueMedia(room, command, actor, permitted, { initialAdd = false, forcePlay = false } = {}) {
+  changeQueueMedia(room, command, actor, permitted, options) {
+    if (this.shuttingDown || room.removing) return Promise.resolve({status:'unavailable',message:'Room is closing.'});
+    return this.startMediaWork(room, work => this.changeQueueMediaOwned(room, command, actor,
+      () => !work.signal.aborted && permitted(), options, work), { kind: 'transition', signal: currentSignal() }).promise;
+  }
+  async changeQueueMediaOwned(room, command, actor, permitted, { initialAdd = false, forcePlay = false } = {}, work) {
     if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
     if (!room.viewers.size && command.action !== 'media.load' && !(command.action === 'queue.remove' && !command.args.advance)) return {status:'unavailable',message:'No viewer is connected.'};
     const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
-    // Detach the countdown's preload so cancelling the countdown cannot stop what this load adopts.
     const preload = countdown && room.preload?.countdown === countdown.id ? room.preload : undefined;
-    if (preload) room.preload = undefined;
     const version = room.mediaVersion, epoch = room.s.epoch, intent = room.playbackIntent || 0;
     const record = room.saved ? this.roomState.store.get(id) : null, current = record && queue.current(id), next = record && this.nextCandidate(id);
-    const valid = () => permitted() && this.rooms.get(id) === room && room.mediaVersion === version && room.s.epoch === epoch &&
+    const valid = () => !this.shuttingDown && !room.removing && permitted() && this.rooms.get(id) === room && room.mediaVersion === version && room.s.epoch === epoch &&
       (room.playbackIntent || 0) === intent && (!countdown || room.autoplayCountdown === countdown && room.viewers.has(countdown.viewerId) &&
         !room.manualPaused && this.roomState.store.get(id).autoplay && countdown.epoch === epoch && countdown.mediaVersion === version &&
         (countdown.currentEntryId || null) === (current?.id || null) && countdown.nextEntryId === next?.id && countdown.queueRevision === record.queueRevision &&
@@ -1212,6 +1275,8 @@ class Watch {
       target = oldPosition < (record ? 5 : 3) && (record ? queue.lastHistory(id) : old?.previousId && {mediaId:old.previousId});
     } else if (!removing) target = {mediaId:args.mediaId};
     room.mediaTransition = true;
+    // Transfer only after admission/target checks, inside the cleanup scope.
+    if (preload) room.preload = undefined;
     try {
       await room.saving?.catch(() => {});
       if (target) {
@@ -1261,6 +1326,7 @@ class Watch {
         else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
         else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie',position:startPosition},prepared.roomServerId),position,{initialAdd});
         room.transitionCommit = saving;
+        work.committing = true;
         await saving;
         this.roomState.apply(room,this.roomState.store.get(id));
       }
@@ -1277,7 +1343,7 @@ class Watch {
         if (room.recovery) this.roomState.finishRecovery(room);
         this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
         this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;
-        void this.plex.stop(old); adopted = true;
+        void this.stopMedia(room, old); adopted = true;
         // Viewers adopt their preloaded streams on their next poll; leftovers are stopped.
         if (preload?.sourceAdopted && preload.source && prepared === await preload.source.catch(() => undefined)) {
           if(preload.fallbackStream) {
@@ -1312,6 +1378,7 @@ class Watch {
       }
       return {status:'applied',message:'Viewing room updated.',...(initialAdd ? {added:queue.current(id),queueRevision:this.roomState.store.get(id).queueRevision} : {})};
     } catch (error) {
+      if (work.signal.aborted && !work.committing) return {status:'unavailable',message:'Media selection was cancelled.'};
       room.autoplayError = error.status || error instanceof PlaybackError ? error.message : 'The next video could not be loaded. Check Plex and server storage.';
       room.revision++;
       return {status:'failed',message:room.autoplayError};
@@ -1322,6 +1389,7 @@ class Watch {
     }
   }
   async execute(room, input, actor, permitted) {
+    if (this.shuttingDown || room.removing) return {status:'unavailable',message:'Room is closing.'};
     const command = Engine.validate(input), { action, args } = command, s = room.s;
     if (room.saved) this.roomState.store.healthy();
     if (action === 'room.kick') {
@@ -1545,9 +1613,22 @@ class Watch {
 
   remove(id, save = true) {
     const room = this.rooms.get(id); if (!room) return;
-    if (room.transitionCommit) return room.transitionCommit.catch(() => {}).then(() => this.remove(id,save));
+    if (room.removal) return room.removal;
+    room.removing = true; room.removalAt = Date.now();
+    this.cancelAutoplay(room);
+    const pending = [...this.mediaWork].some(work => work.room === room);
+    if (pending || room.transitionCommit) {
+      room.removal = this.drainMedia(room).then(() => this.removeNow(room, save), async error => {
+        await this.removeNow(room, save); throw error;
+      });
+      return room.removal;
+    }
+    return room.removal = this.removeNow(room, save);
+  }
+  removeNow(room, save) {
+    const id = room.s.roomId;
     this.cancelAutoplay(room); clearPlaybackEnd(room);
-    const saved = room.saved && save ? this.roomState.save(room,{closing:!this.shuttingDown}).then(async () => {
+    const saved = room.saved && save ? this.roomState.save(room,{closing:!this.shuttingDown,final:true}).then(async () => {
       if (!this.shuttingDown) { this.roomState.recoveries.delete(id); await this.roomState.deleteEmpty(id); }
     }) : Promise.resolve();
     if (room.saved) {
@@ -1556,9 +1637,9 @@ class Watch {
     }
     room.s.state.paused = true; room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
-    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.plex.stop(room.media); this.dropPreload(room); this.dropPreload(room, room.adoptable);
+    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.stopMedia(room, room.media); this.dropPreload(room); this.dropPreload(room, room.adoptable);
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
-    return saved;
+    return saved.finally(() => this.drainMedia(room));
   }
   sweep() {
     for (const room of this.rooms.values()) this.refresh(room);
@@ -1582,10 +1663,22 @@ class Watch {
     this.plexSessions = { ...await this.plex.reconcileSessions(this.plexSessionsInUse()), checkedAt: Date.now() };
     return this.plexSessions;
   }
-  async close() {
+  close() {
+    if (this.closing) return this.closing;
     this.shuttingDown = true;
-    await Promise.all([...this.rooms.keys()].map(id => this.remove(id)));
-    this.tracking.close(); return Promise.all([this.roomState?.close(), this.plex.close?.(), this.reporting?.close()]);
+    this.shutdownDeadline = AbortSignal.timeout(this.mediaDrainMs);
+    if (this.roomState) { this.roomState.stopped = true; clearInterval(this.roomState.timer); }
+    this.closing = (async () => {
+      const results = await Promise.allSettled([...this.rooms.keys()].map(async id => this.remove(id)));
+      try { await this.drainMedia(); } catch (error) { results.push({status:'rejected',reason:error}); }
+      try { this.tracking.close(); } catch (error) { results.push({status:'rejected',reason:error}); }
+      try { await waitFor(this.roomState?.close(), this.shutdownDeadline); }
+      catch (error) { results.push({status:'rejected',reason:error}); }
+      results.push(...await Promise.allSettled([() => this.plex.close?.(), () => this.reporting?.close()].map(action => Promise.resolve().then(action))));
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    })();
+    return this.closing;
   }
 }
 module.exports = { Watch, syncQualityParticipants };

@@ -583,10 +583,17 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     for (const [id, bucket] of limits) if (Date.now() - bucket.at > 60000) limits.delete(id);
   }, 1000);
   sweep.unref();
+  let closing;
   function close() {
+    if (closing) return closing;
     clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close(); assetCache.clear();
     untapLogger?.();
-    return Promise.all([mediaClosed, diagnosticLog?.close(), new Promise(resolve => server.listening ? server.close(resolve) : resolve())]).then(() => registry?.close());
+    closing = Promise.allSettled([mediaClosed, diagnosticLog?.close(), new Promise(resolve => server.listening ? server.close(resolve) : resolve())]).then(async results => {
+      try { await registry?.close(); } catch (error) { results.push({status:'rejected',reason:error}); }
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    });
+    return closing;
   }
   return { server, hub, watch, close, registry, plexAuth };
   } catch(error) { Promise.resolve(registry?.persistence.abort()).catch(()=>{});throw error; }
