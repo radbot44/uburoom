@@ -19,7 +19,8 @@ async function main() {
     throw error;
   }
   logger.info('Server', `Server address: ${config.publicUrl}`);
-  if(config.plexFallback?.enabled&&config.plexUrl&&config.plexToken)logger.warn('Plex', 'Shared Plex fallback is enabled: eligible viewers without personal server access can use the fallback account’s media permissions. Set plex.fallback_token for a dedicated account, or disable fallback.');
+  // Warn only when sharing would use the owner's own account.
+  if(config.plexFallback?.enabled&&config.plexUrl&&config.plexToken&&(!config.plexFallback.token||config.plexFallback.token===config.plexToken))logger.warn('Plex', 'Shared Plex fallback is enabled: eligible viewers without personal server access can use the fallback account’s media permissions. Set plex.fallback_token for a dedicated account, or disable fallback.');
   logger.info('Server', `Private credential key: ${path.resolve(config.credentialKeyFile)} (preserve and back up separately)`);
   logger.info('Server', 'Watch rooms are available in the browser. Ctrl+C stops the server.');
   let bot, retry, stopped=false;

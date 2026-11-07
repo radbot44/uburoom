@@ -28,7 +28,14 @@ plex:
   # This can grant more media access than their personal account has.
   # Expired/revoked credentials, outages and item denials NEVER use fallback.
   fallback_enabled: true
-  fallback_token: '' # Blank uses token above; supply a dedicated server-access token.
+  # Blank uses token above. Prefer a dedicated account that has access to your
+  # libraries but does not own the server. To get its token: open a private
+  # browser window, sign in at https://app.plex.tv as that account, press F12,
+  # and type localStorage.myPlexAccessToken in the console.
+  # Cautions: the token is a password, so paste it only here. It belongs to that
+  # browser sign-in: signing that browser out, or removing its device from the
+  # account's Plex devices, stops the token working and sharing quietly fails.
+  fallback_token: ''
   # Direct sharing NEVER uses token above. Requires a dedicated Plex account
   # with library access but no server ownership, verified against plex.tv.
   direct_fallback_enabled: false

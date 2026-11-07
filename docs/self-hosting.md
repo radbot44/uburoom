@@ -74,7 +74,7 @@ See [accounts and access](accounts-and-access.md) for the authorization model.
 
 - Set `plex.fallback_enabled: false` to require personal media entitlement.
 - Leave it enabled only if you intend to share the fallback account's scope.
-- Set `plex.fallback_token` to a dedicated, restricted Plex account token to limit that scope. If blank, uburoom uses `plex.token`.
+- Set `plex.fallback_token` to a dedicated, restricted Plex account token to limit that scope. If blank, uburoom uses `plex.token`. To get that account's token, sign in at app.plex.tv as it in a private window and run `localStorage.myPlexAccessToken` in the browser console (F12). The token works only while that browser sign-in exists; signing out or removing the device from the account stops sharing. The startup log warns when sharing would use the owner's token.
 
 Fallback does not bypass `access.require_plex: true`. Revoked/expired credentials, Plex errors or outages, and item-level restrictions fail closed. Viewers already in a room keep their place during an outage, and the next answer from Plex applies any real denial; nobody new is admitted meanwhile. Personal entitlement takes priority. Shared access does not link the fallback identity to the viewer or write their personal Plex history.
 
