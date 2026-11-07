@@ -38,6 +38,14 @@ export function createQualityApi() {
   const HEALTH_ERRORS = Object.freeze(['network', 'media', 'decode', 'other']);
   const HEALTH_ISSUES = Object.freeze(['error', 'stalling', 'low-buffer', 'dropping-frames', 'out-of-sync']);
   const HEALTH_LIMITS = Object.freeze({ stalls: 2, stalledSeconds: 3, lowBufferSeconds: 2, droppedPercent: 10, holdMs: 15000 });
+  const FALLBACK_LIMITS = Object.freeze({ prefetchSeconds:8, cacheSeconds:18, stallSeconds:1.5, returnSeconds:20, returnIntervalMs:60000, failedReturns:2 });
+  /** Personal delivery decisions reuse live health, never pauses, seeks or historical stall totals. */
+  function fallbackDecision({onFallback=false,bufferAhead=0,stallSeconds=0,interrupted=false,readyAhead=0,now=0,lastReturn=-Infinity,failedReturns=0}={}) {
+    if(interrupted)return 'idle';
+    if(onFallback)return failedReturns<FALLBACK_LIMITS.failedReturns && now-lastReturn>=FALLBACK_LIMITS.returnIntervalMs && readyAhead>=FALLBACK_LIMITS.returnSeconds?'return':'probe';
+    if(stallSeconds>=FALLBACK_LIMITS.stallSeconds || bufferAhead<HEALTH_LIMITS.lowBufferSeconds)return 'switch';
+    return bufferAhead<FALLBACK_LIMITS.prefetchSeconds?'prefetch':'idle';
+  }
   const HEALTH_NUMBERS = Object.freeze({ bufferAhead: [0, 3600], stalls: [0, 1000], stalledSeconds: [0, 60], droppedPercent: [0, 100],
     offsetMs: [-86400000, 86400000], reconnects: [0, 10000] });
   const HEALTH_CHOICES = Object.freeze({ format: HEALTH_FORMATS, browser: HEALTH_BROWSERS, device: HEALTH_DEVICES, error: HEALTH_ERRORS });
@@ -445,6 +453,8 @@ export function createQualityApi() {
     QUALITY_CONFIDENCES,
     HEALTH_ISSUES,
     HEALTH_LIMITS,
+    FALLBACK_LIMITS,
+    fallbackDecision,
     healthIssue,
     reportableMeasurementFreshnessMs,
     calculate,
@@ -470,6 +480,8 @@ export const {
   QUALITY_CONFIDENCES,
   HEALTH_ISSUES,
   HEALTH_LIMITS,
+  FALLBACK_LIMITS,
+  fallbackDecision,
   healthIssue,
   reportableMeasurementFreshnessMs,
   calculate,

@@ -69,6 +69,7 @@
       if(!cache?.recording || cache.segments.has(frag.sn) || cache.bytes+data.byteLength>CACHE_BYTES)return;
       // hls.js hands each segment to its worker, which empties the original buffer.
       cache.segments.set(frag.sn,data.slice(0));cache.bytes+=data.byteLength;
+      cache.windows?.set(frag.sn,{start:frag.start,end:frag.start+frag.duration});
     };
     return class {
       constructor(config) { this.loader=new config.loader(config); }
@@ -82,6 +83,7 @@
         const frag=context.frag,saved=frag?.type==='main' ? cache?.segments.get(frag.sn) : undefined;
         if(saved) {
           cache.segments.delete(frag.sn);
+          cache.bytes-=saved.byteLength;cache.windows?.delete(frag.sn);
           const stats=this.loader.stats,now=performance.now();
           stats.loading.start=stats.loading.first=stats.loading.end=now;stats.loaded=stats.total=saved.byteLength;
           queueMicrotask(()=>{callbacks.onProgress?.(stats,context,saved,null);callbacks.onSuccess({url:context.url,data:saved},stats,context,null);});
@@ -358,9 +360,10 @@
   // A rolling minute of playback health for hosts: stalls the viewer did not cause and
   // dropped frames. Seeks, pauses, hidden pages and stream changes are not stalls.
   function healthTracker({ windowMs = 60000, minFrames = 50 } = {}) {
-    let stalls = [], stallStart, frames = [];
+    let stalls = [], stallStart, frames = [], sampledAt=0;
     function closeStall(now) { if (stallStart !== undefined) { stalls.push({ start: stallStart, end: now }); stallStart = undefined; } }
     function update(now, quality, { stalled = false, interrupted = false } = {}) {
+      sampledAt=now;
       if (interrupted || !stalled) closeStall(now);
       else stallStart ??= now;
       const cutoff = now - windowMs;
@@ -381,7 +384,7 @@
         droppedPercent: total >= minFrames ? Math.min(100, Math.round((last.dropped - first.dropped) / total * 1000) / 10) : 0 };
     }
     function reset() { stalls = []; stallStart = undefined; frames = []; }
-    return { update, reset };
+    return { update, reset, currentStallSeconds:()=>stallStart===undefined?0:Math.max(0,(sampledAt-stallStart)/1000) };
   }
   // Coarse browser and device names for host health cards, never the full user agent.
   function clientKind(nav, activity = false) {

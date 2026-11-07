@@ -23,6 +23,7 @@ const KEYS = [
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.encoder', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
+  'transcoding.fallback.enabled', 'transcoding.fallback.height', 'transcoding.fallback.bitrate',
   'logging.level', 'logging.requests', 'logging.file',
   'diagnostics.enabled', 'diagnostics.keep_days', 'diagnostics.max_mb'];
 
@@ -57,9 +58,15 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   for (const section of Object.keys(value)) {
     if (!KEYS.some(key => key.startsWith(section + '.'))) throw new Error('Unknown config.yaml section; check the example');
     object(value[section], 'Configuration section');
-    for (const key of Object.keys(value[section])) {
-      if (!KEYS.includes(section + '.' + key)) throw new Error('Unknown setting in ' + section + '; check config.example.yaml');
-    }
+    const validate=(node,prefix)=>{
+      for(const key of Object.keys(node)) {
+        const name=prefix+'.'+key;
+        if(KEYS.includes(name))continue;
+        if(!KEYS.some(known=>known.startsWith(name+'.')))throw new Error('Unknown setting in '+section+'; check config.example.yaml');
+        object(node[key],'Configuration section');validate(node[key],name);
+      }
+    };
+    validate(value[section],section);
   }
   function get(key, fallback = '') {
     const [section, name] = key.split('.');
@@ -78,7 +85,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     return v;
   }
   function boolean(key, fallback) {
-    const [section, name] = key.split('.'), selected = value[section]?.[name];
+    const selected = key.split('.').reduce((node,name)=>node?.[name],value);
     if (selected === undefined) return fallback;
     if (typeof selected !== 'boolean') throw new Error(key + ' must be true or false');
     return selected;
@@ -168,6 +175,10 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     hardwareDecode:boolean('transcoding.hardware_decode',true),
     formats, maxJobs };
   const {QUALITIES,qualityDefinition} = require('../shared/room-protocol');
+  const fallbackHeight=value.transcoding?.fallback?.height ?? 720, fallbackBitrate=value.transcoding?.fallback?.bitrate ?? 2;
+  if (typeof fallbackHeight!=='number' || typeof fallbackBitrate!=='number' || !qualityDefinition(fallbackHeight+'p'+fallbackBitrate)) throw new Error('transcoding.fallback requires an even height 144-4320 and bitrate 0.1-200 Mbps');
+  config.transcoding.fallback={enabled:boolean('transcoding.fallback.enabled',false),height:fallbackHeight,bitrate:fallbackBitrate};
+  if(config.transcoding.fallback.enabled && (!formats.length || config.transcoding.policy==='disabled'))throw new Error('transcoding.fallback requires an enabled uburoom output');
   const pairs = value.transcoding?.qualities;
   if (pairs !== undefined && (!Array.isArray(pairs) || pairs.length > 32 || pairs.some(pair => !Array.isArray(pair) || pair.length !== 2 || pair.some(n => typeof n !== 'number') || !qualityDefinition(pair[0]+'p'+pair[1])))) throw new Error('transcoding.qualities requires up to 32 [height, Mbps] pairs, even heights 144-4320 and 0.1-200 Mbps');
   const configured = pairs === undefined ? QUALITIES.slice(1) : pairs.map(([height,mbps])=>qualityDefinition(height+'p'+mbps));

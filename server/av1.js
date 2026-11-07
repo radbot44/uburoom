@@ -285,7 +285,7 @@ class AV1 {
     }
     return this.probePromises.get(codec);
   }
-  acquire(source, quality, existingOnly = false, codec = 'av1') {
+  acquire(source, quality, existingOnly = false, codec = 'av1', {background=false} = {}) {
     if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
     if (!this.ffmpeg) throw new PlaybackError('WebM unavailable: install FFmpeg on the server PATH or set tools.ffmpeg in config.yaml, then run the encoder probe.');
     if (this.closed) throw new PlaybackError('Server is shutting down.');
@@ -294,6 +294,14 @@ class AV1 {
     if(existingOnly && !this.groups.has(key))throw Object.assign(new PlaybackError('No matching shared output is available.'),{conversionCapacity:true});
     let group = this.groups.get(key);
     if (!group) {
+      if(!background && this.groups.size>=8) {
+        for(const candidate of this.groups.values()) {
+          if(candidate.leases.size && [...candidate.leases].every(lease=>lease.background) && Date.now()-(candidate.viewerDemandAt || 0)>15000) {
+            for(const lease of [...candidate.leases])this.release(lease);
+            break;
+          }
+        }
+      }
       if (this.groups.size >= 8) throw Object.assign(new PlaybackError('WebM is busy; close an unused player or choose a shared quality.'),{conversionCapacity:true});
       group = { key, source, quality, codec, refs:0, chunks:new Map(), controllers:new Set(), leases:new Set(), bytes:0 };
       this.groups.set(key, group);
@@ -301,7 +309,7 @@ class AV1 {
     group.refs++;
     // Each lease keeps its authorized source for future uncached chunk work.
     group.source = source;
-    const lease = { group, source, released:false };
+    const lease = { group, source, background, released:false };
     group.leases.add(lease);
     return lease;
   }
@@ -396,14 +404,15 @@ class AV1 {
     try { if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.'); return await action(); }
     finally {
       const now = Date.now();
-      this.queue.sort((a,b) => Number(b.priority.urgent || now-b.at>=2000)-Number(a.priority.urgent || now-a.at>=2000) ||
+      this.queue.sort((a,b) => Number(!!a.priority.background)-Number(!!b.priority.background) || Number(b.priority.urgent || now-b.at>=2000)-Number(a.priority.urgent || now-a.at>=2000) ||
         Number(a.owner===owner)-Number(b.owner===owner) || a.at-b.at);
       const next = this.queue.shift(); if (next) next.resolve(); else this.active--;
     }
   }
-  async chunk(lease, index, signal, { urgent = true } = {}) {
+  async chunk(lease, index, signal, { urgent = true, background = false } = {}) {
     if (lease.released || this.closed) throw new PlaybackError('WebM stream was replaced.');
     const group = lease.group, source=lease.source||group.source, start = index * CHUNK;
+    if(!background)group.viewerDemandAt=Date.now();
     if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration) throw new PlaybackError('Invalid WebM chunk.');
     let entry = group.chunks.get(index);
     if (entry?.controller.signal.aborted && !entry.error) {
@@ -418,13 +427,13 @@ class AV1 {
     if (!entry) {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
       // A seek can make an already queued prefetch imminent; joining raises it.
-      entry = { users:0, at:Date.now(), queued:Date.now(), controller, priority:{urgent} };
+      entry = { users:0, at:Date.now(), queued:Date.now(), controller, priority:{urgent,background} };
       entry.promise = runOperation(controller.signal, () => this.slot(controller.signal, async () => {
         this.pruneAll(this.jobBytes);
         if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes) throw new PlaybackError('Encoded video memory is busy; retry shortly.');
         this.pendingBytes += this.jobBytes; entry.reserved = true;
         await this.conversionPolicy?.video('uburoom',group.codec);
-        const releaseConversion=await this.conversionPolicy?.wait({signal:controller.signal});
+        const releaseConversion=await this.conversionPolicy?.wait({signal:controller.signal,background:entry.priority.background});
         entry.began=Date.now();
         try {
         const codec = group.codec;
@@ -533,6 +542,7 @@ class AV1 {
       entry.promise.catch(() => {}); group.chunks.set(index, entry);
     }
     entry.at = Date.now(); entry.users++; if (urgent) entry.priority.urgent = true;
+    if(!background)entry.priority.background=false;
     try {
       return await new Promise((resolve, reject) => {
         const cancel = () => reject(new PlaybackError('WebM client disconnected.'));
@@ -547,7 +557,7 @@ class AV1 {
   get retainedBytes() { return [...this.groups.values()].reduce((sum,group)=>sum+group.bytes,0); }
   pruneAll(reserve = 0, keep) {
     const candidates = [...this.groups.values()].flatMap(group => [...group.chunks].map(([index,entry])=>({group,index,entry})))
-      .filter(({entry})=>entry!==keep && !entry.users && (entry.bytes || entry.error)).sort((a,b)=>a.entry.at-b.entry.at);
+      .filter(({entry})=>entry!==keep && !entry.users && (entry.bytes || entry.error)).sort((a,b)=>Number(b.entry.priority?.background)-Number(a.entry.priority?.background) || a.entry.at-b.entry.at);
     for (const {group,index,entry} of candidates) {
       if (this.retainedBytes + this.pendingBytes + reserve <= this.maxBytes) break;
       group.chunks.delete(index); group.bytes -= entry.size || 0;

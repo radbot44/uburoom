@@ -612,6 +612,10 @@ function checkTlsCertificates(config) {
 function checkMediaTools(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
+  const fallback=config.transcoding?.fallback;
+  if(fallback?.enabled) checks.push({category:'Media Tools',name:'Room fallback',status:config.transcoding.uburoom && config.transcoding.policy!=='disabled'?'pass':'fail',
+    message:`${fallback.height}p at ${fallback.bitrate} Mbps, 30 seconds ahead, sharing existing conversion job and encoded-byte limits.`,
+    remediation:'Fallback requires an enabled uburoom output and working FFmpeg/FFprobe; it never uses the Plex transcoder.'});
   const ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
   const ffprobe = config.ffprobePath || findOnPath('ffprobe');
 

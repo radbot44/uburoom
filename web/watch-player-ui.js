@@ -80,10 +80,15 @@
       const select=$(activeChoice), tracks=getState()?.tracks, audio=activeChoice==='audio-track', isAudioMode=activeChoice==='audio-mode', isChapters=activeChoice==='chapters';
       const trackRows=activeChoice==='quality'||isAudioMode||isChapters?[]:audio?tracks?.audio || []:tracks?.subtitles || [];
       const resolved=audio?tracks?.audioId:tracks?.subtitleId;
-      const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
+      const signature=JSON.stringify([select.value,select.disabled,resolved,trackRows,getState()?.fallbackActive,[...select.options].map(o=>[o.value,o.textContent,o.disabled])]);
       if(signature===choiceSignature)return; choiceSignature=signature;
       const focused=options.contains(document.activeElement), previous=document.activeElement?.dataset.value, scrollTop=options.scrollTop;
       options.replaceChildren();
+      const current=getState();
+      if(activeChoice==='quality' && current?.fallbackActive) {
+        const status=document.createElement('p');status.className='settings-caption';status.setAttribute('role','status');
+        status.textContent='Using fallback · '+current.fallbackStream.height+'p · '+current.fallbackStream.bitrate+' Mbps';options.append(status);
+      }
       for(const option of select.options) {
         const track=trackRows.find(row=>row.id===option.value);
         const b=button(options,track?trackLabel(track):option.textContent); b.dataset.value=option.value; b.disabled=select.disabled||option.disabled;
@@ -105,7 +110,7 @@
     function render() {
       const state=getState(), tracks=state?.tracks;
       cog.setAttribute('aria-haspopup',mobile()?'dialog':'menu'); cog.setAttribute('aria-controls',mobile()?dialog.id:menu.id);
-      badge.textContent=state?.quality==='direct'?(uburoomPlayback.convertedOriginal(state)?'MAX':'ORIG'):state?.quality?.startsWith('1080p')?'HD':'';
+      badge.textContent=state?.fallbackActive?'FB':state?.quality==='direct'?(uburoomPlayback.convertedOriginal(state)?'MAX':'ORIG'):state?.quality?.startsWith('1080p')?'HD':'';
       badge.hidden=!badge.textContent;
       const enabled=!!tracks?.subtitleId, available=tracks?.subtitles.some(t=>t.available);
       const cc=$('captions-toggle'); cc.disabled=!available||$('subtitle-track').disabled;
@@ -122,6 +127,10 @@
         const canSeek=state?.capabilities ? state.capabilities.seek !== false : !!state?.canPlayback;
         row.disabled=isChapters?(chapters.length===0||!canSeek):select.disabled;
         value.textContent=isChapters?(chapters.length===0?'None':select.selectedOptions[0]?.textContent || (chapters.length+' chapters')):isAudioMode?select.selectedOptions[0]?.textContent || 'Normal':!hasTracks?(audio?'No audio available':'No subtitles available'):id==='quality'?select.selectedOptions[0]?.textContent || 'Unavailable':track?trackLabel(track):tracks && !audio?'Off':'Unavailable';
+        if(id==='quality' && state?.fallbackActive) {
+          const caption=document.createElement('span');caption.className='settings-caption';caption.textContent='Using fallback · '+state.fallbackStream.height+'p · '+state.fallbackStream.bitrate+' Mbps';value.append(caption);
+        }
+        if(audio && state?.fallbackActive && tracks?.audioId!==state.fallbackStream.defaultAudioId)value.textContent='Default (fallback)';
         if (hasTracks && track?.title) { const caption=document.createElement('span'); caption.className='settings-caption'; caption.textContent=track.title; value.append(caption); }
         value.title=value.textContent;
       }

@@ -7,6 +7,7 @@
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 
 const { MediaChecks } = require('./media-check');
+const { FallbackStream } = require('./fallback-stream');
 const { SharedTask, currentSignal } = require('./operation');
 const { isProviderOutage } = require('./resilience');
 const { randomUUID } = require('node:crypto');
@@ -111,6 +112,7 @@ class Watch {
     invalidateEpoch(room);
   }
   dropMedia(room, reason = 'media-changed') {
+    room.fallbackStream?.close(); room.fallbackStream=undefined;
     this.cancelAutoplay(room); clearPlaybackEnd(room);
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
@@ -139,6 +141,12 @@ class Watch {
       if (preload.dropped) { void this.plex.stop(source); return; }
       this.mediaChecks.start(source);
       preload.media = source;
+      const settings=this.hub.config.transcoding;
+      if(settings?.fallback?.enabled && settings.uburoom && source.tracks) {
+        preload.fallbackStream=new FallbackStream({av1:this.plex.av1,settings,source,shareKey:[room.s.roomId,'next',preload.countdown],
+          authorized:async()=>!preload.dropped && (!plex.allows || await plex.allows(source.id))});
+        preload.fallbackStream.reconcile(preload.startAt,true);
+      }
       return source;
     })();
     preload.source.catch(() => {});
@@ -188,6 +196,7 @@ class Watch {
   dropPreload(room, preload = room.preload) {
     if (!preload) return;
     preload.dropped = true;
+    preload.fallbackStream?.close(); preload.fallbackStream=undefined;
     if (room.preload === preload) room.preload = undefined;
     if (room.adoptable === preload) room.adoptable = undefined;
     clearTimeout(preload.expiry);
@@ -268,22 +277,44 @@ class Watch {
       return viewer.media;
     }
     if (!viewer.localDelivery && viewer.media?.format === 'local') viewer.media = undefined;
-    if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal)) return viewer.media;
+    const background=!!this.fallbackFor(room,viewer) && (viewer.media?.bootstrapFallback || viewer.media?.playbackError);
+    if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal) &&
+      (!background || Date.now()<(viewer.fallbackRetryAt || 0))) return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) {
-      await this.joinPreparation(viewer.preparing);
+      if(background)return viewer.media;
+      await Promise.race([this.joinPreparation(viewer.preparing),viewer.preparing.bootstrap || viewer.preparing.promise]);
       return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
     }
+    if(background)viewer.fallbackRetryAt=Date.now()+60000;
+    let bootstrapReady;
+    const bootstrap=new Promise(resolve=>{bootstrapReady=resolve;});
     const job = new SharedTask(async () => {
+      // Bootstrap and the chosen output share one preparation lifetime, so
+      // concurrent polls cannot create competing metadata or conversion work.
+      if(!viewer.media && this.fallbackFor(room,viewer)) {
+        await this.replaceViewer(room,actor,viewerId,async(authorized,source)=>{
+          const media=await plex.prepare(source.id,viewer.preferredQuality || viewer.quality,false,source,undefined,
+            {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,sourceOnly:true,authorized});
+          if(media.selection?.subtitle?.delivery==='burn') {await this.plex.stop(media);return this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized);}
+          media.bootstrapFallback=true;return media;
+        },{retainUnavailable:true});
+        if(viewer.media?.bootstrapFallback) {
+          viewer.fallbackRetryAt=Date.now()+60000;
+          void job.join(new AbortController().signal).catch(()=>{});bootstrapReady();
+        } else return;
+      }
       await this.replaceViewer(room,actor,viewerId,async (authorized,source)=>source.kind==='demo'?source:
         await this.takePreload(room,viewerId,viewer,source,plex) ||
         this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
       if(viewer.media?.quality)viewer.quality=viewer.media.quality;
       if(room.mediaVersion===version && room.s.state.paused)this.warmSubtitles(viewer.media,this.position(room));
     }, { timeoutMs: 120000, idleMs: 15000 });
+    job.bootstrap=bootstrap;
     job.promise.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; }).catch(() => {});
     viewer.preparing = job;
-    await this.joinPreparation(job);
+    if(background){void job.join(new AbortController().signal).catch(()=>{});return viewer.media;}
+    await Promise.race([this.joinPreparation(job),bootstrap]);
     return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
   }
   // Superseded preparation is not a failed request. A 4xx here would tell this
@@ -367,6 +398,7 @@ class Watch {
     }
     if (hostTimedOut) this.invalidateControls(room);
     if (pruned) this.settle(room, now);
+    this.reconcileFallback(room);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
       for (const viewer of new Map([...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v])).values()) void this.plex.ping(viewer.media);
@@ -390,6 +422,32 @@ class Watch {
     if (room.hadViewers && !room.recovery && ![...room.viewers.values()].some(viewer => viewer.userId === room.s.hostId)) void this.transfer(room);
     else if (pruned) void this.maybeStart(room);
     if (!room.hadViewers && now - room.lastActivity > 30000) this.remove(room.s.roomId);
+  }
+  reconcileFallback(room) {
+    const settings=this.hub.config.transcoding;
+    if(!settings?.fallback?.enabled || !settings.uburoom || settings.policy==='disabled' || !room.media || !room.viewers.size || room.media.kind!=='plex') {
+      room.fallbackStream?.close();room.fallbackStream=undefined;return;
+    }
+    if(!room.fallbackStream && room.media.tracks && this.plex.av1) {
+      const source=room.media,version=room.mediaVersion;
+      room.fallbackStream=new FallbackStream({av1:this.plex.av1,settings,source,shareKey:[room.s.roomId,version],
+        authorized:async()=>{
+          if(this.rooms.get(room.s.roomId)!==room || room.mediaVersion!==version)return false;
+          for(const viewer of room.viewers.values())if((!viewer.alive || await viewer.alive()) && await this.canView(room,viewer.actor))return true;
+          return false;
+        },event:(event,fields)=>this.hub.config.logger?.info('Fallback',event,fields)});
+    }
+    const media=room.fallbackStream?.media;
+    // Active fallback viewers retain their group even between chunk requests.
+    // The existing health report distinguishes them from speculative warming.
+    if(media && [...room.viewers.values()].some(viewer=>viewer.syncQuality?.health?.format===media.format &&
+      viewer.syncQuality.health.quality===media.quality && Date.now()-viewer.syncQuality.updatedAt<15000))media.av1Lease.group.viewerDemandAt=Date.now();
+    room.fallbackStream?.reconcile(this.position(room),!room.s.state.paused);
+  }
+  fallbackFor(room,viewer) {
+    const media=room.fallbackStream?.media;
+    return media && !media.av1Lease?.released && !viewer.localDelivery && !viewer.media?.unavailable &&
+      viewer.media?.selection?.subtitle?.delivery!=='burn' && viewer.localCodecs?.includes(media.format)?media:undefined;
   }
   async canView(room, actor) {
     if (!room?.saved && room?.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
@@ -1213,6 +1271,13 @@ class Watch {
         void this.plex.stop(old); adopted = true;
         // Viewers adopt their preloaded streams on their next poll; leftovers are stopped.
         if (preload?.sourceAdopted && preload.source && prepared === await preload.source.catch(() => undefined)) {
+          if(preload.fallbackStream) {
+            room.fallbackStream=preload.fallbackStream;preload.fallbackStream=undefined;
+            const version=room.mediaVersion;
+            room.fallbackStream.authorized=async()=>this.rooms.get(id)===room && room.mediaVersion===version &&
+              room.viewers.size>0 && await this.canView(room,actor);
+            room.fallbackStream.reconcile(this.position(room),false);
+          }
           room.adoptable = preload; preload.expiry = setTimeout(() => this.dropPreload(room, preload), 60000); preload.expiry.unref?.();
         }
       } else {

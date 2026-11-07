@@ -15,6 +15,14 @@ A playback attempt includes edition/version/file, item timeline, video/color/cad
 
 Distinguish network failure, unsupported decoding, missing source, overload and authorization denial. No credential substitution to bypass denial, oscillating quality or indefinite spinner. Capacity fallback must respect saved quality ceilings. [Direct HLS](plex-hls-delivery.md) owns route/delegation details. Companion native clients (`plezy-uburoom`) playing a verified local download subscribe with `delivery=local` to participate in room readiness, clock synchronization and `observe` reporting without allocating server HLS or proxy media grants; when no local download exists, they fall back to the room's authorized `mediaUrl` or `directHls` stream.
 
+## Optional room fallback
+
+When `transcoding.fallback.enabled` is on, one room-owned local output warms up to 30 seconds ahead of the current video, including an autoplay countdown. Preparation idles while paused and releases on empty rooms, media replacement and room closure. It follows the room timeline through seeks and uses the existing encoder scheduler, conversion policy and aggregate encoded-byte budget. Speculative warming yields to viewer output; limits are never increased. The source still comes through the authorized Plex file route, so this survives Plex transcoder refusals, not a loss of access to the source itself.
+
+Healthy viewers do not fetch fallback chunks. A viewer below 8 seconds buffered prepares an approximately 18-second window; a 1.5-second continuous stall or buffer below the shared 2-second health limit can swap to it. Joins/reconnects may start there while their authorized chosen output prepares. Return probes require 20 seconds ready (or the remaining video near its end), at most one return per minute; two failed returns keep fallback for that video. These decisions are defined in `shared/sync/quality.mjs`, use current health rather than historical stalls, and ignore seeks, pauses and interrupted observations. Preparation, cache adoption and last-frame swaps share the quality-change path.
+
+Fallback does not replace the viewer's selected quality, audio or subtitle preferences. It uses default audio with an explanatory toast if that differs; client-rendered subtitles continue. Viewers requiring Burn-in receive no fallback, so captions cannot disappear silently. Normal and fallback resources have separate per-viewer grants with the same admission, current-media, selection, liveness and bounded source-window checks. Local/native delivery never receives a fallback resource.
+
 ## Shared playback timing
 
 The server owns the timeline. Authenticated WebSockets carry revisioned state and independent clock exchanges; the HTTP-shaped adapter is removed.

@@ -43,6 +43,36 @@ test('actual rebuffering lowers the score while healthy prebuffered playback doe
   assert.equal(quality.calculate(clean),1);
   const stalled=quality.calculate({...clean,bufferingSeconds:15});
   assert.ok(stalled<.6&&stalled>.4,'a genuine 15-second stall causes a prompt rating drop');
+  const decide=quality.fallbackDecision;
+  assert.equal(decide({bufferAhead:12}),'idle');
+  assert.equal(decide({bufferAhead:6}),'prefetch');
+  assert.equal(decide({bufferAhead:1}),'switch');
+  assert.equal(decide({bufferAhead:12,stallSeconds:1.5}),'switch');
+  assert.equal(decide({bufferAhead:0,stallSeconds:10,interrupted:true}),'idle','seeks and pauses cannot switch');
+  assert.equal(decide({onFallback:true,readyAhead:19}),'probe');
+  assert.equal(decide({onFallback:true,readyAhead:20}),'return');
+  assert.equal(decide({onFallback:true,readyAhead:20,lastReturn:0,now:59999}),'probe');
+  assert.equal(decide({onFallback:true,readyAhead:20,lastReturn:0,now:60000}),'return');
+  assert.notEqual(decide({onFallback:true,readyAhead:20,failedReturns:2}),'return');
+  const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+  let at=0,prepares=0,ready=0,swaps=0,closed=0;
+  const context={uburoomSyncQuality:quality,performance:{now:()=>at}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/watch-fallback.js'),'utf8'),context);
+  const controller=context.uburoomFallback.create({supported:()=>true,notify(){},record(){},swap(){swaps++;},
+    prepare(){prepares++;return {cache:{},ahead:()=>ready,close(){closed++;}};}});
+  const source={id:'room',mediaVersion:'video',streamVersion:'stream',mediaUrl:'/chosen/start',state:{duration:300}};
+  controller.receive(source);controller.tick({bufferAhead:12,target:10});assert.equal(prepares,0,'healthy playback never fetches fallback');
+  const fallback={...source,fallbackStream:{mediaUrl:'/fallback/start',format:'av1',quality:'720p2'}};
+  controller.receive(fallback);assert.equal(controller.active,false,'a newly advertised fallback does not interrupt healthy playback');
+  controller.receive(fallback,true);assert.equal(controller.active,true,'reconnects adopt fallback');
+  controller.tick({bufferAhead:12,target:10});assert.equal(prepares,1);
+  ready=20;controller.tick({bufferAhead:12,target:10});assert.equal(controller.active,false);assert.equal(swaps,1);
+  ready=2;controller.tick({bufferAhead:1,target:10});assert.equal(controller.active,true);
+  at=60000;ready=20;controller.tick({bufferAhead:12,target:10});assert.equal(controller.active,false);
+  ready=2;controller.tick({bufferAhead:1,target:10});assert.equal(controller.active,true);
+  const before=prepares;at=120000;ready=30;controller.tick({bufferAhead:12,target:10});
+  assert.equal(controller.active,true);assert.equal(prepares,before,'two failed returns pin fallback and stop probes');
+  controller.reset();assert.ok(closed>=3,'all preparation is released');
 });
 
 test('viewers start at provisional 100% and the first valid interval begins refining the score',()=>{

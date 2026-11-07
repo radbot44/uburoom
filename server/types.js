@@ -105,7 +105,8 @@
  * @property {{status:string,score:number,lastKnownScore?:number,lastKnownLevel?:string,lastKnownAt?:number,updatedAt:number,
  *   confidence?:'confident'|'reduced'|'provisional',measurementFreshnessMs?:number,mediaVersion:string,streamVersion:string,
  *   reason?:string}} [syncQuality] - Ephemeral per-tab playback quality from the viewer's authenticated socket.
- * @property {Promise<any>} [preparing] - In-flight media resolution promise if polling.
+ * @property {import('./operation').SharedTask & {bootstrap?:Promise<void>}} [preparing] - One chosen-output preparation lifetime, optionally publishing authorized fallback metadata first.
+ * @property {number} [fallbackRetryAt] - Next allowed retry of an unavailable chosen output while fallback plays.
  * @property {Function} [alive] - Optional liveness check callback.
  * @property {{watchRtts?: Array<{at:number,ms:number}>,watchKick?: (roomId: string) => void}} [watchSocket] - Active socket's bounded round trips and subscription-removal notification.
  */
@@ -115,6 +116,7 @@
  * @typedef {Object} Room
  * @property {RoomDescriptor} s - Underlying hub room descriptor.
  * @property {any} media - Currently loaded Plex media metadata object (or null).
+ * @property {import('./fallback-stream').FallbackStream} [fallbackStream] - Ephemeral room-owned fallback; never persisted.
  * @property {string} mediaVersion - Random UUID rotated on media load/change.
  * @property {number} revision - Monotonically increasing room revision counter.
  * @property {number} position - Base timeline position in seconds at `changedAt`.

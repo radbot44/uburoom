@@ -19,7 +19,7 @@ function gate() {
   return { get started() { return started; }, held: new Promise(resolve => { release = resolve; }), enter: () => { started = true; }, release: () => release() };
 }
 
-async function fixture(t) {
+async function fixture(t, {fallback=false}={}) {
   const registry = new Accounts(undefined, credentialVault());
   const creatorId = registry.resolve('discord', '111111111111111111', 'Creator').id;
   const guestId = registry.resolve('discord', '222222222222222222', 'Host').id;
@@ -28,15 +28,23 @@ async function fixture(t) {
   const hub = new Hub({ ownerId: '111111111111111111', guildId: 'guild', channels: ['commands'] }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
   const stopped = [], prepared = [];
+  if(fallback)hub.config.transcoding={policy:'override',uburoom:true,formats:['av1'],fallback:{enabled:true,height:720,bitrate:2}};
   const plex = {
     json: async () => ({ machineIdentifier: 'fixture-plex' }),
     prepare: async id => {
       const source = { id, kind: 'plex', format: 'file', duration: 100, title: 'Video ' + id, source: { type: 'movie' }, resources: new Map() };
+      if(fallback)Object.assign(source,{sourceStart:'http://fixture/file',sourceKey:id,tracks:{audio:[],subtitles:[]}});
       prepared.push(source);
       return source;
     },
     stop: async media => { if (media) stopped.push(media); }
   };
+  if(fallback) {
+    const {AV1}=require('../server/av1');
+    plex.av1=new AV1(plex,{ffmpegPath:'fixture'},async(_binary,args)=>args.includes('-show_entries')?
+      Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:640,height:360}]})):args.includes('pipe:3')?{video:Buffer.alloc(200),audio:Buffer.alloc(100)}:Buffer.alloc(200));
+    plex.close=()=>plex.av1.close();
+  }
   const watch = new Watch(hub, plex, undefined, registry);
   watch.autoplayDelayMs = 30;
   clearInterval(watch.roomState.timer);
@@ -93,7 +101,7 @@ async function fixture(t) {
 }
 
 test('verified natural ending broadcasts one countdown, atomically archives completion and consumes one upcoming occurrence', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id), version = f.room.mediaVersion;
+  const f = await fixture(t,{fallback:true}), before = f.queue.current(f.id), version = f.room.mediaVersion;
   await f.end();
   const countdown = f.room.autoplayCountdown;
   assert.ok(countdown); assert.equal(countdown.nextEntryId, f.upcoming[0].id);
@@ -122,6 +130,18 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   assert.equal(f.room.viewers.get(f.creator.watchViewerId).media, preloaded[1]);
   assert.equal(f.prepared.filter(media => media.id === '101').length, 2, 'no second stream was prepared');
   assert.ok(!f.stopped.includes(preloaded[1]));
+  const fallback=f.room.fallbackStream;
+  assert.ok(fallback?.media,'countdown fallback is adopted with its ready chunks');
+  const lease=fallback.media.av1Lease;
+  assert.equal(lease.released,false);
+  f.room.manualPaused=true;f.room.s.state.paused=true;f.watch.reconcileFallback(f.room);
+  assert.equal(fallback.active,false,'paused room idles fallback work');
+  await f.command('media.load',{mediaId:'102',quality:'direct'});
+  assert.equal(lease.released,true,'changing the video releases the old fallback');
+  f.room.s.state.paused=false;f.watch.reconcileFallback(f.room);
+  await waitFor(()=>!!f.room.fallbackStream?.media);
+  const final=f.room.fallbackStream.media.av1Lease;
+  await f.watch.remove(f.id);assert.equal(final.released,true,'closing the room releases its fallback lease');
 });
 
 test('Cancel, pause, seek, queue edits and disabling autoplay immediately cancel countdowns without consuming entries', async t => {

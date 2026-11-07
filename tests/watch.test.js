@@ -319,7 +319,7 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   assert.equal(app.watch.rooms.get(guestCreated).s.hostId, 'demo-guest'); app.watch.remove(guestCreated);
   assert.equal((await request('/api/watch/rooms', 'POST', {}, { ...host, Origin: 'https://evil.example' })).status, 401);
   const id = (await request('/api/watch/rooms', 'POST', {}, host)).body.id, viewer = randomUUID();
-  const getState = () => request(`/api/watch/rooms/${id}?viewer=${viewer}`, 'GET', undefined, host);
+  const getState = () => request(`/api/watch/rooms/${id}?viewer=${viewer}&codecs=av1`, 'GET', undefined, host);
   const command = async (action, args) => {
     const state = (await getState()).body;
     return request(`/api/watch/rooms/${id}/command`, 'POST', { epoch: state.epoch, expiresAt: Date.now() + 2500, command: { action, args } }, host);
@@ -431,7 +431,15 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   local.media = av1; local.mediaVersion = room.mediaVersion; local.streamVersion = randomUUID();
   let chunks = 0;
   app.watch.plex.av1.chunk = async () => { chunks++; return {video:Buffer.from('private fixture webm'),audio:Buffer.from('opus')}; };
+  config.transcoding={uburoom:true,formats:['av1'],fallback:{enabled:true,height:720,bitrate:2}};
+  room.media.kind='plex';
+  const fallbackMedia={...av1,quality:'720p2',selection:{},av1Lease:app.watch.plex.av1.acquire({id:'123',duration:180},'720p2')};
+  room.fallbackStream={media:fallbackMedia,reconcile(){},close(){app.watch.plex.av1.release(fallbackMedia.av1Lease);}};
   const av1State = (await getState()).body, base = av1State.mediaUrl.replace(/\/start$/, '/chunk-video-');
+  assert.ok(av1State.fallbackStream,'fallback uses a second per-viewer grant');
+  const fallbackUrl=av1State.fallbackStream.mediaUrl;
+  assert.equal((await request(fallbackUrl)).status,200);
+  assert.equal((await request(fallbackUrl.replace(/\/start$/,'/chunk-video-100'))).status,403,'fallback cannot encode arbitrary positions');
   assert.equal((await request(base + '0')).status, 200);
   assert.equal((await request(base + '10')).status, 200, 'bounded ahead buffer is available while paused');
   assert.equal((await request(base + '11')).status, 403, 'prefetch cannot exceed the shared ahead window');
@@ -441,9 +449,11 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   assert.equal((await request(base + '14')).status,403,'old rewind chunks are outside the authorized window');
   assert.equal((await request(base + '15')).status,200,'recent rewind window remains available');
   local.streamVersion = randomUUID();
+  assert.equal((await request(fallbackUrl)).status,403,'selection replacement revokes fallback grants too');
   assert.equal((await request(base + '0')).status, 403, 'quality replacement invalidates AV1 grants');
   const renewed = (await getState()).body;
   app.watch.remove(id);
+  assert.equal((await request(renewed.fallbackStream.mediaUrl)).status,403,'room removal revokes fallback grants');
   assert.equal((await request(renewed.mediaUrl)).status, 403, 'room removal revokes AV1 manifests');
   const transferId=(await request('/api/watch/rooms','POST',{},host)).body.id;
   const transferHostId=randomUUID(),transferGuestId=randomUUID();
@@ -638,7 +648,28 @@ test('superseded preparation retries for its waiting viewer instead of failing r
   const viewer=room.viewers.get(viewerId),pending=watch.prepareViewer(room,host,viewerId);
   await preparing;room.mediaVersion=randomUUID();viewer.preparing.abort();
   assert.equal(await pending,replacement,'someone else changing media is not this viewer losing the room');
-  assert.equal(calls,2);watch.close();hub.close();
+  assert.equal(calls,2);
+  // The same shared preparation lifetime publishes authorized fallback metadata
+  // before a slow/refused chosen output, including concurrent initial polls.
+  viewer.media=undefined;viewer.localCodecs=['av1'];viewer.preferredQuality='720p4';
+  const fallback={format:'av1',quality:'720p2',selection:{},duration:60};
+  room.fallbackStream={media:fallback,close(){},reconcile(){}};
+  let metadataCalls=0,chosenCalls=0,finish,chosenStarted;
+  const chosenPreparing=new Promise(resolve=>{chosenStarted=resolve;});
+  const gate=new Promise(resolve=>{finish=resolve;});
+  plex.prepare=async(_id,quality,_compatible,_source,_fallback,options)=>{
+    const media={...replacement,quality,tracks:{audio:[],subtitles:[]},selection:{},resources:new Map()};
+    if(options?.sourceOnly){metadataCalls++;return media;}
+    chosenCalls++;chosenStarted();await gate;throw Object.assign(new (require('../server/av1').PlaybackError)('Plex refused conversion'),{media});
+  };
+  const [first,second]=await Promise.all([watch.prepareViewer(room,host,viewerId),watch.prepareViewer(room,host,viewerId)]);
+  assert.equal(first,second);assert.equal(first.bootstrapFallback,true,'both polls can start on fallback without waiting for the main output');
+  await chosenPreparing;assert.equal(metadataCalls,1);assert.equal(chosenCalls,1);
+  const job=viewer.preparing;finish();await job.promise;
+  assert.equal(viewer.media.playbackError,'Plex refused conversion');assert.equal(watch.fallbackFor(room,viewer),fallback,'Plex transcode refusal does not disable local fallback');
+  viewer.media.selection.subtitle={delivery:'burn'};assert.equal(watch.fallbackFor(room,viewer),undefined,'Burn-in cannot silently lose subtitles');
+  viewer.media.selection.subtitle=undefined;viewer.media.unavailable=true;assert.equal(watch.fallbackFor(room,viewer),undefined,'a real item denial cannot use fallback');
+  watch.close();hub.close();
 });
 
 test('shared seeks wait for fresh viewer buffers and reject superseded readiness', async () => {

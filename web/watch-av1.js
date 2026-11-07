@@ -3,8 +3,9 @@
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
 const SWITCH_MARGIN = 5, MIN_SWITCH_MARGIN = 2;
 class uburoomAV1 {
-  constructor(video, url, target, failed, requiredAttempts = 3) {
+  constructor(video, url, target, failed, requiredAttempts = 3, options = {}) {
     this.video = video; this.url = url; this.target = target; this.failed = failed; this.requiredAttempts = requiredAttempts;
+    this.options=options;
     this.abort = new AbortController(); this.appended = new Set();
     this.chunkBytes = new Map(); this.seekVersion = 0; this.endSignalled = false;
     this.onSeek = () => this.restart();
@@ -28,13 +29,25 @@ class uburoomAV1 {
     this.restart();
   }
   async fetch(url) {
+    const cached=this.options?.cache?.segments.get(url);
+    if(cached) {
+      if(!this.options.cache.recording){this.options.cache.segments.delete(url);this.options.cache.bytes-=cached.byteLength;}
+      return new Response(cached);
+    }
     let response;
-    try { response = await fetch(url, {signal:AbortSignal.any([this.abort.signal,...(this.request ? [this.request.signal] : []), AbortSignal.timeout(45000)])}); }
+    try { response = await fetch(url, {headers:this.options?.background?{'X-Uburoom-Prefetch':'1'}:undefined,
+      signal:AbortSignal.any([this.abort.signal,...(this.request ? [this.request.signal] : []), AbortSignal.timeout(45000)])}); }
     catch (error) { error.retryable = true; throw error; }
     if (!response.ok) {
       const value = await response.json().catch(() => ({}));
       const error = new Error(value.error || 'Converted stream could not load.');
       error.retryable = response.status >= 500 || [408,429].includes(response.status); throw error;
+    }
+    if(this.options?.cache?.recording) {
+      const bytes=await response.arrayBuffer(),cache=this.options.cache;
+      if(cache.bytes+bytes.byteLength>uburoomPlayback.BUFFER.maxBytes)throw new Error('Prepared stream exceeded the buffer limit.');
+      if(!cache.segments.has(url)){cache.segments.set(url,bytes);cache.bytes+=bytes.byteLength;}
+      return new Response(bytes);
     }
     return response;
   }
@@ -161,8 +174,8 @@ class uburoomAV1 {
     const version = this.seekVersion;
     const superseded = () => this.abort.signal.aborted || this.seekVersion !== version ||
       Math.floor(Math.min(this.target(),this.duration - .05) / this.seconds) !== first;
-    const ahead = Math.min(policy.ahead,this.pressureAhead ?? policy.ahead);
-    const last = Math.floor(Math.min(target + ahead,this.duration - .05) / this.seconds);
+    const ahead = Math.min(policy.ahead,this.options?.ahead ?? policy.ahead,this.pressureAhead ?? policy.ahead);
+    const last = this.options?.background ? Math.max(first,Math.ceil(Math.min(target+ahead,this.duration)/this.seconds)-1) : Math.floor(Math.min(target + ahead,this.duration - .05) / this.seconds);
     const earliest = Math.max(0,Math.floor((target - (this.pressured ? 0 : policy.behind)) / this.seconds));
     if (this.nextUrl) {
       this.url = this.nextUrl; this.nextUrl = undefined; this.endSignalled = false;

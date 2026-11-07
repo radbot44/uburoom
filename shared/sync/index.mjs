@@ -50,6 +50,8 @@ export {
   QUALITY_CONFIDENCES,
   HEALTH_ISSUES,
   HEALTH_LIMITS,
+  FALLBACK_LIMITS,
+  fallbackDecision,
   healthIssue,
   reportableMeasurementFreshnessMs,
   calculate as calculateSyncQuality,

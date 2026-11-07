@@ -59,6 +59,8 @@ const STATIC_ASSETS = {
   '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
   '/watch-dialogs.js':['watch-dialogs.js','text/javascript'],
   '/watch-player-ui.js':['watch-player-ui.js','text/javascript'],
+  '/watch-streams.js':['watch-streams.js','text/javascript'],
+  '/watch-fallback.js':['watch-fallback.js','text/javascript'],
   '/watch-layout.js':['watch-layout.js','text/javascript'],
   '/watch-player.css':['watch-player.css','text/css'],
   '/watch-transport.js':['watch-transport.js','text/javascript'],

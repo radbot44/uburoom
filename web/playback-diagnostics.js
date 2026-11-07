@@ -3,6 +3,7 @@
 (function(root) {
   'use strict';
   const choices = {
+    fallbackReason:['join','reconnect','stall','low-buffer','buffer-ready','decode'],
     reason:['state-change','room-select','room-poll','identity-poll','room-unavailable','control-disconnected','kicked','leave','end','logout','fallback','decoder','fatal','complete','source-changed','unavailable'],
     action:['media.load','media.play','media.pause','media.toggle','media.seek.absolute','media.seek.relative','media.quality.set','media.tracks.set','media.stream.refresh','room.enable','room.disable','room.visibility'],
     request:['room-poll','rooms','observe','ready','command','identity','other'],
@@ -31,6 +32,7 @@
     presentationReason:['fresh','none','stale','context','clock','interrupted','discontinuity','divergent','blend','hidden','ineligible','clock-invalid']
   };
   const events = new Set(['start','sample','state-change','request-failed','player-clear','hls-stop','hls-error','retry-scheduled','retry-deferred','retry-start',
+    'fallback-start','fallback-switch','fallback-return','fallback-failed',
     'stream-refresh','stream-refresh-ok','stream-refresh-failed','identity-renewed','identity-renew-failed','fallback','buffer-recovered','control-disconnected','control-reconnected',
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
@@ -38,6 +40,7 @@
     'control-connected','room-list-unavailable','room-state-unavailable','playback-degraded','playback-rearmed','decode-capability',
     'disconnect-extended','disconnect-expired','stream-hold','stream-swap','frame-hold-end','subtitle-window','subtitle-window-failed','chunk-loaded','page-error']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
+    'failedReturns',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
     'clockUncertaintyMs','networkRttMs','networkMinRttMs','networkJitterMs','requestRttMs','serverProcessingMs','timelineRevision','sharedTarget','positionErrorMs',

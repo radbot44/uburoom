@@ -101,6 +101,12 @@ test('AV1 shares one encode per source/tier/chunk and releases/cancels its last 
   manager.release(a); assert.equal(manager.groups.size,1);
   manager.release(b); assert.equal(manager.groups.size,0);
   await assert.rejects(manager.chunk(b,2,signal),/replaced/);
+  const speculative=manager.acquire({...source,id:'fallback'},'720p2',false,'av1',{background:true});
+  const viewers=Array.from({length:7},(_,index)=>manager.acquire({...source,id:'viewer-'+index},'direct'));
+  const urgent=manager.acquire({...source,id:'urgent'},'direct');
+  assert.equal(speculative.released,true,'speculative fallback yields a group slot to a viewer without raising the cap');
+  assert.equal(manager.groups.size,8);
+  for(const lease of [...viewers,urgent])manager.release(lease);
   manager.close();
 });
 

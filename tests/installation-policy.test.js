@@ -196,6 +196,10 @@ test('conversion policy follows Plex, fails closed when unknown and counts jobs 
   await assert.rejects(policy.video('uburoom'),/Plex disables/);assert.equal(reads,1);
   policy.preference=undefined;disabled='0';await policy.video('uburoom');await policy.video('plex');assert.equal(reads,2);
   const release=policy.acquire();assert.throws(()=>policy.acquire(),/conversion jobs/);release();const again=policy.acquire();again();assert.equal(policy.jobs.size,0);
+  const busy=policy.acquire();
+  await assert.rejects(policy.wait({background:true}),/reserved for viewers/);
+  assert.equal(policy.waiters.length,0,'fallback does not queue ahead of viewers or reserve a slot while busy');
+  busy();const background=await policy.wait({background:true});assert.equal(policy.jobs.size,1);background();
   policy.settings.policy='disabled';await assert.rejects(policy.video('plex'),/disabled/);
   policy.settings.policy='override';disabled='1';await policy.video('uburoom');
   policy.settings.formats=[];await assert.rejects(policy.video('uburoom'),/not offered/);

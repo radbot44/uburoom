@@ -361,19 +361,25 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       viewer.localCodecs=(url.searchParams.get('codecs')||'').split(',').filter(localFormat);
       viewer.localDelivery = url.searchParams.get('delivery') === 'local';
       room.viewers.get(viewerId).browserLoginHash=context.headers.authorization?undefined:cookies(context).uburoom&&hash(cookies(context).uburoom);
+      watch.reconcileFallback(room);
       await watch.prepareViewer(room, auth.actor, viewerId);
       if (!await watch.canView(room, auth.actor) || !await alive() || room.viewers.get(viewerId) !== viewer) { return result(403, { error: 'Viewing access was revoked' }); }
       const state = watch.snapshot(room, auth.actor, viewerId, alive);
+      const fallbackMedia=watch.fallbackFor(room,viewer),fallbackGrant=fallbackMedia && mediaGrant(room,auth,context,viewerId,true);
+      if(fallbackGrant) state.fallbackStream={mediaUrl:`/api/watch/media/${fallbackGrant}/start`,format:fallbackMedia.format,quality:fallbackMedia.quality,
+        height:config.transcoding.fallback.height,bitrate:config.transcoding.fallback.bitrate,defaultAudioId:fallbackMedia.selection.audio?.id};
+      state.preparingQuality=!!viewer.media?.bootstrapFallback;
       viewer.directDelivery = undefined;
       const grant = (!viewer.localDelivery && viewer.media?.format !== 'local') ? mediaGrant(room, auth, context, viewerId) : undefined;
       if (grant) {
         state.mediaUrl = `/api/watch/media/${grant}/start`;
+        if(viewer.media.bootstrapFallback)state.mediaUrl=undefined;
         const media=room.viewers.get(viewerId).media;
         if(media.format==='hls' && media.directHls) {
           state.directHls={...media.directHls,session:media.transcodeId};
           state.directDelivery=true;viewer.directDelivery=media;
         }
-        else if (config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
+        else if (!media.bootstrapFallback && config.plexDelivery?.mode === 'auto' && viewer.directProxyVersion !== room.mediaVersion) {
           const direct = await delivery?.file(media, auth, ()=>validGrant(grant), viewer.remoteAddress);
           if (!await validGrant(grant)) return result(409,{error:'Playback delivery changed'});
           if (direct) {

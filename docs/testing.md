@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P2 — Optional room fallback — 2026-11-07
+
+**A/B, local working tree on `71b4f97`:** Fallback is disabled by default in schema v2j. Existing scenarios were extended for shared startup preparation, concurrent joins, a refused chosen Plex output, Burn-in/item-denial boundaries, per-viewer grant revocation and source-window limits, job admission, yielding speculative group capacity, countdown adoption, paused work, and lease release on video replacement/closure. Shared-policy/controller checks cover healthy viewers, low buffer, continuous stalls, interrupted observations, return readiness/cooldown and the two-failed-return cap. `npm test` passed (exit 0, no skips); an earlier run exposed a stale fixture expectation that a newly advertised fallback should interrupt healthy playback, and that expectation was corrected.
+
+**B, decoded browser fixture:** Chrome and Firefox, synthetic source files and Plex responses, local VP8/software fallback, ordinary file and HLS delivery: reconnect starts decoded fallback, returns to the selected quality, and a seven-second delay on chosen local-output chunk fetches causes a low-buffer swap to decoded fallback. HLS return respected the minute cooldown after an initial startup return. Healthy playback makes no further fallback requests after bootstrap. Pause idles warming; video replacement releases its lease. Desktop/dark and narrow/light settings show the approved status while retaining the selected quality; native browser zoom, physical mobile and human acceptance remain open. `npm run doctor -- --config <isolated-fixture.yaml> --json` passed with 14 passes and one expected warning for the absent, unused fixture credential key. No private configuration or migration was applied.
+
+**Not run (C/D):** Vigrid or live Plex, GPU/A380 and multi-room resource/load measurements, real networks/devices, and watch-night acceptance. Synthetic playback does not establish those claims. The fallback still requires readable authorized source bytes; a Plex source outage cannot be repaired by avoiding its transcoder.
+
 ### M1-P1/P13 — Reconnects and fullscreen errors — 2026-11-07
 
 **B:** `npm test` passed (exit 0). Chrome and Firefox: after choosing 180p, volume 55, French audio and English subtitles, a second tab joining the same room as a new viewer started with all four and sent no track change. In real fullscreen an error showed as a toast inside the player, Open menu opened the drawer over fullscreen without leaving it, and outside fullscreen no toast appeared. A first version that dismissed the toast whenever the error line cleared hid real errors within a second, because every command start clears that line; the toast now stays its full time. **Not run:** iPhone, a real dropped connection beyond the server's grace period, C on Vigrid.

@@ -108,6 +108,7 @@ The `transcoding` section controls Plex conversion and uburoom's local encoder i
 | `hardware_decode` | Default on. Decodes and scales every source on the GPU that matches the encoder: CUDA for NVENC; D3D11VA (Windows) or VAAPI (Linux) mapped to QSV; for software encoders D3D11VA, VAAPI or VideoToolbox. HDR tonemaps through libplacebo on Vulkan when FFmpeg has it. A stream that fails steps down to CPU tonemapping, then CPU decode. FFmpeg wrapper decoders such as `hevc_qsv` are not used because they start chunks up to three frames early. |
 | `max_jobs` | Shared Plex/local job limit: default 5, allowed 1–32. Compatible consumers may share one output. |
 | `qualities` / `allow_original` | Ordered height/Mbps pairs and separate Original option. Conversion does not upscale. |
+| `fallback.enabled` / `fallback.height` / `fallback.bitrate` | Optional room fallback, off by default, with a 720p maximum height and 2 Mbps target. Requires a local output. Uses uburoom's encoder and the same job/group/byte limits; speculative fallback work yields to viewers. No extra Plex transcode session is created. |
 
 FFmpeg and FFprobe are found on the service user's PATH or at `tools.ffmpeg`/`tools.ffprobe`. Missing tools disable the features that depend on them. Software conversion needs the corresponding AV1/VP9/VP8 encoders and Opus; capability detection is not proof of successful playback.
 

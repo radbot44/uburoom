@@ -248,7 +248,7 @@ function viewerHealth() {
   const error=hlsNetworkFailure||errorCode===2?'network':errorCode===3?'decode':errorCode===4?'media':playbackError?'other':undefined;
   return {...(playbackHealth||{}),...viewerClient,reconnects:Math.min(10000,Math.max(0,(transport?.connectionAttempt||1)-1)),
     ...(state?.mediaUrl?{bufferAhead:round(Math.min(3600,uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)))}:{}),
-    ...(/^[a-z0-9.]{1,24}$/i.test(state?.quality||'')?{quality:state.quality}:{}),
+    ...(/^[a-z0-9.]{1,24}$/i.test(state?.quality||'')?{quality:state.fallbackActive?state.fallbackStream.quality:state.quality}:{}),
     ...(['hls','file','av1','vp9','vp8'].includes(state?.format)?{format:state.format}:{}),
     ...(Number.isFinite(lastSyncErrorMs)?{offsetMs:Math.round(Math.max(-86400000,Math.min(86400000,lastSyncErrorMs)))}:{}),
     ...(error?{error}:{})};
@@ -1333,6 +1333,7 @@ $('drawer-open').addEventListener('click', () => {
 });
 $('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
 async function compatibleFallback(reason, preferHLS = false) {
+  if(fallbackPlayback.active && fallbackPlayback.failed())return;
   if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
   // Plex would hand a file the browser already failed on the same H.264 again.
   const skipPlex = !preferHLS && state.format === 'file' && /^(h264|avc1)$/i.test(state.videoCodec || '');
@@ -1530,10 +1531,13 @@ function decodedFrames() {
   return videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
 }
 function checkVideoFrames() {
+  const interrupted=!state?.mediaUrl || video.paused || !!state?.state?.paused || video.seeking || seekDragging || !!sync?.timelinePending ||
+    pending || qualityPending || !!heldStream || document.visibilityState!=='visible';
   playbackHealth=playbackHealthTracker.update(performance.now(),video.getVideoPlaybackQuality?.(),{
     stalled:!!state?.mediaUrl && (playerWaiting || !video.paused && video.readyState<3),
-    interrupted:!state?.mediaUrl || video.paused || !!state?.state?.paused || video.seeking || seekDragging || !!sync?.timelinePending ||
-      pending || qualityPending || !!heldStream || document.visibilityState!=='visible'});
+    interrupted});
+  fallbackPlayback.tick({bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),
+    stallSeconds:playbackHealthTracker.currentStallSeconds(),interrupted:interrupted || autoplayBlocked,target:expected()});
   checkChoppyPlayback();
   // Hidden or minimized pages may stop producing frames while audio continues.
   if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending || document.visibilityState !== 'visible') { frameStartedAt = undefined; return; }
@@ -1542,6 +1546,7 @@ function checkVideoFrames() {
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = false) {
+  if(reason!=='state-change')fallbackPlayback.reset();
   directProbe?.abort(); directProbe = undefined;
   directRecovery = undefined;
   clearTimeout(fallbackRetryTimer); fallbackRetryTimer = undefined;
@@ -1608,6 +1613,14 @@ function hlsClientConfig(next,cache) {
 // that is too slow or fails falls back to the plain swap before the buffer runs out.
 const HOLD_LIMIT_MS=20000,HOLD_RESERVE=1.5;
 let heldStream,preparedStream,lastQualityRequest=0;
+const fallbackPlayback=uburoomFallback.create({
+  supported:format=>typeof MediaSource!=='undefined' && MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[format]),
+  prepare:(next,seconds)=>uburoomStreams.prepare(next,{target:expected,seconds,hlsConfig:hlsClientConfig}),
+  swap:(_,prepared)=>{preparedStream=prepared;lastQualityRequest=0;applyState(fallbackPlayback.display(),true);},
+  record:(event,fields)=>diagnostics.record(event,fields),
+  notify:(active,next)=>toasts.show('fallback-stream',{title:active?'Switched to fallback to keep playing.':'Returned to your selected quality.',
+    hint:active && next.tracks?.audioId!==next.fallbackStream?.defaultAudioId?'Using default audio.':'',symbol:active?'down':'up',duration:3000})
+});
 function canHoldStream(next) {
   if(activity || document.body.classList.contains('mobile-player') || !(hls || av1) || !state?.mediaUrl || playbackError)return false;
   if(Date.now()-lastQualityRequest>10000 || video.readyState<3 || uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)<=HOLD_RESERVE+1)return false;
@@ -1625,28 +1638,17 @@ function holdStream(next) {
 }
 function prepareHeldStream(hold) {
   const next=hold.next;
-  hold.client?.destroy(); hold.client=undefined; hold.request?.abort(); hold.cache=undefined;
+  clearInterval(hold.prepareTimer);hold.preparation?.close();hold.request?.abort();hold.cache=undefined;
   if(fileNeedsAudioStream(next))return void requestAudioStream(hold);
-  if(uburoomPlayback.localFormat(next.format)) {
-    // The server keeps a finished chunk, so asking for it here makes the swap immediate.
-    const index=Math.floor((expected()+1)/uburoomPlayback.BUFFER.chunkSeconds),request=hold.request=new AbortController();
-    void Promise.all(['video','audio'].map(track=>fetch(next.mediaUrl.replace(/\/start$/,'/chunk-'+track+'-'+index),{signal:request.signal}).then(response=>response.arrayBuffer())))
-      .catch(()=>{}).finally(()=>{if(heldStream===hold && hold.request===request)releaseStream();});
-    return;
-  }
-  const cache=hold.cache={recording:true,bytes:0,segments:new Map()},element=document.createElement('video');
-  element.muted=true;
-  const client=hold.client=new Hls({...hlsClientConfig(next,cache),maxBufferLength:15,maxMaxBufferLength:30});
-  let anchored=false;
-  client.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal && heldStream===hold && hold.client===client)releaseStream('error');});
-  client.on(Hls.Events.FRAG_LOADED,()=>{if(hold.client===client && !anchored)client.pauseBuffering();});
-  client.on(Hls.Events.FRAG_BUFFERED,()=>{
-    if(heldStream!==hold || hold.client!==client)return;
-    const target=expected()+1;
-    if(!anchored) {anchored=true;element.currentTime=target;client.resumeBuffering?.();client.startLoad(target);}
-    if(uburoomPlayback.bufferedAhead(element.buffered,target)>=1)releaseStream();
-  });
-  client.loadSource(next.mediaUrl); client.attachMedia(element);
+  try {
+    const preparation=hold.preparation=uburoomStreams.prepare(next,{target:expected,seconds:3,hlsConfig:hlsClientConfig});
+    hold.cache=preparation.cache;
+    hold.prepareTimer=setInterval(()=>{
+      if(heldStream!==hold)return;
+      if(preparation.failed)releaseStream('error');
+      else if(preparation.ahead()>=1)releaseStream();
+    },100);
+  } catch {releaseStream('error');}
 }
 // Plex copies H.264 and converts only the audio, so skip the file the browser cannot play.
 async function requestAudioStream(hold) {
@@ -1656,20 +1658,21 @@ async function requestAudioStream(hold) {
   try { await execute({action:'media.quality.set',args:{quality:hold.next.preferredQuality || preferredQuality || hold.next.quality,fallback:'audio',reason:'The browser does not support the original codecs.'}}); }
   catch { if(heldStream===hold)releaseStream('error'); }
 }
-function dropHeldStream() {
+function dropHeldStream(adopt=false) {
   const hold=heldStream; heldStream=undefined;
   if(!hold)return;
   clearTimeout(hold.timer); hold.request?.abort();
+  clearInterval(hold.prepareTimer);hold.preparation?.close(adopt);
   const client=hold.client; hold.client=undefined; client?.destroy();
   return hold;
 }
 function releaseStream(end='ready') {
-  const hold=dropHeldStream();
+  const hold=dropHeldStream(true);
   if(!hold)return;
   lastQualityRequest=0;
   diagnostics.record('stream-swap',{format:hold.next.format,holdEnd:end,prepared:!!hold.cache,elapsedMs:performance.now()-hold.started});
   if(hold.cache){hold.cache.recording=false;preparedStream={url:hold.next.mediaUrl,cache:hold.cache};}
-  applyState(hold.next);
+  applyState(hold.next,true);
 }
 // The picture stays on the last frame through the gap the swap cannot avoid. The first
 // frame of a new stream is the anchor, so wait for the real one at the room's position.
@@ -2341,9 +2344,12 @@ function unavailableToasts(items = []) {
   }
   unavailableNotices = ids;
 }
-function applyState(next) {
-  if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
-  stateTransportSequence=next.transportSequence;
+function applyState(next, local=false) {
+  if(!local) {
+    if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
+    stateTransportSequence=next.transportSequence;
+    next=fallbackPlayback.receive(next,reconnecting);
+  }
   clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
   const wasExtended=disconnectExtended;disconnectExtended=false;hideDisconnectToast();
   const resumed=reconnecting;reconnecting=false;
@@ -2353,6 +2359,7 @@ function applyState(next) {
   // A new quality of the same converted stream keeps the player and buffer.
   const burned=value=>value?.tracks?.subtitleDelivery==='burn'?value.tracks.subtitleId:undefined;
   const seamless = !mediaChanged && !!av1 && mediaSource !== next.mediaUrl && uburoomPlayback.localFormat(next.format) && state?.format === next.format &&
+    !!state?.fallbackActive===!!next.fallbackActive &&
     state.tracks?.audioId === next.tracks?.audioId && burned(state) === burned(next);
   const changed = !seamless && (mediaChanged || mediaSource !== next.mediaUrl);
   if(heldStream) {
@@ -2366,7 +2373,7 @@ function applyState(next) {
     // Someone seeked, paused or changed the video, so the new stream is needed now.
     dropHeldStream();
   }
-  if(changed && !mediaChanged && canHoldStream(next))return void holdStream(next);
+  if(!local && changed && !mediaChanged && canHoldStream(next))return void holdStream(next);
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
@@ -2394,7 +2401,8 @@ function applyState(next) {
         // With no other codec to try, giving up ends playback, so ride out a slow
         // or briefly unavailable source for about 40 seconds instead of 7.
         const alternatives=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],new Set([next.format]),mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
-        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }, alternatives.length ? 3 : 8); }
+        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }, alternatives.length ? 3 : 8,
+          {cache:preparedStream?.url===next.mediaUrl?preparedStream.cache:undefined});preparedStream=undefined; }
         catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
@@ -2482,10 +2490,10 @@ function applyState(next) {
   }
   $('quality-notice').textContent=next.qualityNotice || '';
   renderMediaInformation(next);
-  const maximum = uburoomPlayback.convertedOriginal(next);
+  const maximum = !next.fallbackActive && uburoomPlayback.convertedOriginal(next);
   const choices = (next.qualities || uburoom.QUALITIES).map(q => maximum && q.id === 'direct' ? {...q,label:q.label.replace(/^Original/,'Maximum')} : q);
-  $('quality-detail').textContent = maximum ? 'Converted to '+(next.deliveryInfo.videoCodec || 'another format').toUpperCase()+' at the highest quality available.' : '';
-  $('quality-detail').hidden = !maximum;
+  $('quality-detail').textContent = next.fallbackActive ? 'Using fallback · '+next.fallbackStream.height+'p · '+next.fallbackStream.bitrate+' Mbps' : maximum ? 'Converted to '+(next.deliveryInfo.videoCodec || 'another format').toUpperCase()+' at the highest quality available.' : '';
+  $('quality-detail').hidden = !maximum && !next.fallbackActive;
   if (JSON.stringify([...$('quality').options].map(o => [o.value,o.textContent])) !== JSON.stringify(choices.map(q => [q.id,q.label]))) {
     const previous=$('quality').value;
     $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));

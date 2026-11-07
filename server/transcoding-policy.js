@@ -41,9 +41,13 @@ class ConversionPolicy {
       for (let i = 0; i < count && i < this.waiters.length; i++) this.waiters[i]?.();
     };
   }
-  async wait({signal,authorized,timeoutMs=8000}={}) {
+  async wait({signal,authorized,timeoutMs=8000,background=false}={}) {
     if(signal?.aborted || authorized && !await authorized())throw this.failure('Conversion waiting cancelled: viewing access expired or selection changed.');
     if(!this.settings)return ()=>{};
+    if(background) {
+      if(this.waiters.length || this.jobs.size>=this.settings.maxJobs)throw Object.assign(this.failure('Conversion capacity is reserved for viewers.'),{conversionCapacity:true});
+      return this.acquire();
+    }
     if(!this.waiters.length && this.jobs.size<this.settings.maxJobs)return this.acquire();
     if(this.waiters.length>=32)throw Object.assign(this.failure('Too many players are waiting for conversion. Try again shortly.'),{conversionCapacity:true});
     const until=Date.now()+timeoutMs;

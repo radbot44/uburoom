@@ -56,7 +56,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   }
   async function validGrant(grant) {
     return grant && grant.expires > Date.now() && await grant.alive() && watch.rooms.get(grant.room.s.roomId) === grant.room &&
-      grant.version === grant.room.mediaVersion && grant.room.viewers.get(grant.viewerId)?.media === grant.media &&
+      grant.version === grant.room.mediaVersion && (grant.fallback ? watch.fallbackFor(grant.room,grant.room.viewers.get(grant.viewerId)||{}) === grant.media : grant.room.viewers.get(grant.viewerId)?.media === grant.media) &&
       grant.streamVersion === grant.room.viewers.get(grant.viewerId)?.streamVersion && await watch.canView(grant.room, grant.actor);
   }
   async function validCaptionGrant(grant, captionVersion) {
@@ -65,9 +65,10 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       grant.version === grant.room.mediaVersion && viewer?.media?.captionVersion === captionVersion &&
       await watch.canView(grant.room, grant.actor);
   }
-  function mediaGrant(room, auth, req, viewerId) {
+  function mediaGrant(room, auth, req, viewerId, fallback = false) {
     const viewer = room.viewers.get(viewerId);
-    if (!viewer?.media || viewer.media.playbackError) return;
+    const media=fallback?watch.fallbackFor(room,viewer||{}):viewer?.media;
+    if (!media || media.playbackError) return;
     const credential = req.headers.authorization || cookies(req).uburoom;
     for (const g of grants.values()) {
       if (g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion &&
@@ -78,7 +79,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         g.expires = Date.now() + 15000;
       }
     }
-    const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion);
+    const existing = [...grants.values()].find(g => g.room === room && g.viewerId === viewerId && g.actor.userId === auth.actor.userId && g.version === room.mediaVersion && g.streamVersion === viewer.streamVersion && g.media===media && !!g.fallback===fallback);
     if (existing && (existing.credential === credential || Boolean(req.headers.authorization) === Boolean(existing.headers?.authorization))) {
       existing.credential = credential;
       existing.headers = { cookie: req.headers.cookie, authorization: req.headers.authorization };
@@ -87,7 +88,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if (existing) grants.delete(existing.id);
     const id = randomBytes(24).toString('hex');
-    const grant = { id, room, media: viewer.media, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, credential,
+    const grant = { id, room, media, fallback, streamVersion: viewer.streamVersion, actor: auth.actor, viewerId, version: room.mediaVersion, credential,
       headers: { cookie: req.headers.cookie, authorization: req.headers.authorization },
       expires: Date.now() + 15000,
       alive: async () => (await login({ headers: req.controlSocket?.watchHeaders || grant.headers }))?.userId === auth.actor.userId };
@@ -180,6 +181,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if (!await validGrant(grant)) return json(res, 403, { error: 'Viewing access expired or was revoked' });
     const media = grant.media;
+    if(media.bootstrapFallback)return json(res,409,{error:'Your selected quality is still preparing.'});
     // A direct output never serves video through this process, even if a client
     // tries a stale or manually constructed resource URL. Its start is text only.
     if(media.directHls && key==='start' && !media.initialManifest)return json(res,409,{error:'Direct Plex playlist unavailable'});
@@ -195,7 +197,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const cancel = () => abort.abort(); res.on('close', cancel);
       const check = setInterval(async () => { try { if (!await validGrant(grant)) abort.abort(); } catch { abort.abort(); } }, 2000);
       try {
-        const chunk = await watch.plex.av1.chunk(media.av1Lease, index, abort.signal, { urgent: Math.abs(index - Math.floor(watch.position(grant.room) / CHUNK)) <= 1 }), bytes = chunk[match[1]];
+        const background=req.headers['x-uburoom-prefetch']==='1';
+        const chunk = await watch.plex.av1.chunk(media.av1Lease, index, abort.signal, { urgent: !background && Math.abs(index - Math.floor(watch.position(grant.room) / CHUNK)) <= 1,background }), bytes = chunk[match[1]];
         if (abort.signal.aborted || !await validGrant(grant)) return;
         res.writeHead(200, {'Content-Type':'video/webm','Content-Length':bytes.length});
         if (req.method === 'HEAD') res.end(); else await pipeline(Readable.from([bytes]), res);
