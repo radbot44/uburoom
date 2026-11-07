@@ -1600,7 +1600,7 @@ function handleHlsError(client, data) {
     return;
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
-    fallbackDetail=[data.details,data.sourceBufferName,data.frag?.type,data.frag?'sn '+data.frag.sn:'',(data.error||data.err)?.message,'at '+video.currentTime.toFixed(1)+'/'+expected()?.toFixed(1)].filter(Boolean).join(' ');
+    fallbackDetail=[data.details,data.sourceBufferName,data.frag?.type,data.frag?'sn '+data.frag.sn:'',(data.error||data.err)?.message,'at '+video.currentTime+'/'+expected()].filter(Boolean).join(' ');
     void compatibleFallback(['quota-exceeded','buffer-full','buffer-append'].includes(detail)?'The browser could not append video data.':'The browser media pipeline failed.'); return;
   }
   stopHls('fatal');
