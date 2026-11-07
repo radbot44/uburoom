@@ -1,7 +1,7 @@
 'use strict';
 // AV1/VP9/VP8 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
-const SWITCH_MARGIN = 5;
+const SWITCH_MARGIN = 5, MIN_SWITCH_MARGIN = 2;
 class uburoomAV1 {
   constructor(video, url, target, failed, requiredAttempts = 3) {
     this.video = video; this.url = url; this.target = target; this.failed = failed; this.requiredAttempts = requiredAttempts;
@@ -165,7 +165,9 @@ class uburoomAV1 {
     if (this.nextUrl) {
       this.url = this.nextUrl; this.nextUrl = undefined; this.endSignalled = false;
       // Keep one more chunk when the boundary is too close for the new stream to arrive.
-      const keep = (first + 1) * this.seconds - target < SWITCH_MARGIN ? first + 1 : first;
+      // Recent chunk times say how close that is, with room for a heavier quality.
+      const margin = this.chunkTime ? Math.min(SWITCH_MARGIN,Math.max(MIN_SWITCH_MARGIN,this.chunkTime * 2 + .5)) : SWITCH_MARGIN;
+      const keep = (first + 1) * this.seconds - target < margin ? first + 1 : first;
       await this.evict([...this.appended].filter(index => index > keep));
       if (superseded()) return;
     }
@@ -193,7 +195,7 @@ class uburoomAV1 {
         if (superseded() || !space) break;
       }
       let videoBytes, audioBytes;
-      const request = this.request = new AbortController();
+      const request = this.request = new AbortController(), began = Date.now();
       try {
         [videoBytes,audioBytes] = await Promise.all(['video','audio'].map(async track => {
           const res = await this.fetch(this.url.replace(/\/start$/, '/chunk-' + track + '-' + index));
@@ -215,6 +217,8 @@ class uburoomAV1 {
       // A shared seek may have happened while FFmpeg was running. Don't append
       // stale work; the next pump requests the authoritative position instead.
       if (superseded()) break;
+      const seconds = (Date.now() - began) / 1000;
+      this.chunkTime = this.chunkTime ? Math.max(seconds,this.chunkTime * .7 + seconds * .3) : seconds;
       if (this.prefetchFailure?.index === index) this.prefetchFailure = undefined;
       const bytes = videoBytes.byteLength + audioBytes.byteLength;
       if (index > first) {
