@@ -117,7 +117,7 @@ test('AV1 isolates source audio and Plex scopes, maps the exact stream and refus
   const missing=manager.acquire({...source,audioIndex:9},'direct'), signal=new AbortController().signal;
   try {
     assert.notEqual(a.group,b.group);assert.notEqual(a.group,c.group);
-    await manager.chunk(b,0,signal);assert.deepEqual(maps,[['0:v:0','0:4']]);
+    await manager.chunk(b,0,signal);assert.deepEqual(maps,[['0:v:0','1:4']]);
     await assert.rejects(manager.chunk(missing,0,signal),/selected audio track/);assert.equal(maps.length,1);
   } finally {for(const lease of [a,b,c,missing])manager.release(lease);await manager.close();}
 });

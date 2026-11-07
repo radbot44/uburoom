@@ -5,7 +5,7 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { randomBytes, randomUUID } = require('node:crypto');
 const { UUID, hash } = require('./core');
-const { PlaybackError, CHUNK, AUDIO_MIME } = require('./av1');
+const { PlaybackError, CHUNK, AUDIO_LEAD, AUDIO_MIME } = require('./av1');
 const { Handoff, SECRET } = require('./handoff');
 const Playback = require('../web/playback-policy');
 const Subtitles = require('./subtitles');
@@ -185,7 +185,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     if(media.directHls && key==='start' && !media.initialManifest)return json(res,409,{error:'Direct Plex playlist unavailable'});
     if(media.directHls && key!=='start')return json(res,409,{error:'Use the direct Plex media route'});
     if (Playback.localFormat(media.format)) {
-      if (key === 'start') return json(res, 200, { format:media.format, mime:Playback.LOCAL_CODECS[media.format], audioMime:AUDIO_MIME, chunkSeconds:CHUNK, duration:media.duration,buffer:Playback.BUFFER });
+      if (key === 'start') return json(res, 200, { format:media.format, mime:Playback.LOCAL_CODECS[media.format], audioMime:AUDIO_MIME, chunkSeconds:CHUNK, audioLead:AUDIO_LEAD, duration:media.duration,buffer:Playback.BUFFER });
       const match = /^chunk-(video|audio)-(\d{1,9})$/.exec(key), index = Number(match?.[2]);
       // The authoritative timeline selects source time. The grant cannot be used
       // as an arbitrary transcoding API, even by an authenticated viewer.

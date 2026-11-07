@@ -45,7 +45,7 @@ test('VP8 and VP9 chunks share only identical codec/source/quality/audio and pre
     const signal=new AbortController().signal;
     assert.equal(await manager.chunk(a,0,signal),await manager.chunk(b,0,signal));
     await manager.chunk(c,0,signal);assert.deepEqual(encodes.map(v=>v.encoder),['libvpx-vp9','libvpx']);
-    assert.deepEqual(encodes[0].maps,['0:v:0','0:2']);assert.equal(policy.jobs.size,0);
+    assert.deepEqual(encodes[0].maps,['0:v:0','1:2']);assert.equal(policy.jobs.size,0);
     policy.settings.formats=['vp8'];await assert.rejects(manager.chunk(a,1,signal),/VP9.*not offered/);
   }finally{for(const lease of [a,b,c])manager.release(lease);await manager.close();}
 });

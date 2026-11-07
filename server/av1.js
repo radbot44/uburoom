@@ -12,6 +12,10 @@ const { pipeline } = require('node:stream/promises');
 const { qualityDefinition, qualityId } = require('../shared/room-protocol');
 const Playback = require('../web/playback-policy');
 const CHUNK = Playback.BUFFER.chunkSeconds;
+// Audio starts this early so Opus has settled before the chunk's first sample, and the
+// player keeps only the chunk's own window. 312 samples of encoder delay plus ten
+// 20 ms frames puts a packet edge exactly on the chunk boundary.
+const AUDIO_LEAD_SAMPLES = 9912, AUDIO_LEAD = AUDIO_LEAD_SAMPLES / 48000;
 const { processMemory } = require('./process-memory');
 const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
 class PlaybackError extends Error {}
@@ -428,7 +432,7 @@ class AV1 {
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
           const selectedAudio = source.audioIndex !== undefined ? audioStreams.find(s=>s.index===source.audioIndex) : audioStreams[source.audioOrdinal ?? 0];
           if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
-          const audioMap = source.audioIndex !== undefined ? '0:'+source.audioIndex : '0:a:'+(source.audioOrdinal ?? 0);
+          const audioMap = input => source.audioIndex !== undefined ? input+':'+source.audioIndex : input+':a:'+(source.audioOrdinal ?? 0);
           const duration = String(Math.min(CHUNK, source.duration - start));
           const burn = await this.burnInput(source,url,start,Number(duration),controller.signal);
           const runIn = burn?.runIn || 0;
@@ -439,17 +443,19 @@ class AV1 {
             return ['-map','0:v:0','-an','-filter_threads','2','-vf',filter+text];
           };
           const silence = spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo'];
-          const audio = ['-t',duration,'-map',spec.audio ? audioMap : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
-            '-af','asetpts=PTS-STARTPTS','-f','webm','-live','1','-cluster_time_limit','1000'];
+          const audioInput = ['-ss',String(Math.max(0,start-AUDIO_LEAD)),'-i',url];
+          // The first chunk has nothing before it, so silence takes the lead's place.
+          const audio = input => ['-t',String(Number(duration)+AUDIO_LEAD+.04),'-map',spec.audio ? audioMap(input) : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
+            '-af','asetpts=PTS-STARTPTS'+(start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),'-f','webm','-live','1','-cluster_time_limit','1000'];
           const command = (selected, route) => [
             '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start-runIn),'-i',url,
-            ...(burn?.bitmap ? [] : silence),
+            ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
             '-t',duration,...video(route),
             '-sn','-dn','-map_metadata','-1','-map_chapters','-1',
             ...encoderArgs(selected,codec),...rateArgs(selected,codec,spec.bitrate),
             ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
             '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
-            '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',...(burn?.bitmap ? [] : [...audio,'pipe:3'])];
+            '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',...(burn?.bitmap ? [] : [...audio(1),'pipe:3'])];
           // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
           // run-in for image subtitles adds about the same again.
           const encode = async (selected, route) => {
@@ -457,7 +463,7 @@ class AV1 {
             if (!burn?.bitmap) return job(command(selected,route));
             // Audio in the same process as an image overlay runs about ten times slower.
             const [video,sound] = await Promise.all([job(command(selected,route)),
-              job(['-hide_banner','-loglevel','error','-nostdin','-ss',String(start),'-i',url,...silence,...audio,'pipe:1'])]);
+              job(['-hide_banner','-loglevel','error','-nostdin',...audioInput,...silence,...audio(0),'pipe:1'])]);
             return {video,audio:sound};
           };
           const routes = this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : [];
@@ -541,4 +547,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };

@@ -42,7 +42,7 @@ class uburoomAV1 {
     try { manifest = await response.json(); }
     catch (error) { error.retryable = true; throw error; }
     if (this.abort.signal.aborted) return;
-    this.duration = manifest.duration; this.seconds = manifest.chunkSeconds;
+    this.duration = manifest.duration; this.seconds = manifest.chunkSeconds; this.audioLead = manifest.audioLead;
     // This only validates the transport; playback/frame evidence chooses fallback.
     this.buffer = this.source.addSourceBuffer(manifest.mime);
     this.audio = this.source.addSourceBuffer(manifest.audioMime);
@@ -108,11 +108,16 @@ class uburoomAV1 {
   }
   async append(index,videoBytes,audioBytes,first) {
     const attempt = async () => {
-      this.buffer.timestampOffset = this.audio.timestampOffset = index * this.seconds + .01;
+      const start = index * this.seconds + .01, end = Math.min(this.duration + .1,(index + 1) * this.seconds + .01);
+      this.buffer.timestampOffset = start;
       // A fractional last frame can overlap the next chunk's keyframe. During
-      // refill, MSE would then remove dependent frames from that good chunk.
-      // Bound each pair to its source window before any out-of-order append.
-      this.buffer.appendWindowEnd = this.audio.appendWindowEnd = Math.min(this.duration + .1,(index + 1) * this.seconds + .01);
+      // refill, MSE would then remove dependent frames from that good chunk, so
+      // bound the chunk. In order, the window would instead drop that last frame.
+      this.buffer.appendWindowEnd = this.appended.has(index + 1) ? end : end + .1;
+      // Keep only this chunk's packets of the audio that started early. The margins
+      // cover WebM's millisecond timestamps around packet edges on the boundaries.
+      this.audio.timestampOffset = start - this.audioLead;
+      this.audio.appendWindowStart = 0; this.audio.appendWindowEnd = end + .002; this.audio.appendWindowStart = start - .002;
       const results = await Promise.allSettled([
         this.operation(this.buffer,() => this.buffer.appendBuffer(videoBytes)),
         this.operation(this.audio,() => this.audio.appendBuffer(audioBytes))
