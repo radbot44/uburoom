@@ -351,20 +351,20 @@ class AV1 {
       if (track.external) throw new PlaybackError('External image subtitles cannot be burned by local conversion.');
       return { bitmap:true, runIn:Math.min(BITMAP_RUN_IN,start) };
     }
-    let data;
+    let data, offset = start;
     if (track.external) {
       const key = /\.[a-z0-9]+$/.test(track.key) ? track.key : track.key+'.'+({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec);
       const response = await (source.plexContext||this.plex).request(key,{signal,headers:{Accept:'*/*'}});
       if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
       data = Buffer.from(await response.arrayBuffer());
     } else {
-      // Source timestamps, so cue times do not depend on the keyframe the seek landed on.
-      data = await this.run(this.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-ss',String(Math.max(0,start-TEXT_RUN_IN)),'-copyts','-i',url,'-to',String(start+duration),'-map','0:'+track.index,'-c:s','ass','-f','ass','pipe:1'],signal,20000,4*1024*1024);
+      offset = Math.min(TEXT_RUN_IN,start);
+      data = await this.run(this.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-ss',String(start-offset),'-i',url,'-t',String(offset+duration),'-map','0:'+track.index,'-c:s','ass','-f','ass','pipe:1'],signal,20000,4*1024*1024);
     }
     if (!data.length) return;
     const directory = await fs.mkdtemp(path.join(os.tmpdir(),'uburoom-burn-')), file = path.join(directory,'subtitle.'+(track.external ? ({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec) : 'ass'));
     await fs.writeFile(file,data);
-    return { file, offset:start, cleanup:() => fs.rm(directory,{recursive:true,force:true}) };
+    return { file, offset, cleanup:() => fs.rm(directory,{recursive:true,force:true}) };
   }
   async slot(signal, action, owner, priority = { urgent: true }) {
     if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
