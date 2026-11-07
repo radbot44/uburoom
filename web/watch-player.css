@@ -21,6 +21,7 @@
 @media(hover:hover){.stage:not(.touch-controls):hover .player-chrome,.stage:not(.touch-controls):hover .center-play{opacity:1;pointer-events:auto}}
 .stage.mouse-idle:not(.paused):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open):not(:has(:focus-visible)) :is(.player-chrome,.center-play){opacity:0;pointer-events:none}
 .stage.mouse-idle:not(.paused):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open):not(:has(:focus-visible)),.stage.mouse-idle:not(.paused):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open):not(:has(:focus-visible)) *{cursor:none}
+#frame-hold{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 .center-play:disabled,.stage.settings-open .center-play,.stage.drawer-open .center-play,.stage.remote-open .center-play{opacity:0;pointer-events:none}
 .center-play:disabled{display:none!important}
 .stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open):not(.drawer-open):not(.remote-open) .player-chrome,.stage.touch-controls:not(.controls-visible):not(.blocked):not(.settings-open) .center-play{opacity:0;pointer-events:none}

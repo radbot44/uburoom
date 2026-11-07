@@ -61,8 +61,15 @@
   // A film whose audio starts late has opening segments that declare audio but hold
   // none, and the player then builds no audio track for the audio that follows. Silence
   // fills them up to the first audio. Later segments stream untouched.
-  function silentAudioLoader() {
+  // A cache lets a stream load out of sight while another plays: recording keeps each
+  // finished segment by number, and the real player then reads them from memory.
+  function silentAudioLoader(cache) {
     let audioFrom=Infinity;
+    const keep=(frag,data)=>{
+      if(!cache?.recording || cache.segments.has(frag.sn) || cache.bytes+data.byteLength>CACHE_BYTES)return;
+      // hls.js hands each segment to its worker, which empties the original buffer.
+      cache.segments.set(frag.sn,data.slice(0));cache.bytes+=data.byteLength;
+    };
     return class {
       constructor(config) { this.loader=new config.loader(config); }
       get stats() { return this.loader.stats; }
@@ -72,8 +79,15 @@
       getCacheAge() { return this.loader.getCacheAge?.() ?? null; }
       getResponseHeader(name) { return this.loader.getResponseHeader?.(name) ?? null; }
       load(context,config,callbacks) {
-        const frag=context.frag;
-        if(!frag || frag.sn==='initSegment' || frag.type!=='main' || frag.start>=audioFrom)return this.loader.load(context,config,callbacks);
+        const frag=context.frag,saved=frag?.type==='main' ? cache?.segments.get(frag.sn) : undefined;
+        if(saved) {
+          cache.segments.delete(frag.sn);
+          const stats=this.loader.stats,now=performance.now();
+          stats.loading.start=stats.loading.first=stats.loading.end=now;stats.loaded=stats.total=saved.byteLength;
+          queueMicrotask(()=>{callbacks.onProgress?.(stats,context,saved,null);callbacks.onSuccess({url:context.url,data:saved},stats,context,null);});
+          return;
+        }
+        if(!frag || frag.sn==='initSegment' || frag.type!=='main' || frag.start>=audioFrom && !cache?.recording)return this.loader.load(context,config,callbacks);
         const chunks=[];
         this.loader.load(context,config,{...callbacks,onProgress:(stats,loaded,data)=>{chunks.push(new Uint8Array(data));},
           onSuccess:(response,stats,loaded,details)=>{
@@ -84,21 +98,23 @@
             const missing=hasAudio?(found.audioPts-found.pts)/90000:frag.duration+.05;
             const silence=found?.audioPid!==undefined && found.pts!==undefined && missing>.05 ? silentAudioPackets(found.audioPid,found.pts,missing) : undefined;
             const at=found?.audioAt??bytes.length,data=silence?join([bytes.subarray(0,at),silence,bytes.subarray(at)]).buffer:bytes.buffer;
+            keep(frag,data);
             callbacks.onProgress?.(stats,loaded,data,details);
             callbacks.onSuccess({...response,data},stats,loaded,details);
           }});
       }
     };
   }
+  const CACHE_BYTES=96*1024*1024;
   function join(parts) {
     const joined=new Uint8Array(parts.reduce((total,part)=>total+part.length,0));let at=0;
     for(const part of parts){joined.set(part,at);at+=part.length;}
     return joined;
   }
-  function hlsConfig(bitrateKbps,direct=false) {
+  function hlsConfig(bitrateKbps,direct=false,cache) {
     // Establish transport timestamps from the first segment before any seek.
     const config={enableWorker:true,startPosition:0,maxLiveSyncPlaybackRate:1,
-      maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024),fLoader:silentAudioLoader()};
+      maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024),fLoader:silentAudioLoader(cache)};
     if(direct) {
       // A failed optional direct playlist or segment should refresh or fall back,
       // rather than spend the normal HLS retry budget on a stale or unreachable session.

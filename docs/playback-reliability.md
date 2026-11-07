@@ -112,3 +112,7 @@ References: [clock filtering](https://www.rfc-editor.org/rfc/rfc5905.html), [med
 ## Late audio
 
 Some films start their audio well after their video, so opening HLS segments declare audio but hold none. The player would build no audio track from them and fail when audio arrives. The browser adds silent 48 kHz stereo AAC to those segments, up to the first real audio, and leaves the video untouched. This relies on Plex's stereo AAC output and an audio track declared in each segment; anything else keeps the existing recovery and fallback.
+
+## Quality swaps
+
+A quality change that needs a new stream type plays out the current buffer while the new stream loads in a hidden element, which fills a memory cache the real player then reads. The swap happens once that stream reaches the room position, or before the buffer runs out if it is too slow. Phones and Activity keep the plain swap. Seeking, pausing or changing the video ends the wait at once.

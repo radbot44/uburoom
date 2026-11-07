@@ -105,6 +105,8 @@ Owner-approved 2026-11-06: Original means the viewer is getting the source. When
 
 Owner-approved 2026-11-07: in desktop fullscreen a mouse at rest for 2.5 seconds hides the controls and pointer during playback. They stay while paused, over the controls, or with a menu or drawer open. On iPhone the Fullscreen button uses native video fullscreen, which has Apple's controls; text subtitles use native captions there and other subtitle formats need Burn-in.
 
+Owner-approved 2026-11-07: a quality change between stream types keeps the current stream playing until the new one is ready, and the last frame stays on screen through the swap.
+
 Owner-approved 2026-11-07: the watch page declares `darkreader-lock` so Dark Reader cannot recolour the subtitle outline. uburoom has its own dark and light themes.
 
 Owner-approved 2026-11-06: text subtitles draw in their own layer over the player, not as browser cues. They default to a solid VLC-style outline (labelled Shadow), scale with the player through Small, Medium and Large, and stay on the visible picture unless Text position is On player. They remain visible when controls hide and lift only when the controls would cover them. ASS and bitmap subtitles keep their authored placement.

@@ -1465,6 +1465,107 @@ function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = fal
   if (isEnding) renderEnding(state);
   $('ready-status').textContent = '';
 }
+function hlsClientConfig(next,cache) {
+  const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling,!!next.directHls,cache);
+  if(next.directHls) {
+    // FetchLoader rejects redirects and adds only this viewer's temporary
+    // credential to resources under the pinned Plex output session.
+    config.progressive=true;
+    config.fetchSetup=(context,init)=>{
+      try {
+        const url=new URL(context.url,location.href);
+        const target=url.href===new URL(next.mediaUrl,location.href).href?url.href:uburoomPlayback.directHlsUrl(url.href,next.directHls);
+        return new Request(target,{...init,credentials:url.origin===location.origin?'same-origin':'omit',redirect:'error',referrerPolicy:'no-referrer'});
+      }catch{return Promise.reject(new Error('Direct Plex resource unavailable'));}
+    };
+  }
+  return config;
+}
+// A quality change keeps the current stream playing from its buffer while the new one
+// loads out of sight, and swaps only once it reaches the room's position. A new stream
+// that is too slow or fails falls back to the plain swap before the buffer runs out.
+const HOLD_LIMIT_MS=20000,HOLD_RESERVE=1.5;
+let heldStream,preparedStream,lastQualityRequest=0;
+function canHoldStream(next) {
+  if(activity || document.body.classList.contains('mobile-player') || !(hls || av1) || !state?.mediaUrl || playbackError)return false;
+  if(Date.now()-lastQualityRequest>10000 || video.readyState<3 || uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)<=HOLD_RESERVE+1)return false;
+  return next.format==='hls' && Hls.isSupported() || uburoomPlayback.localFormat(next.format) || fileNeedsAudioStream(next);
+}
+const fileNeedsAudioStream=next=>next.format==='file' && /^(h264|avc1)$/i.test(next.videoCodec || '') && (config.outputs || ['plex']).includes('plex') &&
+  uburoomPlayback.needsCompatible(next,type => video.canPlayType(type));
+function holdStream(next) {
+  const hold=heldStream={next};
+  hls?.stopLoad(); av1?.hold();
+  const room=uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)-HOLD_RESERVE;
+  hold.timer=setTimeout(()=>{if(heldStream===hold)releaseStream();},Math.min(HOLD_LIMIT_MS,room*1000/Math.max(video.playbackRate,1)));
+  prepareHeldStream(hold);
+}
+function prepareHeldStream(hold) {
+  const next=hold.next;
+  hold.client?.destroy(); hold.client=undefined; hold.request?.abort(); hold.cache=undefined;
+  if(fileNeedsAudioStream(next))return void requestAudioStream(hold);
+  if(uburoomPlayback.localFormat(next.format)) {
+    // The server keeps a finished chunk, so asking for it here makes the swap immediate.
+    const index=Math.floor((expected()+1)/uburoomPlayback.BUFFER.chunkSeconds),request=hold.request=new AbortController();
+    void Promise.all(['video','audio'].map(track=>fetch(next.mediaUrl.replace(/\/start$/,'/chunk-'+track+'-'+index),{signal:request.signal}).then(response=>response.arrayBuffer())))
+      .catch(()=>{}).finally(()=>{if(heldStream===hold && hold.request===request)releaseStream();});
+    return;
+  }
+  const cache=hold.cache={recording:true,bytes:0,segments:new Map()},element=document.createElement('video');
+  element.muted=true;
+  const client=hold.client=new Hls({...hlsClientConfig(next,cache),maxBufferLength:15,maxMaxBufferLength:30});
+  let anchored=false;
+  client.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal && heldStream===hold && hold.client===client)releaseStream();});
+  client.on(Hls.Events.FRAG_LOADED,()=>{if(hold.client===client && !anchored)client.pauseBuffering();});
+  client.on(Hls.Events.FRAG_BUFFERED,()=>{
+    if(heldStream!==hold || hold.client!==client)return;
+    const target=expected()+1;
+    if(!anchored) {anchored=true;element.currentTime=target;client.resumeBuffering?.();client.startLoad(target);}
+    if(uburoomPlayback.bufferedAhead(element.buffered,target)>=1)releaseStream();
+  });
+  client.loadSource(next.mediaUrl); client.attachMedia(element);
+}
+// Plex copies H.264 and converts only the audio, so skip the file the browser cannot play.
+async function requestAudioStream(hold) {
+  const started=Date.now();
+  while(qualityPending && heldStream===hold && Date.now()-started<3000)await new Promise(resolve=>setTimeout(resolve,30));
+  if(heldStream!==hold)return;
+  try { await execute({action:'media.quality.set',args:{quality:hold.next.preferredQuality || preferredQuality || hold.next.quality,fallback:'audio',reason:'The browser does not support the original codecs.'}}); }
+  catch { if(heldStream===hold)releaseStream(); }
+}
+function dropHeldStream() {
+  const hold=heldStream; heldStream=undefined;
+  if(!hold)return;
+  clearTimeout(hold.timer); hold.request?.abort();
+  const client=hold.client; hold.client=undefined; client?.destroy();
+  return hold;
+}
+function releaseStream() {
+  const hold=dropHeldStream();
+  if(!hold)return;
+  lastQualityRequest=0;
+  if(hold.cache){hold.cache.recording=false;preparedStream={url:hold.next.mediaUrl,cache:hold.cache};}
+  applyState(hold.next);
+}
+// The picture stays on the last frame through the gap the swap cannot avoid. The first
+// frame of a new stream is the anchor, so wait for the real one at the room's position.
+let frameHold,frameHoldTimer;
+function holdLastFrame() {
+  if(video.readyState<2 || !video.videoWidth)return;
+  if(!frameHold) {frameHold=document.createElement('canvas');frameHold.id='frame-hold';frameHold.hidden=true;video.after(frameHold);}
+  frameHold.width=video.videoWidth;frameHold.height=video.videoHeight;frameHold.style.scale=video.style.scale;frameHold.style.translate=video.style.translate;
+  try {frameHold.getContext('2d').drawImage(video,0,0);} catch {return;}
+  frameHold.hidden=false;
+  clearTimeout(frameHoldTimer);frameHoldTimer=setTimeout(releaseLastFrame,8000);
+  const shown=()=>{
+    if(frameHold.hidden)return;
+    if(sync.timelinePending || video.seeking || video.readyState<2)return void video.requestVideoFrameCallback(shown);
+    releaseLastFrame();
+  };
+  if(video.requestVideoFrameCallback)queueMicrotask(()=>video.requestVideoFrameCallback(shown));
+  else video.addEventListener('playing',releaseLastFrame,{once:true});
+}
+function releaseLastFrame() {clearTimeout(frameHoldTimer);if(frameHold)frameHold.hidden=true;}
 function stopHls(reason) {
   if(hls)diagnosticSample('hls-stop',{reason});
   clearTimeout(hls?.refreshRetryTimer);
@@ -1717,7 +1818,7 @@ async function execute(command) {
   if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused &&
       (autoplayBlocked || readyVersion !== state.mediaVersion) && expected() < state.state.duration - .1) await unlockLocal();
   const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
-  if(qualityChange)qualityPending=qualityRequest;else if(volumeChange)volumePending=true;else pending=true;
+  if(qualityChange){qualityPending=qualityRequest;lastQualityRequest=Date.now();}else if(volumeChange)volumePending=true;else pending=true;
   fail('');renderTransport();
   if(command.action.startsWith('media.seek') || ['media.load','media.next','media.previous','queue.history.replay','queue.playNow'].includes(command.action))choppyDetector.interrupt();
   diagnosticSample('command-start',{action:command.action});
@@ -2126,6 +2227,18 @@ function applyState(next) {
   const seamless = !mediaChanged && !!av1 && mediaSource !== next.mediaUrl && uburoomPlayback.localFormat(next.format) && state?.format === next.format &&
     state.tracks?.audioId === next.tracks?.audioId && burned(state) === burned(next);
   const changed = !seamless && (mediaChanged || mediaSource !== next.mediaUrl);
+  if(heldStream) {
+    const held=heldStream.next;
+    if(next.id===held.id && next.mediaVersion===held.mediaVersion && next.readinessVersion===held.readinessVersion && next.state?.paused===state?.state?.paused) {
+      const replaced=next.mediaUrl!==held.mediaUrl;
+      heldStream.next=next;
+      if(replaced)prepareHeldStream(heldStream);
+      return;
+    }
+    // Someone seeked, paused or changed the video, so the new stream is needed now.
+    dropHeldStream();
+  }
+  if(changed && !mediaChanged && canHoldStream(next))return void holdStream(next);
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
@@ -2139,6 +2252,7 @@ function applyState(next) {
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
   if (seamless) { mediaSource = next.mediaUrl; av1.switchStream(next.mediaUrl); }
   if (changed) {
+    if(!mediaChanged)holdLastFrame();
     clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       stage.classList.remove('ending-active');
@@ -2155,19 +2269,8 @@ function applyState(next) {
         catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
       } else if (next.format === 'hls' && Hls.isSupported()) {
         sync.prepare({timeline:true});
-        const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling,!!next.directHls);
-        if(next.directHls) {
-          // FetchLoader rejects redirects and adds only this viewer's temporary
-          // credential to resources under the pinned Plex output session.
-          config.progressive=true;
-          config.fetchSetup=(context,init)=>{
-            try {
-              const url=new URL(context.url,location.href);
-              const target=url.href===new URL(next.mediaUrl,location.href).href?url.href:uburoomPlayback.directHlsUrl(url.href,next.directHls);
-              return new Request(target,{...init,credentials:url.origin===location.origin?'same-origin':'omit',redirect:'error',referrerPolicy:'no-referrer'});
-            }catch{return Promise.reject(new Error('Direct Plex resource unavailable'));}
-          };
-        }
+        const config=hlsClientConfig(next,preparedStream?.url===next.mediaUrl?preparedStream.cache:undefined);
+        preparedStream=undefined;
         const client = hls = new Hls(config);
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         client.on(Hls.Events.LEVEL_LOADED, (_, data) => {

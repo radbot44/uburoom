@@ -13,6 +13,8 @@ class uburoomAV1 {
     this.source.addEventListener('sourceopen', () => this.start().catch(error => this.fail(error)), {once:true});
     video.src = this.objectUrl;
   }
+  // The next stream is loading elsewhere: play what is buffered and fetch no more.
+  hold() { this.held = true; this.request?.abort(); }
   restart() {
     this.seekVersion++; this.request?.abort();
     if (!this.pumping) { clearTimeout(this.timer); this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)),0); }
@@ -144,7 +146,7 @@ class uburoomAV1 {
     return true;
   }
   async pump() {
-    if (this.abort.signal.aborted || this.pumping || !this.buffer) return;
+    if (this.abort.signal.aborted || this.pumping || !this.buffer || this.held) return;
     this.pumping = true; clearTimeout(this.timer);
     const version = this.seekVersion;
     try { await this.fill(); }
