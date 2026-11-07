@@ -13,10 +13,91 @@
     const info=state?.deliveryInfo;
     return state?.quality==='direct' && !!info && info.format!=='file' && !['multiple-audio','audio-conversion'].includes(info.reason);
   }
+  // Reads what a transport stream segment holds: its AAC audio pid, where and when its
+  // audio starts, and when its first picture plays. Other containers return undefined.
+  function transportAudio(bytes) {
+    if(!bytes.length || bytes.length%188 || bytes[0]!==0x47)return undefined;
+    let programPid,videoPid,audioPid,audioAt,audioPts,pts;
+    for(let at=0;at<bytes.length;at+=188) {
+      if(bytes[at]!==0x47)return undefined;
+      const pid=(bytes[at+1]&31)<<8|bytes[at+2],start=!!(bytes[at+1]&64),control=bytes[at+3]>>4&3;
+      if(!(control&1))continue;
+      const payload=at+4+(control&2?bytes[at+4]+1:0);
+      if(start && (pid===0 || pid===programPid)) {
+        const table=payload+1+bytes[payload],end=table+3+((bytes[table+1]&15)<<8|bytes[table+2])-4;
+        if(pid===0)programPid=(bytes[table+10]&31)<<8|bytes[table+11];
+        else for(let entry=table+12+((bytes[table+10]&15)<<8|bytes[table+11]);entry<end;entry+=5+((bytes[entry+3]&15)<<8|bytes[entry+4])) {
+          const type=bytes[entry],stream=(bytes[entry+1]&31)<<8|bytes[entry+2];
+          if(type===0x0f)audioPid=stream;
+          if(type===0x1b || type===0x24)videoPid=stream;
+        }
+      } else if(start && (pid===audioPid || pid===videoPid) && bytes[payload+7]&0x80) {
+        const p=payload+9,time=(bytes[p]>>1&7)*2**30+(bytes[p+1]<<22|bytes[p+2]>>1<<15|bytes[p+3]<<7|bytes[p+4]>>1);
+        if(pid===videoPid && (pts===undefined || time<pts))pts=time;
+        if(pid===audioPid && audioAt===undefined){audioAt=at;audioPts=time;}
+      }
+    }
+    return {audioPid,audioAt,audioPts,pts};
+  }
+  // Silent 48 kHz stereo AAC packets for one segment, in the same pid as the real audio.
+  function silentAudioPackets(pid,pts,seconds) {
+    const frame=[0xff,0xf1,0x4c,0x80,0x02,0x1f,0xfc,0x21,0x00,0x49,0x90,0x02,0x19,0x00,0x23,0x80];
+    const frames=Math.min(4000,Math.floor(seconds*48000/1024)),length=8+frames*frame.length,low=pts%2**30;
+    const pes=new Uint8Array(6+length);
+    pes.set([0,0,1,0xc0,length>>8,length&255,0x80,0x80,5,0x21|Math.floor(pts/2**30)<<1,low>>>22&255,low>>>14&0xfe|1,low>>>7&255,low<<1&0xfe|1]);
+    for(let i=0;i<frames;i++)pes.set(frame,14+i*frame.length);
+    const count=Math.ceil(pes.length/184),packets=new Uint8Array(count*188);
+    for(let i=0;i<count;i++) {
+      const at=i*188,chunk=pes.subarray(i*184,i*184+184),spare=184-chunk.length;
+      packets.set([0x47,(i?0:64)|pid>>8,pid&255,(spare?0x30:0x10)|i&15],at);
+      if(spare) {
+        packets[at+4]=spare-1;
+        if(spare>1)packets.fill(0xff,at+5,at+4+spare),packets[at+5]=0;
+      }
+      packets.set(chunk,at+4+spare);
+    }
+    return packets;
+  }
+  // A film whose audio starts late has opening segments that declare audio but hold
+  // none, and the player then builds no audio track for the audio that follows. Silence
+  // fills them up to the first audio. Later segments stream untouched.
+  function silentAudioLoader() {
+    let audioFrom=Infinity;
+    return class {
+      constructor(config) { this.loader=new config.loader(config); }
+      get stats() { return this.loader.stats; }
+      get context() { return this.loader.context; }
+      abort() { this.loader.abort(); }
+      destroy() { this.loader.destroy(); }
+      getCacheAge() { return this.loader.getCacheAge?.() ?? null; }
+      getResponseHeader(name) { return this.loader.getResponseHeader?.(name) ?? null; }
+      load(context,config,callbacks) {
+        const frag=context.frag;
+        if(!frag || frag.sn==='initSegment' || frag.type!=='main' || frag.start>=audioFrom)return this.loader.load(context,config,callbacks);
+        const chunks=[];
+        this.loader.load(context,config,{...callbacks,onProgress:(stats,loaded,data)=>{chunks.push(new Uint8Array(data));},
+          onSuccess:(response,stats,loaded,details)=>{
+            const parts=chunks.length?chunks:[new Uint8Array(response.data)];
+            const bytes=join(parts),found=transportAudio(bytes),hasAudio=found?.audioAt!==undefined;
+            if(hasAudio)audioFrom=Math.min(audioFrom,frag.start);
+            const missing=hasAudio?(found.audioPts-found.pts)/90000:frag.duration;
+            const silence=found?.audioPid!==undefined && found.pts!==undefined && missing>.05 ? silentAudioPackets(found.audioPid,found.pts,missing) : undefined;
+            const at=found?.audioAt??bytes.length,data=silence?join([bytes.subarray(0,at),silence,bytes.subarray(at)]).buffer:bytes.buffer;
+            callbacks.onProgress?.(stats,loaded,data,details);
+            callbacks.onSuccess({...response,data},stats,loaded,details);
+          }});
+      }
+    };
+  }
+  function join(parts) {
+    const joined=new Uint8Array(parts.reduce((total,part)=>total+part.length,0));let at=0;
+    for(const part of parts){joined.set(part,at);at+=part.length;}
+    return joined;
+  }
   function hlsConfig(bitrateKbps,direct=false) {
     // Establish transport timestamps from the first segment before any seek.
     const config={enableWorker:true,startPosition:0,maxLiveSyncPlaybackRate:1,
-      maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024)};
+      maxBufferLength:30,maxMaxBufferLength:180,backBufferLength:30,maxBufferSize:BUFFER.hlsMaxBytes || (256 * 1024 * 1024),fLoader:silentAudioLoader()};
     if(direct) {
       // A failed optional direct playlist or segment should refresh or fall back,
       // rather than spend the normal HLS retry budget on a stale or unreachable session.

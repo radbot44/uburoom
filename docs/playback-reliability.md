@@ -108,3 +108,7 @@ Chrome/Firefox fixture coverage is distinct from real Safari/iOS/Android, Discor
 Measure first frame/audio, stall duration, seek recovery, drift/cadence, track fidelity, encoding headroom and cleanup. Proposed warm direct/remux startup/seek p95 3s/2s and cold conversion 8s/5s are calibration targets, not guarantees. Require scoped two-hour endurance without unexplained interruptions/resource growth before claiming sustained support.
 
 References: [clock filtering](https://www.rfc-editor.org/rfc/rfc5905.html), [media synchronization](https://www.rfc-editor.org/rfc/rfc7272.html), [frame callbacks](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback), [Plex API](https://developer.plex.tv/pms/), [Discord development](https://docs.discord.com/developers/activities/development-guides/local-development).
+
+## Late audio
+
+Some films start their audio well after their video, so opening HLS segments declare audio but hold none. The player would build no audio track from them and fail when audio arrives. The browser adds silent 48 kHz stereo AAC to those segments, up to the first real audio, and leaves the video untouched. This relies on Plex's stereo AAC output and an audio track declared in each segment; anything else keeps the existing recovery and fallback.
