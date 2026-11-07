@@ -1243,6 +1243,7 @@ class Watch {
         if (!room.media || room.media.kind === 'demo') return { status: 'applied', message: 'Preferred quality updated for future videos.' };
         if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
         const version = room.mediaVersion;
+        if (args.reset) { viewer.fallback = undefined; viewer.compatible = false; }
         const fallback = args.fallback || viewer.fallback;
         if(args.fallback)this.hub?.config?.logger?.info('Delivery',`Viewer "${viewer.name || actor.userId}" moving to ${args.fallback}: ${args.reason || 'no reason given'}`);
         viewer.updating = true;

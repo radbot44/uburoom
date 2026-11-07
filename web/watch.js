@@ -104,7 +104,7 @@ let pipWindow = null;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsRecoveryAt = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let providerNoticeTimer, providerNoticeShown = false;
-let av1, localFallbackVersion, localFallbackAttempts = new Set();
+let av1, localFallbackVersion, localFallbackAttempts = new Set(), fallbackDetail;
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
 let observationPending = false, observationQueued = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
@@ -1249,7 +1249,7 @@ async function compatibleFallback(reason, preferHLS = false) {
       if(selected!==id || state?.mediaVersion!==version)return;
       localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason:[reason,fallbackDetail].filter(Boolean).join(' ')}});
         return;
       } catch(error) {
         playbackError=reason+' '+(['plex','audio'].includes(codec)?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
@@ -1413,7 +1413,8 @@ function decodedFrames() {
 }
 function checkVideoFrames() {
   checkChoppyPlayback();
-  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending) { frameStartedAt = undefined; return; }
+  // Hidden or minimized pages may stop producing frames while audio continues.
+  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending || document.visibilityState !== 'visible') { frameStartedAt = undefined; return; }
   frameStartedAt ??= performance.now();
   const frames = decodedFrames();
   if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
@@ -1599,6 +1600,7 @@ function handleHlsError(client, data) {
     return;
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
+    fallbackDetail=[data.details,data.sourceBufferName,data.frag?.type,data.frag?'sn '+data.frag.sn:'',(data.error||data.err)?.message,'at '+video.currentTime+'/'+expected()].filter(Boolean).join(' ');
     void compatibleFallback(['quota-exceeded','buffer-full','buffer-append'].includes(detail)?'The browser could not append video data.':'The browser media pipeline failed.'); return;
   }
   stopHls('fatal');
@@ -1696,7 +1698,7 @@ async function unlockLocal() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (state?.mediaVersion !== version || mediaSource !== source) return false;
-    if (decodedFrames() === 0 || !video.videoWidth) { void compatibleFallback('No video frames were decoded.'); return false; }
+    if ((decodedFrames() === 0 || !video.videoWidth) && document.visibilityState === 'visible') { void compatibleFallback('No video frames were decoded.'); return false; }
     readyVersion = version; autoplayBlocked = false;
     if (state.state.paused) video.pause();
     return true;
@@ -2119,7 +2121,11 @@ function applyState(next) {
   sync.transition(next);
   diagnostics.state(next);
   const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
-  const changed = mediaChanged || mediaSource !== next.mediaUrl;
+  // A new quality of the same converted stream keeps the player and buffer.
+  const burned=value=>value?.tracks?.subtitleDelivery==='burn'?value.tracks.subtitleId:undefined;
+  const seamless = !mediaChanged && !!av1 && mediaSource !== next.mediaUrl && uburoomPlayback.localFormat(next.format) && state?.format === next.format &&
+    state.tracks?.audioId === next.tracks?.audioId && burned(state) === burned(next);
+  const changed = !seamless && (mediaChanged || mediaSource !== next.mediaUrl);
   const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
   const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
   if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
@@ -2131,6 +2137,7 @@ function applyState(next) {
   unavailableToasts(next.unavailableMedia);
   renderProviderNotice(next.providerNotice);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
+  if (seamless) { mediaSource = next.mediaUrl; av1.switchStream(next.mediaUrl); }
   if (changed) {
     clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
@@ -2415,7 +2422,9 @@ $('quality').addEventListener('change', () => {
   savePlayerPreferences({quality:preferredQuality});
   choppyDetector.triggerCooldown(10000, performance.now());
   if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
-  execute({ action: 'media.quality.set', args: { quality: preferredQuality } }).catch(error => fail(error.message));
+  // Choosing a quality starts over, so a fallback from earlier cannot pin this viewer.
+  localFallbackAttempts = new Set();
+  execute({ action: 'media.quality.set', args: { quality: preferredQuality, reset: true } }).catch(error => fail(error.message));
 });
 function updateTimelineTooltip(event) {
   const tooltip = $('timeline-tooltip');

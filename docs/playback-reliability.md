@@ -36,6 +36,7 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 - Same-tab reconnect may preserve personal choices briefly, but needs fresh authorization, epochs, grants and decoded readiness. Leave, close, new tab or changed media cannot inherit old consent.
 - Account revocation/relink fences cached and in-flight credential work.
 - Local WebM recovery trusts actual audio/video buffered ranges over its append ledger: it refills only missing chunks within a bounded retry count and bounds each append to its source window, so an out-of-order refill cannot damage the next chunk.
+- A quality change between uburoom outputs of the same codec, audio and burned subtitle keeps the player: buffered chunks keep playing and the new stream takes over at a chunk boundary, at least five seconds away so the new chunk can arrive. Other changes reload the player.
 
 ## Operation and durability boundaries
 
