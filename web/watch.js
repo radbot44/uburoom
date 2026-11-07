@@ -51,6 +51,8 @@ try {
     if(['auto','burn'].includes(saved.subtitleMode))playerPreferences.subtitleMode=saved.subtitleMode;
     if(['auto','off'].includes(saved.subtitles?.choice))playerPreferences.subtitles={choice:saved.subtitles.choice};
     else if(saved.subtitles?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.subtitles.language || ''))playerPreferences.subtitles={choice:'language',language:saved.subtitles.language};
+    if(saved.audio?.choice==='auto')playerPreferences.audio={choice:'auto'};
+    else if(saved.audio?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.audio.language || ''))playerPreferences.audio={choice:'language',language:saved.audio.language};
     if(typeof saved.subtitleColor==='string' && /^#[0-9a-f]{6}$/i.test(saved.subtitleColor))playerPreferences.subtitleColor=saved.subtitleColor.toLowerCase();
     if(['off','background','shadow'].includes(saved.subtitleBg))playerPreferences.subtitleBg=saved.subtitleBg;
     if(['small','medium','large'].includes(saved.subtitleSize))playerPreferences.subtitleSize=saved.subtitleSize;
@@ -62,6 +64,12 @@ preferredQuality=playerPreferences.quality;
 let restoredPlayerSubtitles;
 function rememberPlayerSubtitles(args) {
   if(args.subtitleMode)savePlayerPreferences({subtitleMode:args.subtitleMode});
+  // The audio language is remembered the same way, so a new visit starts with it.
+  if(args.audioId==='auto')savePlayerPreferences({audio:{choice:'auto'}});
+  else if(args.audioId!==undefined) {
+    const track=state?.tracks?.audio.find(row=>row.id===args.audioId);
+    if(track?.language && !['und','unknown'].includes(track.language))savePlayerPreferences({audio:{choice:'language',language:track.language}});
+  }
   if(args.subtitleId===undefined)return;
   if(['auto','off'].includes(args.subtitleId))savePlayerPreferences({subtitles:{choice:args.subtitleId}});
   else {
@@ -95,6 +103,7 @@ function viewerPreferences() {
     // The saved subtitle choice goes with the join, so the first stream already has it.
     ...(playerPreferences.subtitles?{subtitlePreference:playerPreferences.subtitles.choice==='language'?'language:'+playerPreferences.subtitles.language:playerPreferences.subtitles.choice}:{}),
     ...(playerPreferences.subtitleMode?{subtitleMode:playerPreferences.subtitleMode}:{}),
+    ...(playerPreferences.audio?.choice==='language'?{audioPreference:'language:'+playerPreferences.audio.language}:{}),
     ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{}),
     codecs:Object.keys(uburoomPlayback.LOCAL_CODECS).filter(codec=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[codec])).join(',')};
 }
@@ -916,10 +925,18 @@ globalThis.uburoomCodecSample = async (path, options = {}) => {
 globalThis.uburoomCloseCodecTester = () => uburoomDialogs.close($('codec-test-dialog'));
 $('codec-test-close').onclick = globalThis.uburoomCloseCodecTester;
 $('codec-test-dialog').addEventListener('close',() => {$('codec-test-frame').src = 'about:blank';});
-function fail(message) {
+// Errors go to the menu's error line. In fullscreen they never take over the screen:
+// they show as a toast with a way to the fix (the menu by default). The Discord
+// Activity has no fullscreen of its own, so it still opens the menu.
+function fail(message, action) {
   const changed = $('error').textContent !== message;
   $('error').textContent = message;
-  if (message && changed && immersive && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
+  // The error line clears whenever a command starts; a toast stays its full time so it can be read.
+  if (!message || !changed) return;
+  if (document.fullscreenElement === $('stage')) {
+    toasts.show('player-error', { type: 'error', title: message, symbol: 'alert-triangle', duration: 12000,
+      action: action || { label: 'Open menu', run: () => toggleDrawer(true) } });
+  } else if (immersive && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
 async function api(path, data, options = {}) {
   const started=performance.now(); let response,decoded=false,rejection;
@@ -1298,7 +1315,7 @@ async function togglePictureInPicture() {
         action: {
           label: 'Burn-in settings',
           run: () => {
-            $('tracks-open')?.click();
+            playerUI.openDialog();
             $('subtitle-mode')?.focus();
           }
         }

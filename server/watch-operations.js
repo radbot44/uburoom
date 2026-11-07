@@ -336,11 +336,12 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
       }
       // A new viewer's saved subtitle choice shapes their first stream; their own later
       // choices in the room always win.
-      if(url.searchParams.has('subtitlePreference')||url.searchParams.has('subtitleMode')) {
+      if(url.searchParams.has('subtitlePreference')||url.searchParams.has('subtitleMode')||url.searchParams.has('audioPreference')) {
         const value=url.searchParams.get('subtitlePreference')||'auto',mode=url.searchParams.get('subtitleMode')||'auto';
         const language=/^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(value)?.[1];
-        if(!language&&!['auto','off'].includes(value)||!['auto','burn'].includes(mode))throw new Error('Invalid subtitle preference');
-        preferences.trackChoice={audioId:'auto',subtitleId:value==='off'?'off':'auto',subtitleMode:mode,...(language?{subtitleIntent:{language}}:{})};
+        const audio=url.searchParams.has('audioPreference')?/^language:([a-z]{2,3}(?:-[a-z0-9]+)*)$/i.exec(url.searchParams.get('audioPreference'))?.[1]:undefined;
+        if(!language&&!['auto','off'].includes(value)||!['auto','burn'].includes(mode)||url.searchParams.has('audioPreference')&&!audio)throw new Error('Invalid track preference');
+        preferences.trackChoice={audioId:'auto',subtitleId:value==='off'?'off':'auto',subtitleMode:mode,...(language?{subtitleIntent:{language}}:{}),...(audio?{audioIntent:{language:audio}}:{})};
       }
       watch.snapshot(room, auth.actor, viewerId, alive, url.searchParams.get('quality'),preferences);
       // Capability is set before the first source preparation and never grants access.

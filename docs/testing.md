@@ -15,6 +15,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P13 — Reconnects and fullscreen errors — 2026-11-07
+
+**B:** `npm test` passed (exit 0). Chrome and Firefox: after choosing 180p, volume 55, French audio and English subtitles, a second tab joining the same room as a new viewer started with all four and sent no track change. In real fullscreen an error showed as a toast inside the player, Open menu opened the drawer over fullscreen without leaving it, and outside fullscreen no toast appeared. A first version that dismissed the toast whenever the error line cleared hid real errors within a second, because every command start clears that line; the toast now stays its full time. **Not run:** iPhone, a real dropped connection beyond the server's grace period, C on Vigrid.
+
 ### M1-P3/P13 — Faster starts — 2026-11-07
 
 **B:** `npm test` passed (exit 0). Autoplay scenario extended: during the countdown the next video's metadata and the viewer's stream are prepared once each, and after the switch the viewer holds that preloaded stream with no second preparation and nothing stopped. Existing countdown cases (cancel, pause, close, manual Next, preparation failure with exactly one attempt) still pass; three gated cases now wait for the advance itself because preparation starts earlier. Saved subtitle language in Chrome: after a reload the first stream already had the English track and no track change was sent; Firefox control with a language the file lacks started without subtitles. **Not run:** start-time measurement against real Plex (fixture rooms have no queue), the first-window warm-up timing, C on Vigrid.
