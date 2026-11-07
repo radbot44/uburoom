@@ -15,6 +15,10 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P11 — Viewer health for hosts — 2026-11-07
+
+**B:** `npm test` passed (exit 0). Health on the existing sync report: Chrome and Firefox players sent valid reports at 360p AV1 (about 4.7 s buffered, offsets under 50 ms, no stalls, coarse browser and device). Shared core checked directly: unknown fields and out-of-range values rejected; stalls, low buffer and dropped frames each raised an issue; an issue held 15 s after clearing, then cleared; paused raised nothing; the roster took the worst device's issue. Rendered with sample guests in Chrome (dark and light) and Firefox: amber triangle for stalling, red for a player error, card issue line and details as approved. **Not run:** a saved room with real guests (fixture rooms carry no roster), C on Vigrid.
+
 ### M1-P1/P11 — Diagnostics and stale sync reports — 2026-11-07
 
 **B, full suite:** `npm test` passed (exit 0). Chrome fixture, local AV1 360p to 180p: the player report held 5 chunk timings (0.5-0.8s) and came to 23 KB. Chrome fixture, AV1 to Plex HLS Original: `stream-hold`, `stream-swap` (ready, prepared, 209 ms) and `frame-hold-end` (361 ms) were recorded with no uncovered black.

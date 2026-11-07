@@ -230,13 +230,24 @@ function applyAudioMode(mode) {
     makeupGainNode.gain.setValueAtTime(1.35, now);
   }
 }
+// What hosts see on this viewer's health card; the shared sync core validates it.
+function viewerHealth() {
+  const errorCode=video.error?.code,round=value=>Math.round(value*10)/10;
+  const error=hlsNetworkFailure||errorCode===2?'network':errorCode===3?'decode':errorCode===4?'media':playbackError?'other':undefined;
+  return {...(playbackHealth||{}),...viewerClient,reconnects:Math.min(10000,Math.max(0,(transport?.connectionAttempt||1)-1)),
+    ...(state?.mediaUrl?{bufferAhead:round(Math.min(3600,uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)))}:{}),
+    ...(/^[a-z0-9.]{1,24}$/i.test(state?.quality||'')?{quality:state.quality}:{}),
+    ...(['hls','file','av1','vp9','vp8'].includes(state?.format)?{format:state.format}:{}),
+    ...(Number.isFinite(lastSyncErrorMs)?{offsetMs:Math.round(Math.max(-86400000,Math.min(86400000,lastSyncErrorMs)))}:{}),
+    ...(error?{error}:{})};
+}
 function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
   const freshness=uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
   const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,
     score:Number.isFinite(score)?Math.max(0,Math.min(1,score)):1,
     confidence:['confident','reduced','provisional'].includes(confidence)?confidence:'reduced',
-    ...(freshness===undefined?{}:{measurementFreshnessMs:freshness}),...(reason?{reason}:{})};
+    ...(freshness===undefined?{}:{measurementFreshnessMs:freshness}),...(reason?{reason}:{}),health:viewerHealth()};
   const sent=transport?.syncQuality(value) || false;
   if(sent){publishedSyncQualityStatus=status;publishedSyncQualityConfidence=value.confidence;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
   return sent;
@@ -291,6 +302,7 @@ function sampleSyncQuality(timing,at) {
     const target=uburoomTiming.target(state,timing.serverTime);
     if(Number.isFinite(target))errorMs=(video.currentTime-target)*1000;
   }
+  if(Number.isFinite(errorMs))lastSyncErrorMs=errorMs;
   syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,source,context,clockRevision:timing.clockRevision});
 }
 function refreshSyncQuality() {
@@ -1369,6 +1381,8 @@ function watchFrames() {
     watchFrames();
   });
 }
+const playbackHealthTracker = uburoomPlayback.healthTracker(), viewerClient = uburoomPlayback.clientKind(navigator, !!activity);
+let playbackHealth, lastSyncErrorMs;
 const choppyDetector = uburoomPlayback.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
 let choppyToastActive = false;
 let capabilityProbeVersion = 0, capabilityProbeKey;
@@ -1460,6 +1474,10 @@ function decodedFrames() {
   return videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
 }
 function checkVideoFrames() {
+  playbackHealth=playbackHealthTracker.update(performance.now(),video.getVideoPlaybackQuality?.(),{
+    stalled:!!state?.mediaUrl && (playerWaiting || !video.paused && video.readyState<3),
+    interrupted:!state?.mediaUrl || video.paused || !!state?.state?.paused || video.seeking || seekDragging || !!sync?.timelinePending ||
+      pending || qualityPending || !!heldStream || document.visibilityState!=='visible'});
   checkChoppyPlayback();
   // Hidden or minimized pages may stop producing frames while audio continues.
   if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending || document.visibilityState !== 'visible') { frameStartedAt = undefined; return; }

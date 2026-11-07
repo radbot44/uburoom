@@ -78,7 +78,9 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
     });
     viewer.syncQuality=next;
     client.lastSyncQualityAt=now;client.lastSyncQualityStatus=message.status;client.lastSyncQualityConfidence=message.confidence;
-    if(displayChanged)broker.notify({roomId:message.roomId,includeLobby:false});
+    // Open health cards stay current without republishing the room on every report.
+    const healthDue=!!next.health&&now-(room.healthPublishedAt||0)>=10000;
+    if(displayChanged||healthDue){room.healthPublishedAt=now;broker.notify({roomId:message.roomId,includeLobby:false});}
   }
   function publish(client, { roomOnly = false } = {}) {
     void publishLane(client, 'room');

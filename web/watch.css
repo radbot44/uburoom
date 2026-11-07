@@ -635,6 +635,14 @@ body.idle-player #video{visibility:hidden}
 #room-participants .room-roster-sync-quality[data-quality=good]{color:var(--good)}
 #room-participants .room-roster-sync-quality[data-quality=fair]{color:var(--warning)}
 #room-participants .room-roster-sync-quality[data-quality=poor]{color:var(--danger)}
+#room-participants .room-roster-sync-quality[data-issue=warning]{color:var(--warning)}
+#room-participants .room-roster-sync-quality[data-issue=error]{color:var(--danger)}
+.telemetry-issue{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning);font-weight:600}
+.telemetry-issue[data-issue=error]{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
+.telemetry-issue svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.telemetry-health{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:0 0 10px}
+.telemetry-health dt{color:var(--muted)}
+.telemetry-health dd{margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 #room-participants .room-roster-sync-quality[data-confidence]:not([data-confidence=confident]){color:var(--muted)}
 .viewer-telemetry-card{position:fixed;z-index:35;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;box-shadow:0 12px 40px #000a;color:var(--text);font-size:13px;width:280px;max-width:calc(100vw - 20px);box-sizing:border-box}
 .telemetry-card-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}

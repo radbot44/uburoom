@@ -30,6 +30,41 @@ export function createQualityApi() {
 
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 
+  // Playback health rides on the same report: what a host needs to see a struggling guest.
+  // Counts cover the last minute. One place decides "having issues" for every surface.
+  const HEALTH_FORMATS = Object.freeze(['hls', 'file', 'av1', 'vp9', 'vp8']);
+  const HEALTH_BROWSERS = Object.freeze(['chrome', 'edge', 'firefox', 'safari', 'other']);
+  const HEALTH_DEVICES = Object.freeze(['desktop', 'phone', 'tablet', 'tv', 'activity']);
+  const HEALTH_ERRORS = Object.freeze(['network', 'media', 'decode', 'other']);
+  const HEALTH_ISSUES = Object.freeze(['error', 'stalling', 'low-buffer', 'dropping-frames', 'out-of-sync']);
+  const HEALTH_LIMITS = Object.freeze({ stalls: 2, stalledSeconds: 3, lowBufferSeconds: 2, droppedPercent: 10, holdMs: 15000 });
+  const HEALTH_NUMBERS = Object.freeze({ bufferAhead: [0, 3600], stalls: [0, 1000], stalledSeconds: [0, 60], droppedPercent: [0, 100],
+    offsetMs: [-86400000, 86400000], reconnects: [0, 10000] });
+  const HEALTH_CHOICES = Object.freeze({ format: HEALTH_FORMATS, browser: HEALTH_BROWSERS, device: HEALTH_DEVICES, error: HEALTH_ERRORS });
+  function validHealth(health) {
+    if (!health || typeof health !== 'object' || Array.isArray(health)) return false;
+    for (const [key, value] of Object.entries(health)) {
+      if (Object.hasOwn(HEALTH_NUMBERS, key)) { if (!finite(value) || value < HEALTH_NUMBERS[key][0] || value > HEALTH_NUMBERS[key][1]) return false; }
+      else if (Object.hasOwn(HEALTH_CHOICES, key)) { if (!HEALTH_CHOICES[key].includes(value)) return false; }
+      else if (key === 'quality') { if (typeof value !== 'string' || !/^[a-z0-9.]{1,24}$/i.test(value)) return false; }
+      else return false;
+    }
+    return true;
+  }
+  /**
+   * The one rule for whether a viewer is having trouble right now.
+   * @returns {string|undefined} one of HEALTH_ISSUES
+   */
+  function healthIssue(health, { status, score, confidence } = {}) {
+    if (status === 'error') return 'error';
+    if (!health || !['playing', 'buffering'].includes(status)) return undefined;
+    if (health.stalls >= HEALTH_LIMITS.stalls || health.stalledSeconds >= HEALTH_LIMITS.stalledSeconds) return 'stalling';
+    if (status === 'playing' && finite(health.bufferAhead) && health.bufferAhead < HEALTH_LIMITS.lowBufferSeconds) return 'low-buffer';
+    if (health.droppedPercent >= HEALTH_LIMITS.droppedPercent) return 'dropping-frames';
+    if (confidence === 'confident' && level(score) === 'poor') return 'out-of-sync';
+    return undefined;
+  }
+
   function reportableMeasurementFreshnessMs(age) {
     return finite(age) && age >= 0 && age <= MAX_REPORT_FRESHNESS_MS ? age : undefined;
   }
@@ -237,6 +272,7 @@ export function createQualityApi() {
     if (message.confidence !== undefined && !confidenceSet.has(message.confidence)) return false;
     if (message.measurementFreshnessMs !== undefined && (!finite(message.measurementFreshnessMs) || message.measurementFreshnessMs < 0)) return false;
     if (message.reason !== undefined && !reasonSet.has(message.reason)) return false;
+    if (message.health !== undefined && !validHealth(message.health)) return false;
     return true;
   }
 
@@ -278,6 +314,11 @@ export function createQualityApi() {
       : previous.measuredAt;
     const advanced = finite(measuredAt) && (!finite(previous.measuredAt) || measuredAt - previous.measuredAt >= 500);
     const measurementFreshnessMs = finite(measuredAt) ? Math.max(0, now - measuredAt) : undefined;
+    // An issue stays shown for a short while after it clears, so the warning cannot flicker.
+    const health = message.health && { ...message.health };
+    const found = healthIssue(health, { status: message.status, score, confidence });
+    const held = !found && previous.issue && finite(previous.issueAt) && now - previous.issueAt < HEALTH_LIMITS.holdMs;
+    const issue = found || (held ? previous.issue : undefined), issueAt = found ? now : held ? previous.issueAt : undefined;
     const next = {
       status: message.status,
       score,
@@ -290,9 +331,13 @@ export function createQualityApi() {
       updatedAt: now,
       mediaVersion,
       streamVersion,
-      reason: message.reason
+      reason: message.reason,
+      health,
+      issue,
+      issueAt
     };
-    const displayChanged = level(previous.score, previous.lastKnownLevel) !== level(score, lastKnownLevel) || previous.confidence !== confidence;
+    const displayChanged = level(previous.score, previous.lastKnownLevel) !== level(score, lastKnownLevel) || previous.confidence !== confidence ||
+      previous.issue !== issue;
     return { throttled: false, next, displayChanged };
   }
 
@@ -347,6 +392,8 @@ export function createQualityApi() {
           updatedAt: measurement?.updatedAt,
           measurementFreshnessMs: evidenceAge,
           reason: status === 'stale' ? (contextMatches ? 'measurement-expired' : 'stream-changed') : measurement?.reason,
+          health: contextMatches && !disconnected ? measurement?.health : undefined,
+          issue: !disconnected && contextMatches && age <= STALE_AFTER_MS ? measurement?.issue : undefined,
           current: !disconnected && contextMatches && age <= STALE_AFTER_MS && ['playing', 'buffering', 'paused', 'seeking', 'starting', 'error'].includes(status)
         };
       });
@@ -366,7 +413,10 @@ export function createQualityApi() {
       const confidence = selected?.confidence || 'provisional';
       const reason = visible.length === 0 ? 'no-sessions' : selected?.reason ||
         (confidence === 'provisional' ? 'awaiting-measurements' : confidence === 'reduced' ? 'measurement-interrupted' : undefined);
+      // The roster warns about the worst current issue on any of the person's devices.
+      const issue = HEALTH_ISSUES.find(name => visible.some(session => session.issue === name));
       person.syncQuality = {
+        issue,
         status: confidence === 'confident' ? 'known' : 'unknown',
         score,
         level: level(score, selected?.level || selected?.lastKnownLevel || 'excellent'),
@@ -393,6 +443,9 @@ export function createQualityApi() {
     QUALITY_STATUSES,
     QUALITY_REASONS,
     QUALITY_CONFIDENCES,
+    HEALTH_ISSUES,
+    HEALTH_LIMITS,
+    healthIssue,
     reportableMeasurementFreshnessMs,
     calculate,
     level,
@@ -415,6 +468,9 @@ export const {
   QUALITY_STATUSES,
   QUALITY_REASONS,
   QUALITY_CONFIDENCES,
+  HEALTH_ISSUES,
+  HEALTH_LIMITS,
+  healthIssue,
   reportableMeasurementFreshnessMs,
   calculate,
   level,

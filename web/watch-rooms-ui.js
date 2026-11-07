@@ -56,6 +56,38 @@
       }
     }
 
+    // Viewer health for hosts. The shared sync core decides the issue; this only words it.
+    const ISSUE_LABELS = { error:'Player error', stalling:'Stalling', 'low-buffer':'Low buffer', 'dropping-frames':'Dropping frames', 'out-of-sync':'Out of sync' };
+    const FORMAT_LABELS = { hls:'HLS', file:'Direct file', av1:'AV1', vp9:'VP9', vp8:'VP8' };
+    const BROWSER_LABELS = { chrome:'Chrome', edge:'Edge', firefox:'Firefox', safari:'Safari', other:'Another browser' };
+    const DEVICE_LABELS = { desktop:'desktop', phone:'phone', tablet:'tablet', tv:'TV' };
+    const ERROR_LABELS = { network:'network', decode:'decoding', media:'unsupported media', other:'unknown cause' };
+    const seconds = value => (Math.round(value * 10) / 10) + ' s';
+    function offsetText(ms) { const size = Math.abs(Math.round(ms)); return size < 20 ? 'In sync' : size + ' ms ' + (ms > 0 ? 'ahead' : 'behind'); }
+    function qualityText(health) {
+      const match = /^(\d+)p([\d.]+)$/.exec(health.quality || '');
+      const quality = health.quality === 'original' ? 'Original' : match ? match[1] + 'p · ' + match[2] + ' Mbps' : health.quality;
+      return [quality, FORMAT_LABELS[health.format]].filter(Boolean).join(' · ');
+    }
+    function issueText(issue, health = {}) {
+      if (issue === 'stalling') return 'Stalling: ' + (health.stalls || 0) + ' ' + (health.stalls === 1 ? 'stall' : 'stalls') + ', ' + seconds(health.stalledSeconds || 0) + ' stuck in the last minute';
+      if (issue === 'low-buffer') return 'Low buffer: ' + seconds(health.bufferAhead || 0) + ' ahead';
+      if (issue === 'dropping-frames') return 'Dropping frames: ' + (health.droppedPercent || 0) + '% in the last minute';
+      if (issue === 'out-of-sync') return 'Out of sync' + (Number.isFinite(health.offsetMs) ? ': ' + offsetText(health.offsetMs) : '');
+      return 'Player error' + (health.error ? ': ' + ERROR_LABELS[health.error] : '');
+    }
+    function healthRows(health) {
+      const rows = [];
+      if (health.quality || health.format) rows.push(['Quality', qualityText(health)]);
+      if (Number.isFinite(health.bufferAhead)) rows.push(['Buffered', seconds(health.bufferAhead) + ' ahead']);
+      if (Number.isFinite(health.stalls)) rows.push(['Stalls', health.stalls ? health.stalls + ' in the last minute (' + seconds(health.stalledSeconds || 0) + ')' : 'None in the last minute']);
+      if (Number.isFinite(health.droppedPercent)) rows.push(['Dropped frames', health.droppedPercent + '%']);
+      if (Number.isFinite(health.offsetMs)) rows.push(['Sync offset', offsetText(health.offsetMs)]);
+      if (Number.isFinite(health.reconnects)) rows.push(['Reconnects', String(health.reconnects)]);
+      if (health.browser || health.device) rows.push(['Device', health.device === 'activity' ? 'Discord Activity' : (BROWSER_LABELS[health.browser] || 'Browser') + ' on ' + (DEVICE_LABELS[health.device] || 'unknown device')]);
+      if (health.error) rows.push(['Error', ERROR_LABELS[health.error]]);
+      return rows;
+    }
     function humanFreshness(freshnessMs) {
       if (!Number.isFinite(freshnessMs)) return 'Freshness unknown';
       const sec = Math.round(freshnessMs / 1000);
@@ -137,6 +169,18 @@
       const scoreBadge = node('span', statusRow, scorePct + '% (' + (level.charAt(0).toUpperCase() + level.slice(1)) + ')', 'telemetry-score-badge');
       scoreBadge.dataset.quality = level;
 
+      // Health: the device with the issue first, otherwise the first device that reported.
+      const healthSession = sessions.find(s => s.issue && s.issue === sync.issue) || sessions.find(s => s.health) || {};
+      if (sync.issue) {
+        const issueLine = node('div', card, undefined, 'telemetry-issue');
+        issueLine.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
+        const issueIcon = root.uburoomIcons.icon(document, 'alert-triangle'); issueIcon.setAttribute('aria-hidden', 'true');
+        issueLine.append(issueIcon); node('span', issueLine, issueText(sync.issue, healthSession.health));
+      }
+      if (healthSession.health) {
+        const list = node('dl', card, undefined, 'telemetry-health');
+        for (const [label, value] of healthRows(healthSession.health)) { node('dt', list, label); node('dd', list, value); }
+      }
       const detailsBox = node('div', card, undefined, 'telemetry-details-box');
       node('p', detailsBox, humanReason(sync.reason || primarySession.reason), 'telemetry-reason-text');
       node('p', detailsBox, humanFreshness(sync.measurementFreshnessMs || primarySession.measurementFreshnessMs), 'telemetry-freshness-text');
@@ -268,7 +312,8 @@
         const sq = p.syncQuality;
         return [
           p.id, p.name, p.role, p.explicitHost, p.pending, p.provider, p.present,
-          sq && typeof sq === 'object' ? [sq.status, sq.score, sq.level, sq.confidence, sq.lastKnownLevel, sq.sessions?.map(s => [s.score, s.level, s.lastKnownLevel, s.status])] : null
+          sq && typeof sq === 'object' ? [sq.status, sq.score, sq.level, sq.confidence, sq.lastKnownLevel, sq.issue, sq.sessions?.map(s => [s.score, s.level, s.lastKnownLevel, s.status,
+            p.id === activeTelemetryPersonId ? s.health : undefined])] : null
         ];
       });
       const signature = JSON.stringify([peopleView,self,caps,rosterBusy,inSettings && busy,canKickHosts]);
@@ -315,7 +360,13 @@
           quality.title = tooltip; quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g,', '));
           quality.setAttribute('aria-haspopup','dialog');
           quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
-          const qualityIcon = root.uburoomIcons.icon(document,icons[level]||'wifi');
+          // A guest with a playback issue shows a warning instead of their sync level.
+          if (sync.issue) {
+            quality.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
+            quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
+            quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\n/g,', '));
+          }
+          const qualityIcon = root.uburoomIcons.icon(document,sync.issue ? 'alert-triangle' : icons[level]||'wifi');
           qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
           quality.addEventListener('click', event => {
             event.stopPropagation();

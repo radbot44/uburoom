@@ -463,6 +463,8 @@ class Watch {
     const owner = this.hub.canManage(room.s, actor);
     room.transportSequence=(room.transportSequence||0)+1;
     const participants = room.saved ? syncQualityParticipants(room,this.roomState.participants(room.s.roomId),now) : undefined;
+    // Health details (buffer, stalls, device) are for the people who run the room.
+    if (participants && !owner) for (const person of participants) for (const session of person.syncQuality?.sessions || []) delete session.health;
     const { waitingForReady, readiness } = snapshotReadiness(room);
     return { id: room.s.roomId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
       plexReporting: {

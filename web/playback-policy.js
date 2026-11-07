@@ -355,7 +355,43 @@
       inCooldown: now => now < cooldownUntil
     };
   }
-  const api = {BUFFER,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
+  // A rolling minute of playback health for hosts: stalls the viewer did not cause and
+  // dropped frames. Seeks, pauses, hidden pages and stream changes are not stalls.
+  function healthTracker({ windowMs = 60000, minFrames = 50 } = {}) {
+    let stalls = [], stallStart, frames = [];
+    function closeStall(now) { if (stallStart !== undefined) { stalls.push({ start: stallStart, end: now }); stallStart = undefined; } }
+    function update(now, quality, { stalled = false, interrupted = false } = {}) {
+      if (interrupted || !stalled) closeStall(now);
+      else stallStart ??= now;
+      const cutoff = now - windowMs;
+      stalls = stalls.filter(stall => stall.end > cutoff);
+      let stalledMs = 0;
+      for (const stall of stalls) stalledMs += stall.end - Math.max(cutoff, stall.start);
+      if (stallStart !== undefined) stalledMs += now - Math.max(cutoff, stallStart);
+      const valid = quality && Number.isFinite(quality.totalVideoFrames) && Number.isFinite(quality.droppedVideoFrames);
+      if (valid) {
+        const last = frames.at(-1);
+        if (last && (quality.totalVideoFrames < last.total || quality.droppedVideoFrames < last.dropped)) frames = [];
+        if (!interrupted) frames.push({ at: now, total: quality.totalVideoFrames, dropped: quality.droppedVideoFrames });
+        else frames = [];
+      }
+      frames = frames.filter(sample => sample.at > cutoff);
+      const first = frames[0], last = frames.at(-1), total = first && last ? last.total - first.total : 0;
+      return { stalls: stalls.length + (stallStart === undefined ? 0 : 1), stalledSeconds: Math.min(60, Math.round(stalledMs / 100) / 10),
+        droppedPercent: total >= minFrames ? Math.min(100, Math.round((last.dropped - first.dropped) / total * 1000) / 10) : 0 };
+    }
+    function reset() { stalls = []; stallStart = undefined; frames = []; }
+    return { update, reset };
+  }
+  // Coarse browser and device names for host health cards, never the full user agent.
+  function clientKind(nav, activity = false) {
+    const agent = String(nav?.userAgent || '');
+    const browser = /Edg\//.test(agent) ? 'edge' : /Firefox\//.test(agent) ? 'firefox' : /Chrome\/|CriOS\//.test(agent) ? 'chrome' : /Safari\//.test(agent) ? 'safari' : 'other';
+    const device = activity ? 'activity' : /SMART-TV|SmartTV|AFT[A-Z]|CrKey|Web0S|Tizen|BRAVIA/i.test(agent) ? 'tv' :
+      /iPad|Tablet/.test(agent) || /Macintosh/.test(agent) && nav?.maxTouchPoints > 1 ? 'tablet' : /Mobi|iPhone|Android/.test(agent) ? 'phone' : 'desktop';
+    return { browser, device };
+  }
+  const api = {BUFFER,healthTracker,clientKind,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);
