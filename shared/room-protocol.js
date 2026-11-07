@@ -126,7 +126,7 @@
           args.fallback = a.fallback;
         }
         if (a.reset === true) args.reset = true;
-        if (typeof a.reason === 'string') args.reason = a.reason.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,160);
+        if (typeof a.reason === 'string') args.reason = a.reason.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,300);
         break;
       case 'media.reporting.set':
         if (a.activity !== undefined) {

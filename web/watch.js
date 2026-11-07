@@ -104,7 +104,7 @@ let pipWindow = null;
 let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsRecoveryAt = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
 let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
 let providerNoticeTimer, providerNoticeShown = false;
-let av1, localFallbackVersion, localFallbackAttempts = new Set();
+let av1, localFallbackVersion, localFallbackAttempts = new Set(), fallbackDetail;
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
 let observationPending = false, observationQueued = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
 const observationClock=uburoomPlayback.observationClock();
@@ -1249,7 +1249,7 @@ async function compatibleFallback(reason, preferHLS = false) {
       if(selected!==id || state?.mediaVersion!==version)return;
       localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason}});
+        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason:[reason,fallbackDetail].filter(Boolean).join(' ')}});
         return;
       } catch(error) {
         playbackError=reason+' '+(['plex','audio'].includes(codec)?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
@@ -1600,6 +1600,7 @@ function handleHlsError(client, data) {
     return;
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
+    fallbackDetail=[data.details,data.sourceBufferName,data.frag?.type,data.frag?'sn '+data.frag.sn:'',(data.error||data.err)?.message,'at '+video.currentTime.toFixed(1)+'/'+expected()?.toFixed(1)].filter(Boolean).join(' ');
     void compatibleFallback(['quota-exceeded','buffer-full','buffer-append'].includes(detail)?'The browser could not append video data.':'The browser media pipeline failed.'); return;
   }
   stopHls('fatal');
