@@ -24,6 +24,7 @@ const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
 const { clientAddress } = require('./plex-delivery');
+const { DiagnosticLog } = require('./diagnostic-log');
 const SharedSync = require('../shared/sync');
 const SHARED_SYNC_MODULES = new Set([
   'index.mjs', 'timing.mjs', 'player-adapter.mjs', 'client-sync.mjs',
@@ -187,10 +188,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
   function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
-  async function body(req) {
+  async function body(req, limit = 4096) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
-    for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > 4096) throw new Error('Body too large'); }
+    for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > limit) throw new Error('Body too large'); }
     const value = JSON.parse(text); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid body'); return value;
   }
   async function discordFetch(url, options) {
@@ -279,7 +280,10 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
   }
   hub.watchCanView=(room,actor)=>watch.canView(watch.rooms.get(room.roomId),actor);
-  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins, plexAuth });
+  // Kept diagnostics: server log lines and viewer uploads share one daily timeline.
+  const diagnosticLog = config.diagnostics?.enabled ? new DiagnosticLog({ ...config.diagnostics, logger: config.logger }) : undefined;
+  const untapLogger = diagnosticLog && config.logger?.tap?.((level, tag, message) => diagnosticLog.server(level, tag, message));
+  const watchRoutes = watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity, validIdentity, registry, entryPolicy, cookie, accounts, logins, plexAuth, diagnosticLog });
   async function discordStart(req,res,linkLogin,ownerOnly=false,returnTo=undefined) {
     if(config.accessPolicy && !config.accessPolicy.discord&&!ownerOnly)throw new Error('Discord authorization is disabled');
     const state=randomBytes(32).toString('hex');oauthStates.set(state,{expires:Date.now()+300000,ownerOnly,returnTo,...(linkLogin?{linkUserId:linkLogin.userId,sourceHash:hash(cookies(req).uburoom),revision:linkLogin.accountRevision}:{})});
@@ -400,7 +404,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         'h264-main.mp4':'h264-main.mp4', 'vp8.webm':'vp8.webm', 'vp9.webm':'vp9.webm', 'av1.webm':'av1.webm', 'hevc.mp4':'hevc.mp4' };
       const sampleName = route.startsWith('/__diagnostics/media/') ? route.slice('/__diagnostics/media/'.length) : '';
       if (['GET', 'HEAD'].includes(req.method) && Object.hasOwn(testSamples, sampleName)) {
-        if (config.diagnostics !== true) {
+        if (config.codecDiagnostics !== true) {
           const auth = await watchRoutes.authorized(req);
           if (!auth || !hub.isAdmin(auth.actor)) return json(res,403,{error:'Turn on Admin mode to use the codec tester.'});
         }
@@ -579,7 +583,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   sweep.unref();
   function close() {
     clearInterval(sweep); watchConnections.close(); const mediaClosed = watch.close(); watchRoutes.close();accountRoutes.close(); hub.close(); assetCache.clear();
-    return Promise.all([mediaClosed, new Promise(resolve => server.listening ? server.close(resolve) : resolve())]).then(() => registry?.close());
+    untapLogger?.();
+    return Promise.all([mediaClosed, diagnosticLog?.close(), new Promise(resolve => server.listening ? server.close(resolve) : resolve())]).then(() => registry?.close());
   }
   return { server, hub, watch, close, registry, plexAuth };
   } catch(error) { Promise.resolve(registry?.persistence.abort()).catch(()=>{});throw error; }

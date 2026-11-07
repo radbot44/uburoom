@@ -13,12 +13,12 @@ const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
 const { PlexDelivery, clientAddress } = require('./plex-delivery');
 
-function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, cookie, accounts, logins, plexAuth }) {
+function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, diagnosticLog, cookie, accounts, logins, plexAuth }) {
   const identities = new Map(), grants = new Map();
   const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
   watch.delivery=delivery;
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:19,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
+  const publicConfig = () => ({ watchVersion:19,keepDiagnostics:diagnosticLog?config.diagnostics.keepDays:0,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
     outputs:config.transcoding?.policy==='disabled'?[]:config.transcoding?.outputs });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -411,6 +411,18 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           res.end(art.bytes);
         } else json(res, reply.status, reply.value);
         return true;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/watch/diagnostics') {
+        // Player diagnostics are not room controls: a plain upload that never touches room state.
+        const auth = await authorized(req, true);
+        if (!auth || !diagnosticLog) { json(res, auth ? 404 : 401, { error: auth ? 'Diagnostics are off on this server' : 'Sign in again' }); return true; }
+        if (!throttle('diagnostics:' + auth.actor.userId, 12)) { json(res, 429, { error: 'Too many diagnostics uploads' }); return true; }
+        const data = await body(req, 256 * 1024), room = watch.rooms.get(data.roomId), viewer = room?.viewers.get(data.viewerId);
+        if (!UUID.test(data.viewerId || '') || !UUID.test(data.stream || '') || !Array.isArray(data.rows) || data.rows.length > 2000) throw new Error('Invalid diagnostics');
+        // A final upload can arrive just after the viewer left, so the room is enough then.
+        if (!room || viewer && viewer.userId !== auth.actor.userId || !await watch.canView(room, auth.actor)) { json(res, 403, { error: 'Room unavailable' }); return true; }
+        const kept = diagnosticLog.viewer({ room, viewerId: data.viewerId, name: auth.actor.name || auth.actor.userId, title: room.media?.title, stream: data.stream, rows: data.rows });
+        json(res, 200, { kept }); return true;
       }
       if (!['/api/watch/handoff', '/api/watch/handoff/status', '/api/watch/handoff/action'].includes(url.pathname)) { json(res, 404, { error: 'Room controls require an authenticated WebSocket' }); return true; }
       let auth = await authorized(req, req.method !== 'GET');

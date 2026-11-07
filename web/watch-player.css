@@ -34,6 +34,7 @@
 #tracks-dialog h3{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px}
 #tracks-dialog h4{font-size:13px;font-weight:600;margin:0}
 #tracks-dialog .player-media-columns>div,#tracks-dialog details{min-width:0;overflow-wrap:anywhere}
+#tracks-dialog .diagnostic-report{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}#tracks-dialog .diagnostic-report .hint{margin:0}#copy-diagnostics{display:inline-flex;align-items:center;gap:8px}#copy-diagnostics svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #tracks-dialog .player-media-columns summary{font-size:13px;font-weight:600;cursor:pointer}
 #tracks-dialog :is(#quality-notice,#audio-track-status):empty{display:none}
 #tracks-dialog label{font-size:13px;font-weight:600;margin-top:12px}#tracks-dialog select{width:100%;max-width:100%;font-size:14px;padding:10px}

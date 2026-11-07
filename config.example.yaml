@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2h
+# Config schema v2i
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -97,6 +97,13 @@ logging:
   level: 'info' # error | warn | info | debug
   requests: true # log incoming HTTP requests (skips static assets unless error/debug)
   file: '' # Optional log file path, e.g. 'data/uburoom.log' (relative to this YAML file)
+
+# Playback diagnostics: one file per day in the data folder's diagnostics folder, with
+# server log lines and each viewer's player events (no links or sign-in details).
+diagnostics:
+  enabled: true # keep diagnostics on this server; viewers are told in the privacy notice
+  keep_days: 7 # delete days older than this (1-365)
+  max_mb: 500 # delete the oldest days when the folder grows past this
 
 # Rooms and permissions
 rooms:

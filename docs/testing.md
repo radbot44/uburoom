@@ -15,6 +15,12 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P1/P11 — Diagnostics and stale sync reports — 2026-11-07
+
+**B, full suite:** `npm test` passed (exit 0). Chrome fixture, local AV1 360p to 180p: the player report held 5 chunk timings (0.5-0.8s) and came to 23 KB. Chrome fixture, AV1 to Plex HLS Original: `stream-hold`, `stream-swap` (ready, prepared, 209 ms) and `frame-hold-end` (361 ms) were recorded with no uncovered black.
+
+**What changed:** a sync report that goes stale while sign-in is checked is now ignored, not answered with "Sign in again". Viewer disconnects log at info or warn with code, cause, connection age, time since the last message and the hourly count. Chunks slower than real time log a warning. The player records swap, last-frame hold, subtitle window, chunk and page-error events, and `disconnect-extended`/`disconnect-expired`, which the recorder had been dropping. **Kept diagnostics, same day.** `npm test` passed again (exit 0). Store checked directly: retries dropped by sequence, unknown events dropped, days past `keep_days` and over `max_mb` deleted oldest first, and one warning when today's file reached the cap. Chrome and Firefox fixtures with the server keeping diagnostics: about 48 lines per short session in one daily file, server log lines (Socket, Room, Delivery) beside viewer rows with room ID, viewer name and title, a repeated upload added nothing, and the Technical details hint named the 7-day retention. Copy diagnostic report in Technical details: copy and file-fallback paths checked in Chrome, dark and light. `node scripts/doctor.js --config config.example.yaml` passed the new Diagnostics folder check. **Not run:** C on Vigrid, page-close upload timing on real devices, iPhone.
+
 ### M1-P2/P3 — Ordered outputs and local burn-in — 2026-11-06
 
 **B, full suite:** `node --test tests/*.test.js`: 534 passed. Recovery harness on this work: 15/15 in Chrome and Firefox.

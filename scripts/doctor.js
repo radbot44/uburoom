@@ -469,6 +469,29 @@ function checkStorageAndKey(config) {
     }
   }
 
+  // 5. Playback diagnostics folder (if kept)
+  if (config.diagnostics?.enabled) {
+    const { directory, keepDays, maxBytes } = config.diagnostics;
+    const existing = fs.existsSync(directory) ? directory : path.dirname(directory);
+    try {
+      if (fs.existsSync(existing)) fs.accessSync(existing, fs.constants.R_OK | fs.constants.W_OK);
+      checks.push({
+        category: 'Storage & Keys',
+        name: 'Diagnostics folder',
+        status: 'pass',
+        message: `Playback diagnostics are kept ${keepDays} days, up to ${Math.round(maxBytes / 1048576)} MB, in ${directory}`
+      });
+    } catch (err) {
+      checks.push({
+        category: 'Storage & Keys',
+        name: 'Diagnostics folder',
+        status: 'fail',
+        message: `Diagnostics folder at ${directory} is not writable (${err.code}).`,
+        remediation: 'Give the account running uburoom write access to the data folder, or set diagnostics.enabled to false.'
+      });
+    }
+  }
+
   return checks;
 }
 

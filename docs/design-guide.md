@@ -107,6 +107,8 @@ Owner-approved 2026-11-07: in desktop fullscreen a mouse at rest for 2.5 seconds
 
 Owner-approved 2026-11-07: a quality change between stream types keeps the current stream playing until the new one is ready, and the last frame stays on screen through the swap.
 
+Owner-approved 2026-11-07: Copy diagnostic report is a quiet button with the `copy` icon inside Technical details in the player settings Media information section, with a one-line hint. It copies a recent player report and confirms with the shared toast; if the clipboard is blocked, the toast says so and the report downloads as a file. When the server keeps diagnostics, its hint adds how many days they are kept; there is no separate privacy notice.
+
 Owner-approved 2026-11-07: the watch page declares `darkreader-lock` so Dark Reader cannot recolour the subtitle outline. uburoom has its own dark and light themes.
 
 Owner-approved 2026-11-06: text subtitles draw in their own layer over the player, not as browser cues. They default to a solid VLC-style outline (labelled Shadow), scale with the player through Small, Medium and Large, and stay on the visible picture unless Text position is On player. They remain visible when controls hide and lift only when the controls would cover them. ASS and bitmap subtitles keep their authored placement.

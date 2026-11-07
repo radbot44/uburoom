@@ -199,7 +199,7 @@ class uburoomTextWindows {
   }
   synced(timeSeconds) {return this.covered(Math.max(0,Math.round(timeSeconds*1000)));}
   async fetch(targetMs,beforeMs,afterMs) {
-    const controller=new AbortController(),pending=this.fetching={controller,startMs:Math.max(0,targetMs-beforeMs),endMs:targetMs+afterMs};
+    const controller=new AbortController(),pending=this.fetching={controller,startMs:Math.max(0,targetMs-beforeMs),endMs:targetMs+afterMs},began=Date.now();
     try{
       const response=await fetch(this.windowUrl+'?atMs='+targetMs+'&beforeMs='+beforeMs+'&afterMs='+afterMs,{signal:AbortSignal.any([this.signal,controller.signal,AbortSignal.timeout(30000)].filter(Boolean))});
       if(!response.ok){const value=await response.json().catch(()=>({}));throw Object.assign(new Error(value.error||'Subtitle window could not load. Try burn-in.'),{terminal:response.status===403});}
@@ -211,8 +211,10 @@ class uburoomTextWindows {
       this.intervals=merged;
       this.onCues(cues.filter(cue=>{const key=cue.end+'|'+cue.text;if(this.seen.has(key))return false;this.seen.add(key);return true;}));
       this.failures=0;this.retryAt=0;this.onState();
+      globalThis.uburoomTrace?.('subtitle-window',{elapsedMs:Date.now()-began});
     }catch(error){
       if(this.disposed||controller.signal.aborted||this.signal?.aborted)return;
+      globalThis.uburoomTrace?.('subtitle-window-failed',{elapsedMs:Date.now()-began,attempt:this.failures+1});
       this.failures=error.terminal?3:this.failures+1;this.retryAt=Date.now()+1000*2**this.failures;
       this.onState(error,this.failures>=3);
     }finally{if(this.fetching===pending)this.fetching=undefined;}

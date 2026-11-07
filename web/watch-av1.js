@@ -221,6 +221,7 @@ class uburoomAV1 {
       if (superseded()) break;
       const seconds = (Date.now() - began) / 1000;
       this.chunkTime = this.chunkTime ? Math.max(seconds,this.chunkTime * .7 + seconds * .3) : seconds;
+      globalThis.uburoomTrace?.('chunk-loaded',{elapsedMs:seconds * 1000});
       if (this.prefetchFailure?.index === index) this.prefetchFailure = undefined;
       const bytes = videoBytes.byteLength + audioBytes.byteLength;
       if (index > first) {

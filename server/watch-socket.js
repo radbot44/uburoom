@@ -27,6 +27,13 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
   const broker = createSubscriptionBroker({ publish: (client, ctx) => publish(client, ctx) });
   const clients = broker.clients;
   let nextConnectionId=0;
+  // Recent unplanned disconnects per account, so repeat trouble shows in the log.
+  const disconnects=new Map();
+  function noteDisconnect(userId,at) {
+    const recent=(disconnects.get(userId)||[]).filter(time=>at-time<3600000);recent.push(at);
+    if(disconnects.size>=500&&!disconnects.has(userId))disconnects.delete(disconnects.keys().next().value);
+    disconnects.set(userId,recent.slice(-50));return recent.length;
+  }
   function send(client, message) {
     if (client.ws.readyState !== 1) return;
     if (client.ws.bufferedAmount > 1024 * 1024) { client.terminationCause='backpressure';client.ws.terminate(); return; }
@@ -55,8 +62,10 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
     if (subscription.pathname !== '/api/watch/rooms/'+message.roomId || subscription.searchParams.get('viewer') !== message.viewerId ||
         viewer.watchSocket !== client.ws || client.ws.readyState !== 1 || room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return;
     const auth = await routes.authorized({headers:client.headers,controlSocket:client.ws},true);
-    if (!auth || auth.actor.userId !== viewer.userId || !await watch.canView(room,auth.actor) || room.viewers.get(message.viewerId) !== viewer || viewer.watchSocket !== client.ws ||
-        room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return client.ws.close(4003,'Sign in again');
+    if (!auth || auth.actor.userId !== viewer.userId || !await watch.canView(room,auth.actor)) return client.ws.close(4003,'Sign in again');
+    // The room can move on while sign-in is checked. That report is just stale.
+    if (room.viewers.get(message.viewerId) !== viewer || viewer.watchSocket !== client.ws ||
+        room.mediaVersion !== message.mediaVersion || viewer.streamVersion !== message.streamVersion) return;
     const now = Date.now();
     const statusChanged=client.lastSyncQualityStatus!==message.status;
     const confidenceChanged=client.lastSyncQualityConfidence!==message.confidence;
@@ -242,6 +251,11 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         const reason=rawReason?.toString('utf8').slice(0,80).replace(/[^\x20-\x7e]/g,'')||'';
         const attached=[...watch.rooms.values()].reduce((n,room)=>n+[...room.viewers.values()].filter(viewer=>viewer.watchSocket===ws).length,0);
         config.logger?.debug('Socket', `conn=${client.connectionId} closed code=${code} reason=${JSON.stringify(reason)} source=${client.terminationCause||'peer-or-network'} account=${JSON.stringify(client.userName||client.userId||'unauthenticated')} ageMs=${Date.now()-client.openedAt} attachedViewers=${attached} (remaining: ${clients.size-1})`);
+        if(attached){
+          const planned=code===1000||code===1001||client.terminationCause==='server-shutdown',now=Date.now();
+          const count=planned?0:noteDisconnect(client.userId,now),quoted=reason?` ("${reason}")`:'';
+          config.logger?.[planned?'info':'warn']('Socket',`Viewer ${JSON.stringify(client.userName||client.userId)} ${planned?'closed the page':'disconnected'}: code ${code}${quoted}, cause ${client.terminationCause||'browser or network'}, connected ${Math.round((now-client.openedAt)/1000)}s, last message ${((now-client.lastSeen)/1000).toFixed(1)}s ago${count>1?`, ${count} unplanned disconnects in the last hour`:''}`);
+        }
         hub.directory?.disconnected(ws);
         clearTimeout(timer); clients.delete(client);
         // A transient close can precede the next authenticated socket by only

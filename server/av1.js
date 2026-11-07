@@ -418,13 +418,14 @@ class AV1 {
     if (!entry) {
       const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
       // A seek can make an already queued prefetch imminent; joining raises it.
-      entry = { users:0, at:Date.now(), controller, priority:{urgent} };
+      entry = { users:0, at:Date.now(), queued:Date.now(), controller, priority:{urgent} };
       entry.promise = runOperation(controller.signal, () => this.slot(controller.signal, async () => {
         this.pruneAll(this.jobBytes);
         if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes) throw new PlaybackError('Encoded video memory is busy; retry shortly.');
         this.pendingBytes += this.jobBytes; entry.reserved = true;
         await this.conversionPolicy?.video('uburoom',group.codec);
         const releaseConversion=await this.conversionPolicy?.wait({signal:controller.signal});
+        entry.began=Date.now();
         try {
         const codec = group.codec;
         const encoder = group.encoder || await this.selectEncoder(codec);
@@ -512,7 +513,11 @@ class AV1 {
       }, group.key, entry.priority)).then(bytes => {
         if (controller.signal.aborted || group.chunks.get(index)!==entry) throw new PlaybackError('WebM preparation cancelled.');
         if (entry.reserved) { this.pendingBytes -= this.jobBytes; entry.reserved = false; }
-        entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry); return bytes;
+        entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry);
+        // A chunk slower than real time means viewers will catch up and wait.
+        const took = (Date.now() - entry.began) / 1000, waited = (entry.began - entry.queued) / 1000;
+        if (took > CHUNK * .8 || waited > CHUNK) this.logger?.warn('Conversion',`Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}); viewers may wait.`);
+        return bytes;
       }).catch(error => {
         if (controller.signal.aborted) { if (group.chunks.get(index)===entry) group.chunks.delete(index); }
         else {

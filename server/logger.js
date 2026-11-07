@@ -142,6 +142,8 @@ class Logger {
     this.isTTY = options.isTTY !== undefined ? options.isTTY : (process.stdout.isTTY && !process.env.NO_COLOR);
     this.fileStream = null;
     this.filePath = null;
+    /** @type {Set<(level:string, tag:string, message:string) => void>} */
+    this.taps = new Set();
 
     if (options.file) {
       this.setFile(options.file);
@@ -202,8 +204,18 @@ class Logger {
     });
   }
 
+  /**
+   * Receive every redacted line at info or above, whatever the console level.
+   * @param {(level:string, tag:string, message:string) => void} listener
+   */
+  tap(listener) {
+    this.taps.add(listener);
+    return () => this.taps.delete(listener);
+  }
+
   _write(level, tag, args) {
-    if (!this.isLevelEnabled(level)) return;
+    const tapped = level !== 'debug' && this.taps.size > 0;
+    if (!tapped && !this.isLevelEnabled(level)) return;
 
     const time = formatTimestamp();
     const cleanTag = tag ? `[${tag}]` : '';
@@ -212,6 +224,8 @@ class Logger {
     // Sanitize parameters
     const sanitizedArgs = args.map(arg => redact(arg));
     const formattedMsg = util.format(...sanitizedArgs);
+    if (tapped) for (const listener of this.taps) { try { listener(level, tag, stripAnsi(formattedMsg)); } catch {} }
+    if (!this.isLevelEnabled(level)) return;
 
     // Format console output
     let consoleMsg;

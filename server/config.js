@@ -23,7 +23,8 @@ const KEYS = [
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.encoder', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
-  'logging.level', 'logging.requests', 'logging.file'];
+  'logging.level', 'logging.requests', 'logging.file',
+  'diagnostics.enabled', 'diagnostics.keep_days', 'diagnostics.max_mb'];
 
 function configPath(args = process.argv.slice(2)) {
   let selected;
@@ -195,6 +196,11 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     requests: boolean('logging.requests', true),
     file: logFile ? resolveFile('logging.file') : ''
   };
+  const keepDays = value.diagnostics?.keep_days ?? 7, maxMb = value.diagnostics?.max_mb ?? 500;
+  if (!Number.isInteger(keepDays) || keepDays < 1 || keepDays > 365) throw new Error('diagnostics.keep_days must be a whole number of days from 1 to 365');
+  if (!Number.isInteger(maxMb) || maxMb < 10 || maxMb > 100000) throw new Error('diagnostics.max_mb must be a whole number from 10 to 100000');
+  config.diagnostics = { enabled: boolean('diagnostics.enabled', true), keepDays, maxBytes: maxMb * 1024 * 1024,
+    directory: path.join(resolveFile('storage.data_directory', 'data'), 'diagnostics') };
   Object.assign(config, Policy.configuration(value.rooms || {}));
   return config;
 }

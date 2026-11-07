@@ -336,6 +336,9 @@ const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
     repeat:(callback,delay)=>setInterval(callback,delay),cancelRepeat:timer=>clearInterval(timer)});
 });
 const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
+// Player helpers in other files report timings here; the recorder drops anything it does not allow.
+globalThis.uburoomTrace=(event,fields)=>diagnostics.record(event,fields);
+for(const event of ['error','unhandledrejection'])window.addEventListener(event,()=>diagnostics.record('page-error'));
 let soak;
 $('soak-start').hidden=!soakMode;
 $('soak-status').hidden=!soakMode;
@@ -427,6 +430,51 @@ function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
   const link=document.createElement('a');link.href=url;link.download=filename;link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+// A short paste for bug reports: the last few minutes of player events, with one
+// sample every five seconds and no frame rows. Links are removed from error text.
+function diagnosticReport(minutes=5) {
+  diagnosticSample();
+  const snapshot=diagnostics.snapshot(),entries=diagnostics.entries({since:Date.now()-minutes*60000}),quiet=text=>String(text||'').replace(/\bhttps?:\/\/\S+/g,'[link]').slice(0,200)||undefined;
+  const tracks=state?.tracks,quality=video.getVideoPlaybackQuality?.();
+  return {report:'uburoom diagnostics',schema:1,minutes,createdAt:new Date().toISOString(),
+    browser:navigator.userAgent,screen:[screen.width,screen.height,devicePixelRatio],window:[innerWidth,innerHeight],
+    fullscreen:!!document.fullscreenElement,visibility:document.visibilityState,online:navigator.onLine,
+    player:{format:state?.format,quality:state?.quality,preferredQuality,subtitles:tracks?.subtitleDelivery||(tracks?.subtitleId?'text':'off'),
+      paused:video.paused,readyState:video.readyState,position:+video.currentTime.toFixed(2),target:+(expected()||0).toFixed(2),
+      bufferedAhead:+uburoomPlayback.bufferedAhead(video.buffered,video.currentTime).toFixed(2),size:[video.videoWidth,video.videoHeight],
+      frames:quality&&{total:quality.totalVideoFrames,dropped:quality.droppedVideoFrames},chunkSeconds:av1?.chunkTime&&+av1.chunkTime.toFixed(2),
+      held:!!heldStream,error:quiet(playbackError)},
+    connection:{attempt:transport?.connectionAttempt,id:transport?.connectionId},
+    discarded:{events:snapshot.discardedEvents,samples:snapshot.discardedSamples},entries};
+}
+// When the server keeps diagnostics, the player sends its rows in the background so
+// nobody has to copy a report. Each page load is its own stream; the server drops rows
+// it already has, so a retry or an overlapping final upload never duplicates them.
+const diagnosticUpload={stream:crypto.randomUUID(),after:0,busy:false};
+async function uploadDiagnostics(final=false) {
+  if(!config?.keepDiagnostics || !selected || diagnosticUpload.busy && !final)return;
+  const rows=diagnostics.entries({after:diagnosticUpload.after}).slice(0,final?120:2000);
+  if(!rows.length)return;
+  diagnosticUpload.busy=true;
+  try {
+    await api('/api/watch/diagnostics',{roomId:selected,viewerId,stream:diagnosticUpload.stream,rows},{keepalive:final,timeoutMs:20000});
+    diagnosticUpload.after=Math.max(diagnosticUpload.after,rows.at(-1).sequence);
+  } catch {} finally {diagnosticUpload.busy=false;}
+}
+setInterval(()=>void uploadDiagnostics(),30000);
+window.addEventListener('pagehide',()=>void uploadDiagnostics(true));
+$('copy-diagnostics').prepend(uburoomIcons.icon(document,'copy'));
+$('copy-diagnostics').addEventListener('click',async()=>{
+  const text=JSON.stringify(diagnosticReport());
+  try {
+    await navigator.clipboard.writeText(text);
+    toasts.show('diagnostic-report',{title:'Report copied',hint:'Paste it in a message to the host.',symbol:'check',duration:4000});
+  } catch {
+    const url=URL.createObjectURL(new Blob([text+'\n'],{type:'application/json'})),link=document.createElement('a');
+    link.href=url;link.download='uburoom-diagnostic-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toasts.show('diagnostic-report',{type:'error',title:"Couldn't copy",hint:'Saved the report as a file instead.',symbol:'copy',duration:6000});
+  }
+});
 let subtitleLoadingTimer, subtitleLoadingActive = false;
 function setSubtitleLoading(loading) {
   const cc = $('captions-toggle');
@@ -831,7 +879,7 @@ async function api(path, data, options = {}) {
   if(transport && /^\/api\/watch\/(rooms|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
     try {return await transport.request(path,data,options);} catch(error){rejection=error.rejection;if(error.status)response={status:error.status,ok:false};throw error;}
   }
-  response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers,
+  response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers, keepalive: !!options.keepalive,
     body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
   const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw Object.assign(new Error(value.error || 'Request failed'),{status:response.status,response:value});} return value;
   } catch(error) {
@@ -1494,10 +1542,11 @@ function canHoldStream(next) {
 const fileNeedsAudioStream=next=>next.format==='file' && /^(h264|avc1)$/i.test(next.videoCodec || '') && (config.outputs || ['plex']).includes('plex') &&
   uburoomPlayback.needsCompatible(next,type => video.canPlayType(type));
 function holdStream(next) {
-  const hold=heldStream={next};
+  const hold=heldStream={next,started:performance.now()};
+  diagnostics.record('stream-hold',{format:next.format});
   hls?.stopLoad(); av1?.hold();
   const room=uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)-HOLD_RESERVE;
-  hold.timer=setTimeout(()=>{if(heldStream===hold)releaseStream();},Math.min(HOLD_LIMIT_MS,room*1000/Math.max(video.playbackRate,1)));
+  hold.timer=setTimeout(()=>{if(heldStream===hold)releaseStream('timeout');},Math.min(HOLD_LIMIT_MS,room*1000/Math.max(video.playbackRate,1)));
   prepareHeldStream(hold);
 }
 function prepareHeldStream(hold) {
@@ -1515,7 +1564,7 @@ function prepareHeldStream(hold) {
   element.muted=true;
   const client=hold.client=new Hls({...hlsClientConfig(next,cache),maxBufferLength:15,maxMaxBufferLength:30});
   let anchored=false;
-  client.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal && heldStream===hold && hold.client===client)releaseStream();});
+  client.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal && heldStream===hold && hold.client===client)releaseStream('error');});
   client.on(Hls.Events.FRAG_LOADED,()=>{if(hold.client===client && !anchored)client.pauseBuffering();});
   client.on(Hls.Events.FRAG_BUFFERED,()=>{
     if(heldStream!==hold || hold.client!==client)return;
@@ -1531,7 +1580,7 @@ async function requestAudioStream(hold) {
   while(qualityPending && heldStream===hold && Date.now()-started<3000)await new Promise(resolve=>setTimeout(resolve,30));
   if(heldStream!==hold)return;
   try { await execute({action:'media.quality.set',args:{quality:hold.next.preferredQuality || preferredQuality || hold.next.quality,fallback:'audio',reason:'The browser does not support the original codecs.'}}); }
-  catch { if(heldStream===hold)releaseStream(); }
+  catch { if(heldStream===hold)releaseStream('error'); }
 }
 function dropHeldStream() {
   const hold=heldStream; heldStream=undefined;
@@ -1540,22 +1589,23 @@ function dropHeldStream() {
   const client=hold.client; hold.client=undefined; client?.destroy();
   return hold;
 }
-function releaseStream() {
+function releaseStream(end='ready') {
   const hold=dropHeldStream();
   if(!hold)return;
   lastQualityRequest=0;
+  diagnostics.record('stream-swap',{format:hold.next.format,holdEnd:end,prepared:!!hold.cache,elapsedMs:performance.now()-hold.started});
   if(hold.cache){hold.cache.recording=false;preparedStream={url:hold.next.mediaUrl,cache:hold.cache};}
   applyState(hold.next);
 }
 // The picture stays on the last frame through the gap the swap cannot avoid. The first
 // frame of a new stream is the anchor, so wait for the real one at the room's position.
-let frameHold,frameHoldTimer;
+let frameHold,frameHoldTimer,frameHoldShown;
 function holdLastFrame() {
   if(video.readyState<2 || !video.videoWidth)return;
   if(!frameHold) {frameHold=document.createElement('canvas');frameHold.id='frame-hold';frameHold.hidden=true;video.after(frameHold);}
   frameHold.width=video.videoWidth;frameHold.height=video.videoHeight;frameHold.style.scale=video.style.scale;frameHold.style.translate=video.style.translate;
   try {frameHold.getContext('2d').drawImage(video,0,0);} catch {return;}
-  frameHold.hidden=false;
+  frameHold.hidden=false;frameHoldShown=performance.now();
   clearTimeout(frameHoldTimer);frameHoldTimer=setTimeout(releaseLastFrame,8000);
   const shown=()=>{
     if(frameHold.hidden)return;
@@ -1565,7 +1615,11 @@ function holdLastFrame() {
   if(video.requestVideoFrameCallback)queueMicrotask(()=>video.requestVideoFrameCallback(shown));
   else video.addEventListener('playing',releaseLastFrame,{once:true});
 }
-function releaseLastFrame() {clearTimeout(frameHoldTimer);if(frameHold)frameHold.hidden=true;}
+function releaseLastFrame() {
+  clearTimeout(frameHoldTimer);
+  if(frameHold && !frameHold.hidden)diagnostics.record('frame-hold-end',{elapsedMs:performance.now()-frameHoldShown});
+  if(frameHold)frameHold.hidden=true;
+}
 function stopHls(reason) {
   if(hls)diagnosticSample('hls-stop',{reason});
   clearTimeout(hls?.refreshRetryTimer);
@@ -2884,6 +2938,7 @@ setInterval(() => {
 async function start() {
   await syncReady;
   config = pageBootstrap?.config||await api('/api/watch/config');
+  if(config.keepDiagnostics)$('diagnostic-report-hint').textContent+=` This server also keeps player diagnostics for ${config.keepDiagnostics} ${config.keepDiagnostics===1?'day':'days'}.`;
   if (config.watchVersion !== 19) throw new Error('The player and server versions differ. Reload after the server update.');
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
   const discordButton=$('welcome').querySelector('.discord-button');

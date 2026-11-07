@@ -1,4 +1,5 @@
-/* Local, bounded playback evidence. Exports exclude URLs, IDs, titles and error text. */
+/* Local, bounded playback evidence. Exports exclude URLs, IDs, titles and error text.
+ * The server keeps viewer uploads through the same allowlist (see clean). */
 (function(root) {
   'use strict';
   const choices = {
@@ -15,6 +16,7 @@
     visibility:['visible','hidden','prerender'],
     closeInitiator:['none','manual-close','interrupt','auth-timeout','protocol-error','heartbeat-timeout'],
     roomListState:['missing','locked'],
+    holdEnd:['ready','timeout','error'],
     rejection:['media-unavailable','media-changed','stream-changed','epoch-changed','invalid-discontinuity','invalid-state','invalid-sequence','sequence-replayed',
       'invalid-sample','sample-replayed','invalid-clock','sample-stale','sample-future','invalid-position','invalid-rate','invalid-frames','observation-timeout','storage-failure'],
     creditReason:['baseline','not-playing','discontinuity','frames-not-advancing','sample-gap','receive-gap','delivery-jitter','clock-discontinuity','position-discontinuity','interval-limit','clock-unavailable','credited'],
@@ -33,7 +35,8 @@
     'playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort',
     'soak-start','soak-end','probe-start','probe-end','command-start','command-ok','command-failed','online','offline','visibilitychange','pagehide','observation-uncredited',
     'frame','clock-sample','ratechange','sync-seek','sync-jump','sync-mode','sync-quality','start-prepare','start-timer','hls-anchor','hls-buffer-flushing',
-    'control-connected','room-list-unavailable','room-state-unavailable','playback-degraded','playback-rearmed','decode-capability']);
+    'control-connected','room-list-unavailable','room-state-unavailable','playback-degraded','playback-rearmed','decode-capability',
+    'disconnect-extended','disconnect-expired','stream-hold','stream-swap','frame-hold-end','subtitle-window','subtitle-window-failed','chunk-loaded','page-error']);
   const numbers = new Set(['elapsedMs','status','attempt','delayMs','position','target','ready','network','rate','bufferAhead','frames','decoded','dropped',
     'callbackFrames','width','height','viewportFraction','jsHeapUsed','jsHeapTotal','jsHeapLimit','mediaError','audio','subtitle','identity','room','media','stream','grant','observation',
     'receivedMs','clockDeltaMs','positionDelta','frameDelta','creditedSeconds','serverTime','clockRevision','clockAccepted','clockRejected','clockOffsetMs','clockAgeMs',
@@ -47,8 +50,25 @@
     'dropRatio','deltaTotal','deltaDropped','severeRatio','severeTotal','severeDropped','totalStallMs','stallCount','sampleGapMs',
     'hlsMaxBufferSize','hlsMaxBufferLength','hlsMaxMaxBufferLength','hlsBackBufferLength']);
   const flags = new Set(['paused','roomPaused','seeking','waiting','online','inViewport','fatal','enabled','cleanup','roomChanged','mediaChanged','streamChanged','grantChanged','observationChanged','clockValid','frameRepeated','settling','socketCloseClean','socketWasReady',
-    'presentationReset',
+    'presentationReset','prepared',
     'capabilitySupported','capabilitySmooth','capabilityPowerEfficient']);
+  // The one allowlist for recorded fields, in the browser and again on the server.
+  function clean(fields) {
+    const row={};
+    for (const [key,value] of Object.entries(fields||{})) {
+      if (numbers.has(key) && Number.isFinite(value) && Math.abs(value)<=Number.MAX_SAFE_INTEGER) row[key]=Math.round(value*1000)/1000;
+      else if (flags.has(key) && typeof value==='boolean') row[key]=value;
+      else if (Object.hasOwn(choices,key) && choices[key].includes(value)) row[key]=value;
+      else if (key==='ranges' && Array.isArray(value)) row.ranges=value.slice(0,8).filter(pair=>Array.isArray(pair)&&pair.length===2&&pair.every(n=>Number.isFinite(n)&&n>=0&&n<=1e9)).map(pair=>pair.map(n=>Math.round(n*1000)/1000));
+    }
+    return row;
+  }
+  // A recorded row as received from a browser: known event, sane times, allowed fields only.
+  function cleanRow(row) {
+    if (!row || typeof row!=='object' || !events.has(row.event) || !Number.isSafeInteger(row.sequence) || !Number.isFinite(row.at) || !Number.isFinite(row.ms)) return;
+    const {sequence,at,ms,event,...fields}=row;
+    return {sequence,at:Math.round(at),ms:Math.round(ms),event,...clean(fields)};
+  }
   function requestKind(path) {
     const route = String(path).split('?')[0];
     if (/^\/api\/watch\/rooms\/[^/]+$/.test(route)) return 'room-poll';
@@ -63,13 +83,7 @@
     let previous={}, sequence=0, discardedEvents=0, discardedSamples=0, discardedFrames=0, frameCursor=0;
     function record(event,fields={}) {
       if (!events.has(event)) return;
-      const row={sequence:++sequence,at:now(),ms:Math.round(monotonic()-start),event,...generations};
-      for (const [key,value] of Object.entries(fields)) {
-        if (numbers.has(key) && Number.isFinite(value) && Math.abs(value)<=Number.MAX_SAFE_INTEGER) row[key]=Math.round(value*1000)/1000;
-        else if (flags.has(key) && typeof value==='boolean') row[key]=value;
-        else if (Object.hasOwn(choices,key) && choices[key].includes(value)) row[key]=value;
-        else if (key==='ranges' && Array.isArray(value)) row.ranges=value.slice(0,8).filter(pair=>Array.isArray(pair)&&pair.length===2&&pair.every(n=>Number.isFinite(n)&&n>=0&&n<=1e9)).map(pair=>pair.map(n=>Math.round(n*1000)/1000));
-      }
+      const row={sequence:++sequence,at:now(),ms:Math.round(monotonic()-start),event,...generations,...clean(fields)};
       const sample=event==='sample', frame=event==='frame', bucket=frame?buckets.frames:sample?buckets.samples:buckets.events, limit=frame?limits.frames:sample?limits.samples:limits.events;
       if(frame && bucket.length===limit){bucket[frameCursor]=row;frameCursor=(frameCursor+1)%limit;discardedFrames++;return;}
       if (bucket.length===limit) { bucket.shift(); if(frame)discardedFrames++;else if(sample)discardedSamples++;else discardedEvents++; }
@@ -81,8 +95,18 @@
       previous=current;
       if(Object.keys(changed).length)record('state-change',{...changed,deliveryReason:value.deliveryInfo?.reason});
     }
+    // Rows after a sequence, for reports and uploads: no per-frame rows, and at most
+    // one periodic sample per interval. Events are always kept.
+    function entries({after=0,since=0,sampleEveryMs=5000}={}) {
+      let lastSample=0;
+      return [...buckets.events,...buckets.samples].filter(row=>row.sequence>after && row.at>=since).sort((a,b)=>a.sequence-b.sequence).filter(row=>{
+        if(row.event!=='sample')return true;
+        if(row.at-lastSample<sampleEveryMs)return false;
+        lastSample=row.at;return true;
+      }).map(row=>({...row}));
+    }
     record('start');
-    return {record,state,snapshot:()=>JSON.parse(JSON.stringify({schema:2,startedAt,exportedAt:now(),limits,discardedEvents,discardedSamples,discardedFrames,
+    return {record,state,entries,snapshot:()=>JSON.parse(JSON.stringify({schema:2,startedAt,exportedAt:now(),limits,discardedEvents,discardedSamples,discardedFrames,
       entries:[...buckets.events,...buckets.samples,...buckets.frames].sort((a,b)=>a.sequence-b.sequence)}))};
   }
   function controlProbe(now=()=>performance.now()) {
@@ -93,6 +117,6 @@
       rejects:(path,id)=>id===room && now()<until && String(path).split('?')[0]==='/api/watch/rooms/'+room
     };
   }
-  const api={create,requestKind,controlProbe};
+  const api={create,clean,cleanRow,requestKind,controlProbe};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.uburoomDiagnostics=api;
 })(typeof globalThis==='object'?globalThis:this);
