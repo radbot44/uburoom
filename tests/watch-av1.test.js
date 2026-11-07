@@ -16,23 +16,6 @@ function playerAt(duration = 180) {
   for (const buffer of [player.buffer,player.audio]) Object.assign(buffer,{appendBuffer:()=>{},remove:()=>{}});
   return player;
 }
-test('a quality change keeps the playing chunks and replaces only what follows',async () => {
-  const player = playerAt();
-  await player.pump();
-  player.position = 7; player.url='/fixture/next/start'; player.url='/fixture/start';
-  player.switchStream('/fixture/next/start');
-  await player.fill();
-  assert.ok(player.appended.has(0) && player.appended.has(1),'buffered and current chunks stay');
-  assert.ok(player.requests.includes('/fixture/next/chunk-video-2'),'the next chunk comes from the new stream');
-  assert.ok(!player.requests.includes('/fixture/next/chunk-video-1'),'the playing chunk is not replaced');
-  // Too close to the boundary for the new stream to arrive in time, so one more chunk stays.
-  player.position = 11.5; player.requests.length = 0;
-  player.switchStream('/fixture/third/start');
-  await player.fill();
-  assert.ok(!player.requests.includes('/fixture/third/chunk-video-2'));
-  assert.ok(player.requests.includes('/fixture/third/chunk-video-3'));
-});
-
 test('AV1 fills ahead while paused, retains rewind data, and does not download cached chunks again',async () => {
   const player = playerAt();
   await player.pump();

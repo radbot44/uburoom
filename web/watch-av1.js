@@ -1,29 +1,19 @@
 'use strict';
 // AV1/VP9/VP8 WebM goes directly to MediaSource, never through hls.js. Each independently
 // encoded chunk starts at zero; timestampOffset maps it to Plex source time.
-const SWITCH_MARGIN = 5;
 class uburoomAV1 {
   constructor(video, url, target, failed, requiredAttempts = 3) {
     this.video = video; this.url = url; this.target = target; this.failed = failed; this.requiredAttempts = requiredAttempts;
     this.abort = new AbortController(); this.appended = new Set();
     this.chunkBytes = new Map(); this.seekVersion = 0; this.endSignalled = false;
-    this.onSeek = () => this.restart();
+    this.onSeek = () => {
+      this.seekVersion++; this.request?.abort();
+      if (!this.pumping) { clearTimeout(this.timer); this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)),0); }
+    };
     video.addEventListener('seeking',this.onSeek);
     this.source = new MediaSource(); this.objectUrl = URL.createObjectURL(this.source);
     this.source.addEventListener('sourceopen', () => this.start().catch(error => this.fail(error)), {once:true});
     video.src = this.objectUrl;
-  }
-  restart() {
-    this.seekVersion++; this.request?.abort();
-    if (!this.pumping) { clearTimeout(this.timer); this.timer = setTimeout(() => this.pump().catch(error => this.fail(error)),0); }
-  }
-  // Change quality without touching what is playing: buffered chunks keep playing and
-  // the new stream takes over at a chunk boundary. Chunks are independently encoded at
-  // fixed source positions, so the join is the same as any other. Audio is unchanged.
-  switchStream(url) {
-    if (url === this.url && !this.nextUrl) return;
-    this.nextUrl = url; this.prefetchFailure = undefined; this.prefetchSize = undefined;
-    this.restart();
   }
   async fetch(url) {
     let response;
@@ -157,13 +147,6 @@ class uburoomAV1 {
     const ahead = Math.min(policy.ahead,this.pressureAhead ?? policy.ahead);
     const last = Math.floor(Math.min(target + ahead,this.duration - .05) / this.seconds);
     const earliest = Math.max(0,Math.floor((target - (this.pressured ? 0 : policy.behind)) / this.seconds));
-    if (this.nextUrl) {
-      this.url = this.nextUrl; this.nextUrl = undefined; this.endSignalled = false;
-      // Keep one more chunk when the boundary is too close for the new stream to arrive.
-      const keep = (first + 1) * this.seconds - target < SWITCH_MARGIN ? first + 1 : first;
-      await this.evict([...this.appended].filter(index => index > keep));
-      if (superseded()) return;
-    }
     await this.evict([...this.appended].filter(index => index < earliest || index > last));
     if (superseded()) return;
     this.reconcile(first,last);
