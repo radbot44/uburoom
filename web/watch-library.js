@@ -312,10 +312,10 @@
       return b;
     }
     function autoButton(parent, scope, title) {
-      const b = button(parent, 'Set as auto-queue from ' + title, 'sparkle', 'queue-control');
+      const b = button(parent, 'Set as auto-queue from ' + title, 'sparkle', 'library-auto-queue');
       if (parent === scopeActions) b.classList.add('watch-control','watch-control-responsive','watch-control-solid-disabled');
       b.dataset.autoQueue = scope.id;
-      node('span', b, 'Set as auto-queue', 'queue-label watch-control-label');
+      node('span', b, 'Set as auto-queue', 'library-auto-queue-label watch-control-label');
       b.onclick = () => { if (!b.disabled) autoQueue({ scope, title }); };
       return b;
     }

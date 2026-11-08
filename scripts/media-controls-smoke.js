@@ -121,7 +121,7 @@ async function main() {
       assert.equal(await run('$("library-top").querySelector("svg").getAttribute("data-tabler-icon")==="arrow-bar-to-up" && getComputedStyle($("library-top").querySelector(".watch-control-label")).display==="none" && $("library-top").getAttribute("aria-label")==="Back to top"'),true,'Back to top has the requested icon and accessible compact label');
       assert.equal(await run('getComputedStyle(document.querySelector(".library-choices")).display==="none" && !$("library-home").disabled'),true,'Phone hides the switcher but keeps Libraries home navigation');
       assert.equal(await run('getComputedStyle(document.querySelector(".library-views .group-button span")).display'),'none');
-      assert.equal(await run('getComputedStyle(document.querySelector("#library-filters-toggle .filter-label")).display==="none" && getComputedStyle(document.querySelector(".library-scope-actions .queue-label")).display==="none"'),true,'Narrow toolbar labels hide with accessible button names');
+      assert.equal(await run('getComputedStyle(document.querySelector("#library-filters-toggle .filter-label")).display==="none" && getComputedStyle(document.querySelector(".library-scope-actions .library-auto-queue-label")).display==="none"'),true,'Narrow toolbar labels hide with accessible button names');
       assert.equal(await run('document.querySelector(".library-views .group-button").getBoundingClientRect().width>=40 && document.documentElement.scrollWidth<=innerWidth+1'),true);
       assert.equal(await run('Math.abs($("library-sort").getBoundingClientRect().top-document.querySelector(".library-views").getBoundingClientRect().top)<2'),true,'Phone view selector shares the sort row');
       await run('$("library-filters-toggle").click()');

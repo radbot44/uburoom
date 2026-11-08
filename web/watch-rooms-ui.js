@@ -32,7 +32,6 @@
     const $ = id => document.getElementById(id), dialog = $('room-settings-dialog');
     const controls = root.uburoomControls;
     $('room-bar').classList.add('watch-control-group');
-    $('room-keep-empty').closest('label').classList.add('watch-switch-label');
     for (const id of ['switch-room','create','reopen','admin-end-room','close-room']) {
       const control = $(id); controls.content(control,{label:control.textContent,icon:id === 'close-room' ? 'logout' : undefined});
     }
@@ -726,7 +725,7 @@
         roll.id = 'room-invite-reroll'; row.append(roll);
       }
       if (invite.guestsEnabled && invite.canAllowGuests) {
-        const toggle = node('label',row,undefined,'queue-check'), input = node('input',toggle);
+        const toggle = node('label',row,undefined,'watch-switch-label'), input = node('input',toggle);
         input.type = 'checkbox'; input.setAttribute('role','switch'); input.className = 'watch-switch'; input.id = 'room-allow-guests';
         input.checked = invite.allowGuests; input.disabled = busy;
         node('span',toggle,'Allow guests');
@@ -742,7 +741,7 @@
       $('room-invited-section').hidden = false;
       const list = $('room-invited'); list.replaceChildren();
       for (const person of invite.invited) {
-        const item = node('div',list,undefined,'saved-room');
+        const item = node('div',list,undefined,'room-invited-item');
         node('strong',node('div',item),person.name);
         const revoke = node('button',node('div',item,undefined,'room-actions'),'Revoke','danger-button'); revoke.type = 'button'; revoke.disabled = busy;
         revoke.setAttribute('aria-label','Revoke invite for ' + person.name);

@@ -193,7 +193,7 @@
     }
     setInterval(renderContinuation, 250);
 
-    const bulkDialog = node('dialog', doc.body, undefined, 'privacy-dialog queue-dialog');
+    const bulkDialog = node('dialog', doc.body, undefined, 'watch-dialog queue-dialog');
     bulkDialog.id = 'queue-bulk-dialog';
     bulkDialog.setAttribute('aria-labelledby', 'queue-bulk-title');
     const bulkTitle = node('h2', bulkDialog, 'Add episodes to queue');
@@ -205,13 +205,13 @@
     for (const [value, label] of [['all', 'All episodes'], ['unfinished', 'Unfinished by this room']]) {
       const option = node('option', bulkFilter, label); option.value = value;
     }
-    const bulkSpecialLabel = node('label', bulkDialog, undefined, 'queue-check watch-switch-label');
+    const bulkSpecialLabel = node('label', bulkDialog, undefined, 'watch-switch-label');
     const bulkSpecials = node('input', bulkSpecialLabel); bulkSpecials.type = 'checkbox'; bulkSpecials.id = 'queue-bulk-specials';
     bulkSpecials.className = 'watch-switch'; bulkSpecials.setAttribute('role','switch');
     bulkSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     node('p', bulkDialog, 'Current and upcoming episodes are excluded. The server limits upcoming videos; an addition that exceeds its limit is rejected in full.', 'hint');
     const bulkStatus = node('p', bulkDialog, '', 'hint'); bulkStatus.setAttribute('role', 'status');
-    const bulkActions = node('div', bulkDialog, undefined, 'room-actions');
+    const bulkActions = node('div', bulkDialog, undefined, 'dialog-actions');
     const bulkCancel = button(bulkActions, 'Cancel', undefined, () => popups.close(bulkDialog));
     const bulkSubmit = button(bulkActions, 'Add to queue', undefined, undefined, false, 'primary'); bulkSubmit.id = 'queue-bulk-submit';
     let bulkDirty = false;
@@ -240,7 +240,7 @@
     }
 
     const autoDialog = node('div', doc.getElementById('room-playback-controls'), undefined, 'queue-settings');
-    const settingsAutoplayLabel = node('label', autoDialog, undefined, 'queue-check watch-switch-label');
+    const settingsAutoplayLabel = node('label', autoDialog, undefined, 'watch-switch-label');
     const settingsAutoplay = node('input', settingsAutoplayLabel); settingsAutoplay.type = 'checkbox'; settingsAutoplay.id = 'room-autoplay';
     settingsAutoplay.className = 'watch-switch'; settingsAutoplay.setAttribute('role','switch');
     settingsAutoplayLabel.append(doc.createTextNode('Auto-play next video'));
@@ -294,7 +294,7 @@
     const sourceTitle = node('strong',sourcePicker,'Choose source');
     const sourceNotice = node('p',sourcePicker,'','hint'); sourceNotice.setAttribute('role','status');
     const sourceRows = node('div',sourcePicker);
-    const sourceNav = node('div',sourcePicker,undefined,'room-actions');
+    const sourceNav = node('div',sourcePicker,undefined,'dialog-actions');
     button(sourceNav,'Libraries',undefined,() => void browseSources());
     button(sourceNav,'Close picker','close',() => { sourcePicker.hidden = true; });
     let draftScope = {type:'show'}, sourceTicket = 0, autoRoom, autoTicket = 0, hasAutoDraft = false, autoNoticeTimer;
@@ -358,13 +358,13 @@
       syncAutoModeButtons();
     }
     autoMode.addEventListener('change',() => { hasAutoDraft = true; updateAutoFields(); });
-    const autoSpecialLabel = node('label', autoDialog, undefined, 'queue-check watch-switch-label');
+    const autoSpecialLabel = node('label', autoDialog, undefined, 'watch-switch-label');
     const autoSpecials = node('input', autoSpecialLabel); autoSpecials.type = 'checkbox'; autoSpecials.id = 'queue-auto-specials';
     autoSpecials.className = 'watch-switch'; autoSpecials.setAttribute('role','switch');
     autoSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     autoSpecials.addEventListener('change',() => { hasAutoDraft = true; });
     const autoNotice = node('p', autoDialog, '', 'hint'); autoNotice.setAttribute('role', 'status');
-    const autoActions = node('div', autoDialog, undefined, 'room-actions queue-settings-footer');
+    const autoActions = node('div', autoDialog, undefined, 'dialog-actions queue-settings-footer');
     const autoCancel = button(autoActions, 'Reset changes', undefined, () => { hasAutoDraft = false; void openAuto(); });
     const autoSave = button(autoActions, 'Save auto-queue', undefined, undefined, false, 'primary'); autoSave.id = 'queue-auto-save';
     const autoReset = button(autoActions,'Reset auto-queue progress',undefined,async () => {

@@ -4,7 +4,7 @@
   function mount({request, trigger}) {
     const popups=root.uburoomDialogs, controls=root.uburoomControls;
     const node=(tag,parent,text,style)=>{const value=document.createElement(tag);if(text)value.textContent=text;if(style)value.className=style;parent?.append(value);return value;};
-    const dialog=node('dialog',document.body,null,'privacy-dialog server-settings-dialog');dialog.id='server-settings-dialog';dialog.setAttribute('aria-labelledby','server-settings-title');
+    const dialog=node('dialog',document.body,null,'watch-dialog server-settings-dialog');dialog.id='server-settings-dialog';dialog.setAttribute('aria-labelledby','server-settings-title');
     const header=node('header',dialog),title=node('h2',header,'Server settings');title.id='server-settings-title';
     const close=controls.button(document,{label:'Close server settings',icon:'close',iconOnly:true,action:()=>popups.close(dialog)});close.id='server-settings-close';close.autofocus=true;header.append(close);
     node('p',dialog,'Saved changes take effect after restarting uburoom.','hint');
@@ -14,7 +14,7 @@
     const error=node('p',dialog,null,'server-settings-error');error.id='server-settings-error';error.setAttribute('role','alert');
     const review=node('button',dialog,'Review latest settings','quiet');review.type='button';review.id='server-settings-review';review.hidden=true;
     const resolutions=node('div',dialog);resolutions.id='server-settings-conflicts';
-    const footer=node('footer',dialog,null,'room-actions');
+    const footer=node('footer',dialog,null,'dialog-actions');
     const cancel=node('button',footer,'Cancel','quiet');cancel.type='button';cancel.id='server-settings-cancel';cancel.addEventListener('click',()=>popups.close(dialog));
     const save=node('button',footer,null,'primary');save.type='button';save.id='server-settings-save';node('span',save,'Save');
     const spinner=root.uburoomIcons.icon(document,'refresh');spinner.classList.add('server-settings-spinner');save.append(spinner);
@@ -67,7 +67,7 @@
     }
     function checkbox(parent,key,label) {
       labels[key]=label;
-      const row=node('label',parent,null,'room-check'),input=node('input',row);input.type='checkbox';input.id='server-'+key.replaceAll('.','-');node('span',row,label);
+      const row=node('label',parent,null,'form-checkbox'),input=node('input',row);input.type='checkbox';input.id='server-'+key.replaceAll('.','-');node('span',row,label);
       input.addEventListener('change',()=>set(key,input.checked));writers.set(key,value=>{input.checked=value;});return input;
     }
     const capacity=node('div',panels.rooms,null,'server-settings-grid');
@@ -101,7 +101,7 @@
     labels['transcoding.formats']='uburoom video formats';
     const formatInputs=[];
     for(const format of ['av1','vp9','vp8']){
-      const row=node('label',panels.transcoding,null,'room-check'),input=node('input',row);input.type='checkbox';node('span',row,format.toUpperCase());formatInputs.push([format,input]);
+      const row=node('label',panels.transcoding,null,'form-checkbox'),input=node('input',row);input.type='checkbox';node('span',row,format.toUpperCase());formatInputs.push([format,input]);
       input.addEventListener('change',()=>set('transcoding.formats',input.checked?[...draft['transcoding.formats'],format]:draft['transcoding.formats'].filter(name=>name!==format)));
     }
     writers.set('transcoding.formats',value=>{for(const [format,input]of formatInputs)input.checked=value.includes(format);});
