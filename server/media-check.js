@@ -3,12 +3,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, STREAM_CODECS } = require('./av1');
+const { run, STREAM_CODECS, codecMatches } = require('./av1');
 
 const GB = 1024 ** 3;
 // Plex refuses to transcode when its drive is nearly full; warn well before that.
 const DISK = { warning: 25 * GB, problem: 10 * GB };
 const IMAGE_SUBTITLES = new Set(['pgs', 'vobsub', 'dvd_subtitle', 'hdmv_pgs_subtitle']);
+const EMBEDDED_SUBTITLES = new Set(['eia_608', 'eia_708', 'cea_608', 'cea_708']);
 const LEVELS = ['problem', 'warning', 'info', 'ok'];
 
 /**
@@ -78,17 +79,21 @@ class MediaChecks {
   }
   /** Plex's track list against the file it serves (the Star Wars remux case). */
   trackItem(media, streams) {
-    const rows = [...(media.tracks?.audio || []), ...(media.tracks?.subtitles || [])].filter(row => !row.external && Number.isInteger(row.index));
+    const rows = [...(media.tracks?.audio || []), ...(media.tracks?.subtitles || [])]
+      .filter(row => !row.external && Number.isInteger(row.index) && !EMBEDDED_SUBTITLES.has(row.codec));
     const wrong = rows.filter(row => {
       const at = streams.find(stream => stream.index === row.index);
-      return !at || at.codec_name !== (STREAM_CODECS[row.codec] || row.codec);
+      return !at || !codecMatches(row.codec, at.codec_name);
     });
     const counts = type => streams.filter(stream => stream.codec_type === type).length;
-    const plexAudio = (media.tracks?.audio || []).filter(row => !row.external).length, plexSubtitles = (media.tracks?.subtitles || []).filter(row => !row.external).length;
+    const plexAudio = (media.tracks?.audio || []).filter(row => !row.external).length;
+    const plexSubtitles = (media.tracks?.subtitles || []).filter(row => !row.external && !EMBEDDED_SUBTITLES.has(row.codec)).length;
     if (wrong.length || plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle')) {
-      return { level: 'problem', topic: 'tracks', title: "Plex's track info is out of date for this file",
-        detail: 'Plex lists ' + plexAudio + ' audio and ' + plexSubtitles + ' subtitle tracks; the file has ' + counts('audio') + ' and ' + counts('subtitle') +
-          '. uburoom finds tracks by order, but some may be wrong. In Plex, open the item\'s menu and choose Analyze.' };
+      const detail = (plexAudio !== counts('audio') || plexSubtitles !== counts('subtitle'))
+        ? 'Plex lists ' + plexAudio + ' audio and ' + plexSubtitles + ' subtitle tracks; the file has ' + counts('audio') + ' and ' + counts('subtitle') +
+          '. uburoom finds tracks by order, but some may be wrong. In Plex, open the item\'s menu and choose Analyze.'
+        : 'The file\'s tracks do not match Plex\'s saved stream information. In Plex, open the item\'s menu and choose Analyze.';
+      return { level: 'problem', topic: 'tracks', title: "Plex's track info is out of date for this file", detail };
     }
     return { level: 'ok', topic: 'tracks', title: 'Tracks match the file' };
   }

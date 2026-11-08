@@ -110,14 +110,22 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
 }
 
 const STREAM_CODECS = {srt:'subrip',vtt:'webvtt',ssa:'ass',pgs:'hdmv_pgs_subtitle',vobsub:'dvd_subtitle',dca:'dts'};
+function codecMatches(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if ((a === 'pcm' && b.startsWith('pcm')) || (b === 'pcm' && a.startsWith('pcm'))) return true;
+  const ca = STREAM_CODECS[a] || a, cb = STREAM_CODECS[b] || b;
+  return ca === cb;
+}
+
 // Plex's track list can be out of date for the file it serves. Its number counts only
 // when the file agrees; otherwise the track is found by its order among its codec.
 function fileIndex(rows = [], track, streams = [], type) {
   if (!rows.length || !streams.some(stream => stream.codec_name)) return track.index;
-  const codec = STREAM_CODECS[track.codec] || track.codec, same = streams.filter(stream => stream.codec_name === codec);
+  const same = streams.filter(stream => stream.codec_type === type && codecMatches(track.codec, stream.codec_name));
   const at = streams.find(stream => stream.index === track.index);
-  if (at?.codec_type === type && (at.codec_name === codec || !same.length)) return track.index;
-  const order = rows.filter(row => !row.external && (STREAM_CODECS[row.codec] || row.codec) === codec).findIndex(row => row.id === track.id);
+  if (at?.codec_type === type && (codecMatches(track.codec, at.codec_name) || !same.length)) return track.index;
+  const order = rows.filter(row => !row.external && codecMatches(track.codec, row.codec)).findIndex(row => row.id === track.id);
   if (!same[order]) throw new PlaybackError('This track is not in the video file. Refresh its metadata in Plex or choose another track.');
   return same[order].index;
 }
@@ -578,4 +586,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, codecMatches, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };

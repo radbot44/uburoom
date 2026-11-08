@@ -549,3 +549,56 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
   assert.equal(planDelivery({quality:'720p4',fallback:'audio',audioTracks:1,outputs:['av1','plex']}).route,'local');
   assert.equal(planDelivery({quality:'direct',fallback:'audio',burn:true,audioTracks:1,outputs:['av1','plex']}).route,'local');
 });
+
+test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', () => {
+  const { fileIndex, codecMatches } = require('../server/av1');
+  const { MediaChecks } = require('../server/media-check');
+  const checks = new MediaChecks({});
+
+  // Codec matching checks
+  assert.equal(codecMatches('pcm', 'pcm_s16le'), true);
+  assert.equal(codecMatches('pcm', 'pcm_s24le'), true);
+  assert.equal(codecMatches('dca', 'dts'), true);
+  assert.equal(codecMatches('srt', 'subrip'), true);
+  assert.equal(codecMatches('pgs', 'hdmv_pgs_subtitle'), true);
+  assert.equal(codecMatches('aac', 'aac'), true);
+  assert.equal(codecMatches('h264', 'h264'), true);
+  assert.equal(codecMatches('pcm', 'ac3'), false);
+
+  // Buster Keaton / PCM scenario: Plex says pcm at index 1, file has pcm_s16le at index 1
+  const pcmMedia = {
+    tracks: {
+      audio: [{ id: '1', index: 1, codec: 'pcm' }],
+      subtitles: []
+    }
+  };
+  const pcmStreams = [
+    { index: 0, codec_type: 'video', codec_name: 'h264' },
+    { index: 1, codec_type: 'audio', codec_name: 'pcm_s16le' }
+  ];
+  assert.equal(checks.trackItem(pcmMedia, pcmStreams).level, 'ok');
+  assert.equal(fileIndex(pcmMedia.tracks.audio, pcmMedia.tracks.audio[0], pcmStreams, 'audio'), 1);
+
+  // Embedded EIA-608 captions: Plex lists eia_608 sharing video stream index 0
+  const ccMedia = {
+    tracks: {
+      audio: [{ id: '1', index: 1, codec: 'aac' }],
+      subtitles: [{ id: '2', index: 0, codec: 'eia_608' }, { id: '3', index: 2, codec: 'srt' }]
+    }
+  };
+  const ccStreams = [
+    { index: 0, codec_type: 'video', codec_name: 'h264' },
+    { index: 1, codec_type: 'audio', codec_name: 'aac' },
+    { index: 2, codec_type: 'subtitle', codec_name: 'subrip' }
+  ];
+  assert.equal(checks.trackItem(ccMedia, ccStreams).level, 'ok');
+
+  // Real mismatch: file stream index 1 is unexpectedly ac3 instead of pcm
+  const mismatchStreams = [
+    { index: 0, codec_type: 'video', codec_name: 'h264' },
+    { index: 1, codec_type: 'audio', codec_name: 'ac3' }
+  ];
+  const problem = checks.trackItem(pcmMedia, mismatchStreams);
+  assert.equal(problem.level, 'problem');
+  assert.match(problem.detail, /tracks do not match Plex's saved stream information/);
+});
