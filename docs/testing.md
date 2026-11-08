@@ -15,6 +15,22 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M2-P9 — Remove unrelated event checks — 2026-11-08
+
+**A/B, uncommitted follow-up over `494edb8`; not deployed.** Owner-authorized removal of room revision requirements from event creation/editing, the same-start-time restriction, invite validation during cancellation and the Publish button's playback-epoch requirement. Event edit conflicts now hash only title, description and start/end times. Create/edit payloads read the current invite for each attempt; current authorization, valid dates/field limits, managed-event identity, deadlines and uncertain-request duplicate protection remain.
+
+- `node --test --test-name-pattern='Discord' --test-reporter=tap tests/durable-rooms.test.js` — **4 passed, 0 failed/canceled/skipped**. Extended the existing event lifecycle scenario to create without revision fields, create/edit with stale room revisions, retain an edit across automatic invite reconciliation, schedule two events at the same start time, and cancel with an overlong configured invite URL. Genuine native event-detail conflicts and uncertain-create recovery still pass.
+- Chrome and Firefox headless fixture procedure passed scheduling after a room rename and editing after invite rotation/reconciliation without reopening Share, plus publication/removal, event cancellation, draft protection, both Share entrypoints, keyboard focus, dark/light, narrow layout and 200% CSS zoom. Rendered screenshot inspected.
+- `node --test --test-reporter=tap tests/*.test.js` — **442 passed, 0 failed/canceled/skipped**. `git diff --check` passed. No configuration/schema changes or live Discord/provider mutation; deployment and owner acceptance remain open.
+
+### M2-P9 — Publish after room changes — 2026-11-08
+
+**A/B, uncommitted follow-up over `494edb8`; not deployed.** The owner reported that the first Publish still failed with “Room changed. Refresh Share.” The previous fix covered removal, while publishing still checked both the preview revision and playback epoch. Publish now uses the shared validated command engine with a deadline and current host/session/room/media access checks, independently of playback changes. Each Discord attempt builds its payload from current room details after those checks; closure/reopening cannot transfer an in-flight publish to another room instance.
+
+- `node --test --test-name-pattern='Discord' --test-reporter=tap tests/durable-rooms.test.js` — **4 passed, 0 failed/canceled/skipped**. Existing scenarios now publish with stale previews after joins/settings/playback changes, change the title/invite during channel lookup and verify the emitted current details, publish without preview fields, and retain revoked-host, foreign-guild, expired-command, closed-room and duplicate-receipt safeguards. The first run returned `unsupported` for an expired-command assertion because the test request omitted its command envelope; correcting the fixture request produced the pass above.
+- Chrome and Firefox headless isolated fixtures passed first Publish after settings/playback changes without reopening Share, then removal and event create/edit/cancel. Both Share entrypoints, draft protection, keyboard focus return, dark/light themes, narrow layout and 200% CSS zoom retained; rendered screenshot inspected. No live Discord/provider mutation was performed.
+- `node --test --test-reporter=tap tests/*.test.js` — **442 passed, 0 failed/canceled/skipped**. `git diff --check` passed. No config or database schema changes; real Discord retest and owner acceptance remain open.
+
 ### M2-P9 — Share removal, event cancellation and posters — 2026-11-08
 
 **A/B, follow-up on `10cde51`, deployed as `1ba7d8b`.** The owner reported live failures removing a room post after joins/changes and canceling an edited event. Source review found removal incorrectly fenced by a stale playback epoch, and per-route Discord rate limits shared as a global reconnect condition. The follow-up removes that playback dependency while retaining current host/access checks, retries bounded rate-limit waits without retrying ambiguous failures, caches the bot's guild-member lookup, and retains pending event cancellation across longer waits. Event editing still rejects conflicting edits; cancellation does not depend on old room/event details.

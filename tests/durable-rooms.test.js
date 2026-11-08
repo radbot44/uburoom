@@ -18,7 +18,7 @@ test('Discord scheduled events preserve explicit times and consent across closur
   await creator.call(root+'?viewer='+randomUUID());await viewer.call(root+'?viewer='+randomUUID());
   const planned={title:'Planned watch night',description:'Bring popcorn',startLocal:new Date(Date.now()+2*86400000).toISOString().slice(0,16),
     endLocal:new Date(Date.now()+2*86400000+7200000).toISOString().slice(0,16),timeZone:'UTC'};
-  const schedule=async(client,action='room.event.create',extra={})=>client.call(root+'/share',{action,revision:(await creator.call(root+'/settings')).body.revision,...planned,...extra});
+  const schedule=async(client,action='room.event.create',extra={})=>client.call(root+'/share',{action,...planned,...extra});
   assert.equal((await schedule(viewer)).body.status,'forbidden');assert.equal(remote.events.size,0);
   remote.channel.eventPermitted=false;assert.notEqual((await schedule(creator)).body.status,'applied');remote.channel.eventPermitted=true;
   await f.app.watch.remove(id);
@@ -35,15 +35,30 @@ test('Discord scheduled events preserve explicit times and consent across closur
   const args={action:'room.event.edit',revision:(await returning.call(root+'/settings')).body.revision,...planned,eventKey:stale.key,eventVersion:stale.eventVersion};
   assert.notEqual((await returning.call(root+'/share',args)).body.status,'applied');assert.equal(native.name,'Changed in Discord');
   const current=(await returning.call(root+'/share')).body.scheduling.events[0];
+  await edit({action:'rename',name:'Changed while editing an event',isCustom:true});
+  await edit({action:'invite.reroll'});await f.app.watch.events.reconcile();
+  const automatic=(await returning.call(root+'/share')).body.scheduling.events[0];
+  assert.equal(automatic.eventVersion,current.eventVersion,'automatic invite updates do not conflict with event details');
   assert.equal((await returning.call(root+'/share',{...args,eventVersion:current.eventVersion,title:'Updated watch night'})).body.status,'applied');
+  assert.ok(native.entityMetadata.location.endsWith(f.app.watch.roomState.store.get(id).inviteCode));
   const updated=(await returning.call(root+'/share')).body.scheduling.events[0];
   await edit({action:'rename',name:'Room changed after event edit',isCustom:true});
   native.name='Event changed again';
   remote.channel.eventRateLimit={remaining:1,wait:50};
-  assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied');
+  const eventConfig=f.app.watch.events.config;
+  f.app.watch.events.config={...eventConfig,publicUrl:'https://'+ 'x'.repeat(110)+'.invalid'};
+  try {
+    assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied','cancellation does not validate an unused invite URL');
+  } finally {f.app.watch.events.config=eventConfig;}
   assert.equal(native.status,4);assert.equal(f.app.watch.events.records.size,0);
+  assert.equal((await schedule(returning,'room.event.create',{title:'First event at this time',revision:args.revision})).body.status,'applied','an old room revision does not block scheduling');
+  assert.equal((await schedule(returning,'room.event.create',{title:'Second event at this time'})).body.status,'applied','two events can share a start time');
+  for(const event of (await returning.call(root+'/share')).body.scheduling.events) {
+    assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:event.key})).body.status,'applied');
+  }
+  assert.equal(f.app.watch.events.records.size,0);
   remote.channel.loseEventReceipt=true;
-  assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create',revision:(await returning.call(root+'/settings')).body.revision})).body.status,'applied');
+  assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create'})).body.status,'applied');
   const recovered=(await returning.call(root+'/share')).body.scheduling.events;
   assert.equal(recovered.length,1);assert.ok(recovered[0].eventId);
   const creations=remote.calls.filter(call=>call.method==='event-create').length;
@@ -55,7 +70,7 @@ test('Discord scheduled events preserve explicit times and consent across closur
   await f.app.watch.events.reconcile();assert.equal(f.app.watch.events.records.size,0,'accepted cancellation completes without reopening Share');
 });
 
-test('explicit Discord publication enforces host authority, preview freshness, stable posts and room lifecycle across restart',tls,async t=>{
+test('explicit Discord publication uses current room details, enforces host authority and preserves stable posts across restart',tls,async t=>{
   const f=await fixture(t,true,{shareChannelId:'100000000000000050'});
   const remote=require('./helpers/discord-channel').discordChannel(f.config);remote.attach(f.app.hub);
   const creator=await f.login('host'),host=await f.login('guest');
@@ -67,10 +82,20 @@ test('explicit Discord publication enforces host authority, preview freshness, s
   await edit({action:'host.add',userId:(await host.call('/api/watch/me')).body.account.id});
   await edit({action:'permissions',role:'host',permissions:{roomSettings:false}});
   const stale=(await host.call(root+'/share')).body.preview;
+  await creator.call(root+'?viewer='+randomUUID());
+  f.app.watch.invalidateControls(f.app.watch.rooms.get(id));
   await edit({action:'rename',name:'Updated movie night',isCustom:true});
-  assert.notEqual((await share(host,'room.publish',stale)).body.status,'applied');assert.equal(remote.messages.size,0);
-  assert.equal((await share(host)).body.status,'applied','host can publish with Room settings disabled');
+  remote.channel.beforeFetch=async()=>{
+    remote.channel.beforeFetch=undefined;
+    await edit({action:'rename',name:'Changed during publishing',isCustom:true});
+    await edit({action:'invite.reroll'});
+    f.app.watch.invalidateControls(f.app.watch.rooms.get(id));
+  };
+  assert.equal((await share(host,'room.publish',stale)).body.status,'applied','a host with Room settings disabled can publish after joins, settings and playback changes');
   const messageId=[...remote.messages.keys()][0];
+  assert.equal(remote.messages.get(messageId).embeds[0].title,'Changed during publishing');
+  assert.ok(remote.messages.get(messageId).components[0].components[0].url.endsWith(f.app.watch.roomState.store.get(id).inviteCode));
+  assert.equal((await creator.call(root+'/share',{action:'room.publish'})).body.status,'applied','publishing needs no preview snapshot');
   await share(creator);assert.equal(remote.calls.filter(call=>call.method==='send').length,1,'publishing twice edits the same message');
   const oldPreview=(await host.call(root+'/share')).body.preview;
   await creator.call(root+'?viewer='+randomUUID());
@@ -91,6 +116,7 @@ test('explicit Discord publication enforces host authority, preview freshness, s
   assert.equal(remote.calls.filter(call=>call.method==='send').length,2);
   await f.app.watch.remove(id);await f.app.watch.publications.reconcile();
   const closed=remote.messages.get(currentMessageId);assert.deepEqual(closed.components,[]);assert.equal(closed.embeds[0].fields[0].value,'Closed');
+  assert.notEqual((await share(returning,'room.publish',stale)).body.status,'applied','a closed room cannot be published');
   await returning.call(root+'/reopen',{});await f.app.watch.publications.reconcile();
   assert.deepEqual(remote.messages.get(currentMessageId).components,[],'reopening does not republish');
   assert.equal((await share(returning)).body.status,'applied');assert.equal(remote.messages.size,1);
@@ -112,6 +138,8 @@ test('Discord publication fences revoked authority, rejects unsafe destinations 
   const edit=async change=>creator.call(root+'/settings',{revision:(await creator.call(root+'/settings')).body.revision,change});
   await edit({action:'host.add',userId:hostId});
   const dispatch=async client=>{const p=(await client.call(root+'/share')).body.preview;return client.call(root+'/share',{action:'room.publish',epoch:p.epoch,revision:p.revision});};
+  assert.equal((await creator.call('/api/command',{roomId:id,command:{action:'room.publish',expiresAt:Date.now()-1}})).body.status,'unavailable');
+  assert.equal(remote.messages.size,0,'expired publication cannot post');
   remote.channel.guildId='another-guild';assert.notEqual((await dispatch(creator)).body.status,'applied');assert.equal(remote.messages.size,0);remote.channel.guildId=f.config.guildId;
   const preview=(await host.call(root+'/share')).body.preview;
   remote.channel.beforeFetch=async()=>{remote.channel.beforeFetch=undefined;await edit({action:'host.remove',userId:hostId});};

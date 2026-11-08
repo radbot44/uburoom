@@ -10,7 +10,7 @@ function details(event) {
   return {eventId:event.id,title:event.name,description:event.description||'',start:new Date(event.scheduledStartTimestamp).toISOString(),
     end:new Date(event.scheduledEndTimestamp).toISOString(),status:event.status,invite:event.entityMetadata?.location};
 }
-const version=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const version=({title,description,start,end})=>createHash('sha256').update(JSON.stringify({title,description,start,end})).digest('hex');
 class DiscordEvents {
   constructor(watch,registry) {
     this.watch=watch;this.hub=watch.hub;this.registry=registry;this.config=this.hub.config;
@@ -36,12 +36,11 @@ class DiscordEvents {
     if(!member.permissions.has(PermissionFlagsBits.CreateEvents))throw fail('The bot needs Create Events in the Discord server.');
     return guild;
   }
-  async check(id,actor,permitted,revision) {
+  async check(id,actor,permitted) {
     if(actor.watchCurrent&&!await actor.watchCurrent())throw fail('Room access changed.',403);
-    if(this.stopped||this.watch.shuttingDown||!permitted())throw fail('Event change expired. Refresh Share.',409);
+    if(this.stopped||this.watch.shuttingDown||!permitted())throw fail('Event change timed out. Try again.',409);
     const record=this.watch.roomState.store.get(id);
     if(!this.watch.publications.canManage(record,actor))throw fail('Only room hosts can schedule or change Discord events.',403);
-    if(revision!==undefined&&record.revision!==revision)throw fail('The room changed. Refresh Share before changing its event.',409);
     return record;
   }
   async remote(guild,record) {
@@ -87,24 +86,26 @@ class DiscordEvents {
   async command(id,command,actor,permitted) {
     return this.lane(id,async()=>{
       const {action,args}=command;
-      const room=await this.check(id,actor,permitted,args.revision);
+      await this.check(id,actor,permitted);
       const key=args.eventKey||randomUUID();let record=this.records.get(key);
       if(action!=='room.event.create'&&(!record||record.roomId!==id))throw fail('Event unavailable. Refresh Share.',404);
       const guild=await this.guild(record?.guildId);
-      const latest=await this.check(id,actor,permitted,args.revision);
-      const invite=this.config.publicUrl+'/join/'+latest.inviteCode;
-      if(invite.length>100)throw fail('Discord event locations allow at most 100 characters. This server needs a shorter public URL.',400);
+      await this.check(id,actor,permitted);
+      const invite=()=>{
+        const url=this.config.publicUrl+'/join/'+this.watch.roomState.store.get(id).inviteCode;
+        if(url.length>100)throw fail('Discord event locations allow at most 100 characters. This server needs a shorter public URL.',400);
+        return url;
+      };
       if(action==='room.event.create') {
         if([...this.records.values()].some(item=>item.roomId===id&&!item.eventId))throw fail('A previous event could not be confirmed. Check Discord before scheduling another.',409);
         const planned=eventDetails(args);
-        if([...this.records.values()].some(item=>item.roomId===id&&item.start===planned.start&&[1,2].includes(item.status)))throw fail('This room already has an event at that time. Edit the existing event.',409);
-        record={roomId:id,guildId:guild.id,...planned,invite,status:GuildScheduledEventStatus.Scheduled};
+        record={roomId:id,guildId:guild.id,...planned,invite:invite(),status:GuildScheduledEventStatus.Scheduled};
         await this.save(key,record);
-        try{await this.check(id,actor,permitted,args.revision);}catch(error){await this.save(key,undefined);throw error;}
+        try{await this.check(id,actor,permitted);}catch(error){await this.save(key,undefined);throw error;}
         try{
           const event=await discordRequest(()=>guild.scheduledEvents.create({name:planned.title,description:planned.description||undefined,scheduledStartTime:planned.start,scheduledEndTime:planned.end,
-            privacyLevel:GuildScheduledEventPrivacyLevel.GuildOnly,entityType:GuildScheduledEventEntityType.External,entityMetadata:{location:invite}}),{
-            current:()=>this.check(id,actor,permitted,args.revision),signal:this.lifetime.signal});
+            privacyLevel:GuildScheduledEventPrivacyLevel.GuildOnly,entityType:GuildScheduledEventEntityType.External,entityMetadata:{location:invite()}}),{
+            current:()=>this.check(id,actor,permitted),signal:this.lifetime.signal});
           await this.save(key,{...record,...details(event)});
         }catch(error){if(error.status>=400&&error.status<500)await this.save(key,undefined);throw error;}
       } else {
@@ -124,10 +125,10 @@ class DiscordEvents {
         if(version(current)!==args.eventVersion)throw fail('The Discord event changed. Refresh Share before editing it.',409);
         if(event.status!==GuildScheduledEventStatus.Scheduled)throw fail('This event has already started. Open it in Discord.',409);
         const planned=action==='room.event.edit'?eventDetails(args):undefined;
-        await this.check(id,actor,permitted,args.revision);
+        await this.check(id,actor,permitted);
         if(planned) {
-          const updated=await discordRequest(()=>guild.scheduledEvents.edit(record.eventId,{name:planned.title,description:planned.description,scheduledStartTime:planned.start,scheduledEndTime:planned.end,entityMetadata:{location:invite}}),{
-            current:()=>this.check(id,actor,permitted,args.revision),signal:this.lifetime.signal});
+          const updated=await discordRequest(()=>guild.scheduledEvents.edit(record.eventId,{name:planned.title,description:planned.description,scheduledStartTime:planned.start,scheduledEndTime:planned.end,entityMetadata:{location:invite()}}),{
+            current:()=>this.check(id,actor,permitted),signal:this.lifetime.signal});
           await this.save(key,{...record,...planned,...details(updated)});
         }
       }

@@ -93,6 +93,10 @@ Keep existing draft/save/cancel boundaries explicit and report failures truthful
 
 Owner-approved 2026-11-08 (M2-P9): both room Share entrypoints use one small dialog. Everyone retains Copy invite link and Share invite…; hosts and active admins can explicitly publish to one configured Discord channel, view/remove the post, and schedule native Discord events. Show the full invite URL and the current poster in the room embed. The publication preview names its destination and shows room name, movie/episode title, status and viewer count. Scheduling uses a planned title/description, date, start/end times and explicit time zone; event drafts follow the shared save/cancel boundaries. Removing posts and canceling events operate on their current targets without requiring a refreshed playback snapshot. Future events survive room closure; a host reopens the room, and scheduling never starts playback. Lifecycle and access details belong in [Discord sharing](self-hosting.md#publish-rooms-to-discord).
 
+Owner-approved 2026-11-08: Publish uses the room's current details and current host/access permissions. Joining, playback changes and settings changes while Share is open do not require refreshing its preview before publishing.
+
+Owner-approved 2026-11-08: scheduling and editing events do not depend on a room settings revision. Edit conflicts compare only the event title, description and start/end times; automatic invite updates do not conflict. Multiple events may share a start time. Cancellation does not validate an invite URL, and Publish availability does not depend on a playback epoch. Keep current authorization, valid event input and uncertain-request duplicate protection.
+
 Owner-approved 2026-11-08: omit explanatory access-policy, server-audience and room-lifecycle prose from Share and event forms, including the redundant Discord events heading. Prefer short action labels and truthful status/error text. More generally, avoid implementation explanations in end-user flows unless they help someone take a concrete action.
 
 ## Review and maintenance

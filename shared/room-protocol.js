@@ -45,16 +45,8 @@
     const a = command.args || {};
     let args = {};
     switch (action) {
-      case 'room.publish':
-        if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh the publication preview');
-        args.revision = a.revision;
-        break;
-      case 'room.unpublish': break;
+      case 'room.publish': case 'room.unpublish': break;
       case 'room.event.create': case 'room.event.edit': case 'room.event.cancel':
-        if(action!=='room.event.cancel') {
-          if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh Share before changing an event');
-          args.revision=a.revision;
-        }
         if(action!=='room.event.create') {
           if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey))throw new Error('Choose the Discord event');
           args.eventKey=a.eventKey;

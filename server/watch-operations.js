@@ -208,9 +208,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         if(write) {
           if(!throttle('room-publish:'+auth.actor.userId,20))return result(429,{error:'Too many publication requests. Try again shortly.'});
           if(!['room.publish','room.unpublish','room.event.create','room.event.edit','room.event.cancel'].includes(data.action))return result(400,{error:'Unsupported sharing action'});
-          const room=watch.rooms.get(match[1]);
-          if(data.action==='room.publish'&&(!room || data.epoch!==room.s.epoch))return result(409,{error:'Room changed. Refresh Share.'});
-          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:data.action.startsWith('room.event.')?data:{revision:data.revision}}));
+          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:data.action.startsWith('room.event.')?data:{}}));
         }
         const value=await watch.publications.summary(match[1],auth.actor);
         value.scheduling=await watch.events.summary(match[1],auth.actor);

@@ -58,6 +58,7 @@ class Watch {
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
     this.publications = registry ? new (require('./discord-publications').DiscordPublications)(this,registry) : undefined;
     this.events = registry ? new (require('./discord-events').DiscordEvents)(this,registry) : undefined;
+    hub.publicationExecute = this.publications ? (id,actor,permitted)=>this.publications.command(this.rooms.get(id),'room.publish',actor,permitted) : undefined;
     hub.savedPublicationExecute = this.publications ? (id,actor,permitted)=>this.publications.removeSaved(id,actor,permitted) : undefined;
     hub.scheduledEventExecute = this.events ? (id,command,actor,permitted)=>this.events.command(id,command,actor,permitted) : undefined;
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
@@ -1405,7 +1406,7 @@ class Watch {
     if (room.saved) this.roomState.store.healthy();
     if (['room.publish','room.unpublish'].includes(action)) {
       if(!room.saved || !this.publications)return {status:'unavailable',message:'Discord publishing requires a saved room.'};
-      return this.publications.command(room,action,actor,permitted,args.revision);
+      return this.publications.command(room,action,actor,permitted);
     }
     if (action === 'room.kick') {
       if (room.transitionCommit) await room.transitionCommit.catch(() => {});

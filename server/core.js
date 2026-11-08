@@ -126,13 +126,17 @@ class Hub {
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
     const savedUnpublish=command.action==='room.unpublish'&&!!this.savedPublicationExecute;
-    if((command.action.startsWith('room.event.') && this.scheduledEventExecute) || savedUnpublish) {
+    const publishing=command.action==='room.publish'&&!!this.publicationExecute;
+    if((command.action.startsWith('room.event.') && this.scheduledEventExecute) || savedUnpublish || publishing) {
       const deadlines=resolveCommandDeadlines({acceptedAt:Date.now(),expiresAt:input.expiresAt,commandTtlMs:COMMAND_MS,extendedTtlMs:12000});
-      if(!input.roomId||!deadlines.admitted)return {status:'unavailable',message:'Select a room and retry the event change.'};
+      if(!input.roomId||!deadlines.admitted)return {status:'unavailable',message:'Select a room and try again.'};
       const adminEpoch=this.adminEpoch;
       const permitted=()=>Date.now()<deadlines.executionDeadline&&this.adminEpoch===adminEpoch&&canWatch(this.access,actor.userId,actor);
-      try {return savedUnpublish?await this.savedPublicationExecute(input.roomId,actor,permitted):await this.scheduledEventExecute(input.roomId,command,actor,permitted);}
-      catch(error){return {status:error.status===403?'forbidden':'failed',message:error.status?error.message:'Discord could not update the event.',httpStatus:error.status||503};}
+      try {
+        if(publishing)return await this.publicationExecute(input.roomId,actor,permitted);
+        return savedUnpublish?await this.savedPublicationExecute(input.roomId,actor,permitted):await this.scheduledEventExecute(input.roomId,command,actor,permitted);
+      }
+      catch(error){return {status:error.status===403?'forbidden':'failed',message:error.status?error.message:'Discord could not complete this action.',httpStatus:error.status||503};}
     }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
       const acceptedAt = Date.now();

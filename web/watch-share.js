@@ -80,7 +80,7 @@
       $('room-share-preview-title').textContent=[preview.title,preview.subtitle].filter(Boolean).join(' · ');
       $('room-share-preview-status').textContent=preview.status+' · '+preview.viewers+' viewer'+(preview.viewers===1?'':'s');
       $('room-share-publish').hidden=!!value.published||!!value.removing;
-      $('room-share-publish').disabled=busy||!value.available||!value.canPublish||!preview.epoch||preview.status==='Closed'||value.uncertain;
+      $('room-share-publish').disabled=busy||!value.available||!value.canPublish||preview.status==='Closed'||value.uncertain;
       $('room-share-view').hidden=!value.messageUrl;
       $('room-share-view').disabled=busy;
       $('room-share-remove').hidden=!value.hasPost&&!value.published&&!value.uncertain&&!value.removing;
@@ -112,9 +112,9 @@
     }
     async function change(action) {
       if(busy||!value)return;
-      busy=true;const ticket=generation,snapshot=value.preview;render();$('room-share-error').textContent='';
+      busy=true;const ticket=generation;render();$('room-share-error').textContent='';
       try {
-        const response=await request('/api/watch/rooms/'+target+'/share',{action,epoch:snapshot.epoch,revision:snapshot.revision});
+        const response=await request('/api/watch/rooms/'+target+'/share',{action});
         if(response.status!=='applied')throw new Error(response.message||'Discord could not update the post.');
         await load(ticket);
       }catch(error){if(ticket===generation&&dialog.open){try{await load(ticket);}catch{}value.error=error.message;}}
@@ -123,7 +123,7 @@
     async function changeEvent(action,event) {
       if(busy||!value)return;
       const ticket=generation;
-      const args={action,revision:value.preview.revision,...(event?{eventKey:event.key,eventVersion:event.eventVersion}:{})};
+      const args={action,...(event?{eventKey:event.key,...(action==='room.event.edit'?{eventVersion:event.eventVersion}:{})}:{})};
       if(action!=='room.event.cancel')Object.assign(args,{title:$('room-share-event-title').value,description:$('room-share-event-description').value,
         startLocal:$('room-share-event-start').value,endLocal:$('room-share-event-end').value,timeZone:$('room-share-event-zone').value});
       busy=true;render();$('room-share-error').textContent='';

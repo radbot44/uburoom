@@ -122,18 +122,28 @@ class DiscordPublications {
     return error?.status && error.status<500 && error.message && !error.code ? error.message :
       error?.status===503?error.message:`Discord could not update the ${subject}. Check the bot and permissions, then try again.`;
   }
-  async check(room, actor, permitted, revision) {
+  async check(room, actor, permitted) {
     if(actor.watchCurrent&&!await actor.watchCurrent())throw fail('Room access changed.',403);
-    const id=room.s.roomId,record=this.getRecord(id);
-    if (this.stopped || this.watch.shuttingDown || this.watch.rooms.get(id)!==room || room.removing || !permitted() || !record) throw fail('Room changed or command expired.',409);
+    const id=room.s.roomId;
+    let media;
+    do {
+      if(this.watch.rooms.get(id)!==room||room.removing)throw fail('This room is closed.',409);
+      if(this.stopped||this.watch.shuttingDown||!permitted())throw fail('Publishing timed out. Try again.',409);
+      media=room.media;
+      const allowed=await this.watch.canView(room,actor);
+      if(media===room.media&&!allowed)throw fail('Room access changed.',403);
+    } while(media!==room.media);
+    const record=this.getRecord(id);
+    if(this.watch.rooms.get(id)!==room||room.removing||!record)throw fail('This room is closed.',409);
+    if(this.stopped||this.watch.shuttingDown||!permitted())throw fail('Publishing timed out. Try again.',409);
     if (!this.canManage(record,actor)) throw fail('Only room hosts can publish or remove the post.',403);
-    if (revision!==undefined && record.revision!==revision) throw fail('Room changed. Refresh the publication preview.',409);
     return record;
   }
-  async command(room, action, actor, permitted, revision) {
+  async command(room, action, actor, permitted) {
+    if(!room?.saved||room.removing)throw fail('This room is closed.',409);
     const id=room.s.roomId;
     return this.lane(id,async()=>{
-      const record=await this.check(room,actor,permitted,revision);
+      await this.check(room,actor,permitted);
       let publication=this.records.get(id);
       if(action==='room.unpublish') {
         if (!publication)return {status:'applied',message:'Room post removed.'};
@@ -142,7 +152,7 @@ class DiscordPublications {
         return {status:'applied',message:'Room post removed.'};
       }
       if (!this.config.shareChannelId)throw fail('Discord room publishing is not configured.');
-      const channel=await this.channel();await this.check(room,actor,permitted,revision);
+      const channel=await this.channel();await this.check(room,actor,permitted);
       if(publication?.channelId!==undefined && (publication.channelId!==channel.id || publication.guildId!==this.config.guildId))throw fail('Remove the previous room post before publishing to the new channel.',409);
       if(publication&&!publication.messageId) {
         await this.recoverReceipt(id,channel);
@@ -150,23 +160,25 @@ class DiscordPublications {
         if(!publication?.messageId)throw fail('The previous post could not be confirmed. Check Discord before retrying; no duplicate was posted.',409);
       }
       await this.refreshPoster(id,actor);
-      const preview=this.preview(record);
+      let preview=this.preview(await this.check(room,actor,permitted));
+      // Build each attempt from current details after authorization, including
+      // changes made while fetching artwork or waiting for Discord.
+      const latestPayload=()=>{preview=this.preview(this.getRecord(id));return this.payload(preview);};
       if(publication?.messageId) {
-        await this.check(room,actor,permitted,revision);
-        try {await discordRequest(()=>channel.messages.edit(publication.messageId,this.payload(preview)),{
-          current:()=>this.check(room,actor,permitted,revision),signal:this.lifetime.signal});}
+        try {await discordRequest(()=>channel.messages.edit(publication.messageId,latestPayload()),{
+          current:()=>this.check(room,actor,permitted),signal:this.lifetime.signal});}
         catch(error){if(error.code===10008)await this.save(id,undefined);throw error;}
-        await this.save(id,{...publication,active:true,remove:false,channelName:channel.name});
+        await this.save(id,{...publication,preview,active:true,remove:false,channelName:channel.name});
         this.sent.set(id,JSON.stringify(this.payload(preview)));
       } else {
         publication={guildId:this.config.guildId,channelId:channel.id,channelName:channel.name,active:true,nonce:randomBytes(12).toString('hex'),preview};
         await this.save(id,publication);
         // Recheck after durable intent, immediately before the external mutation.
-        try {await this.check(room,actor,permitted,revision);}catch(error){await this.save(id,undefined);throw error;}
+        try {await this.check(room,actor,permitted);}catch(error){await this.save(id,undefined);throw error;}
         try {
-          const message=await discordRequest(()=>channel.send({...this.payload(preview),nonce:publication.nonce,enforceNonce:true}),{
-            current:()=>this.check(room,actor,permitted,revision),signal:this.lifetime.signal});
-          await this.save(id,{...publication,messageId:message.id});
+          const message=await discordRequest(()=>channel.send({...latestPayload(),nonce:publication.nonce,enforceNonce:true}),{
+            current:()=>this.check(room,actor,permitted),signal:this.lifetime.signal});
+          await this.save(id,{...publication,preview,messageId:message.id});
           this.sent.set(id,JSON.stringify(this.payload(preview)));
         } catch(error) {
           // A definite API refusal did not create a message. Timeouts and 5xx
