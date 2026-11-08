@@ -391,6 +391,12 @@ test('Activity Plex requirement defaults on and accepts only YAML booleans',()=>
   assert.throws(()=>normalizeConfig({access:{require_plex_in_activity:'false'}}),/true or false/);
 });
 
+test('guests default_allow defaults on and accepts only YAML booleans', () => {
+  assert.equal(normalizeConfig({}).guests.defaultAllow, true);
+  assert.equal(normalizeConfig({ guests: { default_allow: false } }).guests.defaultAllow, false);
+  assert.throws(() => normalizeConfig({ guests: { default_allow: 'false' } }), /true or false/);
+});
+
 
 test('credential key defaults follow each OS and honor explicit paths without migration',t=>{
   const home=temporary(t),local=path.join(home,'local'),xdg=path.join(home,'xdg');

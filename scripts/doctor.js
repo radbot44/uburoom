@@ -804,7 +804,7 @@ function checkGuestPasses(config) {
   const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
   const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
   checks.push({ category: 'Access', name: 'Guests', status: 'pass',
-    message: `Guests allowed; hosts at ${guests.issuers} tier and above can turn them on, up to ${guests.maxPerRoom} per room for ${guests.sessionHours} hours each` });
+    message: `Guests allowed (${guests.defaultAllow !== false ? 'on' : 'off'} by default in new rooms); hosts at ${guests.issuers} tier and above can change them, up to ${guests.maxPerRoom} per room for ${guests.sessionHours} hours each` });
   if (guests.issuers === 'trusted' && !anyTrusted) checks.push({ category: 'Access', name: 'Guest issuers', status: 'warn',
     message: 'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
     remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.' });

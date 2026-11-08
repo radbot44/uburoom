@@ -72,7 +72,7 @@ class RoomStore {
    * @param {import('./accounts').Accounts} registry
    * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean,limits?:typeof import('./room-limits').DEFAULTS}} [options]
    */
-  constructor(registry, { defaults, now = Date.now, isAdmin = () => false, guests = () => [], limits = require('./room-limits').DEFAULTS } = {}) {
+  constructor(registry, { defaults, now = Date.now, isAdmin = () => false, guests = () => [], limits = require('./room-limits').DEFAULTS, defaultAllowGuests = false } = {}) {
     this.registry = registry;
     this.db = registry.db;
     this.defaults = Policy.policy(defaults);
@@ -81,6 +81,7 @@ class RoomStore {
     this.isAdmin = isAdmin;
     // People currently in a room through a guest pass; they hold no room roles.
     this.guests = guests;
+    this.defaultAllowGuests = !!defaultAllowGuests;
   }
   healthy() {
     const failure = this.failure || this.registry.persistence.error;
@@ -124,7 +125,7 @@ class RoomStore {
     catch (failure) { this.failure = failure; this.healthy(); }
     return result;
   }
-  async create(userId, { name, isCustom, visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'}, keepEmpty = false, maxMembers = null } = {}) {
+  async create(userId, { name, isCustom, visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'}, keepEmpty = false, maxMembers = null, allowGuests } = {}) {
     this.healthy();
     if (this.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n >= this.limits.maxSaved) throw error('Saved room limit reached', 429);
     if (typeof keepEmpty !== 'boolean') throw error('Choose whether to keep the room when empty');
@@ -161,8 +162,9 @@ class RoomStore {
       const baseSlug = ubumfa.slugify(finalName);
       finalSlug = deduplicateSlug(this.db, baseSlug, id);
     }
-    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,slug,ubumfaWord,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers,inviteCode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, creatorId, finalName, finalSlug, ubumfaWord, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers, newInviteCode(this.db));
+    const allowGuestsValue = typeof allowGuests === 'boolean' ? (allowGuests ? 1 : 0) : (this.defaultAllowGuests ? 1 : 0);
+    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,slug,ubumfaWord,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers,inviteCode,allowGuests) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, creatorId, finalName, finalSlug, ubumfaWord, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers, newInviteCode(this.db), allowGuestsValue);
     return this.commit(this.get(id));
   }
   list(userId, { offset = 0, limit = 50 } = {}) {

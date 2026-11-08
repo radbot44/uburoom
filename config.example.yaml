@@ -162,6 +162,7 @@ rooms:
 # plex.fallback_enabled sharing.
 guests:
   enabled: false # Allow rooms to turn on guests at all.
+  default_allow: true # Newly created rooms allow guests by default when guests are enabled.
   # Lowest server tier that may turn on guests in a room they host:
   # operator | admins | trusted | members. Higher tiers are included.
   issuers: 'admins'

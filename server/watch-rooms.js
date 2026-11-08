@@ -17,7 +17,8 @@ class WatchRooms {
       limits:this.limits,
       defaults: watch.hub.config.roomPermissions,
       isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord' && identity.verified)?.subject }),
-      guests: id => watch.hub.guestMembers?.(id) || []
+      guests: id => watch.hub.guestMembers?.(id) || [],
+      defaultAllowGuests: !!(watch.hub.config.guests?.enabled && watch.hub.config.guests?.defaultAllow !== false)
     });
     this.queue = new RoomQueue(registry, this.store);
     registry.transaction(() => {

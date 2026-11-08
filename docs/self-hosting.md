@@ -74,6 +74,7 @@ Guests let a room's invite admit people who couldn't otherwise get in. Turn the 
 
 | Setting | Behavior |
 | --- | --- |
+| `guests.default_allow` | `true` (default) turns on Allow guests in newly created rooms when guests are enabled. |
 | `guests.issuers` | Lowest server tier that may turn on guests in a room they host: `operator`, `admins`, `trusted` or `members` (default `admins`). Admin mode always counts. |
 | `rooms.trusted_discord_ids` / `trusted_plex_ids` / `trusted_discord_role_ids` | The trusted tier, between admins and everyone else. Exact quoted IDs, matched only against verified sign-ins. Trusted grants nothing else today. |
 | `guests.require_sign_in` | `true` makes every guest sign in with Discord or Plex. Required when `access.require_plex` is `true`, since being a guest never replaces personal Plex access. |
