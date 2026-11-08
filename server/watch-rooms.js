@@ -16,7 +16,8 @@ class WatchRooms {
     this.store = new RoomStore(registry, {
       limits:this.limits,
       defaults: watch.hub.config.roomPermissions,
-      isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord' && identity.verified)?.subject })
+      isAdmin: id => watch.hub.isAdmin({ userId:id, discordId:registry.identities(id).find(identity => identity.provider === 'discord' && identity.verified)?.subject }),
+      guests: id => watch.hub.passMembers?.(id) || []
     });
     this.queue = new RoomQueue(registry, this.store);
     registry.transaction(() => {
@@ -64,6 +65,7 @@ class WatchRooms {
   async recover(id, actor, current) {
     const recovery = this.recoveries.get(id);
     if (!recovery || recovery.until <= Date.now()) return;
+    if (actor.passRoomId && actor.passRoomId !== id) return;
     const record = this.store.get(id);
     if (record.visibility === 'private' && !Policy.assigned(record,actor.userId) && !this.watch.hub.isAdmin(actor)) return;
     await this.eligible(actor,current);
@@ -191,6 +193,7 @@ class WatchRooms {
   }
   async create(actor, options, current) {
     if(this.watch.hub.config.singleRoom)throw failure('Room creation is disabled in single-room mode',403);
+    if(actor.pass)throw failure('Guests cannot create rooms',403);
     await this.eligible(actor, current); this.reserve(); this.creating++;
     try {
       let creation = options, initialCorpus;
@@ -285,7 +288,7 @@ class WatchRooms {
     return opened;
   }
   list(actor, page) {
-    if(this.watch.hub.config.singleRoom)return {rooms:[],total:0};
+    if(this.watch.hub.config.singleRoom||actor.pass)return {rooms:[],total:0};
     const result = this.store.list(actor.userId, page);
     return { ...result, rooms:result.rooms.map(record => ({ id:record.id, name:record.name, slug:record.slug, visibility:record.visibility,
       active:this.recoveries.has(record.id) || !!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).reconnecting,
@@ -299,17 +302,20 @@ class WatchRooms {
     const activeAndRecovering=[...(room?.viewers.values() || []),...[...(room?.disconnectedViewers.values() || [])].filter(viewer=>viewer.expires>now)];
     return [...new Set([record.creatorId,...record.hosts,...activeAndRecovering.map(viewer => viewer.userId)])]
       .map(userId => ({id:userId,name:this.registry.canonical(userId)?.name || 'Room member',role:Policy.role(record,userId),
-        explicitHost:record.hosts.includes(userId),present:[...(room?.viewers.values() || [])].some(viewer => viewer.userId === userId)}));
+        explicitHost:record.hosts.includes(userId),present:[...(room?.viewers.values() || [])].some(viewer => viewer.userId === userId),
+        // guest: the name is not verified. passGuest: in this room through a pass, so never a host.
+        ...(this.registry.isGuest?.(userId) ? {guest:true} : {}),...(record.guests?.includes(userId) ? {passGuest:true} : {})}));
   }
   summary(id, actor) {
     const record = this.store.get(id), room = this.watch.rooms.get(id);
-    const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member' });
+    const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member',
+      ...(this.registry.isGuest?.(userId) ? {guest:true} : {}), ...(record.guests?.includes(userId) ? {passGuest:true} : {}) });
     const candidates = [...new Set([record.creatorId, ...record.hosts, ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])];
     return { id, createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,keepEmpty:record.keepEmpty,
       maxMembers:record.maxMembers,serverMaxMembers:this.limits.maxMembers,retentionReason:this.reason(record),singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, slug:record.slug, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
       creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
       actorId:actor.userId,allHosts:!!record.permissions.allHosts,canSetAllHosts:record.creatorId===actor.userId,pendingHosts:this.store.pendingHosts(id),
-      role:Policy.role(record, actor.userId), permissions:record.permissions, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
+      role:Policy.role(record, actor.userId), permissions:record.permissions, guestPasses:this.watch.hub.guestPassSettings?.(record, actor),guestPassesEnabled:!!this.watch.hub.guestPasses, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
       capabilities:Object.fromEntries([...Policy.CAPABILITIES, ...Policy.CREATOR_ONLY].map(key =>
         [key, this.watch.hub.config.singleRoom&&key==='transferCreator' ? false : this.watch.hub.config.singleRoom&&key==='deleteRoom' ? this.watch.hub.isAdmin(actor)||record.creatorId===actor.userId : this.watch.hub.isAdmin(actor) || Policy.allowed(record, actor.userId, key)])) };
   }

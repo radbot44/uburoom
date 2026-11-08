@@ -86,7 +86,7 @@ test('unsupported pre-release schema fails startup without leaving a live storag
 
 test('unsupported schemas fail without changing existing data or installing missing tables', t => {
   const {initializeSchema}=require('../server/storage');
-  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE users(id TEXT);','pre-release'],[6,'CREATE TABLE users(id TEXT);','pre-release'],[9,'CREATE TABLE future_state(id TEXT);','newer']]) {
+  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[1,'CREATE TABLE users(id TEXT);','pre-release'],[2,'CREATE TABLE users(id TEXT);','pre-release'],[3,'CREATE TABLE users(id TEXT);','pre-release'],[4,'CREATE TABLE users(id TEXT);','pre-release'],[5,'CREATE TABLE users(id TEXT);','pre-release'],[6,'CREATE TABLE users(id TEXT);','pre-release'],[7,'CREATE TABLE users(id TEXT);','pre-release'],[8,'CREATE TABLE users(id TEXT);','pre-release'],[10,'CREATE TABLE future_state(id TEXT);','newer']]) {
     const db=new DatabaseSync(':memory:');db.exec(sql+'PRAGMA user_version='+version);
     const before=db.prepare('SELECT name,sql FROM sqlite_master').all();
     assert.throws(()=>initializeSchema(db),new RegExp(message));
@@ -105,47 +105,6 @@ test('unsupported schemas fail without changing existing data or installing miss
   previous.close();
 });
 
-test('version 7 schema checkOnly validates without writes and writable migration upgrades to version 8', () => {
-  const { initializeSchema } = require('../server/storage');
-  const db = new DatabaseSync(':memory:');
-  db.exec(`BEGIN IMMEDIATE;
-    CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT,signedInAt INTEGER);
-    CREATE TABLE identities(provider TEXT NOT NULL,subject TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,assigned INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,subject),UNIQUE(provider,userId));
-    CREATE TABLE credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
-    CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-    CREATE TABLE audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,detail TEXT NOT NULL);
-    CREATE TABLE browser_logins(id TEXT PRIMARY KEY,record TEXT NOT NULL);
-    CREATE TABLE playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL);
-    CREATE INDEX playback_history_user ON playback_history(userId,at);
-    CREATE TABLE watch_rooms(id TEXT PRIMARY KEY,creatorId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,visibility TEXT NOT NULL,revision INTEGER NOT NULL,checkpointRevision INTEGER NOT NULL,queueRevision INTEGER NOT NULL DEFAULT 0,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,permissions TEXT NOT NULL,bookmark TEXT,autoQueue TEXT,autoplay INTEGER NOT NULL DEFAULT 1 CHECK(autoplay IN (0,1)),lastAccessedAt INTEGER NOT NULL,keepEmpty INTEGER NOT NULL DEFAULT 0 CHECK(keepEmpty IN (0,1)),maxMembers INTEGER,liveState TEXT);
-    CREATE INDEX watch_rooms_accessed ON watch_rooms(lastAccessedAt,id);
-    CREATE TABLE watch_room_progress(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,PRIMARY KEY(roomId,serverId,mediaId));
-    CREATE TABLE watch_room_hosts(roomId TEXT NOT NULL REFERENCES watch_rooms(id),userId TEXT NOT NULL REFERENCES users(id),PRIMARY KEY(roomId,userId));
-    CREATE INDEX watch_room_hosts_user ON watch_room_hosts(userId,roomId);
-    CREATE TABLE watch_room_host_grants(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,provider TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,issuerId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,provider,subject));
-    CREATE INDEX watch_room_host_grants_subject ON watch_room_host_grants(provider,subject,roomId);
-    CREATE TABLE watch_queue_entries(id TEXT PRIMARY KEY,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,state TEXT NOT NULL,rank INTEGER,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,type TEXT NOT NULL,title TEXT NOT NULL,parentTitle TEXT,grandparentTitle TEXT,thumb TEXT,duration REAL NOT NULL,position REAL NOT NULL DEFAULT 0,outcome TEXT,provenance TEXT,createdAt INTEGER NOT NULL,startedAt INTEGER,endedAt INTEGER,updatedAt INTEGER NOT NULL);
-    CREATE INDEX watch_queue_room_state_rank ON watch_queue_entries(roomId, state, rank);
-    CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
-    CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
-    PRAGMA user_version=7;
-    COMMIT;`);
-  db.prepare("INSERT INTO users VALUES('u1','Alice',0,null,0)").run();
-  db.prepare("INSERT INTO watch_rooms VALUES('r1','u1','Room Ogdave','public',1,1,0,0,0,'{}',null,null,1,0,0,null,null)").run();
-  initializeSchema(db, { checkOnly: true });
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 7);
-  assert.equal(db.prepare("SELECT count(*) as count FROM pragma_table_info('watch_rooms') WHERE name='slug'").get().count, 0);
-
-  initializeSchema(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
-  const upgraded = db.prepare('SELECT slug, ubumfaWord FROM watch_rooms WHERE id=?').get('r1');
-  assert.equal(upgraded.slug, 'ogdave');
-  assert.equal(upgraded.ubumfaWord, 'ogdave');
-
-  initializeSchema(db, { checkOnly: true });
-  db.close();
-});
-
 test('matched offline SQLite and original-key backup restores UUIDs, credentials, logins and playback history',async t=>{
   const {directory,file}=fixture(t),key=path.join(directory,'original.key');
   fs.writeFileSync(key,Buffer.alloc(32,19));const vault=credentialVault(key);
@@ -158,7 +117,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   fs.copyFileSync(file,copy);fs.copyFileSync(key,copyKey);
   const restored=new Accounts(copy,credentialVault(copyKey));
   try {
-    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,8);
+    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,9);
     assert.equal(restored.identity('plex','101').userId,user.id);
     assert.equal(restored.credential('101').token,'private-restore-fixture');
     assert.equal(loginStore('baseline',restored.vault,restored).logins.get('b'.repeat(64)).oauth.refreshToken,'private-login-fixture');

@@ -1,63 +1,36 @@
 'use strict';
 // First-release baseline. Future published schemas add explicit forward migrations.
-// Never repair or upgrade an unpublished layout implicitly.
+// Never repair or upgrade an unpublished layout implicitly: earlier pre-release
+// layouts move forward only through reviewed, explicitly run transfer scripts.
+const SCHEMA_VERSION = 9;
+const COLUMNS = Object.freeze({ users:['id','name','revision','retiredInto','signedInAt','guest'], identities:['provider','subject','userId','name','verified','assigned'],
+  credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
+  browser_logins:['id','record'], playback_history:['id','userId','at','record'],
+  watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState','slug','ubumfaWord'],
+  watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
+  watch_room_progress:['roomId','serverId','mediaId'],
+  watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'],
+  guest_passes:['id','tokenHash','roomId','issuerId','createdAt','expiresAt','maxUses','uses','signIn','disabled','revokedAt'] });
+// Only a hash of each pass token is stored. A disabled pass can be turned back on;
+// a revoked one never works again.
+const GUEST_PASSES_SQL = `CREATE TABLE guest_passes(id TEXT PRIMARY KEY,tokenHash TEXT NOT NULL UNIQUE,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,issuerId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,expiresAt INTEGER NOT NULL,maxUses INTEGER NOT NULL,uses INTEGER NOT NULL DEFAULT 0,signIn INTEGER NOT NULL DEFAULT 0 CHECK(signIn IN (0,1)),disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),revokedAt INTEGER);
+    CREATE INDEX guest_passes_room ON guest_passes(roomId,createdAt);`;
 function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 8) throw new Error('Account database requires a newer uburoom version');
+  if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-  if (version === 7 || version === 8) {
-    if (version === 7 && checkOnly) {
-      const columnsV7 = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
-        credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
-        browser_logins:['id','record'], playback_history:['id','userId','at','record'],
-        watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState'],
-        watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
-        watch_room_progress:['roomId','serverId','mediaId'],
-        watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'] };
-      if (tables.length !== Object.keys(columnsV7).length) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
-      for (const [table, expected] of Object.entries(columnsV7)) {
-        const actual = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name);
-        if (actual.length !== expected.length || actual.some((name, i) => name !== expected[i])) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
-      }
-      return;
-    }
-    if (version === 7) {
-      db.exec(`BEGIN IMMEDIATE;
-        ALTER TABLE watch_rooms ADD COLUMN slug TEXT;
-        ALTER TABLE watch_rooms ADD COLUMN ubumfaWord TEXT;
-        CREATE UNIQUE INDEX IF NOT EXISTS watch_rooms_slug ON watch_rooms(slug);
-        PRAGMA user_version=8;
-        COMMIT;`);
-      const ubumfa = require('../web/ubumfa');
-      const rows = db.prepare('SELECT id, name FROM watch_rooms WHERE slug IS NULL').all();
-      for (const r of rows) {
-        const match = /^Room\s+([A-Za-z]+)$/i.exec(r.name.trim());
-        const word = match ? match[1].toLowerCase() : ubumfa.generateWord(6).toLowerCase();
-        const baseSlug = match ? word : ubumfa.slugify(r.name);
-        let slug = baseSlug, counter = 2;
-        while (db.prepare('SELECT id FROM watch_rooms WHERE slug=? AND id!=?').get(slug, r.id)) {
-          slug = `${baseSlug}-${counter++}`;
-        }
-        db.prepare('UPDATE watch_rooms SET slug=?, ubumfaWord=? WHERE id=?').run(slug, word, r.id);
-      }
-    }
-    const columns = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
-      credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
-      browser_logins:['id','record'], playback_history:['id','userId','at','record'],
-      watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState','slug','ubumfaWord'],
-      watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
-      watch_room_progress:['roomId','serverId','mediaId'],
-      watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'] };
-    if (tables.length !== Object.keys(columns).length) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
-    for (const [table, expected] of Object.entries(columns)) {
+  if (version === SCHEMA_VERSION) {
+    if (tables.length !== Object.keys(COLUMNS).length) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
+    for (const [table, expected] of Object.entries(COLUMNS)) {
       const actual = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name);
       if (actual.length !== expected.length || actual.some((name, i) => name !== expected[i])) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
     }
     return;
   }
   if (version !== 0 || tables.length) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
+  if (checkOnly) throw new Error('Account database has not been created yet');
   db.exec(`BEGIN IMMEDIATE;
-    CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT,signedInAt INTEGER);
+    CREATE TABLE users(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,retiredInto TEXT,signedInAt INTEGER,guest INTEGER NOT NULL DEFAULT 0 CHECK(guest IN (0,1)));
     CREATE TABLE identities(provider TEXT NOT NULL,subject TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,assigned INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,subject),UNIQUE(provider,userId));
     CREATE TABLE credentials(subject TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -77,7 +50,8 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE INDEX watch_queue_room_state_rank ON watch_queue_entries(roomId, state, rank);
     CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
-    PRAGMA user_version=8;
+    ${GUEST_PASSES_SQL}
+    PRAGMA user_version=${SCHEMA_VERSION};
     COMMIT;`);
 }
 // Fixtures without a database stay ephemeral; production always supplies Accounts.
@@ -107,4 +81,4 @@ function loginStore(context, vault, registry) {
   if (!matching) { db.exec('DELETE FROM browser_logins'); registry.meta('loginContext', context); }
   return store;
 }
-module.exports = { loginStore, initializeSchema };
+module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, GUEST_PASSES_SQL };

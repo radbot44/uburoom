@@ -12,13 +12,15 @@ const Subtitles = require('./subtitles');
 const SubtitleResources = require('./subtitle-resources');
 const { watchOperations } = require('./watch-operations');
 const { PlexDelivery, clientAddress } = require('./plex-delivery');
+const { displayName } = require('./accounts');
+const Ubumfa = require('../web/ubumfa');
 
 function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch, throttle, browserLogin, cookies, discordIdentity = value=>value, validIdentity = ()=>true, registry, entryPolicy, diagnosticLog, cookie, accounts, logins, plexAuth }) {
   const identities = new Map(), grants = new Map();
   const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
   watch.delivery=delivery;
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:19,keepDiagnostics:diagnosticLog?config.diagnostics.keepDays:0,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl,clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
+  const publicConfig = () => ({ watchVersion:19,keepDiagnostics:diagnosticLog?config.diagnostics.keepDays:0,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl,clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),guestPasses:!!hub.guestPasses,singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
     outputs:config.transcoding?.policy==='disabled'?[]:config.transcoding?.outputs });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -264,6 +266,56 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     finally { clearTimeout(timer); res.off('close', disconnect); }
   }
+  // Guest pass links carry their token in the URL fragment, so it never reaches
+  // request logs. 'preview' describes the pass; 'join' uses it. Someone already
+  // allowed in normally is just sent to the room without using up the pass.
+  async function redeemPass(req,res){
+    const passes=hub.guestPasses;
+    if(!allowedOrigin(req)||!throttle('guest-pass:'+(clientAddress(req)||'local'),20))return json(res,429,{error:'Too many tries; wait a minute and try again'});
+    if(!passes||!registry||!watch.roomState)return json(res,404,{error:'Guest passes are turned off on this server'});
+    const data=await body(req);
+    if(!['preview','join'].includes(data.action))return json(res,400,{error:'Unsupported guest pass action'});
+    const pass=passes.byToken(data.token);
+    if(!pass||!passes.active(pass))return json(res,410,{error:'This guest pass has ended. Ask whoever shared it for a new one.'});
+    if(pass.disabled)return json(res,409,{error:'This guest pass is turned off for now. Ask whoever shared it to turn it back on.'});
+    if(!passes.open(pass))return json(res,409,{error:pass.uses>=pass.maxUses?'This guest pass has been used up.':'This guest pass can’t be checked right now. Try again shortly.'});
+    let record;
+    try{record=watch.roomState.store.get(pass.roomId);}catch{return json(res,410,{error:'The room for this guest pass is gone.'});}
+    const identity=await rawLogin(req);
+    if(identity?.activity)return json(res,403,{error:'Open guest pass links in a web browser'});
+    const signedIn=!!identity&&!registry.isGuest(identity.userId);
+    const room={id:record.id,name:record.name,slug:record.slug};
+    if(data.action==='preview')return json(res,200,{room,signInRequired:passes.signInRequired(pass),signedIn,name:signedIn?registry.canonical(identity.userId)?.name:undefined,
+      providers:{discord:config.accessPolicy?.discord!==false&&!!config.clientId,plex:config.accessPolicy?.plex!==false}});
+    if(signedIn&&!identity.pass&&entryPolicy.password(req,identity)&&await entryPolicy.admit(identity.userId,identity))return json(res,200,{room});
+    if(!signedIn&&passes.signInRequired(pass))return json(res,403,{error:'Sign in with Discord or Plex to use this pass'});
+    const now=Date.now(),present=new Set([...(watch.rooms.get(record.id)?.viewers.values()||[])].map(viewer=>viewer.userId));
+    const guests=hub.passMembers(record.id);
+    if(!(signedIn&&guests.has(identity.userId))&&guests.size>=config.guests.maxPerRoom)return json(res,429,{error:'This room has as many guests as it allows. Try again when one leaves.'});
+    let name;
+    if(!signedIn){
+      try{name=displayName(typeof data.name==='string'&&data.name.trim()?data.name:Ubumfa.ubunym().fullName);}catch(error){return json(res,400,{error:error.message});}
+      // Names are unverified, so a guest may not borrow the name of someone signed in here.
+      const taken=[...present].some(userId=>!registry.isGuest(userId)&&registry.canonical(userId)?.name.toLocaleLowerCase()===name.toLocaleLowerCase());
+      if(taken)return json(res,409,{error:'Someone in this room already uses that name. Choose another.'});
+    }
+    if(!passes.use(pass.id))return json(res,409,{error:'This guest pass was just used up or turned off.'});
+    const binding={id:pass.id,roomId:record.id};
+    if(signedIn){
+      const key=hash(cookies(req).uburoom||''),login=logins.get(key);
+      if(!login||login.userId!==identity.userId)return json(res,409,{error:'Your sign-in changed; open the pass link again'});
+      login.pass=binding;
+    } else {
+      const previous=cookies(req).uburoom;
+      if(previous&&identity)logins.delete(hash(previous));
+      const id=randomBytes(32).toString('hex'),account=registry.canonical(registry.createGuest(name));
+      logins.set(hash(id),{userId:account.id,accountRevision:account.revision,name:account.name,csrf:randomBytes(32).toString('hex'),expires:pass.expiresAt,pass:binding});
+      res.setHeader('Set-Cookie',cookie('uburoom',id,Math.max(1,Math.ceil((pass.expiresAt-now)/1000))));
+    }
+    registry.audit(identity?.userId||'guest','guest-pass-use',{passId:pass.id,roomId:record.id,signedIn});
+    await accounts.save();
+    json(res,200,{room});
+  }
   const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch, delivery, validGrant: id=>validGrant(grants.get(id)) });
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
@@ -277,14 +329,15 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         res.setHeader('Set-Cookie',cookie('uburoom_entry',grant,43200));
       }
       if(entryPolicy.anonymous && !identity){
-        const id=randomBytes(32).toString('hex'), accountId=registry.create('Guest'), account=registry.canonical(accountId);
-        registry.seen(accountId);
-        logins.set(hash(id),{userId:account.id,accountRevision:account.revision,name:'Guest',csrf:randomBytes(32).toString('hex'),expires:Date.now()+86400000});accounts.save();
+        // Anonymous visitors are guests too: an unverified, random ubunym they can change.
+        const id=randomBytes(32).toString('hex'), accountId=registry.createGuest(Ubumfa.ubunym().fullName), account=registry.canonical(accountId);
+        logins.set(hash(id),{userId:account.id,accountRevision:account.revision,name:account.name,csrf:randomBytes(32).toString('hex'),expires:Date.now()+86400000});accounts.save();
         const existing=res.getHeader('Set-Cookie');
         res.setHeader('Set-Cookie',[...(existing?[existing]:[]),cookie('uburoom',id,86400)]);
       }
       json(res,200,{ok:true});return true;
     }
+    if(url.pathname==='/api/watch/pass' && req.method==='POST') { await redeemPass(req,res); return true; }
     if(config.accessPolicy && url.pathname==='/api/watch/admission' && req.method==='GET') {
       const identity=await rawLogin(req);
       json(res,200,{identity:!!identity,passwordNeeded:!entryPolicy.password(req,identity),

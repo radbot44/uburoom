@@ -20,9 +20,14 @@ class AccessPolicy {
   }
   get anonymous() { return !!this.settings && !this.settings.discord && !this.settings.plex; }
   get passwordRequired() { return !!this.settings?.password; }
+  // A session let in by a guest pass carries the pass ID (login records hold
+  // {id, roomId}; actors hold the ID). The pass stands in for the usual entry rules.
+  passOf(context) { return typeof context?.pass === 'string' ? context.pass : context?.pass?.id; }
+  viaPass(id, context) { const pass = this.passOf(context); return !!pass && !!this.passes?.admits(this.passes.get(pass), id); }
   password(req, identity) {
     if (!this.passwordRequired) return true;
     if (identity?.activity && identity.entryAuthorized) return true;
+    if (identity && this.viaPass(identity.userId, identity)) return true;
     const token = /(?:^|;\s*)uburoom_entry=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
     return !!token && (this.passwordGrants.get(createHash('sha256').update(token).digest('hex')) || 0) > Date.now();
   }
@@ -39,12 +44,20 @@ class AccessPolicy {
   requiresPlex(context) {
     return !!this.settings?.requirePlex && !(context?.activity === true && this.settings.requirePlexInActivity === false);
   }
-  admissionKey(id, context) { return context?.activity === true ? 'activity:' + id : id; }
+  admissionKey(id, context) {
+    const pass = this.passOf(context);
+    return pass ? 'pass:' + pass + ':' + id : context?.activity === true ? 'activity:' + id : id;
+  }
   async admit(id, context) {
     if (!this.settings) return false;
     const account = this.registry?.canonical(id);
     if (!account) return false;
-    if(this.passwordRequired && (this.entryUsers.get(account.id)||0)<=Date.now())return false;
+    if (this.passOf(context)) {
+      const key = this.admissionKey(account.id, context);
+      if (!this.viaPass(account.id, context)) { this.allowed.delete(key); return false; }
+      // A pass never stands in for required personal Plex access.
+      if (!this.requiresPlex(context)) { this.allowed.set(key, Date.now() + 1000); return true; }
+    } else if(this.passwordRequired && (this.entryUsers.get(account.id)||0)<=Date.now())return false;
     const identities = this.registry.identities(account.id).filter(identity => identity.verified);
     const key = this.admissionKey(account.id, context), now = Date.now();
     // Linking a provider or changing the rule changes who has to vouch for this account.

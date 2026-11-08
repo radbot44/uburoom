@@ -3028,6 +3028,50 @@ setInterval(() => {
   timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
   timeline.title = loaded + ' seconds buffered ahead';
 }, 250);
+// A guest pass link is /join#<token>. The token stays out of the address bar and
+// server logs; it is kept for this tab only so it survives a Discord or Plex sign-in.
+const GUEST_PASS_KEY='uburoom-guest-pass';
+async function guestPassEntry(discordButton){
+  const fromLink=location.hash.slice(1);
+  if(fromLink){try{sessionStorage.setItem(GUEST_PASS_KEY,fromLink);}catch{}history.replaceState(history.state,'','/join');}
+  let passToken=fromLink;
+  try{passToken||=sessionStorage.getItem(GUEST_PASS_KEY)||'';}catch{}
+  const show=(title,message)=>{
+    $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
+    $('empty-title').textContent=title;$('empty-hint').textContent='';$('entry-status').textContent=message;
+    $('entry-form').hidden=true;$('entry-recheck').hidden=true;$('entry-plex-activity').hidden=true;
+  };
+  const signIn=visible=>{
+    for(const button of [discordButton,$('plex-login')])button.href=button.href.split('?')[0]+'?return='+encodeURIComponent('/join');
+    discordButton.hidden=!visible.discord;$('plex-login').hidden=!visible.plex;
+  };
+  const enter=room=>{try{sessionStorage.removeItem(GUEST_PASS_KEY);}catch{}location.replace('/room/'+room.slug);};
+  if(!config.guestPasses){signIn({});show('Guest passes are off','This server doesn’t accept guest passes.');return;}
+  if(!passToken){signIn({});show('Guest pass link incomplete','Open the full link you were sent, or ask for a new one.');return;}
+  let preview;
+  try{preview=await api('/api/watch/pass',{action:'preview',token:passToken});}
+  catch(error){try{sessionStorage.removeItem(GUEST_PASS_KEY);}catch{}signIn({});show('Guest pass unavailable',error.message);return;}
+  if(preview.signedIn){
+    show('Joining '+preview.room.name,'Signed in as '+preview.name+'. Joining the room…');signIn({});
+    try{enter((await api('/api/watch/pass',{action:'join',token:passToken})).room);}catch(error){$('entry-status').textContent=error.message;}
+    return;
+  }
+  const providers={discord:preview.providers.discord&&config.access?.discord!==false,plex:preview.providers.plex&&config.unifiedAccounts&&config.plexConfigured};
+  signIn(providers);
+  if(preview.signInRequired){show('Join '+preview.room.name,'Sign in with Discord or Plex to use this guest pass.');return;}
+  show('Join '+preview.room.name+' as a guest','Pick a name to show in the room.');
+  $('guest-join').hidden=false;$('guest-sign-in-label').hidden=!providers.discord&&!providers.plex;
+  const name=$('guest-name'),roll=$('guest-name-roll');
+  if(!roll.firstChild)uburoomControls.content(roll,{label:'New random name',icon:'arrows-shuffle',iconOnly:true});
+  const rollName=()=>{name.value=uburoomUbumfa.ubunym().fullName;};
+  if(!name.value)rollName();
+  roll.onclick=rollName;
+  $('guest-join').onsubmit=async event=>{
+    event.preventDefault();const button=$('guest-join-submit');button.disabled=true;
+    try{enter((await api('/api/watch/pass',{action:'join',token:passToken,name:name.value})).room);}
+    catch(error){$('entry-status').textContent=error.message;button.disabled=false;}
+  };
+}
 async function start() {
   await syncReady;
   config = pageBootstrap?.config||await api('/api/watch/config');
@@ -3036,6 +3080,7 @@ async function start() {
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
   const discordButton=$('welcome').querySelector('.discord-button');
   discordButton.hidden=config.access?.discord===false;
+  if(!activity&&location.pathname==='/join'){await guestPassEntry(discordButton);return;}
   const roomPathMatch = !activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
   const initialRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
   if (!activity && initialRoom) {

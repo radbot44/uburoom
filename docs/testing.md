@@ -15,6 +15,16 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M2-P3 — Guest passes and trusted tier — 2026-11-07
+
+**A, source review** and **B, isolated execution** on the uncommitted working tree over `ca2680a` (Windows, Node v22.22.2).
+
+- `node --test tests/*.test.js`: 548 tests, 548 passed, 0 skipped. New `tests/guest-passes.test.js` covers atomic use limits, off versus revoked, unknown versus lost issuer standing, sign-in passes, guests never becoming hosts (including All hosts), host-search exclusion, provider-link refusal and tier ranking. The existing subtitle-window MKV range test failed in two of four full runs and passed alone; it touches no guest code and is a timing flake to follow up.
+- Isolated end-to-end script against the fixture account demo over HTTPS and the watch WebSocket: create (lifetime cap enforced), preview, wrong token (410), unverified join, guest `/me`, room list limited to the pass room, other rooms/room creation/pass management refused (403), roster `guest`/`passGuest` viewer flags, use limit, off then on, sign-in pass refusing a guest, a member walking in without using a use, and revocation closing the guest socket and ending the session within 1.5 s.
+- `scripts/doctor.js` on a scratch config with guests on: guest pass summary plus the expected trusted-list and no-fallback warnings. Config validation rejects `require_plex` without `require_sign_in`, unknown issuers and out-of-range limits.
+- Schema v9 baseline: databases at version 7 or 8 are refused unchanged. The reviewed private version-8 transfer was run on a version-8 fixture: rows and UUIDs kept, backup hashes verified, second run unchanged, and the account registry opened the result.
+- **Not run:** browser rendering of the Guests tab, join screen and roster marks (the in-app browser does not trust the local dev certificate), the present-member name collision, real Discord role tiers, real Plex sponsorship for guests, Chrome/Firefox checks and owner acceptance (C, D).
+
 ### M1-P11/P14 — Independent Docker install, backup, rollback & key resilience rehearsal — 2026-11-08
 
 **B, automated container rehearsal:** Executed on this PC using Docker Compose (engine `desktop-linux`, Docker v29.9.2, Compose v5.6.1, container Node v22.23.4 / Debian 12, host Node v22.22.2 / Windows). Proves independent clean installation, diagnosis, matched snapshot backup, destructive mutation rollback, and credential key protection without touching Vigrid (`C:\Users\buizb\Documents\shared boot\uburoom` or `Z:\uburoom`) or production data.

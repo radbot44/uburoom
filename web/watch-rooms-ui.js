@@ -3,7 +3,7 @@
   'use strict';
   const labels = { playPause:'Play / pause', seek:'Seek', chooseMedia:'Skip / replay', addQueue:'Add to queue',
     editQueue:'Edit queue', autoplay:'Manage auto-play', roomSettings:'Room settings',
-    closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts', addHosts:'Add hosts', kickParticipants:'Kick participants' };
+    closeRoom:'Close room for everyone', deleteRoom:'Permanently delete room', continueWithoutHost:'Continue without hosts', addHosts:'Add hosts', kickParticipants:'Kick participants', inviteGuests:'Invite guests' };
   const descriptions = {
     playPause:'Start or pause playback for the room.', seek:'Change the playback position for everyone.',
     chooseMedia:'Skip to another video in the queue or replay a video from history.', addQueue:'Add videos to the room queue.',
@@ -11,10 +11,11 @@
     roomSettings:'Edit the room’s name, visibility and capacity.', closeRoom:'End live viewing and save playback progress.',
     deleteRoom:'Permanently delete this room and its saved history.', addHosts:'Appoint additional hosts; cannot remove other hosts.',
     kickParticipants:'Remove viewers from the room; they may rejoin.', continueWithoutHost:'Keep watching when no host is present.',
-    allHosts:'Everyone admitted uses host permissions. Only the leader can change this; explicit host assignments are kept.'
+    inviteGuests:'Create guest pass links for this room. The server decides who may use this.',
+    allHosts:'Everyone admitted uses host permissions, except guests. Only the leader can change this; explicit host assignments are kept.'
   };
   function presetPolicy(name) {
-    return { host:Object.fromEntries(Object.keys(labels).map(key => [key,!['deleteRoom','addHosts'].includes(key)])),
+    return { host:Object.fromEntries(Object.keys(labels).map(key => [key,!['deleteRoom','addHosts','inviteGuests'].includes(key)])),
       viewer:Object.fromEntries(Object.keys(labels).map(key => [key,name === 'play-pause' && key === 'playPause' || name === 'queue' && ['playPause','seek','chooseMedia','addQueue','editQueue','autoplay'].includes(key)])), allHosts:false };
   }
   function presetName(permissions) {
@@ -311,7 +312,7 @@
       const peopleView = people.map(p => {
         const sq = p.syncQuality;
         return [
-          p.id, p.name, p.role, p.explicitHost, p.pending, p.provider, p.present,
+          p.id, p.name, p.role, p.explicitHost, p.pending, p.provider, p.present, !!p.guest, !!p.passGuest,
           sq && typeof sq === 'object' ? [sq.status, sq.score, sq.level, sq.confidence, sq.lastKnownLevel, sq.issue, sq.sessions?.map(s => [s.score, s.level, s.lastKnownLevel, s.status,
             p.id === activeTelemetryPersonId ? s.health : undefined])] : null
         ];
@@ -325,10 +326,11 @@
       for (const person of sortPeople(people,self)) {
         const row = node('div',roster,undefined,'room-person'); row.dataset.personId = person.id;
         const roleCell = node('span',row,undefined,'room-roster-role');
-        const roleName = person.role === 'creator' ? 'Room Leader' : person.role === 'host' ? 'Host' : 'Participant';
-        const glyph = person.role === 'creator' ? 'creator' : person.role === 'host' ? 'host' : 'user';
+        const roleName = person.role === 'creator' ? 'Room Leader' : person.role === 'host' ? 'Host' : person.guest ? 'Guest' : 'Participant';
+        const glyph = person.role === 'creator' ? 'creator' : person.role === 'host' ? 'host' : person.guest ? 'user-question' : 'user';
         roleCell.title = roleName; roleCell.setAttribute('aria-label',roleName);
-        const allowed = person.role !== 'creator' && (person.explicitHost ? person.id === self || caps.manageHosts : caps.addHosts);
+        // People in through a guest pass can never be hosts.
+        const allowed = person.role !== 'creator' && !person.passGuest && (person.explicitHost ? person.id === self || caps.manageHosts : caps.addHosts);
         if (allowed) {
           const label = person.pending ? 'Remove assignment' : person.explicitHost ? person.id === self ? 'Give up host role' : 'Remove host' : 'Make host';
           const action = controls.button(document,{label:label + ': ' + person.name,icon:glyph,iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings)});
@@ -340,6 +342,7 @@
           action.id = (inSettings ? 'room-host-' : 'room-roster-host-') + person.id; roleCell.append(action);
         } else roleCell.append(root.uburoomIcons.icon(document,glyph));
         const username = node('span',row,person.name,'room-roster-name'); username.title = person.name;
+        if (person.guest) { username.classList.add('guest-name'); username.title += ' · Guest (name not verified)'; username.setAttribute('aria-label',username.title); }
         if (person.pending) { username.title += ' · Awaiting ' + (person.provider === 'discord' ? 'Discord' : 'Plex') + ' sign-in'; username.setAttribute('aria-label',username.title); }
         if (!inSettings) {
           const sync=person.syncQuality&&typeof person.syncQuality==='object'?person.syncQuality:{status:'unknown',reason:'measurements-unavailable',sessions:[]};
@@ -454,6 +457,7 @@
         details = result;
         if (draftRoom !== id) { renameDraft = result.name; capacityDraft = undefined; draftRoom = id; }
         renderSettings();
+        if (section === 'guests') void loadPasses();
       } catch (error) { if (ticket === generation && dialog.open) setSettingsStatus(error.message,false,true); }
     }
     function draftOptions() {
@@ -568,6 +572,7 @@
       people.push(...(value.pendingHosts || []).map(person => ({...person,id:'pending-' + person.provider + '-' + person.subject,role:'host',explicitHost:true,present:false,pending:true})));
       renderPeople(roster,people,value,true);
       updateRosterSize();
+      renderGuests(value);
       const previousTransfer = $('room-transfer-target').value;
       $('room-transfer-target').replaceChildren();
       const transferGroup = $('room-transfer-target-group');
@@ -628,9 +633,10 @@
         control.classList.add('permission-button');
         cell.append(control); return control;
       }
-      for (const [group, keys] of Object.entries({Playback:['playPause','seek','chooseMedia'],Queue:['addQueue','editQueue','autoplay'],'Room management':['roomSettings','closeRoom','deleteRoom','addHosts','kickParticipants','allHosts'],Continuity:['continueWithoutHost']})) {
+      for (const [group, keys] of Object.entries({Playback:['playPause','seek','chooseMedia'],Queue:['addQueue','editQueue','autoplay'],'Room management':['roomSettings','closeRoom','deleteRoom','addHosts','kickParticipants','inviteGuests','allHosts'],Continuity:['continueWithoutHost']})) {
         const heading = node('th',node('tr',$('room-permissions')),group,'permission-group'); heading.colSpan = 3;
         for (const key of keys) {
+          if (key === 'inviteGuests' && !value.guestPassesEnabled) continue;
           const label = key === 'allHosts' ? 'Everyone is host' : labels[key];
           const row = node('tr',$('room-permissions')); row.dataset.permissionRow = key;
           permissionTitle(row,key,label);
@@ -644,7 +650,7 @@
           }
           for (const role of ['host','viewer']) {
             const cell = node('td',row); cell.dataset.permissionRole = role;
-            const restricted = role === 'viewer' && ['roomSettings','closeRoom','deleteRoom','addHosts','kickParticipants'].includes(key);
+            const restricted = role === 'viewer' && ['roomSettings','closeRoom','deleteRoom','addHosts','kickParticipants','inviteGuests'].includes(key);
             const control = permissionButton(cell,{label:(role === 'host' ? 'Host' : 'Participant') + ': ' + label,
               checked:!!value.permissions[role][key],disabled:busy || !value.capabilities.managePermissions || restricted,
               reason:busy ? 'Saving…' : restricted ? 'Room management is restricted to the leader and authorized hosts' : !value.capabilities.managePermissions ? 'Only the room leader or an active administrator can edit permissions' : '',
@@ -708,7 +714,97 @@
         }
       }
     }
+    // Guests tab: only people who may issue passes in this room see it.
+    const LIFETIMES = [[1,'1 hour'],[6,'6 hours'],[24,'1 day'],[168,'1 week'],[720,'30 days']];
+    const PASS_STATUS = {disabled:'Off · no new guests',revoked:'Revoked',expired:'Expired',used:'Used up',issuer:'Stopped · its creator can no longer issue passes'};
+    let passGeneration = 0, passRoom, passBusy = false;
+    controls.bindSelect($('guest-pass-lifetime'),$('guest-pass-lifetime-group'));
+    $('guest-pass-lifetime-group').addEventListener('click',event => {
+      const choice = event.target.closest('button');
+      if (choice && !choice.disabled) $('guest-pass-lifetime').value = choice.dataset.value;
+    });
+    function renderGuests(value) {
+      const settings = !value.draft && value.guestPasses;
+      const tab = $('room-settings-nav').querySelector('[data-section="guests"]');
+      if (tab) tab.hidden = !settings;
+      const option = $('room-settings-section').querySelector('option[value="guests"]');
+      if (option) option.hidden = !settings;
+      if (!settings) { if (section === 'guests') selectSection('general'); return; }
+      if (passRoom !== value.id) { passRoom = value.id; $('guest-pass-created').hidden = true; $('guest-pass-link').value = ''; $('guest-pass-list').replaceChildren(); }
+      const choices = LIFETIMES.filter(([hours]) => hours <= settings.maxLifetimeHours);
+      if (!choices.some(([hours]) => hours === settings.maxLifetimeHours)) choices.push([settings.maxLifetimeHours,settings.maxLifetimeHours + ' hours']);
+      const select = $('guest-pass-lifetime'), signature = JSON.stringify(choices);
+      if (select.dataset.signature !== signature) {
+        const previous = Number(select.value);
+        select.dataset.signature = signature; select.replaceChildren(); $('guest-pass-lifetime-group').replaceChildren();
+        for (const [hours,label] of choices) {
+          node('option',select,label).value = String(hours);
+          const choice = node('button',$('guest-pass-lifetime-group'),label,'group-button'); choice.type = 'button'; choice.dataset.value = String(hours);
+        }
+        select.value = String(choices.some(([hours]) => hours === previous) ? previous : choices.find(([hours]) => hours === 24)?.[0] || choices[choices.length - 1][0]);
+      }
+      const uses = $('guest-pass-uses'); uses.max = String(settings.maxUses);
+      if (!uses.value) uses.value = String(Math.min(5,settings.maxUses));
+      $('guest-pass-sign-in').disabled = passBusy || settings.requireSignIn;
+      if (settings.requireSignIn) $('guest-pass-sign-in').checked = true;
+      for (const id of ['guest-pass-uses','guest-pass-create','guest-pass-lifetime']) $(id).disabled = passBusy;
+      $('guest-pass-hint').textContent = (settings.requireSignIn ? 'This server requires every guest to sign in. ' : '') +
+        'Up to ' + settings.maxPerRoom + ' guests can be in this room at once. Guests are participants, never hosts, and only see this room.';
+    }
+    function renderPasses(passes) {
+      const list = $('guest-pass-list'); list.replaceChildren();
+      $('guest-pass-status').textContent = passes.length ? '' : 'No guest passes yet.';
+      for (const pass of passes) {
+        const row = node('div',list,undefined,'saved-room guest-pass');
+        const text = node('div',row);
+        const live = ['active','disabled','used'].includes(pass.status);
+        node('strong',text,(pass.signIn ? 'Sign-in pass' : 'Guest pass') + ' by ' + pass.issuer.name);
+        node('p',text,pass.uses + ' of ' + pass.maxUses + ' used · ' + (pass.status === 'active' ? 'Expires ' + new Date(pass.expiresAt).toLocaleString() : PASS_STATUS[pass.status] +
+          (live ? ' · Expires ' + new Date(pass.expiresAt).toLocaleString() : '')),'hint');
+        if (!live) continue;
+        const actions = node('div',row,undefined,'room-actions');
+        const toggle = node('label',actions,undefined,'queue-check'), input = node('input',toggle);
+        input.type = 'checkbox'; input.setAttribute('role','switch'); input.className = 'watch-switch';
+        input.checked = !pass.disabled; input.disabled = passBusy; input.id = 'guest-pass-on-' + pass.id;
+        node('span',toggle,'On');
+        input.setAttribute('aria-label','Guest pass by ' + pass.issuer.name + ' on');
+        input.addEventListener('change',() => void changePass({action:input.checked ? 'enable' : 'disable',passId:pass.id}));
+        const revoke = node('button',actions,'Revoke','danger-button'); revoke.type = 'button'; revoke.disabled = passBusy;
+        revoke.setAttribute('aria-label','Revoke guest pass by ' + pass.issuer.name);
+        revoke.addEventListener('click',async () => {
+          if (await confirm('Revoke this guest pass? It stops working for good and its guests are removed from the room now.',{destructive:true})) void changePass({action:'revoke',passId:pass.id});
+        });
+      }
+    }
+    async function loadPasses() {
+      const id = details?.id, ticket = ++passGeneration;
+      if (!id || !details.guestPasses) return;
+      try {
+        const result = await request('/api/watch/rooms/' + id + '/passes');
+        if (ticket === passGeneration && details?.id === id && dialog.open) renderPasses(result.passes);
+      } catch (error) { if (ticket === passGeneration) $('guest-pass-status').textContent = error.message; }
+    }
+    async function changePass(change) {
+      const id = details?.id; if (!id || passBusy) return;
+      passBusy = true; renderGuests(details); $('guest-pass-status').textContent = 'Saving…';
+      try {
+        const result = await request('/api/watch/rooms/' + id + '/passes',change);
+        if (details?.id !== id) return;
+        if (result.url) { $('guest-pass-link').value = result.url; $('guest-pass-created').hidden = false; }
+        renderPasses(result.passes);
+        setSettingsStatus({create:'Guest pass created',enable:'Guest pass on',disable:'Guest pass off',revoke:'Guest pass revoked'}[change.action],true);
+      } catch (error) { $('guest-pass-status').textContent = error.message; void loadPasses(); }
+      finally { passBusy = false; if (details?.id === id) renderGuests(details); }
+    }
+    $('guest-pass-create').addEventListener('click',() => void changePass({action:'create',hours:Number($('guest-pass-lifetime').value),
+      uses:Number($('guest-pass-uses').value),signIn:$('guest-pass-sign-in').checked}));
+    $('guest-pass-copy').addEventListener('click',async () => {
+      const field = $('guest-pass-link');
+      try { await navigator.clipboard.writeText(field.value); setSettingsStatus('Link copied',true); }
+      catch { field.focus(); field.select(); setSettingsStatus('Copy blocked by the browser; the link is selected so you can copy it',false); }
+    });
     function selectSection(value) {
+      if (value === 'guests' && section !== 'guests') queueMicrotask(() => void loadPasses());
       section = value;
       $('room-settings-section').value = value;
       for (const panel of dialog.querySelectorAll('[data-room-section]')) panel.hidden = panel.dataset.roomSection !== value;
@@ -723,7 +819,7 @@
         updateNavigationEdges();
       });
     }
-    for (const [key, label] of [['general','General'],['people','People'],['permissions','Permissions'],['playback','Playback & queue'],['manage','Manage']]) {
+    for (const [key, label] of [['general','General'],['people','People'],['guests','Guests'],['permissions','Permissions'],['playback','Playback & queue'],['manage','Manage']]) {
       const control = button($('room-settings-nav'),label,() => selectSection(key)); control.dataset.section = key;
     }
     function updateNavigationEdges() {

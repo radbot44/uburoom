@@ -86,7 +86,7 @@ Owner-approved fixes from the [recovery/writer investigation](docs/room-recovery
 
 Provider detection retains existing cache/polling bounds; direct Plex delivery depends on PMS enforcement. Real-provider/device integration and live operator recovery remain release checks, with independent container install, backup/rollback, and key-guard rehearsal limits recorded in [testing](docs/testing.md).
 
-Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed; during a provider outage admitted viewers keep their place while new admission fails closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes remain M2-P3.
+Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed; during a provider outage admitted viewers keep their place while new admission fails closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Guest passes (M2-P3) and the trusted server tier are implemented and pass isolated checks; real-provider and human acceptance remain.
 
 Details: [accounts and access](docs/accounts-and-access.md), [names and host directory](docs/account-names-and-host-directory.md).
 
@@ -98,7 +98,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 | --- | --- | --- |
 | M2-P1 | HDR | Verify capable-client passthrough and HDR-to-SDR tone mapping; distinguish Dolby Vision profiles |
 | M2-P2 | Subtitle-aware Picture-in-Picture | Implemented: Document Picture-in-Picture with stage reparenting, full hover transport bar, and vector/bitmap subtitle canvas layers; native video PiP fallback with client-subtitle burn-in recommendation toast; live browser acceptance open |
-| M2-P3 | Guest room passes | Approved for future work after P14 authorization, P4 attribution and P13 roles; revocable, bounded room passes never imply media or host authority |
+| M2-P3 | Guest room passes | Implemented 2026-11-07 with the trusted tier and `inviteGuests`; source review and isolated execution pass. Needs the private v8→v9 database transfer before deployment, then real-provider and human acceptance. Revocable, bounded room passes never imply media or host authority |
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Implemented: personal client-side Web Audio dynamic range compression, speech peaking EQ and 3-choice selector (Normal/Dialogue/Night) in player dialog and sliding menu; live browser acceptance open |

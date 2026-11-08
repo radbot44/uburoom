@@ -355,12 +355,11 @@ function checkStorageAndKey(config) {
             schemaValid = true;
             const userCount = db.prepare('SELECT count(*) as count FROM users').get()?.count ?? 0;
             const roomCount = db.prepare('SELECT count(*) as count FROM watch_rooms').get()?.count ?? 0;
-            const pendingUpgrade = version === 7 ? ' (will upgrade to schema v8 on server startup)' : '';
             checks.push({
               category: 'Storage & Keys',
               name: 'Database schema compatibility',
               status: 'pass',
-              message: `Database schema verified${pendingUpgrade} (${userCount} active users, ${roomCount} rooms)`
+              message: `Database schema verified (${userCount} active users, ${roomCount} rooms)`
             });
           } catch (schemaErr) {
             checks.push({
@@ -797,6 +796,24 @@ async function checkProviderConnectivity(config) {
   return checks;
 }
 
+function checkGuestPasses(config) {
+  /** @type {DoctorCheck[]} */
+  const checks = [];
+  const guests = config.guests;
+  if (!guests?.enabled) return checks;
+  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
+  const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
+  checks.push({ category: 'Access', name: 'Guest passes', status: 'pass',
+    message: `Guest passes on; issued by ${guests.issuers} and above, up to ${guests.maxLifetimeHours} hours and ${guests.maxUses} uses, ${guests.maxPerRoom} guests per room` });
+  if (guests.issuers === 'trusted' && !anyTrusted) checks.push({ category: 'Access', name: 'Guest pass issuers', status: 'warn',
+    message: 'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can issue passes.',
+    remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.' });
+  if (!guests.requireSignIn && config.plexFallback?.enabled === false) checks.push({ category: 'Access', name: 'Guest playback', status: 'warn',
+    message: 'Guests who do not sign in have no Plex access and plex.fallback_enabled is false, so they can join but not watch Plex media.',
+    remediation: 'Enable plex.fallback_enabled or set guests.require_sign_in: true.' });
+  return checks;
+}
+
 async function runDoctor(options = {}) {
   const args = options.args || process.argv.slice(2);
   const jsonMode = args.includes('--json');
@@ -825,6 +842,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkStorageAndKey(config));
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
+    allChecks.push(...checkGuestPasses(config));
     allChecks.push(...(await checkProviderConnectivity(config)));
   }
 

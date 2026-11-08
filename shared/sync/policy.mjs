@@ -5,11 +5,11 @@
 
 export const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
-  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants', 'inviteGuests'
 ]);
 
 export const VIEWER_BLOCKED = Object.freeze([
-  'roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'inviteGuests'
 ]);
 
 export const CREATOR_ONLY = Object.freeze([
@@ -17,7 +17,7 @@ export const CREATOR_ONLY = Object.freeze([
 ]);
 
 export const DEFAULTS = Object.freeze({
-  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts'].includes(key)]))),
+  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts', 'inviteGuests'].includes(key)]))),
   viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause'])))
 });
 
@@ -70,9 +70,12 @@ export function permissionList(value, base) {
   return Object.fromEntries(CAPABILITIES.map(key => [key, value.includes(key)]));
 }
 
-/** @param {{creatorId?:string, hosts?:string[], permissions?:{allHosts?:boolean}}} room @param {string} userId */
+// Room guests (people let in by a pass) are always plain viewers: a pass never
+// makes anyone a host, including through All hosts.
+/** @param {{creatorId?:string, hosts?:string[], guests?:string[]|Set<string>, permissions?:{allHosts?:boolean}}} room @param {string} userId */
 export function role(room, userId) {
-  const hosts = room.hosts || [];
+  const hosts = room.hosts || [], guests = room.guests;
+  if (guests && (Array.isArray(guests) ? guests.includes(userId) : guests.has(userId))) return 'viewer';
   return userId === room.creatorId ? 'creator' : hosts.includes(userId) || room.permissions?.allHosts ? 'host' : 'viewer';
 }
 

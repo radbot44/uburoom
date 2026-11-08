@@ -68,6 +68,10 @@ async function showAccount(){
             button.title='Ordinary Discord sign-in is disabled; sign in via /auth/owner';
           }
         }
+      }else if(value.account.guest===1){
+        // Guest accounts never gain a provider; signing in starts a separate account.
+        $(provider+'-identity').textContent='Guests can’t connect accounts';
+        button.hidden=true;
       }else{
         $(provider+'-identity').textContent=disabledServer?'Unavailable on this server':'Not connected';
         button.textContent='Connect '+label;

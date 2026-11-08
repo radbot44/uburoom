@@ -25,6 +25,13 @@ function credentialVault(file) {
   };
 }
 
+function displayName(value) {
+  if (typeof value !== 'string') throw new Error('Invalid display name');
+  const name = value.trim().normalize('NFC');
+  if (!name || [...name].length > 80 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name)) throw new Error('Use a display name of 1–80 characters without control or invisible formatting characters');
+  return name;
+}
+
 class Accounts {
   constructor(file,vault) {
     if (file) fs.mkdirSync(path.dirname(file),{recursive:true});
@@ -37,17 +44,29 @@ class Accounts {
   identity(provider,subject) {return this.db.prepare('SELECT * FROM identities WHERE provider=? AND subject=?').get(provider,String(subject));}
   identities(userId) {return this.db.prepare('SELECT provider,subject,name,verified,assigned FROM identities WHERE userId=? ORDER BY provider').all(userId);}
   create(name) {const id=randomUUID();this.db.prepare('INSERT INTO users(id,name) VALUES(?,?)').run(id,name);return id;}
+  // Guests have a typed, unverified name and no provider identity. They are never
+  // listed in host search, never linked to a provider and are removed once unused.
+  createGuest(name) {const id=randomUUID();this.db.prepare('INSERT INTO users(id,name,guest,signedInAt) VALUES(?,?,1,?)').run(id,displayName(name),Date.now());return id;}
+  isGuest(id) {return this.canonical(id)?.guest===1;}
+  // Deletes guest accounts that no session, room or pass still uses.
+  removeUnusedGuests(inUse) {
+    const unused=this.db.prepare(`SELECT id FROM users u WHERE guest=1 AND retiredInto IS NULL
+      AND NOT EXISTS(SELECT 1 FROM identities WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_rooms WHERE creatorId=u.id)
+      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)
+      AND NOT EXISTS(SELECT 1 FROM guest_passes WHERE issuerId=u.id)`).all().map(row=>row.id).filter(id=>!inUse.has(id));
+    if(unused.length)this.transaction(()=>{for(const id of unused){this.db.prepare('DELETE FROM playback_history WHERE userId=?').run(id);this.db.prepare('DELETE FROM users WHERE id=?').run(id);}});
+    return unused;
+  }
   rename(userId, value) {
     const user = this.canonical(userId);
     if (!user || typeof value !== 'string') throw new Error('Invalid display name');
-    const name = value.trim().normalize('NFC');
-    if (!name || [...name].length > 80 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name)) throw new Error('Use a display name of 1–80 characters without control or invisible formatting characters');
+    const name = displayName(value);
     this.db.prepare('UPDATE users SET name=? WHERE id=?').run(name,user.id);
     return this.canonical(user.id);
   }
   seen(userId) { this.db.prepare('UPDATE users SET signedInAt=COALESCE(signedInAt,?) WHERE id=?').run(Date.now(),userId); }
   directory() {
-    return this.db.prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL').all()
+    return this.db.prepare('SELECT id,name,signedInAt FROM users WHERE retiredInto IS NULL AND guest=0').all()
       .map(user => ({...user,identities:this.identities(user.id).filter(identity=>identity.verified).map(({provider,subject,name})=>({provider,subject,name}))}));
   }
   resolve(provider,subject,name,verified=true) {
@@ -57,6 +76,7 @@ class Accounts {
   }
   link(userId,provider,subject,name) {
     const user=this.canonical(userId),old=this.identity(provider,subject),current=this.identities(user.id).find(i=>i.provider===provider);
+    if(user.guest===1)throw new Error('Guest accounts cannot connect Discord or Plex; sign in instead');
     if(current && current.subject!==String(subject))throw new Error('This account already has a different '+provider+' identity');
     if(old && old.userId!==user.id)return {conflict:this.canonical(old.userId)};
     this.transaction(()=>{
@@ -127,4 +147,4 @@ class Accounts {
   flush(){return this.persistence.flush();}
   close(){this.credentialCache.clear();return this.persistence.close();}
 }
-module.exports={Accounts,credentialVault,privateFile};
+module.exports={Accounts,credentialVault,privateFile,displayName};

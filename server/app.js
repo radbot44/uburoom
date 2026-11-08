@@ -23,6 +23,7 @@ const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
+const { GuestPasses } = require('./guest-passes');
 const { clientAddress } = require('./plex-delivery');
 const { DiagnosticLog } = require('./diagnostic-log');
 const SharedSync = require('../shared/sync');
@@ -53,7 +54,7 @@ const STATIC_ASSETS = {
   '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
   '/assets/branding/uburoom-oomark-mono.svg': ['assets/branding/uburoom-oomark-mono.svg', 'image/svg+xml'],
   '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
-  '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
+  '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'], '/join': ['watch.html', 'text/html'],
   '/playback-policy.js':['playback-policy.js','text/javascript'],
   '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
   '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
@@ -189,7 +190,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
-  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true }; }
+  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true, ...(login.pass ? { pass:login.pass.id, passRoomId:login.pass.roomId } : {}) }; }
   async function body(req, limit = 4096) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
@@ -227,7 +228,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
     hub.adminEligible = actor => RoomPolicy.administrator(registry,config,actor.userId,rawAccess);
     hub.refreshAdmin = async actor => {
-      const roles = config.roomAdministrators?.discordRoles || [];
+      const roles = [...(config.roomAdministrators?.discordRoles || []), ...(config.guests?.enabled ? config.trustedMembers?.discordRoles || [] : [])];
       const discord = registry.identities(actor.userId).find(identity => identity.provider === 'discord' && identity.verified)?.subject;
       if (roles.length && discord && !rawAccess?.isMember(discord)) {
         try { await rawAccess?.refresh(discord); } catch { /* Missing live guild authority fails closed below. */ }
@@ -248,6 +249,42 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       refreshWatch:async (id,actor)=>{if(config.accessPolicy)return entryPolicy.admit(id,actor);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
     };
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
+    // Guest passes. Whether an issuer may still issue for a room is false only when
+    // that is definitely no longer true, and undefined while a Discord role check
+    // has no current answer, so a slow provider never removes guests.
+    const roleRefreshes = new Map();
+    const issuerStanding = (issuerId, roomId) => {
+      const account = registry.canonical(issuerId);
+      if (!account || account.guest === 1 || !config.guests?.enabled) return false;
+      let record;
+      try { record = watch.roomState?.store.get(roomId); } catch { return false; }
+      if (!record || record.guests.includes(account.id)) return false;
+      const roomAllowed = RoomPolicy.administrator(registry, config, account.id, rawAccess) || RoomPolicy.allowed(record, account.id, 'inviteGuests');
+      if (roomAllowed && RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, account.id, rawAccess), config.guests.issuers)) return true;
+      const discord = registry.identities(account.id).find(identity => identity.provider === 'discord' && identity.verified)?.subject;
+      const roles = (config.roomAdministrators?.discordRoles.length || 0) + (config.trustedMembers?.discordRoles.length || 0);
+      if (!discord || !roles || rawAccess?.isMember(discord) === true) return false;
+      if (Date.now() - (roleRefreshes.get(discord) || 0) > 30000) {
+        roleRefreshes.set(discord, Date.now());
+        Promise.resolve().then(() => rawAccess?.refresh(discord)).catch(() => {});
+      }
+      return undefined;
+    };
+    const passes = config.guests?.enabled ? new GuestPasses(registry, config.guests, { issuer: pass => issuerStanding(pass.issuerId, pass.roomId) }) : undefined;
+    entryPolicy.passes = passes;
+    hub.guestPasses = passes;
+    hub.passMembers = roomId => {
+      const now = Date.now(), members = new Set();
+      for (const login of logins.values()) if (login.pass?.roomId === roomId && (login.expires === null || login.expires > now)) members.add(login.userId);
+      return members;
+    };
+    // The person must be allowed to issue at their server tier and hold
+    // inviteGuests in this room (Admin mode includes it). Pass sessions never issue.
+    hub.canIssuePasses = (record, actor) => !!passes && !actor.pass && !registry.isGuest(actor.userId) && !record.guests.includes(actor.userId) &&
+      RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, actor.userId, rawAccess), config.guests.issuers) &&
+      (hub.isAdmin(actor) || RoomPolicy.allowed(record, actor.userId, 'inviteGuests'));
+    hub.guestPassSettings = (record, actor) => hub.canIssuePasses(record, actor) ? { requireSignIn:config.guests.requireSignIn,
+      maxLifetimeHours:config.guests.maxLifetimeHours, maxUses:config.guests.maxUses, maxPerRoom:config.guests.maxPerRoom } : undefined;
     hub.accountActor=actor=>registry.canonical(actor.userId)?{...actor,name:registry.canonical(actor.userId).name}:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex' && i.verified);
@@ -415,7 +452,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         return json(res, 200, runningSettings(config));
       }
 
-      const watchDocument = route === '/' || route === '/activity' || Boolean(roomRouteMatch);
+      const watchDocument = route === '/' || route === '/activity' || route === '/join' || Boolean(roomRouteMatch);
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
       const player = watchDocument || route === '/__diagnostics/codec';
@@ -550,7 +587,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const returnParam = url.searchParams.get('return');
-        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/$/.test(returnParam))) ? returnParam : undefined;
+        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/(?:join)?$/.test(returnParam))) ? returnParam : undefined;
         return discordStart(req,res,undefined,route==='/auth/owner',returnTo);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
@@ -577,11 +614,14 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         }
         if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
+        // Signing in replaces a guest session in this browser.
+        const previous = logins.get(hash(cookies(req).uburoom || ''));
+        if (previous && registry?.isGuest(previous.userId)) logins.delete(hash(cookies(req).uburoom));
         if (identity.id === config.ownerId) hub.setOwnerName(name);
         logins.set(hash(id), { ...discordIdentity({userId:identity.id,name}),csrf: randomBytes(32).toString('hex'), expires: null,
           ...(oauth ? { oauth } : {}) });
         accounts.save();
-        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/$/.test(attempt.returnTo))) ? attempt.returnTo : '/';
+        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/(?:join)?$/.test(attempt.returnTo))) ? attempt.returnTo : '/';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {
@@ -602,8 +642,31 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;
   const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle});
+  // Ends sessions whose guest pass stopped working (revoked, expired, issuer no
+  // longer allowed, or passes turned off) and removes their viewers at once.
+  // Unused guest accounts and long-ended passes are cleaned up every minute.
+  let guestSweep, guestCleanupAt = 0;
+  hub.sweepGuests = () => guestSweep ||= (async () => {
+    if (!registry) return;
+    const ended = new Set();
+    for (const [key, login] of logins) {
+      if (!login.pass || hub.guestPasses?.admits(hub.guestPasses.get(login.pass.id), login.userId)) continue;
+      ended.add(login.userId);
+      if (registry.isGuest(login.userId)) logins.delete(key); else delete login.pass;
+    }
+    if (ended.size) { await accounts.save(); await watchRoutes.invalidate([...ended]); }
+    if (Date.now() - guestCleanupAt >= 60000) {
+      guestCleanupAt = Date.now();
+      hub.guestPasses?.prune();
+      const inUse = new Set([...logins.values()].map(login => login.userId));
+      for (const room of watch.rooms.values()) for (const viewer of [...room.viewers.values(), ...room.disconnectedViewers.values()]) inUse.add(viewer.userId);
+      for (const recovery of watch.roomState?.recoveries.values() || []) for (const id of recovery.viewers || []) inUse.add(id);
+      registry.removeUnusedGuests(inUse);
+      await registry.flush();
+    }
+  })().catch(error => config.logger?.warn('Guests', 'Guest pass check failed: ' + error.message)).finally(() => { guestSweep = undefined; });
   const sweep = setInterval(() => {
-    watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep();
+    watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep(); void hub.sweepGuests();
     let expired = false;
     for (const [id, s] of logins) if (s.expires !== null && s.expires <= Date.now()) { logins.delete(id); expired = true; }
     if (expired) Promise.resolve(accounts.save()).catch(()=> (config.logger ? config.logger.error('Storage', 'Login storage unavailable') : console.error('[uburoom] Login storage unavailable')));

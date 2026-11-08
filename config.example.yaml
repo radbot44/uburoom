@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2j
+# Config schema v2k
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -129,7 +129,8 @@ rooms:
   # [] or 'none' grants none; 'all' grants all eligible rights.
   # Creators have all perms; hosts inherit from viewers; viewers can't get management perms.
   # Names: playPause, seek, chooseMedia, addQueue, editQueue, autoplay,
-  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants
+  # roomSettings, closeRoom, deleteRoom, continueWithoutHost, addHosts, kickParticipants,
+  # inviteGuests (create guest passes; also needs the guests section below)
   host_permissions: [playPause, seek, chooseMedia, addQueue, editQueue, autoplay, roomSettings, closeRoom, continueWithoutHost, kickParticipants]
   viewer_permissions: [playPause]
 
@@ -139,6 +140,13 @@ rooms:
   admin_plex_ids: []
   admin_discord_role_ids: []
 
+  # Trusted members sit between admins and everyone else. Same kind of exact IDs.
+  # Trusted grants no Admin mode, room rights, entry or Plex access by itself;
+  # today it only matters for guests.issuers below.
+  trusted_discord_ids: []
+  trusted_plex_ids: []
+  trusted_discord_role_ids: []
+
   # Enable single room to remove the ability to create and join rooms.
   # This means your uburoom will only have one shared queue.
   single_room: false # No create/delete/transfer.
@@ -146,6 +154,21 @@ rooms:
   # Blank: Discord owner if Discord sign-in is on; otherwise the Plex token account.
   # With both sign-in methods off, the Discord owner stays the leader.
   single_room_leader_plex_id: ''
+
+# Guest passes: links that let someone into one room without the usual entry rules.
+# Guests are always plain participants, never hosts, and only see that room.
+# Without their own Plex access they watch through plex.fallback_enabled sharing.
+guests:
+  enabled: false
+  # Lowest server tier that may create passes: operator | admins | trusted | members.
+  # Higher tiers are included. The person also needs inviteGuests in that room.
+  issuers: 'admins'
+  # true: every guest must sign in with Discord or Plex (their name is verified).
+  # false: whoever creates a pass chooses. Required when access.require_plex is true.
+  require_sign_in: false
+  max_lifetime_hours: 24 # Longest a pass can last (1-720).
+  max_uses: 10 # Most people one pass can let in (1-100).
+  max_per_room: 5 # Most guests in one room at once (1-50).
 
 # Show never-signed-in provider members in authorized room host search.
 # Discord discovery/presence also need the matching privileged bot intents enabled.

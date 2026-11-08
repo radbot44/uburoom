@@ -14,7 +14,8 @@ const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const PRESENCE_MS = PRESENCE_TIMEOUT_MS;
 const COMMAND_MS = COMMAND_TTL_MS;
 const isOwner = (actor,config) => (actor?.discordId||actor?.userId)===config.ownerId;
-const isHost = (room, actor) => room.creatorId ? RoomPolicy.role(room,actor.userId) !== 'viewer' : actor.userId===room.hostId;
+// A session let in by a guest pass is never a host, whatever the room's roles say.
+const isHost = (room, actor) => !actor.pass && (room.creatorId ? RoomPolicy.role(room,actor.userId) !== 'viewer' : actor.userId===room.hostId);
 const privileged = (room, actor, config, admin = false) => isHost(room, actor) || admin;
 const canWatch = (access,id,actor) => access?.canWatch ? access.canWatch(id,actor) : !!access?.isMember(id);
 function sameVoice(room, actor, access) {
@@ -26,6 +27,8 @@ function watching(room, actor, now = Date.now()) {
 }
 
 function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
+  // A guest pass opens one room only.
+  if (actor.passRoomId && (room.roomId ?? room.id) !== actor.passRoomId) return false;
   return room.kind === 'watch' && actor.guildId === config.guildId && (!config.channels?.length || config.channels.includes(actor.channelId)) &&
     canWatch(access,actor.userId,actor) && room.reachable && now - room.lastSeen < PRESENCE_MS && room.socket.readyState === 1 &&
     (admin || room.visibility === 'public' || (room.creatorId ? RoomPolicy.assigned(room,actor.userId) : isHost(room,actor)));
@@ -68,13 +71,14 @@ class Hub {
     this.adminMode = false; this.adminEpoch = 0; this.adminUsers = new Set();
   }
   isOwner(actor) {return isOwner(actor,this.config);}
-  canAdmin(actor) { return this.isOwner(actor) || this.adminEligible?.(actor) === true; }
+  canAdmin(actor) { return !actor.pass && (this.isOwner(actor) || this.adminEligible?.(actor) === true); }
   isAdmin(actor) {
     if (!this.canAdmin(actor)) { this.adminUsers.delete(actor.userId); return false; }
     return this.isOwner(actor) ? this.adminMode : this.adminUsers.has(actor.userId);
   }
   canRoom(room, actor, capability) {
-    return room.permissions ? this.isAdmin(actor) || RoomPolicy.allowed(room, actor.userId, capability) : this.canManage(room, actor);
+    if (!room.permissions) return this.canManage(room, actor);
+    return this.isAdmin(actor) || RoomPolicy.allowed(actor.pass ? { ...room, guests:[actor.userId] } : room, actor.userId, capability);
   }
   canManage(room, actor) { return room.permissions ? this.canRoom(room, actor, 'roomSettings') : privileged(room, actor, this.config, this.isAdmin(actor)); }
   roomCommandAllowed(room, actor, command, personal = false) {

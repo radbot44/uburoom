@@ -20,7 +20,7 @@ function deduplicateSlug(db, baseSlug, currentRoomId) {
 }
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
-/** @typedef {{id:string,creatorId:string,hosts:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
 
 function error(message, status = 400) { return Object.assign(new Error(message), { status }); }
 function text(value, limit, label) {
@@ -58,13 +58,15 @@ class RoomStore {
    * @param {import('./accounts').Accounts} registry
    * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean,limits?:typeof import('./room-limits').DEFAULTS}} [options]
    */
-  constructor(registry, { defaults, now = Date.now, isAdmin = () => false, limits = require('./room-limits').DEFAULTS } = {}) {
+  constructor(registry, { defaults, now = Date.now, isAdmin = () => false, guests = () => [], limits = require('./room-limits').DEFAULTS } = {}) {
     this.registry = registry;
     this.db = registry.db;
     this.defaults = Policy.policy(defaults);
     this.now = now; this.limits = limits;
     // Server-owned opt-in Admin mode, never a flag accepted from a room edit.
     this.isAdmin = isAdmin;
+    // People currently in a room through a guest pass; they hold no room roles.
+    this.guests = guests;
   }
   healthy() {
     const failure = this.failure || this.registry.persistence.error;
@@ -85,7 +87,7 @@ class RoomStore {
     const hosts = [...new Set(this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=? ORDER BY userId').all(id)
       .map(entry => this.account(entry.userId)))].filter(userId => userId !== creatorId);
     return {
-      id: row.id, creatorId, hosts, name: row.name, slug: row.slug, ubumfaWord: row.ubumfaWord, visibility: row.visibility,
+      id: row.id, creatorId, hosts, guests: [...this.guests(row.id)], name: row.name, slug: row.slug, ubumfaWord: row.ubumfaWord, visibility: row.visibility,
       revision: row.revision, checkpointRevision: row.checkpointRevision, queueRevision: row.queueRevision ?? 0,
       createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt:row.lastAccessedAt,
       keepEmpty:!!row.keepEmpty, maxMembers:row.maxMembers, liveState:row.liveState ? JSON.parse(row.liveState) : null,
@@ -252,6 +254,7 @@ class RoomStore {
         case 'host.add': {
           const target = this.account(change.userId);
           if (target === room.creatorId) throw error('The room leader is already a host');
+          if (room.guests.includes(target)) throw error('Guests cannot be hosts', 403);
           clearPendingForUser(target);
           this.db.prepare('INSERT OR IGNORE INTO watch_room_hosts VALUES(?,?)').run(id, target);
           break;

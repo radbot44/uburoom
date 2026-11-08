@@ -111,7 +111,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         return result(200, await hub.dispatch({...auth.actor,watchCurrent:current}, { ...data.command, roomId: data.roomId }));
       }
       if (!write && url.pathname === '/api/watch/me') {
-        return result(200, { name: auth.actor.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomLimits:watch.roomState?.limits,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId) });
+        return result(200, { name: auth.actor.name,owner:hub.isOwner(auth.actor),adminEligible:hub.canAdmin(auth.actor),adminMode:hub.isAdmin(auth.actor),durableRooms:!!watch.roomState,roomLimits:watch.roomState?.limits,singleRoom:!!config.singleRoom,roomPermissionDefaults:RoomPolicy.policy(config.roomPermissions),csrf:auth.identity.csrf,account:registry?.summary(auth.actor.userId),guest:!!registry?.isGuest(auth.actor.userId),passRoomId:auth.actor.passRoomId });
       }
       if (write && url.pathname === '/api/watch/profile' && registry) {
         if (!throttle('profile-name:'+auth.actor.userId,20)) return result(429,{error:'Too many name changes; try again shortly'});
@@ -170,7 +170,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|passes))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
@@ -201,6 +201,29 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.metadata(match[1],auth.actor);
         if (!await current()) return result(403,{error:'Room access changed'});
         return result(200,watch.roomState.summary(match[1],auth.actor));
+      }
+      // Guest passes: only people who may issue passes in this room see or change them.
+      if (watch.roomState && match[2] === 'passes') {
+        const passes = hub.guestPasses;
+        if (!passes) return result(404, { error: 'Guest passes are turned off on this server' });
+        const check = async () => {
+          await watch.roomState.eligible(auth.actor, current); await watch.roomState.metadata(match[1], auth.actor);
+          if (!await current()) throw Object.assign(new Error('Room access changed'), { status: 403 });
+          const record = watch.roomState.store.get(match[1]);
+          if (!hub.canIssuePasses(record, auth.actor)) throw Object.assign(new Error('You can’t manage guest passes in this room'), { status: 403 });
+          return record;
+        };
+        const record = await check();
+        if (!write) return result(200, { passes: passes.list(record.id) });
+        if (!throttle('guest-passes:' + auth.actor.userId, 30)) return result(429, { error: 'Too many guest pass changes; try again shortly' });
+        if (data.action === 'create') {
+          const created = passes.create(record.id, auth.actor.userId, { hours:data.hours, uses:data.uses, signIn:data.signIn });
+          await check();
+          return result(201, { pass:created.pass, url:config.publicUrl + '/join#' + created.token, passes:passes.list(record.id) });
+        }
+        const changed = passes.change(record.id, data.passId, auth.actor.userId, data.action);
+        if (data.action === 'revoke') await hub.sweepGuests?.();
+        return result(200, { pass:changed, passes:passes.list(record.id) });
       }
       if (watch.roomState && match[2] === 'queue') {
         await watch.roomState.eligible(auth.actor, current);

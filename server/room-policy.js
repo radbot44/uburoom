@@ -34,13 +34,30 @@ function configuration(rooms) {
       host: permissionList(rooms.host_permissions, DEFAULTS.host),
       viewer: permissionList(rooms.viewer_permissions, DEFAULTS.viewer)
     }),
-    roomAdministrators: {
-      discord: identifiers(rooms.admin_discord_ids, /^\d{17,20}$/, 'rooms.admin_discord_ids'),
-      plex: identifiers(rooms.admin_plex_ids, /^\d{1,20}$/, 'rooms.admin_plex_ids'),
-      discordRoles: identifiers(rooms.admin_discord_role_ids, /^\d{17,20}$/, 'rooms.admin_discord_role_ids')
-    }
+    roomAdministrators: members(rooms, 'admin'),
+    trustedMembers: members(rooms, 'trusted')
   };
 }
+
+function members(rooms, prefix) {
+  return {
+    discord: identifiers(rooms[prefix + '_discord_ids'], /^\d{17,20}$/, 'rooms.' + prefix + '_discord_ids'),
+    plex: identifiers(rooms[prefix + '_plex_ids'], /^\d{1,20}$/, 'rooms.' + prefix + '_plex_ids'),
+    discordRoles: identifiers(rooms[prefix + '_discord_role_ids'], /^\d{17,20}$/, 'rooms.' + prefix + '_discord_role_ids')
+  };
+}
+
+// True when a verified identity on the account is listed, directly or through a
+// current Discord guild role.
+function listed(identities, list, access) {
+  if (identities.some(identity => identity.provider === 'discord' && list.discord.includes(identity.subject) ||
+      identity.provider === 'plex' && list.plex.includes(identity.subject))) return true;
+  return identities.some(identity => identity.provider === 'discord' &&
+    access?.isMember(identity.subject) === true && list.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
+}
+
+const NONE = Object.freeze({ discord: [], plex: [], discordRoles: [] });
+const TIERS = Object.freeze(['members', 'trusted', 'admins', 'operator']);
 
 // Provider identities and role membership must come from the server registry and
 // current guild access, never actor fields supplied in a command body.
@@ -49,12 +66,25 @@ function administrator(registry, config, userId, access) {
   const account = registry.canonical(userId);
   if (!account) return false;
   const identities = registry.identities(account.id).filter(identity => identity.verified);
-  const configured = config.roomAdministrators || { discord: [], plex: [], discordRoles: [] };
-  if (identities.some(identity => identity.provider === 'discord' &&
-      (identity.subject === config.ownerId || configured.discord.includes(identity.subject)) ||
-      identity.provider === 'plex' && configured.plex.includes(identity.subject))) return true;
-  return identities.some(identity => identity.provider === 'discord' &&
-    access?.isMember(identity.subject) === true && configured.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
+  if (identities.some(identity => identity.provider === 'discord' && identity.subject === config.ownerId)) return true;
+  return listed(identities, config.roomAdministrators || NONE, access);
+}
+
+// Server-wide standing: operator > admins > trusted > members. Admins include the
+// Discord owner. Unverified guests have no verified identities, so they are
+// members at most; callers decide whether guests may act at all.
+/** @param {import('./accounts').Accounts} registry @returns {'operator'|'admins'|'trusted'|'members'} */
+function serverTier(registry, config, userId, access) {
+  const account = registry.canonical(userId);
+  if (!account) return 'members';
+  if (require('./operator-policy').isServerOperator(registry, config, account.id)) return 'operator';
+  if (administrator(registry, config, account.id, access)) return 'admins';
+  const identities = registry.identities(account.id).filter(identity => identity.verified);
+  return listed(identities, config.trustedMembers || NONE, access) ? 'trusted' : 'members';
+}
+
+function tierAtLeast(tier, minimum) {
+  return TIERS.includes(minimum) && TIERS.indexOf(tier) >= TIERS.indexOf(minimum);
 }
 
 module.exports = {
@@ -71,5 +101,8 @@ module.exports = {
   commandCapability,
   canKickParticipant,
   configuration,
-  administrator
+  administrator,
+  serverTier,
+  tierAtLeast,
+  TIERS
 };
