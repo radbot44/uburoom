@@ -7,21 +7,68 @@
 @media(max-width:700px){#account{flex-wrap:wrap;gap:8px}#account .account-actions{flex:1}#account .identity-group{margin-left:auto}#account #identity{max-width:75px}}
 @media(max-width:500px){#account>.account-actions{flex:1 1 100%;flex-wrap:nowrap}#account .identity-group{margin-left:0;flex:1}}
 /* Video chrome stays dark; its sibling dialogs and menus inherit the page palette. */
-.room-share-preview{border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:10px;padding:14px;overflow-wrap:anywhere}
-.room-share-preview p{margin:8px 0 0}
-#room-share-name{overflow-wrap:anywhere}
-#room-share-url{overflow-wrap:anywhere;color:var(--text)}
-#room-share-events{margin-top:20px}
-#room-share-dialog h3{font-size:14px;font-weight:600;margin:22px 0 12px}
-#room-share-error{color:var(--error);overflow-wrap:anywhere}
+.room-share-label{display:block;font-size:12px;font-weight:500;color:var(--muted);margin:0 0 6px}
+.room-share-link-group{display:flex;align-items:center;gap:8px;margin-bottom:16px}
+.room-share-link-dock{flex:1;display:flex;align-items:center;background:var(--elevated);border:1px solid var(--border);border-radius:10px;padding:2px 4px 2px 12px;min-height:40px;box-sizing:border-box;transition:border-color .15s}
+.room-share-link-dock:focus-within{border-color:var(--primary)}
+#room-share-url-input{background:none;border:0;outline:none;color:var(--text);font-family:monospace;font-size:13px;flex:1;min-width:0;cursor:pointer;padding:6px 0}
+.room-share-dock-btn{background:none;border:0;color:var(--muted);border-radius:8px;width:32px;height:32px;min-width:32px;min-height:32px;padding:4px;display:grid;place-items:center}
+.room-share-dock-btn:hover{background:var(--hover);color:var(--text)}
+.room-share-dock-btn svg{width:18px;height:18px}
+.room-share-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 10px}
+.room-share-heading-row h3{font-size:14px;font-weight:600;margin:0}
+.room-share-channel-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:500;background:var(--elevated);border:1px solid var(--border);color:var(--text);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.room-share-preview{border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:10px;padding:12px 14px;overflow-wrap:anywhere;background:color-mix(in srgb,var(--card) 80%,var(--elevated))}
+.room-share-preview strong{display:block;font-size:15px;font-weight:600;color:var(--text);line-height:1.3}
+.room-share-preview p{margin:4px 0 6px;font-size:13px;color:var(--muted)}
+.room-share-preview-status-row{display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px}
+.room-share-status-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+.room-share-status-dot.playing{background:var(--success)}
+.room-share-status-dot.paused{background:var(--warning)}
+.room-share-action-row{display:flex;gap:8px;align-items:center;margin-top:12px}
+.room-share-action-row>button{flex:1;min-height:40px;justify-content:center}
+.room-share-published-row{display:flex;gap:8px;align-items:center;margin-top:12px}
+.room-share-published-row>button{flex:1;min-height:40px;justify-content:center}
+.room-share-schedule-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px}
+.room-share-schedule-btn svg{width:18px;height:18px}
+.room-share-events-header{display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px}
+.room-share-events-header h3{font-size:14px;font-weight:600;margin:0}
+.room-share-event{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;background:var(--elevated);overflow-wrap:anywhere}
+.room-share-event strong{display:block;font-size:14px;font-weight:600;margin-bottom:4px}
+.room-share-event p{margin:2px 0 8px;font-size:12px;color:var(--muted)}
+.room-share-event .dialog-actions{margin:0;justify-content:flex-end;gap:6px}
+.room-share-event .dialog-actions button{min-height:32px;padding:4px 10px;font-size:12px;border-radius:8px}
+#room-share-error{color:var(--error);overflow-wrap:anywhere;margin-top:10px}
 #room-share-error:empty{display:none}
-#room-share-event-form{display:block;margin-top:16px;text-align:left}
+#room-share-event-form{display:block;text-align:left}
 #room-share-event-form[hidden]{display:none}
-#room-share-event-form label{display:block;margin:14px 0 6px}
-#room-share-event-form :is(input,select,textarea){box-sizing:border-box;width:100%;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);font:inherit}
+.room-share-field{margin-top:14px}
+.room-share-field-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.room-share-field-header label{font-size:13px;font-weight:500;color:var(--text);margin:0}
+.room-share-field label:not(.room-share-field-header label){display:block;font-size:13px;font-weight:500;color:var(--text);margin-bottom:6px}
+#room-share-event-form :is(input,select,textarea){box-sizing:border-box;width:100%;min-width:0;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);font:inherit}
 #room-share-event-form textarea{resize:vertical}
-.room-share-event{border-top:1px solid var(--border);padding:12px 0;overflow-wrap:anywhere}
-.room-share-event p{margin:6px 0}
+.room-share-zone-btn{background:none;border:0;padding:2px 4px;border-radius:6px;font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.room-share-zone-btn:hover{color:var(--text)}
+.room-share-zone-btn svg{width:14px;height:14px}
+.room-share-zone-change{color:var(--accent-text);text-decoration:underline;text-underline-offset:2px;margin-left:2px}
+.room-share-zone-wrapper{margin:6px 0 10px}
+.room-share-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px}
+.room-share-chip{background:var(--elevated);border:1px solid var(--border);color:var(--muted);border-radius:8px;font-size:12px;font-weight:500;padding:6px 10px;white-space:nowrap;cursor:pointer;transition:color .12s,border-color .12s,background-color .12s;min-height:32px}
+.room-share-chip:hover{background:var(--hover);color:var(--text)}
+.room-share-chip[aria-pressed=true]{background:color-mix(in srgb,var(--primary) 15%,var(--elevated));border-color:var(--primary);color:var(--accent-text);font-weight:600}
+.room-share-datetime-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:400px){.room-share-datetime-row{grid-template-columns:1fr}}
+.room-share-end-badge{font-size:12px;font-weight:500;color:var(--accent-text);background:color-mix(in srgb,var(--primary) 12%,transparent);border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);padding:2px 7px;border-radius:6px}
+.room-share-duration-pills{display:flex;gap:6px;margin-top:6px}
+.room-share-duration-pill{flex:1;text-align:center;background:var(--elevated);border:1px solid var(--border);color:var(--muted);border-radius:8px;font-size:12px;font-weight:500;padding:7px 8px;cursor:pointer;transition:color .12s,border-color .12s,background-color .12s;min-height:34px}
+.room-share-duration-pill:hover{background:var(--hover);color:var(--text)}
+.room-share-duration-pill[aria-pressed=true]{background:color-mix(in srgb,var(--primary) 15%,var(--elevated));border-color:var(--primary);color:var(--accent-text);font-weight:600}
+.room-share-custom-row{margin-top:8px;padding:10px;background:var(--elevated);border:1px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.room-share-custom-row label{font-size:12px;color:var(--muted);margin:0}
+.room-share-custom-row select{width:auto;min-width:140px;padding:6px 10px;font-size:12px}
+.room-share-form-actions{margin-top:20px;display:flex;justify-content:flex-end;gap:8px}
+.room-share-form-actions button{min-height:40px;padding:10px 18px}
 .player-chrome,.watch-toast-region{--background:#101217;--card:#1B1E26;--elevated:#292E38;--border:#393F4D;--text:#F8F7F4;--muted:#AAB0BC;--accent-text:var(--primary);color:#F8F7F4;color-scheme:dark}
 #empty-stage,.center-play,#ready-status,#seek-feedback{--text:#F8F7F4;--muted:#AAB0BC;--elevated:#292E38;color:#F8F7F4}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}main{max-width:clamp(1750px,calc(1400px + 18.2292vw),2100px);margin:22px auto;padding:0 24px}

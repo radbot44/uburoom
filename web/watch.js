@@ -587,7 +587,7 @@ function renderNotifications() {
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
-const roomShare=uburoomShare.mount({request:api,share:shareInvite,openLink:async url=>{
+const roomShare=uburoomShare.mount({request:api,share:shareInvite,getDuration:()=>state?.state?.duration,toasts,openLink:async url=>{
   if(activity&&sdk){const result=await sdk.commands.openExternalLink({url});if(!result.opened)throw new Error('Discord could not open the post.');}
   else window.open(url,'_blank','noopener,noreferrer');
 }});
