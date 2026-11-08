@@ -15,6 +15,7 @@ const {
   permissionList,
   role,
   assigned,
+  admitted,
   allowed,
   commandCapability,
   canKickParticipant
@@ -97,6 +98,7 @@ module.exports = {
   policy,
   role,
   assigned,
+  admitted,
   allowed,
   commandCapability,
   canKickParticipant,

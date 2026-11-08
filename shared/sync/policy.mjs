@@ -5,11 +5,11 @@
 
 export const CAPABILITIES = Object.freeze([
   'playPause', 'seek', 'chooseMedia', 'addQueue', 'editQueue', 'autoplay',
-  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants', 'inviteGuests'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'continueWithoutHost', 'addHosts', 'kickParticipants'
 ]);
 
 export const VIEWER_BLOCKED = Object.freeze([
-  'roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants', 'inviteGuests'
+  'roomSettings', 'closeRoom', 'deleteRoom', 'addHosts', 'kickParticipants'
 ]);
 
 export const CREATOR_ONLY = Object.freeze([
@@ -17,7 +17,7 @@ export const CREATOR_ONLY = Object.freeze([
 ]);
 
 export const DEFAULTS = Object.freeze({
-  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts', 'inviteGuests'].includes(key)]))),
+  host: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, !['deleteRoom', 'addHosts'].includes(key)]))),
   viewer: Object.freeze(Object.fromEntries(CAPABILITIES.map(key => [key, key === 'playPause'])))
 });
 
@@ -77,6 +77,15 @@ export function role(room, userId) {
   const hosts = room.hosts || [], guests = room.guests;
   if (guests && (Array.isArray(guests) ? guests.includes(userId) : guests.has(userId))) return 'viewer';
   return userId === room.creatorId ? 'creator' : hosts.includes(userId) || room.permissions?.allHosts ? 'host' : 'viewer';
+}
+
+// Private rooms admit their leader and hosts, people who joined by the room's invite
+// and its current guests. Reopening and saved-room discovery stay with assigned().
+/** @param {{creatorId?:string, hosts?:string[], invited?:string[], guests?:string[]|Set<string>}} room @param {string} userId */
+export function admitted(room, userId) {
+  const guests = room.guests;
+  return assigned(room, userId) || !!room.invited?.includes(userId) ||
+    !!guests && (Array.isArray(guests) ? guests.includes(userId) : guests.has(userId));
 }
 
 // Mode changes permissions, never private-room membership or saved-room discovery.

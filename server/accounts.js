@@ -52,8 +52,7 @@ class Accounts {
   removeUnusedGuests(inUse) {
     const unused=this.db.prepare(`SELECT id FROM users u WHERE guest=1 AND retiredInto IS NULL
       AND NOT EXISTS(SELECT 1 FROM identities WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_rooms WHERE creatorId=u.id)
-      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)
-      AND NOT EXISTS(SELECT 1 FROM guest_passes WHERE issuerId=u.id)`).all().map(row=>row.id).filter(id=>!inUse.has(id));
+      AND NOT EXISTS(SELECT 1 FROM watch_room_hosts WHERE userId=u.id) AND NOT EXISTS(SELECT 1 FROM watch_room_host_grants WHERE issuerId=u.id)`).all().map(row=>row.id).filter(id=>!inUse.has(id));
     if(unused.length)this.transaction(()=>{for(const id of unused){this.db.prepare('DELETE FROM playback_history WHERE userId=?').run(id);this.db.prepare('DELETE FROM users WHERE id=?').run(id);}});
     return unused;
   }

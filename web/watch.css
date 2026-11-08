@@ -799,13 +799,14 @@ input.watch-switch:not(.watch-switch-input):disabled{cursor:default;opacity:.55}
 #account-server-settings{margin-top:18px}
 @media(max-width:500px){.server-settings-dialog{padding:20px}.server-settings-grid{grid-template-columns:1fr}.server-settings-dialog>footer{bottom:-20px}.server-settings-tabs{gap:4px}.server-settings-tabs button{padding-inline:8px}}
 @media(prefers-reduced-motion:reduce){.server-settings-spinner{animation:none}}
-/* Guest passes: unverified guest names, the join form and the Guests tab. */
+/* Room invites: guest names, the join form, the invite code box and the People invite row. */
 .room-roster-name.guest-name{font-style:italic}
-#guest-join{display:grid;gap:10px;margin-top:20px;text-align:left}#guest-join[hidden]{display:none}
+#guest-join,#invite-code-form{display:grid;gap:10px;margin-top:20px;text-align:left}#guest-join[hidden],#invite-code-form[hidden]{display:none}
 .guest-name-row{display:flex;gap:8px;align-items:center}
-#guest-name{box-sizing:border-box;flex:1;width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text)}
+#guest-name,#invite-code{box-sizing:border-box;flex:1;width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text)}
 #guest-join-submit{min-height:44px}#guest-sign-in-label{margin-top:20px}
 #welcome:has(#guest-join:not([hidden])) .login-options{margin-top:12px}
-#guest-pass-link{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
-#guest-pass-uses{max-width:120px;flex:none}
-.guest-pass .room-actions{gap:12px}
+#invite-code-submit{min-height:44px}
+.room-invite-row{gap:12px;margin-top:0}.room-invite-row .queue-check{font-size:14px}
+.room-invite-code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:15px;padding:8px 10px;border-radius:8px;background:var(--elevated);user-select:all}
+#room-invited-section h4{margin:18px 0 4px}

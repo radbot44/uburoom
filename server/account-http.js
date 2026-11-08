@@ -50,7 +50,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
       if(req.method==='GET'&&route==='/auth/plex'){
         if(config.accessPolicy?.plex===false)throw new Error('Plex authorization is disabled');
         const returnParam = url.searchParams.get('return');
-        const returnTo = returnParam && (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/(?:join)?$/.test(returnParam)) ? returnParam : undefined;
+        const returnTo = returnParam && (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(returnParam)) ? returnParam : undefined;
         // A guest signing in starts a separate account; guests never link providers.
         const current=await user(req);
         const destination=await startPlex(req,res,current&&!registry.isGuest(current.userId)?current:undefined,returnTo);res.writeHead(302,{Location:destination});res.end();return true;
@@ -83,7 +83,7 @@ function accountHttp({config,registry,plexAuth,hub,watch,watchRoutes,user,protec
           const previous=sourceHash(req);if(previous&&logins.has(previous)&&registry.isGuest(logins.get(previous).userId))logins.delete(previous);
           const account=registry.resolve('plex',identity.subject,identity.name);registry.credential(identity.subject,identity.credential);plexAuth.clear();session(res,account,account.name);}
         const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(existing?Array.isArray(existing)?existing:[existing]:[]),cookie('uburoom_plex','',0)]);
-        const destination = !pendingMerge && attempt.returnTo && (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/(?:join)?$/.test(attempt.returnTo)) ? attempt.returnTo : '/?account=1';
+        const destination = !pendingMerge && attempt.returnTo && (/^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(attempt.returnTo)) ? attempt.returnTo : '/?account=1';
         res.writeHead(302,{Location:destination});res.end();return true;
       }
       const login=req.method==='GET'?await user(req):await protectedPost(req);

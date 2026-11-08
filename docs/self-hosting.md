@@ -64,22 +64,25 @@ Sign-in, permission to enter uburoom, Plex media access, and server administrati
 | `server.public_web_app: false` | Restrict playback to verified Discord Activity. Browser handoff remains available for account linking/management. |
 | `operator.discord_id` / `operator.plex_id` | Exact quoted provider account IDs authorized to open **Server settings** in the browser (the 19-key allowlist across Rooms, Directory and Transcoding). Saved edits write to `config.yaml` and require a manual restart to take effect. |
 
-With both sign-in methods off, uburoom allows separate 24-hour anonymous browser logins without owner/admin rights; these are guests with a random, changeable name, not managed guest passes. Admission changes invalidate existing browser logins. `/auth/owner` supports the configured Discord owner's OAuth recovery, subject to the remaining admission rules.
+With both sign-in methods off, uburoom allows separate 24-hour anonymous browser logins without owner/admin rights; these are guest accounts with a random, changeable name, separate from room invites. Admission changes invalidate existing browser logins. `/auth/owner` supports the configured Discord owner's OAuth recovery, subject to the remaining admission rules.
 
-### Guest passes
+### Room invites and guests
 
-A guest pass is a link (`/join#…`) that lets people into one room without meeting the usual entry rules (guild membership, Plex server share or the entry password). Turn them on with `guests.enabled: true`.
+Every room has an invite code, like `ubumfa-ogdave`. Anyone in the room can share it with the room's Share button (the device share sheet, the clipboard, or Discord's share link in an Activity), as a `/join/<code>` link or a code typed on the sign-in screen. People who can already enter the server use it to reach the room, including private rooms, which then remember them until a host revokes them. Hosts can make a new code at any time; that removes nobody.
+
+Guests let a room's invite admit people who couldn't otherwise get in. Turn the feature on with `guests.enabled: true`; each room then has an **Allow guests** switch in Room settings → People.
 
 | Setting | Behavior |
 | --- | --- |
-| `guests.issuers` | Lowest server tier that may create passes: `operator`, `admins`, `trusted` or `members` (default `admins`). Higher tiers are included. The person also needs the room's **Invite guests** permission (`inviteGuests`; the room leader and Admin mode always have it, hosts only when granted). |
+| `guests.issuers` | Lowest server tier that may turn on guests in a room they host: `operator`, `admins`, `trusted` or `members` (default `admins`). Admin mode always counts. |
 | `rooms.trusted_discord_ids` / `trusted_plex_ids` / `trusted_discord_role_ids` | The trusted tier, between admins and everyone else. Exact quoted IDs, matched only against verified sign-ins. Trusted grants nothing else today. |
-| `guests.require_sign_in` | `true` makes every guest sign in with Discord or Plex. Otherwise whoever creates a pass chooses. Required when `access.require_plex` is `true`, since a pass never replaces personal Plex access. |
-| `guests.max_lifetime_hours` / `max_uses` / `max_per_room` | Caps on a pass's lifetime (1–720 hours, default 24), how many people it lets in (1–100, default 10), and guests in one room at once (1–50, default 5). |
+| `guests.require_sign_in` | `true` makes every guest sign in with Discord or Plex. Required when `access.require_plex` is `true`, since being a guest never replaces personal Plex access. |
+| `guests.max_per_room` | Most guests in one room at once (1–50, default 10). |
+| `guests.session_hours` | How long a guest stays signed in before re-entering the code (1–720, default 24). |
 
-Guests are always participants: never hosts (All hosts mode skips them), never Admin mode, and they only see their pass's room. Guests who don't sign in pick a name (prefilled with a random ubunym); it isn't verified, so the roster shows it in italics, and a guest can't take the name of someone signed in who is in the room. They watch Plex media through [shared fallback](#shared-plex-fallback) and are never reported to Plex. Someone who already meets the normal entry rules is sent straight in without using up the pass.
+Guests are always participants: never hosts (All hosts mode skips them), never Admin mode, and they only see their room. Guests who don't sign in pick a name (prefilled with a random ubunym). It isn't verified, so the roster shows it in italics, and a guest can't take the name of someone signed in who is in the room. They watch Plex media through [shared fallback](#shared-plex-fallback) and are never reported to Plex.
 
-Hosts manage passes in Room settings → Guests. The link is shown once, when the pass is made; only a hash is stored. Turning a pass **off** stops new entries but keeps guests already in. **Revoking** ends it for good and removes its guests at once. A pass also stops working, and its guests are removed, if the person who made it can no longer issue passes in that room; while a Discord role check is unanswered, guests stay but nobody new gets in.
+Turning Allow guests off keeps current guests. **Remove all guests** removes them all at once and makes a new code. Kicking a guest, or someone who joined a private room by invite, removes them and keeps them out until the code changes.
 
 See [accounts and access](accounts-and-access.md) for the authorization model.
 

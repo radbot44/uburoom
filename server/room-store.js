@@ -20,7 +20,21 @@ function deduplicateSlug(db, baseSlug, currentRoomId) {
 }
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
-/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],invited:string[],inviteCode:string,allowGuests:boolean,name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+
+// A room invite is two six-letter ubumfa words. People may type it in any case,
+// with a hyphen, a space or nothing between the words.
+function inviteCode(value) {
+  if (typeof value !== 'string' || value.length > 40) return undefined;
+  const letters = value.toLowerCase().replace(/[^a-z]/g, '');
+  return letters.length === 12 ? letters.slice(0, 6) + '-' + letters.slice(6) : undefined;
+}
+function newInviteCode(db) {
+  for (;;) {
+    const code = ubumfa.generateWord(6).toLowerCase() + '-' + ubumfa.generateWord(6).toLowerCase();
+    if (!db.prepare('SELECT 1 FROM watch_rooms WHERE inviteCode=?').get(code)) return code;
+  }
+}
 
 function error(message, status = 400) { return Object.assign(new Error(message), { status }); }
 function text(value, limit, label) {
@@ -87,7 +101,8 @@ class RoomStore {
     const hosts = [...new Set(this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=? ORDER BY userId').all(id)
       .map(entry => this.account(entry.userId)))].filter(userId => userId !== creatorId);
     return {
-      id: row.id, creatorId, hosts, guests: [...this.guests(row.id)], name: row.name, slug: row.slug, ubumfaWord: row.ubumfaWord, visibility: row.visibility,
+      id: row.id, creatorId, hosts, guests: [...this.guests(row.id)], name: row.name, inviteCode: row.inviteCode, allowGuests: row.allowGuests === 1,
+      invited: [...new Set(this.db.prepare('SELECT userId FROM watch_room_invites WHERE roomId=? ORDER BY createdAt').all(id).map(entry => this.account(entry.userId)))], slug: row.slug, ubumfaWord: row.ubumfaWord, visibility: row.visibility,
       revision: row.revision, checkpointRevision: row.checkpointRevision, queueRevision: row.queueRevision ?? 0,
       createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt:row.lastAccessedAt,
       keepEmpty:!!row.keepEmpty, maxMembers:row.maxMembers, liveState:row.liveState ? JSON.parse(row.liveState) : null,
@@ -146,8 +161,8 @@ class RoomStore {
       const baseSlug = ubumfa.slugify(finalName);
       finalSlug = deduplicateSlug(this.db, baseSlug, id);
     }
-    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,slug,ubumfaWord,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, creatorId, finalName, finalSlug, ubumfaWord, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers);
+    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,slug,ubumfaWord,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers,inviteCode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, creatorId, finalName, finalSlug, ubumfaWord, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers, newInviteCode(this.db));
     return this.commit(this.get(id));
   }
   list(userId, { offset = 0, limit = 50 } = {}) {
@@ -163,6 +178,29 @@ class RoomStore {
     }
     return { rooms: rooms.slice(offset, offset + limit), total: rooms.length };
   }
+  /** The room a typed or linked invite code belongs to, if any. */
+  byInvite(value) {
+    const code = inviteCode(value);
+    const row = code && this.db.prepare('SELECT id FROM watch_rooms WHERE inviteCode=?').get(code);
+    return row ? this.get(row.id) : undefined;
+  }
+  // Signed-in people who joined a private room by invite stay invited until revoked.
+  invite(id, userId) { this.db.prepare('INSERT OR IGNORE INTO watch_room_invites VALUES(?,?,?)').run(id, this.account(userId), this.now()); return this.commit(this.get(id)); }
+  // Subjects are 'user:<uuid>' or 'device:<hash>'. Blocks end when the code is rerolled.
+  blocked(id, subjects) { return subjects.some(subject => this.db.prepare('SELECT 1 FROM watch_room_invite_blocks WHERE roomId=? AND subject=?').get(id, subject)); }
+  block(id, subjects) {
+    this.registry.transaction(() => { for (const subject of subjects) this.db.prepare('INSERT OR IGNORE INTO watch_room_invite_blocks VALUES(?,?,?)').run(id, subject, this.now()); });
+    return this.commit(this.get(id));
+  }
+  // Removes someone's invite to a private room and keeps them from using it again.
+  revokeInvite(id, userId) {
+    const target = this.account(userId);
+    this.registry.transaction(() => {
+      this.db.prepare('DELETE FROM watch_room_invites WHERE roomId=? AND userId=?').run(id, target);
+      this.db.prepare('INSERT OR IGNORE INTO watch_room_invite_blocks VALUES(?,?,?)').run(id, 'user:' + target, this.now());
+    });
+    return this.commit(this.get(id));
+  }
   restore(id, userId) {
     const room = this.get(id);
     userId = this.account(userId);
@@ -177,11 +215,13 @@ class RoomStore {
     if (!change || typeof change !== 'object' || Array.isArray(change)) throw error('Invalid room change');
     const capabilities = {
       'keepEmpty':'roomSettings', 'maxMembers':'roomSettings', 'auto.reset':'editQueue', rename: 'roomSettings', visibility: 'roomSettings', 'host.add': 'addHosts',
-      'host.remove': 'manageHosts', 'host.leave':'self', 'host.pending.add':'addHosts', 'host.pending.remove':'manageHosts', 'allHosts':'leader', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia'
+      'host.remove': 'manageHosts', 'host.leave':'self', 'host.pending.add':'addHosts', 'host.pending.remove':'manageHosts', 'allHosts':'leader', 'creator.transfer': 'transferCreator', permissions: 'managePermissions', 'permissions.preset': 'managePermissions', autoplay:'autoplay', delete: 'deleteRoom', 'bookmark.clear':'chooseMedia',
+      'invite.reroll':'host', 'guests.allow':'host', 'guests.removeAll':'host', 'invite.revoke':'kickParticipants'
     };
     const capability = Object.hasOwn(capabilities, change.action) && capabilities[change.action];
     if (!capability) throw error('Unsupported room change');
-    if (capability === 'leader' ? userId !== room.creatorId : capability === 'self' ? !room.hosts.includes(userId) : this.isAdmin(userId) !== true && !Policy.allowed(room, userId, capability)) throw error('Room permission required', 403);
+    const host = this.isAdmin(userId) === true || Policy.role(room, userId) !== 'viewer';
+    if (capability === 'leader' ? userId !== room.creatorId : capability === 'self' ? !room.hosts.includes(userId) : capability === 'host' ? !host : this.isAdmin(userId) !== true && !Policy.allowed(room, userId, capability)) throw error('Room permission required', 403);
     if (!Number.isSafeInteger(revision) || revision !== room.revision) throw error('Room changed; refresh before editing', 409);
     const at = this.now();
     const clearPendingForUser = targetId => {
@@ -280,11 +320,28 @@ class RoomStore {
           room.creatorId = target;
           break;
         }
+        case 'invite.reroll':
+        case 'guests.removeAll':
+          // A new code; blocks tied to the old one end with it. Sessions are ended by the caller.
+          this.db.prepare('UPDATE watch_rooms SET inviteCode=? WHERE id=?').run(newInviteCode(this.db), id);
+          this.db.prepare('DELETE FROM watch_room_invite_blocks WHERE roomId=?').run(id);
+          break;
+        case 'guests.allow':
+          if (typeof change.enabled !== 'boolean') throw error('Choose whether to allow guests');
+          this.db.prepare('UPDATE watch_rooms SET allowGuests=? WHERE id=?').run(change.enabled ? 1 : 0, id); break;
+        case 'invite.revoke': {
+          const target = this.account(change.userId);
+          this.db.prepare('DELETE FROM watch_room_invites WHERE roomId=? AND userId=?').run(id, target);
+          this.db.prepare('INSERT OR IGNORE INTO watch_room_invite_blocks VALUES(?,?,?)').run(id, 'user:' + target, at);
+          break;
+        }
         case 'bookmark.clear':
           this.db.prepare('UPDATE watch_rooms SET bookmark=NULL,checkpointRevision=checkpointRevision+1 WHERE id=?').run(id);
           break;
         case 'delete':
           this.db.prepare('DELETE FROM watch_room_host_grants WHERE roomId=?').run(id);
+          this.db.prepare('DELETE FROM watch_room_invites WHERE roomId=?').run(id);
+          this.db.prepare('DELETE FROM watch_room_invite_blocks WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_queue_entries WHERE roomId=?').run(id);
           this.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=?').run(id);
@@ -340,4 +397,4 @@ class RoomStore {
   }
 }
 
-module.exports = { RoomStore };
+module.exports = { inviteCode, RoomStore };

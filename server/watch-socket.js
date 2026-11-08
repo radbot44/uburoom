@@ -218,7 +218,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
             try { await syncQuality(client,message); } finally { client.measuring = false; } return;
           }
           if (message.type !== 'request' || !Number.isSafeInteger(message.id) || message.id < 0 || client.inflight.has(message.id) || client.inflight.size >= 8 ||
-            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|passes))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
+            typeof message.path !== 'string' || message.path.length > 1024 || !/^\/api\/(?:rooms|command|watch\/(?:me|profile|admin-mode|playback|rooms(?:\/saved|\/[a-f0-9-]{36}(?:\/(?:command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check))?)?|library(?:\/(?:item|filters|availability))?))(?:\?[^#]*)?$/.test(message.path)) return ws.close(4002, 'Invalid message');
           if (client.running.size >= 16) { send(client, { type: 'response', id: message.id, status: 429, value: { error: 'Previous work is still retiring; retry shortly' } }); return; }
           const controller = new AbortController();
           const timeout = Number.isFinite(message.timeoutMs) ? Math.min(120000, Math.max(1000, message.timeoutMs)) : 12000;

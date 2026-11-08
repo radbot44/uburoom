@@ -803,10 +803,10 @@ function checkGuestPasses(config) {
   if (!guests?.enabled) return checks;
   const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
   const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
-  checks.push({ category: 'Access', name: 'Guest passes', status: 'pass',
-    message: `Guest passes on; issued by ${guests.issuers} and above, up to ${guests.maxLifetimeHours} hours and ${guests.maxUses} uses, ${guests.maxPerRoom} guests per room` });
-  if (guests.issuers === 'trusted' && !anyTrusted) checks.push({ category: 'Access', name: 'Guest pass issuers', status: 'warn',
-    message: 'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can issue passes.',
+  checks.push({ category: 'Access', name: 'Guests', status: 'pass',
+    message: `Guests allowed; hosts at ${guests.issuers} tier and above can turn them on, up to ${guests.maxPerRoom} per room for ${guests.sessionHours} hours each` });
+  if (guests.issuers === 'trusted' && !anyTrusted) checks.push({ category: 'Access', name: 'Guest issuers', status: 'warn',
+    message: 'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
     remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.' });
   if (!guests.requireSignIn && config.plexFallback?.enabled === false) checks.push({ category: 'Access', name: 'Guest playback', status: 'warn',
     message: 'Guests who do not sign in have no Plex access and plex.fallback_enabled is false, so they can join but not watch Plex media.',

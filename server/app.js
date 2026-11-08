@@ -23,7 +23,6 @@ const version = require('../package.json').version;
 const { resilientFetch } = require('./resilience');
 const RoomPolicy = require('./room-policy');
 const { AccessPolicy } = require('./access-policy');
-const { GuestPasses } = require('./guest-passes');
 const { clientAddress } = require('./plex-delivery');
 const { DiagnosticLog } = require('./diagnostic-log');
 const SharedSync = require('../shared/sync');
@@ -54,7 +53,7 @@ const STATIC_ASSETS = {
   '/assets/plex-icon.png': ['assets/plex-icon.png', 'image/png'],
   '/assets/branding/uburoom-oomark-mono.svg': ['assets/branding/uburoom-oomark-mono.svg', 'image/svg+xml'],
   '/watch-sync.mjs': ['watch-sync.mjs', 'text/javascript'],
-  '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'], '/join': ['watch.html', 'text/html'],
+  '/watch': ['watch.html', 'text/html'], '/activity': ['watch.html', 'text/html'],
   '/playback-policy.js':['playback-policy.js','text/javascript'],
   '/playback-diagnostics.js':['playback-diagnostics.js','text/javascript'],
   '/watch-subtitles.js':['watch-subtitles.js','text/javascript'],
@@ -190,7 +189,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   }
   // Web requests are bound to the configured guild and its approved command context.
   // These actor fields come from the server/login, never from the caller's JSON.
-  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true, ...(login.pass ? { pass:login.pass.id, passRoomId:login.pass.roomId } : {}) }; }
+  function webActor(login) { return { userId: login.userId, ...(registry?{discordId:registry.identities(login.userId).find(i=>i.provider==='discord' && i.verified)?.subject}:{}),name: registry?.canonical(login.userId)?.name || login.name, guildId: config.guildId, channelId: config.channels[0], surface: 'web', activity:login.activity === true, ...(login.guestRoom ? { guestRoomId:login.guestRoom, device:login.device } : {}) }; }
   async function body(req, limit = 4096) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('JSON required');
     let text = '';
@@ -249,42 +248,26 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       refreshWatch:async (id,actor)=>{if(config.accessPolicy)return entryPolicy.admit(id,actor);if(access.isMember(id)||await access.refresh(id))return true;try{return !!await plexAuth.forUser(id);}catch{return false;}}
     };
     Object.defineProperty(hub,'access',{get:()=>access,set:value=>{rawAccess=value;}});
-    // Guest passes. Whether an issuer may still issue for a room is false only when
-    // that is definitely no longer true, and undefined while a Discord role check
-    // has no current answer, so a slow provider never removes guests.
-    const roleRefreshes = new Map();
-    const issuerStanding = (issuerId, roomId) => {
-      const account = registry.canonical(issuerId);
-      if (!account || account.guest === 1 || !config.guests?.enabled) return false;
-      let record;
-      try { record = watch.roomState?.store.get(roomId); } catch { return false; }
-      if (!record || record.guests.includes(account.id)) return false;
-      const roomAllowed = RoomPolicy.administrator(registry, config, account.id, rawAccess) || RoomPolicy.allowed(record, account.id, 'inviteGuests');
-      if (roomAllowed && RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, account.id, rawAccess), config.guests.issuers)) return true;
-      const discord = registry.identities(account.id).find(identity => identity.provider === 'discord' && identity.verified)?.subject;
-      const roles = (config.roomAdministrators?.discordRoles.length || 0) + (config.trustedMembers?.discordRoles.length || 0);
-      if (!discord || !roles || rawAccess?.isMember(discord) === true) return false;
-      if (Date.now() - (roleRefreshes.get(discord) || 0) > 30000) {
-        roleRefreshes.set(discord, Date.now());
-        Promise.resolve().then(() => rawAccess?.refresh(discord)).catch(() => {});
-      }
-      return undefined;
-    };
-    const passes = config.guests?.enabled ? new GuestPasses(registry, config.guests, { issuer: pass => issuerStanding(pass.issuerId, pass.roomId) }) : undefined;
-    entryPolicy.passes = passes;
-    hub.guestPasses = passes;
-    hub.passMembers = roomId => {
+    // Guests: people a room's invite lets in who could not otherwise enter. Their
+    // browser session carries the room (login.guestRoom); guest accounts end with
+    // their session, and signed-in visitors' guest access ends at login.guestUntil.
+    const guestsOn = () => !!config.guests?.enabled && !!watch.roomState;
+    hub.guestsEnabled = guestsOn;
+    entryPolicy.guests = { admits(roomId, userId) {
+      if (!guestsOn()) return false;
+      try { watch.roomState.store.get(roomId); } catch { return false; }
+      return !(config.guests.requireSignIn && registry.isGuest(userId));
+    } };
+    hub.guestMembers = roomId => {
       const now = Date.now(), members = new Set();
-      for (const login of logins.values()) if (login.pass?.roomId === roomId && (login.expires === null || login.expires > now)) members.add(login.userId);
+      for (const login of logins.values()) if (login.guestRoom === roomId && (login.expires === null || login.expires > now) && (login.guestUntil ?? Infinity) > now) members.add(login.userId);
       return members;
     };
-    // The person must be allowed to issue at their server tier and hold
-    // inviteGuests in this room (Admin mode includes it). Pass sessions never issue.
-    hub.canIssuePasses = (record, actor) => !!passes && !actor.pass && !registry.isGuest(actor.userId) && !record.guests.includes(actor.userId) &&
+    // Turning guests on needs the configured server tier and hosting this room
+    // (Admin mode always counts). Guests themselves never can.
+    hub.canAllowGuests = (record, actor) => guestsOn() && !actor.guestRoomId && !registry.isGuest(actor.userId) && !record.guests?.includes(actor.userId) &&
       RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, actor.userId, rawAccess), config.guests.issuers) &&
-      (hub.isAdmin(actor) || RoomPolicy.allowed(record, actor.userId, 'inviteGuests'));
-    hub.guestPassSettings = (record, actor) => hub.canIssuePasses(record, actor) ? { requireSignIn:config.guests.requireSignIn,
-      maxLifetimeHours:config.guests.maxLifetimeHours, maxUses:config.guests.maxUses, maxPerRoom:config.guests.maxPerRoom } : undefined;
+      (hub.isAdmin(actor) || RoomPolicy.role(record, actor.userId) !== 'viewer');
     hub.accountActor=actor=>registry.canonical(actor.userId)?{...actor,name:registry.canonical(actor.userId).name}:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex' && i.verified);
@@ -376,7 +359,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     return (async () => {
-      const url = new URL(req.url, config.publicUrl), route = url.pathname, roomRouteMatch = /^\/room\/([a-z0-9-]+)$/i.exec(route);
+      const url = new URL(req.url, config.publicUrl), route = url.pathname, roomRouteMatch = /^\/room\/([a-z0-9-]+)$/i.exec(route), joinRouteMatch = /^\/join\/[^/]{1,60}$/.exec(route);
 
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
       let activityContext = url.searchParams.has('frame_id');
@@ -452,7 +435,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         return json(res, 200, runningSettings(config));
       }
 
-      const watchDocument = route === '/' || route === '/activity' || route === '/join' || Boolean(roomRouteMatch);
+      const watchDocument = route === '/' || route === '/activity' || Boolean(joinRouteMatch) || Boolean(roomRouteMatch);
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
       const player = watchDocument || route === '/__diagnostics/codec';
@@ -557,8 +540,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const content = await readAsset(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js'));
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
       }
-      const isWatchHtml = route === '/' || Boolean(roomRouteMatch) || (assets[route] && assets[route][0] === 'watch.html');
-      if (req.method === 'GET' && (assets[route] || route === '/' || Boolean(roomRouteMatch))) {
+      const isWatchHtml = route === '/' || Boolean(roomRouteMatch) || Boolean(joinRouteMatch) || (assets[route] && assets[route][0] === 'watch.html');
+      if (req.method === 'GET' && (assets[route] || route === '/' || Boolean(roomRouteMatch) || Boolean(joinRouteMatch))) {
         if(isWatchHtml){
           const [initial, template] = await Promise.all([
             watchRoutes.bootstrap(req),
@@ -587,7 +570,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const returnParam = url.searchParams.get('return');
-        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/(?:join)?$/.test(returnParam))) ? returnParam : undefined;
+        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(returnParam))) ? returnParam : undefined;
         return discordStart(req,res,undefined,route==='/auth/owner',returnTo);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
@@ -621,7 +604,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         logins.set(hash(id), { ...discordIdentity({userId:identity.id,name}),csrf: randomBytes(32).toString('hex'), expires: null,
           ...(oauth ? { oauth } : {}) });
         accounts.save();
-        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/(?:join)?$/.test(attempt.returnTo))) ? attempt.returnTo : '/';
+        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/(?:join\/[a-z]{6}-[a-z]{6})?$/.test(attempt.returnTo))) ? attempt.returnTo : '/';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {
@@ -642,29 +625,47 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;
   const watchConnections=watchSockets({server,config,routes:watchRoutes,watch,hub,throttle});
-  // Ends sessions whose guest pass stopped working (revoked, expired, issuer no
-  // longer allowed, or passes turned off) and removes their viewers at once.
-  // Unused guest accounts and long-ended passes are cleaned up every minute.
+  // Ends guest sessions in a room (all of them, or just these accounts): their
+  // viewers get the ordinary "removed from the room" notice, then their sign-in ends.
+  hub.endGuestSessions = async (roomId, userIds) => {
+    const ended = new Set();
+    for (const [key, login] of logins) {
+      if (login.guestRoom !== roomId || userIds && !userIds.includes(login.userId)) continue;
+      ended.add(login.userId);
+      if (registry.isGuest(login.userId)) logins.delete(key); else { delete login.guestRoom; delete login.guestUntil; delete login.device; }
+    }
+    if (!ended.size) return [];
+    await accounts.save();
+    const room = watch.rooms.get(roomId);
+    if (room) for (const [id, viewer] of [...room.viewers]) if (ended.has(viewer.userId)) { viewer.watchSocket?.watchKick?.(roomId); await watch.leave(room, viewer.actor, id, 'kicked'); }
+    await watchRoutes.invalidate([...ended]);
+    return [...ended];
+  };
+  // Guest sessions end when guests are turned off server-wide, their room is
+  // deleted or their time runs out. Unused guest accounts are cleaned up every minute.
   let guestSweep, guestCleanupAt = 0;
   hub.sweepGuests = () => guestSweep ||= (async () => {
     if (!registry) return;
-    const ended = new Set();
-    for (const [key, login] of logins) {
-      if (!login.pass || hub.guestPasses?.admits(hub.guestPasses.get(login.pass.id), login.userId)) continue;
-      ended.add(login.userId);
-      if (registry.isGuest(login.userId)) logins.delete(key); else delete login.pass;
+    const now = Date.now(), rooms = new Set();
+    for (const login of logins.values()) {
+      if (!login.guestRoom) continue;
+      let gone = !config.guests?.enabled || (login.guestUntil ?? Infinity) <= now;
+      if (!gone) try { watch.roomState.store.get(login.guestRoom); } catch { gone = true; }
+      if (gone) rooms.add(login.guestRoom);
     }
-    if (ended.size) { await accounts.save(); await watchRoutes.invalidate([...ended]); }
-    if (Date.now() - guestCleanupAt >= 60000) {
-      guestCleanupAt = Date.now();
-      hub.guestPasses?.prune();
+    for (const roomId of rooms) {
+      const expired = [...logins.values()].filter(login => login.guestRoom === roomId && (!config.guests?.enabled || (login.guestUntil ?? Infinity) <= now || !watch.roomState.store.db.prepare('SELECT 1 FROM watch_rooms WHERE id=?').get(roomId))).map(login => login.userId);
+      await hub.endGuestSessions(roomId, expired);
+    }
+    if (now - guestCleanupAt >= 60000) {
+      guestCleanupAt = now;
       const inUse = new Set([...logins.values()].map(login => login.userId));
       for (const room of watch.rooms.values()) for (const viewer of [...room.viewers.values(), ...room.disconnectedViewers.values()]) inUse.add(viewer.userId);
       for (const recovery of watch.roomState?.recoveries.values() || []) for (const id of recovery.viewers || []) inUse.add(id);
       registry.removeUnusedGuests(inUse);
       await registry.flush();
     }
-  })().catch(error => config.logger?.warn('Guests', 'Guest pass check failed: ' + error.message)).finally(() => { guestSweep = undefined; });
+  })().catch(error => config.logger?.warn('Guests', 'Guest check failed: ' + error.message)).finally(() => { guestSweep = undefined; });
   const sweep = setInterval(() => {
     watch.sweep(); watchRoutes.sweep(); accountRoutes.sweep(); void hub.sweepGuests();
     let expired = false;

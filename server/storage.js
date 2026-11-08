@@ -2,19 +2,21 @@
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const COLUMNS = Object.freeze({ users:['id','name','revision','retiredInto','signedInAt','guest'], identities:['provider','subject','userId','name','verified','assigned'],
   credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
   browser_logins:['id','record'], playback_history:['id','userId','at','record'],
-  watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState','slug','ubumfaWord'],
+  watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState','slug','ubumfaWord','inviteCode','allowGuests'],
   watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
   watch_room_progress:['roomId','serverId','mediaId'],
   watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'],
-  guest_passes:['id','tokenHash','roomId','issuerId','createdAt','expiresAt','maxUses','uses','signIn','disabled','revokedAt'] });
-// Only a hash of each pass token is stored. A disabled pass can be turned back on;
-// a revoked one never works again.
-const GUEST_PASSES_SQL = `CREATE TABLE guest_passes(id TEXT PRIMARY KEY,tokenHash TEXT NOT NULL UNIQUE,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,issuerId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,expiresAt INTEGER NOT NULL,maxUses INTEGER NOT NULL,uses INTEGER NOT NULL DEFAULT 0,signIn INTEGER NOT NULL DEFAULT 0 CHECK(signIn IN (0,1)),disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),revokedAt INTEGER);
-    CREATE INDEX guest_passes_room ON guest_passes(roomId,createdAt);`;
+  watch_room_invites:['roomId','userId','createdAt'], watch_room_invite_blocks:['roomId','subject','createdAt'] });
+// Each room has one invite code. Signed-in people who join a private room by
+// invite are remembered until someone revokes them; revoked people and guest
+// browsers are blocked from the invite until the code is rerolled.
+const INVITE_SQL = `CREATE UNIQUE INDEX watch_rooms_invite ON watch_rooms(inviteCode);
+    CREATE TABLE watch_room_invites(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,userId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,userId));
+    CREATE TABLE watch_room_invite_blocks(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,subject TEXT NOT NULL,createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,subject));`;
 function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
@@ -38,7 +40,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE TABLE browser_logins(id TEXT PRIMARY KEY,record TEXT NOT NULL);
     CREATE TABLE playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL);
     CREATE INDEX playback_history_user ON playback_history(userId,at);
-    CREATE TABLE watch_rooms(id TEXT PRIMARY KEY,creatorId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,visibility TEXT NOT NULL,revision INTEGER NOT NULL,checkpointRevision INTEGER NOT NULL,queueRevision INTEGER NOT NULL DEFAULT 0,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,permissions TEXT NOT NULL,bookmark TEXT,autoQueue TEXT,autoplay INTEGER NOT NULL DEFAULT 1 CHECK(autoplay IN (0,1)),lastAccessedAt INTEGER NOT NULL,keepEmpty INTEGER NOT NULL DEFAULT 0 CHECK(keepEmpty IN (0,1)),maxMembers INTEGER,liveState TEXT,slug TEXT,ubumfaWord TEXT);
+    CREATE TABLE watch_rooms(id TEXT PRIMARY KEY,creatorId TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,visibility TEXT NOT NULL,revision INTEGER NOT NULL,checkpointRevision INTEGER NOT NULL,queueRevision INTEGER NOT NULL DEFAULT 0,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,permissions TEXT NOT NULL,bookmark TEXT,autoQueue TEXT,autoplay INTEGER NOT NULL DEFAULT 1 CHECK(autoplay IN (0,1)),lastAccessedAt INTEGER NOT NULL,keepEmpty INTEGER NOT NULL DEFAULT 0 CHECK(keepEmpty IN (0,1)),maxMembers INTEGER,liveState TEXT,slug TEXT,ubumfaWord TEXT,inviteCode TEXT,allowGuests INTEGER NOT NULL DEFAULT 0 CHECK(allowGuests IN (0,1)));
     CREATE INDEX watch_rooms_accessed ON watch_rooms(lastAccessedAt,id);
     CREATE UNIQUE INDEX watch_rooms_slug ON watch_rooms(slug);
     CREATE TABLE watch_room_progress(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,serverId TEXT NOT NULL,mediaId TEXT NOT NULL,PRIMARY KEY(roomId,serverId,mediaId));
@@ -50,7 +52,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE INDEX watch_queue_room_state_rank ON watch_queue_entries(roomId, state, rank);
     CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
-    ${GUEST_PASSES_SQL}
+    ${INVITE_SQL}
     PRAGMA user_version=${SCHEMA_VERSION};
     COMMIT;`);
 }
@@ -81,4 +83,4 @@ function loginStore(context, vault, registry) {
   if (!matching) { db.exec('DELETE FROM browser_logins'); registry.meta('loginContext', context); }
   return store;
 }
-module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, GUEST_PASSES_SQL };
+module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, INVITE_SQL };

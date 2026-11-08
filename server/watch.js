@@ -429,15 +429,15 @@ class Watch {
     room.s.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
     room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
     let pruned = false, hostTimedOut = false, lastPresence = 0;
-    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion || room.saved && room.s.visibility === 'private' && !RoomPolicy.assigned(room.saved,saved.userId) && !this.hub.isAdmin({userId:saved.userId})) room.disconnectedViewers.delete(id);
+    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion || room.saved && room.s.visibility === 'private' && !this.privateMember(room,saved.userId) && !this.hub.isAdmin({userId:saved.userId})) room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) {
       const hadTracking = !!viewer.tracking;
       this.tracking.expire(viewer);
       if (hadTracking && !viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
     }
-    for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !(room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) && !this.hub.isAdmin(viewer.actor)) {
+    for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !(room.saved ? this.privateMember(room,viewer.userId) : isHost(room.s,viewer.actor)) && !this.hub.isAdmin(viewer.actor)) {
       lastPresence = Math.max(lastPresence, viewer.at);
-      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || (room.saved ? RoomPolicy.assigned(room.saved,viewer.userId) : isHost(room.s,viewer.actor)) || this.hub.isAdmin(viewer.actor))) {
+      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || (room.saved ? this.privateMember(room,viewer.userId) : isHost(room.s,viewer.actor)) || this.hub.isAdmin(viewer.actor))) {
         // Preserve only personal playback settings for the same tab's short
         // reconnect. A fresh stream and observation epoch are always required.
         room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
@@ -509,6 +509,9 @@ class Watch {
     const media=room.fallbackStream?.media;
     return media && !media.av1Lease?.released && !viewer.localDelivery && !viewer.media?.unavailable &&
       viewer.media?.selection?.subtitle?.delivery!=='burn' && viewer.localCodecs?.includes(media.format)?media:undefined;
+  }
+  privateMember(room, userId) {
+    return RoomPolicy.admitted(room.saved, userId) || !!this.hub.guestMembers?.(room.s.roomId).has(userId);
   }
   async canView(room, actor) {
     if (!room?.saved && room?.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
@@ -671,6 +674,8 @@ class Watch {
         watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
         watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false
       },
+      // Everyone in the room may share its invite.
+      invite:room.saved && room.s.inviteCode ? { code:room.s.inviteCode, url:this.hub.config.publicUrl + '/join/' + room.s.inviteCode } : undefined,
       startAt:room.startAt, pauseAt:room.pauseAt,
       title: room.media?.title || 'Choose something to watch…', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
       chapters: room.media?.chapters || [], markers: room.media?.markers || [],
@@ -1407,6 +1412,19 @@ class Watch {
       for (const [id,viewer] of room.disconnectedViewers) if (viewer.userId === userId) { room.kickedViewers.set(id,now + RECONNECT_GRACE_MS); room.disconnectedViewers.delete(id); }
       for (const socket of new Set(viewers.map(([,viewer]) => viewer.watchSocket).filter(Boolean))) socket.watchKick?.(room.s.roomId);
       for (const [id,viewer] of viewers) await this.leave(room,viewer.actor,id,'kicked');
+      // Kicking a guest ends their guest access; kicking someone invited into a
+      // private room revokes the invite. Either way they stay out until the code changes.
+      const guest = this.hub.guestMembers?.(room.s.roomId).has(userId);
+      if (guest) {
+        const devices = viewers.map(([,viewer]) => viewer.actor.device).filter(Boolean);
+        await this.roomState.store.block(room.s.roomId, ['user:' + userId, ...devices.map(device => 'device:' + device)]);
+        await this.hub.endGuestSessions?.(room.s.roomId, [userId]);
+        return {status:'applied',message:'Guest removed.'};
+      }
+      if (room.s.visibility === 'private' && record.invited?.includes(userId)) {
+        this.roomState.apply(room, await this.roomState.store.revokeInvite(room.s.roomId, userId));
+        return {status:'applied',message:'Participant removed and their invite revoked.'};
+      }
       return {status:'applied',message:'Participant removed. They may rejoin.'};
     }
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };

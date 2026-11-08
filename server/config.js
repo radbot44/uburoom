@@ -21,7 +21,7 @@ const KEYS = [
   'rooms.host_permissions', 'rooms.viewer_permissions', 'rooms.admin_discord_ids', 'rooms.admin_plex_ids',
   'rooms.admin_discord_role_ids', 'rooms.trusted_discord_ids', 'rooms.trusted_plex_ids', 'rooms.trusted_discord_role_ids',
   'rooms.single_room', 'rooms.single_room_leader_plex_id',
-  'guests.enabled', 'guests.issuers', 'guests.require_sign_in', 'guests.max_lifetime_hours', 'guests.max_uses', 'guests.max_per_room',
+  'guests.enabled', 'guests.issuers', 'guests.require_sign_in', 'guests.max_per_room', 'guests.session_hours',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.encoder', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
@@ -221,12 +221,11 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     return selected;
   };
   config.guests = { enabled:boolean('guests.enabled', false), issuers:choice('guests.issuers', 'admins', Policy.TIERS),
-    requireSignIn:boolean('guests.require_sign_in', false), maxLifetimeHours:whole('max_lifetime_hours', 24, 1, 720),
-    maxUses:whole('max_uses', 10, 1, 100), maxPerRoom:whole('max_per_room', 5, 1, 50) };
+    requireSignIn:boolean('guests.require_sign_in', false), maxPerRoom:whole('max_per_room', 10, 1, 50), sessionHours:whole('session_hours', 24, 1, 720) };
   // Unverified guests cannot hold personal Plex access, so a server that
   // requires it can only admit guests who sign in.
   if (config.guests.enabled && config.accessPolicy.requirePlex && !config.guests.requireSignIn) throw new Error('guests.require_sign_in must be true when access.require_plex is true');
-  if (config.guests.enabled && !config.accessPolicy.publicWeb) throw new Error('Guest passes need the public web app (server.public_web_app: true)');
+  if (config.guests.enabled && !config.accessPolicy.publicWeb) throw new Error('Guests need the public web app (server.public_web_app: true)');
   return config;
 }
 

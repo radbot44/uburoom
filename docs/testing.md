@@ -15,15 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
-### M2-P3 — Guest passes and trusted tier — 2026-11-07
+### M2-P3 — Room invites, guests and trusted tier — 2026-11-08
 
-**A, source review** and **B, isolated execution** on the uncommitted working tree over `ca2680a` (Windows, Node v22.22.2).
+**A, source review** and **B, isolated execution** on the uncommitted working tree over `ad5be72` (Windows, Node v22.22.2). Replaces the 2026-11-07 guest pass results.
 
-- `node --test tests/*.test.js`: 548 tests, 548 passed, 0 skipped. New `tests/guest-passes.test.js` covers atomic use limits, off versus revoked, unknown versus lost issuer standing, sign-in passes, guests never becoming hosts (including All hosts), host-search exclusion, provider-link refusal and tier ranking. The existing subtitle-window MKV range test failed in two of four full runs and passed alone; it touches no guest code and is a timing flake to follow up.
-- Isolated end-to-end script against the fixture account demo over HTTPS and the watch WebSocket: create (lifetime cap enforced), preview, wrong token (410), unverified join, guest `/me`, room list limited to the pass room, other rooms/room creation/pass management refused (403), roster `guest`/`passGuest` viewer flags, use limit, off then on, sign-in pass refusing a guest, a member walking in without using a use, and revocation closing the guest socket and ending the session within 1.5 s.
-- `scripts/doctor.js` on a scratch config with guests on: guest pass summary plus the expected trusted-list and no-fallback warnings. Config validation rejects `require_plex` without `require_sign_in`, unknown issuers and out-of-range limits.
-- Schema v9 baseline: databases at version 7 or 8 are refused unchanged. The reviewed private version-8 transfer was run on a version-8 fixture: rows and UUIDs kept, backup hashes verified, second run unchanged, and the account registry opened the result.
-- **Not run:** browser rendering of the Guests tab, join screen and roster marks (the in-app browser does not trust the local dev certificate), the present-member name collision, real Discord role tiers, real Plex sponsorship for guests, Chrome/Firefox checks and owner acceptance (C, D).
+- `node --test tests/*.test.js`: 548 tests, 547 passed, 0 skipped. The one failure is the existing subtitle-window MKV range test, which also failed intermittently before this work and passes alone. `tests/room-invites.test.js` covers code format and typed variants, host-only invite changes, private-room invites, revoke and block, reroll clearing blocks without removing anyone, guests as viewers under All hosts, host-search and provider-link exclusion, and tier ranking.
+- Isolated end-to-end script against the fixture account demo over HTTPS and the watch WebSocket: a private room's invite shown to everyone in it; guests-off refusal; unknown code (404); a member entering the private room only through the invite and being remembered; Allow guests; an unverified guest in the private room, scoped to it, flagged in the roster and refused room creation and invite changes; kicking the guest (kick notice, sign-in ended, browser blocked); reroll (old code 404, block cleared, nobody removed); switching guests off keeping the current guest and refusing new ones; Remove all guests (notice, sign-in ended, new code, members kept); revoking an invited member (out of the room and refused the invite). `/join/<code>` serves the watch page.
+- Schema v10 baseline: databases at version 7, 8 or 9 are refused unchanged.
+- **Not run:** browser rendering of the Share button, People invite row, join page and roster marks (the in-app browser does not trust the local dev certificate); Discord `shareLink`, its invite dialog fallback and opening the Activity from a shared link; real Discord role tiers; real Plex sponsorship for guests; Chrome/Firefox checks; owner acceptance (C, D).
 
 ### M1-P11/P14 — Independent Docker install, backup, rollback & key resilience rehearsal — 2026-11-08
 

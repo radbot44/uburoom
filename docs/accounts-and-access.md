@@ -1,6 +1,6 @@
 # Accounts, administration and Plex reporting
 
-Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. P14's three outcomes have passed source review and isolated execution: authorization boundaries, account mutation/session safety, and configuration backup/restore. Real-provider integration remains a release gate. Guest passes (M2-P3) and the trusted tier are implemented; see [guest passes](#guest-passes).
+Current: YAML configuration, admission/password policies, verified server-operator authorization, the 19-key browser Server Settings panel (Rooms, Directory, Transcoding), configured sponsorship, Activity handoff, single-room operation, decoupled Plex reporting and [names/host assignments](account-names-and-host-directory.md) are implemented. P14's three outcomes have passed source review and isolated execution: authorization boundaries, account mutation/session safety, and configuration backup/restore. Real-provider integration remains a release gate. Room invites, guests (M2-P3) and the trusted tier are implemented; see [room invites and guests](#room-invites-and-guests).
 
 ## Authorization contract
 
@@ -8,7 +8,7 @@ Current: YAML configuration, admission/password policies, verified server-operat
 | --- | --- |
 | Identity | Canonical UUID plus verified provider subjects; names grant nothing |
 | Sign-in | Configured Plex/Discord methods; both off allows anonymous guest visitors |
-| Guest pass | A room-scoped, revocable link standing in for admission in one room; never a role, Admin mode or personal Plex access |
+| Room invite | One code per room; reaches private rooms and admits guests where the room allows them; never a role, Admin mode or personal Plex access |
 | Admission | Current provider/Plex/password rules and verified Activity context |
 | Media | Current personal Plex entitlement or explicitly configured sponsorship |
 | Room roles | Viewer, host, creator and explicit Admin override; none grants Plex entitlement |
@@ -79,27 +79,27 @@ Reporter guarantees:
 - Handle duplicate tabs, handoff, external-player conflicts, revocation and process loss without stale retries or retroactive attribution.
 - Track sponsored viewers locally. Their source credential creates no personal Plex identity; never report or write owner history for guests without personal Plex accounts.
 
-## Guest passes
+## Room invites and guests
 
-Implemented M2-P3 contract (`server/guest-passes.js`); real-provider and human acceptance remain open in [testing](testing.md). Configuration is described in [self-hosting](self-hosting.md#guest-passes).
+Implemented M2-P3 contract (room store and `/api/watch/invite` in `server/watch-http.js`); real-provider and human acceptance remain open in [testing](testing.md). Configuration is in [self-hosting](self-hosting.md#room-invites-and-guests).
 
-**Owner-approved 2026-11-07: trusted tier.** Server-wide tiers are operator, admins, trusted and members (`RoomPolicy.serverTier`). Trusted sits between admins and members and is configured like the admin lists: exact Discord/Plex account IDs and Discord guild role IDs, matched only against verified identities. It grants no Admin mode, room rights, admission or Plex media entitlement. Guest-pass issuing is its only current use. `guests.issuers` names the lowest tier allowed to issue passes; higher tiers are included and the operator always qualifies.
+**Owner-approved 2026-11-07: trusted tier.** Server-wide tiers are operator, admins, trusted and members (`RoomPolicy.serverTier`). Trusted sits between admins and members, configured like the admin lists and matched only against verified identities. It grants no Admin mode, room rights, admission or Plex media entitlement. Its only current use is `guests.issuers`.
 
-**Owner-approved 2026-11-07: issuing checks.** Issuing also requires the room-level `inviteGuests` permission in the pass's room. It is a host permission, off for hosts by default, never grantable to viewers, and Admin mode includes it. A pass stops working, and its guests are removed, once its issuer no longer meets `guests.issuers` or loses `inviteGuests` in that room (for an existing pass, Admin eligibility counts, so leaving Admin mode does not end it). Issuer standing is checked at creation, on every entry and by the one-second sweep. A Discord role check without a current guild answer counts as unknown: guests stay, nobody new is admitted and the guild is asked again.
+**Owner-approved 2026-11-08: one invite per room.** This replaces the 2026-11-07 multi-pass design.
 
-**Owner-approved 2026-11-07: off versus revoked.** Turning a pass off stops new entries and can be undone; guests already in stay. Revoking is permanent and removes its guests at once. Expiry acts like revocation.
+- Every room has one invite code: two six-letter ubumfa words (`ubumfa-ogdave`), shared as `/join/<code>` or typed on the sign-in screen in any case, with or without a separator. Anyone in the room can share it. Hosts can reroll it.
+- Someone the server already admits who uses the invite goes to the room. If the room is private, they are added to its invited list (`watch_room_invites`) and keep access until revoked. A reroll revokes nobody.
+- **Allow guests** is per room. Turning it on needs `guests.enabled`, the `guests.issuers` tier and hosting the room (Admin mode always counts). While it is on, the invite also admits people the server would not: unverified guests with a typed name, or signed-in visitors from outside, up to `guests.max_per_room`. Guest access lasts `guests.session_hours` and is bound to the browser session (`login.guestRoom`), never to a role. Turning it off stops new guests; current guests stay.
+- **Explicit revokes only.** Kicking a guest ends their guest access and blocks their account and browser marker (`uburoom_device`) from the invite. Kicking an invited member of a private room revokes their invite and blocks their account. Revoke in Room settings → People does the same for someone offline. Remove all guests ends every guest session in the room and rerolls the code. Blocks (`watch_room_invite_blocks`) end when the code is rerolled. All removals use the kick notice, then end the sign-in and close the socket.
+- Guest sessions see only their room, can't create rooms or use Admin mode, can't change the invite and are viewers for every capability. Room records list current guests in `guests`, which the shared role check treats as viewers even under All hosts; host assignment refuses them. Private rooms admit leaders, hosts, invited members and current guests (`RoomPolicy.admitted`). Reopening a closed room stays with leaders, hosts and Admin mode, and a guest whose room is closed is told it isn't open.
+- Guests replace guild membership, Plex server membership and the entry password, but never required personal Plex access; config validation requires `guests.require_sign_in` with `access.require_plex`.
+- Guest names are unverified, use the ordinary name rules, and may not match the name of a signed-in person present in the room. Guest accounts (`users.guest = 1`) are excluded from host search, cannot link a provider (signing in starts a separate account and replaces the guest session), are never reported to Plex and watch only through configured sponsorship. Anonymous visitors (both sign-in methods off) are guest accounts too. Unused guest accounts and their local history are deleted after a minute.
+- Invite attempts are rate-limited per address. Codes are low-secrecy join codes, comparable to a party game's room code, and may appear in request logs.
 
-- Tokens are 32 random bytes in the link fragment (`/join#…`), so they stay out of request logs. Only a SHA-256 hash is stored, so a link can be shown only when made. Uses are counted atomically; a pass can't exceed `max_uses`, and a room can't exceed `max_per_room` guests. Entry attempts are rate-limited per address.
-- A pass binds to a browser session (`login.pass = {id, roomId}`), never to an account. Without sign-in, uburoom creates a guest account (`users.guest = 1`) whose session ends with the pass. A signed-in visitor who already meets the normal rules is sent straight in without using the pass; one who doesn't has the pass bound to their existing session. Sign-in passes refuse guest accounts. Passes are browser-only and never cover a Discord Activity.
-- A pass session's actor carries `pass` and `passRoomId`. It sees and joins only that room, can't create rooms, issue passes or enter Admin mode, and is evaluated as a viewer for every room capability. Room records list current pass holders in `guests`, which the shared role check treats as viewers even under All hosts; host assignment refuses them.
-- A pass replaces guild membership, Plex server membership and the entry password, but never required personal Plex access: under `access.require_plex` the ordinary Plex check still applies and config validation requires `guests.require_sign_in`.
-- Guest names are unverified, use the ordinary name rules, and may not match (case-insensitively) the name of a signed-in person present in the room. Guest accounts are excluded from host search, cannot link a provider (signing in starts a separate account and replaces the guest session) and have no Plex identity, so they are never reported to Plex and watch only through configured sponsorship. Anonymous visitors (both sign-in methods off) are guest accounts too.
-- Ending a pass deletes guest sessions, strips the binding from signed-in sessions, removes their viewers and closes their sockets (`watchRoutes.invalidate`). Unused guest accounts and their local history are deleted after a minute; passes ended for over a day are pruned.
-
-Registered-account conversion (keeping a guest's history after they sign in) is not implemented and needs fresh provider proof and an explicit history/role policy.
+Registered-account conversion (keeping a guest's history after they sign in) is not implemented.
 
 ## Next increments
 
-Complete real-provider admission/revocation/handoff and independent operator recovery under the release gates. Complete live verification for decoupled Plex reporting and real-provider guest pass checks.
+Complete real-provider admission/revocation/handoff and independent operator recovery under the release gates. Complete live verification for decoupled Plex reporting and real-provider invite and guest checks.
 
 Use the [verification standard](testing.md#verification-standard-for-new-work); these plans do not authorize live history changes or deployment.

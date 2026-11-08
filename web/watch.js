@@ -587,7 +587,7 @@ function renderNotifications() {
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
-const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,
+const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,share:(invite,name)=>shareInvite(invite,name),
   join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};},
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
   createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = roomVisibilityDraft = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset; } });
@@ -1213,7 +1213,7 @@ function updateActivityLayout(event) {
   if (event) layoutMode = event.layout_mode;
   const pip = activity && (layoutMode === 1 || layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300);
   document.body.classList.toggle('activity-pip', pip);
-  if (pip) { toggleDrawer(false); if ($('privacy-dialog').open) $('privacy-dialog').close('cancel'); }
+  if (pip) toggleDrawer(false);
   if(pip&&$('account-dialog').open)$('account-dialog').close();
   if(pip){playerUI?.reset();if($('tracks-dialog').open)$('tracks-dialog').close();}
 }
@@ -2007,16 +2007,14 @@ function renderVisibility() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('switch-room').textContent = state ? 'Switch room' : 'Choose room';
   $('switch-room').hidden=!!config?.singleRoom;
-  $('create').hidden = !!state||!!config?.singleRoom;
-  if(config?.singleRoom)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
+  $('create').hidden = !!state||!!config?.singleRoom||!!me?.guestRoomId;
+  if(config?.singleRoom||me?.guestRoomId)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
+  if(me?.guestRoomId)$('switch-room').hidden=true;
   if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
   if (state) {
     if ($('current-room-name')) $('current-room-name').textContent = state.roomName || 'Room';
-    uburoomControls.content($('room-visibility'),{icon:state.visibility === 'private' ? 'lock' : 'website',label:state.visibility === 'private' ? 'Private · Hosts only' : 'Public',iconOnly:true});
-    $('room-visibility').setAttribute('aria-pressed', String(state.visibility === 'private'));
-    $('room-visibility').classList.toggle('private', state.visibility === 'private');
-    $('room-visibility').disabled = pending || !state.canManage;
-    $('room-visibility').title = pending ? 'Updating visibility...' : !state.canManage ? 'Only authorized room managers can change visibility' : 'Change room visibility';
+    if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room invite',iconOnly:true});
+    $('room-share').hidden = !state.invite;
     uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});
     $('room-people-open').classList.remove('watch-control-responsive');
     $('room-people-open').setAttribute('aria-label','People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
@@ -2113,18 +2111,23 @@ function checkBufferingViewers() {
   }
 }
 setInterval(checkBufferingViewers, 1000);
-async function changeVisibility() {
-  if (!state?.canManage || pending || $('privacy-dialog').open) return;
-  const id = selected;
-  if (state.visibility === 'public') {
-    const dialog = $('privacy-dialog');
-    const accepted = new Promise(resolve => dialog.addEventListener('close',()=>resolve(dialog.returnValue === 'private'),{once:true}));
-    uburoomDialogs.open(dialog);
-    if (!await accepted || selected !== id || state?.visibility !== 'public' || !state?.canManage) return;
-    await execute({action:'room.visibility',args:{visibility:'private'}});
-  } else await execute({action:'room.visibility',args:{visibility:'public'}});
+// Shares the room invite: Discord's share link inside an Activity (falling back to
+// its invite dialog), the device share sheet in a browser, else the clipboard.
+async function shareInvite(invite = state?.invite, roomName = state?.roomName || 'Room') {
+  if (!invite) return;
+  const message = 'Join me in ' + roomName + ' on uburoom';
+  if (activity && sdk) {
+    try { await sdk.commands.shareLink({ message, custom_id:invite.code }); return; }
+    catch { try { await sdk.commands.openInviteDialog(); return; } catch { /* Fall back to copying below. */ } }
+  }
+  if (!activity && navigator.share) {
+    try { await navigator.share({ title:roomName, text:message, url:invite.url }); return; }
+    catch (error) { if (error.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(invite.url); toasts.show('room-invite',{title:'Invite link copied',hint:'Code: ' + invite.code,symbol:'check',duration:4000}); }
+  catch { toasts.show('room-invite',{type:'error',title:"Couldn't copy the invite",hint:invite.url,symbol:'copy',duration:12000}); }
 }
-$('room-visibility')?.addEventListener('click', () => changeVisibility().catch(error=>fail(error.message)));
+$('room-share').addEventListener('click', () => void shareInvite());
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;
@@ -3028,37 +3031,43 @@ setInterval(() => {
   timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
   timeline.title = loaded + ' seconds buffered ahead';
 }, 250);
-// A guest pass link is /join#<token>. The token stays out of the address bar and
-// server logs; it is kept for this tab only so it survives a Discord or Plex sign-in.
-const GUEST_PASS_KEY='uburoom-guest-pass';
-async function guestPassEntry(discordButton){
-  const fromLink=location.hash.slice(1);
-  if(fromLink){try{sessionStorage.setItem(GUEST_PASS_KEY,fromLink);}catch{}history.replaceState(history.state,'','/join');}
-  let passToken=fromLink;
-  try{passToken||=sessionStorage.getItem(GUEST_PASS_KEY)||'';}catch{}
+// Room invites: /join/<code> or a code typed on the sign-in screen. People the
+// server already admits go straight to the room; others may join as guests when
+// the room allows it.
+const INVITE_CODE=/^[a-z]{6}-[a-z]{6}$/;
+function inviteCode(text){const letters=String(text||'').toLowerCase().replace(/[^a-z]/g,'');return letters.length===12?letters.slice(0,6)+'-'+letters.slice(6):undefined;}
+function showInviteCodeBox(){
+  $('invite-code-form').hidden=false;
+  $('invite-code-form').onsubmit=event=>{
+    event.preventDefault();const code=inviteCode($('invite-code').value);
+    if(!code){$('entry-status').textContent='An invite code is two six-letter words, like ubumfa-ogdave.';return;}
+    location.assign('/join/'+code);
+  };
+}
+async function inviteEntry(discordButton,code){
   const show=(title,message)=>{
     $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
     $('empty-title').textContent=title;$('empty-hint').textContent='';$('entry-status').textContent=message;
     $('entry-form').hidden=true;$('entry-recheck').hidden=true;$('entry-plex-activity').hidden=true;
   };
   const signIn=visible=>{
-    for(const button of [discordButton,$('plex-login')])button.href=button.href.split('?')[0]+'?return='+encodeURIComponent('/join');
+    for(const button of [discordButton,$('plex-login')])button.href=button.href.split('?')[0]+'?return='+encodeURIComponent('/join/'+code);
     discordButton.hidden=!visible.discord;$('plex-login').hidden=!visible.plex;
   };
-  const enter=room=>{try{sessionStorage.removeItem(GUEST_PASS_KEY);}catch{}location.replace('/room/'+room.slug);};
-  if(!config.guestPasses){signIn({});show('Guest passes are off','This server doesn’t accept guest passes.');return;}
-  if(!passToken){signIn({});show('Guest pass link incomplete','Open the full link you were sent, or ask for a new one.');return;}
+  const enter=room=>location.replace('/room/'+room.slug);
+  if(!code){signIn({});show('Invite code not recognized','An invite code is two six-letter words, like ubumfa-ogdave.');showInviteCodeBox();return;}
   let preview;
-  try{preview=await api('/api/watch/pass',{action:'preview',token:passToken});}
-  catch(error){try{sessionStorage.removeItem(GUEST_PASS_KEY);}catch{}signIn({});show('Guest pass unavailable',error.message);return;}
-  if(preview.signedIn){
-    show('Joining '+preview.room.name,'Signed in as '+preview.name+'. Joining the room…');signIn({});
-    try{enter((await api('/api/watch/pass',{action:'join',token:passToken})).room);}catch(error){$('entry-status').textContent=error.message;}
+  try{preview=await api('/api/watch/invite',{action:'preview',code});}
+  catch(error){signIn({});show('Invite unavailable',error.message);showInviteCodeBox();return;}
+  const providers={discord:preview.providers.discord&&config.access?.discord!==false,plex:preview.providers.plex&&config.unifiedAccounts&&config.plexConfigured};
+  if(preview.member||preview.signedIn&&preview.guestsAllowed){
+    show('Joining '+preview.room.name,(preview.signedIn?'Signed in as '+preview.name+'. ':'')+'Joining the room…');signIn({});
+    try{enter((await api('/api/watch/invite',{action:'join',code})).room);}catch(error){$('entry-status').textContent=error.message;}
     return;
   }
-  const providers={discord:preview.providers.discord&&config.access?.discord!==false,plex:preview.providers.plex&&config.unifiedAccounts&&config.plexConfigured};
   signIn(providers);
-  if(preview.signInRequired){show('Join '+preview.room.name,'Sign in with Discord or Plex to use this guest pass.');return;}
+  if(!preview.guestsAllowed){show('Join '+preview.room.name,'Sign in with an account that can join this server. This room isn’t taking guests right now.');return;}
+  if(preview.signInRequired){show('Join '+preview.room.name,'Sign in with Discord or Plex to join as a guest.');return;}
   show('Join '+preview.room.name+' as a guest','Pick a name to show in the room.');
   $('guest-join').hidden=false;$('guest-sign-in-label').hidden=!providers.discord&&!providers.plex;
   const name=$('guest-name'),roll=$('guest-name-roll');
@@ -3068,9 +3077,15 @@ async function guestPassEntry(discordButton){
   roll.onclick=rollName;
   $('guest-join').onsubmit=async event=>{
     event.preventDefault();const button=$('guest-join-submit');button.disabled=true;
-    try{enter((await api('/api/watch/pass',{action:'join',token:passToken,name:name.value})).room);}
+    try{enter((await api('/api/watch/invite',{action:'join',code,name:name.value})).room);}
     catch(error){$('entry-status').textContent=error.message;button.disabled=false;}
   };
+}
+// A guest only ever sees their own room.
+function guestRoomClosed(){
+  $('auth-loading').hidden=$('auth-overlay').hidden=true;document.body.classList.remove('auth-pending');
+  $('empty-title').textContent='This room isn’t open right now';$('empty-hint').textContent='You can join once a host opens it again.';
+  for(const id of ['lobby-create','lobby-reopen','room-chooser-new','create','reopen','switch-room','room-bar'])if($(id))$(id).hidden=true;
 }
 async function start() {
   await syncReady;
@@ -3080,7 +3095,8 @@ async function start() {
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
   const discordButton=$('welcome').querySelector('.discord-button');
   discordButton.hidden=config.access?.discord===false;
-  if(!activity&&location.pathname==='/join'){await guestPassEntry(discordButton);return;}
+  const joinPath=!activity&&/^\/join\/([^/]+)$/.exec(location.pathname);
+  if(joinPath){await inviteEntry(discordButton,inviteCode(decodeURIComponent(joinPath[1])));return;}
   const roomPathMatch = !activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
   const initialRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
   if (!activity && initialRoom) {
@@ -3117,6 +3133,7 @@ async function start() {
       if(admission.identity){me={...admission.pendingIdentity,adminEligible:false};renderAccount();}
       $('entry-plex-activity').hidden=!activity||!admission.identity||admission.passwordNeeded||!config.access.plex;
       $('entry-recheck').hidden=!admission.identity;
+      if(!activity&&!admission.activityOnly)showInviteCodeBox();
       if(admission.identity&&!activity&&params.get('account')==='1'&&typeof showAccount==='function')await showAccount();
       return;
     }
@@ -3155,7 +3172,12 @@ async function start() {
         if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}}
     },
     onMessage:message=>{
-      if(message.type==='room-kicked' && message.roomId===selected){selected=undefined;viewerId=crypto.randomUUID();unavailable('You were removed from the room. You may rejoin.','kicked');}
+      if(message.type==='room-kicked' && message.roomId===selected){
+        selected=undefined;viewerId=crypto.randomUUID();
+        // A removed guest has nowhere else to go; their sign-in ends with the room.
+        if(me?.guestRoomId){unavailable('You were removed from the room.','kicked');guestRoomClosed();$('empty-title').textContent='You were removed from the room';$('empty-hint').textContent='';transport?.close();clearInterval(identityTimer);}
+        else unavailable('You were removed from the room. You may rejoin.','kicked');
+      }
       else if(message.type==='identity'){me=message.value;renderAccount();}
       else if(message.type==='rooms'&&message.status===200){if(JSON.stringify(message.value.rooms)!==JSON.stringify(knownRooms))applyRooms(message.value.rooms);}
       else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
@@ -3177,6 +3199,13 @@ async function start() {
   await transport.connect();
   await bootstrap;
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/');if(typeof showAccount==='function')await showAccount();}
+  // A guest goes straight to their room, or is told it isn't open.
+  if(me?.guestRoomId){try{await selectRoom(me.guestRoomId);}catch{guestRoomClosed();}return;}
+  // A Discord share link opens the Activity with the room's invite code.
+  if(activity&&INVITE_CODE.test(sdk?.customId||'')){
+    try{await selectRoom((await api('/api/watch/invite',{action:'join',code:sdk.customId})).room.id);return;}
+    catch(error){fail(error.message);}
+  }
   const requestedRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
   if (!activity && requestedRoom) {
     try {
