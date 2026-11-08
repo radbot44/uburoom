@@ -12,7 +12,7 @@ const serverSettingsButton=document.createElement('button');serverSettingsButton
 $('account-content').append(serverSettingsButton);
 let serverSettingsPanel;
 serverSettingsButton.addEventListener('click',()=>{if(activity||token||serverSettingsButton.hidden)return;serverSettingsPanel ||= uburoomServerSettings.mount({request:api,trigger:serverSettingsButton});serverSettingsPanel.open();});
-$('account-close').append(uburoomIcons.icon(document,'close'));
+$('account-close').replaceChildren(uburoomIcons.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
 logoutButton.append(uburoomIcons.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
 function updateAccountButton(){accountButton.disabled=!config?.unifiedAccounts||!me;}

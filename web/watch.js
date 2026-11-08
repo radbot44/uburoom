@@ -2955,7 +2955,7 @@ async function createRoom(advanced = roomUI.draftOptions()) {
 for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
 for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
 $('room-create').addEventListener('click', () => void createRoom().catch(error=>fail(error.message)));
-$('room-create-settings').append(uburoomIcons.icon(document,'settings'));
+$('room-create-settings').replaceChildren(uburoomIcons.icon(document,'settings'));
 $('room-create-settings').addEventListener('click',()=>roomUI.openDraft({name:$('room-name').value,visibility:$('room-create-visibility').value,permissionPreset:$('room-create-preset').value}));
 $('room-create-preset').addEventListener('change',()=>{ roomPresetDraft = $('room-create-preset').value; roomUI.updateDraftPreset(roomPresetDraft); });
 $('room-chooser-new').addEventListener('click',() => { roomChooserSection('new'); if (roomNameDraft) $('room-name').value = roomNameDraft; $('room-name').focus(); });

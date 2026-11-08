@@ -211,16 +211,9 @@
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('data-tabler-icon', asset === 'oomark' ? 'oomark' : asset);
     if (asset === 'oomark') svg.setAttribute('class', 'oomark-icon');
-    const specs = glyphs[asset];
-    for (let i = 0; i < specs.length; i++) {
-      const spec = specs[i];
-      const el = doc.createElementNS(SVG_NS, spec[0]);
-      const attrs = spec[1];
-      for (const key in attrs) {
-        if (own(attrs, key)) el.setAttribute(key, attrs[key]);
-      }
-      svg.append(el);
-    }
+    const use = doc.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#icon-' + asset);
+    svg.append(use);
     return svg;
   }
   const api = Object.freeze({icon, resolveName, volumeName, aliases, glyphs});
