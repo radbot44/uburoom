@@ -2012,7 +2012,6 @@ function renderVisibility() {
   if(me?.guestRoomId)$('switch-room').hidden=true;
   if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
   if (state) {
-    if ($('current-room-name')) $('current-room-name').textContent = state.roomName || 'Room';
     if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room invite',iconOnly:true});
     $('room-share').hidden = !state.invite;
     uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});

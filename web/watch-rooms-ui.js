@@ -717,7 +717,7 @@
       const box = $('room-invite'), invite = !value.draft && value.invite;
       box.replaceChildren(); box.hidden = !invite; $('room-invited-section').hidden = true;
       if (!invite) return;
-      const row = node('div',box,undefined,'room-actions room-invite-row');
+      const row = node('div',box,undefined,'room-invite-row');
       row.append(controls.button(document,{label:'Share',icon:'share',action:() => void share?.({code:invite.code,url:invite.url},value.name)}));
       const code = node('code',row,invite.code,'room-invite-code'); code.title = invite.url;
       if (invite.canManage) {
