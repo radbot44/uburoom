@@ -60,6 +60,7 @@ async function startBot(config, hub, { createClient = options => new Client(opti
   client.on(Events.ShardReconnecting, () => log.info('Reconnecting to the Gateway...'));
   log.info('Connecting... waiting up to 30 seconds for the bot to become ready.');
   await connectBot(client, config.botToken);
+  hub.discordClient = client;
   try { hub.setOwnerName?.((await client.users.fetch(config.ownerId)).username); }
   catch { /* Retain the last authenticated account name if Discord lookup fails. */ }
   // Clear any previously registered guild commands.

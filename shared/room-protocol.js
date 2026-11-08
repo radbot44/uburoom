@@ -45,6 +45,26 @@
     const a = command.args || {};
     let args = {};
     switch (action) {
+      case 'room.publish':
+        if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh the publication preview');
+        args.revision = a.revision;
+        break;
+      case 'room.unpublish': break;
+      case 'room.event.create': case 'room.event.edit': case 'room.event.cancel':
+        if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh Share before changing an event');
+        args.revision=a.revision;
+        if(action!=='room.event.create') {
+          if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey)||typeof a.eventVersion!=='string'||!/^[0-9a-f]{64}$/.test(a.eventVersion))throw new Error('Refresh the Discord event');
+          args.eventKey=a.eventKey;args.eventVersion=a.eventVersion;
+        }
+        if(action!=='room.event.cancel') {
+          if(typeof a.title!=='string'||!a.title.trim()||a.title.trim().length>100||/[\u0000-\u001f\u007f]/.test(a.title))throw new Error('Use an event title of 1–100 characters');
+          if(typeof a.description!=='string'||a.description.length>1000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(a.description))throw new Error('Use an event description of up to 1000 characters');
+          for(const field of ['startLocal','endLocal'])if(typeof a[field]!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(a[field]))throw new Error('Choose the event date and times');
+          if(typeof a.timeZone!=='string'||a.timeZone.length>100)throw new Error('Choose a time zone');
+          Object.assign(args,{title:a.title.trim(),description:a.description,startLocal:a.startLocal,endLocal:a.endLocal,timeZone:a.timeZone});
+        }
+        break;
       case 'media.previous': case 'media.next': break;
       case 'queue.add': case 'queue.playNow':
         if (!a.item || typeof a.item !== 'object' || Array.isArray(a.item)) throw new Error('Choose a queue item');

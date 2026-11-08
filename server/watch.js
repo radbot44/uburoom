@@ -56,6 +56,10 @@ class Watch {
         return (!authenticated || await authenticated()) && await this.canView(room, viewer.actor);
       } });
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
+    this.publications = registry ? new (require('./discord-publications').DiscordPublications)(this,registry) : undefined;
+    this.events = registry ? new (require('./discord-events').DiscordEvents)(this,registry) : undefined;
+    hub.savedPublicationExecute = this.publications ? (id,actor,permitted)=>this.publications.removeSaved(id,actor,permitted) : undefined;
+    hub.scheduledEventExecute = this.events ? (id,command,actor,permitted)=>this.events.command(id,command,actor,permitted) : undefined;
     hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
     this.autoplayDelayMs = 10000;
@@ -1399,6 +1403,10 @@ class Watch {
     if (this.shuttingDown || room.removing) return {status:'unavailable',message:'Room is closing.'};
     const command = Engine.validate(input), { action, args } = command, s = room.s;
     if (room.saved) this.roomState.store.healthy();
+    if (['room.publish','room.unpublish'].includes(action)) {
+      if(!room.saved || !this.publications)return {status:'unavailable',message:'Discord publishing requires a saved room.'};
+      return this.publications.command(room,action,actor,permitted,args.revision);
+    }
     if (action === 'room.kick') {
       if (room.transitionCommit) await room.transitionCommit.catch(() => {});
       if (!room.saved || !permitted() || actor.watchCurrent && !await actor.watchCurrent() || !permitted()) return {status:'unavailable',message:'Room changed or command expired.'};
@@ -1635,6 +1643,7 @@ class Watch {
     const room = this.rooms.get(id); if (!room) return;
     if (room.removal) return room.removal;
     room.removing = true; room.removalAt = Date.now();
+    if(!this.shuttingDown)this.publications?.roomClosed(id);
     this.cancelAutoplay(room);
     const pending = [...this.mediaWork].some(work => work.room === room);
     if (pending || room.transitionCommit) {
@@ -1689,6 +1698,8 @@ class Watch {
     this.shutdownDeadline = AbortSignal.timeout(this.mediaDrainMs);
     if (this.roomState) { this.roomState.stopped = true; clearInterval(this.roomState.timer); }
     this.closing = (async () => {
+      await this.publications?.close();
+      await this.events?.close();
       const results = await Promise.allSettled([...this.rooms.keys()].map(async id => this.remove(id)));
       try { await this.drainMedia(); } catch (error) { results.push({status:'rejected',reason:error}); }
       try { this.tracking.close(); } catch (error) { results.push({status:'rejected',reason:error}); }

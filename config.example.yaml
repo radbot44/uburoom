@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2l
+# Config schema v2m
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -52,6 +52,7 @@ discord:
   owner_id: ''
   guild_id: ''
   command_channel_ids: [] # e.g. ['123456789012345678']
+  share_channel_id: '' # One text channel for explicit room publication; blank disables it.
 
 storage:
   data_directory: 'data' # Persist this directory across container replacements.

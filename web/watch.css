@@ -7,6 +7,19 @@
 @media(max-width:700px){#account{flex-wrap:wrap;gap:8px}#account .account-actions{flex:1}#account .identity-group{margin-left:auto}#account #identity{max-width:75px}}
 @media(max-width:500px){#account>.account-actions{flex:1 1 100%;flex-wrap:nowrap}#account .identity-group{margin-left:0;flex:1}}
 /* Video chrome stays dark; its sibling dialogs and menus inherit the page palette. */
+.room-share-preview{border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:10px;padding:14px;overflow-wrap:anywhere}
+.room-share-preview p{margin:8px 0 0}
+#room-share-name{overflow-wrap:anywhere}
+#room-share-dialog h3{font-size:14px;font-weight:600;margin:22px 0 12px}
+#room-share-error{color:var(--error);overflow-wrap:anywhere}
+#room-share-error:empty{display:none}
+#room-share-event-form{display:block;margin-top:16px;text-align:left}
+#room-share-event-form[hidden]{display:none}
+#room-share-event-form label{display:block;margin:14px 0 6px}
+#room-share-event-form :is(input,select,textarea){box-sizing:border-box;width:100%;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--elevated);color:var(--text);font:inherit}
+#room-share-event-form textarea{resize:vertical}
+.room-share-event{border-top:1px solid var(--border);padding:12px 0;overflow-wrap:anywhere}
+.room-share-event p{margin:6px 0}
 .player-chrome,.watch-toast-region{--background:#101217;--card:#1B1E26;--elevated:#292E38;--border:#393F4D;--text:#F8F7F4;--muted:#AAB0BC;--accent-text:var(--primary);color:#F8F7F4;color-scheme:dark}
 #empty-stage,.center-play,#ready-status,#seek-feedback{--text:#F8F7F4;--muted:#AAB0BC;--elevated:#292E38;color:#F8F7F4}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}main{max-width:clamp(1750px,calc(1400px + 18.2292vw),2100px);margin:22px auto;padding:0 24px}

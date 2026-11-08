@@ -587,7 +587,11 @@ function renderNotifications() {
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
-const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,share:(invite,name)=>shareInvite(invite,name),
+const roomShare=uburoomShare.mount({request:api,share:shareInvite,openLink:async url=>{
+  if(activity&&sdk){const result=await sdk.commands.openExternalLink({url});if(!result.opened)throw new Error('Discord could not open the post.');}
+  else window.open(url,'_blank','noopener,noreferrer');
+}});
+const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,share:(invite,name,id)=>roomShare.open(id||selected),
   join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};},
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
   createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = roomVisibilityDraft = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset; } });
@@ -2012,7 +2016,8 @@ function renderVisibility() {
   if(me?.guestRoomId)$('switch-room').hidden=true;
   if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
   if (state) {
-    if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room invite',iconOnly:true});
+    if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room',iconOnly:true});
+    $('room-share').setAttribute('aria-label','Share room');
     $('room-share').hidden = !state.invite;
     uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});
     $('room-people-open').classList.remove('watch-control-responsive');
@@ -2112,21 +2117,21 @@ function checkBufferingViewers() {
 setInterval(checkBufferingViewers, 1000);
 // Shares the room invite: Discord's share link inside an Activity (falling back to
 // its invite dialog), the device share sheet in a browser, else the clipboard.
-async function shareInvite(invite = state?.invite, roomName = state?.roomName || 'Room') {
+async function shareInvite(invite = state?.invite, roomName = state?.roomName || 'Room', {copy=false} = {}) {
   if (!invite) return;
   const message = 'Join me in ' + roomName + ' on uburoom';
-  if (activity && sdk) {
+  if (!copy && activity && sdk) {
     try { await sdk.commands.shareLink({ message, custom_id:invite.code }); return; }
     catch { try { await sdk.commands.openInviteDialog(); return; } catch { /* Fall back to copying below. */ } }
   }
-  if (!activity && navigator.share) {
+  if (!copy && !activity && navigator.share) {
     try { await navigator.share({ title:roomName, text:message, url:invite.url }); return; }
     catch (error) { if (error.name === 'AbortError') return; }
   }
   try { await navigator.clipboard.writeText(invite.url); toasts.show('room-invite',{title:'Invite link copied',hint:'Code: ' + invite.code,symbol:'check',duration:4000}); }
   catch { toasts.show('room-invite',{type:'error',title:"Couldn't copy the invite",hint:invite.url,symbol:'copy',duration:12000}); }
 }
-$('room-share').addEventListener('click', () => void shareInvite());
+$('room-share').addEventListener('click', () => void roomShare.open(selected));
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;

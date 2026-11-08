@@ -144,6 +144,28 @@ Create an application in the [Discord Developer Portal](https://discord.com/deve
 
 Optional host-directory discovery can use Discord Server Members/Presence intents. `directory.expose_discord_members` defaults to `true`, and `directory.expose_plex_members` defaults to `false`. Directory results are not invitations or access grants. See [host directory](account-names-and-host-directory.md).
 
+### Publish rooms to Discord
+
+Set `discord.share_channel_id` to one quoted text-channel ID in `discord.guild_id`; blank disables new publishing. Give the bot **View Channel**, **Send Messages**, **Embed Links** and **Read Message History** in that channel, then restart uburoom. No additional privileged Gateway intent or bot commands are needed.
+
+In the Room section or Room settings → People, **Share** opens Copy invite link and Share invite… for everyone. Room leaders, hosts (including All hosts, excluding room guests) and active admins can explicitly **Publish** a preview to the configured channel, view the post or remove it. Publishing is independent of the editable Room settings permission. It sends no participant names or automatic mentions.
+
+One post shows the room name, selected movie/episode, Playing/Paused/Waiting status, unique viewer count and Join room. The same post updates on meaningful changes, including invite rerolls, with changes grouped at five-second intervals. Public and private rooms can be published. The preview explains that people who see the channel can use its invite; existing entry, guest and Plex requirements still apply. Publishing never enables guests or grants media/host access.
+
+Closing or resetting the room marks its post Closed and removes Join; reopening requires explicit Publish. An empty room retains publication while it remains open. Known message IDs survive a server restart and are reconciled after reconnect. Removing a post while Discord is unavailable records pending removal and reports that it has not completed. Provider failures can delay edits/removal; playback stays independent. Deleted posts are not automatically recreated. An uncertain creation response is recovered from the bot's nonce in the latest 100 channel messages when possible; if it cannot be confirmed, fresh creation stops and the host is told to check Discord, preventing automatic duplicate posts.
+
+Publication records use the existing SQLite metadata store; this increment introduces no database schema change. `discord.share_channel_id` is YAML-only. Personal Rich Presence remains separately scoped.
+
+### Schedule Discord events
+
+With the bot configured, give it **Create Events** at server level. Share → **Schedule Discord event…** creates a native Discord external event whose location is the room's current invite. This works independently of channel publishing, including for a closed saved room. Hosts and active admins can schedule, view, edit or cancel the room's upcoming events. The bot manages events it created; managing unrelated human-created events is outside this scope.
+
+Choose the planned event title, description, start/end date and time, and an explicit time zone. The planned title does not change when the room plays another video. Discord displays event times in each viewer's own zone. Nonexistent or repeated local times at daylight-saving changes are rejected with an explanation; choose another time or UTC. Escape/backdrop preserve an edited event draft; Cancel discards it.
+
+Events have a server-wide audience beyond the publication channel, as the form explains. Existing entry and media requirements still apply. A future event survives room closure and server restart; a host must reopen the room for the watch night. Scheduling never opens rooms or starts playback. Invite rerolls update tracked events on the next reconciliation (normally within 30 seconds while Discord is available). Manual edits in Discord are read back and stale uburoom edits are refused. Active events can be viewed here and managed in Discord; this form edits/cancels upcoming events only. Permanently deleting a room leaves its native event in Discord for the server's event managers to manage; its room invite no longer resolves.
+
+Create responses that cannot be confirmed are reconciled against the bot's matching native event rather than automatically resubmitted. If an event remains unconfirmed, the form reports it and stops additional creation for that room until it is resolved. Completed, canceled and deleted events are never recreated. Records use the existing SQLite metadata store and require no database schema change.
+
 ## Rooms and retention
 
 Defaults in `rooms`: **50 saved rooms**, **5 open**, **20 members per room**, **100 connected people** (including lobby), **50 upcoming queue items**, **150 history items**, and a **60-second reconnect window**. A full room/capacity limit rejects new additions rather than evicting existing viewers.

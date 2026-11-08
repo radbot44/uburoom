@@ -718,7 +718,7 @@
       box.replaceChildren(); box.hidden = !invite; $('room-invited-section').hidden = true;
       if (!invite) return;
       const row = node('div',box,undefined,'room-invite-row');
-      row.append(controls.button(document,{label:'Share',icon:'share',action:() => void share?.({code:invite.code,url:invite.url},value.name)}));
+      row.append(controls.button(document,{label:'Share',icon:'share',action:() => void share?.({code:invite.code,url:invite.url},value.name,value.id)}));
       const code = node('code',row,invite.code,'room-invite-code'); code.title = invite.url;
       if (invite.canManage) {
         const roll = controls.button(document,{label:'New invite code',icon:'arrows-shuffle',iconOnly:true,disabled:busy,action:() => void edit({action:'invite.reroll'})});

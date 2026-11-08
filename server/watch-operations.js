@@ -170,7 +170,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|share))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
@@ -201,6 +201,23 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.metadata(match[1],auth.actor);
         if (!await current()) return result(403,{error:'Room access changed'});
         return result(200,watch.roomState.summary(match[1],auth.actor));
+      }
+      if (watch.publications && match[2] === 'share') {
+        await watch.roomState.eligible(auth.actor,current);
+        await watch.roomState.metadata(match[1],auth.actor);
+        if(write) {
+          if(!throttle('room-publish:'+auth.actor.userId,20))return result(429,{error:'Too many publication requests. Try again shortly.'});
+          if(!['room.publish','room.unpublish','room.event.create','room.event.edit','room.event.cancel'].includes(data.action))return result(400,{error:'Unsupported sharing action'});
+          const room=watch.rooms.get(match[1]);
+          if(!data.action.startsWith('room.event.')&&!(data.action==='room.unpublish'&&!room)&&(!room || data.epoch!==room.s.epoch))return result(409,{error:'Room changed. Refresh Share.'});
+          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:data.action.startsWith('room.event.')?data:{revision:data.revision}}));
+        }
+        const value=await watch.publications.summary(match[1],auth.actor);
+        value.scheduling=await watch.events.summary(match[1],auth.actor);
+        await watch.roomState.eligible(auth.actor,current);
+        await watch.roomState.metadata(match[1],auth.actor);
+        if(!await current())return result(403,{error:'Room access changed'});
+        return result(200,value);
       }
       if (watch.roomState && match[2] === 'queue') {
         await watch.roomState.eligible(auth.actor, current);

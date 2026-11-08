@@ -83,6 +83,7 @@ class Hub {
   canManage(room, actor) { return room.permissions ? this.canRoom(room, actor, 'roomSettings') : privileged(room, actor, this.config, this.isAdmin(actor)); }
   roomCommandAllowed(room, actor, command, personal = false) {
     if (personal) return true;
+    if (['room.publish','room.unpublish'].includes(command.action)) return !actor.guestRoomId && (isHost(room,actor) || this.isAdmin(actor));
     const capability = RoomPolicy.commandCapability(command.action);
     if (['queue.auto.playNow', 'media.next', 'queue.history.replay'].includes(command.action)) {
       if (!this.canRoom(room, actor, 'chooseMedia') && !(this.watchIdle?.(room.roomId) && this.canRoom(room, actor, 'playPause'))) return false;
@@ -124,6 +125,15 @@ class Hub {
     if(this.config.singleRoom&&input.roomId&&!this.rooms.has(input.roomId))return {status:'forbidden',message:'Only the configured shared room is available.'};
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
+    const savedUnpublish=command.action==='room.unpublish'&&!this.rooms.has(input.roomId)&&!!this.savedPublicationExecute;
+    if((command.action.startsWith('room.event.') && this.scheduledEventExecute) || savedUnpublish) {
+      const deadlines=resolveCommandDeadlines({acceptedAt:Date.now(),expiresAt:input.expiresAt,commandTtlMs:COMMAND_MS,extendedTtlMs:12000});
+      if(!input.roomId||!deadlines.admitted)return {status:'unavailable',message:'Select a room and retry the event change.'};
+      const adminEpoch=this.adminEpoch;
+      const permitted=()=>Date.now()<deadlines.executionDeadline&&this.adminEpoch===adminEpoch&&canWatch(this.access,actor.userId,actor);
+      try {return savedUnpublish?await this.savedPublicationExecute(input.roomId,actor,permitted):await this.scheduledEventExecute(input.roomId,command,actor,permitted);}
+      catch(error){return {status:error.status===403?'forbidden':'failed',message:error.status?error.message:'Discord could not update the event.',httpStatus:error.status||503};}
+    }
     if (command.action.startsWith('queue.') && !this.rooms.has(input.roomId) && this.savedQueueExecute) {
       const acceptedAt = Date.now();
       const extendedTtlMs = ['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.add','queue.playNow'].includes(command.action) ? 30000 : undefined;

@@ -773,6 +773,10 @@ async function checkProviderConnectivity(config) {
     });
   }
 
+  if (config.shareChannelId) checks.push({category:'Providers',name:'Discord room publishing',status:'warn',
+    message:'Explicit room publishing is configured; channel access is checked when Share opens or a post updates.',
+    remediation:'Give the bot View Channel, Send Messages, Embed Links and Read Message History in discord.share_channel_id; optional event scheduling also needs Create Events at server level.'});
+
   // Discord bot config presence
   if (config.botToken) {
     if (config.botToken.length < 20) {

@@ -460,6 +460,7 @@ class WatchRooms {
     if(revision!==record.revision)throw failure('Room changed; refresh before resetting');
     if(!await current())throw failure('Room access changed',403);
     if(room&&(room.mediaTransition||room.queueEditing))throw failure('Wait for the current queue or media operation before resetting');
+    this.watch.publications?.roomClosed(id);
     if(room)room.mediaTransition=true;
     try{
       if(room){this.freeze(room);this.watch.invalidateControls(room);await room.saving?.catch(()=>{});}

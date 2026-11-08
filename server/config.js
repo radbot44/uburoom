@@ -15,7 +15,7 @@ const KEYS = [
   'plex.delivery', 'plex.client_url', 'plex.lan_client_url', 'plex.direct_fallback_enabled',
   'plex.reporting_enabled', 'plex.reporting_watch_state',
   'discord.bot_token', 'discord.client_id', 'discord.client_secret', 'discord.owner_id',
-  'discord.guild_id', 'discord.command_channel_ids',
+  'discord.guild_id', 'discord.command_channel_ids', 'discord.share_channel_id',
   'server.host', 'server.port', 'server.public_url', 'server.tls_cert', 'server.tls_key', 'server.public_web_app',
   'storage.credential_key_file', 'storage.data_directory', 'tools.ffmpeg', 'tools.ffprobe',
   'rooms.host_permissions', 'rooms.viewer_permissions', 'rooms.admin_discord_ids', 'rooms.admin_plex_ids',
@@ -128,7 +128,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     plexUrl, plexToken: get('plex.token'), plexMachineIdentifier: get('plex.machine_identifier'),
     botToken: get('discord.bot_token'), clientId: get('discord.client_id'), clientSecret: get('discord.client_secret'),
     ownerId: get('discord.owner_id'), guildId: get('discord.guild_id'),
-    channels: list('discord.command_channel_ids') || [],
+    channels: list('discord.command_channel_ids') || [], shareChannelId: get('discord.share_channel_id'),
     ffmpegPath: get('tools.ffmpeg') ? resolveFile('tools.ffmpeg') : discoverTools ? findOnPath('ffmpeg', environment) : undefined,
     ffprobePath: get('tools.ffprobe') ? resolveFile('tools.ffprobe') : discoverTools ? findOnPath('ffprobe', environment) : undefined
   };
@@ -203,6 +203,8 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
     if (config[key] && !/^\d{17,20}$/.test(config[key])) throw new Error('discord IDs must be quoted numeric Developer Mode IDs');
   }
   if (config.channels.some(id => !/^\d{17,20}$/.test(id))) throw new Error('discord.command_channel_ids requires exact quoted IDs');
+  if (config.shareChannelId && !/^\d{17,20}$/.test(config.shareChannelId)) throw new Error('discord.share_channel_id requires one quoted Discord channel ID');
+  if (config.shareChannelId && (!config.botToken || !config.guildId)) throw new Error('discord.share_channel_id requires discord.bot_token and discord.guild_id');
   const logFile = get('logging.file');
   config.logging = {
     level: choice('logging.level', 'info', ['error', 'warn', 'info', 'debug']),
