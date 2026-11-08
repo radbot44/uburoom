@@ -492,7 +492,12 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
         try {
           const room = watch.roomState.store.getBySlug(requested);
           initial.targetRoom = { id: room.id, slug: room.slug, name: room.name };
-        } catch {}
+        } catch {
+          const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
+          if (activeRoom) {
+            initial.targetRoom = { id: activeRoom.s.roomId, slug: activeRoom.s.slug, name: activeRoom.s.name };
+          }
+        }
       }
     } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
     return initial;

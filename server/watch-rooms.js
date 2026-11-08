@@ -179,6 +179,10 @@ class WatchRooms {
       record = { ...record, queueRevision:previous.queueRevision };
     }
     room.saved = record;
+    if (room.s.slug && record.slug && room.s.slug !== record.slug) {
+      room.previousSlugs ||= new Set();
+      room.previousSlugs.add(room.s.slug);
+    }
     Object.assign(room.s, { creatorId:record.creatorId, hosts:record.hosts, permissions:record.permissions,
       name:record.name, slug:record.slug, ubumfaWord:record.ubumfaWord, visibility:record.visibility, ownerId:record.creatorId });
   }

@@ -339,7 +339,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     return (async () => {
-      const url = new URL(req.url, config.publicUrl), route = url.pathname;
+      const url = new URL(req.url, config.publicUrl), route = url.pathname, roomRouteMatch = /^\/room\/([a-z0-9-]+)$/i.exec(route);
+
       const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
       let activityContext = url.searchParams.has('frame_id');
       let activityQuery = url.search;
@@ -355,6 +356,15 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       }
       if (req.method === 'GET' && route === '/room') {
         const rem = url.searchParams.toString(); res.writeHead(302, {Location:'/' + (rem ? '?' + rem : '')}); return res.end();
+      }
+      if (req.method === 'GET' && roomRouteMatch) {
+        const reqSlug = roomRouteMatch[1].toLowerCase();
+        const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(reqSlug));
+        if (activeRoom && activeRoom.s.slug && activeRoom.s.slug !== reqSlug) {
+          const rem = url.searchParams.toString();
+          res.writeHead(302, { Location: '/room/' + encodeURIComponent(activeRoom.s.slug) + (rem ? '?' + rem : '') });
+          return res.end();
+        }
       }
       if (req.method === 'GET' && route === '/watch') {
         const roomParam = url.searchParams.get('room');
@@ -404,7 +414,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!isServerOperator(registry, config, login.userId)) return json(res, 403, { error: 'Server operator required' });
         return json(res, 200, runningSettings(config));
       }
-      const roomRouteMatch = /^\/room\/([a-z0-9-]+)$/i.exec(route);
+
       const watchDocument = route === '/' || route === '/activity' || Boolean(roomRouteMatch);
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;

@@ -15,7 +15,7 @@ let viewerId = (() => {
 })();
 const params = new URLSearchParams(location.search);
 const activity = params.has('frame_id');
-function syncRoomUrl(id) {
+function syncRoomUrl(id, slug) {
   if (activity) return;
   if (config?.singleRoom) {
     if (location.pathname !== '/' || location.search) {
@@ -23,7 +23,7 @@ function syncRoomUrl(id) {
     }
     return;
   }
-  const currentSlug = state?.slug || knownRooms.find(r => r.id === id)?.slug;
+  const currentSlug = slug || (state?.id === id ? state.slug : undefined) || knownRooms.find(r => r.id === id)?.slug;
   const target = id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
   if (location.pathname !== target || location.search) {
     history.replaceState(null, '', target + location.hash);
@@ -2390,6 +2390,7 @@ function applyState(next, local=false) {
   if(next.canManage && next.mediaId && next.mediaVersion!==videoCheck.media){videoCheck.media=next.mediaVersion;videoCheck.report=undefined;queueMicrotask(()=>void loadVideoCheck());}
   if (state && state.epoch !== next.epoch) dropVolume();
   state = next; receivedAt = performance.now();
+  if (selected) syncRoomUrl(selected, next.slug);
   unavailableToasts(next.unavailableMedia);
   renderProviderNotice(next.providerNotice);
   if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
@@ -2558,7 +2559,7 @@ async function selectRoom(id,initial) {
       throw error;
     }
     if(next.id!==id)throw new Error('Room changed while opening. Try again.');
-    syncRoomUrl(id);
+    syncRoomUrl(id, next.slug);
     qualityPending=false;
     stateTransportSequence=0;
     stateRequestSequence++;
@@ -2593,6 +2594,7 @@ async function refreshRooms() {
 }
 function applyRooms(rooms) {
   knownRooms=rooms;
+  if (selected) syncRoomUrl(selected);
   $('lobby-error').textContent='';
   renderRooms($('rooms'), rooms); renderRoomChoices(rooms,$('lobby-rooms'));
   if ($('room-dialog').open && !creating) {

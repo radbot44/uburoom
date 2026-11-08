@@ -153,7 +153,7 @@ async function fixture(t, disk = false, settings = {}) {
     });
     return {call:(route,data)=>controls.request(route,data,{Authorization:'Bearer ' + identity.token})};
   }
-  return {get app(){return app;},login,roleUsers,subjects,async restart(){await app.close();await start();}};
+  return {get app(){return app;},config,cert,login,roleUsers,subjects,async restart(){await app.close();await start();}};
 }
 async function command(client, id, viewer, action, args) {
   const response = await client.call('/api/watch/rooms/' + id + '?viewer=' + viewer);
@@ -260,8 +260,19 @@ test('configured role administrators explicitly enable creator rights and lose p
   assert.equal((await admin.call('/api/watch/rooms/saved')).body.total,1);
   let settings = (await admin.call('/api/watch/rooms/' + id + '/settings')).body;
   assert.ok(settings.capabilities.manageHosts); assert.equal(settings.hosts.length,0);
+  const oldSlug = f.app.watch.rooms.get(id).s.slug;
   settings = (await admin.call('/api/watch/rooms/' + id + '/settings',{revision:settings.revision,change:{action:'rename',name:'Moderated name'}})).body;
   assert.equal(settings.creator.name,'Demo host');
+  const active = f.app.watch.rooms.get(id);
+  assert.equal(active.s.slug, 'moderated-name');
+  assert.ok(active.previousSlugs.has(oldSlug));
+  const redirect = await new Promise((resolve, reject) => {
+    https.get(f.config.publicUrl + '/room/' + oldSlug, { ca: f.cert }, res => {
+      resolve({ status: res.statusCode, location: res.headers.location });
+    }).on('error', reject);
+  });
+  assert.equal(redirect.status, 302);
+  assert.equal(redirect.location, '/room/moderated-name');
   assert.equal((await admin.call('/api/watch/admin-mode',{enabled:false})).body.adminMode,false);
   assert.equal((await admin.call('/api/watch/rooms/saved')).body.total,0);
   await admin.call('/api/watch/admin-mode',{enabled:true}); f.roleUsers.clear();

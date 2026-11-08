@@ -673,7 +673,7 @@
     async function edit(change) {
       if (!details || busy) return;
       if (details.draft) {
-        if (change.action === 'rename') { if (!change.name.trim()) { setSettingsStatus('Enter a room name',false,true); return; } details.name = renameDraft = change.name.trim(); }
+        if (change.action === 'rename') details.name = renameDraft = change.name.trim();
         else if (change.action === 'keepEmpty') details.keepEmpty = change.enabled;
         else if (change.action === 'maxMembers') { details.maxMembers = change.value; capacityDraft = undefined; }
         else if (change.action === 'visibility') details.visibility = change.visibility;
@@ -695,7 +695,7 @@
       try {
         const result = await request('/api/watch/rooms/' + id + '/settings',{revision,change});
         if (ticket === generation && dialog.open) {
-          if (result.deleted) dialog.close(); else { details = result; if (change.action === 'maxMembers') capacityDraft = undefined; if (change.action === 'rename' && renameDraft === change.name) renameDraft = result.name; }
+          if (result.deleted) dialog.close(); else { details = result; if (change.action === 'maxMembers') capacityDraft = undefined; if (change.action === 'rename') renameDraft = result.name; }
           setSettingsStatus('Saved', true);
         }
         await changed();
