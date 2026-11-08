@@ -351,15 +351,16 @@ function checkStorageAndKey(config) {
         if (tables.length > 0 || version !== 0) {
           try {
             const { initializeSchema } = require('../server/storage');
-            initializeSchema(db);
+            initializeSchema(db, { checkOnly: true });
             schemaValid = true;
             const userCount = db.prepare('SELECT count(*) as count FROM users').get()?.count ?? 0;
             const roomCount = db.prepare('SELECT count(*) as count FROM watch_rooms').get()?.count ?? 0;
+            const pendingUpgrade = version === 7 ? ' (will upgrade to schema v8 on server startup)' : '';
             checks.push({
               category: 'Storage & Keys',
               name: 'Database schema compatibility',
               status: 'pass',
-              message: `Database schema verified (${userCount} active users, ${roomCount} rooms)`
+              message: `Database schema verified${pendingUpgrade} (${userCount} active users, ${roomCount} rooms)`
             });
           } catch (schemaErr) {
             checks.push({

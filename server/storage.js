@@ -1,11 +1,26 @@
 'use strict';
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly.
-function initializeSchema(db) {
+function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > 8) throw new Error('Account database requires a newer uburoom version');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
   if (version === 7 || version === 8) {
+    if (version === 7 && checkOnly) {
+      const columnsV7 = { users:['id','name','revision','retiredInto','signedInAt'], identities:['provider','subject','userId','name','verified','assigned'],
+        credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
+        browser_logins:['id','record'], playback_history:['id','userId','at','record'],
+        watch_rooms:['id','creatorId','name','visibility','revision','checkpointRevision','queueRevision','createdAt','updatedAt','permissions','bookmark','autoQueue','autoplay','lastAccessedAt','keepEmpty','maxMembers','liveState'],
+        watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
+        watch_room_progress:['roomId','serverId','mediaId'],
+        watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'] };
+      if (tables.length !== Object.keys(columnsV7).length) throw new Error('Unsupported pre-release database; review a manual state transfer before starting');
+      for (const [table, expected] of Object.entries(columnsV7)) {
+        const actual = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name);
+        if (actual.length !== expected.length || actual.some((name, i) => name !== expected[i])) throw new Error('Unsupported pre-release database; restore a matched backup or review a manual state transfer before starting');
+      }
+      return;
+    }
     if (version === 7) {
       db.exec(`BEGIN IMMEDIATE;
         ALTER TABLE watch_rooms ADD COLUMN slug TEXT;
