@@ -143,11 +143,17 @@ test('decoupled session identity: timeline reports use unique viewerSessionId an
   const f = fixture();
   try {
     const viewer = f.createViewer(f.userWithPlex.id);
-    const { data, observed } = f.makeObserved(10, 'playing', 'baseline');
+    const obs1 = f.makeObserved(10, 'playing', 'baseline');
+    const obs2 = f.makeObserved(10, 'playing', 'baseline');
 
-    await f.reporting.observe(f.room, viewer, viewer.viewerId, data, observed);
+    await Promise.all([
+      f.reporting.observe(f.room, viewer, viewer.viewerId, obs1.data, obs1.observed),
+      f.reporting.observe(f.room, viewer, viewer.viewerId, obs2.data, obs2.observed)
+    ]);
     await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
 
+    assert.equal(f.reporting.sessions.size, 1, 'concurrent observe initialization deduplicated');
+    assert.equal(f.reporting.creating?.size || 0, 0);
     assert.equal(f.dispatchedRequests.length, 1);
     const req = f.dispatchedRequests[0];
     assert.equal(req.url, '/:/timeline');
@@ -489,27 +495,20 @@ test('consent opt-out mid-stream: cleanly stops session on Plex', async () => {
     assert.equal(f.dispatchedRequests.length, 2);
     assert.equal(f.dispatchedRequests[1].params.state, 'stopped');
     assert.equal(f.reporting.sessions.has(viewer.viewerId), false);
-  } finally {
-    f.close();
-  }
-});
 
-test('updateConsent({ activity: false }) immediately stops Plex timeline session', async () => {
-  const f = fixture();
-  try {
-    const viewer = f.createViewer(f.userWithPlex.id);
-    const obs = f.makeObserved(15, 'playing', 'baseline');
-    await f.reporting.observe(f.room, viewer, viewer.viewerId, obs.data, obs.observed);
-    await f.reporting.sessions.get(viewer.viewerId)?.dispatched;
-    assert.equal(f.dispatchedRequests.length, 1);
-    assert.equal(f.dispatchedRequests[0].params.state, 'playing');
+    // Explicit updateConsent with activity: false also immediately stops timeline
+    const viewer2 = f.createViewer(f.userWithPlex.id);
+    const obs2 = f.makeObserved(15, 'playing', 'baseline');
+    await f.reporting.observe(f.room, viewer2, viewer2.viewerId, obs2.data, obs2.observed);
+    await f.reporting.sessions.get(viewer2.viewerId)?.dispatched;
+    assert.equal(f.dispatchedRequests.length, 3);
+    assert.equal(f.dispatchedRequests[2].params.state, 'playing');
 
-    // Call updateConsent with activity: false
-    await f.reporting.updateConsent(viewer, { activity: false });
-    assert.equal(f.reporting.sessions.has(viewer.viewerId), false);
-    assert.equal(f.dispatchedRequests.length, 2);
-    assert.equal(f.dispatchedRequests[1].params.state, 'stopped');
-    assert.equal(f.dispatchedRequests[1].params.time, '15000');
+    await f.reporting.updateConsent(viewer2, { activity: false });
+    assert.equal(f.reporting.sessions.has(viewer2.viewerId), false);
+    assert.equal(f.dispatchedRequests.length, 4);
+    assert.equal(f.dispatchedRequests[3].params.state, 'stopped');
+    assert.equal(f.dispatchedRequests[3].params.time, '15000');
   } finally {
     f.close();
   }
@@ -576,19 +575,3 @@ test('observe handles ended, error, subordinate watchState, and state mapping cl
   }
 });
 
-test('deduplicates concurrent observe session initialization per viewerId', async () => {
-  const f = fixture();
-  try {
-    const viewer = f.createViewer(f.userWithPlex.id);
-    const obs1 = f.makeObserved(1, 'playing', 'baseline');
-    const obs2 = f.makeObserved(2, 'playing', 'baseline');
-    await Promise.all([
-      f.reporting.observe(f.room, viewer, viewer.viewerId, obs1.data, obs1.observed),
-      f.reporting.observe(f.room, viewer, viewer.viewerId, obs2.data, obs2.observed)
-    ]);
-    assert.equal(f.reporting.sessions.size, 1);
-    assert.equal(f.reporting.creating?.size || 0, 0);
-  } finally {
-    f.close();
-  }
-});

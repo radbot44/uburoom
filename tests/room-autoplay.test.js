@@ -159,7 +159,7 @@ test('Cancel, pause, seek, queue edits and disabling autoplay immediately cancel
   });
 });
 
-test('autoplay off unloads ended media and presents upNext interstitial when queue has upcoming items', async t => {
+test('autoplay off unloads ended media and presents upNext interstitial when queue has upcoming items, finished when empty', async t => {
   const f = await fixture(t), before = f.queue.current(f.id);
   await f.command('media.autoplay.set', { enabled: false });
   await f.end(); await delay(60);
@@ -169,25 +169,15 @@ test('autoplay off unloads ended media and presents upNext interstitial when que
   assert.equal(f.queue.history(f.id).total, 1);
   assert.equal(f.queue.history(f.id).items[0].id, before.id);
   assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
-  const snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
+  let snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
   assert.equal(snapshot.ending.state, 'upNext');
   assert.equal(snapshot.ending.next.entryId, f.upcoming[0].id);
-});
 
-test('empty upcoming queue archives completed media and leaves the player', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id);
+  // Clearing remaining items transitions ending state to finished
   await f.command('queue.clear');
-  await f.end(); await delay(60);
-  assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.room.s.state.paused, true); assert.equal(f.room.position, 0);
-  assert.equal(f.room.media, undefined);
-  assert.equal(f.queue.current(f.id), null);
-  const history = f.queue.history(f.id);
-  assert.equal(history.total, 1);
-  assert.equal(history.items[0].id, before.id);
-  assert.equal(history.items[0].outcome, 'completed');
-  assert.equal(history.items[0].position, 100);
-  const snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
+  snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
   assert.equal(snapshot.ending.state, 'finished');
+  assert.equal(f.room.s.state.paused, true);
 });
 
 test('smart queue-edit countdown rule: appending preserves countdown, head change restarts, clearing cancels', async t => {

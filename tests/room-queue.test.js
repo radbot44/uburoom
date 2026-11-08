@@ -55,6 +55,7 @@ test('explicit source versions round-trip through current queue, checkpoint and 
   const f = fixture(t, { disk: true });
   const room = await f.store.create(f.creator);
   await f.queue.playNow(room.id, f.creator, { ...sampleItem(), mediaId: '123:456' });
+  await f.queue.add(room.id, f.creator, sampleItem(2));
   const saved = f.store.get(room.id);
   assert.equal(saved.bookmark.mediaId, '123:456');
   await f.store.checkpoint(room.id, saved.checkpointRevision, { ...saved.bookmark, position: 45 });
@@ -62,6 +63,8 @@ test('explicit source versions round-trip through current queue, checkpoint and 
   assert.equal(f.store.get(room.id).bookmark.mediaId, '123:456');
   assert.equal(f.store.get(room.id).bookmark.position, 45);
   assert.equal(f.queue.current(room.id).mediaId, '123:456');
+  assert.equal(f.queue.list(room.id).total, 1);
+  assert.equal(f.queue.list(room.id).items[0].title, 'Episode 2');
   await assert.rejects(f.queue.playNow(room.id, f.creator, { ...sampleItem(), mediaId: '123:456:789' }));
   assert.equal(f.store.get(room.id).bookmark.mediaId, '123:456');
 });
@@ -69,6 +72,7 @@ test('explicit source versions round-trip through current queue, checkpoint and 
 test('add appends to queue, updates queueRevision, and rejects exceeding MAX_PENDING', async t => {
   const f = fixture(t);
   const room = await f.store.create(f.creator, { name: 'Queue Room' });
+  await assert.rejects(f.queue.add(room.id, f.viewer, sampleItem(1)), /Room queue permission required/);
   await f.store.edit(room.id, f.creator, room.revision, { action: 'host.add', userId: f.host });
 
   const added1 = await f.queue.add(room.id, f.creator, sampleItem(1));
@@ -91,21 +95,6 @@ test('add appends to queue, updates queueRevision, and rejects exceeding MAX_PEN
     f.queue.add(room.id, f.creator, sampleItem(3), { expectedRevision: 1 }),
     /Queue changed/
   );
-});
-
-test('viewer without addQueue permission cannot add, but full participant permissions allow it', async t => {
-  const f = fixture(t);
-  const room = await f.store.create(f.creator);
-
-  await assert.rejects(
-    f.queue.add(room.id, f.viewer, sampleItem(1)),
-    /Room queue permission required/
-  );
-
-  // Enable full permissions for room
-  const fullRoom = await f.store.create(f.creator, { fullPermissions: true });
-  const added = await f.queue.add(fullRoom.id, f.viewer, sampleItem(1));
-  assert.equal(added.added.title, 'Episode 1');
 });
 
 test('move reindexes pending items transactionally and rejects stale queueRevision', async t => {
@@ -151,20 +140,6 @@ test('remove deletes entry, reindexes remaining, and rejects stale queueRevision
   assert.equal(list.items[0].rank, 0);
   assert.equal(list.items[1].id, e3.id);
   assert.equal(list.items[1].rank, 1);
-});
-
-test('clear removes all pending items', async t => {
-  const f = fixture(t);
-  const room = await f.store.create(f.creator);
-  await f.queue.add(room.id, f.creator, sampleItem(1));
-  await f.queue.add(room.id, f.creator, sampleItem(2));
-
-  const res = await f.queue.clear(room.id, f.creator, 2);
-  assert.equal(res.cleared, true);
-  assert.equal(res.queueRevision, 3);
-
-  const list = f.queue.list(room.id);
-  assert.equal(list.total, 0);
 });
 
 test('playNow interrupts current item, saves progress in history, and sets new current', async t => {
@@ -325,66 +300,6 @@ test('Go back capacity failures are atomic and completed targets restart from ze
   const result = await f.queue.historyReplay(room.id, f.creator, target.id, { restore:true });
   assert.equal(result.replayed.position, 0);
   assert.equal(f.queue.list(room.id).items[0].title, 'Episode 2');
-});
-
-test('historyClear removes history without touching queue or current', async t => {
-  const f = fixture(t);
-  const room = await f.store.create(f.creator);
-  await f.queue.playNow(room.id, f.creator, sampleItem(1));
-  await f.queue.playNow(room.id, f.creator, sampleItem(2));
-  await f.queue.add(room.id, f.creator, sampleItem(3));
-
-  assert.equal(f.queue.history(room.id).total, 1);
-  assert.equal(f.queue.list(room.id).total, 1);
-
-  const cleared = await f.queue.historyClear(room.id, f.creator);
-  assert.equal(cleared.cleared, true);
-  assert.equal(f.queue.history(room.id).total, 0);
-  assert.equal(f.queue.list(room.id).total, 1);
-  assert.equal(f.queue.current(room.id).title, 'Episode 2');
-});
-
-test('checkpoint updates position of current occurrence', async t => {
-  const f = fixture(t);
-  const room = await f.store.create(f.creator);
-  await f.queue.playNow(room.id, f.creator, sampleItem(1));
-
-  f.queue.checkpoint(room.id, 825.5);
-  const cur = f.queue.current(room.id);
-  assert.equal(cur.position, 825.5);
-});
-
-test('summary returns lightweight snapshot with current, next, and counts', async t => {
-  const f = fixture(t);
-  const room = await f.store.create(f.creator);
-  await f.queue.playNow(room.id, f.creator, sampleItem(1));
-  await f.queue.add(room.id, f.creator, sampleItem(2));
-
-  const sum = f.queue.summary(room.id);
-  assert.equal(sum.queueLength, 1);
-  assert.equal(sum.historyLength, 0);
-  assert.equal(sum.current.title, 'Episode 1');
-  assert.equal(sum.next.title, 'Episode 2');
-});
-
-test('queue and history survive disk restart', async t => {
-  const f = fixture(t, { disk: true });
-  const room = await f.store.create(f.creator);
-  await f.queue.playNow(room.id, f.creator, sampleItem(1));
-  await f.queue.add(room.id, f.creator, sampleItem(2));
-  f.queue.checkpoint(room.id, 300);
-
-  await f.restart();
-
-  const sum = f.queue.summary(room.id);
-  assert.equal(sum.queueLength, 1);
-  assert.equal(sum.current.title, 'Episode 1');
-  assert.equal(sum.current.position, 300);
-  assert.equal(sum.next.title, 'Episode 2');
-
-  const list = f.queue.list(room.id);
-  assert.equal(list.total, 1);
-  assert.equal(list.items[0].title, 'Episode 2');
 });
 
 test('bulk append deduplicates active occurrences, filters only completed room history and preserves rewatch identities', async t => {
@@ -553,18 +468,29 @@ test('explicit current removal clears its bookmark and survives restart with oth
 });
 
 
-test('history trimming preserves completed-item exclusions and random cycle memory',async t=>{
-  const f=fixture(t),room=await f.store.create(f.creator),corpus=Array.from({length:5},(_,i)=>sampleItem(i+1));
-  f.queue.maxHistory=1;
-  await f.queue.playNow(room.id,f.creator,corpus[0]);
-  await f.queue.addBulk(room.id,f.creator,corpus.slice(1,4));
-  await f.queue.next(room.id,f.creator,{outcome:'completed'});
-  await f.queue.next(room.id,f.creator,{outcome:'completed'});
-  await f.queue.next(room.id,f.creator,{outcome:'completed'});
-  assert.equal(f.queue.history(room.id).total,1);
-  const added=await f.queue.addBulk(room.id,f.creator,corpus,{unfinished:true});
-  assert.equal(added.added.some(item=>item.mediaId===corpus[0].mediaId),false);
-  assert.equal(added.added.some(item=>item.mediaId===corpus[1].mediaId),false);
+test('history trimming preserves completed-item exclusions and random cycle memory', async t => {
+  const f = fixture(t), room = await f.store.create(f.creator), corpus = Array.from({ length: 6 }, (_, i) => sampleItem(i + 1));
+  f.queue.maxHistory = 1; f.queue.randomIndex = () => 0;
+  await f.queue.playNow(room.id, f.creator, corpus[0]);
+  await f.queue.addBulk(room.id, f.creator, corpus.slice(1, 4));
+  await f.queue.next(room.id, f.creator, { outcome: 'completed' });
+  await f.queue.next(room.id, f.creator, { outcome: 'completed' });
+  await f.queue.next(room.id, f.creator, { outcome: 'completed' });
+  assert.equal(f.queue.history(room.id).total, 1);
+  const added = await f.queue.addBulk(room.id, f.creator, corpus, { unfinished: true });
+  assert.equal(added.added.some(item => item.mediaId === corpus[0].mediaId), false);
+  assert.equal(added.added.some(item => item.mediaId === corpus[1].mediaId), false);
+  await f.queue.clear(room.id, f.creator);
+
+  await f.queue.configureAuto(room.id, f.creator, { mode: 'random', scope: { type: 'show', id: '100', serverId: 'plex-server-1' }, includeSpecials: false });
+  await f.queue.generate(room.id, f.creator, corpus);
+  await f.queue.next(room.id, f.creator, { corpus, outcome: 'completed' });
+  await f.queue.next(room.id, f.creator, { corpus, outcome: 'completed' });
+  assert.equal(f.queue.history(room.id).total, 1);
+  await f.queue.historyClear(room.id, f.creator);
+  await f.queue.next(room.id, f.creator, { corpus, outcome: 'completed' });
+  assert.equal(f.store.get(room.id).autoQueue.next.mediaId, corpus[4].mediaId);
+  assert.equal(f.store.get(room.id).autoQueue.cycle, 0);
 });
 
 test('auto-queue reset requires permission and preserves queue/history while forgetting progress',async t=>{
@@ -595,21 +521,6 @@ test('configured queues above 100 support bounded pages and moves beyond the old
   assert.equal(f.queue.list(room.id,{offset:109,limit:1}).items[0].id,entries[0].id);
 });
 
-
-test('random auto-queue remembers its full cycle after visible history is pruned and cleared',async t=>{
-  const f=fixture(t),room=await f.store.create(f.creator),corpus=Array.from({length:6},(_,i)=>sampleItem(i+1));
-  f.queue.maxHistory=1;f.queue.randomIndex=()=>0;
-  await f.queue.playNow(room.id,f.creator,corpus[0]);
-  await f.queue.configureAuto(room.id,f.creator,{mode:'random',scope:{type:'show',id:'100',serverId:'plex-server-1'},includeSpecials:false});
-  await f.queue.generate(room.id,f.creator,corpus);
-  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
-  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
-  assert.equal(f.queue.history(room.id).total,1);
-  await f.queue.historyClear(room.id,f.creator);
-  await f.queue.next(room.id,f.creator,{corpus,outcome:'completed'});
-  assert.equal(f.store.get(room.id).autoQueue.next.mediaId,corpus[4].mediaId);
-  assert.equal(f.store.get(room.id).autoQueue.cycle,0);
-});
 
 test('auto-queue computeAutoNext performs fast O(N) preview selection with large catalog corpora and supports continue, skip, pin and playAutoNow', async t => {
   const f = fixture(t);

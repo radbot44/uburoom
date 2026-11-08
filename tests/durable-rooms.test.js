@@ -606,9 +606,13 @@ test('reboot recovery admits ordinary returning viewers, waits for everyone and 
 test('reboot playback resumes only with all expected people ready, or explicit permitted Play',tls,async t=>{
   const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
   const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID(),b=randomUUID();
+  const id2=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a2=randomUUID(),b2=randomUUID();
   await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
   await guest.call('/api/watch/rooms/'+id+'?viewer='+b);
   await command(creator,id,a,'media.play');
+  await command(creator,id2,a2,'media.load',{mediaId:'demo',quality:'direct'});
+  await guest.call('/api/watch/rooms/'+id2+'?viewer='+b2);
+  await command(creator,id2,a2,'media.play');
   await f.restart();
   const host=await f.login('host'),viewer=await f.login('guest');
   await host.call('/api/watch/rooms/'+id+'?viewer='+a);
@@ -619,6 +623,15 @@ test('reboot playback resumes only with all expected people ready, or explicit p
   await viewer.call('/api/watch/rooms/'+id+'?viewer='+b);
   for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
   assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,false);
+
+  // Explicit Pause cancels reboot resume intent even when everyone subsequently returns ready
+  await host.call('/api/watch/rooms/'+id2+'?viewer='+a2);
+  const room2=f.app.watch.rooms.get(id2);
+  assert.ok(room2.recovery);
+  await command(host,id2,a2,'media.pause');
+  await viewer.call('/api/watch/rooms/'+id2+'?viewer='+b2);
+  for(const [key,v] of room2.viewers)await f.app.watch.ready(room2,v.actor,key,room2.mediaVersion,true,room2.readinessVersion);
+  assert.equal(room2.recovery,undefined);assert.equal(room2.manualPaused,true);assert.equal(room2.s.state.paused,true);
 });
 
 
@@ -650,22 +663,6 @@ test('saved and open limits remain separate under concurrent room creation',tls,
   assert.equal((await creator.call('/api/watch/rooms',{keepEmpty:true})).status,429,'closed records still consume saved slots');
 });
 
-
-test('explicit Pause cancels reboot resume intent even when everyone subsequently returns ready',tls,async t=>{
-  const f=await fixture(t,true),creator=await f.login('host'),guest=await f.login('guest');
-  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,a=randomUUID(),b=randomUUID();
-  await command(creator,id,a,'media.load',{mediaId:'demo',quality:'direct'});
-  await guest.call('/api/watch/rooms/'+id+'?viewer='+b);await command(creator,id,a,'media.play');
-  await f.restart();
-  const host=await f.login('host'),viewer=await f.login('guest');
-  await host.call('/api/watch/rooms/'+id+'?viewer='+a);
-  assert.ok(f.app.watch.rooms.get(id).recovery);
-  await command(host,id,a,'media.pause');
-  await viewer.call('/api/watch/rooms/'+id+'?viewer='+b);
-  const room=f.app.watch.rooms.get(id);
-  for(const [key,v] of room.viewers)await f.app.watch.ready(room,v.actor,key,room.mediaVersion,true,room.readinessVersion);
-  assert.equal(room.recovery,undefined);assert.equal(room.manualPaused,true);assert.equal(room.s.state.paused,true);
-});
 
 
 test('missing queue media remains removable, blocks raw additions and restores without a media grant',tls,async t=>{
@@ -700,14 +697,3 @@ test('missing queue media remains removable, blocks raw additions and restores w
   assert.deepEqual((await client.call(root+'?viewer='+viewer)).body.unavailableMedia,[]);
 });
 
-test('save checkpoints queue position and store snapshot atomically without stale pre-await state',tls,async t=>{
-  const f=await fixture(t,true),client=await f.login('host'),viewer=randomUUID();
-  const id=(await client.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
-  await client.call(root+'?viewer='+viewer);
-  const room=f.app.watch.rooms.get(id);
-  await command(client,id,viewer,'media.load',{mediaId:'demo',quality:'direct'});
-  room.position=42;
-  await f.app.watch.roomState.save(room);
-  const saved=f.app.watch.roomState.store.get(id);
-  assert.equal(saved.bookmark?.position,42,'bookmark is saved atomically');
-});

@@ -33,7 +33,11 @@ test('library pagination and native search/sort/filter queries cover titles beyo
 test('collection order is retained; filtering reads all child pages instead of filtering a partial collection', async t => {
   const rows = Array.from({length:245},(_,i)=>movie(245-i)), starts = [];
   rows[rows.length-1].title = 'Needle beyond the first two hundred';
+  rows[0].Genre = [{id:2,tag:'Drama'},{id:3,tag:'Thriller'}];
   const plex = fixture(async url => {
+    if (url.pathname.endsWith('/genre')) return json({Directory:[{key:'5',title:'Action'}]});
+    if (url.pathname.endsWith('/year')) return json({Directory:[]});
+    if (url.pathname.startsWith('/library/metadata/')) return json({Metadata:[movie(245,{Genre:[{id:2,tag:'Drama'},{id:3,tag:'Thriller'},{id:5,tag:'Action'}]})]});
     assert.equal(url.pathname,'/library/collections/9/children');
     const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120); starts.push(start);
     return json({totalSize:rows.length,Metadata:rows.slice(start,start+size)});
@@ -42,6 +46,7 @@ test('collection order is retained; filtering reads all child pages instead of f
   const found = await plex.browse({section:'1',collection:'9',q:'Needle',sort:'default'});
   assert.ok(found.items.some(x=>x.id==='1')); assert.deepEqual(starts,[0,0,120,240]);
   const ascending = await plex.browse({section:'1',collection:'9',sort:'title'}); assert.equal(ascending.items[0].id,'2');
+  const genreFiltered = await plex.browse({section:'1',collection:'9',genre:'5',sort:'default'}); assert.equal(genreFiltered.total,1); assert.equal(genreFiltered.items[0].id,'245');
 });
 
 test('random sort uses one full-library shuffle across pages and a new seed produces a new order', async t => {
@@ -68,16 +73,16 @@ test('editions, people and ratings are sanitized; private artwork paths never le
   await plex.artwork('2'); await plex.artwork('2'); assert.equal(imageRequests,1);
   assert.equal(plex.items([movie(3,{thumb:'https://evil.test/private.jpg'})])[0].hasPoster,false);
   await assert.rejects(plex.artwork('2','unsafe'));
-});
-
-test('collection genre filters use complete tags when Plex listing rows omit the matching genre', async t => {
-  const plex = fixture(async url => {
-    if (url.pathname.endsWith('/genre')) return json({Directory:[{key:'5',title:'Action'}]});
-    if (url.pathname.endsWith('/year')) return json({Directory:[]});
-    if (url.pathname.startsWith('/library/metadata/')) return json({Metadata:[movie(1,{Genre:[{id:2,tag:'Drama'},{id:3,tag:'Thriller'},{id:5,tag:'Action'}]})]});
-    return json({totalSize:1,Metadata:[movie(1,{Genre:[{id:2,tag:'Drama'},{id:3,tag:'Thriller'}]})]});
-  }); t.after(()=>plex.close());
-  const result = await plex.browse({section:'1',collection:'9',genre:'5',sort:'default'}); assert.equal(result.total,1); assert.equal(result.items[0].id,'1');
+  const progressItems = plex.items([
+    movie(10, { duration: 6000000, viewOffset: 125000 }),
+    movie(11, { duration: 6000000, viewOffset: 5000 }),
+    movie(12, { duration: 6000000, viewOffset: 5800000 }),
+    movie(13, { duration: 6000000 })
+  ]);
+  assert.equal(progressItems[0].viewOffset, 125);
+  assert.equal(progressItems[1].viewOffset, undefined);
+  assert.equal(progressItems[2].viewOffset, undefined);
+  assert.equal(progressItems[3].viewOffset, undefined);
 });
 
 test('show and season queue expansion pages the complete corpus, sorts cross-season episodes and filters Specials', async t => {
@@ -123,23 +128,20 @@ test('queue catalog expansion rejects incomplete, stuck and oversized upstream p
   const stuck = fixture(async () => json({ totalSize: 240, Metadata: Array.from({ length: 120 }, (_, i) => movie(i + 1)) }));
   const incomplete = fixture(async url => json({ totalSize: 240, Metadata: Number(url.searchParams.get('X-Plex-Container-Start')) ? [] : Array.from({ length: 120 }, (_, i) => movie(i + 1)) }));
   const large = fixture(async () => json({ totalSize: 20001, Metadata: [] }));
-  t.after(() => Promise.all([stuck.close(), incomplete.close(), large.close()]));
-  await assert.rejects(stuck.queueItems({ type: 'show', id: '50' }), /did not advance/);
-  await assert.rejects(incomplete.queueItems({ type: 'show', id: '50' }), /before all items/);
-  await assert.rejects(large.queueItems({ type: 'show', id: '50' }), /20000-item/);
-});
-
-test('collection expansion bounds upstream work even when every nested show is empty', async t => {
   const shows = Array.from({ length: 201 }, (_, index) => movie(index + 1, { type: 'show' }));
-  let requests = 0;
-  const plex = fixture(async url => {
-    requests++;
+  let emptyRequests = 0;
+  const emptyNested = fixture(async url => {
+    emptyRequests++;
     if (url.pathname.startsWith('/library/metadata/')) return json({ totalSize: 0, Metadata: [] });
     const start = Number(url.searchParams.get('X-Plex-Container-Start')), size = Math.min(Number(url.searchParams.get('X-Plex-Container-Size')), 120);
     return json({ totalSize: shows.length, Metadata: shows.slice(start, start + size) });
-  }); t.after(() => plex.close());
-  await assert.rejects(plex.queueItems({ type: 'collection', id: '900' }), /200-request expansion limit/);
-  assert.equal(requests, 200);
+  });
+  t.after(() => Promise.all([stuck.close(), incomplete.close(), large.close(), emptyNested.close()]));
+  await assert.rejects(stuck.queueItems({ type: 'show', id: '50' }), /did not advance/);
+  await assert.rejects(incomplete.queueItems({ type: 'show', id: '50' }), /before all items/);
+  await assert.rejects(large.queueItems({ type: 'show', id: '50' }), /20000-item/);
+  await assert.rejects(emptyNested.queueItems({ type: 'collection', id: '900' }), /200-request expansion limit/);
+  assert.equal(emptyRequests, 200);
 });
 
 test('every room-scoped library route rejects inaccessible viewers and rechecks access before returning awaited private data or artwork', async () => {
@@ -310,22 +312,6 @@ test('prepare parses and normalizes item chapters and markers chronologically', 
   assert.equal(media.markers[1].type, 'credits');
   assert.equal(media.markers[1].startTime, 100);
   assert.equal(media.markers[1].endTime, 120);
-});
-
-test('viewOffset extraction maps actionable progress in seconds and omits unstarted or credits progress', async t => {
-  const inProgress = movie(10, { duration: 6000000, viewOffset: 125000 }); // 125s of 6000s -> 125s
-  const justStarted = movie(11, { duration: 6000000, viewOffset: 5000 }); // 5s -> omitted (< 10s)
-  const inCredits = movie(12, { duration: 6000000, viewOffset: 5800000 }); // 5800s of 6000s (96.6%) -> omitted (> 92%)
-  const unstarted = movie(13, { duration: 6000000 });
-
-  const plex = fixture(async () => json({ Metadata: [inProgress, justStarted, inCredits, unstarted] }));
-  t.after(() => plex.close());
-
-  const items = plex.items([inProgress, justStarted, inCredits, unstarted]);
-  assert.equal(items[0].viewOffset, 125);
-  assert.equal(items[1].viewOffset, undefined);
-  assert.equal(items[2].viewOffset, undefined);
-  assert.equal(items[3].viewOffset, undefined);
 });
 
 test('multi-media movies expand into separate edition cards and details returns otherEditions', async t => {

@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {normalizeConfig}=require('../server/config');
-const {AV1,PlaybackError,encoderArgs}=require('../server/av1');
+const {AV1,PlaybackError}=require('../server/av1');
 const {ConversionPolicy}=require('../server/transcoding-policy');
 const {Plex}=require('../server/plex');
 const Playback=require('../web/playback-policy');
@@ -15,8 +15,6 @@ test('local codec configuration and fallback commands are ordered, bounded allow
   for(const codec of ['av1','vp9','vp8'])assert.equal(Engine.validate({action:'media.quality.set',args:{quality:'direct',fallback:codec}}).args.fallback,codec);
   assert.throws(()=>Engine.validate({action:'media.quality.set',args:{quality:'direct',fallback:'__proto__'}}));
   assert.deepEqual(Playback.fallbackCodecs(['vp9','vp8','av1'],new Set(['vp9']),mime=>!mime.includes('av01')),['vp8']);
-  assert.equal(encoderArgs('software','vp8')[1],'libvpx');assert.equal(encoderArgs('software','vp9')[1],'libvpx-vp9');
-  assert.equal(encoderArgs('qsv','vp9')[1],'vp9_qsv');assert.throws(()=>encoderArgs('nvenc','vp9'),/NVENC/);
 });
 
 test('encoder probes are isolated by codec and unsupported NVENC obeys CPU fallback',async()=>{

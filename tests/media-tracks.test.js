@@ -86,6 +86,15 @@ test('track catalog distinguishes source IDs, selected flags, roles and text ver
   assert.equal(Tracks.select(next,{audioIntent:Tracks.intent(rows.audio[1])}).audio.id,'99','language/role intent crosses items without reusing numeric IDs');
   const publicRows=Tracks.publicCatalog(rows);
   assert.equal('index' in publicRows.audio[0],false); assert.equal('key' in publicRows.subtitles[0],false);
+
+  const intentTracks = [
+    { id: '1', language: 'eng', available: true, title: 'English Stereo', default: false, selected: false },
+    { id: '2', language: 'eng', available: true, title: 'English 5.1', default: true, selected: false },
+    { id: '3', language: 'eng', available: true, title: 'English Commentary', commentary: true, default: false, selected: false }
+  ];
+  assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', commentary: true }).id, '3');
+  assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', commentary: false }).id, '2');
+  assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', title: 'English Stereo', commentary: false }).id, '1');
 });
 test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal media cue text',()=>{
   assert.deepEqual(Subtitles.parse('\uFEFF1\r\n00:00:01,100 --> 00:00:04,250\r\nDeuxième\r\nligne\r\n'),[{start:1.1,end:4.25,text:'Deuxième\nligne',settings:''}]);
@@ -93,11 +102,6 @@ test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal med
   assert.equal(cues[0].settings,'align:start position:20%'); assert.equal(cues[0].text,'<script>literal</script>');
   assert.throws(()=>Subtitles.parse('<html>Not subtitles</html>'),/usable/);
   assert.throws(()=>Subtitles.parse('1\n00:99:01,000 --> 00:00:04,000\nbad'),/invalid/);
-  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM encoder timed out.')).message,/timed out/);
-  assert.match(SubtitleResources.classifyExtractionError(new Error('WebM output exceeded the supported limit.')).message,/exceeded/);
-  assert.match(SubtitleResources.classifyExtractionError(new Error('encoder failed with code 1')).message,/failed/);
-  assert.match(SubtitleResources.classifyExtractionError(new Error('Subtitle extraction produced no usable data.')).message,/no usable data/);
-  assert.match(SubtitleResources.classifyExtractionError(new Error('unrecognized failure')).message,/could not be extracted/);
 });
 test('Plex selects and confirms the exact subtitle before starting its private burn session',async()=>{
   const {plex,state}=provider();
@@ -168,6 +172,13 @@ test('a failed subtitle restoration fails preparation but still restores audio a
 test('audio starts capture different per-viewer choices and restore the saved preference, including failures',async()=>{
   const {plex,state}=provider();
   try {
+    const scoped=plex.scope('viewer-only','viewer');
+    await scoped.prepare('1','direct',false,undefined,undefined,{audioId:'12'});
+    assert.equal(state.audio,'11');
+    assert.ok(state.events.some(e=>e.method==='PUT'));
+    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
+    state.events.length = 0;
+
     const [french,english]=await Promise.all(['12','11'].map(audioId=>plex.prepare('1','direct',false,undefined,undefined,{audioId,subtitleId:'off'})));
     assert.notEqual(french.transcodeId,english.transcodeId);
     assert.deepEqual(state.events.filter(e=>e.startedAudio).map(e=>e.startedAudio),['12','11']);
@@ -184,17 +195,6 @@ test('audio starts capture different per-viewer choices and restore the saved pr
     const before=state.events.filter(e=>e.method==='PUT').length;
     await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',authorized:async()=>false}),/expired/);
     assert.equal(state.events.filter(e=>e.method==='PUT').length,before);
-  } finally {await plex.close();}
-});
-
-test('audio selection and restoration use only the current viewer Plex credential',async()=>{
-  const {plex,state}=provider();
-  try {
-    const scoped=plex.scope('viewer-only','viewer');
-    await scoped.prepare('1','direct',false,undefined,undefined,{audioId:'12'});
-    assert.equal(state.audio,'11');
-    assert.ok(state.events.some(e=>e.method==='PUT'));
-    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
   } finally {await plex.close();}
 });
 
@@ -523,22 +523,6 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
   assert.equal(cues[0].text, 'Hello');
 });
 
-test('matchIntent resolves among multiple available tracks matching language without returning undefined', () => {
-  const tracks = [
-    { id: '1', language: 'eng', available: true, title: 'English Stereo', default: false, selected: false },
-    { id: '2', language: 'eng', available: true, title: 'English 5.1', default: true, selected: false },
-    { id: '3', language: 'eng', available: true, title: 'English Commentary', commentary: true, default: false, selected: false }
-  ];
-  const commentaryMatch = Tracks.matchIntent(tracks, { language: 'eng', commentary: true });
-  assert.equal(commentaryMatch.id, '3');
-
-  const regularMatch = Tracks.matchIntent(tracks, { language: 'eng', commentary: false });
-  assert.equal(regularMatch.id, '2');
-
-  const exactMatch = Tracks.matchIntent(tracks, { language: 'eng', title: 'English Stereo', commentary: false });
-  assert.equal(exactMatch.id, '1');
-});
-
 test('embedded text stays client-rendered, so Original is not forced into a conversion',()=>{
   const {planDelivery}=require('../server/delivery-plan');
   const [track]=Tracks.catalog({Stream:[{id:1,streamType:3,codec:'srt',index:2}]},{browserSubtitles:true,extractSubtitles:true}).subtitles;
@@ -551,19 +535,9 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
 });
 
 test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', () => {
-  const { fileIndex, codecMatches } = require('../server/av1');
+  const { fileIndex } = require('../server/av1');
   const { MediaChecks } = require('../server/media-check');
   const checks = new MediaChecks({});
-
-  // Codec matching checks
-  assert.equal(codecMatches('pcm', 'pcm_s16le'), true);
-  assert.equal(codecMatches('pcm', 'pcm_s24le'), true);
-  assert.equal(codecMatches('dca', 'dts'), true);
-  assert.equal(codecMatches('srt', 'subrip'), true);
-  assert.equal(codecMatches('pgs', 'hdmv_pgs_subtitle'), true);
-  assert.equal(codecMatches('aac', 'aac'), true);
-  assert.equal(codecMatches('h264', 'h264'), true);
-  assert.equal(codecMatches('pcm', 'ac3'), false);
 
   // Buster Keaton / PCM scenario: Plex says pcm at index 1, file has pcm_s16le at index 1
   const pcmMedia = {

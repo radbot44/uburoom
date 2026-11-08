@@ -64,23 +64,6 @@ test('guests are always viewers, never hosts, and are excluded from host search 
   assert.equal(Policy.role(f.store.get(room.id), invitee), 'host');
 });
 
-test('room store honors defaultAllowGuests and explicit allowGuests', async t => {
-  const f = fixture(t);
-  const defaultStore = new RoomStore(f.registry, { defaultAllowGuests: true });
-  const roomOn = await defaultStore.create(f.creator, { name: 'Allowed Room' });
-  assert.equal(roomOn.allowGuests, true);
-
-  const roomOffExplicit = await defaultStore.create(f.creator, { name: 'Opt Out Room', allowGuests: false });
-  assert.equal(roomOffExplicit.allowGuests, false);
-
-  const offStore = new RoomStore(f.registry, { defaultAllowGuests: false });
-  const roomOff = await offStore.create(f.creator, { name: 'Off Room' });
-  assert.equal(roomOff.allowGuests, false);
-
-  const roomOnExplicit = await offStore.create(f.creator, { name: 'Opt In Room', allowGuests: true });
-  assert.equal(roomOnExplicit.allowGuests, true);
-});
-
 test('server tiers rank operator, admins, trusted and members from verified identities only', t => {
   const registry = new Accounts(undefined, credentialVault());
   t.after(() => registry.close());

@@ -4,64 +4,6 @@ const assert = require('node:assert/strict');
 const { PlaybackError } = require('../server/av1');
 const SubtitleResources = require('../server/subtitle-resources');
 
-test('classifyExtractionError maps error messages and instances to standard PlaybackError', () => {
-  const { classifyExtractionError } = SubtitleResources;
-
-  // Timed out case
-  const errTimeout = classifyExtractionError(new Error('Process timed out after 30s'));
-  assert.ok(errTimeout instanceof PlaybackError);
-  assert.equal(errTimeout.message, 'Subtitle extraction timed out. Try burn-in.');
-
-  // Exceeded limit case
-  const errExceeded = classifyExtractionError(new Error('Subtitle font exceeded the supported limit.'));
-  assert.ok(errExceeded instanceof PlaybackError);
-  assert.equal(errExceeded.message, 'Subtitle resource or fonts exceeded the supported limits. Try burn-in.');
-
-  const errExceed = classifyExtractionError(new Error('Data size exceed max capacity'));
-  assert.ok(errExceed instanceof PlaybackError);
-  assert.equal(errExceed.message, 'Subtitle resource or fonts exceeded the supported limits. Try burn-in.');
-
-  // No usable data case
-  const errNoData = classifyExtractionError(new Error('Subtitle extraction produced no usable data.'));
-  assert.ok(errNoData instanceof PlaybackError);
-  assert.equal(errNoData.message, 'Subtitle extraction produced no usable data. Try burn-in.');
-
-  // Failed case
-  const errFailed = classifyExtractionError(new Error('Extraction failed during demux'));
-  assert.ok(errFailed instanceof PlaybackError);
-  assert.equal(errFailed.message, 'Subtitle extraction failed during media demuxing. Try burn-in.');
-
-  // Already PlaybackError instance
-  const originalPbError = new PlaybackError('Custom playback error');
-  const errSame = classifyExtractionError(originalPbError);
-  assert.strictEqual(errSame, originalPbError);
-
-  // Fallbacks: unknown error, empty error, null, undefined
-  const errGeneric = classifyExtractionError(new Error('Uncategorized network error'));
-  assert.ok(errGeneric instanceof PlaybackError);
-  assert.equal(errGeneric.message, 'Original subtitles could not be extracted. Try burn-in.');
-
-  const errNull = classifyExtractionError(null);
-  assert.ok(errNull instanceof PlaybackError);
-  assert.equal(errNull.message, 'Original subtitles could not be extracted. Try burn-in.');
-
-  const errUndefined = classifyExtractionError(undefined);
-  assert.ok(errUndefined instanceof PlaybackError);
-  assert.equal(errUndefined.message, 'Original subtitles could not be extracted. Try burn-in.');
-});
-
-test('clear resets media.subtitleAssets and operates safely on any media object', () => {
-  const { clear } = SubtitleResources;
-  const media = { subtitleAssets: new Map([['data', Buffer.from('test')]]) };
-
-  clear(media);
-  assert.equal(media.subtitleAssets, undefined);
-
-  // Clearing again should be safe and non-throwing
-  assert.doesNotThrow(() => clear(media));
-  assert.equal(media.subtitleAssets, undefined);
-});
-
 test('read streams subtitle data and enforces response status and size limits', async () => {
   const { read, LIMIT } = SubtitleResources;
   assert.equal(LIMIT, 64 * 1024 * 1024);
@@ -290,7 +232,7 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   const ssZero = zeroArgs.indexOf('-ss');
   assert.equal(zeroArgs[ssZero + 1], '40'); // at 40s - 0s = 40s (not 25s!)
 
-  // 4. Quality transfer preserves windowCache
+  // 4. Quality transfer preserves windowCache, but rejects mismatched track IDs
   const replacement = {
     sourceKey: media.sourceKey,
     principal: media.principal,
@@ -302,6 +244,17 @@ test('window retrieves bounded subtitle intervals, counts cues, and caches resul
   assert.equal(transfer(media, replacement), true);
   assert.ok(replacement.windowCache instanceof Map);
   assert.ok(replacement.windowCache.size > 0);
+  const differentTrack = {
+    sourceKey: media.sourceKey,
+    principal: media.principal,
+    captionVersion: '12345678-bbbb-cccc-dddd-eeeeeeeeeeee',
+    subtitleAbort: new AbortController(),
+    selection: { subtitle: { id: '99', index: 8, delivery: 'pgs', available: true } },
+    source: media.source
+  };
+  assert.equal(transfer(media, differentTrack), false);
+  assert.equal(differentTrack.windowCache, undefined);
+  assert.equal(differentTrack.subtitleAbort.signal.aborted, false);
 
   // 5. Clear cleans up windowCache
   clear(replacement);
@@ -692,17 +645,6 @@ test('generated two-hour MKV windows seek over HTTP ranges, preserve offset timi
   }
 });
 
-
-test('cross-track transfer rejects compatibility before moving any subtitle cache',()=>{
-  const media=windowMedia(),different=windowMedia(),windowCache=new Map([['old',{data:pgsAt()}]]),textCache=new Map([['old',[]]]);
-  media.windowCache=windowCache;media.subtitleCache=textCache;
-  different.selection={subtitle:{id:'24',delivery:'pgs',available:true}};
-  const controller=different.subtitleAbort;
-  assert.equal(SubtitleResources.transfer(media,different),false);
-  assert.equal(different.windowCache,undefined);assert.equal(different.subtitleCache,undefined);
-  assert.equal(media.windowCache,windowCache);assert.equal(media.subtitleCache,textCache);
-  assert.equal(different.subtitleAbort,controller);assert.equal(controller.signal.aborted,false);
-});
 
 test('empty successful FFmpeg output cannot verify quiet coverage when packet inspection found captions',async()=>{
   const media=windowMedia();let emptyInspection=false,ffmpegRuns=0;

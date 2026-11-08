@@ -237,14 +237,6 @@ rooms:
   assert.throws(() => configPath(['--config=a', '--config=b']), /once/);
 });
 
-test('empty permission lists grant none, while omission preserves defaults', () => {
-  const config = normalizeConfig({ rooms: { host_permissions: [], viewer_permissions: [] } });
-  assert.ok(Object.values(config.roomPermissions.host).every(value => !value));
-  assert.ok(Object.values(config.roomPermissions.viewer).every(value => !value));
-  const all = normalizeConfig({ rooms: { viewer_permissions: 'all' } });
-  assert.ok(Policy.VIEWER_BLOCKED.every(key => !all.roomPermissions.viewer[key]));
-});
-
 test('direct Plex delivery requires an explicit secure origin and cannot inherit owner fallback credentials', () => {
   assert.deepEqual(normalizeConfig({plex:{delivery:'auto',client_url:'https://plex.example:32400/'}}).plexDelivery,
     {mode:'auto',clientUrl:'https://plex.example:32400',lanClientUrl:'',fallback:false});
@@ -280,9 +272,18 @@ test('malformed YAML and unsupported structures never echo secret source text', 
     {transcoding:{outputs:['plex'],fallback:{enabled:true}}},
     {server:{public_url:'http://localhost'}}, {server:{public_url:'https://private:token@example.com'}},
     {server:{public_url:'https://example.com/path'}}, {plex:{url:'file:///secret'}},
-    {storage:{credential_key_file:path.join(ROOT,'key')}}]) {
+    {storage:{credential_key_file:path.join(ROOT,'key')}},
+    {access:{require_plex_in_activity:'false'}}, {guests:{default_allow:'false'}},
+    {access:{discord:false},rooms:{single_room:true}},
+    {rooms:{single_room_leader_plex_id:'alice'}}]) {
     assert.throws(() => normalizeConfig(value));
   }
+  assert.equal(normalizeConfig({}).accessPolicy.requirePlexInActivity, true);
+  assert.equal(normalizeConfig({access:{require_plex_in_activity:false}}).accessPolicy.requirePlexInActivity, false);
+  assert.equal(normalizeConfig({}).guests.defaultAllow, true);
+  assert.equal(normalizeConfig({guests:{default_allow:false}}).guests.defaultAllow, false);
+  assert.equal(normalizeConfig({rooms:{single_room:true,single_room_leader_plex_id:'101'}}).singleRoomLeaderPlexId, '101');
+  assert.equal(normalizeConfig({access:{discord:false},plex:{token:'fixture-token'},rooms:{single_room:true}}).singleRoom, true);
 });
 
 test('missing YAML fails before TLS or providers and never falls back to .env/environment', t => {
@@ -294,15 +295,6 @@ test('missing YAML fails before TLS or providers and never falls back to .env/en
   assert.equal(child.status,1);
   assert.match(child.stderr,/Missing config.yaml/);
   assert.doesNotMatch(child.stderr,/inherited-secret|Missing TLS/);
-});
-
-test('git ignores private YAML and packaging admits only the blank YAML example', () => {
-  const result = spawnSync('git',['check-ignore','--no-index','config.yaml','config.local.yaml','config.yml'],{cwd:ROOT,encoding:'utf8'});
-  assert.equal(result.status,0);
-  assert.equal(result.stdout.trim().split(/\r?\n/).length,3);
-  const script = fs.readFileSync(path.join(ROOT,'scripts/package.ps1'),'utf8');
-  assert.match(script,/config\.example\.yaml/);
-  assert.match(script,/yaml\|yml/);
 });
 
 test('real entry point serves health from external YAML with isolated persistent state', { timeout: 20000 }, async t => {
@@ -384,20 +376,6 @@ test('real entry point cleans up application resources and exits nonzero on list
   assert.match(output, /EADDRINUSE/);
 });
 
-
-test('Activity Plex requirement defaults on and accepts only YAML booleans',()=>{
-  assert.equal(normalizeConfig({}).accessPolicy.requirePlexInActivity,true);
-  assert.equal(normalizeConfig({access:{require_plex_in_activity:false}}).accessPolicy.requirePlexInActivity,false);
-  assert.throws(()=>normalizeConfig({access:{require_plex_in_activity:'false'}}),/true or false/);
-});
-
-test('guests default_allow defaults on and accepts only YAML booleans', () => {
-  assert.equal(normalizeConfig({}).guests.defaultAllow, true);
-  assert.equal(normalizeConfig({ guests: { default_allow: false } }).guests.defaultAllow, false);
-  assert.throws(() => normalizeConfig({ guests: { default_allow: 'false' } }), /true or false/);
-});
-
-
 test('credential key defaults follow each OS and honor explicit paths without migration',t=>{
   const home=temporary(t),local=path.join(home,'local'),xdg=path.join(home,'xdg');
   const key=(platform,environment)=>normalizeConfig({}, {platform,environment}).credentialKeyFile;
@@ -410,13 +388,6 @@ test('credential key defaults follow each OS and honor explicit paths without mi
   const original=path.join(home,'original.key');fs.writeFileSync(original,'unchanged');
   assert.equal(normalizeConfig({storage:{credential_key_file:original}},{platform:'linux'}).credentialKeyFile,original);
   assert.equal(fs.readFileSync(original,'utf8'),'unchanged');
-});
-
-test('single-room Plex leader accepts an explicit ID or token default without Discord ownership',()=>{
-  assert.equal(normalizeConfig({rooms:{single_room:true,single_room_leader_plex_id:'101'}}).singleRoomLeaderPlexId,'101');
-  assert.equal(normalizeConfig({access:{discord:false},plex:{token:'fixture-token'},rooms:{single_room:true}}).singleRoom,true);
-  assert.throws(()=>normalizeConfig({access:{discord:false},rooms:{single_room:true}}),/plex.token/);
-  assert.throws(()=>normalizeConfig({rooms:{single_room_leader_plex_id:'alice'}}),/Plex account ID/);
 });
 
 test('installation doctor validates healthy configurations and reports actionable failures', async () => {

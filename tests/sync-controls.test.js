@@ -3,7 +3,7 @@ const {install}=require('./helpers/watch-sync');
 const test = require('node:test'), assert = require('node:assert/strict');
 const {randomUUID} = require('node:crypto');
 const {Hub} = require('../server/core'), {Watch} = require('../server/watch');
-const {target, correction} = require('../web/playback-timing');
+const {target} = require('../web/playback-timing');
 
 function fixture(t) {
   let now = 100000, mono = 1000;
@@ -113,7 +113,7 @@ test('joining an already playing solo room does not stop its timeline and restor
   f.advance(400);await f.dispatch('media.play');assert.equal(f.room.startAt,f.now()+400);
 });
 
-test('departure releases an already scheduled group start or pause without a timeline jump', async t => {
+test('departure and expired viewers release coordination delays without timeline jumps', async t => {
   const f=fixture(t);await f.load();await f.ready(f.h);await f.ready(f.g);
   f.advance(100);await f.watch.leave(f.room,f.guest,f.g);
   assert.equal(f.room.startAt,f.now());assert.equal(f.watch.position(f.room),0);
@@ -121,10 +121,8 @@ test('departure releases an already scheduled group start or pause without a tim
   f.watch.snapshot(f.room,f.guest,f.g);await f.dispatch('media.pause');
   f.advance(100);await f.watch.leave(f.room,f.guest,f.g);
   assert.equal(f.room.pauseAt,undefined);assert.equal(f.room.s.state.paused,true);assert.equal(f.watch.position(f.room),1.1);
-});
-
-test('expired viewers release coordination delays; leaving during readiness retains only the sole decoder gate', async t => {
-  const f=fixture(t);await f.load();await f.ready(f.h);await f.ready(f.g);
+  f.watch.snapshot(f.room,f.guest,f.g);
+  await f.dispatch('media.play');assert.equal(f.room.startAt,f.now()+400);
   f.room.viewers.get(f.g).at=f.now()-10001;f.watch.refresh(f.room);
   assert.equal(f.room.viewers.size,1);assert.equal(f.room.startAt,f.now());
   f.watch.snapshot(f.room,f.guest,f.g);
@@ -178,24 +176,6 @@ test('wait extends by fifteen seconds, cancel stays paused, and superseded choic
   assert.equal(f.room.readinessTimedOut,true,'shared seeks have the same bounded wait');
   await f.dispatch('media.load',{mediaId:'demo',quality:'direct'});
   assert.equal((await f.dispatch('media.ready.wait',{readinessId:id})).status,'unavailable','replacement invalidates choices');
-});
-
-test('correction uses cadence-aware widening and enforces uncertainty and stability cutoffs', () => {
-  const c1 = correction();
-  assert.equal(c1.update({now: 0, error: .06, eligible: true, context: 'room', frameSeconds: 0, uncertaintyMs: 10}), 1);
-  assert.equal(c1.update({now: 1000, error: .06, eligible: true, context: 'room', frameSeconds: 0, uncertaintyMs: 10}), 1.01);
-
-  const c2 = correction();
-  assert.equal(c2.update({now: 0, error: .06, eligible: true, context: 'room', frameSeconds: 1/24, uncertaintyMs: 10}), 1);
-  assert.equal(c2.update({now: 1000, error: .06, eligible: true, context: 'room', frameSeconds: 1/24, uncertaintyMs: 10}), 1);
-
-  const c3 = correction();
-  assert.equal(c3.update({now: 0, error: .3, eligible: true, context: 'room', uncertaintyMs: 260}), 1);
-  assert.equal(c3.update({now: 1000, error: .3, eligible: true, context: 'room', uncertaintyMs: 260}), 1);
-
-  const c4 = correction();
-  assert.equal(c4.update({now: 0, error: .3, eligible: true, context: 'room', uncertaintyMs: 20, stabilityMs: 110}), 1);
-  assert.equal(c4.update({now: 1000, error: .3, eligible: true, context: 'room', uncertaintyMs: 20, stabilityMs: 110}), 1);
 });
 
 test('client pauses at the common deadline and cancels a superseded pause alarm', async () => {

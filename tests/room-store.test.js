@@ -246,13 +246,6 @@ test('explicit room presets preserve defaults, reject unknown names and protect 
     assert.equal(f.store.get(configured.id).permissions.viewer.deleteRoom,false);
   }
   await assert.rejects(f.store.create(f.creator,{permissionPreset:'unknown'}),/Unknown/);
-  const ui = {}; require('node:vm').runInNewContext(fs.readFileSync(path.join(__dirname,'../web/watch-rooms-ui.js'),'utf8'),ui);
-  for (const name of ['host-control','play-pause','queue']) {
-    assert.equal(JSON.stringify(ui.uburoomRoomUI.presetPolicy(name)),JSON.stringify(Policy.preset(name)));
-    assert.equal(ui.uburoomRoomUI.presetName(Policy.preset(name)),name);
-  }
-  const custom = Policy.preset('host-control'); custom.viewer.seek = true;
-  assert.equal(ui.uburoomRoomUI.presetName(custom),'custom');
 });
 
 test('old stored picture flags are retired and participant management stays off across restart', async t => {

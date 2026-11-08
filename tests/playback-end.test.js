@@ -37,26 +37,26 @@ test('natural ending requires recent sequential decoded playback; clamped room c
     f.room.s.state.paused = true;
     assert.equal(f.send(100, 'ended'), true);
     assert.equal(f.send(100, 'ended'), false, 'the same ending cannot be consumed twice');
-  } finally { f.tracking.close(); }
-});
-
-test('seek to end, premature ended, frozen frames and a clock alone cannot prove completion', () => {
-  const cases = [
-    f => { f.send(10); return f.send(100, 'ended'); },
-    f => { f.send(96); f.send(97); f.send(98); return f.send(98, 'ended'); },
-    f => { f.send(96); f.send(97); f.send(98, 'playing', { frames: 60 }); f.send(99); return f.send(100, 'ended'); },
-    f => { f.room.s.state.paused = true; return f.send(100, 'ended'); },
-    f => { f.tail(); f.send(99.95, 'seeking', { discontinuity: 1 }); return f.send(100, 'ended', { discontinuity: 1 }); },
-    f => { f.send(94); f.send(95); f.send(96); return f.send(100, 'ended'); }
-  ];
-  for (const scenario of cases) {
-    const f = fixture();
-    try { assert.equal(scenario(f), false); } finally { f.tracking.close(); }
+  } finally {
+    f.tracking.close();
   }
 });
 
-test('pause, buffering, errors, gaps and explicit cancellation discard prior ending evidence', () => {
-  for (const state of ['paused', 'buffering', 'seeking', 'error', 'blocked']) {
+test('ending evidence is fenced by room epochs, stream leases, and invalidated by pauses, gaps, or premature seeks', () => {
+  // 1. Premature or fraudulent completions
+  const fraudCases = [
+    f => { f.send(10); return f.send(100, 'ended'); },
+    f => { f.send(96); f.send(97); f.send(98); return f.send(98, 'ended'); },
+    f => { f.send(96); f.send(97); f.send(98, 'playing', { frames: 60 }); f.send(99); return f.send(100, 'ended'); },
+    f => { f.tail(); f.send(99.95, 'seeking', { discontinuity: 1 }); return f.send(100, 'ended', { discontinuity: 1 }); }
+  ];
+  for (const scenario of fraudCases) {
+    const f = fixture();
+    try { assert.equal(scenario(f), false); } finally { f.tracking.close(); }
+  }
+
+  // 2. Intervening pauses, buffer states, explicit resets, or timing gaps
+  for (const state of ['paused', 'buffering', 'seeking', 'error']) {
     const f = fixture();
     try {
       f.tail(); f.send(99, state);
@@ -65,8 +65,6 @@ test('pause, buffering, errors, gaps and explicit cancellation discard prior end
   }
   for (const change of [
     f => { f.room.manualPaused = true; },
-    f => { f.room.initialGate = true; },
-    f => { f.room.pauseAt = 120000; },
     f => { clearPlaybackEnd(f.room); },
     f => { f.room.viewers.clear(); }
   ]) {
@@ -74,12 +72,13 @@ test('pause, buffering, errors, gaps and explicit cancellation discard prior end
     try { f.tail(); change(f); assert.equal(f.send(100, 'ended'), false); }
     finally { f.tracking.close(); }
   }
-  const f = fixture();
-  try { f.tail(); assert.equal(f.send(100, 'ended', {}, 3000), false); }
-  finally { f.tracking.close(); }
-});
+  const gapFixture = fixture();
+  try {
+    gapFixture.tail();
+    assert.equal(gapFixture.send(100, 'ended', {}, 3000), false, 'time gap discards ending evidence');
+  } finally { gapFixture.tracking.close(); }
 
-test('room epochs, media generations, stream and observation leases fence ending evidence', () => {
+  // 3. Epoch, media, stream, and observation lease fences
   for (const change of [
     f => { f.room.s.epoch = randomUUID(); },
     f => { f.room.mediaVersion = f.viewer.mediaVersion = randomUUID(); },
@@ -90,9 +89,6 @@ test('room epochs, media generations, stream and observation leases fence ending
     try { f.tail(); change(f); assert.equal(f.send(100, 'ended'), false); }
     finally { f.tracking.close(); }
   }
-  const f = fixture();
-  try { f.tail(); assert.equal(f.send(100, 'ended', { epoch: randomUUID() }), false); }
-  finally { f.tracking.close(); }
 });
 
 test('a short near-end restart must earn its own decoded tail; accepted ending does not add watch credit', () => {

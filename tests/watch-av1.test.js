@@ -70,15 +70,14 @@ test('AV1 look-ahead failure does not stop buffered playback or repeatedly reque
   target = 18;
   await assert.rejects(player.pump(),error => error === failure,'error becomes terminal when the chunk is actually needed');
 });
-test('a seek supersedes a failing AV1 fetch at the previous position',async () => {
-  const player = playerAt(60);
-  let target = 0;
-  Object.assign(player,{abort:new AbortController(),duration:60,seconds:6,appended:new Set(),target:()=>target,
-    fetch:async () => { target = 24; throw new Error('Old position failed'); }});
-  await player.pump();
-  assert.equal(player.prefetchFailure.index,0,'the old failure must not stop playback at the new position');
-});
 test('a seek during AV1 window eviction does not fetch chunks at the old position',async () => {
+  const seekPlayer = playerAt(60);
+  let target = 0;
+  Object.assign(seekPlayer,{abort:new AbortController(),duration:60,seconds:6,appended:new Set(),target:()=>target,
+    fetch:async () => { target = 24; throw new Error('Old position failed'); }});
+  await seekPlayer.pump();
+  assert.equal(seekPlayer.prefetchFailure.index,0,'the old failure must not stop playback at the new position');
+
   const player = playerAt();
   player.position = 120; player.appended.add(0); player.chunkBytes.set(0,1024);
   player.evict = async indices => {
@@ -110,6 +109,12 @@ test('temporary AV1 network failure retries with backoff without clearing good c
   await player.pump(); assert.equal(player.prefetchFailure.attempts,1,'backoff prevents a tight request loop');
   player.prefetchFailure.retryAt = 0; player.fetch = original;
   await player.pump(); assert.ok(player.appended.has(0)); assert.equal(player.prefetchFailure,undefined);
+
+  const playerExhausted = playerAt(90);
+  playerExhausted.position = 30;
+  playerExhausted.prefetchFailure = {index:5,error,attempts:6,required:false,retryAt:Infinity};
+  await playerExhausted.pump();
+  assert.ok(playerExhausted.appended.has(5)); assert.equal(playerExhausted.prefetchFailure,undefined);
 });
 test('quota pressure removes partial track data and reduces speculative look-ahead',async () => {
   const player = playerAt(); let count = 0;
@@ -118,14 +123,14 @@ test('quota pressure removes partial track data and reduces speculative look-ahe
   assert.deepEqual([...player.appended],[0,1]);
   assert.equal(player.pressured,true); assert.equal(player.pressureAhead,6);
 });
-test('AV1 retries an exhausted speculative network failure when playback actually reaches that chunk',async () => {
-  const player = playerAt(90), error = Object.assign(new Error('Temporary outage'),{retryable:true});
-  player.position = 30;
-  player.prefetchFailure = {index:5,error,attempts:6,required:false,retryAt:Infinity};
-  await player.pump();
-  assert.ok(player.appended.has(5)); assert.equal(player.prefetchFailure,undefined);
-});
 test('AV1 signals natural EOF only when the final chunk is needed, and only once',async () => {
+  const failingPlayer = playerAt(18), failure = Object.assign(new Error('Temporary error'),{retryable:true});
+  failingPlayer.source = {readyState:'open',ends:0,endOfStream(){this.ends++;}};
+  failingPlayer.position = 18;
+  failingPlayer.fetch = async () => {throw failure;};
+  await failingPlayer.pump();
+  assert.equal(failingPlayer.source.ends,0,'final chunk failure does not signal EOF');
+
   const player = playerAt(20.602);
   player.source = {readyState:'open',ends:0,endOfStream(){this.ends++;this.readyState='ended';}};
   await player.pump();
@@ -144,13 +149,4 @@ test('AV1 signals natural EOF only when the final chunk is needed, and only once
   player.position = 18;
   await player.pump();
   assert.equal(player.source.ends,2,'the same movie can end again after rewind');
-});
-
-test('AV1 does not signal EOF when the required final chunk fails',async () => {
-  const player = playerAt(18), failure = Object.assign(new Error('Temporary error'),{retryable:true});
-  player.source = {readyState:'open',ends:0,endOfStream(){this.ends++;}};
-  player.position = 18;
-  player.fetch = async () => {throw failure;};
-  await player.pump();
-  assert.equal(player.source.ends,0);
 });

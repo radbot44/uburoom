@@ -96,10 +96,15 @@ test('direct HLS shares without any server segment fetch, isolates viewer tokens
 
 test('browser captions share video but burned subtitle IDs, audio, room and media generation change the output key',async()=>{
   const f=fixture(),media=[];
+  f.plex.av1.ffmpeg='fixture';
   try{
     const off=await f.prepare(f.a),text=await f.prepare(f.b,'1080p20',{subtitleId:'21'}),otherText=await f.prepare(f.b,'1080p20',{subtitleId:'24'});
     media.push(off,text,otherText);assert.equal(off.transcodeId,text.transcodeId);assert.equal(text.transcodeId,otherText.transcodeId);
     assert.equal(off.selection.subtitle,undefined);assert.equal(text.selection.subtitle.id,'21');assert.equal(otherText.selection.subtitle.id,'24');
+    const browserPgs=await f.prepare(f.a,'1080p20',{browserSubtitles:true,subtitleId:'22'}),browserAss=await f.prepare(f.b,'1080p20',{browserSubtitles:true,subtitleId:'23'});
+    media.push(browserPgs,browserAss);assert.equal(browserPgs.selection.subtitle.delivery,'pgs');assert.equal(browserAss.selection.subtitle.delivery,'ass');
+    assert.equal(browserPgs.transcodeId,off.transcodeId);assert.equal(browserAss.transcodeId,off.transcodeId);
+    assert.notEqual(browserPgs.plexContext,browserAss.plexContext);assert.notEqual(browserPgs.captionVersion,browserAss.captionVersion);
     const burn=await f.prepare(f.a,'1080p20',{subtitleId:'22'}),sameBurn=await f.prepare(f.b,'1080p20',{subtitleId:'22'}),otherBurn=await f.prepare(f.b,'1080p20',{subtitleId:'23'});
     media.push(burn,sameBurn,otherBurn);assert.equal(burn.transcodeId,sameBurn.transcodeId);assert.notEqual(burn.transcodeId,off.transcodeId);assert.notEqual(burn.transcodeId,otherBurn.transcodeId);
     for(const choices of[{audioId:'12'},{shareKey:['other-room','media']},{shareKey:['room','other-media']}]){
@@ -108,16 +113,6 @@ test('browser captions share video but burned subtitle IDs, audio, room and medi
     const fallback=await f.b.prepare('1','1080p20',true,undefined,undefined,{shareKey:['room','media'],subtitleId:'off',authorized:async()=>true});
     media.push(fallback);assert.notEqual(fallback.transcodeId,off.transcodeId);
   }finally{await Promise.all(media.map(m=>f.plex.stop(m)));await f.plex.close();}
-});
-
-test('different browser-rendered ASS and PGS choices share video while retaining personal selection and grants',async()=>{
-  const f=fixture();f.plex.av1.ffmpeg='fixture';
-  try{
-    const a=await f.prepare(f.a,'1080p20',{browserSubtitles:true,subtitleId:'22'}),b=await f.prepare(f.b,'1080p20',{browserSubtitles:true,subtitleId:'23'});
-    assert.equal(a.selection.subtitle.delivery,'pgs');assert.equal(b.selection.subtitle.delivery,'ass');assert.equal(a.transcodeId,b.transcodeId);assert.equal(f.state.starts.length,1);
-    assert.notEqual(a.plexContext,b.plexContext);assert.notEqual(a.captionVersion,b.captionVersion);
-    await f.plex.stop(a);assert.equal(f.state.stops.length,0);await f.plex.stop(b);assert.equal(f.state.stops.length,1);
-  }finally{await f.plex.close();}
 });
 
 test('denied and expired consumers cannot borrow another account output; refresh replaces a group without stopping its remaining users',async()=>{
@@ -135,16 +130,6 @@ test('denied and expired consumers cannot borrow another account output; refresh
   }finally{await f.plex.close();}
 });
 
-test('bounded or unsupported anchors fall back to independent outputs without stopping the returned private stream',async()=>{
-  const f=fixture();f.plex.hlsPool.anchorBytes=100;
-  try{
-    const [a,b]=await Promise.all([f.prepare(f.a),f.prepare(f.b)]);assert.notEqual(a.transcodeId,b.transcodeId);
-    assert.equal(a.hlsLease,undefined);assert.equal(b.hlsLease,undefined);assert.equal(f.state.stops.length,0);
-    assert.equal(f.plex.hlsPool.bytes,0);assert.equal(f.plex.hlsPool.pendingBytes,0);
-    await f.plex.stop(a);await f.plex.stop(b);assert.equal(f.state.stops.length,2);
-  }finally{await f.plex.close();}
-});
-
 test('an expired producer cannot use another consumer permission to prepare its source',async()=>{
   let allowed=true,finish,entered;const started=new Promise(resolve=>{entered=resolve;});const stopped=[];
   const pool=new HLSPool(async media=>stopped.push(media));pool.anchor=async()=>({url:'http://fixture/0.ts',bytes:Buffer.alloc(0),type:'video/mp2t'});
@@ -155,6 +140,15 @@ test('an expired producer cannot use another consumer permission to prepare its 
 });
 
 test('aggregate anchor memory and pooled group counts are bounded without preventing private playback',async()=>{
+  const boundedAnchor=fixture();boundedAnchor.plex.hlsPool.anchorBytes=100;
+  try{
+    const [a,b]=await Promise.all([boundedAnchor.prepare(boundedAnchor.a),boundedAnchor.prepare(boundedAnchor.b)]);
+    assert.notEqual(a.transcodeId,b.transcodeId);
+    assert.equal(a.hlsLease,undefined);assert.equal(b.hlsLease,undefined);assert.equal(boundedAnchor.state.stops.length,0);
+    assert.equal(boundedAnchor.plex.hlsPool.bytes,0);assert.equal(boundedAnchor.plex.hlsPool.pendingBytes,0);
+    await boundedAnchor.plex.stop(a);await boundedAnchor.plex.stop(b);assert.equal(boundedAnchor.state.stops.length,2);
+  }finally{await boundedAnchor.plex.close();}
+
   for(const limit of['bytes','groups']){
     const f=fixture();if(limit==='bytes')f.plex.hlsPool.maxBytes=f.bytes.length;else f.plex.hlsPool.maxGroups=1;
     try{

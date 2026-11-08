@@ -731,17 +731,13 @@ test('provider removal protects the last sign-in, checks CSRF and current owners
   await browser.discord('guest',true);
   account=(await browser.request('/api/account')).body.account;
   assert.equal(account.id,original.id);assert.equal(account.identities.length,2,'both providers can be connected again');
-});
 
-test('provider removal rejects unusable Plex credentials and account changes during remaining-provider verification',tls,async t=>{
-  const f=await fixture(t),browser=f.browser();await browser.discord('guest');await browser.plex('alice',true);
   const owner=f.browser();await owner.discord();await owner.plex('bob',true);f.members.delete(f.config.ownerId);
   assert.equal((await owner.post('/api/account/plex/remove',{subject:'102'})).status,400,'owner also needs an eligible remaining sign-in');
   f.members.add(f.config.ownerId);
-  const original=(await browser.request('/api/account')).body.account;
   f.provider.revoked.add('101');f.app.plexAuth.clear();
   assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'revoked Plex cannot replace Discord sign-in');
-  assert.equal(f.app.registry.identities(original.id).length,2);
+  assert.equal(f.app.registry.identities(account.id).length,2);
   f.provider.revoked.delete('101');
   const credential=f.app.registry.credential('101');
   f.app.registry.db.prepare('DELETE FROM credentials WHERE subject=?').run('101');f.app.registry.credentialCache.delete('101');
@@ -750,7 +746,7 @@ test('provider removal rejects unusable Plex credentials and account changes dur
   const verify=f.app.plexAuth.forUser.bind(f.app.plexAuth);
   f.app.plexAuth.forUser=async id=>{const result=await verify(id);f.app.registry.db.prepare('UPDATE users SET revision=revision+1 WHERE id=?').run(id);return result;};
   assert.equal((await browser.post('/api/account/discord/remove',{subject:f.provider.subjects.guest})).status,400,'stale sign-in cannot unlink after awaited verification');
-  assert.equal(f.app.registry.identities(original.id).length,2);
+  assert.equal(f.app.registry.identities(account.id).length,2);
 });
 
 test('verified reverse linking offers an explicit offline merge, refuses stale proof and signs out both previous accounts',tls,async t=>{

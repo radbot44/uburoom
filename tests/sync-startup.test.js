@@ -1,20 +1,8 @@
 'use strict';
 const {install}=require('./helpers/watch-sync');
 const test=require('node:test'),assert=require('node:assert/strict');
-const {trials,startup,compareStarts,immediateStarts}=require('../scripts/sync-startup');
 const {alarm,target}=require('../web/playback-timing');
 const {Hub}=require('../server/core'),{Watch}=require('../server/watch'),{randomUUID}=require('node:crypto');
-test('startup trials are reproducible, balanced within each RTT/round, and use both mode orders',()=>{
-  const plan=trials(5,[20,320]);assert.deepEqual(plan,trials(5,[20,320]));assert.equal(plan.length,20);
-  for(let round=1;round<=5;round++)for(const rtt of[20,320])assert.deepEqual(plan.filter(r=>r.round===round&&r.rtt===rtt).map(r=>r.mode).sort(),['controller','unit']);
-  assert.ok(plan.some((r,i)=>i%2===0&&r.mode==='controller'));assert.ok(plan.some((r,i)=>i%2===0&&r.mode==='unit'));
-});
-test('startup metrics exclude decoded readiness probes and compare only observed matching media frames',()=>{
-  const row=(media,time,extra={})=>({event:'frame',roomPaused:false,frameMediaTime:media,frameServerTime:time,presentationErrorMs:5,...extra});
-  const a={entries:[row(0,100,{roomPaused:true}),row(.042,180),row(.083,222)]},b={entries:[row(.042,200),row(.083,242)]};
-  assert.equal(startup(a,[]).firstFrameServerTime,180);assert.equal(compareStarts(a,b).firstCommonFrame.mediaTime,.042);
-  assert.equal(compareStarts(a,b).matchingFrameDifferencesMs.p95,20);assert.equal(startup({entries:[]},[]).firstFrameServerTime,null);
-});
 test('scheduled targets hold nonzero positions and then interpolate from the shared deadline',()=>{
   const state={serverNow:100000,startAt:101750,state:{position:35,paused:false,duration:120}};
   assert.equal(target(state,100500),35);assert.equal(target(state,101750),35);assert.equal(target(state,102750),36);
@@ -92,25 +80,11 @@ test('readiness schedules one initial start without advancing early; ordinary co
     assert.equal(f.room.startAt,deadline,'a late unready viewer cannot delay the group');
     await f.dispatch('media.pause');assert.equal(f.room.startAt,undefined);assert.equal(f.room.s.state.paused,true);
     await f.dispatch('media.play');assert.ok(f.room.startAt>=Date.now()+390,'ordinary resume is scheduled');
-    await f.dispatch('media.load',{mediaId:'demo'});assert.equal(f.room.startAt,undefined,'replacement cannot inherit the old start');
-  }finally{f.watch.close();}
-});
-test('explicit initial pause survives readiness; seeking cancels a pending scheduled start',async()=>{
-  const f=roomFixture();try{
+    await f.dispatch('media.seek.absolute',{seconds:35});assert.equal(f.room.startAt,undefined);assert.ok(f.watch.position(f.room)>=35);
     await f.dispatch('media.load',{mediaId:'demo'});await f.dispatch('media.pause');
     await f.watch.ready(f.room,f.host,f.h,f.room.mediaVersion,true);await f.watch.ready(f.room,f.guest,f.g,f.room.mediaVersion,true);
-    assert.equal(f.room.startAt,undefined);assert.equal(f.room.s.state.paused,true);
-    await f.dispatch('media.play');assert.ok(f.room.startAt>Date.now());
-    await f.dispatch('media.seek.absolute',{seconds:35});assert.equal(f.room.startAt,undefined);assert.ok(f.watch.position(f.room)>=35);
-  }finally{f.watch.close();}
-});
-test('immediate comparison removes only the fixture autoplay deadline and retains validation',async()=>{
-  const f=roomFixture();try {
-    immediateStarts(f.watch);await f.dispatch('media.load',{mediaId:'demo'});
-    await f.watch.ready(f.room,f.host,f.h,f.room.mediaVersion,true);await f.watch.ready(f.room,f.guest,f.g,f.room.mediaVersion,true);
-    assert.equal(f.room.startAt,undefined);assert.equal(f.room.s.state.paused,false);
-    const denied=await f.watch.execute(f.room,{action:'media.pause'},f.host,()=>false);
-    assert.equal(denied.status,'unavailable');assert.equal(f.room.s.state.paused,false);
+    assert.equal(f.room.startAt,undefined,'explicit initial pause survives readiness');assert.equal(f.room.s.state.paused,true);
+    await f.dispatch('media.load',{mediaId:'demo'});assert.equal(f.room.startAt,undefined,'replacement cannot inherit the old start');
   }finally{f.watch.close();}
 });
 

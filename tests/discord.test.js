@@ -63,7 +63,7 @@ test('bot clears its guild command set on startup and registers no message or in
   await client.destroy();
 });
 
-test('Discord startup waits for actual readiness and removes its startup listener', async () => {
+test('Discord startup waits for readiness, handles timeouts, and distinguishes sanitized failures', async () => {
   const client = fakeClient(async () => 'private-token');
   let connected = false;
   const connection = connectBot(client, 'private-token', 1000).then(() => { connected = true; });
@@ -74,9 +74,32 @@ test('Discord startup waits for actual readiness and removes its startup listene
   assert.equal(connected, true);
   assert.equal(client.listenerCount(Events.ClientReady), 0);
   assert.equal(client.destroyed, undefined);
+
+  // Stalled login timeout destroys client
+  const stalled = fakeClient(() => new Promise(() => {}));
+  await assert.rejects(connectBot(stalled, 'private-token', 20), /login timed out/);
+  assert.equal(stalled.destroyed, true);
+  assert.equal(stalled.listenerCount(Events.ClientReady), 0);
+  stalled.emit(Events.ClientReady);
+
+  // Error classification and token sanitization
+  for (const [error, expected] of [
+    [Object.assign(new Error('private-token'), { code: 'TokenInvalid' }), /rejected the bot token/],
+    [new Error('Used disallowed intents: private-token'), /rejected the requested privileged Gateway intents/],
+    [Object.assign(new Error('private-token'), { cause: { code: 'ECONNRESET' } }), /ECONNRESET/]
+  ]) {
+    const errClient = fakeClient(async () => { throw error; });
+    await assert.rejects(connectBot(errClient, 'private-token', 1000), result => {
+      assert.match(result.message, expected);
+      assert.doesNotMatch(result.message, /private-token/);
+      return true;
+    });
+    assert.equal(errClient.destroyed, true);
+    assert.equal(errClient.listenerCount(Events.ClientReady), 0);
+  }
 });
 
-test('Discord membership is fetched per request and voice permissions fail closed on shard gaps', async () => {
+test('Discord membership is fetched per request, caches in-flight lookups, and voice permissions fail closed on shard gaps', async () => {
   const client = new EventEmitter(), voice = '111111111111111111'; let calls = 0, present = true, role = true;
   const g = { name: 'Test guild', available: true, shard: { status: Status.Ready },
     channels: { cache: new Map([[voice, { id: voice, name: 'Lounge', rawPosition: 0, isVoiceBased: () => true }]]) },
@@ -102,64 +125,23 @@ test('Discord membership is fetched per request and voice permissions fail close
   g.shard.status = Status.Ready; present = false;
   assert.equal(await access.refresh('friend'), false); assert.equal(access.isMember('friend'), false);
   assert.equal(access.hasRole('friend', 'moderator'), false);
-});
 
-test('a stalled Discord login times out, destroys the client and cannot later become ready', async () => {
-  const client = fakeClient(() => new Promise(() => {}));
-  await assert.rejects(connectBot(client, 'private-token', 20), /login timed out/);
-  assert.equal(client.destroyed, true);
-  assert.equal(client.listenerCount(Events.ClientReady), 0);
-  client.emit(Events.ClientReady);
-});
-
-test('Discord startup distinguishes token, intent and network failures without exposing error details', async () => {
-  for (const [error, expected] of [
-    [Object.assign(new Error('private-token'), { code: 'TokenInvalid' }), /rejected the bot token/],
-    [new Error('Used disallowed intents: private-token'), /rejected the requested privileged Gateway intents/],
-    [Object.assign(new Error('private-token'), { cause: { code: 'ECONNRESET' } }), /ECONNRESET/]
-  ]) {
-    const client = fakeClient(async () => { throw error; });
-    await assert.rejects(connectBot(client, 'private-token', 1000), result => {
-      assert.match(result.message, expected);
-      assert.doesNotMatch(result.message, /private-token/);
-      return true;
-    });
-    assert.equal(client.destroyed, true);
-    assert.equal(client.listenerCount(Events.ClientReady), 0);
-  }
-});
-
-test('lookup preserves cached membership while in-flight fetch is pending and handles timeout failure', async () => {
-  const client = new EventEmitter();
-  let fetchCount = 0;
-  let delay = false;
-  const g = {
-    name: 'Guild',
-    available: true,
-    shard: { status: Status.Ready },
-    members: {
-      fetch: async () => {
-        fetchCount++;
-        if (delay) {
-          await new Promise(r => setTimeout(r, 20));
-          throw new Error('Fetch failed');
-        }
-        return { user: { bot: false }, roles: { cache: new Map() } };
-      }
+  // Cached membership survives while in-flight fetch is pending and handles timeout/outage
+  let delayed = false;
+  const prevFetch = g.members.fetch;
+  g.members.fetch = async options => {
+    if (delayed) {
+      await new Promise(r => setTimeout(r, 20));
+      throw new Error('Fetch failed');
     }
+    return prevFetch(options);
   };
-  client.guilds = { cache: new Map([['guild', g]]) };
-  client.isReady = () => true;
-  const access = discordAccess(client, 'guild');
-
+  present = true;
   assert.equal(await access.refresh('friend'), true);
   assert.equal(access.isMember('friend'), true);
-  assert.equal(fetchCount, 1);
-
-  delay = true;
+  delayed = true;
   const inFlight = access.refresh('friend');
   assert.equal(access.isMember('friend'), true, 'cached membership survives while lookup is in-flight');
-
   const res = await inFlight;
   assert.equal(res, undefined, 'a failed lookup is no answer, not a denial');
   assert.equal(access.isMember('friend'), true, 'valid cached membership survives failed refresh');

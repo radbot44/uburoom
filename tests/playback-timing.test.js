@@ -338,22 +338,19 @@ test('frame diagnostics have their own bounded sanitized ring',()=>{
   const d=create();for(let i=0;i<7300;i++)d.record('frame',{frameMediaTime:i,frameServerTime:100000+i,clockEpoch:'secret',url:'secret'});
   const log=d.snapshot();assert.equal(log.discardedFrames,100);assert.equal(log.entries.filter(r=>r.event==='frame').length,7200);
   assert.equal(log.entries.filter(r=>r.event==='frame')[0].frameMediaTime,100);assert.ok(!JSON.stringify(log).includes('secret'));
-});
 
-test('degradation and capability diagnostics remain bounded and exclude media/credential/device identifiers',()=>{
-  const d=create();for(let i=0;i<400;i++)d.record('decode-capability',{capabilityStatus:'reported',capabilitySupported:true,capabilitySmooth:false,
+  const eventDiag=create();for(let i=0;i<400;i++)eventDiag.record('decode-capability',{capabilityStatus:'reported',capabilitySupported:true,capabilitySmooth:false,
     capabilityPowerEfficient:false,roomId:'secret-room',mediaId:'secret-media',url:'https://secret-media',token:'secret-token',device:'secret-device',error:'secret-error'});
-  d.record('playback-degraded',{degradation:'severe-drops',severeRatio:.5,severeTotal:48,severeDropped:24,sampleGapMs:500});
-  const log=d.snapshot();assert.equal(log.entries.length,300);assert.equal(log.discardedEvents,102);
-  assert.equal(log.entries.at(-1).severeDropped,24);assert.ok(!JSON.stringify(log).includes('secret'));
-});
-test('sync-quality diagnostics retain bounded scoring contributors and sanitize device identity',()=>{
-  const d=create();d.record('sync-quality',{qualityStatus:'playing',qualityConfidence:'reduced',qualityReason:'position-timing-estimate',rawQualityScore:.3,smoothedQualityScore:.8,
+  eventDiag.record('playback-degraded',{degradation:'severe-drops',severeRatio:.5,severeTotal:48,severeDropped:24,sampleGapMs:500});
+  const capLog=eventDiag.snapshot();assert.equal(capLog.entries.length,300);assert.equal(capLog.discardedEvents,102);
+  assert.equal(capLog.entries.at(-1).severeDropped,24);assert.ok(!JSON.stringify(capLog).includes('secret'));
+
+  eventDiag.record('sync-quality',{qualityStatus:'playing',qualityConfidence:'reduced',qualityReason:'position-timing-estimate',rawQualityScore:.3,smoothedQualityScore:.8,
     measuredPlaybackSeconds:50,outOfSync250Seconds:12,outOfSync500Seconds:4,automaticCorrectionCount:3,
     automaticCorrectionMagnitudeMs:1900,correctionDutyCycle:.2,rateAdjustedSeconds:10,rateAdjustmentSeconds:.4,
     bufferingSeconds:2,qualityMeasurementFreshnessMs:2800,presentationMeasuredSeconds:40,positionMeasuredSeconds:10,
     lastKnownQualityLevel:'good',deviceLabel:'Firefox · Android'});
-  const row=d.snapshot().entries.find(entry=>entry.event==='sync-quality');
+  const row=eventDiag.snapshot().entries.find(entry=>entry.event==='sync-quality');
   assert.equal(row.qualityStatus,'playing');assert.equal(row.qualityConfidence,'reduced');assert.equal(row.qualityReason,'position-timing-estimate');assert.equal(row.rawQualityScore,.3);
   assert.equal(row.automaticCorrectionCount,3);assert.equal(row.bufferingSeconds,2);assert.equal(row.lastKnownQualityLevel,'good');
   assert.equal(row.presentationMeasuredSeconds,40);assert.equal(row.positionMeasuredSeconds,10);

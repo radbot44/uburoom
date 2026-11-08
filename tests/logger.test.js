@@ -12,7 +12,7 @@ function temporary(t) {
   return dir;
 }
 
-test('redact masks sensitive tokens, passwords, and cookies', () => {
+test('redact masks sensitive tokens, passwords, cookies, binary views, and cyclic objects', () => {
   assert.equal(
     redact('Connecting to Plex at https://192.168.1.50:32400?X-Plex-Token=secret12345&foo=bar'),
     'Connecting to Plex at https://192.168.1.50:32400?X-Plex-Token=[REDACTED]&foo=bar'
@@ -26,6 +26,11 @@ test('redact masks sensitive tokens, passwords, and cookies', () => {
   assert.equal(
     redact('Cookie: uburoom=abcdef1234567890; other=ok'),
     'Cookie: uburoom=[REDACTED]; other=ok'
+  );
+
+  assert.equal(
+    redact('Cookie: uburoom_session=secret123; uburoom_csrf=csrf456; uburoom=main789; other=fine'),
+    'Cookie: uburoom_session=[REDACTED]; uburoom_csrf=[REDACTED]; uburoom=[REDACTED]; other=fine'
   );
 
   assert.equal(
@@ -50,14 +55,6 @@ test('redact masks sensitive tokens, passwords, and cookies', () => {
   assert.equal(redactedObj.token, '[REDACTED]');
   assert.equal(redactedObj.nested.password, '[REDACTED]');
   assert.equal(redactedObj.nested.safe, 'visible');
-});
-
-test('redact masks uburoom_* cookies, Buffer, authorization/csrf, URL, Date, shared siblings, and cycles', () => {
-  // uburoom_* cookies
-  assert.equal(
-    redact('Cookie: uburoom_session=secret123; uburoom_csrf=csrf456; uburoom=main789; other=fine'),
-    'Cookie: uburoom_session=[REDACTED]; uburoom_csrf=[REDACTED]; uburoom=[REDACTED]; other=fine'
-  );
 
   // Date preservation
   const date = new Date('2026-10-29T12:00:00.000Z');
@@ -117,15 +114,17 @@ test('redact masks uburoom_* cookies, Buffer, authorization/csrf, URL, Date, sha
   assert.equal(redactedOuter.cause.message, 'Root cause token=[REDACTED]');
 });
 
-test('Logger respects log levels and level gating', async (t) => {
+test('Logger respects log levels, gating, child tags, and debug output', async (t) => {
   const dir = temporary(t);
   const logFile = path.join(dir, 'test.log');
   const logger = new Logger({ level: 'info', file: logFile, isTTY: false });
+  const httpLogger = logger.child('HTTP');
 
   logger.debug('Test', 'this debug message should be skipped');
   logger.info('Test', 'this info message should be logged');
   logger.warn('Test', 'this warn message should be logged');
   logger.error('Test', 'this error message should be logged');
+  httpLogger.info('GET /watch 200 5ms');
 
   await logger.close();
 
@@ -134,29 +133,13 @@ test('Logger respects log levels and level gating', async (t) => {
   assert.ok(content.includes('this info message should be logged'));
   assert.ok(content.includes('this warn message should be logged'));
   assert.ok(content.includes('this error message should be logged'));
-});
-
-test('Logger debug level outputs debug messages', async (t) => {
-  const dir = temporary(t);
-  const logFile = path.join(dir, 'debug.log');
-  const logger = new Logger({ level: 'debug', file: logFile, isTTY: false });
-
-  logger.debug('DebugTag', 'verbose payload: X-Plex-Token=secret-debug');
-  await logger.close();
-
-  const content = fs.readFileSync(logFile, 'utf8');
-  assert.ok(content.includes('[DebugTag] verbose payload: X-Plex-Token=[REDACTED]'));
-});
-
-test('Logger child loggers append subsystem tags', async (t) => {
-  const dir = temporary(t);
-  const logFile = path.join(dir, 'child.log');
-  const logger = new Logger({ level: 'info', file: logFile, isTTY: false });
-  const httpLogger = logger.child('HTTP');
-
-  httpLogger.info('GET /watch 200 5ms');
-  await logger.close();
-
-  const content = fs.readFileSync(logFile, 'utf8');
   assert.ok(content.includes('[HTTP] GET /watch 200 5ms'));
+
+  const debugLog = path.join(dir, 'debug.log');
+  const debugLogger = new Logger({ level: 'debug', file: debugLog, isTTY: false });
+  debugLogger.debug('DebugTag', 'verbose payload: X-Plex-Token=secret-debug');
+  await debugLogger.close();
+
+  const debugContent = fs.readFileSync(debugLog, 'utf8');
+  assert.ok(debugContent.includes('[DebugTag] verbose payload: X-Plex-Token=[REDACTED]'));
 });

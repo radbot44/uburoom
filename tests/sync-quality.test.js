@@ -12,7 +12,7 @@ function refresh(tracker,at,overrides={}) {
   return tracker.refresh({at,rttSampleCount:10,clockValid:true,clockAgeMs:0,clockUncertaintyMs:20,playbackStatus:'playing',...overrides});
 }
 
-test('scoring rewards clean playback and ignores large RTT or jitter variation',()=>{
+test('scoring rewards clean playback and penalizes drift, seeks, and speed correction while ignoring jitter',()=>{
   assert.equal(quality.calculate(clean),1);
   assert.equal(quality.calculate({...clean,networkRttMs:1000,networkJitterMs:900}),1,'mobile network latency/range is diagnostic only');
   const tracker=quality.create();ready(tracker);
@@ -23,16 +23,10 @@ test('scoring rewards clean playback and ignores large RTT or jitter variation',
   assert.equal(jitterSpike.score,first.score,'network timing variation is not a direct score input');
   assert.equal(quality.calculate({...clean,bufferingSeconds:undefined}),undefined,'missing measurements remain unavailable');
   assert.equal(quality.calculate({...clean,bufferingSeconds:-1}),undefined);
-});
-
-test('out-of-sync time degrades playback even without automatic corrections',()=>{
   const drifting={...clean,measuredSeconds:60,outOfSync250Seconds:60,outOfSync500Seconds:60};
   const score=quality.calculate(drifting);
   assert.ok(score<.1,'continuous drift beyond 500 ms scores poorly without correction events');
   assert.ok(quality.calculate({...clean,outOfSync250Seconds:30})<1,'time beyond 250 ms is represented');
-});
-
-test('hard correction frequency and magnitude plus speed-correction duty reduce quality',()=>{
   const corrected=quality.calculate({...clean,automaticCorrectionCount:8,automaticCorrectionMagnitudeMs:12000,
     rateAdjustedSeconds:20,rateAdjustmentSeconds:.8});
   assert.ok(corrected<.5,'frequent large seeks and sustained playback-rate correction affect quality');
@@ -157,20 +151,7 @@ test('four quality bands use the existing inclusive boundaries with hysteresis',
   assert.equal(quality.level(.77,'fair'),'fair');assert.equal(quality.level(.78,'fair'),'good');
 });
 
-test('Chrome-style startup and imperfect mixed sampling color promptly without perfect history',()=>{
-  const tracker=quality.create(),context='chrome';
-  assert.equal(refresh(tracker,0,{clockValid:false}).confidence,'provisional');
-  tracker.sample({at:2500,errorMs:35,source:'position',eligible:true,context,clockRevision:1});
-  tracker.sample({at:3500,errorMs:30,source:'presentation',eligible:true,context,clockRevision:1});
-  assert.equal(refresh(tracker,3500,{rttSampleCount:2,clockAgeMs:1200}).confidence,'confident');
-  for(let at=4500;at<=70000;at+=1000) {
-    tracker.sample({at,errorMs:40,source:at===24000?'position':'presentation',eligible:true,context,clockRevision:1});
-    const result=refresh(tracker,at,{clockAgeMs:1800,clockUncertaintyMs:150,rttSampleCount:2});
-    assert.equal(result.confidence,'confident','an isolated fallback does not poison a 60-second window');
-  }
-});
-
-test('Android-style clock variability and missed probes do not flicker, but prolonged loss greys',()=>{
+test('clock loss and prolonged pauses decay confidence to reduced without losing score, and resume promptly re-qualifies',()=>{
   const tracker=quality.create(),context='android';
   tracker.sample({at:0,errorMs:45,source:'position',eligible:true,context,clockRevision:1});
   tracker.sample({at:1000,errorMs:65,source:'position',eligible:true,context,clockRevision:1});
@@ -183,6 +164,16 @@ test('Android-style clock variability and missed probes do not flicker, but prol
   tracker.sample({at:16000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
   tracker.sample({at:17000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
   assert.equal(refresh(tracker,17000,{rttSampleCount:1}).confidence,'confident');
+
+  const pauseTracker=quality.create(),pContext='paused';
+  pauseTracker.sample({at:0,errorMs:10,eligible:true,context:pContext,clockRevision:1});
+  pauseTracker.sample({at:1000,errorMs:10,eligible:true,context:pContext,clockRevision:1});
+  refresh(pauseTracker,1000);
+  assert.equal(refresh(pauseTracker,50000,{playbackStatus:'paused',clockValid:false}).confidence,'confident');
+  assert.equal(refresh(pauseTracker,122000,{playbackStatus:'paused',clockValid:false}).confidence,'reduced');
+  pauseTracker.sample({at:123000,errorMs:15,eligible:true,context:pContext,clockRevision:1});
+  pauseTracker.sample({at:124000,errorMs:15,eligible:true,context:pContext,clockRevision:1});
+  assert.equal(refresh(pauseTracker,124000).confidence,'confident');
 });
 
 test('five-minute-old paused measurements are omitted from reports without waiting',()=>{
@@ -197,16 +188,4 @@ test('five-minute-old paused measurements are omitted from reports without waiti
   assert.equal(quality.reportableMeasurementFreshnessMs(299999),299999);
   assert.equal(quality.reportableMeasurementFreshnessMs(-1),undefined);
   assert.equal(quality.reportableMeasurementFreshnessMs(NaN),undefined);
-});
-
-test('pauses retain measured ratings, then expire, without a long resume warmup',()=>{
-  const tracker=quality.create(),context='paused';
-  tracker.sample({at:0,errorMs:10,eligible:true,context,clockRevision:1});
-  tracker.sample({at:1000,errorMs:10,eligible:true,context,clockRevision:1});
-  refresh(tracker,1000);
-  assert.equal(refresh(tracker,50000,{playbackStatus:'paused',clockValid:false}).confidence,'confident');
-  assert.equal(refresh(tracker,122000,{playbackStatus:'paused',clockValid:false}).confidence,'reduced');
-  tracker.sample({at:123000,errorMs:15,eligible:true,context,clockRevision:1});
-  tracker.sample({at:124000,errorMs:15,eligible:true,context,clockRevision:1});
-  assert.equal(refresh(tracker,124000).confidence,'confident');
 });

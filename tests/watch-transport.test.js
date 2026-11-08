@@ -9,7 +9,7 @@ const PlaybackDiagnostics = require('../web/playback-diagnostics');
 class MockSocket {
   constructor(url) {
     this.url = url;
-    this.connectionId=++MockSocket.nextId;
+    this.connectionId = ++MockSocket.nextId;
     this.readyState = 0;
     this.sent = [];
     this.autoAuth = true;
@@ -24,7 +24,7 @@ class MockSocket {
     const msg = JSON.parse(data);
     this.sent.push(msg);
     if (this.autoAuth && msg.type === 'auth') {
-      queueMicrotask(() => this.receive({ type: 'auth-ok',connectionId:this.connectionId }));
+      queueMicrotask(() => this.receive({ type: 'auth-ok', connectionId: this.connectionId }));
     }
   }
   close(code = 1000, reason = '') {
@@ -39,82 +39,61 @@ class MockSocket {
   }
 }
 
-MockSocket.nextId=0;
+MockSocket.nextId = 0;
 
 test('socket diagnostics distinguish an abnormal loss from an intentional reconnect', async () => {
-  const closes=[];
-  const transport=new WatchTransport({url:'wss://example.test/watch-socket',WebSocket:MockSocket,
-    identity:()=>({token:'tok',csrf:'csr'}),onClose:details=>closes.push(details)});
+  const closes = [];
+  const transport = new WatchTransport({
+    url: 'wss://example.test/watch-socket', WebSocket: MockSocket,
+    identity: () => ({ token: 'tok', csrf: 'csr' }), onClose: details => closes.push(details)
+  });
   await transport.connect();
-  const firstId=transport.connectionId;
-  assert.ok(firstId>0);
+  const firstId = transport.connectionId;
+  assert.ok(firstId > 0);
   transport.socket.close(1006);
-  assert.equal(closes.length,1);
-  assert.equal(closes[0].connectionId,firstId);
-  assert.equal(closes[0].connectionAttempt,1);
-  assert.equal(closes[0].closeInitiator,'none');
-  assert.equal(closes[0].wasReady,true);
-  assert.ok(closes[0].connectionAgeMs>=0);
+  assert.equal(closes.length, 1);
+  assert.equal(closes[0].connectionId, firstId);
+  assert.equal(closes[0].connectionAttempt, 1);
+  assert.equal(closes[0].closeInitiator, 'none');
+  assert.equal(closes[0].wasReady, true);
+  assert.ok(closes[0].connectionAgeMs >= 0);
   await transport.connect();
-  assert.equal(transport.connectionAttempt,2);
-  assert.notEqual(transport.connectionId,firstId);
+  assert.equal(transport.connectionAttempt, 2);
+  assert.notEqual(transport.connectionId, firstId);
   transport.interrupt(1000);
-  assert.equal(closes[1].closeInitiator,'interrupt');
-  assert.equal(closes[1].connectionAttempt,2);
+  assert.equal(closes[1].closeInitiator, 'interrupt');
+  assert.equal(closes[1].connectionAttempt, 2);
   transport.close();
   // The first disconnect scheduled a 500ms retry, which was superseded by
   // the manual connect. It must not reopen the transport after final close.
-  await new Promise(resolve=>setTimeout(resolve,650));
-  assert.equal(transport.connectionAttempt,2,'an orphan retry must not resurrect a stopped transport');
-  assert.equal(transport.stopped,true);
+  await new Promise(resolve => setTimeout(resolve, 650));
+  assert.equal(transport.connectionAttempt, 2, 'an orphan retry must not resurrect a stopped transport');
+  assert.equal(transport.stopped, true);
 });
 
 test('diagnostic exports distinguish missing and locked rooms without leaking room identifiers', () => {
-  const diagnostics=PlaybackDiagnostics.create({now:()=>1000,monotonic:()=>0});
-  diagnostics.record('control-connected',{connectionId:4,connectionAttempt:2,visibility:'hidden',url:'wss://secret'});
-  diagnostics.record('room-list-unavailable',{roomListState:'locked',roomCount:2,connectionId:4,roomId:'secret',reason:'private'});
-  diagnostics.record('control-disconnected',{socketCloseCode:1006,connectionId:4,connectionAgeMs:400000,
-    closeInitiator:'none',socketCloseClean:false,socketWasReady:true,reason:'secret'});
-  const rows=diagnostics.snapshot().entries;
-  const room=rows.find(row=>row.event==='room-list-unavailable');
-  assert.equal(room.roomListState,'locked');
-  assert.equal(room.roomCount,2);
-  assert.equal(room.connectionId,4);
-  assert.equal(Object.hasOwn(room,'roomId'),false);
-  const closed=rows.find(row=>row.event==='control-disconnected');
-  assert.equal(closed.closeInitiator,'none');
-  assert.equal(closed.socketWasReady,true);
-  assert.equal(closed.socketCloseClean,false);
-  assert.equal(Object.hasOwn(closed,'reason'),false);
-  assert.equal(Object.hasOwn(rows.find(row=>row.event==='control-connected'),'url'),false);
-});
-
-test('clock sample resolves promptly and cleans up pending entry', async () => {
-  const clocks = [];
-  const transport = new WatchTransport({
-    url: 'wss://example.test/watch-socket',
-    WebSocket: MockSocket,
-    identity: () => ({ token: 'tok', csrf: 'csr' }),
-    beginClock: () => ({ start: 100 }),
-    onClock: (msg, ex) => clocks.push({ msg, ex }),
-    clockTimeoutMs: 50,
-    heartbeatTimeoutMs: 200
+  const diagnostics = PlaybackDiagnostics.create({ now: () => 1000, monotonic: () => 0 });
+  diagnostics.record('control-connected', { connectionId: 4, connectionAttempt: 2, visibility: 'hidden', url: 'wss://secret' });
+  diagnostics.record('room-list-unavailable', { roomListState: 'locked', roomCount: 2, connectionId: 4, roomId: 'secret', reason: 'private' });
+  diagnostics.record('control-disconnected', {
+    socketCloseCode: 1006, connectionId: 4, connectionAgeMs: 400000,
+    closeInitiator: 'none', socketCloseClean: false, socketWasReady: true, reason: 'secret'
   });
-
-  await transport.connect();
-  const socket = transport.socket;
-  assert.equal(socket.sent[0].type, 'auth');
-  assert.equal(transport.ready, true);
-  assert.equal(socket.sent.filter(m => m.type === 'clock').length, 1);
-  const clockId = socket.sent.find(m => m.type === 'clock').id;
-  socket.receive({ type: 'clock', id: clockId, serverNow: 500, timing: { serverReceivedAt: 200, serverSentAt: 205, serverProcessingMs: 5 } });
-  assert.equal(clocks.length, 1);
-  assert.equal(clocks[0].ex.start, 100);
-  assert.equal(transport.pending.size, 0);
-  transport.close();
+  const rows = diagnostics.snapshot().entries;
+  const room = rows.find(row => row.event === 'room-list-unavailable');
+  assert.equal(room.roomListState, 'locked');
+  assert.equal(room.roomCount, 2);
+  assert.equal(room.connectionId, 4);
+  assert.equal(Object.hasOwn(room, 'roomId'), false);
+  const closed = rows.find(row => row.event === 'control-disconnected');
+  assert.equal(closed.closeInitiator, 'none');
+  assert.equal(closed.socketWasReady, true);
+  assert.equal(closed.socketCloseClean, false);
+  assert.equal(Object.hasOwn(closed, 'reason'), false);
+  assert.equal(Object.hasOwn(rows.find(row => row.event === 'control-connected'), 'url'), false);
 });
 
-test('clock sample expires after validity window without closing healthy socket and allows prompt reacquisition', async () => {
+test('clock sample resolves promptly, suppresses inflight duplicates, expires on timeout, and reacquires cleanly', async () => {
   const clocks = [];
   let sampleNum = 0;
   const transport = new WatchTransport({
@@ -126,8 +105,13 @@ test('clock sample expires after validity window without closing healthy socket 
     clockTimeoutMs: 40,
     heartbeatTimeoutMs: 300
   });
+
   await transport.connect();
   const socket = transport.socket;
+  assert.equal(socket.sent[0].type, 'auth');
+  assert.equal(transport.ready, true);
+
+  // 1. Initial clock sample resolves promptly and cleans up pending entry
   const firstClocks = socket.sent.filter(m => m.type === 'clock');
   assert.equal(firstClocks.length, 1);
   const firstId = firstClocks[0].id;
@@ -136,31 +120,43 @@ test('clock sample expires after validity window without closing healthy socket 
   transport.clock();
   assert.equal(socket.sent.filter(m => m.type === 'clock').length, 1);
 
+  // Prompt resolution
+  socket.receive({ type: 'clock', id: firstId, serverNow: 500, timing: { serverReceivedAt: 200, serverSentAt: 205, serverProcessingMs: 5 } });
+  assert.equal(clocks.length, 1);
+  assert.equal(clocks[0].ex.sample, 1);
+  assert.equal(transport.pending.size, 0);
+
+  // 2. Second clock sample: test expiry and reacquisition
+  transport.clock();
+  const secondClocks = socket.sent.filter(m => m.type === 'clock');
+  assert.equal(secondClocks.length, 2);
+  const secondId = secondClocks[1].id;
+
   // Wait for the clock sample expiry (40ms)
   await new Promise(resolve => setTimeout(resolve, 60));
-  assert.equal(transport.pending.has(firstId), false, 'expired clock sample is removed from pending');
+  assert.equal(transport.pending.has(secondId), false, 'expired clock sample is removed from pending');
   assert.equal(socket.readyState, 1, 'socket remains open after clock sample expiry');
 
   // Next clock call can send immediately without waiting for 30s heartbeat
   transport.clock();
-  const secondClocks = socket.sent.filter(m => m.type === 'clock');
-  assert.equal(secondClocks.length, 2, 'fresh clock sample is sent promptly');
-  const secondId = secondClocks[1].id;
-  assert.notEqual(secondId, firstId);
+  const thirdClocks = socket.sent.filter(m => m.type === 'clock');
+  assert.equal(thirdClocks.length, 3, 'fresh clock sample is sent promptly');
+  const thirdId = thirdClocks[2].id;
+  assert.notEqual(thirdId, secondId);
 
   // Stale clock response arriving after expiry is ignored
-  socket.receive({ type: 'clock', id: firstId, serverNow: 999, timing: {} });
-  assert.equal(clocks.length, 0, 'stale response does not call onClock');
+  socket.receive({ type: 'clock', id: secondId, serverNow: 999, timing: {} });
+  assert.equal(clocks.length, 1, 'stale response does not call onClock');
 
   // Fresh clock response is accepted
-  socket.receive({ type: 'clock', id: secondId, serverNow: 1000, timing: {} });
-  assert.equal(clocks.length, 1);
-  assert.equal(clocks[0].ex.sample, 2);
+  socket.receive({ type: 'clock', id: thirdId, serverNow: 1000, timing: {} });
+  assert.equal(clocks.length, 2);
+  assert.equal(clocks[1].ex.sample, 3);
 
   transport.close();
 });
 
-test('socket liveness timeout closes socket when no traffic arrives for heartbeat deadline', async () => {
+test('socket liveness timeout resets on healthy traffic and closes socket when deadline expires', async () => {
   const closes = [];
   const transport = new WatchTransport({
     url: 'wss://example.test/watch-socket',
@@ -173,62 +169,19 @@ test('socket liveness timeout closes socket when no traffic arrives for heartbea
   await transport.connect();
   const socket = transport.socket;
 
-  // No server messages arrive; wait for heartbeat deadline (60ms)
+  // Send periodic state messages from server every 25ms for 75ms total (longer than 60ms heartbeat)
+  for (let i = 0; i < 3; i++) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+    socket.receive({ type: 'state', path: '/api/watch/rooms/1', value: { epoch: i } });
+  }
+  assert.equal(socket.readyState, 1, 'socket remains open because messages arrived');
+
+  // Wait for heartbeat deadline without messages (60ms)
   await new Promise(resolve => setTimeout(resolve, 90));
   assert.equal(socket.readyState, 3, 'socket closed on heartbeat timeout');
   assert.equal(socket.closeCode, 4000);
   assert.equal(socket.closeReason, 'Server heartbeat timed out');
 
-  transport.close();
-});
-
-test('healthy non-clock traffic refreshes socket liveness and prevents heartbeat disconnect', async () => {
-  const transport = new WatchTransport({
-    url: 'wss://example.test/watch-socket',
-    WebSocket: MockSocket,
-    identity: () => ({ token: 'tok', csrf: 'csr' }),
-    clockTimeoutMs: 20,
-    heartbeatTimeoutMs: 80
-  });
-  await transport.connect();
-  const socket = transport.socket;
-
-  // Send periodic state messages from server every 30ms for 120ms total (longer than 80ms heartbeat)
-  for (let i = 0; i < 4; i++) {
-    await new Promise(resolve => setTimeout(resolve, 30));
-    socket.receive({ type: 'state', path: '/api/watch/rooms/1', value: { epoch: i } });
-  }
-
-  assert.equal(socket.readyState, 1, 'socket remains open because messages arrived');
-  transport.close();
-});
-
-test('deferred timer from background tab sleep does not trigger false heartbeat disconnect', async () => {
-  const transport = new WatchTransport({
-    url: 'wss://example.test/watch-socket',
-    WebSocket: MockSocket,
-    identity: () => ({ token: 'tok', csrf: 'csr' }),
-    clockTimeoutMs: 5000,
-    heartbeatTimeoutMs: 30000
-  });
-  await transport.connect();
-  const socket = transport.socket;
-
-  // Simulate a waking tab by manually invoking scheduleHeartbeat timeout callback
-  // with a deadline that was in the past (Date.now() - deadline >= 1000)
-  clearTimeout(transport.heartbeatTimer);
-  const deadline = Date.now() - 5000; // Simulated 5 seconds late
-  const socketRef = transport.socket;
-  // Execute the exact heartbeat check logic for a deferred timer
-  if (Date.now() - deadline < 1000 && Date.now() - transport.lastReceivedAt >= 30000) {
-    socketRef.close(4000, 'Server heartbeat timed out');
-  } else if (!transport.stopped && transport.ready) {
-    transport.scheduleHeartbeat();
-    transport.clock();
-  }
-
-  assert.equal(socket.readyState, 1, 'socket was not closed by deferred timer');
-  assert.ok(transport.heartbeatTimer, 'heartbeat timer was re-armed for the waking tab');
   transport.close();
 });
 

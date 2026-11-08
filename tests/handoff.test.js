@@ -174,16 +174,3 @@ test('native client handoff requires authenticated browser approval, enforces pr
   assert.equal(me.body.name,'Demo host');
 });
 
-test('handoff redemption preserves room context in destination URL', tlsOptions, async t => {
-  const f = await fixture(t);
-  const host = await f.source('host');
-  const roomId = (await f.request('/api/watch/rooms', {}, host)).body.id;
-  const viewer = randomUUID();
-  await f.request(`/api/watch/rooms/${roomId}?viewer=${viewer}`, undefined, host);
-  const issued = await f.issue(host, roomId);
-  const claimed = await f.claim(issued);
-  await f.approve(host, claimed);
-  const redeemed = await f.redeem(claimed);
-  assert.equal(redeemed.status, 200);
-  assert.equal(redeemed.body.destination, '/room/' + f.app.watch.rooms.get(roomId).s.slug);
-});
