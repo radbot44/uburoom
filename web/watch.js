@@ -2904,6 +2904,7 @@ $('room-name').addEventListener('input', event => { roomNameDraft = event.target
 function roomChooserSection(section) {
   $('room-create-form').hidden = section !== 'new';
   $('room-create-actions').hidden = section !== 'new';
+  $('room-dialog-footer').hidden = section !== 'new';
   $('room-join').hidden = section !== 'active';
   $('room-reopen').hidden = section !== 'saved' || !me?.durableRooms;
   $('room-chooser-nav').hidden = section === 'new';
@@ -2914,10 +2915,12 @@ function roomChooserSection(section) {
   $('room-show-saved').hidden = !me?.durableRooms;
   $('room-dialog-hint').textContent = roomChoice ? 'Create a room to watch ' + roomChoice.title + '. Joining follows current playback; reopening restores the saved video.' : section === 'new' ? 'Choose a name and who can join.' : 'Choose an active room or restore one of your saved rooms.';
 }
+let openedAsNew = false;
 async function chooseRoom(item, section = 'active', options = {}) {
   const dialog = $('room-dialog');
   if (dialog.open || creating) return {status:'cancelled'};
   roomUI.clearDraft(); roomChoice = item; roomChoiceOptions = options;
+  openedAsNew = section === 'new';
   $('room-dialog-error').textContent = ''; delete $('room-choices').dataset.roomList; $('room-choices').replaceChildren();
   $('room-name').value = roomNameDraft; $('room-create-visibility').value = roomVisibilityDraft; $('room-create-preset').value = roomPresetDraft;
   roomChooserSection(section);
@@ -2931,7 +2934,7 @@ async function chooseRoom(item, section = 'active', options = {}) {
   return closed;
 }
 uburoomDialogs.register($('room-dialog'), {busy:() => creating, dirty:() => !$('room-create-form').hidden && (!!$('room-name').value.trim() || roomVisibilityDraft !== 'public' || roomPresetDraft !== 'host-control')});
-$('room-dialog').querySelector('form').addEventListener('submit', event => { if (creating) event.preventDefault(); });
+$('room-dialog-footer').addEventListener('submit', event => { event.preventDefault(); if (!creating) void createRoom().catch(error => fail(error.message)); });
 async function createRoom(advanced = roomUI.draftOptions()) {
   if (creating) return; creating = true;
   $('room-create').disabled = true;
@@ -2954,6 +2957,8 @@ async function createRoom(advanced = roomUI.draftOptions()) {
 }
 for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
 for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
+$('room-dialog-close').addEventListener('click', () => uburoomDialogs.close($('room-dialog')));
+$('room-create-cancel').addEventListener('click', () => { if (roomChoice || openedAsNew) uburoomDialogs.close($('room-dialog'), 'cancel'); else roomChooserSection('active'); });
 $('room-create').addEventListener('click', () => void createRoom().catch(error=>fail(error.message)));
 $('room-create-settings').replaceChildren(uburoomIcons.icon(document,'settings'));
 $('room-create-settings').addEventListener('click',()=>roomUI.openDraft({name:$('room-name').value,visibility:$('room-create-visibility').value,permissionPreset:$('room-create-preset').value}));

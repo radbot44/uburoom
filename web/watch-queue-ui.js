@@ -196,7 +196,8 @@
     const bulkDialog = node('dialog', doc.body, undefined, 'watch-dialog queue-dialog');
     bulkDialog.id = 'queue-bulk-dialog';
     bulkDialog.setAttribute('aria-labelledby', 'queue-bulk-title');
-    const bulkTitle = node('h2', bulkDialog, 'Add episodes to queue');
+    const bulkHeader = node('header', bulkDialog);
+    const bulkTitle = node('h2', bulkHeader, 'Add episodes to queue');
     bulkTitle.id = 'queue-bulk-title';
     const bulkDescription = node('p', bulkDialog, '', 'hint');
     const bulkFilterLabel = node('label', bulkDialog, 'Episodes');
@@ -211,7 +212,7 @@
     bulkSpecialLabel.append(doc.createTextNode('Include Specials (Season 0)'));
     node('p', bulkDialog, 'Current and upcoming episodes are excluded. The server limits upcoming videos; an addition that exceeds its limit is rejected in full.', 'hint');
     const bulkStatus = node('p', bulkDialog, '', 'hint'); bulkStatus.setAttribute('role', 'status');
-    const bulkActions = node('div', bulkDialog, undefined, 'dialog-actions');
+    const bulkActions = node('footer', bulkDialog, undefined, 'dialog-footer');
     const bulkCancel = button(bulkActions, 'Cancel', undefined, () => popups.close(bulkDialog));
     const bulkSubmit = button(bulkActions, 'Add to queue', undefined, undefined, false, 'primary'); bulkSubmit.id = 'queue-bulk-submit';
     let bulkDirty = false;

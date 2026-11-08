@@ -14,7 +14,7 @@
     const error=node('p',dialog,null,'server-settings-error');error.id='server-settings-error';error.setAttribute('role','alert');
     const review=node('button',dialog,'Review latest settings','quiet');review.type='button';review.id='server-settings-review';review.hidden=true;
     const resolutions=node('div',dialog);resolutions.id='server-settings-conflicts';
-    const footer=node('footer',dialog,null,'dialog-actions');
+    const footer=node('footer',dialog,null,'dialog-footer with-divider');
     const cancel=node('button',footer,'Cancel','quiet');cancel.type='button';cancel.id='server-settings-cancel';cancel.addEventListener('click',()=>popups.close(dialog));
     const save=node('button',footer,null,'primary');save.type='button';save.id='server-settings-save';node('span',save,'Save');
     const spinner=root.uburoomIcons.icon(document,'refresh');spinner.classList.add('server-settings-spinner');save.append(spinner);

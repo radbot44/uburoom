@@ -14,7 +14,7 @@ let serverSettingsPanel;
 serverSettingsButton.addEventListener('click',()=>{if(activity||token||serverSettingsButton.hidden)return;serverSettingsPanel ||= uburoomServerSettings.mount({request:api,trigger:serverSettingsButton});serverSettingsPanel.open();});
 $('account-close').replaceChildren(uburoomIcons.icon(document,'close'));
 const logoutButton=document.createElement('button');logoutButton.id='account-logout';logoutButton.type='button';logoutButton.className='quiet browser-button';logoutButton.hidden=true;
-logoutButton.append(uburoomIcons.icon(document,'logout'),document.createTextNode('Log out'));$('account-dialog').append(logoutButton);
+logoutButton.append(uburoomIcons.icon(document,'logout'),document.createTextNode('Log out'));$('account-footer').append(logoutButton);
 function updateAccountButton(){accountButton.disabled=!config?.unifiedAccounts||!me;}
 function accountError(message=''){$('account-error').textContent=message;}
 function identityRows(host,account){
@@ -27,11 +27,11 @@ function identityRows(host,account){
 }
 async function showAccount(){
   const load=++accountLoad;
-  serverSettingsButton.hidden=true;
+  serverSettingsButton.hidden=true;$('account-footer').hidden=true;
   accountError();invalidatePreview();
   $('account-content').hidden=true;$('account-loading').hidden=false;$('account-retry').hidden=true;
   $('account-admin').open=false;
-  logoutButton.hidden=activity||!!token;
+  logoutButton.hidden=activity||!!token;$('account-footer').hidden=logoutButton.hidden;
   if(!accountDialog.open)accountPopups.open(accountDialog,accountButton);
   try{
     const value=activity?{account:me.account}:await api('/api/account');if(!value.account)throw new Error('Restart the server to enable accounts');
