@@ -1,19 +1,19 @@
 # Playback reliability and content coverage
 
-M1-P1/P2/P3/P5/P6/P9 technical contract. [Roadmap](../ROADMAP.md) owns priorities; [testing](testing.md) owns results. Scope support to measured configurations.
+Technical specification for playback delivery, synchronization, and recovery. [Roadmap](../ROADMAP.md) owns priorities; [testing](testing.md) owns results. Scope support to measured configurations.
 
 ## Playback decisions
 
 A playback attempt includes edition/version/file, item timeline, video/color/cadence, selected audio/subtitles, container/transport, client support, network and server capacity.
 
 1. Resolve current media authority and eligible source. Never silently replace an alternate cut; substitute encodes only when timing-compatible.
-2. Treat codec/MSE/MediaCapabilities hints as candidates, not decode proof. Negotiation is therefore the delivery plan plus observed decode evidence and bounded fallback; clients do not pre-report capabilities, because positive hints proved false in Discord with acceleration off.
+2. Treat codec/MSE/MediaCapabilities hints as candidates, not decode proof. Negotiation is therefore the delivery plan plus observed decode evidence and bounded fallback; clients do not pre-report capabilities. In Discord Activity environments (particularly with client hardware acceleration disabled), H.264 and HEVC decoders fail (emitting decoder `kUnsupportedConfig` / media error 4 or advancing clock without video frames) despite positive `canPlayType`, MSE, MediaCapabilities, or WebCodecs hints. Uburoom therefore negotiates candidate WebM formats (AV1 default, VP9/VP8 candidates) and requires verified decoded frame presentation before committing.
 3. Prefer compatible direct output, then remux/audio-only conversion, then full conversion/burn-in. One delivery plan chooses the route and records why in diagnostics.
 4. Validate actual Plex output and requested track/quality ceilings.
 5. Confirm decoded picture; verify intended audio/captions independently.
 6. Recover through bounded candidates while preserving position, pause intent and personal choices. Fence superseded work by attempt/stream generation.
 
-Distinguish network failure, unsupported decoding, missing source, overload and authorization denial. No credential substitution to bypass denial, oscillating quality or indefinite spinner. Capacity fallback must respect saved quality ceilings. [Direct HLS](plex-hls-delivery.md) owns route/delegation details. Companion native clients (`plezy-uburoom`) playing a verified local download subscribe with `delivery=local` to participate in room readiness, clock synchronization and `observe` reporting without allocating server HLS or proxy media grants; when no local download exists, they fall back to the room's authorized `mediaUrl` or `directHls` stream.
+Distinguish network failure, unsupported decoding, missing source, overload and authorization denial. No credential substitution to bypass denial, oscillating quality or indefinite spinner. Capacity fallback must respect saved quality ceilings. See [direct Plex delivery](#direct-plex-delivery-hls-and-direct-file) for route, delegation, and timeout details. Companion native clients (`plezy-uburoom`) playing a verified local download subscribe with `delivery=local` to participate in room readiness, clock synchronization and `observe` reporting without allocating server HLS or proxy media grants; when no local download exists, they fall back to the room's authorized `mediaUrl` or `directHls` stream.
 
 ## Optional room fallback
 
@@ -31,7 +31,7 @@ Use server receive/send timestamps with monotonic RTT minus server processing. T
 
 Group startup/shared seeks combine decoder readiness with a scheduled lead. Ordinary pause/resume uses a bounded RTT-derived deadline. A single viewing tab skips group leads; count tabs, not account identities. After readiness timeout, the host chooses Start with ready viewers, Wait or Cancel.
 
-Ongoing buffering/late join recovers locally and never pauses healthy viewers. Missing clock confidence suppresses drift correction while preserving authoritative intent. Default speed correction uses a per-frame exponential moving average (alpha = 0.35) with a hybrid divergence policy (<=90 ms selects presentation error, 90-180 ms blends presentation and position, >180 ms falls back to position error); opt-in Occasional jumps and hard seeks use position-based error exclusively. The experimental precision policy is retired and removed.
+Ongoing buffering/late join recovers locally and never pauses healthy viewers. Missing clock confidence suppresses drift correction while preserving authoritative intent. Default speed correction uses a per-frame exponential moving average (alpha = 0.35) with a hybrid divergence policy (<=90 ms selects presentation error, 90-180 ms blends presentation and position, >180 ms falls back to position error); opt-in Occasional jumps and hard seeks use position-based error exclusively.
 
 Measure presented-frame skew, cadence, correction rate and dropped frames separately. Frame callbacks estimate compositor timing, not physical pixels/audio; sparse callbacks require explicit exclusion/coverage counts. Targets ≤50ms p95 / ≤100ms p99 remain unverified on real separated displays.
 
@@ -44,7 +44,7 @@ Measure presented-frame skew, cadence, correction rate and dropped frames separa
 - Same-tab reconnect may preserve personal choices briefly, but needs fresh authorization, epochs, grants and decoded readiness. Leave, close, new tab or changed media cannot inherit old consent.
 - Account revocation/relink fences cached and in-flight credential work.
 - Local WebM recovery trusts actual audio/video buffered ranges over its append ledger: it refills only missing chunks within a bounded retry count and bounds each append to its source window, so an out-of-order refill cannot damage the next chunk.
-- A quality change between uburoom outputs of the same codec, audio and burned subtitle keeps the player: buffered chunks keep playing and the new stream takes over at a chunk boundary, at least five seconds away so the new chunk can arrive. Other changes reload the player.
+- A quality change between uburoom outputs of the same codec, audio and burned subtitle keeps the player: buffered chunks keep playing and the new stream takes over at a chunk boundary, dynamically scaled between 2 seconds (`MIN_SWITCH_MARGIN`) and 5 seconds (`SWITCH_MARGIN`) based on observed chunk arrival speed so the new chunk can arrive safely. Other changes reload the player.
 
 ## Operation and durability boundaries
 
@@ -98,7 +98,7 @@ Proxy HLS uses a bounded timestamp-anchor cache; direct HLS anchors in the brows
 
 Preserve source cadence, VFR/interlacing handling, aspect ratio, anamorphic pixels, rotation and color. HDR10/HLG/Dolby Vision need distinct verified paths; HDR expansion is future scope, not implied by SDR success.
 
-Split-file item timelines, version selection, chapters/markers/extras and broader Plex parity remain planned. Queue continuation and durable rooms are implemented under [P13](rooms-and-queues.md); do not build a parallel advance path. Personal Plex reporting is separate [P4 work](plex-reporting-investigation.md).
+Split-file item timelines, version selection, chapters/markers/extras and broader Plex parity remain planned. Queue continuation and durable rooms are governed by [rooms and queues](rooms-and-queues.md); do not build a parallel advance path. Personal Plex reporting is documented in [Plex reporting](archive/plex-reporting-investigation.md).
 
 ## Verification corpus and failure scenarios
 
@@ -124,3 +124,39 @@ Some films start their audio well after their video, so opening HLS segments dec
 ## Quality swaps
 
 A quality change that needs a new stream type plays out the current buffer while the new stream loads in a hidden element, which fills a memory cache the real player then reads. The swap happens once that stream reaches the room position, or before the buffer runs out if it is too slow. Phones and Activity keep the plain swap. Seeking, pausing or changing the video ends the wait at once.
+
+## Direct Plex delivery (HLS and direct file)
+
+Direct delivery makes uburoom the access and timeline coordinator while Plex streams media directly to each browser for Original files and HLS playback. See [Direct Plex verification](testing.md#direct-plex-hls).
+
+### Transport boundaries
+
+| Path | Media bytes | uburoom responsibility |
+| --- | --- | --- |
+| Direct file | Plex → browser | Access, temporary delegation, bounded observations |
+| Direct HLS | Plex → browser, including timestamp anchor | Output preparation/lifecycle, retained initial playlist, viewer descriptor |
+| Proxy HLS | Plex → uburoom → browser | Authorized rewriting/proxy and bounded anchor cache |
+| Local AV1/VP9/VP8 | Plex → uburoom encoder → browser | Authorized source, conversion and delivery |
+
+`proxy` is default; `auto` prefers direct and permits proxy recovery. Direct-only delivery without proxy recovery is unsupported. Activity and native-HLS-only clients retain proxy HLS.
+
+### Preparation and sharing
+
+- Select direct intent **before** pool acquisition or cache warm-up. Direct preparation must never fetch video or audio bytes, including speculative probes. Metadata, playback decisions, track selection, keepalive/stop, and bounded playlist text are control traffic.
+- Keep separate direct and proxy pools. Share only matching room, media, source, quality, audio, and burn outputs under independent viewer authority and existing capacity reservations.
+- Capture the initial playlist while selected Plex track preferences are locked; do not restart negotiation after restoring preferences.
+- Give each viewer its own temporary delegation, pinned HTTPS origin, and output session ID. Never use another viewer's or configured owner's fallback credential to bypass rejection.
+- The retained initial playlist uses absolute Plex resources. Nested playlists and segments are restricted to the pinned `/video/:/transcode/universal/session/<id>/` layout; reject foreign origins, redirects, and uncontrolled query parameters. Do not forward uburoom cookies.
+- Keep temporary credentials out of shared producer objects, room state, persistence, and diagnostics. Delegation retains upstream account scope and cannot enforce immediate room revocation; see [operator implications](self-hosting.md#direct-plex-delivery).
+
+### Timestamp and recovery contract
+
+The browser reads segment zero directly from Plex to establish source-to-media timestamp mapping before joining the room position. Equal playback clocks do not prove equal pictures; nearby-anchor replacement requires picture-level evidence across discontinuities.
+
+Direct failures replace only the affected viewer's route, preserving position, pause intent, quality, and tracks. Retire superseded work and keep other viewers running. Unsupported decoding is a separate decision; proxying identical bytes cannot fix decoder rejection.
+
+Under direct HLS, manifest, playlist, and fragment loads all enforce single-attempt deadlines: a five-second first-byte deadline and an eight-second total load deadline (`maxTimeToFirstByteMs: 5000, maxLoadTimeMs: 8000, timeoutRetry: null, errorRetry: null`). LAN viewers use authenticated Plex LAN-origin discovery or an explicit override; external viewers use the public origin. See [configuration](self-hosting.md#direct-plex-delivery).
+
+### Verification
+
+Instrument the server boundary: successful direct playback must decode with **zero server video/audio requests**, including failed warm-up or range probes. Record control traffic and deliberate proxy recovery separately. Check credential, origin, and session fencing, revocation after awaits, cancellation, capacity, and last-reference cleanup. Browser verification requires decoded picture and audio through late/paused joins, seeks, track/quality replacement, and CORS/auth failures.

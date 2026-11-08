@@ -1,8 +1,6 @@
 # Persistent rooms and playback queues
 
-P13-1–P13-5 are implemented. P13-6 acceptance and P13-7 real Plex/Activity, load and retained-state verification remain open. See [roadmap](../ROADMAP.md#m1-p13--persistent-rooms-and-playback-queues) and [testing](testing.md).
-
-Owner-approved fixes from the bounded [recovery/writer investigation](room-recovery-investigation.md) are implemented locally: final shutdown checkpoint capture, retained preload ownership and bounded preparation/cleanup draining. Passing fixture, atomic-commit/restart and short load checks do not close the broader verification gates.
+Uburoom persistent rooms and playback queues provide crash-resilient playback state, bounded preparation, sequential history, and configurable auto-queueing backed by SQLite. The room lifecycle enforces shutdown checkpoint capture, retained preload ownership, and bounded preparation and cleanup draining.
 
 ## Room lifecycle
 
@@ -17,7 +15,7 @@ Owner-approved fixes from the bounded [recovery/writer investigation](room-recov
 
 Missing media/access retains the bookmark with an error and authorized retry/replacement/removal. No silent edition substitution or queue skipping. Room authority does not imply Plex access.
 
-Empty-room retention, inactivity/capacity defaults and single-room reset are defined in [self-hosting](self-hosting.md#rooms-and-directory). Retention is independent of completion evidence. Closed rooms consume no active playback slot.
+Empty-room retention, inactivity/capacity defaults and single-room reset are defined in [self-hosting](self-hosting.md#rooms-and-retention). Playback in progress (< 90% of duration) retains an empty room; completed or idle rooms without keep-when-empty or single-room protection are reclaimed during cleanup. Room retention is independent of PMS personal watch-state reporting. Closed rooms consume no active playback slot.
 
 Previously open rooms reserve recovery slots, return paused and admit original participants with fresh authorization. Auto-resume requires prior playing intent, all expected accounts back before expiry, fresh readiness and a present authorized controller; otherwise remain paused. No old stream or countdown is restored.
 
@@ -25,18 +23,22 @@ Previously open rooms reserve recovery slots, return paused and admit original p
 
 Creator > host > viewer, using canonical UUIDs. Hosts inherit viewer grants; defaults give viewers play/pause and hosts ordinary controls except deletion/Add hosts. Management capabilities cannot be granted to viewers.
 
-- Reopen requires explicit durable host/creator membership or active Admin, not merely effective All hosts status.
-- Admin mode is a server-authorized opt-in granting creator rights without changing membership/ownership. A request flag or unfinished check grants nothing; exiting removes the override.
-- Host addition/self-demotion and leader-only All hosts follow the [directory contract](account-names-and-host-directory.md#host-authority).
-- Creatorship transfer targets an explicit host; single-room mode forbids it.
-- Without a creator/host, pause unless Continue without host permits playback. This permission grants no management authority.
-- Visibility/role changes revoke ineligible subscriptions and pending work. Private rooms require explicit assignments even with All hosts enabled.
+- **Add hosts** is a host-only capability (`addHosts`), off by default. Authorized hosts can assign known accounts or exact provider subjects but cannot remove other hosts or pending grants. Removal belongs to the room leader or an active administrator; explicit hosts may relinquish their own role (`host.leave`) with a warning about lost private/closed-room access.
+- **All hosts** is persistent, reversible, and controlled only by the actual room leader (`userId === room.creatorId`)—even an administrator cannot toggle it. It makes admitted members effective hosts without creating persistent assignments. Presets preserve the mode; disabling it restores explicit roles. Private entry and reopening still require explicit assignment (`assigned()`) or active Admin authority. Relinquishing an explicit role while All hosts is active does not remove the mode-derived role.
+- **Reopen** requires explicit durable host/creator membership or active Admin, not merely effective All hosts status.
+- **Admin mode** is a server-authorized opt-in granting creator rights without changing membership/ownership. A request flag or unfinished check grants nothing; exiting removes the override.
+- **Creatorship transfer** targets an explicit assigned host; single-room mode forbids it.
+- **Without a creator/host**, playback pauses unless Continue without host permits it. This permission grants no management authority.
+- **Visibility and role changes** revoke ineligible subscriptions and pending work. Private rooms require explicit assignments even with All hosts enabled.
 
 ### Participant removal
 
-`room.kick` requires `kickParticipants` (default on for hosts, off/ineligible for viewers). Leader/self are protected; authorized hosts can remove viewers, leader/active Admin can also remove hosts.
+`room.kick` requires `kickParticipants` (default on for hosts, off and ineligible for viewers). Leader and self are protected; authorized hosts can remove viewers, while the room leader and active administrators can also remove hosts.
 
-Remove all target tabs, reconnect reservations and streams; fence old viewer IDs. Preserve host assignments. A fresh explicit rejoin is allowed immediately under current policy: this is removal, not a ban.
+Removal tears down all target tabs, reconnect reservations and active streams, and fences old viewer IDs in `room.kickedViewers` for the reconnect window (60 seconds). Host assignments are preserved. Rejoining rules depend on participant type:
+- **Ordinary admitted members** in public rooms are removed but may rejoin immediately with fresh authorization; removal is not a permanent ban.
+- **Invited members of private rooms** have their invite revoked (`DELETE FROM watch_room_invites`) and their account blocked in `watch_room_invite_blocks` (`user:<uuid>`). They cannot rejoin until re-invited or until the invite code is rerolled.
+- **Guest sessions** have their session ended immediately (`endGuestSessions`), and both their account (`user:<uuid>`) and browser marker (`device:<hash>`) are recorded in `watch_room_invite_blocks`. They cannot rejoin until a host rerolls the room invite code.
 
 ## Queue and history
 
@@ -64,10 +66,10 @@ Prepare the successor under current authority, recheck fences, then atomically c
 
 Use existing SQLite tables/mirror/writer; no separate database or persistence framework. Room, checkpoint and queue revisions are independent. Enforce one current occurrence, contiguous pending ranks and canonical memberships.
 
-Checkpoint shared progress outside the sync tick and on lifecycle changes. Durable edits/Close acknowledge only after commit; shutdown waits for transitions. Fence awaits with live epoch, media/stream generation, occurrence IDs and expected revisions. Stale operations refresh rather than replay.
+Checkpoint shared progress outside the sync tick and on lifecycle changes. Durable edits and Close acknowledge only after commit; shutdown waits for transitions. Fence awaits with live epoch, media/stream generation, occurrence IDs and expected revisions. Stale operations refresh rather than replay. In-flight room operations use a bounded 30-second abort signal to prevent stalled external dependencies from hanging the server loop.
 
-Final removal captures the resulting occurrence at the removal cutoff, before pausing/detaching its runtime state, and serializes that allowlisted snapshot behind earlier checkpoints. Explicit Close clears restart participation/intent; server shutdown retains those existing fields. Ordinary deferred saves cannot resurrect detached rooms. Operation ownership covers preparation and cleanup independently of the durable commit receipt, so Close can cancel uncommitted work and wait for outputs to be released without creating a checkpoint cycle. Shutdown uses one 35-second drain deadline and attempts provider/reporting/database closure on failure; an operation ignoring cancellation beyond it makes shutdown fail rather than claim complete cleanup.
+Final removal captures the resulting occurrence at the removal cutoff, before pausing/detaching its runtime state, and serializes that allowlisted snapshot behind earlier checkpoints. Explicit Close clears restart participation/intent; server shutdown retains those existing fields. Ordinary deferred saves cannot resurrect detached rooms. Operation ownership covers preparation and cleanup independently of the durable commit receipt, so Close can cancel uncommitted work and wait for outputs to be released without creating a checkpoint cycle. Cleanup is resilient: room detachment and resource cleanup proceed even if a final checkpoint persistence step fails or errors. Shutdown uses one 35-second drain deadline (`mediaDrainMs = 35000`) and attempts provider, reporting, and database closure on failure; an operation ignoring cancellation beyond it makes shutdown fail rather than claim complete cleanup.
 
 Page queue/history separately from frequent playback snapshots. Bound catalog expansion and socket messages; send show/season IDs rather than thousands of client entries. Protect saved metadata/artwork with current access checks.
 
-Schema/transfer rules belong in [upgrading](upgrading.md). UI presentation belongs in [design](design-guide.md). Verify concurrent reopen/edit, crash/disk failure, duplicate endings, revocation, queue recovery and real mixed-viewer playback before broader claims.
+Schema/transfer rules belong in [upgrading](upgrading.md). UI presentation belongs in [design](design-guide.md).

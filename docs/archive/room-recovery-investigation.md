@@ -1,10 +1,13 @@
-# Room recovery and writer investigation
+# Room recovery and writer investigation (archived)
+
+> [!NOTE]
+> **Historical investigation record.** The lifecycle bug fixes investigated here (preload leak from stale countdown, missed shutdown checkpoint capture, and un-drained queue preparation during provider shutdown) are implemented and committed on `main` (commit `bbc0864`). The durable architectural and lifecycle contracts have been folded into [rooms and queues](../rooms-and-queues.md#persistence-and-concurrency). Current verification status and gates live in [testing](../testing.md).
 
 ## Scope and authority
 
-2026-11-07, baseline revision `262debbce4122ce0941116eb3107dd1358ce72e0`, Node v22.22.2 / Windows. The owner approved all three lifecycle fixes after the investigation below. They are implemented in the local working tree, uncommitted. No schema, configuration or new permanent smoke runner was added; existing lifecycle fixtures were extended.
+2026-11-07, baseline revision `262debbce4122ce0941116eb3107dd1358ce72e0`, Node v22.22.2 / Windows. The owner approved all three lifecycle fixes after the investigation below. They are implemented and committed on `main` (commit `bbc0864`). No schema, configuration or new permanent smoke runner was added; existing lifecycle fixtures were extended.
 
-All execution used isolated accounts/media, injected Plex implementations, temporary SQLite databases and disposable child processes. No production credentials/data, real Plex/Discord, deployment or live playback was used. Results are A source review and B isolated execution, not C integration or D acceptance. Commands and counts are in [testing](testing.md#m1-p13--recovery-preparation-ownership-and-writer-investigation--2026-11-07).
+All execution used isolated accounts/media, injected Plex implementations, temporary SQLite databases and disposable child processes. No production credentials/data, real Plex/Discord, deployment or live playback was used. Results are A source review and B isolated execution, not C integration or D acceptance. Commands and counts are in [testing](../testing.md#m1-p13--recovery-preparation-ownership-and-writer-investigation--2026-11-07).
 
 ## Implemented lifecycle contract
 
@@ -15,7 +18,7 @@ All execution used isolated accounts/media, injected Plex implementations, tempo
 
 ### Verification after implementation
 
-The final full fixture run passed **544 tests, zero failures/cancellations/skips**. New or extended scenarios cover stale countdown ownership, exact cleanup of ready preloads, final disk bookmark and playing-intent capture behind a pending checkpoint, cancellation with a late output, an unfinished preload exceeding the drain deadline, provider/reporting/database cleanup after a failed final write, and Close waiting for canceled preparation. Existing commit-phase shutdown, deferred checkpoint, natural ending/autoplay, shared HLS and reporting scenarios remain covered. See [testing](testing.md#m1-p13--approved-shutdown-checkpoint-and-preparation-cleanup-fixes--2026-11-07) for actual commands and initial failures.
+The final full fixture run passed **544 tests, zero failures/cancellations/skips**. New or extended scenarios cover stale countdown ownership, exact cleanup of ready preloads, final disk bookmark and playing-intent capture behind a pending checkpoint, cancellation with a late output, an unfinished preload exceeding the drain deadline, provider/reporting/database cleanup after a failed final write, and Close waiting for canceled preparation. Existing commit-phase shutdown, deferred checkpoint, natural ending/autoplay, shared HLS and reporting scenarios remain covered. See [testing](../testing.md#m1-p13--approved-shutdown-checkpoint-and-preparation-cleanup-fixes--2026-11-07) for actual commands and initial failures.
 
 The disposable real-disk/child-process controls were repeated: shutdown/restart now retains **80 seconds**, while abrupt exit before commit still retains the original video at **25 seconds**, exit after acknowledgement retains the successor at zero, and a real changeset conflict still fences the failed transition without overwriting the injected external position. Original fixture key/account checks and SQLite integrity passed in all four cases. Fresh runtimes were paused with new media generations and no old viewers, reporting sessions or preloads.
 
@@ -90,7 +93,7 @@ The existing separate 16-paused-viewer/320-observation storage fixture measured 
 
 1. Preload ownership transfer and final-snapshot capture are implemented using the existing lifecycle APIs. Stale-command rejection, explicit Close/restart distinctions, per-viewer authorization and atomic queue/bookmark outcomes remain.
 2. Preparation/teardown cancellation and draining are implemented with the existing operation machinery. Commit receipts remain separate; failure cleanup includes provider/reporting and database closure. No UI, schema, configuration or production change was made.
-3. Existing lifecycle scenarios were extended, focused and full fixture suites executed, and the child-process commit controls and bounded load sample repeated. Actual results and remaining limits are in [testing](testing.md).
+3. Existing lifecycle scenarios were extended, focused and full fixture suites executed, and the child-process commit controls and bounded load sample repeated. Actual results and remaining limits are in [testing](../testing.md).
 4. A commit, deployment, any request to the owner's Plex and every live test still require their respective explicit authorization.
 
 Broader real Plex/Activity continuity, independent host/network/device checks, long-running resource accounting and perceptual acceptance remain open regardless of fixture results.

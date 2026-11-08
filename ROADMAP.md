@@ -1,14 +1,12 @@
 # uburoom roadmap
 
-Updated: 2026-11-07.
-
 A map of priorities and unfinished work. Implementation does not imply live verification or release readiness. Detailed requirements belong in the linked plans; results belong in [testing](docs/testing.md). Phase IDs stay stable; retired M1-P8 transport work and baseline M2-P7/M2-P8 installation diagnostics and Docker/Compose packaging are owned by M1-P11.
 
 ## Priorities
 
 1. **Configuration and administration (P14):** Three-outcome A/B verification complete: authorization boundaries, safe account mutations/session revocation, and supported settings with matched backup/restore. Real installation and recovery checks remain release gates.
 2. **Playback continuity (P1/P2/P13):** Verify real multi-viewer delivery, independent recovery, natural ending, queue transitions and resource cleanup on a bounded browser/provider configuration.
-3. **Plex reporting (P4):** Live reporting owner-accepted (2026-11-06 Tautulli history). Stable viewing identity across stream changes/reconnect grace implemented; live continuity verification remains. Address forwarding deferred for remote-limit risk. Deliberate stop/seek, natural-completion and personal watch-state checks remain.
+3. **Plex reporting (P4):** Live reporting baseline is owner-accepted based on watch-night Tautulli history ([testing](docs/testing.md)). Stable viewing identity across stream changes/reconnect grace implemented; live continuity verification remains. Address forwarding deferred for remote-limit risk. Deliberate stop/seek, natural-completion and personal watch-state checks remain.
 4. **Release closure:** Complete the supported-environment checks, operator recovery and publication audit gates below. Expand the supported matrix only with evidence.
 
 ## M1 — Verified self-hosted release
@@ -54,7 +52,7 @@ Architecture and implementation constraints remain in [AGENTS.md](AGENTS.md) and
 
 Reporter-owned viewing continuity is now implemented on main: one occurrence survives stream/observation changes and eligible reconnects, while bounded gap updates remain activity-only and terminal events include suspended viewers. The reporting and producer identities stay separate.
 
-**Next:** Baseline live reporting was accepted by the owner from Tautulli history of the 2026-11-06 watch night ([testing](docs/testing.md)). Verify continuity against actual PMS session keys and ungrouped Tautulli history under separately authorized tests; deliberate multi-viewer stop/seek, natural-completion and personal watch-state checks remain open. [Address forwarding](docs/plex-reporting-investigation.md#viewer-addresses-and-viewing-continuity--2026-11-07) is deferred pending the owner's remote-stream/quality-limit risk decision and authorized live validation.
+**Next:** Baseline live reporting is owner-accepted from watch-night Tautulli history ([testing](docs/testing.md)). Verify continuity against actual PMS session keys and ungrouped Tautulli history under separately authorized tests; deliberate multi-viewer stop/seek, natural-completion and personal watch-state checks remain open. [Address forwarding](docs/plex-reporting-investigation.md) is deferred pending the owner's remote-stream/quality-limit risk decision and authorized live validation.
 
 **Later increments:** Split-file timelines, previews/extras; subtitle search and supported presentation/audio controls. Episode continuation uses P13's queue transition, not a second advance path.
 
@@ -62,7 +60,7 @@ Details: [accounts and reporting](docs/accounts-and-access.md), [reporting inves
 
 ### M1-P12 — Viewer telemetry
 
-**Status:** Passive Room sync-quality indicator, interactive viewer telemetry cards (with live status pills, sync score %, diagnostic explanation, and freshness), and host-gated voluntary buffering notices (`Pause to wait` and `Resume playback`) are implemented and covered by unit/lifecycle tests on main. Since 2026-11-07 each sync report also carries playback health, validated in `shared/sync/quality.mjs`, which alone decides whether a viewer has an issue (error, stalling, low buffer, dropped frames or poor sync, held 15 seconds). Hosts see a warning in the roster and the details on the card; other viewers never receive them. Deployed to Vigrid; not yet checked with real guests.
+**Status:** Passive Room sync-quality indicator, interactive viewer telemetry cards (with live status pills, sync score %, diagnostic explanation, and freshness), and host-gated voluntary buffering notices (`Pause to wait` and `Resume playback`) are implemented and covered by unit/lifecycle tests on main. Each sync report also carries playback health, validated in `shared/sync/quality.mjs`, which alone decides whether a viewer has an issue (error, stalling, low buffer, dropped frames or poor sync, held 15 seconds). Hosts see a warning in the roster and the details on the card; other viewers never receive them. Deployed to Vigrid; not yet checked with real guests.
 
 **Next:** Complete live accuracy and readability acceptance across multi-device viewing parties. Further expansions (timeline viewer indicators, operator resource HUD, optional presence cues) remain optional. None may automatically interrupt healthy viewers.
 
@@ -88,7 +86,7 @@ Provider detection retains existing cache/polling bounds; direct Plex delivery d
 
 Configured sharing for eligible viewers without personal Plex access is an approved policy, not the obsolete implicit-fallback defect. Expired/revoked credentials, provider errors and item restrictions must fail closed; during a provider outage admitted viewers keep their place while new admission fails closed. Editable names and existing host assignment are implemented; native login and owner name-lock rules are deferred. Room invites with guests (M2-P3) and the trusted server tier are implemented and pass isolated checks; real-provider and human acceptance remain.
 
-Details: [accounts and access](docs/accounts-and-access.md), [names and host directory](docs/account-names-and-host-directory.md).
+Details: [accounts and access](docs/accounts-and-access.md).
 
 ## M2 — Future planned capabilities
 
@@ -98,7 +96,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 | --- | --- | --- |
 | M2-P1 | HDR | Verify capable-client passthrough and HDR-to-SDR tone mapping; distinguish Dolby Vision profiles |
 | M2-P2 | Subtitle-aware Picture-in-Picture | Implemented: Document Picture-in-Picture with stage reparenting, full hover transport bar, and vector/bitmap subtitle canvas layers; native video PiP fallback with client-subtitle burn-in recommendation toast; live browser acceptance open |
-| M2-P3 | Room invites and guests | Reworked 2026-11-08 to one invite per room with Allow guests and the trusted tier; source review and isolated execution pass. Needs the private v9→v10 database transfer before deployment, then real-provider (Discord share link) and human acceptance. Invites and guests never imply media or host authority |
+| M2-P3 | Room invites and guests | Single invite per room with Allow guests and the trusted tier is implemented; source review and isolated execution pass. Real-provider (Discord share link) and human acceptance remain open. Invites and guests never imply media or host authority |
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |
 | M2-P5 | Shared YouTube playback | Use P5 timeline and P11 command transport; account for embed, ad and buffering constraints |
 | M2-P6 | Dialogue Boost / Night Mode | Implemented: personal client-side Web Audio dynamic range compression, speech peaking EQ and 3-choice selector (Normal/Dialogue/Night) in player dialog and sliding menu; live browser acceptance open |
@@ -111,7 +109,7 @@ Further directions: managed/project-hosted rooms and Live TV/DVR. Each needs a s
 
 - **This roadmap:** priorities, phase status, remaining outcomes and dependencies. Update the affected row after material work; delete superseded status.
 - **[Testing](docs/testing.md):** evidence, failures and open verification gates. Keep dated results and test counts out of this roadmap.
-- **[Playback](docs/playback-reliability.md), [sync core](docs/sync-core.md), [delivery](docs/plex-hls-delivery.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
+- **[Playback & delivery](docs/playback-reliability.md), [sync core](docs/sync-core.md), [rooms](docs/rooms-and-queues.md), [accounts](docs/accounts-and-access.md):** detailed requirements and implementation contracts.
 - **[Design](docs/design-guide.md), [development](docs/development.md), [self-hosting](docs/self-hosting.md), [Docker](docs/docker.md), [upgrading](docs/upgrading.md), [third-party review](docs/third-party.md):** UI decisions, commands, operator procedures and licensing.
 
 Do not append work diaries, UI dimensions, commit narratives, repeated disclaimers or completed test reports here. Preserve substantive evidence in its owning document or history. Private suggestion audits stay in the ignored personal queue.

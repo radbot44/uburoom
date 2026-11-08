@@ -4,7 +4,7 @@ Private pre-release layouts have no supported automatic upgrade path. Published 
 
 ## Current storage contract
 
-SQLite baseline **7** contains accounts, identities, encrypted credentials, logins, audit, playback history, durable rooms/hosts/queues, restart recovery, completion progress and pending provider-bound hosts. The runtime creates this layout only for an empty installation and reopens complete baseline-7 databases without replacing UUIDs or ciphertext.
+SQLite baseline **10** contains accounts with guest flags, identities, encrypted credentials, logins, audit, playback history, durable rooms (including slugs, phonetic words, invite codes and guest admission rules), room hosts, completion progress, playback queues and history, and room invite memberships and blocks. The runtime creates this layout only for an empty installation and reopens complete baseline-10 databases without replacing UUIDs or ciphertext.
 
 Older private, incomplete, unversioned or newer layouts fail unchanged. Legacy JSON is not imported. Startup and deployment neither reset state nor run private migrations.
 
@@ -24,4 +24,4 @@ Set `storage.credential_key_file` outside the project or preserve the existing p
 
 Keep prior code and a matched restricted backup. Code rollback alone does not restore schema/state. Crossing incompatible layouts requires a deliberate matched restore and can discard subsequent changes, including sign-outs and revocations. Do not pair a database with a newly generated key.
 
-Historical v2c/v2d configuration and schema-4/5/6 transfer notes are superseded by the selected code, [configuration example](../config.example.yaml) and baseline above. Offline fixture success is not operator restore verification; open checks remain in [testing](testing.md).
+Historical pre-release configuration versions and prior schema transfer notes are superseded by the selected code, [configuration example](../config.example.yaml) (schema v2m) and baseline 10 above. Offline fixture success is not operator restore verification; open checks remain in [testing](testing.md).

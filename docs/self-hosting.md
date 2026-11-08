@@ -109,7 +109,7 @@ For `auto`, configure `plex.client_url` as a trusted, viewer-reachable HTTPS ori
 
 **Direct fallback** needs all three: `plex.fallback_enabled: true`, `plex.direct_fallback_enabled: true` and a dedicated `plex.fallback_token` verified as a **non-owner** Plex account. Blank, owner, ambiguous or unverifiable fallback credentials are rejected for direct delegation. Temporary Plex tokens are not restricted to the current movie or room; they can remain valid for up to 48 hours or until PMS restart, and revoking uburoom access may not revoke them immediately. Keep all tokens out of logs and persistent client storage.
 
-Technical details, failure budgets and provider boundaries: [Plex delivery](plex-hls-delivery.md) and [Plex developer reference](https://developer.plex.tv/pms/).
+Technical details, failure budgets and provider boundaries: [Plex delivery](playback-reliability.md#direct-plex-delivery-hls-and-direct-file) and [Plex developer reference](https://developer.plex.tv/pms/).
 
 ### Reporting
 
@@ -131,7 +131,7 @@ The `transcoding` section controls Plex conversion and uburoom's local encoder i
 
 FFmpeg and FFprobe are found on the service user's PATH or at `tools.ffmpeg`/`tools.ffprobe`. Missing tools disable the features that depend on them. Software conversion needs the corresponding AV1/VP9/VP8 encoders and Opus; capability detection is not proof of successful playback.
 
-At capacity, a conversion may wait briefly or reuse an existing compatible output. uburoom will not evict viewers or exceed its job limit; conversions started by other Plex applications are outside that counter. See [codec compatibility](discord-codec-compatibility.md).
+At capacity, a conversion may wait briefly or reuse an existing compatible output. uburoom will not evict viewers or exceed its job limit; conversions started by other Plex applications are outside that counter. See [playback decisions](playback-reliability.md#playback-decisions).
 
 ## Discord (optional)
 
@@ -142,7 +142,7 @@ Create an application in the [Discord Developer Portal](https://discord.com/deve
 - For Activity, enable Activities, map the root to the uburoom HTTPS origin and verify it in a real Discord client.
 - Bot commands are no longer supported; rooms are controlled in the browser or Activity.
 
-Optional host-directory discovery can use Discord Server Members/Presence intents. `directory.expose_discord_members` defaults to `true`, and `directory.expose_plex_members` defaults to `false`. Directory results are not invitations or access grants. See [host directory](account-names-and-host-directory.md).
+Optional host-directory discovery can use Discord Server Members/Presence intents. `directory.expose_discord_members` defaults to `true`, and `directory.expose_plex_members` defaults to `false`. Directory results are not invitations or access grants. See [member directory](accounts-and-access.md#provider-directory-and-member-search).
 
 ### Publish rooms to Discord
 

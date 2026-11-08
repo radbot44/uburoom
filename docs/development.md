@@ -4,9 +4,11 @@ Use a local checkout, Node 22.13.0+ and the committed lockfile. Ordinary develop
 
 ## Local setup
 
-```powershell
+```sh
 npm ci
-.\scripts\new-dev-cert.ps1 -DnsNames @('localhost')
+# Generate development TLS certificates (cross-platform Node or PowerShell):
+node scripts/new-dev-cert.js
+# Or on Windows PowerShell: .\scripts\new-dev-cert.ps1 -DnsNames @('localhost')
 node scripts/watch-demo.js --accounts
 ```
 

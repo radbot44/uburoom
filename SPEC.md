@@ -10,12 +10,21 @@ On-demand playback must preload useful video while paused, retain a bounded rewi
 
 ## Watch rooms
 
+Authenticated eligible users create and join watch rooms in a web browser or Discord Activity. Multi-room is the default; `rooms.single_room` provides a dedicated single-room mode. Room creators act as room leaders; host permissions can be shared or inherited by remaining viewers when a host departs. Server administration requires explicit Admin mode; host privileges alone do not grant server administration.
 
-Retain durable per-viewer playback history and decoupled Plex session reporting across clients/servers; connected Plex accounts default to activity-only reporting while personal resume and watched-state writes require explicit per-viewer opt-in, and sponsored viewers remain local-only. Check access before and after awaited catalog/media operations. A linked Plex user's denied/revoked access must never fall back to the configured owner token. Account UUIDs remain stable across verified links/merges. Device/browser/provider credentials stay private; encrypted records require the original key.
+Rooms may be public or private. Each room maintains a distinct invite code (`/join/<code>`) for sharing via the device share sheet, clipboard, or Discord Activity. When enabled (`guests.enabled`), room invites can admit external guests without host or administrative rights, isolated to their room and using shared fallback media without Plex reporting.
 
-## Watch-room commands
+Durable rooms, hosts, permission overrides, bookmarks, playback queues and history persist in SQLite across server restarts. Auto-resume requires previous play intent, expected viewers returning inside the recovery window, fresh readiness and an authorized controller; live viewer sessions, consent and streams are never restored from disk.
 
+Retain durable per-viewer playback history and decoupled Plex session reporting across clients/servers; connected Plex accounts default to activity-only reporting while personal resume and watched-state writes require explicit per-viewer opt-in, and sponsored viewers remain local-only. Check access before and after awaited catalog/media operations. A linked Plex user's denied/revoked access must never fall back to the configured owner token. Account UUIDs remain stable across verified links/merges. Device/browser/provider credentials stay private; encrypted records require the original key. See [rooms and queues](docs/rooms-and-queues.md) and [accounts and access](docs/accounts-and-access.md).
 
+## Watch-room commands & synchronization
+
+Room interactions and playback mutations route through an authenticated WebSocket protocol (`/watch-socket`) powered by a shared, validated command engine. The engine verifies actor permissions, room state, media version and command eligibility on every operation. Ambiguous targets, stale commands and unauthorized requests fail closed with truthful acknowledgements.
+
+Room state advances with monotonic revisions. The server owns the authoritative playback timeline: play, pause, seek, epoch calculation and stream readiness. Viewers maintain clock estimation against server time. Scheduled actions ensure coordinated playback transitions across distributed clients.
+
+Late-joining or seeking viewers pass through server readiness gates before playback begins, preventing desynchronized starts. Active synchronization uses proportional drift correction with Hybrid EMA filtering to maintain smooth frame pacing without audible pitch distortion or visual stutter. Buffer stalls and recovery remain strictly independent per viewer so struggling clients do not interrupt healthy playback. Personal preferences (volume, audio language, subtitle track and appearance) remain client-owned. See [sync core](docs/sync-core.md).
 
 ## Boundaries
 
