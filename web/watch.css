@@ -71,7 +71,7 @@
 .room-share-form-actions button{min-height:40px;padding:10px 18px}
 .player-chrome,.watch-toast-region{--background:#101217;--card:#1B1E26;--elevated:#292E38;--border:#393F4D;--text:#F8F7F4;--muted:#AAB0BC;--accent-text:var(--primary);color:#F8F7F4;color-scheme:dark}
 #empty-stage,.center-play,#ready-status,#seek-feedback{--text:#F8F7F4;--muted:#AAB0BC;--elevated:#292E38;color:#F8F7F4}
-*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}main{max-width:clamp(1750px,calc(1400px + 18.2292vw),2100px);margin:22px auto;padding:0 24px}
+*{box-sizing:border-box}[hidden],#icon-sprite{display:none!important}#icon-sprite{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}body{margin:0}main{max-width:clamp(1750px,calc(1400px + 18.2292vw),2100px);margin:22px auto;padding:0 24px}
 button,input,select,a{font:inherit}button,a,input{touch-action:manipulation}button{cursor:pointer;border:0;color:inherit}button:disabled,input:disabled,select:disabled{opacity:.4;cursor:default}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--text);outline-offset:3px}
 h1,h2,.watch-panel-heading{font-family:var(--font-heading);font-weight:400;letter-spacing:normal}h1{font-size:22px;margin:0}h2{font-size:17px;margin:0}.hint{color:var(--muted);font-size:12px}.brand{display:block;width:164px;height:auto;aspect-ratio:944.16 / 293.5061;object-fit:contain}
 .account,.account-actions,.library-header{display:flex;align-items:center;justify-content:space-between;gap:12px}.account{margin-bottom:22px}.account-actions{color:var(--muted)}
