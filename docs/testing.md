@@ -15,6 +15,28 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M1-P11/P14 — Independent Docker install, backup, rollback & key resilience rehearsal — 2026-11-08
+
+**B, automated container rehearsal:** Executed on this PC using Docker Compose (engine `desktop-linux`, Docker v29.9.2, Compose v5.6.1, container Node v22.23.4 / Debian 12, host Node v22.22.2 / Windows). Proves independent clean installation, diagnosis, matched snapshot backup, destructive mutation rollback, and credential key protection without touching Vigrid (`C:\Users\buizb\Documents\shared boot\uburoom` or `Z:\uburoom`) or production data.
+
+- **Mock PMS & Stack Setup:** Standalone containerized fake Plex Media Server (`fake-plex`) serving `/identity`, library sections, metadata, video parts, and `/transcode/universal/decision` on port 32400. Fresh uburoom container (`config.yaml` `# Config schema v2j`, port 5756, HTTPS TLS cert/key, volume mounts for `/app/data` and `/var/lib/uburoom`).
+- **Pre-flight Diagnostic Check:** Executed `scripts/doctor.js --json` via `docker compose run --rm uburoom`: **14 checks passed, zero failures**, 1 expected warning (`Credential key does not exist yet ... will be generated automatically on first server startup`). All runtime (Node v22, built-in SQLite), configuration, TLS cert match, media tools (FFmpeg, FFprobe, codecs, decode accels), and provider reachability (`http://fake-plex:32400` HTTP 200) passed cleanly.
+- **Clean Boot & Key Generation:** uburoom started; HTTPS `/health` verified HTTP 200. Exactly 32-byte AES credential key generated automatically in `/var/lib/uburoom/uburoom/credentials.key` (host-mounted `./secrets/uburoom/credentials.key`).
+- **Baseline Seeding:** Using first-party `Accounts`, `credentialVault`, `RoomStore`, and `RoomQueue` classes inside the container: created Alice (`0cf73920-9575-4210-9c39-56313ade1c0e`, Plex ID 101, owner) and Bob (`a1a46e45-994d-4652-9ea4-22f45831e5bc`, Plex ID 102, guest); sealed credential secret token with the generated key; created durable room `3eddc9b6-a91b-4763-9b33-36cbdf2e41ee` (`keepEmpty: true`) and queued test movie.
+- **Matched Offline Backup:** Stopped service; created snapshot of `accounts.sqlite`, `credentials.key`, `config.yaml`, and TLS certificates with SHA-256 recording.
+- **State Divergence & Drift:** Applied mutations: renamed Alice to `Alice Renamed Post-Backup`, created Charlie (`59402383-213a-4413-a6cf-5982a3254ba8`), created Divergent Room (`71ac7102-5822-4074-84e3-7a7877d9d7c4`), mutated `config.yaml` `rooms.max_members` from 12 to 24. Started uburoom; verified container runs healthy with mutated state.
+- **Rollback Verification:** Restored all files from snapshot.
+  - `doctor.js` reported **0 failures**, explicitly verifying `Credential key match` (authenticated encrypted database secrets).
+  - Started uburoom on restored state: `/health` returned HTTP 200.
+  - Invariants confirmed: canonical account UUIDs intact, Alice name reverted to `Alice`, Charlie absent, rehearsal room creator intact as Alice, divergent room absent, credential token successfully decrypted with surviving key matching original plaintext, SQLite `PRAGMA integrity_check` = `ok`, and `config.yaml` `max_members` reverted to 12.
+- **Negative & Resilience Probes:**
+  - *Probe 7A (Missing key guard):* Unlinked `credentials.key`. `doctor.js` failed on `Credential encryption key`. Asserted that server/doctor did NOT generate a replacement key over the existing database (preventing orphaned ciphertext).
+  - *Probe 7B (Mismatched key guard):* Wrote random 32-byte key. `doctor.js` failed on `Credential key match`. Asserted that mismatched key was NOT overwritten.
+  - *Probe 7C (Legitimate recovery):* Restored original key bytes. `doctor.js` passed 100%, uburoom started cleanly and returned HTTP 200 on `/health`.
+- **Teardown:** Clean compose down with volume cleanup (`docker compose down -v`). Sanitized evidence logged in `artifacts/rehearsal/results/rehearsal-evidence.json`.
+
+**C/D — not run:** No access or requests to Vigrid, live Plex accounts, or external networks. Containerized playback and simulated recovery do not constitute live device or human acceptance. Baseline 7 schema and credential key preservation invariants satisfied.
+
 ### M1-P13 — Approved shutdown checkpoint and preparation cleanup fixes — 2026-11-07
 
 **A/B, owner-approved implementation:** Uncommitted working tree based on `262debbce4122ce0941116eb3107dd1358ce72e0`, Node v22.22.2 / Windows. [Implementation and limits](room-recovery-investigation.md#implemented-lifecycle-contract): preloads transfer ownership only after admission; cleanup is tracked before deferred continuations; final snapshots retain the current occurrence/progress and correct Close/restart intent before detachment; bounded owned preparation/cleanup is separate from the storage receipt. Shutdown attempts remaining subsystem/database closure even after a final-save error. No UI, schema or configuration changes.
