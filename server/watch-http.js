@@ -333,6 +333,13 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   const operations = watchOperations({ config, watch, hub, authorized, login, mediaGrant, cookies, throttle, registry, clockEpoch, delivery, validGrant: id=>validGrant(grants.get(id)) });
   async function route(req, res, url) {
     if (!url.pathname.startsWith('/api/watch/')) return false;
+    const sharedPoster=/^\/api\/watch\/shared-poster\/([a-f0-9-]{36})\/([a-f0-9]{48})$/.exec(url.pathname);
+    if(sharedPoster&&req.method==='GET') {
+      const art=watch.publications?.posterResource(sharedPoster[1],sharedPoster[2]);
+      if(!art){json(res,404,{error:'Poster unavailable'});return true;}
+      res.writeHead(200,{'Content-Type':art.type,'Content-Length':art.bytes.length,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'});
+      res.end(art.bytes);return true;
+    }
     if(config.accessPolicy && url.pathname==='/api/watch/entry' && req.method==='POST') {
       if(!allowedOrigin(req)||!throttle('entry:'+(clientAddress(req)||'local'),10)){json(res,429,{error:'Entry is unavailable; wait a minute and try again'});return true;}
       const identity=await rawLogin(req), data=await body(req);

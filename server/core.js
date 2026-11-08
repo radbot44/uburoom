@@ -125,7 +125,7 @@ class Hub {
     if(this.config.singleRoom&&input.roomId&&!this.rooms.has(input.roomId))return {status:'forbidden',message:'Only the configured shared room is available.'};
     let command;
     try { command = Engine.validate(input); } catch { return { status: 'unsupported', message: 'Unsupported command or value.' }; }
-    const savedUnpublish=command.action==='room.unpublish'&&!this.rooms.has(input.roomId)&&!!this.savedPublicationExecute;
+    const savedUnpublish=command.action==='room.unpublish'&&!!this.savedPublicationExecute;
     if((command.action.startsWith('room.event.') && this.scheduledEventExecute) || savedUnpublish) {
       const deadlines=resolveCommandDeadlines({acceptedAt:Date.now(),expiresAt:input.expiresAt,commandTtlMs:COMMAND_MS,extendedTtlMs:12000});
       if(!input.roomId||!deadlines.admitted)return {status:'unavailable',message:'Select a room and retry the event change.'};
@@ -166,7 +166,7 @@ class Hub {
       // preparation can take longer than the default command deadline.
       // Keep completion bounded and recheck the same live authorization below.
       const preparing = personal && ['media.quality.set', 'media.tracks.set', 'media.stream.refresh'].includes(command.action) ||
-        command.action === 'media.load' ||
+        ['media.load','room.publish'].includes(command.action) ||
         s.permissions && (
           ['queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin','queue.auto.playNow','queue.offer.start','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','media.next','media.previous'].includes(command.action) ||
           ['media.play','media.toggle'].includes(command.action) && this.watchIdle?.(s.roomId)

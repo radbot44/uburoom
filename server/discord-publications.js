@@ -2,6 +2,8 @@
 const { randomBytes } = require('node:crypto');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { isHost } = require('./core');
+const {discordRequest,retryDelay} = require('./discord-request');
+const {waitFor} = require('./operation');
 const fail = (message, status = 503) => Object.assign(new Error(message), {status});
 const PREFIX = 'discordPublication:';
 const clean = (value, length = 256) => String(value || '').replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,length);
@@ -15,7 +17,9 @@ class DiscordPublications {
     this.watch = watch; this.hub = watch.hub; this.config = this.hub.config; this.registry = registry;
     this.records = new Map(registry.db.prepare('SELECT key,value FROM meta WHERE key LIKE ?').all(PREFIX+'%')
       .map(row => [row.key.slice(PREFIX.length),JSON.parse(row.value)]));
-    this.lanes = new Map(); this.sent = new Map(); this.errors = new Map(); this.retryAt = 0; this.retries = new Map();
+    this.lanes = new Map(); this.sent = new Map(); this.errors = new Map(); this.retries = new Map();
+    this.lifetime=new AbortController();
+    this.posters=new Map();this.posterAttempts=new Map();
     this.timer = setInterval(() => {void this.reconcile();},5000); this.timer.unref();
   }
   canManage(record, actor) {return !actor.guestRoomId && (isHost(record,actor) || this.hub.isAdmin(actor));}
@@ -23,7 +27,7 @@ class DiscordPublications {
   async save(id, value) {
     this.watch.roomState.store.healthy();
     if (value) {this.records.set(id,value);this.registry.meta(PREFIX+id,JSON.stringify(value));}
-    else {this.records.delete(id);this.sent.delete(id);this.errors.delete(id);this.retries.delete(id);this.registry.db.prepare('DELETE FROM meta WHERE key=?').run(PREFIX+id);}
+    else {this.records.delete(id);this.sent.delete(id);this.errors.delete(id);this.retries.delete(id);this.posters.delete(id);this.posterAttempts.delete(id);this.registry.db.prepare('DELETE FROM meta WHERE key=?').run(PREFIX+id);}
     await this.registry.flush();
   }
   lane(id, action) {
@@ -35,7 +39,7 @@ class DiscordPublications {
   async channel(channelId = this.config.shareChannelId, guildId = this.config.guildId) {
     const client=this.hub.discordClient;
     if (!client?.isReady()) throw fail('Discord is unavailable. Try again when the bot reconnects.');
-    if (!channelId || Date.now()<this.retryAt) throw fail('Discord publishing is unavailable. Try again shortly.');
+    if (!channelId) throw fail('Discord publishing is unavailable. Try again shortly.');
     const channel=await client.channels.fetch(channelId);
     if (channel?.guildId!==guildId || channel.type!==ChannelType.GuildText) throw fail('Choose a text channel in the configured Discord server.');
     const permissions=channel.permissionsFor(client.user);
@@ -50,12 +54,50 @@ class DiscordPublications {
     const viewers=new Set([...(room?.viewers.values() || [])].filter(v=>!v.watchSocket || v.watchSocket.readyState===1).map(v=>v.userId)).size;
     return {name:record.name,title:live?room.media?.title || 'Nothing selected':recovering?record.bookmark?.title || 'Nothing selected':'Nothing selected',
       subtitle:live?room.media?.subtitle || '':'',status:!live&&!recovering?'Closed':!live||room.reconnecting||room.mediaTransition||!room.media||room.media.unavailable||room.s.state.waitingForReady?'Waiting':room.s.state.paused?'Paused':'Playing',
-      viewers,visibility:record.visibility,revision:record.revision,epoch:room?.s.epoch,invite:this.config.publicUrl+'/join/'+record.inviteCode};
+      viewers,visibility:record.visibility,revision:record.revision,epoch:room?.s.epoch,invite:this.config.publicUrl+'/join/'+record.inviteCode,
+      posterUrl:this.posterUrl(record.id)};
+  }
+  posterKey(room) {return room?.media?.kind==='plex'?String(room.media.roomServerId||'')+':'+room.media.id:undefined;}
+  posterUrl(id) {
+    const poster=this.posters.get(id);
+    return poster&&poster.key===this.posterKey(this.watch.rooms.get(id))?this.config.publicUrl+'/api/watch/shared-poster/'+id+'/'+poster.token:undefined;
+  }
+  posterResource(id,token) {
+    const publication=this.records.get(id),poster=this.posters.get(id);
+    if(this.stopped||!publication?.active||publication.remove||!poster||poster.token!==token||poster.key!==this.posterKey(this.watch.rooms.get(id)))return;
+    return {bytes:poster.bytes,type:poster.type};
+  }
+  async refreshPoster(id,actor) {
+    const room=this.watch.rooms.get(id),key=this.posterKey(room);
+    if(!key){this.posters.delete(id);return;}
+    if(this.posters.get(id)?.key===key)return;
+    this.posters.delete(id);
+    const attempted=this.posterAttempts.get(id);
+    if(attempted?.key===key&&Date.now()<attempted.retryAt)return;
+    this.posterAttempts.set(id,{key,retryAt:Date.now()+30000});
+    const candidates=[actor,...[...(room.viewers?.values()||[])].map(viewer=>viewer.actor)].filter(Boolean);
+    for(const person of [...new Map(candidates.map(candidate=>[candidate.userId,candidate])).values()].slice(0,2)) {
+      try {
+        const art=await waitFor((async()=>{
+          if(person.watchCurrent&&!await person.watchCurrent()||!await this.watch.canView(room,person))return;
+          const plex=this.hub.plexFor?await this.hub.plexFor(person):this.watch.plex;
+          if(!plex?.artwork)return;
+          const result=await plex.artwork(room.media.id,'poster',room.media.source?.type);
+          if(!await this.watch.canView(room,person))return;
+          return result;
+        })(),AbortSignal.timeout(2500));
+        if(!art)continue;
+        if(this.stopped||this.watch.rooms.get(id)!==room||this.posterKey(room)!==key)return;
+        if(!['image/jpeg','image/png','image/webp','image/gif'].includes(art.type)||!Buffer.isBuffer(art.bytes)||art.bytes.length>2000000)continue;
+        this.posters.set(id,{key,token:randomBytes(24).toString('hex'),bytes:art.bytes,type:art.type});return;
+      }catch { /* Missing artwork does not prevent publishing or playback. */ }
+    }
   }
   payload(preview, closed = false) {
     const status=closed?'Closed':preview.status;
     return {content:'',allowedMentions:{parse:[]},embeds:[{title:clean(preview.name),color:closed?0x777777:0xff984f,
       description:closed?'This room is closed.':[markdown(preview.title),markdown(preview.subtitle)].filter(Boolean).join('\n'),
+      ...(!closed&&preview.posterUrl?{thumbnail:{url:preview.posterUrl}}:{}),
       fields:[{name:'Status',value:status,inline:true},{name:'Viewers',value:String(closed?0:preview.viewers),inline:true}],footer:{text:'uburoom'}}],
       components:closed?[]:[{type:1,components:[{type:2,style:5,label:'Join room',url:preview.invite}]}]};
   }
@@ -75,8 +117,8 @@ class DiscordPublications {
     return value;
   }
   safeError(error, subject = 'room post') {
-    const wait=Number(error?.retryAfter || error?.timeToReset || error?.retry_after*1000);
-    if(Number.isFinite(wait)&&wait>0)this.retryAt=Date.now()+Math.max(wait,1000);
+    const wait=retryDelay(error);
+    if(wait)return `Discord is busy. Try again in ${Math.max(1,Math.ceil(wait/1000))} seconds.`;
     return error?.status && error.status<500 && error.message && !error.code ? error.message :
       error?.status===503?error.message:`Discord could not update the ${subject}. Check the bot and permissions, then try again.`;
   }
@@ -107,10 +149,12 @@ class DiscordPublications {
         publication=this.records.get(id);
         if(!publication?.messageId)throw fail('The previous post could not be confirmed. Check Discord before retrying; no duplicate was posted.',409);
       }
+      await this.refreshPoster(id,actor);
       const preview=this.preview(record);
       if(publication?.messageId) {
         await this.check(room,actor,permitted,revision);
-        try {await channel.messages.edit(publication.messageId,this.payload(preview));}
+        try {await discordRequest(()=>channel.messages.edit(publication.messageId,this.payload(preview)),{
+          current:()=>this.check(room,actor,permitted,revision),signal:this.lifetime.signal});}
         catch(error){if(error.code===10008)await this.save(id,undefined);throw error;}
         await this.save(id,{...publication,active:true,remove:false,channelName:channel.name});
         this.sent.set(id,JSON.stringify(this.payload(preview)));
@@ -120,7 +164,8 @@ class DiscordPublications {
         // Recheck after durable intent, immediately before the external mutation.
         try {await this.check(room,actor,permitted,revision);}catch(error){await this.save(id,undefined);throw error;}
         try {
-          const message=await channel.send({...this.payload(preview),nonce:publication.nonce,enforceNonce:true});
+          const message=await discordRequest(()=>channel.send({...this.payload(preview),nonce:publication.nonce,enforceNonce:true}),{
+            current:()=>this.check(room,actor,permitted,revision),signal:this.lifetime.signal});
           await this.save(id,{...publication,messageId:message.id});
           this.sent.set(id,JSON.stringify(this.payload(preview)));
         } catch(error) {
@@ -147,7 +192,10 @@ class DiscordPublications {
       if(this.stopped||!record||!permitted())throw fail('Room changed or command expired.',409);
       if(!this.canManage(record,actor))throw fail('Only room hosts can remove the post.',403);
       const publication=this.records.get(id);
-      if(publication){await this.save(id,{...publication,active:false,remove:true});await this.update(id);}
+      if(publication){await this.save(id,{...publication,active:false,remove:true});await this.update(id,false,async()=>{
+        if(actor.watchCurrent&&!await actor.watchCurrent())return false;
+        const current=this.getRecord(id);return !this.stopped&&!!current&&permitted()&&this.canManage(current,actor);
+      });}
       return {status:'applied',message:'Room post removed.'};
     }).catch(error=>{throw fail(this.safeError(error),error.status||503);});
   }
@@ -164,33 +212,35 @@ class DiscordPublications {
     void this.lane(id,async()=>{const value=this.records.get(id);if(value)await this.save(id,{...value,active:false});await this.update(id);})
       .catch(error=>this.recordError(id,error));
   }
-  async update(id, force = false) {
+  async update(id, force = false, current = ()=>!this.stopped) {
     let publication=this.records.get(id);if(!publication)return;
     const record=this.getRecord(id), room=this.watch.rooms.get(id);
     if(publication.active&&(!record || (!room&&!this.watch.roomState.recoveries.has(id)))) {
       publication={...publication,active:false};await this.save(id,publication);
     }
+    if(!publication.active){this.posters.delete(id);this.posterAttempts.delete(id);}
     const channel=await this.channel(publication.channelId,publication.guildId);
     if(!publication.messageId){await this.recoverReceipt(id,channel);publication=this.records.get(id);}
     if(!publication.messageId)throw fail('The room post could not be confirmed. Check Discord; no duplicate was posted.',409);
     if(publication.remove) {
-      try {await channel.messages.delete(publication.messageId);}catch(error){if(error.code!==10008)throw error;}
+      try {await discordRequest(()=>channel.messages.delete(publication.messageId),{current,signal:this.lifetime.signal});}catch(error){if(error.code!==10008)throw error;}
       await this.save(id,undefined);this.sent.delete(id);this.errors.delete(id);return;
     }
+    if(publication.active)await this.refreshPoster(id);
     const payload=this.payload(record?this.preview(record):publication.preview,!publication.active);
     const signature=JSON.stringify(payload);
     if(!force&&this.sent.get(id)===signature)return;
-    try {await channel.messages.edit(publication.messageId,payload);}
+    try {await discordRequest(()=>channel.messages.edit(publication.messageId,payload),{current,signal:this.lifetime.signal});}
     catch(error){if(error.code===10008){await this.save(id,undefined);this.sent.delete(id);return;}throw error;}
     this.sent.set(id,signature);this.errors.delete(id);this.retries.delete(id);
     if(!record){await this.save(id,undefined);this.sent.delete(id);}
   }
   async reconcile() {
-    if(this.stopped||!this.hub.discordClient?.isReady()||Date.now()<this.retryAt)return;
+    if(this.stopped||!this.hub.discordClient?.isReady())return;
     await Promise.allSettled([...this.records.keys()].filter(id=>!this.lanes.has(id)&&Date.now()>=(this.retries.get(id)||0)).map(id=>this.lane(id,()=>this.update(id))
       .catch(error=>this.recordError(id,error))));
   }
-  recordError(id,error) {this.errors.set(id,this.safeError(error));this.retries.set(id,Math.max(this.retryAt,Date.now()+30000));}
-  async close() {this.stopped=true;clearInterval(this.timer);await Promise.allSettled([...this.lanes.values()]);}
+  recordError(id,error) {this.errors.set(id,this.safeError(error));this.retries.set(id,Date.now()+(retryDelay(error)||30000));}
+  async close() {this.stopped=true;this.lifetime.abort();clearInterval(this.timer);await Promise.allSettled([...this.lanes.values()]);}
 }
 module.exports = {DiscordPublications};

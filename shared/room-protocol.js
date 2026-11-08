@@ -51,11 +51,17 @@
         break;
       case 'room.unpublish': break;
       case 'room.event.create': case 'room.event.edit': case 'room.event.cancel':
-        if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh Share before changing an event');
-        args.revision=a.revision;
+        if(action!=='room.event.cancel') {
+          if (!Number.isSafeInteger(a.revision) || a.revision < 0) throw new Error('Refresh Share before changing an event');
+          args.revision=a.revision;
+        }
         if(action!=='room.event.create') {
-          if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey)||typeof a.eventVersion!=='string'||!/^[0-9a-f]{64}$/.test(a.eventVersion))throw new Error('Refresh the Discord event');
-          args.eventKey=a.eventKey;args.eventVersion=a.eventVersion;
+          if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey))throw new Error('Choose the Discord event');
+          args.eventKey=a.eventKey;
+          if(action==='room.event.edit') {
+            if(typeof a.eventVersion!=='string'||!/^[0-9a-f]{64}$/.test(a.eventVersion))throw new Error('Refresh the Discord event');
+            args.eventVersion=a.eventVersion;
+          }
         }
         if(action!=='room.event.cancel') {
           if(typeof a.title!=='string'||!a.title.trim()||a.title.trim().length>100||/[\u0000-\u001f\u007f]/.test(a.title))throw new Error('Use an event title of 1–100 characters');

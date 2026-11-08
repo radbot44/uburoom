@@ -4,6 +4,7 @@ const {ChannelType} = require('discord.js');
 function discordChannel(config) {
   const messages=new Map(), calls=[];let sequence=100;
   const missing=()=>Object.assign(new Error('Unknown message'),{code:10008,status:404});
+  function limit(value) {if(value?.remaining>0){value.remaining--;throw Object.assign(new Error('Fixture rate limit'),{name:'RateLimitError',retryAfter:value.wait});}}
   const channel={id:config.shareChannelId,guildId:config.guildId,name:'watch-together',type:ChannelType.GuildText,permitted:true,
     permissionsFor:()=>({has:()=>channel.permitted}),
     async send(payload) {
@@ -17,14 +18,14 @@ function discordChannel(config) {
     messages:{
       async fetch(){return messages;},
       async edit(id,payload){calls.push({method:'edit',id,payload:structuredClone(payload)});if(!messages.has(id))throw missing();Object.assign(messages.get(id),structuredClone(payload));return messages.get(id);},
-      async delete(id){calls.push({method:'delete',id});if(!messages.delete(id))throw missing();}
+      async delete(id){calls.push({method:'delete',id});limit(channel.deleteRateLimit);if(!messages.delete(id))throw missing();}
     }};
   const client={user:{id:'fixture-bot'},isReady:()=>!channel.offline,channels:{fetch:async id=>{
     if(channel.beforeFetch)await channel.beforeFetch();
     if(id!==channel.id)throw new Error('Unexpected fixture channel');return channel;
   }}};
   const events=new Map();channel.eventPermitted=true;
-  const guild={id:config.guildId,name:'Fixture server',members:{fetchMe:async()=>({permissions:{has:()=>channel.eventPermitted}})},scheduledEvents:{
+  const guild={id:config.guildId,name:'Fixture server',members:{fetchMe:async()=>{guild.members.me={permissions:{has:()=>channel.eventPermitted}};return guild.members.me;}},scheduledEvents:{
     async fetch(options={}) {
       if(channel.beforeEventFetch)await channel.beforeEventFetch();
       if(!options.guildScheduledEvent)return events;
@@ -37,7 +38,7 @@ function discordChannel(config) {
       events.set(id,event);if(channel.loseEventReceipt){channel.loseEventReceipt=false;throw new TypeError('Fixture event response lost');}return event;
     },
     async edit(id,payload) {
-      calls.push({method:'event-edit',id,payload:structuredClone(payload)});const event=events.get(id);if(!event)throw Object.assign(new Error('Unknown event'),{code:10070,status:404});
+      calls.push({method:'event-edit',id,payload:structuredClone(payload)});limit(channel.eventRateLimit);const event=events.get(id);if(!event)throw Object.assign(new Error('Unknown event'),{code:10070,status:404});
       for(const [key,value] of Object.entries(payload)) {
         if(key==='scheduledStartTime')event.scheduledStartTimestamp=Date.parse(value);
         else if(key==='scheduledEndTime')event.scheduledEndTimestamp=Date.parse(value);

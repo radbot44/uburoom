@@ -37,14 +37,22 @@ test('Discord scheduled events preserve explicit times and consent across closur
   const current=(await returning.call(root+'/share')).body.scheduling.events[0];
   assert.equal((await returning.call(root+'/share',{...args,eventVersion:current.eventVersion,title:'Updated watch night'})).body.status,'applied');
   const updated=(await returning.call(root+'/share')).body.scheduling.events[0];
+  await edit({action:'rename',name:'Room changed after event edit',isCustom:true});
+  native.name='Event changed again';
+  remote.channel.eventRateLimit={remaining:1,wait:50};
   assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied');
   assert.equal(native.status,4);assert.equal(f.app.watch.events.records.size,0);
   remote.channel.loseEventReceipt=true;
-  assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create',revision:args.revision})).body.status,'applied');
+  assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create',revision:(await returning.call(root+'/settings')).body.revision})).body.status,'applied');
   const recovered=(await returning.call(root+'/share')).body.scheduling.events;
   assert.equal(recovered.length,1);assert.ok(recovered[0].eventId);
   const creations=remote.calls.filter(call=>call.method==='event-create').length;
   await f.app.watch.events.reconcile();assert.equal(remote.calls.filter(call=>call.method==='event-create').length,creations);
+  remote.channel.eventRateLimit={remaining:1,wait:9000};
+  assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:recovered[0].key})).body.status,'applied');
+  const pending=(await returning.call(root+'/share')).body.scheduling;
+  assert.equal(pending.available,true,'a rate limit does not become a disconnected bot');assert.equal(pending.events[0].cancel,true);
+  await f.app.watch.events.reconcile();assert.equal(f.app.watch.events.records.size,0,'accepted cancellation completes without reopening Share');
 });
 
 test('explicit Discord publication enforces host authority, preview freshness, stable posts and room lifecycle across restart',tls,async t=>{
@@ -64,18 +72,27 @@ test('explicit Discord publication enforces host authority, preview freshness, s
   assert.equal((await share(host)).body.status,'applied','host can publish with Room settings disabled');
   const messageId=[...remote.messages.keys()][0];
   await share(creator);assert.equal(remote.calls.filter(call=>call.method==='send').length,1,'publishing twice edits the same message');
+  const oldPreview=(await host.call(root+'/share')).body.preview;
+  await creator.call(root+'?viewer='+randomUUID());
+  f.app.watch.invalidateControls(f.app.watch.rooms.get(id));
+  await edit({action:'rename',name:'Changed after opening Share',isCustom:true});
+  remote.channel.deleteRateLimit={remaining:1,wait:50};
+  assert.equal((await share(creator,'room.unpublish',oldPreview)).body.status,'applied','room and playback changes do not block post removal');
+  assert.equal(remote.messages.has(messageId),false);
+  await share(creator);
+  const currentMessageId=[...remote.messages.keys()][0];
   await edit({action:'visibility',visibility:'private'});
   await edit({action:'invite.reroll'});await f.app.watch.publications.reconcile();
-  assert.match(remote.messages.get(messageId).components[0].components[0].url,new RegExp(f.app.watch.roomState.store.get(id).inviteCode+'$'));
+  assert.match(remote.messages.get(currentMessageId).components[0].components[0].url,new RegExp(f.app.watch.roomState.store.get(id).inviteCode+'$'));
   await f.restart();remote.attach(f.app.hub);
   const returning=await f.login('host');await returning.call(root+'?viewer='+randomUUID());
   await f.app.watch.publications.reconcile();
-  assert.equal(f.app.watch.publications.records.get(id).messageId,messageId);
-  assert.equal(remote.calls.filter(call=>call.method==='send').length,1);
+  assert.equal(f.app.watch.publications.records.get(id).messageId,currentMessageId);
+  assert.equal(remote.calls.filter(call=>call.method==='send').length,2);
   await f.app.watch.remove(id);await f.app.watch.publications.reconcile();
-  const closed=remote.messages.get(messageId);assert.deepEqual(closed.components,[]);assert.equal(closed.embeds[0].fields[0].value,'Closed');
+  const closed=remote.messages.get(currentMessageId);assert.deepEqual(closed.components,[]);assert.equal(closed.embeds[0].fields[0].value,'Closed');
   await returning.call(root+'/reopen',{});await f.app.watch.publications.reconcile();
-  assert.deepEqual(remote.messages.get(messageId).components,[],'reopening does not republish');
+  assert.deepEqual(remote.messages.get(currentMessageId).components,[],'reopening does not republish');
   assert.equal((await share(returning)).body.status,'applied');assert.equal(remote.messages.size,1);
   remote.channel.offline=true;
   assert.notEqual((await share(returning,'room.unpublish')).body.status,'applied');
@@ -111,6 +128,37 @@ test('Discord publication fences revoked authority, rejects unsafe destinations 
   assert.notEqual((await creator.call(root+'/share',{action:'room.publish',epoch:finalPreview.epoch,revision:finalPreview.revision})).body.status,'applied');
   await f.app.watch.publications.reconcile();
   assert.deepEqual([...remote.messages.values()][0].components,[],'closure during an external send cannot leave an active Join');
+});
+
+test('Discord room posters expose only bounded cached artwork for the active publication and current media',tls,async t=>{
+  const f=await fixture(t,false,{shareChannelId:'100000000000000050'}),creator=await f.login('host');
+  const remote=require('./helpers/discord-channel').discordChannel(f.config);remote.attach(f.app.hub);
+  const id=(await creator.call('/api/watch/rooms',{keepEmpty:true})).body.id,root='/api/watch/rooms/'+id;
+  await creator.call(root+'?viewer='+randomUUID());
+  const room=f.app.watch.rooms.get(id),actor=[...room.viewers.values()][0].actor;
+  const image=Buffer.from('fixture-image-bytes');let reads=0,allowed=true;
+  const originalPlexFor=f.app.hub.plexFor;
+  f.app.hub.plexFor=async()=>({allows:async()=>allowed,artwork:async()=>{reads++;return {type:'image/png',bytes:image};}});
+  room.media={id:'42',title:'Poster movie',kind:'plex',format:'unavailable',unavailable:true,duration:60,resources:new Map(),roomServerId:'fixture-server',source:{type:'movie'}};
+  const get=url=>new Promise((resolve,reject)=>https.get(url,{ca:f.cert},response=>{const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve({status:response.statusCode,bytes:Buffer.concat(chunks),type:response.headers['content-type']}));}).on('error',reject));
+  try {
+    await f.app.watch.publications.refreshPoster(id,actor);
+    const before=f.app.watch.publications.posterUrl(id);assert.ok(before);assert.equal((await get(before)).status,404,'unpublished artwork is not public');
+    const preview=(await creator.call(root+'/share')).body.preview;
+    assert.equal((await creator.call(root+'/share',{action:'room.publish',epoch:preview.epoch,revision:preview.revision})).body.status,'applied');
+    const message=[...remote.messages.values()][0],url=message.embeds[0].thumbnail.url;
+    assert.equal(new URL(url).origin,f.config.publicUrl);assert.ok(!url.includes('token'));
+    const result=await get(url);assert.equal(result.status,200);assert.deepEqual(result.bytes,image);assert.equal(result.type,'image/png');
+    const calls=reads;await get(url);assert.equal(reads,calls,'anonymous image requests never call Plex');
+    assert.equal((await get(url.replace(/.$/,'z'))).status,404);
+    room.media={...room.media,id:'43'};assert.equal((await get(url)).status,404,'the previous title cannot serve a new title poster');
+    await f.app.watch.publications.reconcile();const next=message.embeds[0].thumbnail.url;assert.notEqual(next,url);assert.equal((await get(next)).status,200);
+    room.media={...room.media,id:'44'};allowed=false;
+    await f.app.watch.publications.reconcile();assert.equal(message.embeds[0].thumbnail,undefined,'denied artwork has no implicit provider fallback');
+    allowed=true;
+    assert.equal((await creator.call(root+'/share',{action:'room.unpublish'})).body.status,'applied');
+    assert.equal((await get(next)).status,404,'removal revokes the cached artwork URL');
+  } finally {room.media=undefined;f.app.hub.plexFor=originalPlexFor;}
 });
 
 test('kick permission protects leader/self/hosts, removes every target tab, fences stale subscriptions and allows manual rejoining',tls,async t=>{

@@ -3,7 +3,7 @@
   'use strict';
   function mount({request,share,openLink}) {
     const $=id=>document.getElementById(id),dialog=$('room-share-dialog'),dialogs=root.uburoomDialogs;
-    let generation=0,target,value,busy=false,editing,draftDirty=false;
+    let generation=0,target,value,busy=false,editing,draftDirty=false,refreshTimer;
     const eventFields=['title','description','zone','start','end'].map(name=>$('room-share-event-'+name));
     dialogs.register(dialog,{busy:()=>busy,dirty:()=>draftDirty});
     dialog.addEventListener('keydown',event=>{if(event.key==='Escape'&&(busy||draftDirty)){event.preventDefault();event.stopPropagation();}});
@@ -34,7 +34,6 @@
     function renderEvents() {
       const scheduling=value?.scheduling,visible=!!scheduling?.configured&&!!scheduling?.canManage;
       $('room-share-events').hidden=!visible;if(!visible)return;
-      $('room-share-event-audience').textContent='Events are visible to the Discord server, beyond the publishing channel. Anyone who sees an event can use its room invite; entry and media requirements still apply.';
       $('room-share-event-new').hidden=!$('room-share-event-form').hidden;
       $('room-share-event-list').hidden=!$('room-share-event-form').hidden;
       $('room-share-event-new').disabled=busy||!scheduling.available;
@@ -49,7 +48,7 @@
         when.textContent=format.format(new Date(event.start))+' – '+format.format(new Date(event.end))+' · '+event.timeZone+' · '+event.statusName;row.append(when);
         const actions=document.createElement('div');actions.className='dialog-actions';
         if(event.url)actions.append(button('View event',()=>void openLink(event.url).catch(error=>{$('room-share-error').textContent=error.message;})));
-        if(event.status===1&&event.eventId) {
+        if(event.status===1&&event.eventId&&!event.cancel) {
           const edit=button('Edit',()=>editEvent(event));edit.disabled=busy||!scheduling.available;
           const cancel=button('Cancel event',async()=>{
             const release=dialogs.hold(dialog);
@@ -67,7 +66,8 @@
       $('room-share-invite').hidden=editorOpen;
       $('room-share-close').hidden=editorOpen;
       $('room-share-name').textContent=value?.preview.name || 'Room';
-      $('room-share-code').textContent=value?.invite.code || '';
+      $('room-share-url').textContent=value?.invite.url || '';
+      if(value?.invite.url)$('room-share-url').href=value.invite.url;else $('room-share-url').removeAttribute('href');
       $('room-share-copy').disabled=$('room-share-personal').disabled=busy||!value;
       renderEvents();
       $('room-share-error').textContent=value?.error||'';
@@ -79,26 +79,33 @@
       $('room-share-preview-name').textContent=preview.name;
       $('room-share-preview-title').textContent=[preview.title,preview.subtitle].filter(Boolean).join(' · ');
       $('room-share-preview-status').textContent=preview.status+' · '+preview.viewers+' viewer'+(preview.viewers===1?'':'s');
-      $('room-share-audience').textContent=preview.visibility==='private'?'Anyone who can see this channel can use this room invite. Entry and media requirements still apply.':'People in this channel can use the room invite. Entry and media requirements still apply.';
       $('room-share-publish').hidden=!!value.published||!!value.removing;
       $('room-share-publish').disabled=busy||!value.available||!value.canPublish||!preview.epoch||preview.status==='Closed'||value.uncertain;
       $('room-share-view').hidden=!value.messageUrl;
       $('room-share-view').disabled=busy;
       $('room-share-remove').hidden=!value.hasPost&&!value.published&&!value.uncertain&&!value.removing;
       $('room-share-remove').disabled=busy;
-      $('room-share-publication-status').textContent=value.removing?'Removal pending · retry Remove post when Discord is available':value.uncertain?'The post could not be confirmed. Check Discord before retrying.':value.published?'Published · updates automatically':preview.status==='Closed'?'Open this room to publish it.':'';
+      $('room-share-publication-status').textContent=value.removing?'Removing post…':value.uncertain?'The post could not be confirmed. Check Discord before retrying.':value.published?'Published':preview.status==='Closed'?'Open this room to publish it.':'';
     }
     async function load(ticket) {
       const next=await request('/api/watch/rooms/'+target+'/share');
       if(ticket!==generation||!dialog.open)return;
-      value=next;render();
+      value=next;render();scheduleRefresh(ticket);
+    }
+    function scheduleRefresh(ticket=generation) {
+      clearTimeout(refreshTimer);
+      if(!dialog.open||draftDirty||busy||!(value?.removing||value?.scheduling?.events.some(event=>event.cancel)||value?.canManage&&value?.configured&&!value?.available||value?.scheduling?.canManage&&value?.scheduling?.configured&&!value?.scheduling?.available))return;
+      refreshTimer=setTimeout(async()=>{
+        if(ticket!==generation||!dialog.open||busy||draftDirty)return;
+        try{await load(ticket);}catch{scheduleRefresh(ticket);}
+      },5000);
     }
     async function open(id) {
       if(busy)return;
       const ticket=++generation;target=id;value=undefined;
       discardEvent();$('room-share-events').hidden=true;$('room-share-event-status').textContent='';
       $('room-share-error').textContent='';$('room-share-publication').hidden=true;
-      $('room-share-name').textContent='Loading room…';$('room-share-code').textContent='';
+      $('room-share-name').textContent='Loading room…';$('room-share-url').textContent='';$('room-share-url').removeAttribute('href');
       $('room-share-copy').disabled=$('room-share-personal').disabled=true;
       dialogs.open(dialog);
       try {await load(ticket);}catch(error){if(ticket===generation&&dialog.open)$('room-share-error').textContent=error.message;}
@@ -111,7 +118,7 @@
         if(response.status!=='applied')throw new Error(response.message||'Discord could not update the post.');
         await load(ticket);
       }catch(error){if(ticket===generation&&dialog.open){try{await load(ticket);}catch{}value.error=error.message;}}
-      finally{busy=false;if(ticket===generation&&dialog.open)render();}
+      finally{busy=false;if(ticket===generation&&dialog.open){render();scheduleRefresh(ticket);}}
     }
     async function changeEvent(action,event) {
       if(busy||!value)return;
@@ -125,7 +132,7 @@
         if(result.status!=='applied')throw new Error(result.message||'Discord could not update the event.');
         discardEvent();await load(ticket);$('room-share-event-status').textContent=result.message;
       }catch(error){if(ticket===generation&&dialog.open){try{await load(ticket);}catch{}value.error=error.message;}}
-      finally{busy=false;if(ticket===generation&&dialog.open)render();}
+      finally{busy=false;if(ticket===generation&&dialog.open){render();scheduleRefresh(ticket);}}
     }
     $('room-share-event-new').addEventListener('click',()=>editEvent());
     $('room-share-event-discard').addEventListener('click',discardEvent);
@@ -136,7 +143,7 @@
     $('room-share-remove').addEventListener('click',()=>void change('room.unpublish'));
     $('room-share-view').addEventListener('click',()=>{if(value?.messageUrl)void openLink(value.messageUrl).catch(error=>{$('room-share-error').textContent=error.message;});});
     $('room-share-close').addEventListener('click',()=>dialogs.close(dialog));
-    dialog.addEventListener('close',()=>{generation++;value=undefined;draftDirty=false;});
+    dialog.addEventListener('close',()=>{generation++;clearTimeout(refreshTimer);value=undefined;draftDirty=false;});
     return {open};
   }
   root.uburoomShare={mount};

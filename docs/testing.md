@@ -15,6 +15,14 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 
 ## Latest scoped evidence
 
+### M2-P9 — Share removal, event cancellation and posters — 2026-11-08
+
+**A/B, local follow-up on `10cde51`, not deployed.** The owner reported live failures removing a room post after joins/changes and canceling an edited event. Source review found removal incorrectly fenced by a stale playback epoch, and per-route Discord rate limits shared as a global reconnect condition. The follow-up removes that playback dependency while retaining current host/access checks, retries bounded rate-limit waits without retrying ambiguous failures, caches the bot's guild-member lookup, and retains pending event cancellation across longer waits. Event editing still rejects conflicting edits; cancellation does not depend on old room/event details.
+
+- `node --test --test-reporter=tap tests/*.test.js` — **442 passed, 0 failed/canceled/skipped**. Existing Discord lifecycle cases now exercise removal with stale epochs/revisions after a viewer join and room rename, edit-then-cancel after further native event/room changes, short rate-limit recovery and long pending cancellation without a false disconnect. The added artwork boundary scenario checks unpublished/invalid/stale/revoked URLs, current-media switching, anonymous cache-only delivery, own-origin image URLs and denied-provider refusal.
+- Chrome and Firefox headless fixture procedure passed with full invite URLs, the requested prose/heading removed, stale-state removal and rate-limited edit-then-cancel; both Share entrypoints, draft protection, focus return, dark/light, narrow layouts and 200% CSS zoom retained. Screenshots inspected. The poster is referenced as the Discord embed thumbnail from a bounded image-only cache; Discord's actual image fetching/rendering has not been retested.
+- Syntax checks and `git diff --check` passed. No configuration or database schema change. Real Discord/provider retest, deployment and owner acceptance remain open.
+
 ### M2-P9 — Explicit Discord publishing and scheduled events — 2026-11-08
 
 **A, source and rendered review; B, isolated execution** on the uncommitted working tree over `fdce778` (Windows; local account/provider fixtures only).
