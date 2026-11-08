@@ -16,12 +16,17 @@ let viewerId = (() => {
 const params = new URLSearchParams(location.search);
 const activity = params.has('frame_id');
 function syncRoomUrl(id) {
-  if (activity || config?.singleRoom) return;
-  const url = new URL(location.href);
-  if (id) url.searchParams.set('room', id);
-  else url.searchParams.delete('room');
-  if (url.search !== location.search) {
-    history.replaceState(null, '', url.pathname + url.search + url.hash);
+  if (activity) return;
+  if (config?.singleRoom) {
+    if (location.pathname !== '/' || location.search) {
+      history.replaceState(null, '', '/' + location.hash);
+    }
+    return;
+  }
+  const currentSlug = state?.slug || knownRooms.find(r => r.id === id)?.slug;
+  const target = id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
+  if (location.pathname !== target || location.search) {
+    history.replaceState(null, '', target + location.hash);
   }
 }
 let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
@@ -1215,8 +1220,10 @@ function updateActivityLayout(event) {
 document.body.classList.toggle('activity', activity); $('fullscreen').hidden = $('theater').hidden = activity;
 $('pip').hidden = activity || !supportsPiP;
 if (activity) {
-  $('brand-link').href = '/watch' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
+  $('brand-link').href = '/' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
+} else {
+  $('brand-link').href = '/'; $('brand-link').setAttribute('aria-label', 'uburoom watch');
 }
 updateMobilePlayer(); setTheater(theater,false); updateFullscreenLayout(); updateActivityLayout();
 window.addEventListener('resize', () => { updateMobilePlayer(); updateActivityLayout(); renderTransport(); });
@@ -2920,7 +2927,8 @@ async function createRoom(advanced = roomUI.draftOptions()) {
   if (creating) return; creating = true;
   $('room-create').disabled = true;
   try {
-    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:$('room-name').value.trim() || $('room-name').placeholder,...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
+    const customTyped = $('room-name').value.trim();
+    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:customTyped || $('room-name').placeholder,isCustom:Boolean(customTyped),...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
     const item = roomChoice, opts = roomChoiceOptions;
     roomNameDraft = ''; roomVisibilityDraft = 'public'; roomPresetDraft = 'host-control'; $('room-name').value = '';
@@ -3026,9 +3034,11 @@ async function start() {
   $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
   const discordButton=$('welcome').querySelector('.discord-button');
   discordButton.hidden=config.access?.discord===false;
-  const initialRoom = params.get('room');
-  if (!activity && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(initialRoom || '')) {
-    const returnTarget = encodeURIComponent('/watch?room=' + initialRoom);
+  const roomPathMatch = !activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
+  const initialRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+  if (!activity && initialRoom) {
+    const returnSlug = pageBootstrap?.targetRoom?.slug || (roomPathMatch ? roomPathMatch[1] : undefined);
+    const returnTarget = encodeURIComponent(returnSlug ? '/room/' + returnSlug : '/room/' + initialRoom);
     if (discordButton) discordButton.href = '/auth/discord?return=' + returnTarget;
     if ($('plex-login')) $('plex-login').href = '/auth/plex?return=' + returnTarget;
   }
@@ -3119,11 +3129,17 @@ async function start() {
   }, 1000);
   await transport.connect();
   await bootstrap;
-  if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/watch');if(typeof showAccount==='function')await showAccount();}
-  const requestedRoom = params.get('room');
-  if (!activity && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requestedRoom || '')) {
+  if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/');if(typeof showAccount==='function')await showAccount();}
+  const requestedRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+  if (!activity && requestedRoom) {
     try {
-      await selectRoom(requestedRoom);
+      let targetId = requestedRoom;
+      if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
+        const found = knownRooms.find(r => r.slug === targetId || r.id === targetId);
+        if (found) targetId = found.id;
+        else if (pageBootstrap?.targetRoom?.id) targetId = pageBootstrap.targetRoom.id;
+      }
+      await selectRoom(targetId);
     } catch {
       syncRoomUrl(null);
     }

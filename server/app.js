@@ -350,8 +350,25 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         } catch {}
         activityContext ||= req.headers.origin === activityOrigin || req.headers.host === new URL(activityOrigin).host;
       }
-      if (req.method === 'GET' && (route === '/' || activityContext && ['/activity', '/auth/discord', '/auth/callback'].includes(route))) {
-        res.writeHead(302, {Location:'/watch' + activityQuery}); return res.end();
+      if (req.method === 'GET' && (route === '/activity' || (activityContext && ['/auth/discord', '/auth/callback'].includes(route)))) {
+        res.writeHead(302, {Location:'/' + activityQuery}); return res.end();
+      }
+      if (req.method === 'GET' && route === '/room') {
+        const rem = url.searchParams.toString(); res.writeHead(302, {Location:'/' + (rem ? '?' + rem : '')}); return res.end();
+      }
+      if (req.method === 'GET' && route === '/watch') {
+        const roomParam = url.searchParams.get('room');
+        if (roomParam && watch.roomState) {
+          try {
+            const r = watch.roomState.store.get(roomParam);
+            if (r?.slug) {
+              url.searchParams.delete('room');
+              const rem = url.searchParams.toString();
+              res.writeHead(302, {Location:'/room/' + encodeURIComponent(r.slug) + (rem ? '?' + rem : '')}); return res.end();
+            }
+          } catch {}
+        }
+        const rem = url.searchParams.toString(); res.writeHead(302, {Location:'/' + (rem ? '?' + rem : '')}); return res.end();
       }
       if (await watchRoutes.route(req, res, url)) return;
       if (await accountRoutes.route(req,res,url)) return;
@@ -387,7 +404,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         if (!isServerOperator(registry, config, login.userId)) return json(res, 403, { error: 'Server operator required' });
         return json(res, 200, runningSettings(config));
       }
-      const watchDocument = route === '/watch' || route === '/activity';
+      const roomRouteMatch = /^\/room\/([a-z0-9-]+)$/i.exec(route);
+      const watchDocument = route === '/' || route === '/activity' || Boolean(roomRouteMatch);
       // The watch page needs a per-response nonce for OverlayScrollbars' own inline <style>.
       const scrollbarStyleNonce = watchDocument ? randomBytes(16).toString('base64') : undefined;
       const player = watchDocument || route === '/__diagnostics/codec';
@@ -492,17 +510,18 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const content = await readAsset(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js'));
         res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
       }
-      if (req.method === 'GET' && assets[route]) {
-        const [file, type] = assets[route];
-        if(file==='watch.html'){
+      const isWatchHtml = route === '/' || Boolean(roomRouteMatch) || (assets[route] && assets[route][0] === 'watch.html');
+      if (req.method === 'GET' && (assets[route] || route === '/' || Boolean(roomRouteMatch))) {
+        if(isWatchHtml){
           const [initial, template] = await Promise.all([
             watchRoutes.bootstrap(req),
-            readAsset(path.join(publicDir,file),'utf8')
+            readAsset(path.join(publicDir,'watch.html'),'utf8')
           ]);
           const current = await user(req); if (current) renewCookie(req, res, current);
           const html=watchPage(template,initial,scrollbarStyleNonce);
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);
         }
+        const [file, type] = assets[route];
         const content = await readAsset(path.join(publicDir, file));
         const contentType = type.startsWith('font/') ? type : type + '; charset=utf-8';
         res.writeHead(200, { 'Content-Type': contentType }); return res.end(content);
@@ -521,7 +540,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       if (req.method === 'GET' && ['/auth/discord','/auth/owner'].includes(route)) {
         if (!oauthReady) return json(res, 503, { error: 'Configure Discord OAuth on the server first' });
         const returnParam = url.searchParams.get('return');
-        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam))) ? returnParam : undefined;
+        const returnTo = (returnParam && (/^\/auth\/native#[a-f0-9]{64}$/.test(returnParam) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(returnParam) || /^\/room\/[a-z0-9-]+$/.test(returnParam) || /^\/$/.test(returnParam))) ? returnParam : undefined;
         return discordStart(req,res,undefined,route==='/auth/owner',returnTo);
       }
       if (req.method === 'GET' && route === '/auth/callback') {
@@ -544,7 +563,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
           if((await user(req))!==linking)return json(res,403,{error:'Account sign-in expired during linking'});
           await accountRoutes.verifiedLink(req,res,linking,'discord',identity.id,name,undefined,oauth);
           const existing=res.getHeader('Set-Cookie');
-          res.writeHead(302,{Location:'/watch?account=1','Set-Cookie':[...(existing?[existing]:[]),cookie('uburoom_oauth','',0)]});return res.end();
+          res.writeHead(302,{Location:'/?account=1','Set-Cookie':[...(existing?[existing]:[]),cookie('uburoom_oauth','',0)]});return res.end();
         }
         if (!config.accessPolicy && !await hub.access?.refresh(identity.id)) return json(res, 403, { error: 'Sign in as a member of the configured Discord server; the bot must be connected.' });
         const id = randomBytes(32).toString('hex');
@@ -552,7 +571,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         logins.set(hash(id), { ...discordIdentity({userId:identity.id,name}),csrf: randomBytes(32).toString('hex'), expires: null,
           ...(oauth ? { oauth } : {}) });
         accounts.save();
-        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo))) ? attempt.returnTo : '/watch';
+        const destination = (attempt.returnTo && (/^\/auth\/native#[a-f0-9]{64}$/.test(attempt.returnTo) || /^\/watch\?room=[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(attempt.returnTo) || /^\/room\/[a-z0-9-]+$/.test(attempt.returnTo) || /^\/$/.test(attempt.returnTo))) ? attempt.returnTo : '/';
         res.writeHead(302, { Location: destination, 'Set-Cookie': [cookie('uburoom', id, loginSeconds), cookie('uburoom_oauth', '', 0)] }); return res.end();
       }
       if (req.method === 'POST' && route === '/api/logout') {

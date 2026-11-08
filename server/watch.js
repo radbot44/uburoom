@@ -92,8 +92,10 @@ class Watch {
     if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))) throw new Error('Only authenticated eligible users can create a viewing room');
     if (this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen && !this.roomState?.recoveries.has(saved?.id)) throw new Error('Close an existing viewing room first');
     const socket = { readyState: 1 }, id = saved?.id || randomUUID();
+    const slug = saved?.slug || (saved?.name ? require('../web/ubumfa').slugify(saved.name) : require('../web/ubumfa').generateWord(6).toLowerCase());
     const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
       ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, reachable: true, lastSeen: Date.now(),
+      slug, ubumfaWord: saved?.ubumfaWord || slug,
       controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 30, seekable: false, profileSlots: [] } };
     const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
       initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
@@ -529,7 +531,7 @@ class Watch {
       const accessible = await this.canView(room, actor);
       if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access))) continue;
       const members = [...new Map([...room.viewers.values()].map(v => [v.userId, v.name])).values()];
-      rooms.push({maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,id:room.s.roomId, name:accessible ? room.s.name : undefined, hostName:room.s.hostName, visibility:room.s.visibility, viewers:members.length,
+      rooms.push({maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,id:room.s.roomId, name:accessible ? room.s.name : undefined, slug:accessible ? (room.s.slug || room.saved?.slug) : undefined, hostName:room.s.hostName, visibility:room.s.visibility, viewers:members.length,
         ...(accessible ? {title:room.media?.title || '',members,canManage:this.hub.canManage(room.s, actor)} : {locked:true})});
     }
     if (this.roomState) for (const [id,recovery] of this.roomState.recoveries) {
@@ -540,7 +542,7 @@ class Watch {
       if (record.bookmark && this.hub.plexFor) {
         try { if (!await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId)) continue; } catch { continue; }
       }
-      rooms.push({id,name:record.name,visibility:record.visibility,hostName:this.roomState.registry.canonical(record.creatorId)?.name,
+      rooms.push({id,name:record.name,slug:record.slug,visibility:record.visibility,hostName:this.roomState.registry.canonical(record.creatorId)?.name,
         title:record.bookmark?.title || '',viewers:0,members:[],recovering:true,
         maxMembers:Math.min(record.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers)});
     }
@@ -748,7 +750,7 @@ class Watch {
         error:room.autoplayError || room.autoQueueError } : undefined,
       readinessVersion: room.readinessVersion, waitingForReady, readiness,
       recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
-      roomName:room.s.name, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
+      roomName:room.s.name, slug:room.s.slug || room.saved?.slug, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
       participants,
       allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
       participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,

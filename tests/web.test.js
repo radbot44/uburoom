@@ -19,10 +19,13 @@ test('removed endpoints are unavailable while the watch page still serves', { sk
       });req.on('error',reject);req.end();
     });
   }
+  const rootRes = await request('/');
+  assert.equal(rootRes.status, 200);
+  assert.equal(rootRes.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  assert.ok(rootRes.headers['content-security-policy'].includes("font-src 'self'"));
   const watchRes = await request('/watch');
-  assert.equal(watchRes.status, 200);
-  assert.equal(watchRes.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  assert.ok(watchRes.headers['content-security-policy'].includes("font-src 'self'"));
+  assert.equal(watchRes.status, 302);
+  assert.equal(watchRes.headers.location, '/');
   const fontRes = await request('/assets/fonts/UburoomSans-Regular.woff2');
   assert.equal(fontRes.status, 200);
   assert.equal(fontRes.headers['content-type'], 'font/woff2');

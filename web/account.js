@@ -119,7 +119,7 @@ $('account-dialog').addEventListener('close',()=>{if(!accountDialog.open)account
 logoutButton.addEventListener('click',async()=>{
   const release=accountPopups.hold(accountDialog);
   logoutButton.disabled=true;accountError();pending=true;
-  try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer('logout');location.replace('/watch');}
+  try{await api('/api/logout',{});stopBrowserHandoff();clearPlayer('logout');location.replace('/');}
   catch(error){accountError(error.message);logoutButton.disabled=false;pending=false;}finally{release();}
 });
 $('account-close').addEventListener('click',()=>accountPopups.close(accountDialog));
@@ -139,7 +139,7 @@ $('account-remove-confirm').addEventListener('click',async()=>{
   const release=accountPopups.hold($('account-remove-dialog'));
   const button=$('account-remove-confirm'),identity=accountValue.identities.find(i=>i.provider===removeProvider);
   button.disabled=true;$('account-remove-error').textContent='';
-  try{await api('/api/account/'+removeProvider+'/remove',{subject:identity.subject});location.replace('/watch?account=1');}
+  try{await api('/api/account/'+removeProvider+'/remove',{subject:identity.subject});location.replace('/?account=1');}
   catch(error){$('account-remove-error').textContent=error.message;}
   finally{button.disabled=false;release();}
 });
@@ -153,7 +153,7 @@ for(const provider of ['plex','discord'])$('connect-'+provider).addEventListener
 $('account-merge-confirm').addEventListener('click',async()=>{
   const release=accountPopups.hold(accountDialog);
   const button=$('account-merge-confirm');button.disabled=true;accountError();
-  try{await api('/api/account/merge',{id:accountMerge.id});location.replace('/watch?account=1');}catch(error){accountError(error.message);button.disabled=false;}finally{release();}
+  try{await api('/api/account/merge',{id:accountMerge.id});location.replace('/?account=1');}catch(error){accountError(error.message);button.disabled=false;}finally{release();}
 });
 for(const provider of ['discord','plex'])$('match-'+provider).addEventListener('input',invalidatePreview);
 $('match-preview').addEventListener('click',async()=>{

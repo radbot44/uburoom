@@ -180,7 +180,7 @@ class WatchRooms {
     }
     room.saved = record;
     Object.assign(room.s, { creatorId:record.creatorId, hosts:record.hosts, permissions:record.permissions,
-      name:record.name, visibility:record.visibility, ownerId:record.creatorId });
+      name:record.name, slug:record.slug, ubumfaWord:record.ubumfaWord, visibility:record.visibility, ownerId:record.creatorId });
   }
   reserve(replacing = false) {
     if (new Set([...this.watch.rooms.keys(), ...this.recoveries.keys(), ...this.opening.keys()]).size + this.creating - (replacing ? 1 : 0) >= this.limits.maxOpen) throw failure('Open room limit reached; close an active room first', 429);
@@ -283,7 +283,7 @@ class WatchRooms {
   list(actor, page) {
     if(this.watch.hub.config.singleRoom)return {rooms:[],total:0};
     const result = this.store.list(actor.userId, page);
-    return { ...result, rooms:result.rooms.map(record => ({ id:record.id, name:record.name, visibility:record.visibility,
+    return { ...result, rooms:result.rooms.map(record => ({ id:record.id, name:record.name, slug:record.slug, visibility:record.visibility,
       active:this.recoveries.has(record.id) || !!this.watch.rooms.get(record.id) && !this.watch.rooms.get(record.id).reconnecting,
       title:record.bookmark?.title, position:record.bookmark?.position || 0, updatedAt:record.updatedAt,
       createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,retentionReason:this.reason(record),
@@ -302,7 +302,7 @@ class WatchRooms {
     const person = userId => ({ id:userId, name:this.registry.canonical(userId)?.name || 'Room member' });
     const candidates = [...new Set([record.creatorId, ...record.hosts, ...[...(room?.viewers.values() || [])].map(viewer => viewer.userId)])];
     return { id, createdAt:record.createdAt,lastAccessedAt:record.lastAccessedAt,keepEmpty:record.keepEmpty,
-      maxMembers:record.maxMembers,serverMaxMembers:this.limits.maxMembers,retentionReason:this.reason(record),singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
+      maxMembers:record.maxMembers,serverMaxMembers:this.limits.maxMembers,retentionReason:this.reason(record),singleRoom:!!this.watch.hub.config.singleRoom, name:record.name, slug:record.slug, visibility:record.visibility, revision:record.revision, active:!!room && !room.reconnecting, hasLiveRoom:!!room, epoch:room?.s.epoch, hasBookmark:!!record.bookmark,
       creator:person(record.creatorId), hosts:record.hosts.map(person), candidates:candidates.map(person), viewers:[...new Set([...(room?.viewers.values() || [])].map(viewer => viewer.userId))].map(person),
       actorId:actor.userId,allHosts:!!record.permissions.allHosts,canSetAllHosts:record.creatorId===actor.userId,pendingHosts:this.store.pendingHosts(id),
       role:Policy.role(record, actor.userId), permissions:record.permissions, autoplay:{enabled:record.autoplay}, queueSummary:this.queue.summary(id), mediaId:record.bookmark?.mediaId,
@@ -387,7 +387,7 @@ class WatchRooms {
           for(const host of removed)this.store.db.prepare('DELETE FROM watch_room_hosts WHERE roomId=? AND userId=?').run(id,host);
           this.registry.meta('singleRoomDefaultHosts',JSON.stringify(hosts));
         });
-        this.store.db.prepare("UPDATE watch_rooms SET name='Room',keepEmpty=1 WHERE id=?").run(id);
+        this.store.db.prepare("UPDATE watch_rooms SET name='Room',slug='room',keepEmpty=1 WHERE id=?").run(id);
         await this.registry.flush();record=this.store.get(id);
         if(this.recoveries.has(id) && !this.watch.rooms.has(id)) await this.recover(id,actor);
         for(const other of [...this.watch.rooms.keys()])if(other!==id)await this.watch.remove(other);

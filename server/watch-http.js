@@ -18,7 +18,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
   const delivery = new PlexDelivery(config, watch.plex, plexAuth, hub.plexFor?.bind(hub));
   watch.delivery=delivery;
   const clockEpoch=randomUUID();
-  const publicConfig = () => ({ watchVersion:19,keepDiagnostics:diagnosticLog?config.diagnostics.keepDays:0,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl+'/watch',clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
+  const publicConfig = () => ({ watchVersion:19,keepDiagnostics:diagnosticLog?config.diagnostics.keepDays:0,unifiedAccounts:!!registry,accountDemo:!!config.demo&&!!config.unifiedAccounts,watchUrl:config.publicUrl,clientId:config.clientId,demo:!!config.demo,plexConfigured:watch.plex.configured,testVideo:!!watch.demoMedia,access:entryPolicy?.public(),singleRoom:!!config.singleRoom,localFormats:config.transcoding && (!config.transcoding.uburoom || config.transcoding.policy==='disabled')?[]:config.transcoding?.formats || ['av1'],
     outputs:config.transcoding?.policy==='disabled'?[]:config.transcoding?.outputs });
   const handoff = new Handoff();
   const activityOrigin = /^\d{17,20}$/.test(config.clientId || '') ? `https://${config.clientId}.discordsays.com` : undefined;
@@ -376,7 +376,8 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
           if (!await alive() || !handoff.consume(attempt)) { json(res,410,{error:'Activity sign-in expired or was cancelled'}); return true; }
           if (existing?.userId !== attempt.source.userId) browserLogin(res,attempt.source);
           else res.setHeader('Set-Cookie','uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-          json(res,200,{destination:attempt.connectPlex?('/auth/plex' + (roomId ? '?return=' + encodeURIComponent('/watch?room=' + roomId) : '')):attempt.linkOnly?'/watch?account=1':'/watch' + (roomId ? '?room=' + roomId : '')}); return true;
+          const target = roomId ? (room?.s?.slug ? '/room/' + room.s.slug : '/room/' + roomId) : '/';
+          json(res,200,{destination:attempt.connectPlex?('/auth/plex' + (roomId ? '?return=' + encodeURIComponent(target) : '')):attempt.linkOnly?'/?account=1':target}); return true;
         } finally { attempt.redeeming = false; }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/config') {
@@ -484,6 +485,15 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     try {
       initial.me=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/me');
       if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/rooms');
+      const reqUrl = new URL(req.url, config.publicUrl);
+      const roomMatch = /^\/room\/([a-z0-9-]+)$/i.exec(reqUrl.pathname);
+      const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
+      if (requested && watch.roomState) {
+        try {
+          const room = watch.roomState.store.getBySlug(requested);
+          initial.targetRoom = { id: room.id, slug: room.slug, name: room.name };
+        } catch {}
+      }
     } catch { initial.me={status:503,value:{error:'Sign-in temporarily unavailable. Try again.'}}; }
     return initial;
   }

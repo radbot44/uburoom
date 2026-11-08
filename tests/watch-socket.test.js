@@ -236,14 +236,14 @@ test('cookie socket authentication requires CSRF and logout invalidates the acti
   const good=await f.connect(identity,f.config.publicUrl,cookie);
   const created=await good.call('/api/watch/rooms',{});assert.equal(created.status,201);
   const clientId=f.config.clientId;f.config.clientId='</script><script>bootstrapInjection()</script>&\u2028';
-  const page=await http('/watch',{Cookie:cookie});
+  const page=await http('/',{Cookie:cookie});
   const initial=JSON.parse(/<script id="watch-bootstrap" type="application\/json">(.*?)<\/script>/.exec(page.raw)[1]);
   assert.equal(page.headers['cache-control'],'no-store','Personalized bootstrap cannot be shared by caches');
   assert.equal(initial.me.value.csrf,identity.csrf);assert.equal(initial.me.status,200);
   assert.equal(initial.config.clientId,f.config.clientId);assert.ok(!page.raw.includes(f.config.clientId),'Embedded JSON escapes script delimiters and separators');
   f.config.clientId=clientId;
   assert.ok(initial.rooms.value.rooms.some(room=>room.id===created.value.id),'Page embeds authorized active rooms');
-  const signedOut=await http('/watch');
+  const signedOut=await http('/');
   const publicInitial=JSON.parse(/<script id="watch-bootstrap" type="application\/json">(.*?)<\/script>/.exec(signedOut.raw)[1]);
   assert.equal(publicInitial.me.status,401);assert.equal(publicInitial.rooms,undefined,'Signed-out pages never embed room data');
   assert.equal((await http('/api/logout',{Cookie:cookie,'X-CSRF-Token':identity.csrf},{})).status,200);

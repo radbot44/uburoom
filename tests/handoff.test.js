@@ -66,7 +66,7 @@ test('HTTPS handoff creates only a bounded cookie login, preserves room context 
   assert.equal((await f.redeem(claimed)).status,202);assert.equal((await f.approve(source,claimed)).status,200);
   const results=await Promise.all([f.redeem(claimed),f.redeem(claimed)]);
   assert.equal(results.filter(r=>r.status===200).length,1);
-  const done=results.find(r=>r.status===200);assert.equal(done.body.destination,'/watch?room='+id);
+  const done=results.find(r=>r.status===200);assert.equal(done.body.destination,'/room/'+f.app.watch.rooms.get(id).s.slug);
   const cookie=done.headers['set-cookie'][0];assert.match(cookie,/HttpOnly; Secure; SameSite=Lax/);assert.ok(Number(/Max-Age=(\d+)/.exec(cookie)[1])<=3600);
   assert.equal((await f.redeem(claimed)).status,410);
   const me=await f.request('/api/watch/me',undefined,{Cookie:cookie.split(';')[0]});assert.equal(me.body.name,'Demo host');assert.equal(me.body.adminMode,false);
@@ -108,9 +108,9 @@ test('HTTPS handoff rechecks revocation, cancellation, room privacy/closure and 
   assert.equal((await f.request('/api/watch/handoff',{roomId:randomUUID()},guest)).status,403);
   const privateClaim=await f.claim(await f.issue(guest,roomId));await f.approve(guest,privateClaim);
   f.app.watch.rooms.get(roomId).s.visibility='private';
-  const privateDone=await f.redeem(privateClaim);assert.equal(privateDone.body.destination,'/watch','room revoked before redemption is not disclosed');
+  const privateDone=await f.redeem(privateClaim);assert.equal(privateDone.body.destination,'/','room revoked before redemption is not disclosed');
   const closedClaim=await f.claim(await f.issue(host,roomId));await f.approve(host,closedClaim);f.app.watch.remove(roomId);
-  assert.equal((await f.redeem(closedClaim)).body.destination,'/watch');
+  assert.equal((await f.redeem(closedClaim)).body.destination,'/');
   const cancelled=await f.claim(await f.issue(host));await f.request('/api/watch/handoff/action',{id:cancelled.id,action:'cancel'},host);
   assert.equal((await f.redeem(cancelled)).status,410);
   const revoked=await f.claim(await f.issue(host));await f.approve(host,revoked);f.setMember(false);
@@ -185,5 +185,5 @@ test('handoff redemption preserves room context in destination URL', tlsOptions,
   await f.approve(host, claimed);
   const redeemed = await f.redeem(claimed);
   assert.equal(redeemed.status, 200);
-  assert.equal(redeemed.body.destination, '/watch?room=' + roomId);
+  assert.equal(redeemed.body.destination, '/room/' + f.app.watch.rooms.get(roomId).s.slug);
 });

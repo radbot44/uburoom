@@ -5,7 +5,19 @@ const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
 const { validateAuto } = require('./room-queue');
 const { mediaIdentity } = require('../shared/room-protocol');
+const ubumfa = require('../web/ubumfa');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+
+function deduplicateSlug(db, baseSlug, currentRoomId) {
+  let candidate = baseSlug;
+  let counter = 2;
+  const query = db.prepare('SELECT id FROM watch_rooms WHERE slug=?');
+  while (true) {
+    const existing = query.get(candidate);
+    if (!existing || existing.id === currentRoomId) return candidate;
+    candidate = `${baseSlug}-${counter++}`;
+  }
+}
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
 /** @typedef {{id:string,creatorId:string,hosts:string[],name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
@@ -73,7 +85,7 @@ class RoomStore {
     const hosts = [...new Set(this.db.prepare('SELECT userId FROM watch_room_hosts WHERE roomId=? ORDER BY userId').all(id)
       .map(entry => this.account(entry.userId)))].filter(userId => userId !== creatorId);
     return {
-      id: row.id, creatorId, hosts, name: row.name, visibility: row.visibility,
+      id: row.id, creatorId, hosts, name: row.name, slug: row.slug, ubumfaWord: row.ubumfaWord, visibility: row.visibility,
       revision: row.revision, checkpointRevision: row.checkpointRevision, queueRevision: row.queueRevision ?? 0,
       createdAt: row.createdAt, updatedAt: row.updatedAt, lastAccessedAt:row.lastAccessedAt,
       keepEmpty:!!row.keepEmpty, maxMembers:row.maxMembers, liveState:row.liveState ? JSON.parse(row.liveState) : null,
@@ -82,18 +94,25 @@ class RoomStore {
       autoplay: row.autoplay === 1
     };
   }
+  getBySlug(slug) {
+    this.healthy();
+    if (typeof slug !== 'string' || !slug.trim()) throw error('Room unavailable', 404);
+    const normalized = slug.trim().toLowerCase();
+    const row = this.db.prepare('SELECT id FROM watch_rooms WHERE slug=? OR id=?').get(normalized, normalized);
+    if (!row) throw error('Room unavailable', 404);
+    return this.get(row.id);
+  }
   async commit(result) {
     try { await this.registry.flush(); }
     catch (failure) { this.failure = failure; this.healthy(); }
     return result;
   }
-  async create(userId, { name = 'Room', visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'}, keepEmpty = false, maxMembers = null } = {}) {
+  async create(userId, { name, isCustom, visibility: selectedVisibility = 'public', fullPermissions = false, permissionPreset, permissions:customPermissions, autoplay = true, autoQueue = {mode:'off'}, keepEmpty = false, maxMembers = null } = {}) {
     this.healthy();
     if (this.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n >= this.limits.maxSaved) throw error('Saved room limit reached', 429);
     if (typeof keepEmpty !== 'boolean') throw error('Choose whether to keep the room when empty');
     this.validateMembers(maxMembers);
     const creatorId = this.account(userId), id = randomUUID(), at = this.now();
-    name = text(name, 100, 'room name');
     selectedVisibility = visibility(selectedVisibility);
     if (typeof fullPermissions !== 'boolean') throw error('Choose full participant permissions on or off');
     let permissions = permissionPreset === undefined || permissionPreset === 'server-defaults' ? Policy.policy(this.defaults) : Policy.preset(permissionPreset);
@@ -104,8 +123,29 @@ class RoomStore {
     }
     if (typeof autoplay !== 'boolean') throw error('Choose auto-play on or off');
     const automatic = validateAuto(autoQueue);
-    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, creatorId, name, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers);
+    if (name !== undefined) {
+      name = text(name, 100, 'room name');
+    }
+    const custom = isCustom === true || (isCustom === undefined && name !== undefined && name !== 'Room');
+    const ubumfaWord = ubumfa.generateWord(6).toLowerCase();
+    let finalName, finalSlug;
+    if (!custom) {
+      if (name && /^Room\s+[A-Za-z]+$/i.test(name)) {
+        const wordMatch = /^Room\s+([A-Za-z]+)$/i.exec(name);
+        const w = wordMatch[1].toLowerCase();
+        finalName = 'Room ' + w[0].toUpperCase() + w.slice(1);
+        finalSlug = deduplicateSlug(this.db, w, id);
+      } else {
+        finalName = 'Room ' + ubumfaWord[0].toUpperCase() + ubumfaWord.slice(1);
+        finalSlug = deduplicateSlug(this.db, ubumfaWord, id);
+      }
+    } else {
+      finalName = name;
+      const baseSlug = ubumfa.slugify(finalName);
+      finalSlug = deduplicateSlug(this.db, baseSlug, id);
+    }
+    this.db.prepare('INSERT INTO watch_rooms(id,creatorId,name,slug,ubumfaWord,visibility,revision,checkpointRevision,queueRevision,createdAt,updatedAt,permissions,bookmark,autoplay,autoQueue,lastAccessedAt,keepEmpty,maxMembers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, creatorId, finalName, finalSlug, ubumfaWord, selectedVisibility, 0, 0, 0, at, at, JSON.stringify(permissions), null, autoplay ? 1 : 0, JSON.stringify(automatic), at, keepEmpty ? 1 : 0, maxMembers);
     return this.commit(this.get(id));
   }
   list(userId, { offset = 0, limit = 50 } = {}) {
@@ -174,7 +214,20 @@ class RoomStore {
           this.db.prepare('UPDATE watch_rooms SET autoQueue=?,queueRevision=queueRevision+1 WHERE id=?').run(JSON.stringify(auto),id);
           this.db.prepare('DELETE FROM watch_room_progress WHERE roomId=?').run(id); break;
         }
-        case 'rename': room.name = text(change.name, 100, 'room name'); break;
+        case 'rename': {
+          const trimmed = typeof change.name === 'string' ? change.name.trim() : '';
+          const word = room.ubumfaWord || ubumfa.generateWord(6).toLowerCase();
+          const defaultDisplayName = 'Room ' + word[0].toUpperCase() + word.slice(1);
+          if (!trimmed || trimmed === defaultDisplayName || trimmed === 'Room') {
+            room.name = defaultDisplayName;
+            room.slug = deduplicateSlug(this.db, word, id);
+          } else {
+            room.name = text(trimmed, 100, 'room name');
+            const baseSlug = ubumfa.slugify(room.name);
+            room.slug = deduplicateSlug(this.db, baseSlug, id);
+          }
+          break;
+        }
         case 'visibility': room.visibility = visibility(change.visibility); break;
         case 'autoplay':
           if (typeof change.enabled !== 'boolean') throw error('Choose auto-play on or off');
@@ -235,8 +288,8 @@ class RoomStore {
           this.db.prepare('DELETE FROM watch_rooms WHERE id=?').run(id);
           return;
       }
-      this.db.prepare('UPDATE watch_rooms SET creatorId=?,name=?,visibility=?,permissions=?,revision=revision+1,updatedAt=?,lastAccessedAt=? WHERE id=?')
-        .run(room.creatorId, room.name, room.visibility, JSON.stringify(room.permissions), at, at, id);
+      this.db.prepare('UPDATE watch_rooms SET creatorId=?,name=?,slug=?,visibility=?,permissions=?,revision=revision+1,updatedAt=?,lastAccessedAt=? WHERE id=?')
+        .run(room.creatorId, room.name, room.slug, room.visibility, JSON.stringify(room.permissions), at, at, id);
     });
     return this.commit(change.action === 'delete' ? { deleted: true } : this.get(id));
   }

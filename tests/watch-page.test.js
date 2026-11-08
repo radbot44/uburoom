@@ -9,7 +9,7 @@ test('personalized page includes visible authorized rooms and inert safely escap
   const html=watchPage(template,initial);
   assert.ok(html.includes('&lt;/script&gt;&lt;img src=x onerror=&quot;attack()&quot;&gt; &amp; room'));
   assert.ok(!html.includes(name));
-  assert.ok(html.includes('href="/watch?room=room"'));
+  assert.ok(html.includes('href="/room/room"'));
   assert.ok(!html.includes('id="room-lobby" hidden'));
   assert.ok(html.includes('id="auth-overlay" class="lobby-auth" hidden'));
   const data=JSON.parse(/<script id="watch-bootstrap" type="application\/json">(.*?)<\/script>/.exec(html)[1]);
@@ -20,7 +20,7 @@ test('personalized page includes visible authorized rooms and inert safely escap
 test('unauthenticated page contains no personalized room rows and retains inline sign-in',()=>{
   const html=watchPage(template,{config:{},me:{status:401,value:{error:'Sign in'}}});
   assert.ok(html.includes('id="room-lobby" hidden'));
-  assert.ok(!html.includes('/watch?room='));
+  assert.ok(!html.includes('/room/'));
   assert.ok(html.includes('id="welcome"'));
 });
 

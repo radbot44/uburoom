@@ -14,7 +14,7 @@ function watchPage(template, initial, scrollbarStyleNonce) {
   if (initial.me?.status === 200 && initial.rooms?.status === 200) {
     const rows = initial.rooms.value.rooms.map(room => {
       const info = (room.title || 'No video selected') + ' · ' + room.viewers + (room.viewers === 1 ? ' viewer' : ' viewers');
-      const action = room.locked ? '<button class="quiet" disabled>Join</button>' : '<a class="quiet" href="/watch?room=' + encodeURIComponent(room.id) + '">Join</a>';
+      const action = room.locked ? '<button class="quiet" disabled>Join</button>' : '<a class="quiet" href="/room/' + encodeURIComponent(room.slug || room.id) + '">Join</a>';
       return '<div class="saved-room"><div><strong>' + escapeText(room.name || room.hostName) + '</strong><p class="hint">' + escapeText(info) + '</p></div><div class="room-actions">' + action + '</div></div>';
     }).join('');
     html = html.replace('class="auth-pending outside-room idle-player"', 'class="outside-room idle-player"')

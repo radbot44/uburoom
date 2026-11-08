@@ -332,7 +332,7 @@ test('browser subtitle resources enforce grants, selection generations and expli
   assert.equal((await request(windowManifest.body.window+'?atMs=0')).status,403);
 
   member=false;assert.equal((await request(next.subtitleUrl)).status,403);
-  const page=await request('/watch');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
+  const page=await request('/');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
 });
 
 test('media grants reject stale playlists, subtitles and revoked viewers during pending fetches',async t=>{

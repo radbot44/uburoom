@@ -322,10 +322,11 @@ test('real HTTPS watch endpoints reject impersonation, stale commands and revoke
   assert.equal(app.watch.rooms.get(created.body.id).s.hostId, 'demo-guest', 'creator comes from verified identity');
   assert.equal((await request('/api/watch/library?room=' + created.body.id, 'GET', undefined, activityHeaders)).status, 200);
   app.watch.remove(created.body.id);
-  for (const route of ['/', '/activity', '/auth/discord']) {
+  for (const route of ['/watch', '/activity', '/auth/discord']) {
     const redirected = await request(route + '?frame_id=fixture');
-    assert.equal(redirected.status, 302); assert.equal(redirected.headers.location, '/watch?frame_id=fixture');
+    assert.equal(redirected.status, 302); assert.equal(redirected.headers.location, '/?frame_id=fixture');
   }
+  assert.equal((await request('/?frame_id=fixture')).status, 200);
   assert.equal((await request('/watch/test?frame_id=fixture&embedded=1','GET',undefined,{'Sec-Fetch-Dest':'iframe'})).status,404);
   member = false;
   assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' }, { Origin: activityOrigin })).status, 403);

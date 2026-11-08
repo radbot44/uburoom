@@ -460,9 +460,9 @@ test('direct HLS shares preparation without server video, keeps own credentials 
   const wanMaster=await bob.request(right.mediaUrl);assert.equal(wanMaster.status,200);
   const wanChild=new URL(wanMaster.body.split('\n').find(line=>line.startsWith('https://')));
   assert.equal(wanChild.origin,'https://plex-client.invalid:32400');assert.equal(wanChild.searchParams.get('X-Plex-Token'),right.directHls.token);
-  const lanCsp=(await alice.request('/watch')).headers['content-security-policy'];
+  const lanCsp=(await alice.request('/')).headers['content-security-policy'];
   assert.equal(lanCsp.includes('https://plex-lan.invalid:32400'),true);
-  const wanCsp=(await bob.request('/watch',undefined,{'cf-connecting-ip':'172.56.21.89'})).headers['content-security-policy'];
+  const wanCsp=(await bob.request('/',undefined,{'cf-connecting-ip':'172.56.21.89'})).headers['content-security-policy'];
   assert.equal(wanCsp.includes('https://plex-client.invalid:32400'),true);
   assert.equal(wanCsp.includes('https://plex-lan.invalid:32400'),false,'WAN CSP must not expose the LAN origin');
   assert.equal(master.body.includes(right.directHls.token),false);assert.equal(master.body.includes('fixture-server-'),false);

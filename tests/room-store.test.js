@@ -295,3 +295,32 @@ test('prospective room settings save atomically and closed autoplay changes enfo
     assert.equal(f.store.list(f.creator).total,count,'Invalid drafts do not create saved rooms');
   }
 });
+
+test('room slug generation distinguishes default ubumfa names, deduplicates collisions, falls back on emojis, and reverts on rename clear', async t => {
+  const f = fixture(t);
+  const defRoom = await f.store.create(f.creator, { isCustom: false });
+  assert.match(defRoom.name, /^Room [A-Z][a-z]{5}$/);
+  assert.equal(defRoom.slug, defRoom.ubumfaWord);
+  assert.equal(f.store.getBySlug(defRoom.slug).id, defRoom.id);
+  assert.equal(f.store.getBySlug(defRoom.id).id, defRoom.id);
+
+  const custom1 = await f.store.create(f.creator, { name: 'Party Time' });
+  assert.equal(custom1.name, 'Party Time');
+  assert.equal(custom1.slug, 'party-time');
+
+  const custom2 = await f.store.create(f.creator, { name: 'Party Time' });
+  assert.equal(custom2.name, 'Party Time');
+  assert.equal(custom2.slug, 'party-time-2');
+
+  const emojiRoom = await f.store.create(f.creator, { name: '🍿🎬' });
+  assert.equal(emojiRoom.name, '🍿🎬');
+  assert.match(emojiRoom.slug, /^[a-z]{6}$/);
+
+  let renamed = await f.store.edit(custom1.id, f.creator, custom1.revision, { action: 'rename', name: 'Movie Night' });
+  assert.equal(renamed.name, 'Movie Night');
+  assert.equal(renamed.slug, 'movie-night');
+
+  let reverted = await f.store.edit(renamed.id, f.creator, renamed.revision, { action: 'rename', name: '' });
+  assert.equal(reverted.name, 'Room ' + custom1.ubumfaWord[0].toUpperCase() + custom1.ubumfaWord.slice(1));
+  assert.equal(reverted.slug, custom1.ubumfaWord);
+});
