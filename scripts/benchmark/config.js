@@ -285,7 +285,8 @@ function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
     const parent = path.dirname(target);
     fs.mkdirSync(parent, { recursive: true });
 
-    // Atomic allocation loop to prevent check-then-create race
+    // Atomic allocation loop: claim an exclusively created directory.
+    // Never reuse an existing directory even if empty to prevent concurrent collision.
     let counter = 0;
     while (true) {
       const candidate = counter === 0 ? target : `${target}-${counter}`;
@@ -294,12 +295,6 @@ function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
         return { dir: candidate, collisionAvoided: counter > 0, original: target };
       } catch (err) {
         if (err.code === 'EEXIST') {
-          // If the directory exists but is completely empty, it can be safely reused
-          try {
-            if (fs.readdirSync(candidate).length === 0) {
-              return { dir: candidate, collisionAvoided: counter > 0, original: target };
-            }
-          } catch {}
           counter++;
           continue;
         }
@@ -322,14 +317,9 @@ function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
     const candidatePath = path.join(artifactsDir, candidateName);
     try {
       fs.mkdirSync(candidatePath);
-      return { dir: candidatePath, collisionAvoided: false };
+      return { dir: candidatePath, collisionAvoided: counter > 0 };
     } catch (err) {
       if (err.code === 'EEXIST') {
-        try {
-          if (fs.readdirSync(candidatePath).length === 0) {
-            return { dir: candidatePath, collisionAvoided: false };
-          }
-        } catch {}
         counter++;
         continue;
       }

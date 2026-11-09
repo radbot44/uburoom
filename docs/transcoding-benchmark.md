@@ -165,7 +165,8 @@ Encodes the entire sample duration in one continuous FFmpeg process using identi
 - **`--all-encoders` Mode**: In comparative encoder testing, unavailable hardware encoders (e.g. QSV on NVIDIA-only machines) are recorded as `skipped` / `unavailable`, rather than silently converted into duplicate software benchmarks.
 - **Configured Fallback Mode**: When running with `--encoder auto` (or configured hardware), runtime errors trigger step-downs (first GPU decode to CPU decode, then hardware encoder to CPU software). All fallback steps are recorded in `fallbackEvents` and displayed in reports.
 - **Repetition Isolation (`--runs N`)**: Each run writes to isolated directories (`outputs/run-${N}/<configId>/`) and unique screenshot filenames (`screenshots/run-${N}-<configId>-frame.jpg`), preventing file collision.
-- **Collision-Safe Output Directories**: Every benchmark invocation uses a unique, collision-free directory (e.g. `artifacts/transcode-benchmark/run-<timestamp>-<pid>/`). If an explicit `--output` points to an existing directory containing files, the benchmark automatically diverts to a safe suffix (`<output>-1`, `<output>-2`) with an operator notice, preventing accidental data loss or clobbering of previous runs. Project source roots (`server`, `web`, `shared`, `.git`) are strictly rejected.
+- **Collision-Safe Atomic Output Allocation**: Every benchmark invocation uses a unique, collision-free directory (e.g. `artifacts/transcode-benchmark/run-<timestamp>-<pid>/`). If an explicit `--output` is provided, the benchmark claims an exclusively created directory, incrementing to a safe suffix (`<output>-1`, `<output>-2`) on any collision without reusing an existing directory merely because it is empty. Project source roots (`server`, `web`, `shared`, `.git`) are strictly rejected.
+- **Process Cancellation & Cleanup**: Abort signals (`AbortController`) propagate promptly to every active FFmpeg encoder subprocess. On cancellation, active child processes are terminated, further chunks and retries are suppressed, and event listeners are cleanly deregistered to prevent memory leaks and warning accumulation. Emergency signal hooks ensure orphaned encoder processes are cleared on exit.
 
 ---
 
@@ -216,7 +217,7 @@ When `--quality-metrics` (or `--quality-metrics=<vmaf,ssim,psnr,cambi>`) is enab
    - **VMAF (`libvmaf`)**: Uses default `vmaf_v0.6.1` model, yielding 0-100 perceptual quality scores.
    - **SSIM (`ssim`)**: Structural similarity index (0.0 to 1.0).
    - **PSNR (`psnr`)**: Peak signal-to-noise ratio in decibels (dB).
-   - **CAMBI (`cambi`)**: Contrast Aware Multiscale Banding Index, detecting compression banding and false contouring artifacts.
+   - **CAMBI (`cambi`)**: Contrast Aware Multiscale Banding Index, detecting compression banding and false contouring artifacts. Supported independently via `--quality-metrics=cambi` or in any combination with VMAF, SSIM, and PSNR.
    - **Standalone Fallback**: If `libvmaf` is unavailable or not compiled in FFmpeg, the benchmark falls back to a standalone dual filter graph (`split=2`) calculating SSIM and PSNR simultaneously.
 3. **Pacing, Color Range Normalization and Alignment**:
    - Both reference and encoded streams normalize color ranges (`scale=in_range=auto:out_range=tv`) to eliminate false MSE/PSNR penalties from broadcast TV vs full-range video flags.
@@ -226,9 +227,11 @@ When `--quality-metrics` (or `--quality-metrics=<vmaf,ssim,psnr,cambi>`) is enab
 4. **Summary Statistics**:
    - Computes mean, harmonic mean, median, min, max, stdDev, and 1st, 5th, and 10th percentiles (`p1`, `p5`, `p10`). Percentiles expose brief quality dips and stutter that aggregate means conceal.
    - Identifies worst 2-second intervals across the video timeline.
-5. **Trustworthy Validation**:
-   - Verifies decoded frame counts against expected frame counts (+/-3 frames tolerance for CFR, $\ge 85\%$ duration coverage for VFR).
-   - Verifies start timestamps ($\le 0.20\text{s}$). If incomplete or invalid, quality status is recorded as `failed` without corrupting transcode success status.
+5. **Trustworthy Temporal Validation & Packet Inspection**:
+   - Demuxes real packet-level presentation timestamps from both the source sample interval and the encoded output via FFprobe (`validateTemporalAlignment`).
+   - Verifies presentation start offset ($\le 0.08\text{s}$), total decoded duration coverage ($\pm 0.25\text{s}$), and frame count agreement ($\pm 3$ frames for CFR; $\ge 85\%$ duration for VFR).
+   - Does not invent or synthesize presentation timestamps from frame numbers. If packet presentation timestamps cannot be extracted, temporal alignment is truthfully recorded as `unverified` with the reason.
+   - Deliberately time-shifted or desynchronized inputs are detected and flagged as `misaligned`, failing quality validation.
 6. **HDR & Dolby Vision Handling**:
    - HDR10 sources are tonemapped to SDR BT.709 using `zscale` linear transfer.
    - Dolby Vision Profile 5 without Vulkan `libplacebo` is gracefully rejected to prevent invalid color comparisons.

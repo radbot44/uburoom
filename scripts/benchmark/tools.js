@@ -207,11 +207,15 @@ function spawnSafe(binary, args, options = {}) {
 
     let settled = false;
     let timer;
+    let abortHandler = null;
 
     const finish = (err, code, signalCode) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (signal && abortHandler) {
+        signal.removeEventListener('abort', abortHandler);
+      }
       activeProcesses.delete(child);
       if (err) return reject(err);
       resolve({ code, signal: signalCode });
@@ -231,7 +235,7 @@ function spawnSafe(binary, args, options = {}) {
     }
 
     if (signal) {
-      signal.addEventListener('abort', () => {
+      abortHandler = () => {
         try {
           if (process.platform === 'win32' && child.pid) {
             cp.execSync(`taskkill /T /F /PID ${child.pid}`, { stdio: 'ignore' });
@@ -240,7 +244,8 @@ function spawnSafe(binary, args, options = {}) {
           }
         } catch {}
         finish(new Error('Process cancelled by abort signal.'));
-      }, { once: true });
+      };
+      signal.addEventListener('abort', abortHandler, { once: true });
     }
 
     if (onStdout && child.stdout) {

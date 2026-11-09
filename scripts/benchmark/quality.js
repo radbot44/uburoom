@@ -253,17 +253,39 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 
   // 3. Metric filter resolution
   let metricFilter = '';
-  const wantsVmaf = selectedMetrics.includes('vmaf') && capabilities.libvmaf;
+  const wantsVmaf = selectedMetrics.includes('vmaf');
+  const wantsCambi = selectedMetrics.includes('cambi');
+  const wantsSsim = selectedMetrics.includes('ssim');
+  const wantsPsnr = selectedMetrics.includes('psnr');
 
-  if (wantsVmaf) {
+  // libvmaf is used whenever VMAF or CAMBI is requested (CAMBI is evaluated via libvmaf)
+  const needsLibvmaf = wantsVmaf || wantsCambi;
+
+  if (needsLibvmaf) {
+    if (!capabilities.libvmaf) {
+      return {
+        supported: false,
+        reason: wantsCambi && !wantsVmaf
+          ? 'CAMBI requires libvmaf which is not available in the current FFmpeg installation.'
+          : 'libvmaf is not available in the current FFmpeg installation.'
+      };
+    }
+
+    if (wantsCambi && !capabilities.vmafFeatures?.cambi) {
+      return {
+        supported: false,
+        reason: 'CAMBI feature is not available in the current FFmpeg libvmaf build.'
+      };
+    }
+
     const features = [];
-    if (selectedMetrics.includes('cambi') && capabilities.vmafFeatures?.cambi) {
+    if (wantsCambi && capabilities.vmafFeatures?.cambi) {
       features.push('name=cambi');
     }
-    if (selectedMetrics.includes('psnr') && capabilities.vmafFeatures?.psnr) {
+    if (wantsPsnr && capabilities.vmafFeatures?.psnr) {
       features.push('name=psnr');
     }
-    if (selectedMetrics.includes('ssim') && capabilities.vmafFeatures?.float_ssim) {
+    if (wantsSsim && capabilities.vmafFeatures?.float_ssim) {
       features.push('name=float_ssim');
     }
 
@@ -271,15 +293,15 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
     const logFilename = path.basename(jsonLogPath);
     metricFilter = `[dist_norm][ref_norm]libvmaf=log_fmt=json:log_path=${logFilename}${featureArg}:n_threads=8:shortest=1[out]`;
   } else {
-    // Standalone metric fallback when libvmaf is unavailable or not selected
-    const wantsSsim = selectedMetrics.includes('ssim') && capabilities.ssim;
-    const wantsPsnr = selectedMetrics.includes('psnr') && capabilities.psnr;
+    // Standalone metric fallback when neither VMAF nor CAMBI is requested
+    const wantsStandaloneSsim = wantsSsim && capabilities.ssim;
+    const wantsStandalonePsnr = wantsPsnr && capabilities.psnr;
 
-    if (wantsSsim && wantsPsnr) {
+    if (wantsStandaloneSsim && wantsStandalonePsnr) {
       metricFilter = `[dist_norm]split=2[d1][d2];[ref_norm]split=2[r1][r2];[d1][r1]ssim=stats_file=ssim.log:shortest=1[s_out];[d2][r2]psnr=stats_file=psnr.log:shortest=1[p_out];[s_out][p_out]overlay[out]`;
-    } else if (wantsSsim) {
+    } else if (wantsStandaloneSsim) {
       metricFilter = `[dist_norm][ref_norm]ssim=stats_file=ssim.log:shortest=1[out]`;
-    } else if (wantsPsnr) {
+    } else if (wantsStandalonePsnr) {
       metricFilter = `[dist_norm][ref_norm]psnr=stats_file=psnr.log:shortest=1[out]`;
     } else {
       return {
@@ -293,7 +315,7 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 
   return {
     supported: true,
-    usesLibvmaf: wantsVmaf,
+    usesLibvmaf: needsLibvmaf,
     filterGraph: parts.join(';'),
     normalization: {
       method: 'VMAF standard (distorted upscaled to reference resolution with bicubic)',
@@ -302,6 +324,159 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
       colorTransform: source.hdr?.hdr ? 'HDR-to-SDR tonemapped (hable/bt709, TV range)' : 'Native SDR BT.709 (TV range)',
       refFps
     }
+  };
+}
+
+/**
+ * Validates real presentation timestamps and decoded-frame timing between source interval
+ * and encoded output. Demuxes actual packet timestamps rather than synthesizing from frame counts.
+ * Returns { status: 'verified' | 'unverified' | 'misaligned', errors: [], details: {} }.
+ */
+function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options = {}) {
+  const { startOffset = 0, sampleDuration = 60, fps = 30, isVfr = false } = options;
+  const errors = [];
+
+  // 1. Demux packet timestamps from encoded output
+  const encodedPackets = [];
+  try {
+    const rawEncoded = cp.execFileSync(ffprobePath, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time,duration_time',
+      '-of', 'csv=p=0',
+      encodedPath
+    ], { encoding: 'utf8', windowsHide: true, timeout: 20000 });
+
+    for (const line of rawEncoded.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [ptsStr, durStr] = trimmed.split(',');
+      const pts = parseFloat(ptsStr);
+      const dur = parseFloat(durStr) || (fps ? 1 / fps : 0.033);
+      if (!isNaN(pts)) encodedPackets.push({ pts, dur });
+    }
+  } catch (err) {
+    return {
+      status: 'unverified',
+      reason: `Could not demux encoded video packet timestamps: ${err.message}`,
+      errors: [`Encoded packet inspection failed: ${err.message}`]
+    };
+  }
+
+  if (encodedPackets.length === 0) {
+    return {
+      status: 'misaligned',
+      reason: 'Encoded video stream contains no demuxable video packets.',
+      errors: ['No video packets found in encoded video.']
+    };
+  }
+
+  const encodedFirstPts = encodedPackets[0].pts;
+  const encodedLastPts = encodedPackets[encodedPackets.length - 1].pts;
+  const encodedDuration = encodedLastPts - encodedFirstPts + encodedPackets[encodedPackets.length - 1].dur;
+
+  // 2. Demux packet timestamps from source interval [startOffset, startOffset + sampleDuration]
+  const sourcePackets = [];
+  let sourceReadFailed = false;
+  try {
+    const rawSource = cp.execFileSync(ffprobePath, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time,duration_time',
+      '-read_intervals', `${startOffset}%+${sampleDuration}`,
+      '-of', 'csv=p=0',
+      sourcePath
+    ], { encoding: 'utf8', windowsHide: true, timeout: 25000 });
+
+    for (const line of rawSource.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [ptsStr, durStr] = trimmed.split(',');
+      const pts = parseFloat(ptsStr);
+      const dur = parseFloat(durStr) || (fps ? 1 / fps : 0.033);
+      if (!isNaN(pts)) sourcePackets.push({ pts, dur });
+    }
+  } catch {
+    // If -read_intervals is unsupported by this container/demuxer, try -ss / -t fallback
+    try {
+      const rawSource = cp.execFileSync(ffprobePath, [
+        '-v', 'error',
+        '-ss', String(startOffset),
+        '-t', String(sampleDuration),
+        '-select_streams', 'v:0',
+        '-show_entries', 'packet=pts_time,duration_time',
+        '-of', 'csv=p=0',
+        sourcePath
+      ], { encoding: 'utf8', windowsHide: true, timeout: 25000 });
+      for (const line of rawSource.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const [ptsStr, durStr] = trimmed.split(',');
+        const pts = parseFloat(ptsStr);
+        const dur = parseFloat(durStr) || (fps ? 1 / fps : 0.033);
+        if (!isNaN(pts)) sourcePackets.push({ pts, dur });
+      }
+    } catch {
+      sourceReadFailed = true;
+    }
+  }
+
+  // Presentation start check: encoded video should start at 0.0s (<= 0.08s)
+  if (encodedFirstPts > 0.08) {
+    errors.push(`Encoded presentation start delay: first packet begins at ${encodedFirstPts.toFixed(3)}s (expected <= 0.08s).`);
+  }
+
+  // Duration check
+  if (Math.abs(encodedDuration - sampleDuration) > 0.25) {
+    errors.push(`Encoded duration mismatch: ${encodedDuration.toFixed(2)}s vs requested ${sampleDuration}s.`);
+  }
+
+  // Frame count / coverage check
+  const expectedFrames = Math.round(sampleDuration * fps);
+  if (!isVfr) {
+    if (Math.abs(encodedPackets.length - expectedFrames) > 3) {
+      errors.push(`Encoded frame count mismatch: expected ~${expectedFrames} frames, demuxed ${encodedPackets.length}.`);
+    }
+    if (sourcePackets.length > 0 && Math.abs(encodedPackets.length - sourcePackets.length) > 3) {
+      errors.push(`Source/encoded frame count divergence: source interval has ${sourcePackets.length} frames, encoded has ${encodedPackets.length}.`);
+    }
+  } else {
+    if (encodedDuration < sampleDuration * 0.85) {
+      errors.push(`VFR duration coverage below threshold: ${encodedDuration.toFixed(2)}s is below 85% of ${sampleDuration}s.`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      status: 'misaligned',
+      reason: errors.join('; '),
+      errors,
+      encodedFirstPts,
+      encodedDuration: Math.round(encodedDuration * 1000) / 1000,
+      encodedPacketCount: encodedPackets.length,
+      sourcePacketCount: sourcePackets.length
+    };
+  }
+
+  if (sourceReadFailed || sourcePackets.length === 0) {
+    return {
+      status: 'unverified',
+      reason: 'Source interval packet timestamps could not be extracted; temporal alignment verified from encoded presentation timing only.',
+      errors: [],
+      encodedFirstPts,
+      encodedDuration: Math.round(encodedDuration * 1000) / 1000,
+      encodedPacketCount: encodedPackets.length
+    };
+  }
+
+  return {
+    status: 'verified',
+    reason: null,
+    errors: [],
+    encodedFirstPts,
+    encodedDuration: Math.round(encodedDuration * 1000) / 1000,
+    encodedPacketCount: encodedPackets.length,
+    sourcePacketCount: sourcePackets.length
   };
 }
 
@@ -355,6 +530,29 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
+  const ffprobePath = options.ffprobePath || ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  const fps = source.video?.fps || 30;
+  const isVfr = Boolean(source.video?.isVfr);
+  const expectedFrames = Math.round(sampleDuration * fps);
+
+  // Validate actual presentation timestamps and decoded-frame timing between source and encode
+  const temporal = validateTemporalAlignment(ffprobePath, source.filePath, encodedFilePath, {
+    startOffset,
+    sampleDuration,
+    fps,
+    isVfr
+  });
+
+  if (temporal.status === 'misaligned') {
+    return {
+      available: true,
+      status: 'failed',
+      reason: `Temporal alignment validation failed: ${temporal.reason}`,
+      temporalAlignment: temporal,
+      validation: { valid: false, errors: temporal.errors }
+    };
+  }
+
   const jsonLogPath = path.join(outputDir, 'quality-metrics.json');
   const chain = buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPath, selectedMetrics);
 
@@ -403,10 +601,6 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
-  const fps = source.video?.fps || 30;
-  const isVfr = Boolean(source.video?.isVfr);
-  const expectedFrames = Math.round(sampleDuration * fps);
-
   // 1. Parse libvmaf JSON log if libvmaf was executed
   if (chain.usesLibvmaf && fs.existsSync(jsonLogPath)) {
     try {
@@ -420,17 +614,13 @@ async function runQualityAnalysis(ffmpegPath, options) {
       if (frames.length === 0) {
         validationErrors.push('No video frames were analyzed by the quality filter.');
       } else {
-        const firstPts = frames[0]?.metrics?.timestampSec !== undefined ? frames[0].metrics.timestampSec : 0;
-        const lastPts = frames[frames.length - 1]?.metrics?.timestampSec !== undefined ? frames[frames.length - 1].metrics.timestampSec : (frames.length / fps);
+        const hasExplicitPts = frames[0]?.metrics?.timestampSec !== undefined;
+        if (hasExplicitPts && frames[0].metrics.timestampSec > 0.08) {
+          validationErrors.push(`Temporal misalignment in metric log: first scored frame begins at ${frames[0].metrics.timestampSec.toFixed(3)}s (expected <= 0.08s).`);
+        }
 
         if (!isVfr && Math.abs(frames.length - expectedFrames) > 3) {
           validationErrors.push(`Incomplete metric sequence: expected ~${expectedFrames} frames, scored only ${frames.length} frames.`);
-        } else if (isVfr && (lastPts - firstPts) < (sampleDuration * 0.85)) {
-          validationErrors.push(`Truncated metric duration: scored coverage (${(lastPts - firstPts).toFixed(2)}s) is below requested ${sampleDuration}s.`);
-        }
-
-        if (firstPts > 0.2) {
-          validationErrors.push(`Temporal misalignment: first scored frame begins at ${firstPts.toFixed(3)}s (expected <= 0.20s).`);
         }
       }
 
@@ -477,12 +667,17 @@ async function runQualityAnalysis(ffmpegPath, options) {
         timeline.push(entry);
       }
 
-      const vmafStats = calculateMetricStats(vmafValues);
-      const ssimStats = calculateMetricStats(ssimValues);
-      const psnrStats = calculateMetricStats(psnrValues);
-      const cambiStats = calculateMetricStats(cambiValues);
+      const vmafStats = selectedMetrics.includes('vmaf') ? calculateMetricStats(vmafValues) : null;
+      const ssimStats = selectedMetrics.includes('ssim') ? calculateMetricStats(ssimValues) : null;
+      const psnrStats = selectedMetrics.includes('psnr') ? calculateMetricStats(psnrValues) : null;
+      const cambiStats = selectedMetrics.includes('cambi') ? calculateMetricStats(cambiValues) : null;
 
-      const worstVmafIntervals = findWorstIntervals(timeline, 'vmaf', fps, 2);
+      const metricForWorstInterval = selectedMetrics.includes('vmaf') ? 'vmaf'
+        : (selectedMetrics.includes('ssim') ? 'ssim'
+        : (selectedMetrics.includes('psnr') ? 'psnr'
+        : (selectedMetrics.includes('cambi') ? 'cambi' : null)));
+
+      const worstIntervals = metricForWorstInterval ? findWorstIntervals(timeline, metricForWorstInterval, fps, 2) : [];
 
       return {
         available: true,
@@ -491,7 +686,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
         ssim: ssimStats,
         psnr: psnrStats,
         cambi: cambiStats,
-        worstIntervals: worstVmafIntervals,
+        worstIntervals,
         timeline,
         totalFramesEvaluated: frames.length,
         normalization: {
@@ -501,6 +696,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
           coveragePercent: Math.round((frames.length / (expectedFrames || 1)) * 1000) / 10,
           isVfr
         },
+        temporalAlignment: temporal,
         validation: { valid: true, errors: [] },
         rawLogRelative: path.basename(jsonLogPath)
       };
@@ -577,8 +773,8 @@ async function runQualityAnalysis(ffmpegPath, options) {
     available: true,
     status: 'pass',
     vmaf: null,
-    ssim: calculateMetricStats(ssimValues),
-    psnr: calculateMetricStats(psnrValues),
+    ssim: selectedMetrics.includes('ssim') ? calculateMetricStats(ssimValues) : null,
+    psnr: selectedMetrics.includes('psnr') ? calculateMetricStats(psnrValues) : null,
     cambi: null,
     worstIntervals: ssimValues.length ? findWorstIntervals(timeline, 'ssim', fps, 2) : [],
     timeline,
@@ -590,6 +786,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
       coveragePercent: Math.round((scoredCount / (expectedFrames || 1)) * 1000) / 10,
       isVfr
     },
+    temporalAlignment: temporal,
     validation: { valid: true, errors: [] }
   };
 }
@@ -599,5 +796,6 @@ module.exports = {
   calculateMetricStats,
   findWorstIntervals,
   buildQualityFilterChain,
+  validateTemporalAlignment,
   runQualityAnalysis
 };

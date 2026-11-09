@@ -19,8 +19,10 @@ const {
   calculateMetricStats,
   findWorstIntervals,
   buildQualityFilterChain,
+  validateTemporalAlignment,
   runQualityAnalysis
 } = require('../scripts/benchmark/quality');
+const { spawnSafe } = require('../scripts/benchmark/tools');
 const {
   runConcurrentTier,
   runCapacityScan
@@ -129,6 +131,27 @@ test('resolveUniqueOutputDir safely avoids collisions and protects source direct
     assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, 'server'), tmpDir), /source directories/i);
     assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, 'web'), tmpDir), /source directories/i);
     assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, '.git'), tmpDir), /source directories/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('resolveUniqueOutputDir atomically claims unique directories under concurrent invocations', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-atomic-'));
+  try {
+    const target = path.join(tmpDir, 'concurrent-target');
+    // Launch 10 simultaneous allocations for the exact same target directory
+    const allocations = await Promise.all(
+      Array.from({ length: 10 }, () => Promise.resolve().then(() => resolveUniqueOutputDir(target, tmpDir)))
+    );
+
+    const allocatedDirs = allocations.map(a => a.dir);
+    const uniqueDirs = new Set(allocatedDirs);
+
+    assert.equal(uniqueDirs.size, 10, 'All 10 concurrent allocations must yield unique directories');
+    for (const d of allocatedDirs) {
+      assert.ok(fs.existsSync(d), `Allocated directory ${d} must exist on disk`);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -283,6 +306,122 @@ test('buildQualityFilterChain builds dual standalone SSIM and PSNR when libvmaf 
   assert.ok(chain.filterGraph.includes('ssim=stats_file=ssim.log'));
   assert.ok(chain.filterGraph.includes('psnr=stats_file=psnr.log'));
   assert.ok(chain.filterGraph.includes('split=2'));
+});
+
+test('buildQualityFilterChain supports independent CAMBI selection and accurate unsupported reason', () => {
+  const source = { video: { width: 1920, height: 1080, fps: 30 }, hdr: { hdr: false } };
+  const target = { width: 1920, height: 1080 };
+
+  // 1. CAMBI selected alone without VMAF: must use libvmaf with feature=name=cambi
+  const capsWithCambi = {
+    libvmaf: true,
+    vmafFeatures: { cambi: true, psnr: true, float_ssim: true },
+    ssim: true,
+    psnr: true
+  };
+  const cambiOnly = buildQualityFilterChain(source, target, capsWithCambi, 'quality-metrics.json', ['cambi']);
+  assert.ok(cambiOnly.supported);
+  assert.ok(cambiOnly.usesLibvmaf, 'CAMBI evaluation requires libvmaf filter');
+  assert.ok(cambiOnly.filterGraph.includes('feature=name=cambi'));
+  assert.ok(!cambiOnly.filterGraph.includes('name=psnr'));
+  assert.ok(!cambiOnly.filterGraph.includes('name=float_ssim'));
+
+  // 2. CAMBI requested but unsupported by build: must report accurate unavailable status
+  const capsNoCambi = {
+    libvmaf: true,
+    vmafFeatures: { cambi: false },
+    ssim: true,
+    psnr: true
+  };
+  const unsuppCambi = buildQualityFilterChain(source, target, capsNoCambi, 'quality-metrics.json', ['cambi']);
+  assert.equal(unsuppCambi.supported, false);
+  assert.match(unsuppCambi.reason, /CAMBI feature is not available/i);
+});
+
+test('spawnSafe promptly terminates running subprocess on abort signal', async () => {
+  const controller = new AbortController();
+  const startTime = Date.now();
+
+  // Launch a real FFmpeg child process that would run for 30 seconds if not cancelled
+  const promise = spawnSafe('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30',
+    '-t', '30',
+    '-f', 'null', '-'
+  ], {
+    signal: controller.signal,
+    timeout: 30000
+  });
+
+  // Trigger abort after a brief delay so the process is genuinely running
+  setTimeout(() => controller.abort(), 60);
+
+  let caughtError;
+  try {
+    await promise;
+  } catch (err) {
+    caughtError = err;
+  }
+
+  const elapsedMs = Date.now() - startTime;
+  assert.ok(caughtError, 'Must reject on abort signal');
+  assert.match(caughtError.message, /cancelled by abort signal/i);
+  assert.ok(elapsedMs < 3000, `Process termination must be prompt (took ${elapsedMs}ms, expected < 3000ms)`);
+});
+
+test('validateTemporalAlignment detects start presentation delays and duration mismatches', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-temporal-'));
+  try {
+    // Generate a reference 2-second video at 30 fps
+    const refFile = path.join(tmpDir, 'ref.mp4');
+    const cp = require('child_process');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+      '-t', '2',
+      '-c:v', 'libx264', '-preset', 'ultrafast',
+      refFile
+    ], { windowsHide: true });
+
+    // Generate matching encode (start PTS ~ 0, duration 2s)
+    const matchingFile = path.join(tmpDir, 'matching.webm');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', refFile,
+      '-c:v', 'libvpx',
+      matchingFile
+    ], { windowsHide: true });
+
+    // Validate matching
+    const resMatching = validateTemporalAlignment('ffprobe', refFile, matchingFile, {
+      startOffset: 0,
+      sampleDuration: 2,
+      fps: 30
+    });
+    assert.equal(resMatching.status, 'verified');
+    assert.ok(resMatching.encodedFirstPts <= 0.08);
+
+    // Generate deliberately time-delayed encode (start PTS = 1.0s)
+    const delayedFile = path.join(tmpDir, 'delayed.webm');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', refFile,
+      '-vf', 'setpts=PTS-STARTPTS+1.0/TB',
+      '-c:v', 'libvpx',
+      delayedFile
+    ], { windowsHide: true });
+
+    // Validate delayed
+    const resDelayed = validateTemporalAlignment('ffprobe', refFile, delayedFile, {
+      startOffset: 0,
+      sampleDuration: 2,
+      fps: 30
+    });
+    assert.equal(resDelayed.status, 'misaligned');
+    assert.match(resDelayed.reason, /presentation start delay/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('runCapacityScan exercises real progression, stopping on sub-real-time speed', async () => {

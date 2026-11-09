@@ -41,8 +41,12 @@ function calculateStats(numbers) {
  * relying on container duration fallbacks, complete video frame coverage, and chunk boundary continuity.
  */
 function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
-  const { expectedCodec, hasAudio, sampleDuration, fps = 30, isVfr = false } = options;
+  const { expectedCodec, hasAudio, sampleDuration, fps = 30, isVfr = false, signal = null } = options;
   const errors = [];
+
+  if (signal?.aborted) {
+    return { valid: false, errors: ['Video validation cancelled by abort signal.'] };
+  }
 
   if (!fs.existsSync(filePath)) {
     return { valid: false, errors: ['Output file does not exist.'] };
@@ -318,6 +322,9 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
   let accumulatedSuccessfulSec = 0;
 
   for (let i = 0; i < numChunks; i++) {
+    if (options.signal?.aborted) {
+      throw new Error('Benchmark cancelled by abort signal.');
+    }
     const chunkStart = startOffset + i * CHUNK;
     const chunkDuration = Math.min(CHUNK, sampleDuration - i * CHUNK);
     const chunkFile = path.join(chunksDir, `chunk-${String(i).padStart(3, '0')}.webm`);
@@ -370,6 +377,9 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     let attempts = 0;
 
     while (!encoded && attempts < 4) {
+      if (options.signal?.aborted) {
+        throw new Error('Benchmark cancelled by abort signal.');
+      }
       attempts++;
       const currentArgs = buildArgs(actualEncoder, activeRoute);
       let stderrOutput = '';
@@ -378,6 +388,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       try {
         await spawnSafe(tools.ffmpeg, currentArgs, {
           timeout: 45000,
+          signal: options.signal,
           onStderr: chunk => { stderrOutput += chunk.toString(); }
         });
         if (!fs.existsSync(chunkFile) || fs.statSync(chunkFile).size < 100) {
@@ -392,6 +403,9 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
           firstChunkStartupSec = Number(process.hrtime.bigint() - firstChunkStartHr) / 1e9;
         }
       } catch (err) {
+        if (options.signal?.aborted) {
+          throw err;
+        }
         // Step down route first (hardware decode -> CPU decode / placebo)
         const currentRouteIdx = candidateRoutes.indexOf(activeRoute);
         if (currentRouteIdx >= 0 && currentRouteIdx < candidateRoutes.length - 1) {
@@ -462,6 +476,10 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
   const totalElapsedSpeedMultiplier = Math.round((sampleDuration / totalRunDurationSec) * 100) / 100;
   const actualBitrateKbps = Math.round((totalBytes * 8) / (sampleDuration * 1000));
 
+  if (options.signal?.aborted) {
+    throw new Error('Benchmark cancelled by abort signal.');
+  }
+
   // Assemble measured chunks into a seekable review file without re-encoding
   const assembledFile = path.join(runOutputDir, 'assembled.webm');
   const concatListFile = path.join(runOutputDir, 'chunks-list.txt');
@@ -484,7 +502,8 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       expectedCodec: codec,
       hasAudio: rawSpec.hasAudio,
       sampleDuration,
-      fps: sourceInfo.video.fps || 30
+      fps: sourceInfo.video.fps || 30,
+      signal: options.signal
     });
     assembledDuration = validationResult.videoDecodedDuration || 0;
     assembledSuccess = validationResult.valid;
@@ -668,6 +687,9 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
   const totalRunStartHr = process.hrtime.bigint();
 
   while (!encoded && attempts < 4) {
+    if (options.signal?.aborted) {
+      throw new Error('Benchmark cancelled by abort signal.');
+    }
     attempts++;
     const args = buildArgs(actualEncoder, activeRoute);
     let stderrOutput = '';
@@ -675,6 +697,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     try {
       await spawnSafe(tools.ffmpeg, args, {
         timeout: 180000,
+        signal: options.signal,
         onStderr: chunk => { stderrOutput += chunk.toString(); }
       });
       if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 100) {
@@ -684,6 +707,9 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       successfulDurationSec = Number(t1 - t0) / 1e9;
       encoded = true;
     } catch (err) {
+      if (options.signal?.aborted) {
+        throw err;
+      }
       const currentRouteIdx = candidateRoutes.indexOf(activeRoute);
       if (currentRouteIdx >= 0 && currentRouteIdx < candidateRoutes.length - 1) {
         const nextRoute = candidateRoutes[currentRouteIdx + 1];
@@ -724,7 +750,8 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     expectedCodec: codec,
     hasAudio: rawSpec.hasAudio,
     sampleDuration,
-    fps: sourceInfo.video.fps || 30
+    fps: sourceInfo.video.fps || 30,
+    signal: options.signal
   });
 
   const isPassed = validationResult.valid;
