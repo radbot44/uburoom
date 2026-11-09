@@ -6,7 +6,7 @@ const { spawnSafe } = require('./tools');
 
 /**
  * Detects objective quality analysis filters supported by the FFmpeg binary.
- * Checks for libvmaf, ssim, psnr, and CAMBI support.
+ * Performs executable test runs to confirm libvmaf and individual features (cambi, psnr, float_ssim).
  */
 function detectQualityCapabilities(ffmpegPath) {
   const result = {
@@ -31,39 +31,106 @@ function detectQualityCapabilities(ffmpegPath) {
       timeout: 5000
     });
 
-    if (/\blibvmaf\b/i.test(raw)) {
-      result.libvmaf = true;
-      result.availableMetrics.push('vmaf');
-    }
-    if (/\bssim\b/i.test(raw)) {
-      result.ssim = true;
-      result.availableMetrics.push('ssim');
-    }
-    if (/\bpsnr\b/i.test(raw)) {
-      result.psnr = true;
-      result.availableMetrics.push('psnr');
-    }
+    const hasLibvmafFilter = /\blibvmaf\b/i.test(raw);
+    const hasSsimFilter = /\bssim\b/i.test(raw);
+    const hasPsnrFilter = /\bpsnr\b/i.test(raw);
 
-    // Check libvmaf features (cambi, float_ssim, psnr) by querying filter help or testing
-    if (result.libvmaf) {
+    // 1. Executable probe for libvmaf
+    if (hasLibvmafFilter) {
       try {
-        const help = cp.execFileSync(ffmpegPath, ['-hide_banner', '-h', 'filter=libvmaf'], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          windowsHide: true,
-          timeout: 4000
-        });
-        if (/feature/i.test(help)) {
-          // Probe whether cambi feature works
+        cp.execFileSync(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+          '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+          '-filter_complex', '[0:v][1:v]libvmaf',
+          '-f', 'null',
+          '-'
+        ], { windowsHide: true, timeout: 5000 });
+
+        result.libvmaf = true;
+        result.availableMetrics.push('vmaf');
+
+        // Probe optional libvmaf features individually with executable checks
+        // A. CAMBI
+        try {
+          cp.execFileSync(ffmpegPath, [
+            '-v', 'error',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-filter_complex', '[0:v][1:v]libvmaf=feature=name=cambi',
+            '-f', 'null',
+            '-'
+          ], { windowsHide: true, timeout: 5000 });
           result.vmafFeatures.cambi = true;
-          result.vmafFeatures.psnr = true;
-          result.vmafFeatures.float_ssim = true;
           result.cambi = true;
           result.availableMetrics.push('cambi');
-        }
+        } catch {}
+
+        // B. PSNR
+        try {
+          cp.execFileSync(ffmpegPath, [
+            '-v', 'error',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-filter_complex', '[0:v][1:v]libvmaf=feature=name=psnr',
+            '-f', 'null',
+            '-'
+          ], { windowsHide: true, timeout: 5000 });
+          result.vmafFeatures.psnr = true;
+        } catch {}
+
+        // C. float_ssim
+        try {
+          cp.execFileSync(ffmpegPath, [
+            '-v', 'error',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-f', 'lavfi', '-i', 'testsrc=s=256x256:d=0.08:r=25,format=yuv420p',
+            '-filter_complex', '[0:v][1:v]libvmaf=feature=name=float_ssim',
+            '-f', 'null',
+            '-'
+          ], { windowsHide: true, timeout: 5000 });
+          result.vmafFeatures.float_ssim = true;
+        } catch {}
       } catch {
-        // Feature detection fallback
+        // libvmaf execution failed
+        result.libvmaf = false;
       }
+    }
+
+    // 2. Executable probe for standalone SSIM filter
+    if (hasSsimFilter) {
+      try {
+        cp.execFileSync(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi', '-i', 'testsrc=s=128x128:d=0.04:r=25,format=yuv420p',
+          '-f', 'lavfi', '-i', 'testsrc=s=128x128:d=0.04:r=25,format=yuv420p',
+          '-filter_complex', '[0:v][1:v]ssim',
+          '-f', 'null',
+          '-'
+        ], { windowsHide: true, timeout: 4000 });
+        result.ssim = true;
+        if (!result.availableMetrics.includes('ssim')) {
+          result.availableMetrics.push('ssim');
+        }
+      } catch {}
+    }
+
+    // 3. Executable probe for standalone PSNR filter
+    if (hasPsnrFilter) {
+      try {
+        cp.execFileSync(ffmpegPath, [
+          '-v', 'error',
+          '-f', 'lavfi', '-i', 'testsrc=s=128x128:d=0.04:r=25,format=yuv420p',
+          '-f', 'lavfi', '-i', 'testsrc=s=128x128:d=0.04:r=25,format=yuv420p',
+          '-filter_complex', '[0:v][1:v]psnr',
+          '-f', 'null',
+          '-'
+        ], { windowsHide: true, timeout: 4000 });
+        result.psnr = true;
+        if (!result.availableMetrics.includes('psnr')) {
+          result.availableMetrics.push('psnr');
+        }
+      } catch {}
     }
   } catch (err) {
     result.error = err.message;
@@ -150,7 +217,7 @@ function findWorstIntervals(timeline, metricKey = 'vmaf', fps = 30, windowSec = 
  * handling alignment, resolution normalization (upscaling distorted to match reference per VMAF standard),
  * and HDR-to-SDR tonemapping where applicable.
  */
-function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPath) {
+function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPath, selectedMetrics = ['vmaf', 'ssim', 'psnr', 'cambi']) {
   const refWidth = source.video?.width || 1920;
   const refHeight = source.video?.height || 1080;
   const refFps = source.video?.fps || 30;
@@ -166,9 +233,8 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
   const parts = [];
 
   // 1. Reference stream processing (input 0)
-  // Time alignment & frame pacing
-  let refFilter = `[0:v]setpts=PTS-STARTPTS,fps=fps=${refFps}`;
-  // If reference is HDR10 or HLG, tonemap to SDR BT.709 so comparison against SDR encode is meaningful
+  // Time alignment, frame pacing, range normalization to TV range, and YUV420p format
+  let refFilter = `[0:v]setpts=PTS-STARTPTS,fps=fps=${refFps},scale=in_range=auto:out_range=tv`;
   if (source.hdr?.hdr) {
     refFilter += `,zscale=t=linear:npl=100,tonemap=hable,zscale=p=bt709:t=bt709:m=bt709`;
   }
@@ -176,8 +242,8 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
   parts.push(refFilter);
 
   // 2. Distorted stream processing (input 1)
-  // Time alignment, frame pacing, and scaling to reference resolution
-  let distFilter = `[1:v]setpts=PTS-STARTPTS,fps=fps=${refFps}`;
+  // Time alignment, frame pacing, range normalization, and scaling to reference resolution
+  let distFilter = `[1:v]setpts=PTS-STARTPTS,fps=fps=${refFps},scale=in_range=auto:out_range=tv`;
   if (targetQuality.width < refWidth || targetQuality.height < refHeight) {
     // Upscale encoded frame to reference resolution using bicubic filter (standard VMAF methodology)
     distFilter += `,scale=${refWidth}:${refHeight}:flags=bicubic`;
@@ -185,24 +251,41 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
   distFilter += `,format=pix_fmts=yuv420p[dist_norm]`;
   parts.push(distFilter);
 
-  // 3. Metric filter
+  // 3. Metric filter resolution
   let metricFilter = '';
-  if (capabilities.libvmaf) {
-    let features = [];
-    if (capabilities.vmafFeatures?.cambi) features.push('name=cambi');
-    if (capabilities.vmafFeatures?.psnr) features.push('name=psnr');
-    if (capabilities.vmafFeatures?.float_ssim) features.push('name=float_ssim');
+  const wantsVmaf = selectedMetrics.includes('vmaf') && capabilities.libvmaf;
+
+  if (wantsVmaf) {
+    const features = [];
+    if (selectedMetrics.includes('cambi') && capabilities.vmafFeatures?.cambi) {
+      features.push('name=cambi');
+    }
+    if (selectedMetrics.includes('psnr') && capabilities.vmafFeatures?.psnr) {
+      features.push('name=psnr');
+    }
+    if (selectedMetrics.includes('ssim') && capabilities.vmafFeatures?.float_ssim) {
+      features.push('name=float_ssim');
+    }
 
     const featureArg = features.length ? `:feature=${features.join('|')}` : '';
-    // Use relative filename to avoid Windows drive-letter colon conflicts in FFmpeg filter syntax
     const logFilename = path.basename(jsonLogPath);
     metricFilter = `[dist_norm][ref_norm]libvmaf=log_fmt=json:log_path=${logFilename}${featureArg}:n_threads=8:shortest=1[out]`;
-  } else if (capabilities.ssim || capabilities.psnr) {
-    // Fallback: standalone SSIM or PSNR
-    if (capabilities.ssim) {
-      metricFilter = `[dist_norm][ref_norm]ssim=shortest=1[out]`;
+  } else {
+    // Standalone metric fallback when libvmaf is unavailable or not selected
+    const wantsSsim = selectedMetrics.includes('ssim') && capabilities.ssim;
+    const wantsPsnr = selectedMetrics.includes('psnr') && capabilities.psnr;
+
+    if (wantsSsim && wantsPsnr) {
+      metricFilter = `[dist_norm]split=2[d1][d2];[ref_norm]split=2[r1][r2];[d1][r1]ssim=stats_file=ssim.log:shortest=1[s_out];[d2][r2]psnr=stats_file=psnr.log:shortest=1[p_out];[s_out][p_out]overlay[out]`;
+    } else if (wantsSsim) {
+      metricFilter = `[dist_norm][ref_norm]ssim=stats_file=ssim.log:shortest=1[out]`;
+    } else if (wantsPsnr) {
+      metricFilter = `[dist_norm][ref_norm]psnr=stats_file=psnr.log:shortest=1[out]`;
     } else {
-      metricFilter = `[dist_norm][ref_norm]psnr=shortest=1[out]`;
+      return {
+        supported: false,
+        reason: 'None of the requested quality metrics are available in the current FFmpeg installation.'
+      };
     }
   }
 
@@ -210,13 +293,14 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 
   return {
     supported: true,
+    usesLibvmaf: wantsVmaf,
     filterGraph: parts.join(';'),
     normalization: {
       method: 'VMAF standard (distorted upscaled to reference resolution with bicubic)',
       refResolution: `${refWidth}x${refHeight}`,
       distResolution: `${targetQuality.width}x${targetQuality.height}`,
-      colorTransform: source.hdr?.hdr ? 'HDR-to-SDR tonemapped (hable/bt709)' : 'Native SDR BT.709',
-      fps: refFps
+      colorTransform: source.hdr?.hdr ? 'HDR-to-SDR tonemapped (hable/bt709, TV range)' : 'Native SDR BT.709 (TV range)',
+      refFps
     }
   };
 }
@@ -235,6 +319,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
     targetQuality,
     outputDir,
     capabilities,
+    selectedMetrics = ['vmaf', 'ssim', 'psnr', 'cambi'],
     signal
   } = options;
 
@@ -271,7 +356,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
   }
 
   const jsonLogPath = path.join(outputDir, 'quality-metrics.json');
-  const chain = buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPath);
+  const chain = buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPath, selectedMetrics);
 
   if (!chain.supported) {
     return {
@@ -311,29 +396,58 @@ async function runQualityAnalysis(ffmpegPath, options) {
     });
   } catch (err) {
     return {
-      available: false,
+      available: true,
       status: 'failed',
       reason: `Quality analysis execution failed: ${err.message}`,
       stderr: stderrOutput.slice(-300)
     };
   }
 
-  // Parse the generated JSON log from libvmaf
-  if (capabilities.libvmaf && fs.existsSync(jsonLogPath)) {
+  const fps = source.video?.fps || 30;
+  const isVfr = Boolean(source.video?.isVfr);
+  const expectedFrames = Math.round(sampleDuration * fps);
+
+  // 1. Parse libvmaf JSON log if libvmaf was executed
+  if (chain.usesLibvmaf && fs.existsSync(jsonLogPath)) {
     try {
       const raw = fs.readFileSync(jsonLogPath, 'utf8');
       const data = JSON.parse(raw);
 
       const frames = data.frames || [];
-      const pooled = data.pooled_metrics || {};
+      const validationErrors = [];
+
+      // Frame count and coverage verification
+      if (frames.length === 0) {
+        validationErrors.push('No video frames were analyzed by the quality filter.');
+      } else {
+        const firstPts = frames[0]?.metrics?.timestampSec !== undefined ? frames[0].metrics.timestampSec : 0;
+        const lastPts = frames[frames.length - 1]?.metrics?.timestampSec !== undefined ? frames[frames.length - 1].metrics.timestampSec : (frames.length / fps);
+
+        if (!isVfr && Math.abs(frames.length - expectedFrames) > 3) {
+          validationErrors.push(`Incomplete metric sequence: expected ~${expectedFrames} frames, scored only ${frames.length} frames.`);
+        } else if (isVfr && (lastPts - firstPts) < (sampleDuration * 0.85)) {
+          validationErrors.push(`Truncated metric duration: scored coverage (${(lastPts - firstPts).toFixed(2)}s) is below requested ${sampleDuration}s.`);
+        }
+
+        if (firstPts > 0.2) {
+          validationErrors.push(`Temporal misalignment: first scored frame begins at ${firstPts.toFixed(3)}s (expected <= 0.20s).`);
+        }
+      }
+
+      if (validationErrors.length > 0) {
+        return {
+          available: true,
+          status: 'failed',
+          reason: validationErrors.join('; '),
+          validation: { valid: false, errors: validationErrors }
+        };
+      }
 
       const timeline = [];
       const vmafValues = [];
       const ssimValues = [];
       const psnrValues = [];
       const cambiValues = [];
-
-      const fps = source.video?.fps || 30;
 
       for (let i = 0; i < frames.length; i++) {
         const m = frames[i].metrics || {};
@@ -380,36 +494,103 @@ async function runQualityAnalysis(ffmpegPath, options) {
         worstIntervals: worstVmafIntervals,
         timeline,
         totalFramesEvaluated: frames.length,
-        normalization: chain.normalization,
-        rawLogRelative: 'quality-metrics.json'
+        normalization: {
+          ...chain.normalization,
+          expectedFrames,
+          evaluatedFrames: frames.length,
+          coveragePercent: Math.round((frames.length / (expectedFrames || 1)) * 1000) / 10,
+          isVfr
+        },
+        validation: { valid: true, errors: [] },
+        rawLogRelative: path.basename(jsonLogPath)
       };
     } catch (parseErr) {
       return {
-        available: false,
+        available: true,
         status: 'failed',
-        reason: `Failed to parse quality metrics JSON: ${parseErr.message}`
+        reason: `Failed to parse libvmaf output: ${parseErr.message}`
       };
     }
   }
 
-  // Fallback for standalone ssim/psnr stdout parsing
-  let ssimScore = null;
-  let psnrScore = null;
-  const ssimMatch = stderrOutput.match(/SSIM\s+Y:([0-9.]+)\s+U:([0-9.]+)\s+V:([0-9.]+)\s+All:([0-9.]+)/i);
-  if (ssimMatch) ssimScore = parseFloat(ssimMatch[4]);
-  const psnrMatch = stderrOutput.match(/average:([0-9.]+)/i);
-  if (psnrMatch) psnrScore = parseFloat(psnrMatch[1]);
+  // 2. Parse standalone SSIM and PSNR logs if standalone filters were executed
+  const ssimLogPath = path.join(outputDir, 'ssim.log');
+  const psnrLogPath = path.join(outputDir, 'psnr.log');
+
+  const ssimValues = [];
+  const psnrValues = [];
+  const timeline = [];
+
+  if (fs.existsSync(ssimLogPath)) {
+    try {
+      const ssimRaw = fs.readFileSync(ssimLogPath, 'utf8');
+      const lines = ssimRaw.split(/\r?\n/).filter(Boolean);
+      for (let i = 0; i < lines.length; i++) {
+        const match = /All:([0-9.]+)/.exec(lines[i]);
+        if (match) {
+          const val = parseFloat(match[1]);
+          ssimValues.push(val);
+          timeline.push({ frameNum: i, timestampSec: Math.round((i / fps) * 1000) / 1000, ssim: val });
+        }
+      }
+    } catch {}
+  }
+
+  if (fs.existsSync(psnrLogPath)) {
+    try {
+      const psnrRaw = fs.readFileSync(psnrLogPath, 'utf8');
+      const lines = psnrRaw.split(/\r?\n/).filter(Boolean);
+      for (let i = 0; i < lines.length; i++) {
+        const match = /psnr_avg:([0-9.]+|inf)/.exec(lines[i]);
+        if (match) {
+          const val = match[1] === 'inf' ? 60 : parseFloat(match[1]);
+          psnrValues.push(val);
+          if (timeline[i]) {
+            timeline[i].psnr = val;
+          } else {
+            timeline.push({ frameNum: i, timestampSec: Math.round((i / fps) * 1000) / 1000, psnr: val });
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const scoredCount = Math.max(ssimValues.length, psnrValues.length);
+  if (scoredCount === 0) {
+    return {
+      available: true,
+      status: 'failed',
+      reason: 'No metric data was produced by standalone quality filters.'
+    };
+  }
+
+  if (!isVfr && Math.abs(scoredCount - expectedFrames) > 3) {
+    return {
+      available: true,
+      status: 'failed',
+      reason: `Incomplete metric sequence: expected ~${expectedFrames} frames, scored only ${scoredCount} frames.`,
+      validation: { valid: false, errors: [`Scored ${scoredCount} frames out of ${expectedFrames} expected`] }
+    };
+  }
 
   return {
-    available: Boolean(ssimScore || psnrScore),
-    status: ssimScore || psnrScore ? 'pass' : 'failed',
-    ssim: ssimScore ? { mean: ssimScore } : null,
-    psnr: psnrScore ? { mean: psnrScore } : null,
+    available: true,
+    status: 'pass',
     vmaf: null,
+    ssim: calculateMetricStats(ssimValues),
+    psnr: calculateMetricStats(psnrValues),
     cambi: null,
-    worstIntervals: [],
-    timeline: [],
-    normalization: chain.normalization
+    worstIntervals: ssimValues.length ? findWorstIntervals(timeline, 'ssim', fps, 2) : [],
+    timeline,
+    totalFramesEvaluated: scoredCount,
+    normalization: {
+      ...chain.normalization,
+      expectedFrames,
+      evaluatedFrames: scoredCount,
+      coveragePercent: Math.round((scoredCount / (expectedFrames || 1)) * 1000) / 10,
+      isVfr
+    },
+    validation: { valid: true, errors: [] }
   };
 }
 

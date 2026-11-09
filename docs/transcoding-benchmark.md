@@ -73,10 +73,12 @@ The benchmark parses only the `transcoding` and `tools` sections:
 | `-q, --qualities <list>` | Comma-separated list of qualities (e.g. `1080p8,720p4`). | All configured qualities |
 | `-e, --encoders <list>` | Comma-separated list of encoders (`nvenc,qsv,software`). | Configured encoder |
 | `--codecs <list>` | Comma-separated list of codecs (`av1,vp9,vp8`). | Configured outputs |
-| `--concurrency <N>` | Run N simultaneous independent transcode streams. | `1` |
-| `--capacity-scan` | Progressively scan concurrency from 1 stream upward to find limit. | Disabled |
-| `--max-concurrency <N>` | Upper bound for concurrency scanning. | `8` |
-| `--quality-metrics` | Compute objective quality metrics (VMAF, SSIM, PSNR, CAMBI) post-encode. | Disabled |
+| `--concurrency <N>` | Run N simultaneous independent transcode streams (max 16). | `1` |
+| `--capacity-scan` | Progressively scan concurrency from 1 stream upward to find limit (requires `--allow-load-test`). | Disabled |
+| `--allow-load-test` | Operator safety acknowledgment required for progressive `--capacity-scan` load testing. | Disabled |
+| `--force-concurrent-with-server` | Force concurrent benchmarking even if an active uburoom server process is detected. | Disabled |
+| `--max-concurrency <N>` | Upper bound for concurrency scanning (clamped to max 16). | `8` |
+| `--quality-metrics[=list]` | Compute objective quality metrics (VMAF, SSIM, PSNR, CAMBI) post-encode. Optional list: `--quality-metrics=vmaf,ssim,psnr`. | Disabled |
 | `--warmup` | Run an untimed single-chunk transcode before starting measurements. | Disabled |
 | `-o, --output <dir>` | Directory where artifacts and reports are saved. | `artifacts/transcode-benchmark/run-<timestamp>/` |
 | `-r, --runs <number>` | Number of test iterations per configuration (>= 1). | `1` |
@@ -207,21 +209,27 @@ artifacts/transcode-benchmark/run-<timestamp>/
 
 ## 10. Objective Quality Metrics & Analysis
 
-When `--quality-metrics` is enabled, the benchmark runs post-encode objective quality evaluation strictly outside timed benchmark loops:
+When `--quality-metrics` (or `--quality-metrics=<vmaf,ssim,psnr,cambi>`) is enabled, the benchmark runs post-encode objective quality evaluation strictly outside timed benchmark loops:
 1. **Reference Media**: Evaluates distorted encoded outputs against the **untouched reference source** (never the lossy viewing proxy).
-2. **Metrics Evaluated**:
+2. **Metrics Evaluated & Probing**:
+   - **Executable Probing**: Probes `libvmaf`, `ssim`, `psnr`, and `cambi` using a micro test execution (`testsrc=s=256x256:d=0.08`) rather than documentation regex.
    - **VMAF (`libvmaf`)**: Uses default `vmaf_v0.6.1` model, yielding 0-100 perceptual quality scores.
    - **SSIM (`ssim`)**: Structural similarity index (0.0 to 1.0).
    - **PSNR (`psnr`)**: Peak signal-to-noise ratio in decibels (dB).
    - **CAMBI (`cambi`)**: Contrast Aware Multiscale Banding Index, detecting compression banding and false contouring artifacts.
-3. **Pacing and Normalization**:
+   - **Standalone Fallback**: If `libvmaf` is unavailable or not compiled in FFmpeg, the benchmark falls back to a standalone dual filter graph (`split=2`) calculating SSIM and PSNR simultaneously.
+3. **Pacing, Color Range Normalization and Alignment**:
+   - Both reference and encoded streams normalize color ranges (`scale=in_range=auto:out_range=tv`) to eliminate false MSE/PSNR penalties from broadcast TV vs full-range video flags.
    - Distorted video is scaled to reference dimensions using bicubic interpolation per VMAF recommendations (`scale=W:H:flags=bicubic`).
    - Timestamps and frame pacing are strictly aligned using `[0:v]setpts=PTS-STARTPTS,fps=N` and `[1:v]setpts=PTS-STARTPTS,fps=N`.
    - Threading is bounded (`:n_threads=8`) with `:shortest=1` to prevent framesync stalls.
 4. **Summary Statistics**:
    - Computes mean, harmonic mean, median, min, max, stdDev, and 1st, 5th, and 10th percentiles (`p1`, `p5`, `p10`). Percentiles expose brief quality dips and stutter that aggregate means conceal.
    - Identifies worst 2-second intervals across the video timeline.
-5. **HDR & Dolby Vision Handling**:
+5. **Trustworthy Validation**:
+   - Verifies decoded frame counts against expected frame counts (+/-3 frames tolerance for CFR, $\ge 85\%$ duration coverage for VFR).
+   - Verifies start timestamps ($\le 0.20\text{s}$). If incomplete or invalid, quality status is recorded as `failed` without corrupting transcode success status.
+6. **HDR & Dolby Vision Handling**:
    - HDR10 sources are tonemapped to SDR BT.709 using `zscale` linear transfer.
    - Dolby Vision Profile 5 without Vulkan `libplacebo` is gracefully rejected to prevent invalid color comparisons.
 
@@ -230,17 +238,21 @@ When `--quality-metrics` is enabled, the benchmark runs post-encode objective qu
 ## 11. Multi-Stream Concurrency & Sustainable Capacity
 
 The benchmark supports evaluating multi-user party loads:
-1. **Fixed Concurrency (`--concurrency N`)**:
+1. **Fixed Concurrency (`--concurrency N`, max 16)**:
    - Launches $N$ simultaneous, independent transcode workers in parallel.
-   - Each worker runs in an isolated directory (`outputs/concurrency-${N}/worker-${w}/<configId>/`).
+   - Each worker runs in an isolated directory (`outputs/concurrency-${N}/run-${run}/worker-${w}/<configId>/`).
+   - Repeats (`--runs M`) maintain full trial-level isolation (`run-1`, `run-2`), guaranteeing no file or metric clobbering.
    - Measures aggregate throughput, slowest worker bottleneck speed, and individual chunk deadline misses.
-2. **Progressive Capacity Scan (`--capacity-scan`)**:
-   - Iteratively tests concurrency levels from 1 up to `--max-concurrency N` (default 8).
-   - **Conservative Stopping Rule**: Scanning stops immediately if:
-     - Any worker's overall transcode speed drops below 1.0x real-time.
-     - Any worker experiences an unrecoverable transcode or validation failure.
-     - Any worker misses a chunk deadline (transcode time > 6.0 seconds), representing an MSE buffer underrun.
-   - Reports highest sustainable concurrency and first failing tier with exact failure reasons.
+2. **Progressive Capacity Scan (`--capacity-scan`, requires `--allow-load-test`)**:
+   - Iteratively tests concurrency levels from 1 up to `--max-concurrency N` (clamped to max 16).
+   - Formally designated as a **short-run sustainable capacity estimate based on chunk deadline preservation**.
+   - **Strict Capacity Acceptance Criteria**: A concurrency tier is accepted as sustainable *only* if:
+     - **0 Missed Deadlines**: Every chunk across all workers finishes in $\le 6.0\text{s}$ (`totalDeadlineMisses === 0`).
+     - **Real-Time Margin**: Every worker achieves $\ge 1.05\times$ real-time speed (`minWorkerSpeed >= 1.05`).
+     - **P95 Chunk Latency**: Worst worker P95 chunk duration does not exceed $5.1\text{s}$ (`maxWorkerP95ChunkSec <= 5.1`).
+     - **Hardware Backend Preserved**: No hardware-to-software encoder fallback occurs during the run.
+     - **Zero Worker Failures**: All workers achieve status `pass`.
+   - **Conservative Stopping Rule**: Scanning stops immediately upon the first failed tier to prevent runaway GPU queueing or system lockups.
 3. **Warmup (`--warmup`)**:
    - Executes an untimed single-chunk transcode prior to starting measurements to eliminate cold GPU driver, shader cache, or thread-pool startup penalties.
 
@@ -260,12 +272,19 @@ Opening `report.html` locally in any web browser (`file:///...`) provides:
    - Side-by-side synchronized players with unified play/pause and seek controls.
    - Interactive wipe/split overlay slider allowing the operator to drag a vertical divider across matching frames.
    - Zoom 2x toggle for pixel-level artifact and ringing inspection.
-8. **Blind A/B Subjective Comparison Workspace**:
-   - Operator selects two candidates to compare.
-   - Candidate identities are randomized and masked as "Candidate X" and "Candidate Y", with all identifying metadata concealed from DOM and tooltips.
-   - Synchronized side-by-side, wipe, and zoom players.
-   - Voting buttons ("Prefer X", "Equal", "Prefer Y") and text notes.
-   - Identity reveal button and offline JSON export of subjective comparison results.
+8. **Blind A/B Subjective Quality Evaluation Workspace**:
+   - Operator selects two candidate encodes to evaluate.
+   - Candidates are randomized as "Candidate A" and "Candidate B" with all identifying names, codecs, bitrates, and tooltips masked.
+   - Candidate selection dropdowns are hidden during active evaluation to preserve blinding.
+   - Calibration check alerts if identical candidates are chosen.
+   - Standard 5-level preference rating scale: *Strongly Prefer A*, *Slightly Prefer A*, *Equal*, *Slightly Prefer B*, *Strongly Prefer B*.
+   - Free-form observations textarea for operator notes.
+   - View modes: Side-by-side, Wipe curtain divider, and 2x Zoom.
+   - Speed controls: 0.25x, 0.5x, 0.75x, 1.0x, 1.25x, 1.5x, 2.0x.
+   - Identity reveal button displaying true candidate identities using safe DOM APIs (`createElement`/`textContent`).
+   - Offline JSON export of subjective trial evaluations.
+   - Repeat/Reset button to conduct fresh blinded trials.
+   - Explicit offline blinding notice.
 9. **Contact Sheet**: Matching timestamp frame screenshots.
 10. **Zero CDN Dependencies**: Self-contained CSS and SVG; functions without network access or local web servers.
 

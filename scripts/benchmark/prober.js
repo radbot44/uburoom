@@ -83,7 +83,12 @@ function probeHwaccels(ffmpegPath) {
  * Resolves which encoder to use for a given codec according to uburoom's
  * configured policy, taking into account probe availability.
  */
-function resolveEncoderForCodec(codec, configuredEncoder, cpuFallback, probedResults) {
+function resolveEncoderForCodec(codec, configuredEncoder, cpuFallback = true, probedResults = []) {
+  if (Array.isArray(cpuFallback)) {
+    const tmp = cpuFallback;
+    cpuFallback = typeof probedResults === 'boolean' ? probedResults : true;
+    probedResults = tmp;
+  }
   const getAvailability = (c, enc) => {
     const match = probedResults.find(r => r.codec === c && r.encoder === enc);
     return match ? match.available : false;

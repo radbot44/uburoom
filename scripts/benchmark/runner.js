@@ -254,9 +254,16 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
 
   const { codec, requestedEncoder, quality } = testConfig;
   const configId = `${codec}-${requestedEncoder}-${quality.id}-chunked`;
-  const subFolder = options.workerId
-    ? (options.concurrency ? `concurrency-${options.concurrency}/worker-${options.workerId}` : `run-${runIndex}/worker-${options.workerId}`)
-    : `run-${runIndex}`;
+  let subFolder;
+  if (options.tierIndex) {
+    subFolder = `capacity-tier-${options.tierIndex}/run-${runIndex}/worker-${options.workerId || 1}`;
+  } else if (options.concurrency && options.concurrency > 1) {
+    subFolder = `concurrency-${options.concurrency}/run-${runIndex}/worker-${options.workerId || 1}`;
+  } else if (options.workerId) {
+    subFolder = `run-${runIndex}/worker-${options.workerId}`;
+  } else {
+    subFolder = `run-${runIndex}`;
+  }
   const runOutputDir = path.join(outputDir, 'outputs', subFolder, configId);
   const chunksDir = path.join(runOutputDir, 'chunks');
   fs.mkdirSync(chunksDir, { recursive: true });
@@ -492,6 +499,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     runIndex,
     workerId: options.workerId || 1,
     concurrency: options.concurrency || 1,
+    tierIndex: options.tierIndex || null,
     configId,
     mode: 'chunked',
     status: isPassed ? 'pass' : 'fail',
@@ -520,6 +528,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       meanChunkSec: stats.mean,
       medianChunkSec: stats.median,
       p95ChunkSec: stats.p95,
+      chunkP95DurationSec: stats.p95,
       maxChunkSec: stats.max,
       deadlineMisses: deadlineMissCount,
       totalBytes,
@@ -554,9 +563,16 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
 
   const { codec, requestedEncoder, quality } = testConfig;
   const configId = `${codec}-${requestedEncoder}-${quality.id}-continuous`;
-  const subFolder = options.workerId
-    ? (options.concurrency ? `concurrency-${options.concurrency}/worker-${options.workerId}` : `run-${runIndex}/worker-${options.workerId}`)
-    : `run-${runIndex}`;
+  let subFolder;
+  if (options.tierIndex) {
+    subFolder = `capacity-tier-${options.tierIndex}/run-${runIndex}/worker-${options.workerId || 1}`;
+  } else if (options.concurrency && options.concurrency > 1) {
+    subFolder = `concurrency-${options.concurrency}/run-${runIndex}/worker-${options.workerId || 1}`;
+  } else if (options.workerId) {
+    subFolder = `run-${runIndex}/worker-${options.workerId}`;
+  } else {
+    subFolder = `run-${runIndex}`;
+  }
   const runOutputDir = path.join(outputDir, 'outputs', subFolder, configId);
   fs.mkdirSync(runOutputDir, { recursive: true });
 
@@ -717,6 +733,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     runIndex,
     workerId: options.workerId || 1,
     concurrency: options.concurrency || 1,
+    tierIndex: options.tierIndex || null,
     configId,
     mode: 'continuous',
     status: isPassed ? 'pass' : 'fail',

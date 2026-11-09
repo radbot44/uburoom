@@ -123,10 +123,20 @@ function parseArgs(args) {
       options.maxConcurrency = Number(args[++i]);
     } else if (arg.startsWith('--max-concurrency=')) {
       options.maxConcurrency = Number(arg.slice(18));
+    } else if (arg === '--allow-load-test') {
+      options.allowLoadTest = true;
+    } else if (arg === '--force-concurrent-with-server') {
+      options.forceConcurrentWithServer = true;
     } else if (arg === '--quality-metrics' || arg === '-Q') {
-      options.qualityMetrics = true;
+      const next = args[i + 1];
+      if (next && !next.startsWith('-')) {
+        i++;
+        options.qualityMetrics = next.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      } else {
+        options.qualityMetrics = ['vmaf', 'ssim', 'psnr', 'cambi'];
+      }
     } else if (arg.startsWith('--quality-metrics=')) {
-      options.qualityMetrics = arg.slice(18).split(',').map(s => s.trim()).filter(Boolean);
+      options.qualityMetrics = arg.slice(18).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     } else if (arg === '--no-quality-metrics') {
       options.qualityMetrics = false;
     } else if (arg === '--warmup') {
@@ -223,19 +233,31 @@ async function main() {
   if (!Number.isInteger(options.runs) || options.runs < 1) {
     throw new Error(`Invalid --runs "${options.runs}": must be a positive integer >= 1.`);
   }
+  const ABSOLUTE_MAX_CONCURRENCY = 16;
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
     throw new Error(`Invalid --concurrency "${options.concurrency}": must be a positive integer >= 1.`);
   }
+  if (options.concurrency > ABSOLUTE_MAX_CONCURRENCY) {
+    throw new Error(`Requested --concurrency (${options.concurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`);
+  }
   if (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1) {
     throw new Error(`Invalid --max-concurrency "${options.maxConcurrency}": must be a positive integer >= 1.`);
+  }
+  if (options.maxConcurrency > ABSOLUTE_MAX_CONCURRENCY) {
+    throw new Error(`Requested --max-concurrency (${options.maxConcurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`);
   }
   if (!['chunks', 'continuous', 'both'].includes(options.mode)) {
     throw new Error(`Invalid --mode "${options.mode}": must be one of "chunks", "continuous", or "both".`);
   }
 
-  console.log(`===========================================================`);
-  console.log(`   uburoom Transcoding Benchmark Suite (Stage 2)`);
-  console.log(`===========================================================\n`);
+  if (Array.isArray(options.qualityMetrics)) {
+    const valid = ['vmaf', 'ssim', 'psnr', 'cambi'];
+    for (const m of options.qualityMetrics) {
+      if (!valid.includes(m)) {
+        throw new Error(`Invalid metric in --quality-metrics: "${m}". Supported metrics: ${valid.join(', ')}`);
+      }
+    }
+  }
 
   // 1. Process Safety Check
   const activeNodeCheck = inspectActiveUburoomProcess();
@@ -244,8 +266,24 @@ async function main() {
     if (options.capacityScan || options.concurrency > 1) {
       console.warn(`[WARNING] Heavy concurrent load testing requested while uburoom may be running.`);
       console.warn(`          Concurrent transcoding may contend for GPU/CPU resources with live viewers.\n`);
+      if (!options.forceConcurrentWithServer) {
+        throw new Error(`Concurrent load requested while uburoom is running on this machine. Pass --force-concurrent-with-server to acknowledge and proceed.`);
+      }
     }
   }
+
+  if (options.capacityScan && !options.allowLoadTest) {
+    throw new Error(`Automatic capacity scanning executes progressive multi-process load. Pass --allow-load-test to acknowledge and proceed.`);
+  }
+
+  // Abort controller for clean child process termination
+  const abortController = new AbortController();
+  const onSignal = () => {
+    console.log('\n[ABORT] Cancellation signal received. Terminating child processes and halting benchmark...');
+    abortController.abort();
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
 
   // 2. Configuration Resolution
   const configPath = resolveConfigFile(options.config);
@@ -430,6 +468,7 @@ async function main() {
       cpuFallback: benchmarkConfig.transcoding.cpuFallback,
       probedEncoders,
       outputDir,
+      signal: abortController.signal,
       mode: options.mode === 'continuous' ? 'continuous' : 'chunks',
       onTierStart: (c, max) => {
         process.stdout.write(`Testing Concurrency ${c}/${max}... `);
@@ -463,12 +502,15 @@ async function main() {
     console.log(`   Executing Concurrent Benchmark (${options.concurrency} simultaneous workers)`);
     console.log(`===========================================================\n`);
 
+    const concurrencyTrials = [];
     for (let run = 1; run <= options.runs; run++) {
       for (const testConfig of testMatrix.configurations) {
         for (const mode of runModes) {
-          console.log(`Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]...`);
+          const runTag = options.runs > 1 ? ` [Run ${run}/${options.runs}]` : '';
+          console.log(`Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]${runTag}...`);
           const tierResult = await runConcurrentTier({
             concurrency: options.concurrency,
+            runIndex: run,
             tools,
             source: sourceInfo,
             testConfig,
@@ -478,6 +520,7 @@ async function main() {
             cpuFallback: benchmarkConfig.transcoding.cpuFallback,
             probedEncoders,
             outputDir,
+            signal: abortController.signal,
             mode
           });
 
@@ -486,10 +529,21 @@ async function main() {
           for (const w of tierResult.workers) {
             benchmarkResults.push(w);
           }
-          concurrencySummary = tierResult;
+          concurrencyTrials.push(tierResult);
         }
       }
     }
+
+    concurrencySummary = {
+      isCapacityScan: false,
+      concurrency: options.concurrency,
+      trials: concurrencyTrials,
+      highestSustainableConcurrency: concurrencyTrials.every(t => t.isSustainable) ? options.concurrency : 0,
+      totalTrials: concurrencyTrials.length,
+      passedTrials: concurrencyTrials.filter(t => t.isSustainable).length,
+      stoppingReason: concurrencyTrials.every(t => t.isSustainable) ? null : concurrencyTrials.find(t => !t.isSustainable)?.failureReason,
+      estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation. Long-term production capacity requires extended thermal and memory soak testing.'
+    };
   } else {
     // Stage 1: Standard Single-Stream Execution
     const totalTests = testMatrix.configurations.length * runModes.length * options.runs;
@@ -573,19 +627,6 @@ async function main() {
               }
             }
 
-            // Extract screenshot from transcoded output
-            const targetVideoPath = result.output?.assembledFile ? path.join(outputDir, result.output.assembledFile) : null;
-            if (targetVideoPath && fs.existsSync(targetVideoPath)) {
-              const shotPath = path.join(screenshotsDir, `run-${run}-${result.configId}-frame.jpg`);
-              if (extractScreenshot(tools.ffmpeg, targetVideoPath, sampleDuration * 0.5, shotPath)) {
-                screenshots.push({
-                  label: `${testConfig.codec.toUpperCase()} (${result.actualEncoder}) ${testConfig.quality.label || testConfig.quality.id}${options.runs > 1 ? ` [Run ${run}]` : ''}`,
-                  timestampSeconds: Math.round(sampleDuration * 0.5 * 10) / 10,
-                  relativePath: path.relative(outputDir, shotPath).replace(/\\/g, '/')
-                });
-              }
-            }
-
             benchmarkResults.push(result);
           } catch (err) {
             console.log(`   -> FAIL: ${err.message}`);
@@ -606,10 +647,38 @@ async function main() {
     }
   }
 
+  // Extract representative screenshots from all successful outputs (single-stream, concurrent, capacity)
+  for (const result of benchmarkResults) {
+    if (result.status === 'pass' && result.output?.assembledFile) {
+      const targetVideoPath = path.join(outputDir, result.output.assembledFile);
+      if (fs.existsSync(targetVideoPath)) {
+        const rIndex = result.runIndex || 1;
+        const workerTag = result.workerId ? `-worker-${result.workerId}` : '';
+        const tierTag = result.tierIndex ? `-tier-${result.tierIndex}` : (result.concurrency && result.concurrency > 1 ? `-c${result.concurrency}` : '');
+        const shotFilename = `run-${rIndex}${tierTag}${workerTag}-${result.configId}-frame.jpg`;
+        const shotPath = path.join(screenshotsDir, shotFilename);
+        if (!fs.existsSync(shotPath)) {
+          const shotTimestamp = Math.min(30, Math.max(1, Math.floor(sampleDuration * 0.5)));
+          if (extractScreenshot(tools.ffmpeg, targetVideoPath, shotTimestamp, shotPath)) {
+            screenshots.push({
+              label: `${result.codec.toUpperCase()} (${result.actualEncoder}) ${result.quality?.label || result.quality?.id}${tierTag ? ` [${tierTag.slice(1)}]` : ''}${workerTag ? ` [${workerTag.slice(1)}]` : ''}${rIndex > 1 ? ` (Run ${rIndex})` : ''}`,
+              timestampSeconds: Math.round(shotTimestamp * 10) / 10,
+              relativePath: path.relative(outputDir, shotPath).replace(/\\/g, '/')
+            });
+          }
+        }
+      }
+    }
+  }
+
   // 9. Objective Quality Metrics Analysis (Stage 2)
   if (options.qualityMetrics) {
+    const selectedMetricsList = Array.isArray(options.qualityMetrics)
+      ? options.qualityMetrics
+      : ['vmaf', 'ssim', 'psnr', 'cambi'];
+
     console.log(`\n===========================================================`);
-    console.log(`   Evaluating Objective Video Quality (VMAF, SSIM, PSNR)`);
+    console.log(`   Evaluating Objective Video Quality (${selectedMetricsList.join(', ').toUpperCase()})`);
     console.log(`   Reference: ${sourceInfo.fileName} (untouched master)`);
     console.log(`===========================================================\n`);
 
@@ -628,7 +697,9 @@ async function main() {
         sampleDuration,
         targetQuality: r.quality,
         outputDir: qOutputDir,
-        capabilities: qualityCapabilities
+        capabilities: qualityCapabilities,
+        selectedMetrics: selectedMetricsList,
+        signal: abortController.signal
       });
 
       r.qualityMetrics = qResult;

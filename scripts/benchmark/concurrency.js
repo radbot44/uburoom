@@ -6,6 +6,13 @@ const { runChunkedBenchmark, runContinuousBenchmark } = require('./runner');
 /**
  * Runs a set of N independent transcoding jobs simultaneously.
  * Each worker has its own isolated output path and executes FFmpeg in parallel.
+ *
+ * Acceptance Criteria (Short-run sustainable capacity estimate):
+ * 1. Every worker completes without transcode or validation error.
+ * 2. Hardware encoder is preserved (no silent fallback to CPU software if hardware requested).
+ * 3. Zero missed chunk deadlines (transcode time > 6.0s for any 6s chunk).
+ * 4. Minimum worker throughput satisfies real-time margin (default >= 1.05x).
+ * 5. P95 chunk latency remains below 85% of chunk duration (default <= 5.1s for 6s chunks).
  */
 async function runConcurrentTier(options) {
   const {
@@ -20,8 +27,18 @@ async function runConcurrentTier(options) {
     probedEncoders = [],
     outputDir,
     signal,
-    mode = 'chunks'
+    mode = 'chunks',
+    runIndex = 1,
+    tierIndex = null,
+    minRealtimeMargin = 1.05,
+    maxChunkP95ThresholdSec = 5.1,
+    requireHardwarePreserved = true,
+    workerRunner = null // For unit testing and injection
   } = options;
+
+  if (signal?.aborted) {
+    throw new Error('Concurrent tier cancelled before start.');
+  }
 
   const tierStartTime = process.hrtime.bigint();
   const workerPromises = [];
@@ -36,7 +53,8 @@ async function runConcurrentTier(options) {
       outputDir,
       workerId: w,
       concurrency,
-      runIndex: 1,
+      tierIndex,
+      runIndex,
       probedEncoders,
       signal
     };
@@ -45,7 +63,9 @@ async function runConcurrentTier(options) {
       const workerStartHr = process.hrtime.bigint();
       try {
         let result;
-        if (mode === 'continuous') {
+        if (workerRunner) {
+          result = await workerRunner(tools, source, testConfig, workerOptions);
+        } else if (mode === 'continuous') {
           result = await runContinuousBenchmark(tools, source, testConfig, workerOptions);
         } else {
           result = await runChunkedBenchmark(tools, source, testConfig, workerOptions);
@@ -54,6 +74,9 @@ async function runConcurrentTier(options) {
         return {
           ...result,
           workerId: w,
+          concurrency,
+          tierIndex,
+          runIndex,
           workerElapsedSec: Math.round(workerElapsedSec * 1000) / 1000
         };
       } catch (err) {
@@ -61,6 +84,8 @@ async function runConcurrentTier(options) {
         return {
           workerId: w,
           concurrency,
+          tierIndex,
+          runIndex,
           configId: `${testConfig.codec}-${testConfig.requestedEncoder}-${testConfig.quality.id}-${mode}`,
           mode,
           status: 'fail',
@@ -80,6 +105,7 @@ async function runConcurrentTier(options) {
             firstChunkDurationSec: 0,
             firstChunkStartupSec: 0,
             deadlineMisses: 0,
+            chunkP95DurationSec: 0,
             totalBytes: 0,
             actualBitrateKbps: 0,
             processingType: 'production-like'
@@ -99,6 +125,8 @@ async function runConcurrentTier(options) {
   let passedWorkers = 0;
   let failedWorkers = 0;
   let totalDeadlineMisses = 0;
+  let fallbackDetected = false;
+  let maxWorkerP95ChunkSec = 0;
   const speeds = [];
 
   for (const wr of workerResults) {
@@ -107,8 +135,16 @@ async function runConcurrentTier(options) {
     speeds.push(speed);
     totalDeadlineMisses += perf.deadlineMisses || 0;
 
-    // A worker passes if it completed without fatal error and achieved at least 1.0x real-time speed
-    if (wr.status === 'pass' && speed >= 1.0) {
+    const p95 = perf.chunkP95DurationSec || 0;
+    if (p95 > maxWorkerP95ChunkSec) {
+      maxWorkerP95ChunkSec = p95;
+    }
+
+    if (testConfig.requestedEncoder !== 'software' && (wr.actualEncoder === 'software' || wr.fallback)) {
+      fallbackDetected = true;
+    }
+
+    if (wr.status === 'pass') {
       passedWorkers++;
     } else {
       failedWorkers++;
@@ -131,10 +167,7 @@ async function runConcurrentTier(options) {
     ? totalCompletedMediaSec / wallClockTimeSec
     : 0;
 
-  // Sustainable acceptance criteria:
-  // 1. Zero crashed or errored workers
-  // 2. Minimum worker speed >= 1.0x (every single stream sustains real-time)
-  // 3. Deadline misses <= 0 (or <= 5% of all chunks across workers)
+  // Evaluate Sustainable Acceptance Criteria
   let isSustainable = true;
   let failureReason = null;
 
@@ -142,20 +175,24 @@ async function runConcurrentTier(options) {
     isSustainable = false;
     const failed = workerResults.find(w => w.status !== 'pass');
     failureReason = failed?.error || `${failedWorkers} worker(s) failed or dropped below 1.0x real-time.`;
-  } else if (minWorkerSpeed < 1.0) {
+  } else if (requireHardwarePreserved && fallbackDetected) {
     isSustainable = false;
-    failureReason = `Slowest worker ran at ${minWorkerSpeed.toFixed(2)}x (below 1.0x real-time requirement).`;
+    failureReason = `Hardware encoder ${testConfig.requestedEncoder} fell back to software encoding on one or more workers.`;
   } else if (totalDeadlineMisses > 0) {
-    const totalChunks = concurrency * Math.ceil(sampleDuration / 6);
-    const missRate = totalDeadlineMisses / (totalChunks || 1);
-    if (missRate > 0.05) {
-      isSustainable = false;
-      failureReason = `${totalDeadlineMisses} chunk deadline(s) missed (${(missRate * 100).toFixed(1)}% miss rate).`;
-    }
+    isSustainable = false;
+    failureReason = `${totalDeadlineMisses} chunk deadline(s) missed (transcode time exceeded 6.0s chunk duration).`;
+  } else if (minWorkerSpeed < minRealtimeMargin) {
+    isSustainable = false;
+    failureReason = `Slowest worker ran at ${minWorkerSpeed.toFixed(2)}x (below required ${minRealtimeMargin.toFixed(2)}x real-time margin).`;
+  } else if (mode === 'chunks' && maxWorkerP95ChunkSec > maxChunkP95ThresholdSec) {
+    isSustainable = false;
+    failureReason = `Worker P95 chunk latency (${maxWorkerP95ChunkSec.toFixed(2)}s) exceeded ${maxChunkP95ThresholdSec.toFixed(2)}s threshold.`;
   }
 
   return {
     concurrency,
+    tierIndex,
+    runIndex,
     wallClockTimeSec: Math.round(wallClockTimeSec * 1000) / 1000,
     aggregateCompletedMediaSec: totalCompletedMediaSec,
     aggregateThroughputMultiplier: Math.round(aggregateThroughputMultiplier * 100) / 100,
@@ -164,8 +201,10 @@ async function runConcurrentTier(options) {
     maxWorkerSpeed: Math.round(maxWorkerSpeed * 100) / 100,
     workerSpeedStdDev: Math.round(workerSpeedStdDev * 100) / 100,
     totalDeadlineMisses,
+    maxWorkerP95ChunkSec: Math.round(maxWorkerP95ChunkSec * 1000) / 1000,
     passedWorkers,
     failedWorkers,
+    fallbackDetected,
     isSustainable,
     failureReason,
     workers: workerResults
@@ -192,24 +231,34 @@ async function runCapacityScan(options) {
     onTierStart,
     onTierComplete,
     signal,
-    mode = 'chunks'
+    mode = 'chunks',
+    runIndex = 1,
+    minRealtimeMargin = 1.05,
+    maxChunkP95ThresholdSec = 5.1,
+    requireHardwarePreserved = true,
+    workerRunner = null
   } = options;
+
+  // Hard clamp on maxConcurrency to prevent unbounded subprocess explosion
+  const boundedMaxConcurrency = Math.min(16, Math.max(1, maxConcurrency));
 
   const testedTiers = [];
   let highestSustainableConcurrency = 0;
   let firstFailingConcurrency = null;
   let overallStoppingReason = null;
 
-  for (let c = 1; c <= maxConcurrency; c++) {
+  for (let c = 1; c <= boundedMaxConcurrency; c++) {
     if (signal?.aborted) {
       overallStoppingReason = 'Capacity scan cancelled by operator.';
       break;
     }
 
-    if (onTierStart) onTierStart(c, maxConcurrency);
+    if (onTierStart) onTierStart(c, boundedMaxConcurrency);
 
     const tierResult = await runConcurrentTier({
       concurrency: c,
+      tierIndex: c,
+      runIndex,
       tools,
       source,
       testConfig,
@@ -220,7 +269,11 @@ async function runCapacityScan(options) {
       probedEncoders,
       outputDir,
       signal,
-      mode
+      mode,
+      minRealtimeMargin,
+      maxChunkP95ThresholdSec,
+      requireHardwarePreserved,
+      workerRunner
     });
 
     testedTiers.push(tierResult);
@@ -241,9 +294,15 @@ async function runCapacityScan(options) {
     highestSustainableConcurrency,
     firstFailingConcurrency,
     maxTestedConcurrency: testedTiers[testedTiers.length - 1]?.concurrency || 0,
-    stoppingReason: overallStoppingReason || (highestSustainableConcurrency === maxConcurrency ? 'Reached maximum requested concurrency ceiling.' : null),
+    stoppingReason: overallStoppingReason || (highestSustainableConcurrency === boundedMaxConcurrency ? 'Reached maximum requested concurrency ceiling.' : null),
+    criteria: {
+      zeroMissedDeadlines: true,
+      minRealtimeMargin,
+      maxChunkP95ThresholdSec,
+      hardwarePreserved: requireHardwarePreserved
+    },
     testedTiers,
-    estimateNotice: 'Short-run sustainable capacity estimate based on chunk deadline preservation. Long-term production capacity requires extended thermal and memory soak testing.'
+    estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation and P95 latency headroom. Long-term production capacity requires extended thermal and memory soak testing.'
   };
 }
 

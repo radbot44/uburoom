@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = '2.0.0';
+const SCHEMA_VERSION = '2.1.0';
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -111,6 +111,7 @@ function generateCsvReport(benchmarkData, outputPath) {
   const cleanData = sanitizeForExport(benchmarkData);
   const headers = [
     'Run',
+    'Tier',
     'Concurrency',
     'WorkerId',
     'ConfigID',
@@ -174,6 +175,7 @@ function generateCsvReport(benchmarkData, outputPath) {
 
     return [
       r.runIndex || 1,
+      r.tierIndex || '',
       r.concurrency || 1,
       r.workerId || 1,
       r.configId,
@@ -1007,55 +1009,130 @@ function generateHtmlReport(benchmarkData, outputPath) {
   ${passResults.length >= 2 ? `
   <section class="card" id="blind-ab-section">
     <h2>Blind A/B Subjective Quality Comparison</h2>
-    <p style="margin-bottom:16px;">Compare two encoded outputs without knowing which encoder, codec, or bitrate produced them. Rate visual quality, vote your preference, and reveal identities after voting.</p>
+    <p style="margin-bottom:8px;">Compare two encoded outputs without knowing which encoder, codec, or bitrate produced them. Rate visual quality, vote your preference, and reveal identities after voting.</p>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px;">
+      <em>Offline Blinding Note:</em> Candidate identities are randomized and concealed in the UI. In an offline HTML report, technical users can inspect network requests or DOM properties to discern sources. This workflow is intended for unbiased self-evaluation, not cryptographically secure double-blind protocols.
+    </p>
+
+    <!-- Embedded Candidate Data -->
+    <script id="blind-candidates-json" type="application/json">
+      ${JSON.stringify(passResults.map((r, i) => ({
+        index: i,
+        src: r.output.assembledFile,
+        configId: r.configId,
+        label: `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]`,
+        codec: r.codec,
+        encoder: r.actualEncoder,
+        quality: r.quality?.label || r.quality?.id,
+        resolution: `${r.quality?.width || '-'}x${r.quality?.height || '-'}`,
+        bitrateKbps: r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || null,
+        vmaf: r.qualityMetrics?.vmaf?.mean || null,
+        ssim: r.qualityMetrics?.ssim?.mean || null,
+        psnr: r.qualityMetrics?.psnr?.mean || null,
+        cambi: r.qualityMetrics?.cambi?.mean || null
+      })))}
+    </script>
 
     <div class="blind-box">
-      <div class="selector-bar" id="blind-setup-bar">
+      <!-- Candidate Selection Setup Bar -->
+      <div class="selector-bar" id="blind-setup-bar" style="flex-wrap:wrap;gap:12px;align-items:center;">
         <label for="blind-select-1" style="font-size:13px;font-weight:600;">Candidate 1:</label>
         <select id="blind-select-1" class="custom-select">
-          ${passResults.map((r, i) => `<option value="${escapeHtml(r.output.assembledFile)}" data-id="${escapeHtml(r.configId)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)})</option>`).join('')}
+          ${passResults.map((r, i) => `<option value="${i}" ${i === 0 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)}) [${escapeHtml(r.mode)}]</option>`).join('')}
         </select>
-        <label for="blind-select-2" style="font-size:13px;font-weight:600;margin-left:12px;">Candidate 2:</label>
+        <label for="blind-select-2" style="font-size:13px;font-weight:600;margin-left:8px;">Candidate 2:</label>
         <select id="blind-select-2" class="custom-select">
-          ${passResults.map((r, i) => `<option value="${escapeHtml(r.output.assembledFile)}" data-id="${escapeHtml(r.configId)}" ${i === 1 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)})</option>`).join('')}
+          ${passResults.map((r, i) => `<option value="${i}" ${i === 1 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)}) [${escapeHtml(r.mode)}]</option>`).join('')}
         </select>
-        <button class="player-btn primary" onclick="startBlindAB()" style="margin-left:auto;">Start Blind A/B</button>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:8px;">
+          <input type="checkbox" id="blind-allow-identical"> Allow identical candidates (calibration)
+        </label>
+        <button class="player-btn primary" onclick="startBlindAB()" style="margin-left:auto;">Start Blind Trial</button>
       </div>
 
-      <!-- Blind Players Grid -->
-      <div id="blind-players" class="player-grid" style="display:none;">
-        <div class="player-box">
-          <div class="player-label"><span id="blind-label-a">Video A</span></div>
-          <video id="blind-video-a" preload="metadata" muted playsinline></video>
-        </div>
-        <div class="player-box">
-          <div class="player-label"><span id="blind-label-b">Video B</span></div>
-          <video id="blind-video-b" preload="metadata" muted playsinline></video>
-        </div>
-      </div>
+      <div id="blind-setup-error" style="display:none;color:var(--error);font-size:13px;margin:8px 0;font-weight:500;"></div>
 
-      <!-- Blind Playback Controls -->
-      <div id="blind-controls" class="controls-bar" style="display:none;">
-        <button class="player-btn primary" onclick="toggleBlindPlay()" id="btn-blind-play">Play</button>
-        <input type="range" id="blind-seek-bar" class="seek-slider" min="0" max="100" value="0" step="0.1" oninput="onBlindSeek(this.value)">
-        <span id="blind-time" class="time-display">0:00 / 0:00</span>
-      </div>
-
-      <!-- Blind Voting Panel -->
-      <div id="blind-voting" style="display:none;background:#181C24;border:1px solid var(--card-border);padding:16px;border-radius:8px;">
-        <div style="font-weight:600;margin-bottom:12px;">Your Preference:</div>
-        <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-          <button class="player-btn" onclick="submitBlindVote('A')" id="vote-btn-a">Prefer Video A</button>
-          <button class="player-btn" onclick="submitBlindVote('Same')" id="vote-btn-same">No Preference / Same</button>
-          <button class="player-btn" onclick="submitBlindVote('B')" id="vote-btn-b">Prefer Video B</button>
-          <button class="player-btn quiet" onclick="revealBlindIdentities()" id="btn-reveal" style="margin-left:auto;">Reveal Identities</button>
+      <!-- Active Blind Trial Workspace -->
+      <div id="blind-workspace" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-weight:600;font-size:14px;color:var(--primary);">Blind Comparison Active</span>
+            <span style="font-size:12px;color:var(--muted);">(Identities masked as Candidate A &amp; Candidate B)</span>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="player-btn active" id="btn-blind-mode-side" onclick="setBlindViewMode('side')">Side-by-Side</button>
+            <button class="player-btn" id="btn-blind-mode-wipe" onclick="setBlindViewMode('wipe')">Wipe Curtain</button>
+            <button class="player-btn" id="btn-blind-mode-zoom" onclick="toggleBlindZoom()">Zoom 2x</button>
+            <button class="player-btn quiet" onclick="resetBlindAB()" style="margin-left:8px;">Change Candidates</button>
+          </div>
         </div>
 
-        <div id="blind-reveal-card" style="display:none;padding:14px;border-radius:8px;background:#1E232E;border:1px solid var(--primary);margin-top:12px;">
-          <h3 style="color:var(--primary);margin-bottom:8px;">Identities Revealed:</h3>
-          <div id="blind-reveal-content" style="font-size:13px;line-height:1.6;"></div>
-          <div style="margin-top:12px;">
-            <button class="player-btn" onclick="exportBlindResults()">Export Subjective Results (JSON)</button>
+        <!-- Side-by-Side View -->
+        <div id="blind-view-side" class="player-grid">
+          <div class="player-box">
+            <div class="player-label"><span id="blind-label-a">Candidate A</span></div>
+            <video id="blind-video-a" preload="metadata" muted playsinline></video>
+          </div>
+          <div class="player-box">
+            <div class="player-label"><span id="blind-label-b">Candidate B</span></div>
+            <video id="blind-video-b" preload="metadata" muted playsinline></video>
+          </div>
+        </div>
+
+        <!-- Wipe Curtain View -->
+        <div id="blind-view-wipe" class="wipe-container" style="display:none;">
+          <video id="blind-wipe-bg" preload="metadata" muted playsinline></video>
+          <div id="blind-wipe-overlay" class="wipe-overlay">
+            <video id="blind-wipe-fg" preload="metadata" muted playsinline></video>
+          </div>
+          <input type="range" min="0" max="100" value="50" class="wipe-slider" oninput="updateBlindWipe(this.value)">
+        </div>
+
+        <!-- Synchronized Controls -->
+        <div class="controls-bar" style="margin-top:12px;">
+          <button class="player-btn primary" onclick="toggleBlindPlay()" id="btn-blind-play">Play</button>
+          <input type="range" id="blind-seek-bar" class="seek-slider" min="0" max="100" value="0" step="0.1" oninput="onBlindSeek(this.value)">
+          <span id="blind-time" class="time-display">0:00 / 0:00</span>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:12px;color:var(--muted)">Speed:</span>
+            <select id="blind-speed-select" class="custom-select" style="padding:4px 8px;font-size:12px;" onchange="setBlindSpeed(this.value)">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="2">2.0x</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 5-Level Rating & Notes Panel -->
+        <div id="blind-voting-card" style="background:#181C24;border:1px solid var(--card-border);padding:16px;border-radius:8px;margin-top:16px;">
+          <div style="font-weight:600;margin-bottom:10px;">Subjective Visual Quality Preference (5-Level Scale):</div>
+          <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+            <button class="player-btn" onclick="setBlindVote('strongly-a')" id="btn-vote-strongly-a">Strongly Prefer A</button>
+            <button class="player-btn" onclick="setBlindVote('slightly-a')" id="btn-vote-slightly-a">Slightly Prefer A</button>
+            <button class="player-btn" onclick="setBlindVote('equal')" id="btn-vote-equal">Equal / No Difference</button>
+            <button class="player-btn" onclick="setBlindVote('slightly-b')" id="btn-vote-slightly-b">Slightly Prefer B</button>
+            <button class="player-btn" onclick="setBlindVote('strongly-b')" id="btn-vote-strongly-b">Strongly Prefer B</button>
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <label for="blind-notes-input" style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Evaluation Notes &amp; Observations (optional):</label>
+            <textarea id="blind-notes-input" style="width:100%;height:54px;background:#13161c;border:1px solid var(--card-border);color:var(--text);border-radius:6px;padding:8px;font-family:inherit;font-size:13px;box-sizing:border-box;" placeholder="Note any ringing, blockiness, gradient banding, text sharpness, or artifact differences..."></textarea>
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="player-btn highlight" onclick="revealBlindIdentities()" id="btn-blind-reveal">Reveal Identities</button>
+            <button class="player-btn quiet" onclick="resetBlindAB()" style="margin-left:auto;">Reset / Next Comparison</button>
+          </div>
+
+          <!-- Reveal Panel (Safe DOM generated) -->
+          <div id="blind-reveal-card" style="display:none;padding:16px;border-radius:8px;background:#1E232E;border:1px solid var(--primary);margin-top:14px;">
+            <h3 style="color:var(--primary);margin-bottom:12px;">Candidate Identities Revealed</h3>
+            <div id="blind-reveal-content"></div>
+            <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="player-btn primary" onclick="exportBlindResults()">Export Evaluation Results (JSON)</button>
+              <button class="player-btn" onclick="resetBlindAB()">Start Another Comparison</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1211,44 +1288,158 @@ function generateHtmlReport(benchmarkData, outputPath) {
   let blindCandidateA = null;
   let blindCandidateB = null;
   let blindVote = null;
-  let blindRatingA = 0;
-  let blindRatingB = 0;
+  let blindIsZoomed = false;
+
+  function getBlindCandidates() {
+    try {
+      const el = document.getElementById('blind-candidates-json');
+      return el ? JSON.parse(el.textContent) : [];
+    } catch (e) { return []; }
+  }
 
   function startBlindAB() {
     const sel1 = document.getElementById('blind-select-1');
     const sel2 = document.getElementById('blind-select-2');
+    const errEl = document.getElementById('blind-setup-error');
     if (!sel1 || !sel2) return;
 
-    const opt1 = { src: sel1.value, label: sel1.options[sel1.selectedIndex].text };
-    const opt2 = { src: sel2.value, label: sel2.options[sel2.selectedIndex].text };
+    const idx1 = parseInt(sel1.value, 10);
+    const idx2 = parseInt(sel2.value, 10);
+    const allowIdentical = document.getElementById('blind-allow-identical')?.checked;
 
-    // Randomize A and B assignment
+    if (idx1 === idx2 && !allowIdentical) {
+      if (errEl) {
+        errEl.textContent = 'Please select two different outputs to compare (or check "Allow identical candidates" for calibration).';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
+    if (errEl) errEl.style.display = 'none';
+
+    const candidates = getBlindCandidates();
+    const cand1 = candidates[idx1];
+    const cand2 = candidates[idx2];
+    if (!cand1 || !cand2) return;
+
+    // Randomize Candidate A and Candidate B assignment
     const swap = Math.random() >= 0.5;
-    blindCandidateA = swap ? opt2 : opt1;
-    blindCandidateB = swap ? opt1 : opt2;
+    blindCandidateA = swap ? cand2 : cand1;
+    blindCandidateB = swap ? cand1 : cand2;
+    blindVote = null;
 
+    // Set video sources
     const vidA = document.getElementById('blind-video-a');
     const vidB = document.getElementById('blind-video-b');
+    const wipeBg = document.getElementById('blind-wipe-bg');
+    const wipeFg = document.getElementById('blind-wipe-fg');
+
     if (vidA && vidB) {
       vidA.src = blindCandidateA.src;
       vidB.src = blindCandidateB.src;
-      document.getElementById('blind-players').style.display = 'grid';
-      document.getElementById('blind-controls').style.display = 'flex';
-      document.getElementById('blind-voting').style.display = 'block';
-      document.getElementById('blind-reveal-card').style.display = 'none';
     }
+    if (wipeBg && wipeFg) {
+      wipeBg.src = blindCandidateA.src;
+      wipeFg.src = blindCandidateB.src;
+    }
+
+    // Hide setup, show active workspace
+    document.getElementById('blind-setup-bar').style.display = 'none';
+    document.getElementById('blind-workspace').style.display = 'block';
+    document.getElementById('blind-reveal-card').style.display = 'none';
+
+    // Clear previous vote styling
+    ['strongly-a', 'slightly-a', 'equal', 'slightly-b', 'strongly-b'].forEach(k => {
+      document.getElementById('btn-vote-' + k)?.classList.remove('active');
+    });
+    const notesInput = document.getElementById('blind-notes-input');
+    if (notesInput) notesInput.value = '';
+    setBlindViewMode('side');
+  }
+
+  function resetBlindAB() {
+    const vidA = document.getElementById('blind-video-a');
+    const vidB = document.getElementById('blind-video-b');
+    const wipeBg = document.getElementById('blind-wipe-bg');
+    const wipeFg = document.getElementById('blind-wipe-fg');
+    if (vidA) { vidA.pause(); vidA.removeAttribute('src'); vidA.load(); }
+    if (vidB) { vidB.pause(); vidB.removeAttribute('src'); vidB.load(); }
+    if (wipeBg) { wipeBg.pause(); wipeBg.removeAttribute('src'); wipeBg.load(); }
+    if (wipeFg) { wipeFg.pause(); wipeFg.removeAttribute('src'); wipeFg.load(); }
+
+    document.getElementById('blind-workspace').style.display = 'none';
+    document.getElementById('blind-setup-bar').style.display = 'flex';
+    document.getElementById('blind-reveal-card').style.display = 'none';
+    blindCandidateA = null;
+    blindCandidateB = null;
+    blindVote = null;
+  }
+
+  function setBlindViewMode(mode) {
+    const sideEl = document.getElementById('blind-view-side');
+    const wipeEl = document.getElementById('blind-view-wipe');
+    const btnSide = document.getElementById('btn-blind-mode-side');
+    const btnWipe = document.getElementById('btn-blind-mode-wipe');
+
+    if (mode === 'side') {
+      if (sideEl) sideEl.style.display = 'grid';
+      if (wipeEl) wipeEl.style.display = 'none';
+      btnSide?.classList.add('active');
+      btnWipe?.classList.remove('active');
+    } else {
+      if (sideEl) sideEl.style.display = 'none';
+      if (wipeEl) wipeEl.style.display = 'block';
+      btnSide?.classList.remove('active');
+      btnWipe?.classList.add('active');
+      updateBlindWipe(50);
+    }
+  }
+
+  function toggleBlindZoom() {
+    blindIsZoomed = !blindIsZoomed;
+    const sideEl = document.getElementById('blind-view-side');
+    const wipeEl = document.getElementById('blind-view-wipe');
+    const btn = document.getElementById('btn-blind-mode-zoom');
+    if (sideEl) sideEl.classList.toggle('zoomed', blindIsZoomed);
+    if (wipeEl) wipeEl.classList.toggle('zoomed', blindIsZoomed);
+    if (btn) btn.classList.toggle('active', blindIsZoomed);
+  }
+
+  function updateBlindWipe(pct) {
+    const overlay = document.getElementById('blind-wipe-overlay');
+    if (overlay) overlay.style.width = pct + '%';
+  }
+
+  function setBlindSpeed(rate) {
+    const num = parseFloat(rate);
+    const vidA = document.getElementById('blind-video-a');
+    const vidB = document.getElementById('blind-video-b');
+    const wipeBg = document.getElementById('blind-wipe-bg');
+    const wipeFg = document.getElementById('blind-wipe-fg');
+    if (vidA) vidA.playbackRate = num;
+    if (vidB) vidB.playbackRate = num;
+    if (wipeBg) wipeBg.playbackRate = num;
+    if (wipeFg) wipeFg.playbackRate = num;
   }
 
   function toggleBlindPlay() {
     const vidA = document.getElementById('blind-video-a');
     const vidB = document.getElementById('blind-video-b');
+    const wipeBg = document.getElementById('blind-wipe-bg');
+    const wipeFg = document.getElementById('blind-wipe-fg');
     const btn = document.getElementById('btn-blind-play');
-    if (!vidA || !vidB) return;
+    if (!vidA) return;
+
     if (vidA.paused) {
-      vidA.play(); vidB.play();
+      vidA.play().catch(() => {});
+      vidB?.play().catch(() => {});
+      wipeBg?.play().catch(() => {});
+      wipeFg?.play().catch(() => {});
       if (btn) btn.textContent = 'Pause';
     } else {
-      vidA.pause(); vidB.pause();
+      vidA.pause();
+      vidB?.pause();
+      wipeBg?.pause();
+      wipeFg?.pause();
       if (btn) btn.textContent = 'Play';
     }
   }
@@ -1256,48 +1447,149 @@ function generateHtmlReport(benchmarkData, outputPath) {
   function onBlindSeek(pct) {
     const vidA = document.getElementById('blind-video-a');
     const vidB = document.getElementById('blind-video-b');
+    const wipeBg = document.getElementById('blind-wipe-bg');
+    const wipeFg = document.getElementById('blind-wipe-fg');
     if (!vidA || !vidA.duration) return;
     const time = (pct / 100) * vidA.duration;
     vidA.currentTime = time;
     if (vidB) vidB.currentTime = time;
+    if (wipeBg) wipeBg.currentTime = time;
+    if (wipeFg) wipeFg.currentTime = time;
   }
 
-  function submitBlindVote(preference) {
+  function setBlindVote(preference) {
     blindVote = preference;
-    ['vote-btn-a', 'vote-btn-same', 'vote-btn-b'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.classList.remove('active');
+    ['strongly-a', 'slightly-a', 'equal', 'slightly-b', 'strongly-b'].forEach(k => {
+      document.getElementById('btn-vote-' + k)?.classList.remove('active');
     });
-    if (preference === 'A') document.getElementById('vote-btn-a')?.classList.add('active');
-    if (preference === 'Same') document.getElementById('vote-btn-same')?.classList.add('active');
-    if (preference === 'B') document.getElementById('vote-btn-b')?.classList.add('active');
-    revealBlindIdentities();
+    document.getElementById('btn-vote-' + preference)?.classList.add('active');
   }
 
   function revealBlindIdentities() {
     if (!blindCandidateA || !blindCandidateB) return;
     const card = document.getElementById('blind-reveal-card');
     const content = document.getElementById('blind-reveal-content');
-    if (card && content) {
-      card.style.display = 'block';
-      content.innerHTML = '<div><strong>Video A:</strong> ' + escapeHtml(blindCandidateA.label) + '</div>' +
-                          '<div style="margin-top:4px;"><strong>Video B:</strong> ' + escapeHtml(blindCandidateB.label) + '</div>' +
-                          '<div style="margin-top:8px;color:var(--primary);font-weight:600;">Your Preference: ' + (blindVote ? 'Prefer Video ' + blindVote : 'None Recorded') + '</div>';
+    if (!card || !content) return;
+
+    // Clear previous content
+    while (content.firstChild) {
+      content.removeChild(content.firstChild);
     }
+
+    const table = document.createElement('table');
+    table.style.width = '100%';
+    table.style.borderCollapse = 'collapse';
+    table.style.fontSize = '13px';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['Attribute', 'Candidate A', 'Candidate B'].forEach(t => {
+      const th = document.createElement('th');
+      th.textContent = t;
+      th.style.padding = '8px';
+      th.style.textAlign = 'left';
+      th.style.borderBottom = '1px solid var(--card-border)';
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const rows = [
+      ['Codec', blindCandidateA.codec.toUpperCase(), blindCandidateB.codec.toUpperCase()],
+      ['Encoder', blindCandidateA.encoder, blindCandidateB.encoder],
+      ['Quality Tier', blindCandidateA.quality, blindCandidateB.quality],
+      ['Resolution', blindCandidateA.resolution, blindCandidateB.resolution],
+      ['Bitrate', blindCandidateA.bitrateKbps ? blindCandidateA.bitrateKbps + ' kbps' : '-', blindCandidateB.bitrateKbps ? blindCandidateB.bitrateKbps + ' kbps' : '-'],
+      ['VMAF (Mean)', blindCandidateA.vmaf ? blindCandidateA.vmaf.toFixed(1) : '-', blindCandidateB.vmaf ? blindCandidateB.vmaf.toFixed(1) : '-'],
+      ['SSIM (Mean)', blindCandidateA.ssim ? blindCandidateA.ssim.toFixed(4) : '-', blindCandidateB.ssim ? blindCandidateB.ssim.toFixed(4) : '-'],
+      ['PSNR (dB)', blindCandidateA.psnr ? blindCandidateA.psnr.toFixed(1) + ' dB' : '-', blindCandidateB.psnr ? blindCandidateB.psnr.toFixed(1) + ' dB' : '-'],
+      ['CAMBI', blindCandidateA.cambi ? blindCandidateA.cambi.toFixed(4) : '-', blindCandidateB.cambi ? blindCandidateB.cambi.toFixed(4) : '-']
+    ];
+
+    rows.forEach(([attr, valA, valB]) => {
+      const tr = document.createElement('tr');
+      const tdAttr = document.createElement('td');
+      tdAttr.style.padding = '6px 8px';
+      tdAttr.style.color = 'var(--muted)';
+      tdAttr.textContent = attr;
+
+      const tdA = document.createElement('td');
+      tdA.style.padding = '6px 8px';
+      tdA.style.fontWeight = '600';
+      tdA.textContent = valA;
+
+      const tdB = document.createElement('td');
+      tdB.style.padding = '6px 8px';
+      tdB.style.fontWeight = '600';
+      tdB.textContent = valB;
+
+      tr.appendChild(tdAttr);
+      tr.appendChild(tdA);
+      tr.appendChild(tdB);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    content.appendChild(table);
+
+    // Vote summary box
+    const voteBox = document.createElement('div');
+    voteBox.style.marginTop = '12px';
+    voteBox.style.padding = '10px';
+    voteBox.style.borderRadius = '6px';
+    voteBox.style.background = '#13161c';
+    voteBox.style.border = '1px solid var(--card-border)';
+
+    const voteLabels = {
+      'strongly-a': 'Strongly Prefer Candidate A',
+      'slightly-a': 'Slightly Prefer Candidate A',
+      'equal': 'Equal / No Difference',
+      'slightly-b': 'Slightly Prefer Candidate B',
+      'strongly-b': 'Strongly Prefer Candidate B'
+    };
+
+    const voteLine = document.createElement('div');
+    voteLine.style.fontWeight = '600';
+    voteLine.style.color = 'var(--primary)';
+    voteLine.textContent = 'Your Recorded Preference: ' + (voteLabels[blindVote] || 'None Recorded');
+    voteBox.appendChild(voteLine);
+
+    const notesVal = document.getElementById('blind-notes-input')?.value?.trim();
+    if (notesVal) {
+      const notesLine = document.createElement('div');
+      notesLine.style.marginTop = '6px';
+      notesLine.style.fontSize = '12px';
+      notesLine.style.color = 'var(--muted)';
+      notesLine.textContent = 'Notes: ' + notesVal;
+      voteBox.appendChild(notesLine);
+    }
+
+    content.appendChild(voteBox);
+    card.style.display = 'block';
   }
 
   function exportBlindResults() {
+    const voteLabels = {
+      'strongly-a': 'Strongly Prefer Candidate A',
+      'slightly-a': 'Slightly Prefer Candidate A',
+      'equal': 'Equal / No Difference',
+      'slightly-b': 'Slightly Prefer Candidate B',
+      'strongly-b': 'Strongly Prefer Candidate B'
+    };
     const payload = {
       timestamp: new Date().toISOString(),
+      evaluationMode: 'blind_ab',
       preference: blindVote,
-      candidateA: blindCandidateA?.label,
-      candidateB: blindCandidateB?.label
+      preferenceLabel: voteLabels[blindVote] || 'None',
+      notes: document.getElementById('blind-notes-input')?.value || '',
+      candidateA: blindCandidateA,
+      candidateB: blindCandidateB
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'subjective-ab-results.json';
+    a.download = 'blind-ab-evaluation-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json';
     a.click();
     URL.revokeObjectURL(url);
   }

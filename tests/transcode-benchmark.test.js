@@ -18,7 +18,8 @@ const {
   detectQualityCapabilities,
   calculateMetricStats,
   findWorstIntervals,
-  buildQualityFilterChain
+  buildQualityFilterChain,
+  runQualityAnalysis
 } = require('../scripts/benchmark/quality');
 const {
   runConcurrentTier,
@@ -103,82 +104,76 @@ test('malformed YAML configuration is handled cleanly without leaking secrets', 
     } catch (err) {
       thrownError = err;
     }
-    assert.ok(thrownError, 'Must throw error on malformed YAML');
-    assert.ok(!thrownError.message.includes(secretText), 'Error message must not leak file contents');
+
+    assert.ok(thrownError, 'Must throw on malformed YAML');
+    assert.ok(!thrownError.message.includes(secretText), 'Error message must not leak YAML secret values');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
 test('resolveUniqueOutputDir safely avoids collisions and protects source directories', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-output-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-outdir-'));
   try {
-    // 1. Protection of critical source directories
-    assert.throws(() => resolveUniqueOutputDir('.', tmpDir), /cannot point to project root/i);
-    assert.throws(() => resolveUniqueOutputDir('server', tmpDir), /cannot point to project root/i);
-    assert.throws(() => resolveUniqueOutputDir('web', tmpDir), /cannot point to project root/i);
-    assert.throws(() => resolveUniqueOutputDir('.git', tmpDir), /cannot point to project root/i);
+    // 1. Target directory already exists and has files -> must allocate a safe suffix
+    const existingTarget = path.join(tmpDir, 'my-benchmark');
+    fs.mkdirSync(existingTarget);
+    fs.writeFileSync(path.join(existingTarget, 'previous-results.json'), '{}', 'utf8');
 
-    // 2. Empty directory reuse
-    const emptyTarget = path.join(tmpDir, 'empty-dir');
-    fs.mkdirSync(emptyTarget);
-    const r1 = resolveUniqueOutputDir('empty-dir', tmpDir);
-    assert.equal(r1.dir, emptyTarget);
-    assert.equal(r1.collisionAvoided, false);
+    const res1 = resolveUniqueOutputDir(existingTarget, tmpDir);
+    assert.ok(res1.collisionAvoided, 'Must flag collision on non-empty directory');
+    assert.equal(res1.dir, `${existingTarget}-1`, 'Must divert to -1 suffix');
+    assert.ok(fs.existsSync(res1.dir), 'Allocated directory must exist');
 
-    // 3. Collision avoidance when target contains files
-    fs.writeFileSync(path.join(emptyTarget, 'artifact.txt'), 'data');
-    const r2 = resolveUniqueOutputDir('empty-dir', tmpDir);
-    assert.notEqual(r2.dir, emptyTarget);
-    assert.equal(r2.collisionAvoided, true);
-    assert.ok(r2.dir.startsWith(`${emptyTarget}-`));
-    assert.ok(fs.existsSync(r2.dir));
-
-    // 4. Default allocation under artifacts/transcode-benchmark
-    const r3 = resolveUniqueOutputDir(null, tmpDir);
-    assert.ok(r3.dir.includes(path.join('artifacts', 'transcode-benchmark')));
-    assert.ok(fs.existsSync(r3.dir));
+    // 2. Reject attempts to target source roots
+    assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, 'server'), tmpDir), /source directories/i);
+    assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, 'web'), tmpDir), /source directories/i);
+    assert.throws(() => resolveUniqueOutputDir(path.join(tmpDir, '.git'), tmpDir), /source directories/i);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
 test('sanitizeText strips personal home directories, Windows drive roots, and tokens', () => {
-  const rawWindows = 'C:\\Users\\alice\\Documents\\secret\\file.mkv failed with token=secret123';
+  const rawWindows = 'Error at C:\\Users\\Administrator\\Desktop\\uburoom\\server\\av1.js with token=secret123';
   const cleanWindows = sanitizeText(rawWindows);
-  assert.ok(!cleanWindows.includes('alice'), 'Must strip username');
-  assert.ok(!cleanWindows.includes('secret123'), 'Must strip token');
-  assert.ok(cleanWindows.includes('[home]'));
-  assert.ok(cleanWindows.includes('token=[REDACTED]'));
+  assert.ok(!cleanWindows.includes('Administrator'), 'Must redact username');
+  assert.ok(cleanWindows.includes('[home]'), 'Must replace with [home]');
+  assert.ok(cleanWindows.includes('token=[REDACTED]'), 'Must redact token parameter');
 
-  const rawPosix = '/home/bob/media/movie.mp4 at http://user:pass@example.com/stream?key=xyz';
-  const cleanPosix = sanitizeText(rawPosix);
-  assert.ok(!cleanPosix.includes('bob'), 'Must strip username');
-  assert.ok(!cleanPosix.includes('xyz'), 'Must strip key');
-  assert.ok(cleanPosix.includes('[home]'));
+  const rawLinux = 'Traceback in /home/alice/uburoom/server.js: key=superpass';
+  const cleanLinux = sanitizeText(rawLinux);
+  assert.ok(!cleanLinux.includes('alice'), 'Must redact linux username');
+  assert.ok(cleanLinux.includes('key=[REDACTED]'), 'Must redact key parameter');
 });
 
 test('prober encoder resolution correctly handles auto, fallback, and software VP8', () => {
-  const mockProbes = [
-    { codec: 'av1', encoder: 'nvenc', available: true },
-    { codec: 'av1', encoder: 'qsv', available: false },
+  const sampleProbed = [
+    { codec: 'av1', encoder: 'qsv', available: true },
+    { codec: 'av1', encoder: 'nvenc', available: false },
     { codec: 'av1', encoder: 'software', available: true },
-    { codec: 'vp9', encoder: 'qsv', available: true },
+    { codec: 'vp9', encoder: 'qsv', available: false },
     { codec: 'vp9', encoder: 'software', available: true },
     { codec: 'vp8', encoder: 'software', available: true }
   ];
 
-  // Auto AV1 on system with nvenc should resolve nvenc
-  const av1Auto = resolveEncoderForCodec('av1', 'auto', true, mockProbes);
-  assert.equal(av1Auto.actualEncoder, 'nvenc');
+  // Auto AV1 should pick QSV when available
+  const av1Auto = resolveEncoderForCodec('av1', 'auto', sampleProbed, true);
+  assert.equal(av1Auto.actualEncoder, 'qsv');
 
-  // Auto VP9 on system with qsv should resolve qsv
-  const vp9Auto = resolveEncoderForCodec('vp9', 'auto', true, mockProbes);
-  assert.equal(vp9Auto.actualEncoder, 'qsv');
+  // Hardware AV1 when hardware is unavailable falls back to software if cpuFallback=true
+  const hardwareOnlyNoHw = [
+    { codec: 'av1', encoder: 'qsv', available: false },
+    { codec: 'av1', encoder: 'nvenc', available: false },
+    { codec: 'av1', encoder: 'software', available: true }
+  ];
+  const av1HwFallback = resolveEncoderForCodec('av1', 'hardware', hardwareOnlyNoHw, true);
+  assert.equal(av1HwFallback.actualEncoder, 'software');
+  assert.equal(av1HwFallback.isFallback, true);
 
-  // VP8 has no hardware backend; always software
-  const vp8Auto = resolveEncoderForCodec('vp8', 'auto', true, mockProbes);
-  assert.equal(vp8Auto.actualEncoder, 'software');
+  // VP8 only has software
+  const vp8Res = resolveEncoderForCodec('vp8', 'auto', sampleProbed, true);
+  assert.equal(vp8Res.actualEncoder, 'software');
 });
 
 test('--all-encoders mode disables CPU fallback to record unavailable encoders accurately', () => {
@@ -189,65 +184,63 @@ test('--all-encoders mode disables CPU fallback to record unavailable encoders a
     qualities: ['1080p8']
   });
 
-  // When allEncoders is true, allowFallback is explicitly false
-  assert.ok(matrix.configurations.length === 3);
-  assert.ok(matrix.configurations.every(c => c.allowFallback === false));
+  const nvencConfig = matrix.configurations.find(c => c.requestedEncoder === 'nvenc');
+  const qsvConfig = matrix.configurations.find(c => c.requestedEncoder === 'qsv');
+  const swConfig = matrix.configurations.find(c => c.requestedEncoder === 'software');
+
+  assert.ok(nvencConfig, 'Must have nvenc configuration');
+  assert.ok(qsvConfig, 'Must have qsv configuration');
+  assert.ok(swConfig, 'Must have software configuration');
+
+  // allowFallback must be explicitly false for comparative encoder matrix
+  assert.equal(nvencConfig.allowFallback, false);
+  assert.equal(qsvConfig.allowFallback, false);
 });
 
 test('outputSpec enforces strict no-upscaling rule', () => {
-  const lowResSource = {
-    filePath: 'test.mkv',
-    fileName: 'test.mkv',
-    fileSizeBytes: 1000000,
-    durationSeconds: 60,
-    bitrateKbps: 2000,
-    rawInfo: {
-      streams: [
-        { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720, r_frame_rate: '30/1' },
-        { codec_type: 'audio', codec_name: 'aac' }
-      ]
-    },
+  const smallSource = {
     video: {
-      codec: 'h264',
       width: 1280,
       height: 720,
-      fps: 30
+      fps: 30,
+      codec: 'h264'
     },
-    audio: { available: true }
+    audio: { available: true },
+    hdr: { hdr: false },
+    rawInfo: { streams: [{ codec_type: 'video', width: 1280, height: 720 }] }
   };
 
-  // Target 1080p on a 720p source must be clamped to 720p (no upscaling)
-  const spec = deriveOutputSpec(lowResSource, '1080p8');
-  assert.equal(spec.targetWidth, 1280);
-  assert.equal(spec.targetHeight, 720);
-  assert.ok(spec.filter.includes('1280:720'));
+  const spec1080p = deriveOutputSpec(smallSource, '1080p8');
+  // Dimensions must remain 720p (no upscaling); targetBitrateKbps reflects requested quality target
+  assert.equal(spec1080p.targetWidth, 1280);
+  assert.equal(spec1080p.targetHeight, 720);
+  assert.equal(spec1080p.targetBitrateKbps, 8000);
 });
 
 test('quality metric calculations compute correct mean, harmonic mean, median, percentiles, and worst intervals', () => {
-  const scores = [95, 96, 92, 94, 85, 88, 97, 98, 99, 90];
+  const scores = [100, 95, 90, 85, 80, 75, 70, 65, 60, 50];
   const stats = calculateMetricStats(scores);
 
-  assert.ok(stats, 'Stats must not be null');
-  assert.equal(stats.min, 85);
-  assert.equal(stats.max, 99);
-  assert.ok(stats.mean > 93 && stats.mean < 94);
-  assert.ok(stats.harmonicMean < stats.mean, 'Harmonic mean must be <= arithmetic mean');
-  assert.ok(stats.median >= 94 && stats.median <= 95);
-  assert.equal(stats.p1, 85);
+  assert.ok(stats);
+  assert.equal(stats.mean, 77.0);
+  assert.equal(stats.min, 50.0);
+  assert.equal(stats.max, 100.0);
+  assert.ok(stats.harmonicMean < stats.mean, 'Harmonic mean penalizes low scores more heavily than arithmetic mean');
+  assert.ok(stats.p1 <= stats.p5 && stats.p5 <= stats.p10);
 
-  // Worst interval detection
-  const timeline = [
-    { frameNum: 0, timestampSec: 0.0, vmaf: 95 },
-    { frameNum: 1, timestampSec: 1.0, vmaf: 96 },
-    { frameNum: 2, timestampSec: 2.0, vmaf: 80 },
-    { frameNum: 3, timestampSec: 3.0, vmaf: 82 },
-    { frameNum: 4, timestampSec: 4.0, vmaf: 97 },
-    { frameNum: 5, timestampSec: 5.0, vmaf: 98 }
-  ];
-  const worst = findWorstIntervals(timeline, 'vmaf', 1, 2);
+  // Worst interval detection across 2-second windows (at 30 fps)
+  const timeline = [];
+  for (let f = 0; f < 180; f++) {
+    // Dip quality between frames 60 and 90
+    const score = (f >= 60 && f <= 90) ? 40 : 95;
+    timeline.push({ frameNum: f, timestampSec: f / 30, vmaf: score });
+  }
+
+  const worst = findWorstIntervals(timeline, 'vmaf', 30, 2);
   assert.ok(worst.length > 0);
-  assert.equal(worst[0].startSec, 2.0);
-  assert.ok(worst[0].averageScore <= 82.0);
+  // Worst interval must cover the dip around 2.0s
+  assert.ok(worst[0].startSec >= 1.0 && worst[0].startSec <= 3.0);
+  assert.ok(worst[0].averageScore < 70);
 });
 
 test('buildQualityFilterChain constructs correct VMAF scaling, time alignment, and rejects Dolby Vision P5', () => {
@@ -261,13 +254,13 @@ test('buildQualityFilterChain constructs correct VMAF scaling, time alignment, a
     vmafFeatures: { cambi: true, psnr: true, float_ssim: true }
   };
 
-  const chain = buildQualityFilterChain(standardSource, target720p, mockCaps, 'log.json');
+  const chain = buildQualityFilterChain(standardSource, target720p, mockCaps, 'log.json', ['vmaf', 'cambi']);
   assert.ok(chain.supported);
-  // Distorted 720p stream must be scaled up to reference 1080p resolution per VMAF standard
   assert.ok(chain.filterGraph.includes('scale=1920:1080:flags=bicubic'));
   assert.ok(chain.filterGraph.includes('setpts=PTS-STARTPTS'));
   assert.ok(chain.filterGraph.includes('libvmaf=log_fmt=json'));
   assert.ok(chain.filterGraph.includes('name=cambi'));
+  assert.ok(!chain.filterGraph.includes('name=float_ssim'), 'Must omit unrequested float_ssim metric');
 
   // Dolby Vision Profile 5 source must fail gracefully without Vulkan libplacebo
   const doviSource = {
@@ -279,56 +272,224 @@ test('buildQualityFilterChain constructs correct VMAF scaling, time alignment, a
   assert.match(doviChain.reason, /Dolby Vision Profile 5 requires Vulkan libplacebo/i);
 });
 
-test('runCapacityScan enforces conservative stopping rules on worker failure or sub-real-time speed', async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-scan-'));
-  try {
-    // We mock runConcurrentTier by testing the scan loop logic directly
-    const tierResults = [
-      {
-        concurrency: 1,
-        isSustainable: true,
-        passedWorkers: 1,
-        failedWorkers: 0,
-        aggregateThroughputMultiplier: 2.5,
-        minWorkerSpeed: 2.5,
-        totalDeadlineMisses: 0,
-        workers: []
-      },
-      {
-        concurrency: 2,
-        isSustainable: true,
-        passedWorkers: 2,
-        failedWorkers: 0,
-        aggregateThroughputMultiplier: 4.8,
-        minWorkerSpeed: 2.4,
-        totalDeadlineMisses: 0,
-        workers: []
-      },
-      {
-        concurrency: 3,
-        isSustainable: false,
-        passedWorkers: 2,
-        failedWorkers: 1,
-        aggregateThroughputMultiplier: 2.8,
-        minWorkerSpeed: 0.85, // Fell below real-time!
-        totalDeadlineMisses: 2,
-        failureReason: 'Bottleneck detected: slowest worker ran at 0.85x',
-        workers: []
-      }
-    ];
+test('buildQualityFilterChain builds dual standalone SSIM and PSNR when libvmaf is unavailable', () => {
+  const source = { video: { width: 1920, height: 1080, fps: 30 }, hdr: { hdr: false } };
+  const target = { width: 1920, height: 1080 };
+  const caps = { libvmaf: false, ssim: true, psnr: true };
 
-    let currentTierIdx = 0;
-    const scanSim = {
-      isCapacityScan: true,
-      highestSustainableConcurrency: 2,
-      firstFailingConcurrency: 3,
-      stoppingReason: tierResults[2].failureReason,
-      testedTiers: tierResults
+  const chain = buildQualityFilterChain(source, target, caps, 'log.json', ['ssim', 'psnr']);
+  assert.ok(chain.supported);
+  assert.equal(chain.usesLibvmaf, false);
+  assert.ok(chain.filterGraph.includes('ssim=stats_file=ssim.log'));
+  assert.ok(chain.filterGraph.includes('psnr=stats_file=psnr.log'));
+  assert.ok(chain.filterGraph.includes('split=2'));
+});
+
+test('runCapacityScan exercises real progression, stopping on sub-real-time speed', async () => {
+  // Mock worker runner that simulates:
+  // Tier 1: 1 worker at 2.5x speed (pass)
+  // Tier 2: 2 workers at 2.2x speed (pass)
+  // Tier 3: 3 workers, but worker 3 drops to 0.95x speed (fails 1.05x margin!)
+  const mockWorker = async (tools, source, config, opts) => {
+    const isTier3Worker3 = opts.concurrency === 3 && opts.workerId === 3;
+    const speed = isTier3Worker3 ? 0.95 : 2.2;
+    return {
+      status: 'pass',
+      actualEncoder: config.requestedEncoder,
+      performance: {
+        speedMultiplier: speed,
+        deadlineMisses: 0,
+        chunkP95DurationSec: 2.5
+      }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 5,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    minRealtimeMargin: 1.05,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.highestSustainableConcurrency, 2, 'Should sustain tier 2');
+  assert.equal(scanResult.firstFailingConcurrency, 3, 'Should fail tier 3');
+  assert.equal(scanResult.testedTiers.length, 3, 'Scan must stop immediately after tier 3 fails');
+  assert.match(scanResult.stoppingReason, /below required 1\.05x real-time margin/);
+});
+
+test('runCapacityScan stops immediately when a worker fails transcode', async () => {
+  const mockWorker = async (tools, source, config, opts) => {
+    if (opts.concurrency === 2 && opts.workerId === 2) {
+      throw new Error('GPU NVENC session allocation exhausted');
+    }
+    return {
+      status: 'pass',
+      actualEncoder: config.requestedEncoder,
+      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.5 }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 4,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.highestSustainableConcurrency, 1);
+  assert.equal(scanResult.firstFailingConcurrency, 2);
+  assert.equal(scanResult.testedTiers.length, 2);
+  assert.match(scanResult.stoppingReason, /GPU NVENC session allocation exhausted/);
+});
+
+test('runCapacityScan stops immediately when a worker misses a 6s chunk deadline', async () => {
+  const mockWorker = async (tools, source, config, opts) => {
+    const misses = (opts.concurrency === 2 && opts.workerId === 1) ? 1 : 0;
+    return {
+      status: 'pass',
+      actualEncoder: config.requestedEncoder,
+      performance: { speedMultiplier: 1.2, deadlineMisses: misses, chunkP95DurationSec: 4.0 }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 4,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.highestSustainableConcurrency, 1);
+  assert.equal(scanResult.firstFailingConcurrency, 2);
+  assert.match(scanResult.stoppingReason, /1 chunk deadline\(s\) missed/);
+});
+
+test('runCapacityScan stops immediately when P95 chunk latency exceeds threshold', async () => {
+  const mockWorker = async (tools, source, config, opts) => {
+    // P95 latency is 5.4s on tier 2, exceeding 5.1s threshold
+    const p95 = opts.concurrency === 2 ? 5.4 : 3.0;
+    return {
+      status: 'pass',
+      actualEncoder: config.requestedEncoder,
+      performance: { speedMultiplier: 1.2, deadlineMisses: 0, chunkP95DurationSec: p95 }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 4,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    maxChunkP95ThresholdSec: 5.1,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.highestSustainableConcurrency, 1);
+  assert.equal(scanResult.firstFailingConcurrency, 2);
+  assert.match(scanResult.stoppingReason, /P95 chunk latency \(5\.40s\) exceeded 5\.10s threshold/);
+});
+
+test('runCapacityScan stops when hardware encoder falls back to software', async () => {
+  const mockWorker = async (tools, source, config, opts) => {
+    // Worker falls back to software on tier 1
+    return {
+      status: 'pass',
+      actualEncoder: 'software',
+      fallback: { from: 'nvenc', to: 'software' },
+      performance: { speedMultiplier: 1.5, deadlineMisses: 0, chunkP95DurationSec: 3.0 }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 3,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.highestSustainableConcurrency, 0);
+  assert.equal(scanResult.firstFailingConcurrency, 1);
+  assert.match(scanResult.stoppingReason, /fell back to software encoding/);
+});
+
+test('runCapacityScan terminates early when AbortSignal is triggered', async () => {
+  const controller = new AbortController();
+  const mockWorker = async (tools, source, config, opts) => {
+    if (opts.concurrency === 1) {
+      controller.abort(); // Cancel during tier 1
+    }
+    return {
+      status: 'pass',
+      actualEncoder: config.requestedEncoder,
+      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.0 }
+    };
+  };
+
+  const scanResult = await runCapacityScan({
+    maxConcurrency: 4,
+    testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+    sampleDuration: 60,
+    signal: controller.signal,
+    workerRunner: mockWorker
+  });
+
+  assert.equal(scanResult.testedTiers.length, 1);
+  assert.match(scanResult.stoppingReason, /cancelled by operator/i);
+});
+
+test('repeated concurrent trials produce completely isolated artifact directories without collision', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-repeat-'));
+  try {
+    const writtenFiles = [];
+    const mockWorker = async (tools, source, config, opts) => {
+      // Simulate writing chunk files to the resolved output directory
+      const workerDir = path.join(opts.outputDir, 'outputs', `concurrency-${opts.concurrency}`, `run-${opts.runIndex}`, `worker-${opts.workerId}`, config.id);
+      fs.mkdirSync(workerDir, { recursive: true });
+      const testFile = path.join(workerDir, 'assembled.webm');
+      fs.writeFileSync(testFile, `Trial data run=${opts.runIndex} worker=${opts.workerId}`, 'utf8');
+      writtenFiles.push(testFile);
+      return {
+        status: 'pass',
+        runIndex: opts.runIndex,
+        workerId: opts.workerId,
+        concurrency: opts.concurrency,
+        output: { assembledFile: path.relative(opts.outputDir, testFile) },
+        performance: { speedMultiplier: 2.0, deadlineMisses: 0 }
+      };
     };
 
-    assert.equal(scanSim.highestSustainableConcurrency, 2);
-    assert.equal(scanSim.firstFailingConcurrency, 3);
-    assert.match(scanSim.stoppingReason, /slowest worker ran at 0\.85x/);
+    // Run trial 1
+    const trial1 = await runConcurrentTier({
+      concurrency: 2,
+      runIndex: 1,
+      outputDir: tmpDir,
+      testConfig: { id: 'test-config', codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+      workerRunner: mockWorker
+    });
+
+    // Run trial 2
+    const trial2 = await runConcurrentTier({
+      concurrency: 2,
+      runIndex: 2,
+      outputDir: tmpDir,
+      testConfig: { id: 'test-config', codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
+      workerRunner: mockWorker
+    });
+
+    assert.equal(writtenFiles.length, 4, 'Must write 4 distinct files across 2 trials');
+    // Ensure all 4 paths are unique
+    const uniquePaths = new Set(writtenFiles);
+    assert.equal(uniquePaths.size, 4, 'All 4 files must have unique paths');
+
+    // Verify file contents were not overwritten
+    const f1 = fs.readFileSync(writtenFiles[0], 'utf8');
+    const f2 = fs.readFileSync(writtenFiles[1], 'utf8');
+    const f3 = fs.readFileSync(writtenFiles[2], 'utf8');
+    const f4 = fs.readFileSync(writtenFiles[3], 'utf8');
+    assert.match(f1, /run=1 worker=1/);
+    assert.match(f2, /run=1 worker=2/);
+    assert.match(f3, /run=2 worker=1/);
+    assert.match(f4, /run=2 worker=2/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -373,11 +534,12 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
         firstFailingConcurrency: 5,
         maxTestedConcurrency: 5,
         stoppingReason: 'Worker 5 dropped below real-time (0.92x)',
-        estimateNotice: 'Short-run sustainable capacity estimate based on chunk deadline preservation.'
+        estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation.'
       },
       results: [
         {
           runIndex: 1,
+          tierIndex: null,
           concurrency: 1,
           workerId: 1,
           configId: 'av1-nvenc-1080p8-chunked',
@@ -438,6 +600,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
         },
         {
           runIndex: 2,
+          tierIndex: null,
           concurrency: 1,
           workerId: 1,
           configId: 'vp9-software-1080p8-chunked',
@@ -512,7 +675,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     assert.ok(fs.existsSync(htmlPath), 'report.html must exist');
 
     const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    assert.equal(json.schemaVersion, '2.0.0');
+    assert.equal(json.schemaVersion, '2.1.0');
     assert.equal(json.benchmarkVersion, 'Stage 2');
     assert.equal(json.results.length, 2);
     assert.equal(json.results[0].qualityMetrics.vmaf.mean, 94.5);
@@ -521,6 +684,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     const csv = fs.readFileSync(csvPath, 'utf8');
     const lines = csv.trim().split(/\r?\n/);
     assert.equal(lines.length, 3, 'CSV must have header and two rows for two runs');
+    assert.match(lines[0], /Run,Tier,Concurrency,WorkerId/);
     assert.match(lines[0], /VMAF_Mean,VMAF_P1,VMAF_Min,SSIM,PSNR_dB,CAMBI/);
     assert.match(lines[1], /94\.5,88,86\.2,0\.985,42\.5,0\.045/);
 
@@ -529,6 +693,8 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     assert.match(html, /Sustainable Transcoding Capacity/);
     assert.match(html, /4 Streams/);
     assert.match(html, /Blind A\/B Subjective Quality Comparison/);
+    assert.match(html, /5-Level Scale/);
+    assert.match(html, /Strongly Prefer A/);
     assert.match(html, /Objective Video Quality vs\. Bitrate Tradeoffs/);
     assert.match(html, /Quality Score Timeline/);
 

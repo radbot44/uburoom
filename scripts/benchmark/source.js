@@ -137,6 +137,10 @@ function generateSyntheticSource(ffmpegPath, outputDir, requiredDuration = 60) {
     '-preset', 'ultrafast',
     '-crf', '18',
     '-pix_fmt', 'yuv420p',
+    '-color_range', 'tv',
+    '-colorspace', 'bt709',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
     '-c:a', 'aac',
     '-b:a', '192k',
     syntheticFile
