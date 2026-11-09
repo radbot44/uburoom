@@ -63,7 +63,12 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     probedEncoders = []
   } = opts;
 
-  // 1. Validate source media duration: fail fast if source is shorter than requested interval
+  // 1. Validate duration bounds (6s to 3600s)
+  if (!Number.isFinite(duration) || duration < 6 || duration > 3600) {
+    throw new Error(`Invalid stability test duration (${duration}): must be a positive number between 6 and 3600 seconds.`);
+  }
+
+  // 2. Validate source media duration: fail fast if source is shorter than requested interval
   const sourceDuration = source?.durationSeconds ?? source?.duration ?? source?.format?.duration ?? null;
   if (sourceDuration !== null && typeof sourceDuration === 'number' && !isNaN(sourceDuration)) {
     if (sourceDuration < startOffset + duration) {
@@ -79,13 +84,21 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
   let consecutiveFailures = 0;
   let earlyStopReason = null;
   let fallbackCount = 0;
+  const stabilityStartTime = process.hrtime.bigint();
 
   if (telemetryCollector) {
     telemetryCollector.setPhase('encoding', { mode: 'stability', configId: config.id });
   }
 
   const internalAbort = new AbortController();
-  const linkedSignal = signal || internalAbort.signal;
+  if (signal) {
+    if (signal.aborted) {
+      internalAbort.abort(signal.reason);
+    } else {
+      signal.addEventListener('abort', () => internalAbort.abort(signal.reason), { once: true });
+    }
+  }
+  const linkedSignal = internalAbort.signal;
 
   let benchmarkResult = null;
 
@@ -125,7 +138,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
         const currentDiskBytes = getDirectorySize(stabilityOutputDir);
         if (currentDiskBytes > maxDiskBytes) {
           earlyStopReason = `Maximum allowed disk consumption exceeded (${(currentDiskBytes / (1024 * 1024)).toFixed(1)} MB > ${(maxDiskBytes / (1024 * 1024)).toFixed(1)} MB)`;
-          internalAbort.abort();
+          internalAbort.abort(earlyStopReason);
           return;
         }
 
@@ -134,7 +147,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
           consecutiveFailures++;
           if (consecutiveFailures >= maxConsecutiveFailures) {
             earlyStopReason = `Early stop triggered after ${consecutiveFailures} consecutive severe chunk performance failures or fallbacks.`;
-            internalAbort.abort();
+            internalAbort.abort(earlyStopReason);
             return;
           }
         } else {
@@ -143,8 +156,11 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
       }
     });
   } catch (err) {
-    // If early stop was triggered, preserve all completed measurements without failing the test run
-    if (earlyStopReason) {
+    // If early stop was triggered or cancelled by signal, preserve all completed measurements without failing the test run
+    if (earlyStopReason || linkedSignal.aborted) {
+      if (!earlyStopReason) {
+        earlyStopReason = signal?.reason || internalAbort.signal.reason || 'Stability test cancelled by operator signal.';
+      }
       benchmarkResult = {
         configId: config.id,
         mode: 'chunks',
@@ -216,11 +232,16 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     }
   }
 
+  const actualElapsedDurationSec = Number(process.hrtime.bigint() - stabilityStartTime) / 1e9;
+  const isEarlyStopped = Boolean(earlyStopReason || linkedSignal.aborted);
+  const fallbacksObserved = fallbackCount > 0 || (benchmarkResult?.fallbackEvents?.length > 0);
+
   return {
     ...benchmarkResult,
     stability: {
-      status: earlyStopReason ? 'early_stopped' : benchmarkResult.status,
+      status: isEarlyStopped ? 'early_stopped' : benchmarkResult.status,
       testedDurationSeconds: duration,
+      actualElapsedDurationSec: Math.round(actualElapsedDurationSec * 100) / 100,
       totalChunksRequested: totalChunks,
       chunksCompleted: chunkResults.length,
       earlyStopReason,
@@ -232,7 +253,8 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
       p95LatencySecondHalf,
       p95LatencyChangePercent,
       latencyChangePercent: p95LatencyChangePercent,
-      fallbacksObserved: fallbackCount > 0,
+      fallbacksObserved,
+      fallbackCount,
       thermalClimbC: thermalClimb,
       throttlingConfirmed,
       activeThrottles,

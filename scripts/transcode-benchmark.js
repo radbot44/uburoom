@@ -42,7 +42,8 @@ const {
   saveRunToHistory,
   compareRuns,
   importHistoricalReport,
-  deleteRunFromHistory
+  deleteRunFromHistory,
+  deriveSourceFingerprint
 } = require('./benchmark/history');
 const {
   generateConfigurationRecommendations
@@ -351,6 +352,12 @@ async function main() {
     throw new Error(`Invalid --mode "${options.mode}": must be one of "chunks", "continuous", or "both".`);
   }
 
+  if (options.stabilityDuration !== undefined) {
+    if (!Number.isFinite(options.stabilityDuration) || options.stabilityDuration < 6 || options.stabilityDuration > 3600) {
+      throw new Error(`Invalid --stability-duration "${options.stabilityDuration}": must be a positive number of seconds between 6 and 3600.`);
+    }
+  }
+
   if (Array.isArray(options.qualityMetrics)) {
     const valid = ['vmaf', 'ssim', 'psnr', 'cambi'];
     for (const m of options.qualityMetrics) {
@@ -538,9 +545,8 @@ async function main() {
   // Initialize Stage 3 Hardware Telemetry Collector
   if (options.telemetry && telemetryProvider) {
     telemetryCollector = new TelemetryCollector({
-      provider: telemetryProvider.provider,
-      intervalMs: options.telemetryInterval,
-      device: telemetryProvider.device
+      providerInfo: telemetryProvider,
+      intervalMs: options.telemetryInterval
     });
     telemetryCollector.start();
     telemetryCollector.setPhase('idle_baseline');
@@ -595,6 +601,10 @@ async function main() {
       signal: abortController.signal,
       mode: options.mode === 'continuous' ? 'continuous' : 'chunks',
       onTierStart: (c, max) => {
+        if (telemetryCollector) {
+          const tierConfigId = `${primaryConfig.id}-${options.mode === 'continuous' ? 'continuous' : 'chunks'}-c${c}`;
+          telemetryCollector.setPhase('encoding', { configId: tierConfigId, concurrency: c, isSharedGpu: c > 1 });
+        }
         process.stdout.write(`Testing Concurrency ${c}/${max}... `);
       },
       onTierComplete: tier => {
@@ -610,8 +620,15 @@ async function main() {
 
     // Collect all worker results across tested tiers
     for (const tier of scanResult.testedTiers) {
+      const tierConfigId = `${primaryConfig.id}-${options.mode === 'continuous' ? 'continuous' : 'chunks'}-c${tier.concurrency}`;
+      const summary = telemetryCollector ? telemetryCollector.getSummary(tierConfigId) : null;
       for (const w of tier.workers) {
-        w.telemetry = telemetryCollector ? telemetryCollector.getSummary(w.configId) : null;
+        w.telemetry = summary ? {
+          ...summary,
+          isSharedGpu: tier.concurrency > 1,
+          concurrency: tier.concurrency,
+          notice: tier.concurrency > 1 ? `Aggregate host GPU telemetry during concurrent execution of ${tier.concurrency} stream(s); not isolated to single worker.` : undefined
+        } : null;
         benchmarkResults.push(w);
       }
     }
@@ -633,7 +650,7 @@ async function main() {
         for (const mode of runModes) {
           const runTag = options.runs > 1 ? ` [Run ${run}/${options.runs}]` : '';
           const currentConfigId = `${testConfig.id}-${mode}-c${options.concurrency}${options.runs > 1 ? `-r${run}` : ''}`;
-          telemetryCollector?.setPhase('encoding', { configId: currentConfigId, runIndex: run, mode });
+          telemetryCollector?.setPhase('encoding', { configId: currentConfigId, runIndex: run, mode, concurrency: options.concurrency, isSharedGpu: true });
           console.log(`Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]${runTag}...`);
           const tierResult = await runConcurrentTier({
             concurrency: options.concurrency,
@@ -654,7 +671,13 @@ async function main() {
           console.log(`   -> ${tierResult.passedWorkers}/${options.concurrency} passed | Aggregate throughput: ${tierResult.aggregateThroughputMultiplier}x | Slowest: ${tierResult.minWorkerSpeed}x | Deadlines missed: ${tierResult.totalDeadlineMisses}`);
 
           for (const w of tierResult.workers) {
-            w.telemetry = telemetryCollector ? telemetryCollector.getSummary(currentConfigId) : null;
+            const summary = telemetryCollector ? telemetryCollector.getSummary(currentConfigId) : null;
+            w.telemetry = summary ? {
+              ...summary,
+              isSharedGpu: true,
+              concurrency: options.concurrency,
+              notice: `Aggregate host GPU telemetry during concurrent execution of ${options.concurrency} stream(s); not isolated to single worker.`
+            } : null;
             benchmarkResults.push(w);
           }
           concurrencyTrials.push(tierResult);
@@ -952,6 +975,9 @@ async function main() {
   if (options.recommendations) {
     recommendations = generateConfigurationRecommendations({
       benchmarkVersion: 'Stage 3',
+      source: sourceInfo,
+      sampleDuration,
+      runs: options.runs,
       results: benchmarkResults,
       concurrencySummary,
       stabilitySummary,
@@ -971,9 +997,12 @@ async function main() {
   console.log(`   Generating Benchmark Reports (JSON, CSV, HTML)`);
   console.log(`===========================================================\n`);
 
+  const sourceFingerprint = deriveSourceFingerprint(sourceInfo);
+
   const benchmarkPayload = {
     schemaVersion: '3.0.0',
     benchmarkVersion: 'Stage 3',
+    sourceFingerprint,
     configProfile: benchmarkConfig.profileName,
     sampleDuration,
     startOffset,
@@ -998,6 +1027,7 @@ async function main() {
     environment: envInfo,
     transcodingSettings: benchmarkConfig.transcoding,
     source: {
+      sourceFingerprint,
       fileName: sourceInfo.fileName,
       filePath: sourceFilePath,
       fileSizeBytes: sourceInfo.fileSizeBytes,

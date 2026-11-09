@@ -498,7 +498,25 @@ function calculateMetricSummary(samples, metricKey) {
 class TelemetryCollector {
   constructor(options = {}) {
     this.intervalMs = Math.max(200, options.intervalMs || 500);
-    this.providerInfo = options.providerInfo || (typeof options.provider === 'string' ? { provider: options.provider, throttlingSupported: true } : detectTelemetryProvider());
+    if (options.providerInfo) {
+      this.providerInfo = options.providerInfo;
+    } else if (typeof options.provider === 'string') {
+      const isNvidia = options.provider === 'nvidia-smi';
+      const isPdh = options.provider === 'pdh' || options.provider === 'windows-pdh';
+      const throttlingSupported = options.throttlingSupported !== undefined
+        ? Boolean(options.throttlingSupported)
+        : !isPdh;
+      this.providerInfo = {
+        provider: options.provider,
+        deviceAttribution: isNvidia ? 'verified' : (isPdh ? 'unverified' : 'unknown'),
+        throttlingSupported,
+        device: options.device || 'Host GPU',
+        supportedFields: isNvidia ? ['gpu_utilization', 'memory_used', 'temperature', 'power', 'clock', 'throttling'] : (isPdh ? ['memory_used', 'clock'] : ['gpu_utilization', 'memory_used', 'temperature', 'power', 'clock', 'throttling']),
+        unavailableFields: isNvidia ? [] : (isPdh ? ['throttling', 'temperature', 'power', 'gpu_utilization'] : [])
+      };
+    } else {
+      this.providerInfo = detectTelemetryProvider();
+    }
     this.signal = options.signal || null;
     this.samples = [];
     this.activePhase = 'idle_baseline';
@@ -532,11 +550,13 @@ class TelemetryCollector {
       if (this.isSampling) return; // Prevent overlapping async calls
 
       this.isSampling = true;
+      const samplePhase = this.activePhase;
+      const sampleContext = { ...this.activeContext };
       try {
         const { sample: s, currentCpuInfo: c } = await sampleHardwareStateAsync(this.providerInfo, this.prevCpuInfo);
         this.prevCpuInfo = c;
-        s.phase = this.activePhase;
-        s.context = { ...this.activeContext };
+        s.phase = samplePhase;
+        s.context = sampleContext;
         s.elapsedSec = Math.round(((Date.now() - this.startTimeMs) / 1000) * 10) / 10;
         this.samples.push(s);
       } catch {} finally {
@@ -594,9 +614,25 @@ class TelemetryCollector {
   getSummary(configId = null) {
     let encodingSamples = this.samples.filter(s => s.phase === 'encoding');
     if (configId) {
-      const tagged = encodingSamples.filter(s => s.context?.configId === configId);
-      if (tagged.length > 0) {
-        encodingSamples = tagged;
+      encodingSamples = encodingSamples.filter(s => s.context?.configId === configId);
+      if (encodingSamples.length === 0) {
+        return {
+          provider: this.providerInfo.provider,
+          deviceAttribution: this.providerInfo.deviceAttribution,
+          throttlingSupported: Boolean(this.providerInfo.throttlingSupported),
+          sampleCount: 0,
+          encoding: {
+            sampleCount: 0,
+            metrics: {},
+            thermalClimbC: 0,
+            throttlingDetected: this.providerInfo.throttlingSupported ? false : null,
+            activeThrottleReasons: []
+          },
+          qualityAnalysis: {
+            sampleCount: 0,
+            metrics: {}
+          }
+        };
       }
     }
 
@@ -677,6 +713,7 @@ class TelemetryCollector {
       driver: this.providerInfo.driver,
       intervalMs: this.intervalMs,
       totalSamples: this.samples.length,
+      sampleCount: configId ? encodingSamples.length : this.samples.length,
       encodingSampleCount: encodingSamples.length,
       qualitySampleCount: qualitySamples.length,
       encoding: {

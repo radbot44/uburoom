@@ -65,19 +65,28 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
       const hwEncoderName = bestHw.actualEncoder || bestHw.requestedEncoder;
       const speed = getSpeed(bestHw);
       const fps = getFps(bestHw);
+      const bestHwDeadlines = bestHw.deadlinesMissed ?? bestHw.performance?.deadlineMisses ?? 0;
 
       // Determine confidence level strictly based on evidence
       let confidence = 'preliminary';
       const confidenceReasons = [];
 
       if (isSynthetic) {
+        confidence = 'preliminary';
         confidenceReasons.push('capped at preliminary because test used synthetic media');
       } else if (runsCount < 2 || sampleDuration < 30) {
-        confidenceReasons.push(`preliminary observation from ${runsCount} run(s) over ${sampleDuration}s interval`);
-      } else if (speed >= 1.5 && !fallbacksObserved && (qualityVerified || !bestHw.qualityMetrics)) {
+        confidence = 'preliminary';
+        confidenceReasons.push(`preliminary observation from ${runsCount} run(s) over ${sampleDuration}s interval (requires >= 2 runs and >= 30s)`);
+      } else if (speed >= 1.5 && !fallbacksObserved && bestHwDeadlines === 0 && qualityVerified) {
         confidence = 'high';
       } else {
         confidence = 'medium';
+        if (!qualityVerified) {
+          confidenceReasons.push('visual quality was not confirmed via objective quality metrics');
+        }
+        if (bestHwDeadlines > 0) {
+          confidenceReasons.push(`experienced ${bestHwDeadlines} missed deadline(s)`);
+        }
       }
 
       if (currentEncoderSetting !== hwEncoderName) {
@@ -115,7 +124,7 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
     if (highestTested >= 1) {
       // Conservative recommendation: apply headroom of N - 1 if > 2 streams
       const recommendedJobs = Math.max(1, highestTested > 2 ? highestTested - 1 : highestTested);
-      let concurrencyConfidence = isSynthetic || sampleDuration < 30 ? 'preliminary' : (highestTested >= 2 ? 'high' : 'medium');
+      let concurrencyConfidence = (isSynthetic || sampleDuration < 30 || runsCount < 2) ? 'preliminary' : (highestTested >= 2 && qualityVerified ? 'high' : 'medium');
 
       if (recommendedJobs !== currentMaxJobs) {
         const shortRunNote = sampleDuration < 30 ? ' Derived from short-run chunk tests; monitor long-term thermals and memory under real production load.' : '';

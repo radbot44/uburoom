@@ -1145,8 +1145,7 @@ test('history management derives fingerprints, saves runs, updates index, and sa
 });
 
 test('compareRuns produces matched regression/improvement classifications and flags differing conditions', () => {
-  const commonSource = { fileName: 'clip.mp4', durationSeconds: 60, video: { resolution: '1920x1080', fps: 30, codec: 'h264' } };
-  const sourceFp = deriveSourceFingerprint(commonSource);
+  const sourceFp = 'v1:11223344556677889900aabbccddeeff';
 
   const baselineRun = {
     runId: 'base-01',
@@ -1269,6 +1268,7 @@ test('generateConfigurationRecommendations produces conservative advice adhering
         status: 'pass',
         quality: { id: '1080p8', label: '1080p 8Mbps' },
         performance: { speedMultiplier: 2.2, effectiveFps: 66.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 94.0 } },
         fallbackEvents: []
       }
     ],
@@ -1531,4 +1531,315 @@ test('buildQualityFilterChain builds secondary standalone pass when libvmaf lack
   assert.deepEqual(chain.secondaryMetrics, ['ssim', 'psnr']);
   assert.ok(chain.secondaryFilterGraph.includes('ssim=stats_file=ssim.log'));
   assert.ok(chain.secondaryFilterGraph.includes('psnr=stats_file=psnr.log'));
+});
+
+test('runStabilityBenchmark validates duration bounds (< 6s, > 3600s rejected)', async () => {
+  await assert.rejects(
+    () => runStabilityBenchmark(null, { durationSeconds: 100 }, { id: 'cfg' }, { duration: 5, outputDir: os.tmpdir() }),
+    /Invalid stability test duration/i
+  );
+  await assert.rejects(
+    () => runStabilityBenchmark(null, { durationSeconds: 4000 }, { id: 'cfg' }, { duration: 3601, outputDir: os.tmpdir() }),
+    /Invalid stability test duration/i
+  );
+});
+
+test('TelemetryCollector handles providerInfo and string fallback correctly', () => {
+  // Case A: Full providerInfo
+  const providerInfo = {
+    provider: 'pdh',
+    deviceAttribution: 'unverified',
+    throttlingSupported: false,
+    device: 'Windows GPU (PDH)',
+    supportedFields: ['memory_used', 'clock'],
+    unavailableFields: ['throttling', 'temperature']
+  };
+  const collector1 = new TelemetryCollector({ providerInfo });
+  assert.equal(collector1.providerInfo.deviceAttribution, 'unverified');
+  assert.equal(collector1.providerInfo.throttlingSupported, false);
+
+  // Case B: String fallback for pdh
+  const collector2 = new TelemetryCollector({ provider: 'pdh' });
+  assert.equal(collector2.providerInfo.deviceAttribution, 'unverified');
+  assert.equal(collector2.providerInfo.throttlingSupported, false);
+
+  // Case C: String fallback for nvidia-smi
+  const collector3 = new TelemetryCollector({ provider: 'nvidia-smi' });
+  assert.equal(collector3.providerInfo.deviceAttribution, 'verified');
+  assert.equal(collector3.providerInfo.throttlingSupported, true);
+});
+
+test('TelemetryCollector getSummary(configId) returns 0 samples when requested config has no samples without fallback', () => {
+  const collector = new TelemetryCollector({ provider: 'nvidia-smi' });
+  collector.setPhase('encoding', { configId: 'config-a' });
+  collector.recordSample({ gpuUtilization: 55, temperatureC: 60 });
+  collector.recordSample({ gpuUtilization: 65, temperatureC: 62 });
+
+  // Summary for config-a has 2 samples
+  const summaryA = collector.getSummary('config-a');
+  assert.equal(summaryA.sampleCount, 2);
+  assert.equal(summaryA.encoding.sampleCount, 2);
+  assert.equal(summaryA.encoding.metrics.gpuUtilization.mean, 60);
+
+  // Summary for nonexistent config-b must return 0 samples and NOT fall back to config-a
+  const summaryB = collector.getSummary('config-b');
+  assert.equal(summaryB.sampleCount, 0);
+  assert.equal(summaryB.encoding.sampleCount, 0);
+  assert.deepEqual(summaryB.encoding.metrics, {});
+});
+
+test('saveRunToHistory serializes concurrent updates with file lock preventing lost records', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-lock-'));
+  try {
+    const payloads = Array.from({ length: 5 }, (_, i) => ({
+      timestamp: new Date().toISOString(),
+      benchmarkVersion: 'Stage 3',
+      sourceFingerprint: `v1:source${i}`,
+      source: { fileName: `test${i}.mp4` },
+      environment: { gpu: 'Test GPU' },
+      results: [
+        { configId: `cfg-${i}`, codec: 'av1', requestedEncoder: 'nvenc', status: 'pass' }
+      ]
+    }));
+
+    // Save all 5 runs
+    for (const p of payloads) {
+      saveRunToHistory(p, tmpDir);
+    }
+
+    const index = loadHistoryIndex(tmpDir);
+    assert.equal(index.runs.length, 5, 'All 5 runs must be preserved in history index');
+    const sourceNames = index.runs.map(r => r.sourceFileName);
+    for (let i = 0; i < 5; i++) {
+      assert.ok(sourceNames.includes(`test${i}.mp4`), `Index must contain test${i}.mp4`);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('compareRuns distinguishes GPU driver updates on same hardware from cross-hardware comparisons', () => {
+  const baseRun = {
+    runId: 'base-driver-old',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090 (Driver 566.03, 24GB VRAM)' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.0,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const targetRun = {
+    runId: 'target-driver-new',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090 (Driver 566.14, 24GB VRAM)' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.2,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const comp = compareRuns(baseRun, targetRun);
+  // Driver update on the same RTX 4090 is NOT cross-hardware!
+  assert.equal(comp.isCrossHardware, false, 'Driver update on same GPU must not be classified as cross-hardware');
+  assert.equal(comp.environmentDiff.gpuMatch, true);
+  assert.equal(comp.environmentDiff.driverMatch, false);
+  assert.equal(comp.environmentDiff.driverDiff, '566.03 -> 566.14');
+  assert.equal(comp.matchedComparisons.length, 1);
+  assert.equal(comp.matchedComparisons[0].classification, 'stable');
+});
+
+test('compareRuns rejects synthetic or unverified source media from matched regression evaluation', () => {
+  const baseRun = {
+    runId: 'base-real',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090' },
+    sourceFingerprint: 'synthetic:test-pattern',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.0,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const targetRun = {
+    runId: 'target-synth',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090' },
+    sourceFingerprint: 'synthetic:test-pattern',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 1.5,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const comp = compareRuns(baseRun, targetRun);
+  // Synthetic media lacks verified v1: content hash, so cannot evaluate performance regression
+  assert.equal(comp.matchedComparisons.length, 0, 'Synthetic media must not be evaluated as matched regression');
+  assert.equal(comp.partiallyMatchedComparisons.length, 1);
+  assert.ok(comp.partiallyMatchedComparisons[0].differingConditions.some(c => c.includes('verified content fingerprint')));
+});
+
+test('compareRuns rejects mismatched actual encoder backends from matched regression evaluation', () => {
+  const baseRun = {
+    runId: 'base-nvenc',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.0,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const targetRun = {
+    runId: 'target-fallback-software',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'software', // Fell back to software
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 0.5,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const comp = compareRuns(baseRun, targetRun);
+  // Mismatched actualEncoder (nvenc vs software) must NOT be compared directly as regression
+  assert.equal(comp.matchedComparisons.length, 0);
+  assert.equal(comp.partiallyMatchedComparisons.length, 1);
+  assert.ok(comp.partiallyMatchedComparisons[0].differingConditions.some(c => c.includes('actual encoder backend')));
+});
+
+test('generateConfigurationRecommendations strictly gates high confidence on real media, verified quality, 0 fallbacks and 0 missed deadlines', () => {
+  // Case 1: Real media + 2 runs + 60s + 0 fallbacks + 0 missed deadlines + VERIFIED QUALITY -> HIGH confidence
+  const highPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'reference.mkv' },
+    results: [
+      {
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 94.2 } },
+        fallbackEvents: []
+      }
+    ]
+  };
+  const highAdvice = generateConfigurationRecommendations(highPayload);
+  assert.equal(highAdvice.recommendations[0]?.confidence, 'high');
+
+  // Case 2: Same conditions but quality metrics were omitted -> capped at MEDIUM confidence
+  const noQualityPayload = {
+    ...highPayload,
+    results: [
+      {
+        ...highPayload.results[0],
+        qualityMetrics: null
+      }
+    ]
+  };
+  const mediumAdvice = generateConfigurationRecommendations(noQualityPayload);
+  assert.equal(mediumAdvice.recommendations[0]?.confidence, 'medium', 'Unverified visual quality must cap confidence at medium');
+
+  // Case 3: Same conditions but with 1 missed deadline -> capped at MEDIUM confidence
+  const deadlineMissPayload = {
+    ...highPayload,
+    results: [
+      {
+        ...highPayload.results[0],
+        performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 1 },
+        deadlinesMissed: 1
+      }
+    ]
+  };
+  const deadlineAdvice = generateConfigurationRecommendations(deadlineMissPayload);
+  assert.equal(deadlineAdvice.recommendations[0]?.confidence, 'medium', 'Missed deadline must prevent high confidence');
+
+  // Case 4: Multiple 6s runs on synthetic media -> capped at PRELIMINARY confidence
+  const multiSynthPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 3,
+    sampleDuration: 6,
+    source: { isSynthetic: true, fileName: 'synthetic-pattern.mkv' },
+    results: [
+      {
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 3.5, effectiveFps: 105.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 98.0 } },
+        fallbackEvents: []
+      }
+    ]
+  };
+  const multiSynthAdvice = generateConfigurationRecommendations(multiSynthPayload);
+  assert.equal(multiSynthAdvice.recommendations[0]?.confidence, 'preliminary', 'Synthetic media must always be capped at preliminary');
 });

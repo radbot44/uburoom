@@ -375,6 +375,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     let encoded = false;
     let encodeDurationSec = 0;
     let attempts = 0;
+    const initialFallbackCount = fallbackEvents.length;
 
     while (!encoded && attempts < 4) {
       if (options.signal?.aborted) {
@@ -454,6 +455,8 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       relativePath: path.relative(outputDir, chunkFile).replace(/\\/g, '/')
     });
 
+    const chunkHadFallback = fallbackEvents.length > initialFallbackCount;
+
     onProgress?.({
       type: 'chunk',
       configId,
@@ -461,7 +464,10 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       totalChunks: numChunks,
       encodeDurationSec,
       realTimeSpeed,
-      deadlineMissed
+      deadlineMissed,
+      fallbackOccurred: chunkHadFallback,
+      totalFallbacks: fallbackEvents.length,
+      fallbackEvents: [...fallbackEvents]
     });
   }
 

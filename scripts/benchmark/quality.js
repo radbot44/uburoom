@@ -759,6 +759,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
   }
 
   // Execute secondary standalone pass if libvmaf lacked requested SSIM or PSNR
+  let secondaryPassError = null;
   if (chain.needsSecondaryStandalonePass && chain.secondaryFilterGraph) {
     const secArgs = [
       '-v', 'error',
@@ -782,6 +783,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
         }
       });
     } catch (secErr) {
+      secondaryPassError = secErr.message;
       stderrOutput += '\nSecondary standalone pass error: ' + secErr.message;
     }
   }
@@ -857,44 +859,66 @@ async function runQualityAnalysis(ffmpegPath, options) {
         const ssimLogPath = path.join(outputDir, 'ssim.log');
         const psnrLogPath = path.join(outputDir, 'psnr.log');
 
-        if (chain.secondaryMetrics?.includes('ssim') && fs.existsSync(ssimLogPath) && ssimValues.length === 0) {
-          try {
-            const ssimRaw = fs.readFileSync(ssimLogPath, 'utf8');
-            const lines = ssimRaw.split(/\r?\n/).filter(Boolean);
-            for (let i = 0; i < lines.length; i++) {
-              const match = /All:([0-9.]+)/.exec(lines[i]);
-              if (match) {
-                const val = parseFloat(match[1]);
-                ssimValues.push(val);
-                if (timeline[i]) {
-                  timeline[i].ssim = Math.round(val * 10000) / 10000;
+        if (chain.secondaryMetrics?.includes('ssim')) {
+          if (fs.existsSync(ssimLogPath) && ssimValues.length === 0) {
+            try {
+              const ssimRaw = fs.readFileSync(ssimLogPath, 'utf8');
+              const lines = ssimRaw.split(/\r?\n/).filter(Boolean);
+              for (let i = 0; i < lines.length; i++) {
+                const match = /All:([0-9.]+)/.exec(lines[i]);
+                if (match) {
+                  const val = parseFloat(match[1]);
+                  ssimValues.push(val);
+                  if (timeline[i]) {
+                    timeline[i].ssim = Math.round(val * 10000) / 10000;
+                  }
                 }
               }
-            }
-          } catch {}
+            } catch {}
+          }
+          if (ssimValues.length === 0) {
+            chain.unavailableMetrics.push({
+              metric: 'ssim',
+              status: 'failed',
+              reason: secondaryPassError ? `Secondary standalone SSIM filter pass failed: ${secondaryPassError}` : 'Secondary standalone SSIM filter pass did not produce valid score records.'
+            });
+          }
         }
 
-        if (chain.secondaryMetrics?.includes('psnr') && fs.existsSync(psnrLogPath) && psnrValues.length === 0) {
-          try {
-            const psnrRaw = fs.readFileSync(psnrLogPath, 'utf8');
-            const lines = psnrRaw.split(/\r?\n/).filter(Boolean);
-            for (let i = 0; i < lines.length; i++) {
-              const match = /psnr_avg:([0-9.]+|inf)/.exec(lines[i]);
-              if (match) {
-                const val = match[1] === 'inf' ? 60 : parseFloat(match[1]);
-                psnrValues.push(val);
-                if (timeline[i]) {
-                  timeline[i].psnr = Math.round(val * 100) / 100;
+        if (chain.secondaryMetrics?.includes('psnr')) {
+          if (fs.existsSync(psnrLogPath) && psnrValues.length === 0) {
+            try {
+              const psnrRaw = fs.readFileSync(psnrLogPath, 'utf8');
+              const lines = psnrRaw.split(/\r?\n/).filter(Boolean);
+              for (let i = 0; i < lines.length; i++) {
+                const match = /psnr_avg:([0-9.]+|inf)/.exec(lines[i]);
+                if (match) {
+                  const val = match[1] === 'inf' ? 60 : parseFloat(match[1]);
+                  psnrValues.push(val);
+                  if (timeline[i]) {
+                    timeline[i].psnr = Math.round(val * 100) / 100;
+                  }
                 }
               }
-            }
-          } catch {}
+            } catch {}
+          }
+          if (psnrValues.length === 0) {
+            chain.unavailableMetrics.push({
+              metric: 'psnr',
+              status: 'failed',
+              reason: secondaryPassError ? `Secondary standalone PSNR filter pass failed: ${secondaryPassError}` : 'Secondary standalone PSNR filter pass did not produce valid score records.'
+            });
+          }
         }
       }
 
       const vmafStats = selectedMetrics.includes('vmaf') ? calculateMetricStats(vmafValues) : null;
-      const ssimStats = selectedMetrics.includes('ssim') ? calculateMetricStats(ssimValues) : null;
-      const psnrStats = selectedMetrics.includes('psnr') ? calculateMetricStats(psnrValues) : null;
+      const ssimStats = selectedMetrics.includes('ssim')
+        ? (ssimValues.length > 0 ? calculateMetricStats(ssimValues) : (chain.secondaryMetrics?.includes('ssim') ? { status: 'failed', reason: secondaryPassError || 'Secondary standalone SSIM filter pass failed' } : null))
+        : null;
+      const psnrStats = selectedMetrics.includes('psnr')
+        ? (psnrValues.length > 0 ? calculateMetricStats(psnrValues) : (chain.secondaryMetrics?.includes('psnr') ? { status: 'failed', reason: secondaryPassError || 'Secondary standalone PSNR filter pass failed' } : null))
+        : null;
       const cambiStats = selectedMetrics.includes('cambi') ? calculateMetricStats(cambiValues) : null;
 
       const metricForWorstInterval = selectedMetrics.includes('vmaf') ? 'vmaf'

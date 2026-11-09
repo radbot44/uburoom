@@ -137,14 +137,55 @@ function saveHistoryIndex(historyDir, indexData) {
 }
 
 /**
+ * Executes a function holding an exclusive filesystem lock on history-index.lock.
+ * Serializes index reads and writes across concurrent processes, preventing lost updates.
+ */
+function withHistoryLock(historyDir, fn) {
+  const lockPath = path.join(historyDir, 'history-index.lock');
+  const maxWaitMs = 15000;
+  const start = Date.now();
+  let fd = null;
+
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      fd = fs.openSync(lockPath, 'wx');
+      break;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          const stat = fs.statSync(lockPath);
+          if (Date.now() - stat.mtimeMs > 15000) {
+            try { fs.unlinkSync(lockPath); } catch {}
+          }
+        } catch {}
+        const sleepMs = 15 + Math.floor(Math.random() * 25);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (fd === null) {
+    throw new Error('Timed out acquiring history index lock.');
+  }
+
+  try {
+    return fn();
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+    try { fs.unlinkSync(lockPath); } catch {}
+  }
+}
+
+/**
  * Saves a benchmark execution payload into local history.
  * Strips large outputs, preserves measurements, environment fingerprints, and telemetry summaries.
  */
 function saveRunToHistory(benchmarkPayload, historyDir) {
-  const index = loadHistoryIndex(historyDir);
-
   const timestamp = benchmarkPayload.timestamp || new Date().toISOString();
-  const runId = `run-${timestamp.replace(/[:.]/g, '-')}-${process.pid || Math.floor(Math.random() * 10000)}`;
+  const randomSuffix = crypto.randomBytes(4).toString('hex');
+  const runId = `run-${timestamp.replace(/[:.]/g, '-')}-${process.pid || 0}-${randomSuffix}`;
 
   const sanitizedEnvironment = {
     gpu: benchmarkPayload.environment?.gpu || 'Unknown GPU',
@@ -155,6 +196,9 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
   };
 
   const sourceFingerprint = benchmarkPayload.sourceFingerprint || deriveSourceFingerprint(benchmarkPayload.source);
+  const sourceFileName = benchmarkPayload.source?.fileName
+    ? path.basename(benchmarkPayload.source.fileName)
+    : (benchmarkPayload.source?.filePath ? path.basename(benchmarkPayload.source.filePath) : 'unknown');
 
   const compactResults = (benchmarkPayload.results || []).map(r => ({
     configId: r.configId,
@@ -201,7 +245,7 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
     timestamp,
     benchmarkVersion: benchmarkPayload.benchmarkVersion || 'Stage 3',
     sourceFingerprint,
-    sourceFileName: benchmarkPayload.source?.fileName || 'unknown',
+    sourceFileName,
     sampleDuration: benchmarkPayload.sampleDuration || 60,
     startOffset: benchmarkPayload.startOffset || 0,
     environment: sanitizedEnvironment,
@@ -215,21 +259,23 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
   const recordFilePath = path.join(historyDir, `${runId}.json`);
   fs.writeFileSync(recordFilePath, JSON.stringify(record, null, 2), 'utf8');
 
-  // Add summary entry to index
-  index.runs.unshift({
-    runId,
-    timestamp,
-    benchmarkVersion: record.benchmarkVersion,
-    sourceFingerprint: record.sourceFingerprint,
-    sourceFileName: record.sourceFileName,
-    resultsCount: record.resultsCount,
-    passedCount: record.passedCount,
-    failedCount: record.failedCount,
-    gpu: sanitizedEnvironment.gpu,
-    recordFile: `${runId}.json`
+  withHistoryLock(historyDir, () => {
+    const index = loadHistoryIndex(historyDir);
+    index.runs.unshift({
+      runId,
+      timestamp,
+      benchmarkVersion: record.benchmarkVersion,
+      sourceFingerprint: record.sourceFingerprint,
+      sourceFileName: record.sourceFileName,
+      resultsCount: record.resultsCount,
+      passedCount: record.passedCount,
+      failedCount: record.failedCount,
+      gpu: sanitizedEnvironment.gpu,
+      recordFile: `${runId}.json`
+    });
+    saveHistoryIndex(historyDir, index);
   });
 
-  saveHistoryIndex(historyDir, index);
   return record;
 }
 
@@ -262,13 +308,32 @@ function deleteRunFromHistory(runId, historyDir) {
     throw new Error(`Path traversal attempt rejected for runId: ${runId}`);
   }
 
-  const index = loadHistoryIndex(historyDir);
-  index.runs = index.runs.filter(r => r.runId !== runId);
-  saveHistoryIndex(historyDir, index);
+  withHistoryLock(historyDir, () => {
+    const index = loadHistoryIndex(historyDir);
+    index.runs = index.runs.filter(r => r.runId !== runId);
+    saveHistoryIndex(historyDir, index);
+  });
 
   if (fs.existsSync(recordFile)) {
     fs.rmSync(recordFile, { force: true });
   }
+}
+
+/**
+ * Extracts normalized GPU hardware device name without driver version or VRAM info.
+ */
+function extractGpuDeviceName(gpuString) {
+  if (!gpuString || typeof gpuString !== 'string') return '';
+  return gpuString.replace(/\s*\([^)]*driver[^)]*\)/i, '').trim().toLowerCase();
+}
+
+/**
+ * Extracts driver version from GPU environment string if present.
+ */
+function extractDriverVersion(gpuString) {
+  if (!gpuString || typeof gpuString !== 'string') return null;
+  const match = gpuString.match(/driver\s+([0-9a-zA-Z._-]+)/i);
+  return match ? match[1] : null;
 }
 
 /**
@@ -282,7 +347,14 @@ function compareRuns(baseRun, targetRun) {
 
   const baseGpu = baseRun.environment?.gpu;
   const targetGpu = targetRun.environment?.gpu;
-  const isSameGpu = Boolean(baseGpu && targetGpu && baseGpu.trim().toLowerCase() === targetGpu.trim().toLowerCase());
+  const baseDevice = extractGpuDeviceName(baseGpu);
+  const targetDevice = extractGpuDeviceName(targetGpu);
+  const isSameGpu = Boolean(baseDevice && targetDevice && baseDevice === targetDevice);
+
+  const baseDriver = extractDriverVersion(baseGpu);
+  const targetDriver = extractDriverVersion(targetGpu);
+  const driverMatch = baseDriver && targetDriver ? baseDriver === targetDriver : true;
+  const driverDiff = !driverMatch ? `${baseDriver || 'unknown'} -> ${targetDriver || 'unknown'}` : null;
 
   const comparison = {
     baseRunId: baseRun.runId || 'baseline',
@@ -294,6 +366,10 @@ function compareRuns(baseRun, targetRun) {
       gpuMatch: isSameGpu,
       baseGpu: baseGpu || 'Unknown GPU',
       targetGpu: targetGpu || 'Unknown GPU',
+      driverMatch,
+      baseDriver: baseDriver || 'Unknown Driver',
+      targetDriver: targetDriver || 'Unknown Driver',
+      driverDiff,
       cpuMatch: baseRun.environment?.cpu === targetRun.environment?.cpu,
       baseCpu: baseRun.environment?.cpu || 'Unknown CPU',
       targetCpu: targetRun.environment?.cpu || 'Unknown CPU',
@@ -307,8 +383,8 @@ function compareRuns(baseRun, targetRun) {
     incomparableItems: []
   };
 
-  const isVerifiedFingerprint = baseFingerprint && baseFingerprint.startsWith('v1:') && targetFingerprint && targetFingerprint.startsWith('v1:');
-  const isSameSource = Boolean(baseFingerprint && targetFingerprint && baseFingerprint === targetFingerprint);
+  const isVerifiedFingerprint = Boolean(baseFingerprint && baseFingerprint.startsWith('v1:') && targetFingerprint && targetFingerprint.startsWith('v1:'));
+  const isSameSource = isVerifiedFingerprint && baseFingerprint === targetFingerprint;
   const isSameDuration = baseRun.sampleDuration === targetRun.sampleDuration && baseRun.startOffset === targetRun.startOffset;
 
   for (const targetRes of targetRun.results || []) {
@@ -331,6 +407,7 @@ function compareRuns(baseRun, targetRun) {
 
     const exactMatch = candidateMatches.find(b =>
       b.requestedEncoder === targetRes.requestedEncoder &&
+      (b.actualEncoder || b.requestedEncoder) === (targetRes.actualEncoder || targetRes.requestedEncoder) &&
       (b.mode === targetRes.mode || (b.mode === 'chunked' && targetRes.mode === 'chunks') || (b.mode === 'chunks' && targetRes.mode === 'chunked')) &&
       (b.concurrency || 1) === (targetRes.concurrency || 1) &&
       (b.hardwareDecode ?? true) === (targetRes.hardwareDecode ?? true)
@@ -427,10 +504,17 @@ function compareRuns(baseRun, targetRun) {
       const speedBase = partial.speedRatio ?? partial.performance?.speedMultiplier ?? 0;
       const reasons = [];
       if (!isSameSource) {
-        reasons.push(isVerifiedFingerprint ? 'Different source media content' : 'Unverified source fingerprint match');
+        if (!isVerifiedFingerprint) {
+          reasons.push('Source media lacks verified content fingerprint (v1:<hash>). Cannot evaluate for performance regression.');
+        } else {
+          reasons.push('Different source media content');
+        }
       }
       if (!isSameDuration) reasons.push('Different sample interval');
-      if (partial.requestedEncoder !== targetRes.requestedEncoder) reasons.push(`Different encoder (${partial.requestedEncoder} vs ${targetRes.requestedEncoder})`);
+      if (partial.requestedEncoder !== targetRes.requestedEncoder) reasons.push(`Different requested encoder (${partial.requestedEncoder} vs ${targetRes.requestedEncoder})`);
+      if ((partial.actualEncoder || partial.requestedEncoder) !== (targetRes.actualEncoder || targetRes.requestedEncoder)) {
+        reasons.push(`Different actual encoder backend (${partial.actualEncoder || partial.requestedEncoder} vs ${targetRes.actualEncoder || targetRes.requestedEncoder})`);
+      }
       if (partial.mode !== targetRes.mode) reasons.push(`Different mode (${partial.mode} vs ${targetRes.mode})`);
       if ((partial.concurrency || 1) !== (targetRes.concurrency || 1)) reasons.push(`Different concurrency (${partial.concurrency || 1} vs ${targetRes.concurrency || 1})`);
       if ((partial.hardwareDecode ?? true) !== (targetRes.hardwareDecode ?? true)) reasons.push('Different hardware decode setting');
