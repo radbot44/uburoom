@@ -591,12 +591,19 @@ function renderNotifications() {
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
 const roomEvents=uburoomEvents.mount({request:api});
-const roomShare=uburoomShare.mount({request:api,share:shareInvite,getDuration:()=>state?.state?.duration,schedule:options=>roomEvents.open(options),openLink:async url=>{
+const roomEntry=()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};};
+const lobbyEvents=uburoomLobbyEvents.mount({request:api,schedule:options=>roomEvents.open(options),
+  join:async id=>{await selectRoom(id);if(!state||selected!==id)throw new Error('Room unavailable');returnToVideo();},
+  changed:()=>renderScheduleButton(),
+  reopen:async id=>{const opened=await api('/api/watch/rooms/'+id+'/reopen',roomEntry(),{timeoutMs:35000});await selectRoom(opened.id,opened.state);if(!state)throw new Error('Room unavailable');returnToVideo();}});
+// The room header calendar button needs both hosting and the server's scheduling tier.
+function renderScheduleButton(){$('room-schedule').hidden=!state?.durable||!state.canManage||!lobbyEvents.canSchedule();}
+const roomShare=uburoomShare.mount({request:api,share:shareInvite,openLink:async url=>{
   if(activity&&sdk){const result=await sdk.commands.openExternalLink({url});if(!result.opened)throw new Error('Discord could not open the post.');}
   else window.open(url,'_blank','noopener,noreferrer');
 }});
 const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,share:(invite,name,id)=>roomShare.open(id||selected),
-  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};},
+  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:roomEntry,
   changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
   createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = roomVisibilityDraft = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset; } });
 async function fetchArtwork(path, signal) {
@@ -1122,7 +1129,10 @@ function updateFullscreenLayout() {
 }
 function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
-  $('room-lobby').hidden = !!selected || !me;
+  const lobbyHidden = !!selected || !me;
+  // The Upcoming list refreshes whenever the lobby comes back into view.
+  if ($('room-lobby').hidden && !lobbyHidden && transport?.ready && me?.durableRooms && !config?.singleRoom) void lobbyEvents.refresh();
+  $('room-lobby').hidden = lobbyHidden;
 }
 function renderSyncPreference() {
   $('sync-correction').value=syncCorrectionMode;
@@ -2023,6 +2033,8 @@ function renderVisibility() {
     if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room',iconOnly:true});
     $('room-share').setAttribute('aria-label','Share room');
     $('room-share').hidden = !state.invite;
+    if (!$('room-schedule').firstChild) uburoomControls.content($('room-schedule'),{icon:'calendar-event',label:'Schedule event',iconOnly:true});
+    renderScheduleButton();
     uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});
     $('room-people-open').classList.remove('watch-control-responsive');
     $('room-people-open').setAttribute('aria-label','People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
@@ -2149,6 +2161,7 @@ async function shareInvite(invite = state?.invite, roomName = state?.roomName ||
   }
 }
 $('room-share').addEventListener('click', () => void roomShare.open(selected));
+$('room-schedule').addEventListener('click', () => void roomEvents.open({roomId:selected,roomName:state?.roomName,duration:()=>state?.state?.duration,onChange:()=>lobbyEvents.refresh()}));
 function renderTransport() {
   const available = !reconnecting && !!state?.mediaUrl, playback = available && state.canPlayback;
   for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;
@@ -3184,6 +3197,7 @@ async function start() {
     onReady:()=>bootstrap=(async()=>{
       diagnostics.record('control-connected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt,visibility:document.visibilityState});
       await refreshState();if(initialRooms)initialRooms=undefined;else await refreshRooms();
+      if(me?.durableRooms)void lobbyEvents.refresh();
       if(!selected){if(reconnecting)diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
       $('auth-loading').hidden=$('auth-overlay').hidden=true;
       document.body.classList.remove('auth-pending');

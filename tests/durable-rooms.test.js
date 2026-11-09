@@ -18,7 +18,7 @@ test('Discord scheduled events preserve explicit times and consent across closur
   await creator.call(root+'?viewer='+randomUUID());await viewer.call(root+'?viewer='+randomUUID());
   const planned={title:'Planned watch night',description:'Bring popcorn',startLocal:new Date(Date.now()+2*86400000).toISOString().slice(0,16),
     endLocal:new Date(Date.now()+2*86400000+7200000).toISOString().slice(0,16),timeZone:'UTC'};
-  const schedule=async(client,action='room.event.create',extra={})=>client.call(root+'/share',{action,...planned,...extra});
+  const schedule=async(client,action='room.event.create',extra={})=>client.call(root+'/events',{action,...planned,...extra});
   assert.equal((await schedule(viewer)).body.status,'forbidden');assert.equal(remote.events.size,0);
   remote.channel.eventPermitted=false;assert.notEqual((await schedule(creator)).body.status,'applied');remote.channel.eventPermitted=true;
   await f.app.watch.remove(id);
@@ -31,41 +31,41 @@ test('Discord scheduled events preserve explicit times and consent across closur
   const edit=async change=>returning.call(root+'/settings',{revision:(await returning.call(root+'/settings')).body.revision,change});
   await edit({action:'invite.reroll'});await f.app.watch.events.reconcile();
   assert.ok(native.entityMetadata.location.endsWith(f.app.watch.roomState.store.get(id).inviteCode));
-  const stale=(await returning.call(root+'/share')).body.scheduling.events[0];native.name='Changed in Discord';
+  const stale=(await returning.call(root+'/events')).body.events[0];native.name='Changed in Discord';
   const args={action:'room.event.edit',revision:(await returning.call(root+'/settings')).body.revision,...planned,eventKey:stale.key,eventVersion:stale.eventVersion};
-  assert.notEqual((await returning.call(root+'/share',args)).body.status,'applied');assert.equal(native.name,'Changed in Discord');
-  const current=(await returning.call(root+'/share')).body.scheduling.events[0];
+  assert.notEqual((await returning.call(root+'/events',args)).body.status,'applied');assert.equal(native.name,'Changed in Discord');
+  const current=(await returning.call(root+'/events')).body.events[0];
   await edit({action:'rename',name:'Changed while editing an event',isCustom:true});
   await edit({action:'invite.reroll'});await f.app.watch.events.reconcile();
-  const automatic=(await returning.call(root+'/share')).body.scheduling.events[0];
+  const automatic=(await returning.call(root+'/events')).body.events[0];
   assert.equal(automatic.eventVersion,current.eventVersion,'automatic invite updates do not conflict with event details');
-  assert.equal((await returning.call(root+'/share',{...args,eventVersion:current.eventVersion,title:'Updated watch night'})).body.status,'applied');
+  assert.equal((await returning.call(root+'/events',{...args,eventVersion:current.eventVersion,title:'Updated watch night'})).body.status,'applied');
   assert.ok(native.entityMetadata.location.endsWith(f.app.watch.roomState.store.get(id).inviteCode));
-  const updated=(await returning.call(root+'/share')).body.scheduling.events[0];
+  const updated=(await returning.call(root+'/events')).body.events[0];
   await edit({action:'rename',name:'Room changed after event edit',isCustom:true});
   native.name='Event changed again';
   remote.channel.eventRateLimit={remaining:1,wait:50};
   const eventConfig=f.app.watch.events.config;
   f.app.watch.events.config={...eventConfig,publicUrl:'https://'+ 'x'.repeat(110)+'.invalid'};
   try {
-    assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied','cancellation does not validate an unused invite URL');
+    assert.equal((await returning.call(root+'/events',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied','cancellation does not validate an unused invite URL');
   } finally {f.app.watch.events.config=eventConfig;}
   assert.equal(native.status,4);assert.equal(f.app.watch.events.forRoom(id).length,0);
   assert.equal((await schedule(returning,'room.event.create',{title:'First event at this time',revision:args.revision})).body.status,'applied','an old room revision does not block scheduling');
   assert.equal((await schedule(returning,'room.event.create',{title:'Second event at this time'})).body.status,'applied','two events can share a start time');
-  for(const event of (await returning.call(root+'/share')).body.scheduling.events) {
-    assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:event.key})).body.status,'applied');
+  for(const event of (await returning.call(root+'/events')).body.events) {
+    assert.equal((await returning.call(root+'/events',{action:'room.event.cancel',eventKey:event.key})).body.status,'applied');
   }
   assert.equal(f.app.watch.events.forRoom(id).length,0);
   remote.channel.loseEventReceipt=true;
-  assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create'})).body.status,'applied');
-  const recovered=(await returning.call(root+'/share')).body.scheduling.events;
+  assert.notEqual((await returning.call(root+'/events',{...planned,action:'room.event.create'})).body.status,'applied');
+  const recovered=(await returning.call(root+'/events')).body.events;
   assert.equal(recovered.length,1);assert.ok(recovered[0].eventId);
   const creations=remote.calls.filter(call=>call.method==='event-create').length;
   await f.app.watch.events.reconcile();assert.equal(remote.calls.filter(call=>call.method==='event-create').length,creations);
   remote.channel.eventRateLimit={remaining:1,wait:9000};
-  assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:recovered[0].key})).body.status,'applied');
-  const pending=(await returning.call(root+'/share')).body.scheduling;
+  assert.equal((await returning.call(root+'/events',{action:'room.event.cancel',eventKey:recovered[0].key})).body.status,'applied');
+  const pending=(await returning.call(root+'/events')).body;
   assert.equal(pending.available,true,'a rate limit does not become a disconnected bot');assert.equal(pending.events[0].cancel,true);
   await f.app.watch.events.reconcile();assert.equal(f.app.watch.events.forRoom(id).length,0,'accepted cancellation completes without reopening Share');
 });

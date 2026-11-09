@@ -1,7 +1,7 @@
 /* Room sharing and explicit server publication; no playback ownership. */
 (function(root) {
   'use strict';
-  function mount({request, share, openLink, getDuration, schedule}) {
+  function mount({request, share, openLink}) {
     const $ = id => document.getElementById(id), dialog = $('room-share-dialog'), dialogs = root.uburoomDialogs;
     let generation = 0, target, value, busy = false, refreshTimer;
 
@@ -23,11 +23,7 @@
     const viewPostBtn = $('room-share-view');
     const removePostBtn = $('room-share-remove');
     const publishBtn = $('room-share-publish');
-    const scheduleBtn = $('room-share-schedule-btn');
 
-    const eventsSection = $('room-share-events');
-    const eventsList = $('room-share-event-list');
-    const eventStatus = $('room-share-event-status');
     const errorEl = $('room-share-error');
 
     dialogs.register(dialog, {busy: () => busy});
@@ -38,68 +34,6 @@
       }
     });
 
-    function button(label, action, className = 'quiet') {
-      const element = document.createElement('button');
-      element.type = 'button';
-      element.className = className;
-      element.textContent = label;
-      element.disabled = busy;
-      element.addEventListener('click', action);
-      return element;
-    }
-
-    function renderEvents() {
-      const scheduling = value?.scheduling;
-      const visible = !!scheduling?.configured && !!scheduling?.canManage;
-      eventsSection.hidden = !visible;
-      if (!visible) return;
-      eventsList.replaceChildren();
-
-      if (!scheduling.events || scheduling.events.length === 0) {
-        eventsSection.hidden = true;
-        return;
-      }
-
-      for (const event of scheduling.events) {
-        const row = document.createElement('div');
-        row.className = 'room-share-event';
-        const title = document.createElement('strong');
-        title.textContent = event.title;
-        row.append(title);
-
-        const when = document.createElement('p');
-        when.className = 'hint';
-        const format = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: event.timeZone });
-        when.textContent = format.format(new Date(event.start)) + ' – ' + format.format(new Date(event.end)) + ' · ' + event.timeZone + ' · ' + event.statusName;
-        row.append(when);
-
-        const actions = document.createElement('div');
-        actions.className = 'dialog-actions';
-        if (event.url) {
-          actions.append(button('View event', () => void openLink(event.url).catch(error => { errorEl.textContent = error.message; })));
-        }
-        if (event.status === 1 && event.eventId && !event.cancel) {
-          const edit = button('Edit', () => scheduleEvent(event));
-          edit.disabled = busy || !scheduling.available;
-          const cancel = button('Cancel event', async () => {
-            const release = dialogs.hold(dialog);
-            try {
-              if (await dialogs.confirm('Cancel “' + event.title + '” in Discord?', { destructive: true })) {
-                await changeEvent('room.event.cancel', event);
-              }
-            } finally {
-              release();
-            }
-          }, 'danger-button');
-          cancel.disabled = busy || !scheduling.available;
-          actions.append(edit, cancel);
-        }
-        row.append(actions);
-        eventsList.append(row);
-      }
-      if (scheduling.error) eventStatus.textContent = scheduling.error;
-    }
-
     function render() {
       titleEl.textContent = 'Share room';
 
@@ -107,7 +41,6 @@
       urlInput.value = rawUrl.replace(/^https?:\/\//i, '');
       copyBtn.disabled = personalBtn.disabled = busy || !value;
 
-      renderEvents();
       errorEl.textContent = value?.error || '';
 
       const publishing = !!value?.configured && !!value?.canManage;
@@ -153,7 +86,7 @@
 
     function scheduleRefresh(ticket = generation) {
       clearTimeout(refreshTimer);
-      if (!dialog.open || busy || !(value?.removing || value?.scheduling?.events.some(event => event.cancel) || value?.canManage && value?.configured && !value?.available || value?.scheduling?.canManage && value?.scheduling?.configured && !value?.scheduling?.available)) return;
+      if (!dialog.open || busy || !(value?.removing || value?.canManage && value?.configured && !value?.available)) return;
       refreshTimer = setTimeout(async () => {
         if (ticket !== generation || !dialog.open || busy) return;
         try { await load(ticket); } catch { scheduleRefresh(ticket); }
@@ -165,8 +98,6 @@
       const ticket = ++generation;
       target = id;
       value = undefined;
-      eventsSection.hidden = true;
-      eventStatus.textContent = '';
       errorEl.textContent = '';
       pubSection.hidden = true;
       urlInput.value = 'Loading…';
@@ -203,43 +134,10 @@
       }
     }
 
-    async function changeEvent(action, event) {
-      if (busy || !value) return;
-      const ticket = generation;
-      busy = true;
-      render();
-      errorEl.textContent = '';
-      try {
-        const result = await request('/api/watch/rooms/' + target + '/events', {action, eventKey: event.key});
-        if (result.status !== 'applied') throw new Error(result.message || 'The event could not be canceled.');
-        await load(ticket);
-      } catch (error) {
-        if (ticket === generation && dialog.open) {
-          try { await load(ticket); } catch {}
-          value.error = error.message;
-        }
-      } finally {
-        busy = false;
-        if (ticket === generation && dialog.open) {
-          render();
-          scheduleRefresh(ticket);
-        }
-      }
-    }
-
-    // Until scheduling leaves Share, its buttons open the shared scheduler for this room.
-    function scheduleEvent(event) {
-      if (busy || !value) return;
-      const ticket = generation, suggested = value.preview.title === 'Nothing selected' ? '' : value.preview.title;
-      void schedule({roomId: target, roomName: value.preview.name, event, title: suggested, duration: getDuration,
-        onChange: () => ticket === generation && dialog.open ? load(ticket) : undefined});
-    }
-
     function copyInvite() {
       if (value) void share(value.invite, value.preview.name, { copy: true });
     }
 
-    scheduleBtn.addEventListener('click', () => scheduleEvent());
     dismissBtn.addEventListener('click', () => dialogs.close(dialog));
 
     copyBtn.addEventListener('click', copyInvite);

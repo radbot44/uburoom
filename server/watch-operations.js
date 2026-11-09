@@ -225,11 +225,10 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.metadata(match[1],auth.actor);
         if(write) {
           if(!throttle('room-publish:'+auth.actor.userId,20))return result(429,{error:'Too many publication requests. Try again shortly.'});
-          if(!['room.publish','room.unpublish','room.event.create','room.event.edit','room.event.cancel'].includes(data.action))return result(400,{error:'Unsupported sharing action'});
-          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:data.action.startsWith('room.event.')?data:{}}));
+          if(!['room.publish','room.unpublish'].includes(data.action))return result(400,{error:'Unsupported sharing action'});
+          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:{}}));
         }
         const value=await watch.publications.summary(match[1],auth.actor);
-        value.scheduling=await watch.events.summary(match[1],auth.actor);
         await watch.roomState.eligible(auth.actor,current);
         await watch.roomState.metadata(match[1],auth.actor);
         if(!await current())return result(403,{error:'Room access changed'});

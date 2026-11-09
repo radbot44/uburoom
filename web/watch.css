@@ -29,15 +29,6 @@
 .room-share-action-row>button{flex:1;min-height:40px;justify-content:center}
 .room-share-published-row{display:flex;gap:8px;align-items:center;margin-top:12px}
 .room-share-published-row>button{flex:1;min-height:40px;justify-content:center}
-.room-share-schedule-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px}
-.room-share-schedule-btn svg{width:18px;height:18px}
-.room-share-events-header{display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px}
-.room-share-events-header h3{font-size:14px;font-weight:600;margin:0}
-.room-share-event{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;background:var(--elevated);overflow-wrap:anywhere}
-.room-share-event strong{display:block;font-size:14px;font-weight:600;margin-bottom:4px}
-.room-share-event p{margin:2px 0 8px;font-size:12px;color:var(--muted)}
-.room-share-event .dialog-actions{margin:0;justify-content:flex-end;gap:6px}
-.room-share-event .dialog-actions button{min-height:32px;padding:4px 10px;font-size:12px;border-radius:8px}
 #room-share-error{color:var(--error);overflow-wrap:anywhere;margin-top:10px}
 #room-share-error:empty{display:none}
 #event-form{display:block;text-align:left}
@@ -552,7 +543,8 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 #empty-stage button{pointer-events:auto}#empty-stage .room-bar{flex-wrap:wrap}
 #room-lobby{margin:18px auto 0}#lobby-room-bar{display:flex;justify-content:center;gap:12px}
 #lobby-rooms{flex-basis:100%;width:100%;text-align:left;max-height:270px;overflow:auto}.lobby-rooms .saved-room{border-color:#393F4D;padding:12px 0}.lobby-rooms .saved-room .hint{color:#AAB0BC}.lobby-rooms .saved-room button{flex:none}
-#lobby-reopen,#lobby-create{min-height:44px}#lobby-room-bar svg,.room-actions button>svg,#room-bar button>svg,#close-room>svg,#room-settings-delete>svg{width:19px;height:19px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;margin-right:6px}
+#lobby-events{flex-basis:100%;width:100%;text-align:left;margin-top:6px}#lobby-events[hidden]{display:none}#lobby-events h3{margin:0 0 4px;font-size:13px;font-weight:600;color:#AAB0BC;text-transform:uppercase;letter-spacing:.04em}#lobby-event-list{max-height:none;overflow:visible}.lobby-event strong svg{color:var(--primary)}.lobby-event .room-actions{align-items:center;gap:6px}.lobby-event .lobby-event-icon{width:36px;height:36px;min-width:36px;min-height:36px;padding:0;display:inline-grid;place-items:center}.lobby-event .lobby-event-icon svg{margin:0}#lobby-events-more{min-height:32px;padding:4px 10px;font-size:12px;margin-top:4px}
+#lobby-reopen,#lobby-schedule,#lobby-create{min-height:44px}#lobby-room-bar svg,.room-actions button>svg,#room-bar button>svg,#close-room>svg,#room-settings-delete>svg{width:19px;height:19px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;margin-right:6px}
 #lobby-error{flex-basis:100%;font-size:12px}#lobby-error:empty{display:none}
 
 #room-quick-switches{display:flex;flex-direction:column;gap:0}
@@ -637,7 +629,9 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
   body.outside-room #lobby-rooms{max-height:max(54px,calc(56.25vw - 154px))}
   .lobby-rooms .saved-room{flex-direction:row;align-items:center;padding:6px 0;font-size:12px}
   .lobby-rooms .hint{font-size:11px}.lobby-rooms button{min-height:44px;padding:8px}
-  #lobby-reopen,#lobby-create{font-size:12px;padding:8px 10px}
+  #lobby-reopen,#lobby-schedule,#lobby-create{font-size:12px;padding:8px 10px}
+  /* Three lobby buttons fit one row only when Schedule collapses to its icon. */
+  #lobby-schedule .lobby-schedule-label{display:none}#lobby-room-bar #lobby-schedule svg{margin-right:0}
 }
 
 #empty-browse{display:inline-flex;align-items:center;gap:8px}#empty-browse[hidden]{display:none}#empty-browse svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}

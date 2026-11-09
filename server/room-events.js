@@ -54,7 +54,7 @@ class RoomEvents {
   present(event,record,actor,now=Date.now()) {
     const manage=this.canManage(record,actor),discord=event.discord;
     return {key:event.id,roomId:record.id,roomName:record.name,roomSlug:record.slug,title:event.title,description:event.description,start:event.start,end:event.end,
-      timeZone:event.timeZone,live:Date.parse(event.start)<=now,canceling:event.state==='canceling',canManage:manage,canEdit:manage&&this.canSchedule(actor),
+      timeZone:event.timeZone,live:Date.parse(event.start)<=now,active:this.watch.rooms.has(record.id),canceling:event.state==='canceling',canManage:manage,canEdit:manage&&this.canSchedule(actor),
       eventVersion:version(event),invite:manage?this.config.publicUrl+'/join/'+record.inviteCode:undefined,
       discord:discord?{confirmed:!!discord.eventId,status:discord.status,interested:discord.interested??null,url:this.discord.url(discord)}:null};
   }
