@@ -1,6 +1,7 @@
 'use strict';
 const { runOperation, commitOperation } = require('./operation');
 const https = require('node:https');
+const zlib = require('node:zlib');
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
@@ -122,6 +123,52 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     const data = await fsp.readFile(filePath, encoding);
     if (assetCache.size < 128) assetCache.set(key, data);
     return data;
+  }
+  const staticCache = new Map();
+  let themeJsCached, roomProtocolCached;
+  function etagMatches(clientEtag, serverEtag) {
+    if (!clientEtag) return false;
+    if (clientEtag === '*') return true;
+    const target = serverEtag.replace(/^W\//, '');
+    return clientEtag.split(',').some(tag => tag.trim().replace(/^W\//, '') === target);
+  }
+  function sendStatic(req, res, content, type, key) {
+    const cacheKey = key || content;
+    let entry = staticCache.get(cacheKey);
+    if (!entry) {
+      const raw = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
+      const etag = 'W/"' + hash(raw).slice(0, 16) + '"';
+      const compressible = /^(text\/|image\/svg\+xml|application\/(javascript|wasm))/.test(type) && raw.length >= 256;
+      entry = {
+        raw,
+        etag,
+        gzip: compressible ? zlib.gzipSync(raw, { level: 6 }) : null,
+        brotli: compressible ? zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6 } }) : null
+      };
+      if (staticCache.size < 128) staticCache.set(cacheKey, entry);
+    }
+    if (etagMatches(req.headers['if-none-match'], entry.etag)) {
+      res.writeHead(304, { 'ETag': entry.etag, 'Cache-Control': 'public, no-cache', 'Vary': 'Accept-Encoding' });
+      return res.end();
+    }
+    const accept = req.headers['accept-encoding'] || '';
+    let body = entry.raw, encoding;
+    if (entry.brotli && /\bbr\b/.test(accept)) {
+      body = entry.brotli; encoding = 'br';
+    } else if (entry.gzip && /\bgzip\b/.test(accept)) {
+      body = entry.gzip; encoding = 'gzip';
+    }
+    const headers = {
+      'Content-Type': type,
+      'Content-Length': body.length,
+      'ETag': entry.etag,
+      'Cache-Control': 'public, no-cache',
+      'Vary': 'Accept-Encoding'
+    };
+    if (encoding) headers['Content-Encoding'] = encoding;
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') return res.end();
+    return res.end(body);
   }
   const oauthReady = !!(config.clientId && config.clientSecret && config.ownerId);
   const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
@@ -422,6 +469,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         route === '/room-protocol.js' ||
         route === '/picture.js' ||
         route === '/engine.js' ||
+        route === '/playback-timing.js' ||
+        route === '/sync-quality.js' ||
         route.startsWith('/shared/sync/')
       );
       if (!isStaticAsset && !throttle(clientAddress(req) || 'local', 180)) return json(res, 429, { error: 'Too many requests; try again shortly' });
@@ -450,11 +499,11 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
       const plexDeliveryOrigins = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' && watchRoutes.deliveryOrigins ? await watchRoutes.deliveryOrigins(req) : (config.plexDelivery?.clientUrl ? [config.plexDelivery.clientUrl] : []);
       const plexOrigin = watchDocument && !activityContext && config.plexDelivery?.mode === 'auto' ? plexDeliveryOrigins.map(origin => ' ' + origin).join('') : '';
       if (player) res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'${scrollbarStyleNonce ? ` 'nonce-${scrollbarStyleNonce}'` : ''}; font-src 'self'; connect-src 'self'${plexOrigin}; media-src 'self' blob:${plexOrigin}; worker-src 'self' blob:; img-src 'self' blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com; form-action 'self'`);
-      if(req.method==='GET' && subtitleAsset){
-        const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript';
+      if(['GET', 'HEAD'].includes(req.method) && subtitleAsset){
+        const name=subtitleAsset[1],type=name.endsWith('.wasm')?'application/wasm':name.endsWith('.woff2')?'font/woff2':'text/javascript; charset=utf-8';
         if(name.endsWith('.js'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:");
         const content = await readAsset(path.join(__dirname,'../web/vendor/subtitles',name));
-        res.writeHead(200,{'Content-Type':type});return res.end(content);
+        return sendStatic(req, res, content, type, route);
       }
       // Synthetic samples only. Production requires current admission and active
       // Admin mode, including when requested with an Activity bearer identity.
@@ -498,59 +547,57 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(content);
       }
-      if (req.method === 'GET' && branding[route]) {
+      if (['GET', 'HEAD'].includes(req.method) && branding[route]) {
         const [file, type] = branding[route];
         const content = await readAsset(path.join(publicDir, 'assets', file));
-        res.writeHead(200, { 'Content-Type': type });
-        return res.end(content);
+        return sendStatic(req, res, content, type, route);
       }
-      if (req.method === 'GET' && route === '/theme.js') {
-        const [wordmark, favicon, themeScript] = await Promise.all([
-          readAsset(path.join(publicDir,'assets',branding['/assets/branding/uburoom-wordmark-brand.svg'][0]),'utf8'),
-          readAsset(path.join(publicDir,'assets',branding['/favicon.svg'][0]),'utf8'),
-          readAsset(path.join(publicDir,'theme.js'),'utf8')
-        ]);
-        const sources={
-          '/assets/branding/uburoom-wordmark-brand.svg': wordmark,
-          '/favicon.svg': favicon
-        };
-        res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});
-        return res.end('window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+themeScript);
+      if (['GET', 'HEAD'].includes(req.method) && route === '/theme.js') {
+        if (!themeJsCached) {
+          const [wordmark, favicon, themeScript] = await Promise.all([
+            readAsset(path.join(publicDir,'assets',branding['/assets/branding/uburoom-wordmark-brand.svg'][0]),'utf8'),
+            readAsset(path.join(publicDir,'assets',branding['/favicon.svg'][0]),'utf8'),
+            readAsset(path.join(publicDir,'theme.js'),'utf8')
+          ]);
+          const sources={
+            '/assets/branding/uburoom-wordmark-brand.svg': wordmark,
+            '/favicon.svg': favicon
+          };
+          themeJsCached = 'window.uburoomBrandAssets='+JSON.stringify(sources)+';\n'+themeScript;
+        }
+        return sendStatic(req, res, themeJsCached, 'text/javascript; charset=utf-8', route);
       }
-      if (req.method === 'GET' && route === '/playback-timing.js') {
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-        return res.end(BROWSER_TIMING_SCRIPT);
+      if (['GET', 'HEAD'].includes(req.method) && route === '/playback-timing.js') {
+        return sendStatic(req, res, BROWSER_TIMING_SCRIPT, 'text/javascript; charset=utf-8', route);
       }
-      if (req.method === 'GET' && route === '/sync-quality.js') {
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-        return res.end(BROWSER_QUALITY_SCRIPT);
+      if (['GET', 'HEAD'].includes(req.method) && route === '/sync-quality.js') {
+        return sendStatic(req, res, BROWSER_QUALITY_SCRIPT, 'text/javascript; charset=utf-8', route);
       }
-      if (req.method === 'GET' && route.startsWith('/shared/sync/')) {
+      if (['GET', 'HEAD'].includes(req.method) && route.startsWith('/shared/sync/')) {
         const modName = route.slice('/shared/sync/'.length);
         if (SHARED_SYNC_MODULES.has(modName)) {
           const content = await readAsset(path.join(__dirname, '../shared/sync', modName));
-          res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-          return res.end(content);
+          return sendStatic(req, res, content, 'text/javascript; charset=utf-8', route);
         }
       }
-      if (req.method === 'GET' && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
+      if (['GET', 'HEAD'].includes(req.method) && ['/room-protocol.js', '/picture.js', '/engine.js'].includes(route)) {
         const content = await readAsset(path.join(__dirname, '../shared', route.slice(1)), 'utf8');
-        const bodyOut = route === '/room-protocol.js' ? BROWSER_SYNC_PROTOCOL_PREFIX + content : content;
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); return res.end(bodyOut);
+        const bodyOut = route === '/room-protocol.js' ? (roomProtocolCached ||= BROWSER_SYNC_PROTOCOL_PREFIX + content) : content;
+        return sendStatic(req, res, bodyOut, 'text/javascript; charset=utf-8', route);
       }
-      if (req.method === 'GET' && diagnosticAssets[route]) {
+      if (['GET', 'HEAD'].includes(req.method) && diagnosticAssets[route]) {
         const [file, type] = diagnosticAssets[route];
         const content = await readAsset(path.join(__dirname, '../diagnostics', file));
-        res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' });
-        return res.end(content);
+        return sendStatic(req, res, content, type + '; charset=utf-8', route);
       }
-      if (req.method === 'GET' && route === '/vendor/hls.js') {
+      if (['GET', 'HEAD'].includes(req.method) && route === '/vendor/hls.js') {
         const content = await readAsset(path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js'));
-        res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(content);
+        return sendStatic(req, res, content, 'text/javascript; charset=utf-8', route);
       }
       const isWatchHtml = route === '/' || Boolean(roomRouteMatch) || Boolean(joinRouteMatch) || (assets[route] && assets[route][0] === 'watch.html');
-      if (req.method === 'GET' && (assets[route] || route === '/' || Boolean(roomRouteMatch) || Boolean(joinRouteMatch))) {
+      if (['GET', 'HEAD'].includes(req.method) && (assets[route] || route === '/' || Boolean(roomRouteMatch) || Boolean(joinRouteMatch))) {
         if(isWatchHtml){
+          if (req.method === 'HEAD') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(); }
           const [initial, template] = await Promise.all([
             watchRoutes.bootstrap(req),
             readAsset(path.join(publicDir,'watch.html'),'utf8')
@@ -562,7 +609,7 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
         const [file, type] = assets[route];
         const content = await readAsset(path.join(publicDir, file));
         const contentType = type.startsWith('font/') ? type : type + '; charset=utf-8';
-        res.writeHead(200, { 'Content-Type': contentType }); return res.end(content);
+        return sendStatic(req, res, content, contentType, route);
       }
       if (req.method === 'GET' && route === '/api/me') {
         const login = await user(req);

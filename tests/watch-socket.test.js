@@ -249,6 +249,18 @@ test('cookie socket authentication requires CSRF and logout invalidates the acti
   const publicInitial=JSON.parse(/<script id="watch-bootstrap" type="application\/json">(.*?)<\/script>/.exec(signedOut.raw)[1]);
   assert.equal(publicInitial.me.status,401);assert.equal(publicInitial.rooms,undefined,'Signed-out pages never embed room data');
   assert.equal((await http('/api/logout',{Cookie:cookie,'X-CSRF-Token':identity.csrf},{})).status,200);
+  const staticRes=await http('/watch.js',{'Accept-Encoding':'br'});
+  assert.equal(staticRes.headers['content-encoding'],'br');
+  assert.equal(staticRes.headers['cache-control'],'public, no-cache');
+  assert.equal(staticRes.headers['vary'],'Accept-Encoding');
+  assert.ok(staticRes.headers['etag']);
+  const etag=staticRes.headers['etag'];
+  const cachedRes=await http('/watch.js',{'If-None-Match':etag});
+  assert.equal(cachedRes.status,304);
+  assert.equal(cachedRes.headers['etag'],etag);
+  assert.equal(cachedRes.raw,'');
+  const gzipRes=await http('/watch.js',{'Accept-Encoding':'gzip'});
+  assert.equal(gzipRes.headers['content-encoding'],'gzip');
   const revoked=once(good.ws,'close');good.ws.send(JSON.stringify({type:'clock',id:100}));assert.equal((await revoked)[0],4003);
 });
 
