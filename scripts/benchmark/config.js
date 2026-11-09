@@ -281,42 +281,61 @@ function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
       throw new Error(`Output directory cannot point to project root or source directories: ${requestedPath}`);
     }
 
-    if (!fs.existsSync(target)) {
-      fs.mkdirSync(target, { recursive: true });
-      return { dir: target, collisionAvoided: false };
+    // Ensure parent directory exists
+    const parent = path.dirname(target);
+    fs.mkdirSync(parent, { recursive: true });
+
+    // Atomic allocation loop to prevent check-then-create race
+    let counter = 0;
+    while (true) {
+      const candidate = counter === 0 ? target : `${target}-${counter}`;
+      try {
+        fs.mkdirSync(candidate);
+        return { dir: candidate, collisionAvoided: counter > 0, original: target };
+      } catch (err) {
+        if (err.code === 'EEXIST') {
+          // If the directory exists but is completely empty, it can be safely reused
+          try {
+            if (fs.readdirSync(candidate).length === 0) {
+              return { dir: candidate, collisionAvoided: counter > 0, original: target };
+            }
+          } catch {}
+          counter++;
+          continue;
+        }
+        throw err;
+      }
     }
-
-    // Target exists: if empty, reuse it
-    const entries = fs.readdirSync(target);
-    if (entries.length === 0) {
-      return { dir: target, collisionAvoided: false };
-    }
-
-    // Target contains files: find a unique sibling to prevent overwriting
-    let counter = 1;
-    let safeDir;
-    do {
-      safeDir = `${target}-${counter++}`;
-    } while (fs.existsSync(safeDir) && fs.readdirSync(safeDir).length > 0);
-
-    fs.mkdirSync(safeDir, { recursive: true });
-    return { dir: safeDir, collisionAvoided: true, original: target };
   }
 
   // Default output directory under artifacts/transcode-benchmark/run-<timestamp>-<pid>
   const artifactsDir = path.resolve(resolvedCwd, 'artifacts', 'transcode-benchmark');
+  fs.mkdirSync(artifactsDir, { recursive: true });
+
   const now = new Date();
   const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const baseName = `run-${timestamp}-${process.pid}`;
-  let target = path.join(artifactsDir, baseName);
 
-  let counter = 1;
-  while (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
-    target = path.join(artifactsDir, `${baseName}-${counter++}`);
+  let counter = 0;
+  while (true) {
+    const candidateName = counter === 0 ? baseName : `${baseName}-${counter}`;
+    const candidatePath = path.join(artifactsDir, candidateName);
+    try {
+      fs.mkdirSync(candidatePath);
+      return { dir: candidatePath, collisionAvoided: false };
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          if (fs.readdirSync(candidatePath).length === 0) {
+            return { dir: candidatePath, collisionAvoided: false };
+          }
+        } catch {}
+        counter++;
+        continue;
+      }
+      throw err;
+    }
   }
-
-  fs.mkdirSync(target, { recursive: true });
-  return { dir: target, collisionAvoided: false };
 }
 
 module.exports = {

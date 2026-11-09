@@ -54,6 +54,11 @@ function inspectSourceVideo(ffprobePath, filePath) {
   }
 
   const hdrInfo = classifyHdr(videoStream);
+  const isVfr = Boolean(
+    videoStream.r_frame_rate &&
+    videoStream.avg_frame_rate &&
+    videoStream.r_frame_rate !== videoStream.avg_frame_rate
+  );
 
   return {
     filePath: path.resolve(filePath),
@@ -71,7 +76,8 @@ function inspectSourceVideo(ffprobePath, filePath) {
       colorPrimaries: videoStream.color_primaries || 'unknown',
       colorTransfer: videoStream.color_transfer || 'unknown',
       frameRate: videoStream.r_frame_rate || videoStream.avg_frame_rate || '30/1',
-      fps: Math.round(fps * 100) / 100
+      fps: Math.round(fps * 100) / 100,
+      isVfr
     },
     audio: {
       available: audioStreams.length > 0,

@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = '1.0.0';
+const SCHEMA_VERSION = '2.0.0';
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -40,7 +40,7 @@ function sanitizeText(text) {
 
   // Strip URLs with tokens, IPs, or credentials
   s = s.replace(/https?:\/\/[^\s"']+/gi, '[url]');
-  s = s.replace(/(?:token|key|secret|password|auth)=[^&\s"']+/gi, '$1=[REDACTED]');
+  s = s.replace(/((?:token|key|secret|password|auth))=[^&\s"']+/gi, '$1=[REDACTED]');
 
   return s;
 }
@@ -111,6 +111,8 @@ function generateCsvReport(benchmarkData, outputPath) {
   const cleanData = sanitizeForExport(benchmarkData);
   const headers = [
     'Run',
+    'Concurrency',
+    'WorkerId',
     'ConfigID',
     'Mode',
     'ProcessingType',
@@ -137,6 +139,12 @@ function generateCsvReport(benchmarkData, outputPath) {
     'FrameCoveragePct',
     'AVStartDeltaSec',
     'AVEndDeltaSec',
+    'VMAF_Mean',
+    'VMAF_P1',
+    'VMAF_Min',
+    'SSIM',
+    'PSNR_dB',
+    'CAMBI',
     'FallbackEvents',
     'Errors'
   ];
@@ -145,6 +153,7 @@ function generateCsvReport(benchmarkData, outputPath) {
     const perf = r.performance || {};
     const q = r.quality || {};
     const val = r.validation || {};
+    const qm = r.qualityMetrics || {};
     const fallbacks = (r.fallbackEvents || (r.fallback ? [r.fallback] : []))
       .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
       .join('; ');
@@ -165,6 +174,8 @@ function generateCsvReport(benchmarkData, outputPath) {
 
     return [
       r.runIndex || 1,
+      r.concurrency || 1,
+      r.workerId || 1,
       r.configId,
       r.mode,
       perf.processingType || 'production-like',
@@ -191,6 +202,12 @@ function generateCsvReport(benchmarkData, outputPath) {
       frameCov,
       avStart,
       avEnd,
+      qm.vmaf?.mean || '',
+      qm.vmaf?.p1 || '',
+      qm.vmaf?.min || '',
+      qm.ssim?.mean || '',
+      qm.psnr?.mean || '',
+      qm.cambi?.mean || '',
       fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None',
       err ? `"${err.replace(/"/g, '""')}"` : ''
     ].join(',');
@@ -220,7 +237,8 @@ function buildSpeedChartSvg(results) {
     const speed = r.performance?.speedMultiplier || 0;
     const barW = Math.max(4, Math.round((speed / maxSpeed) * chartWidth));
     const runTag = r.runIndex ? ` [R${r.runIndex}]` : '';
-    const label = `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]${runTag}`;
+    const workerTag = r.workerId && r.concurrency && r.concurrency > 1 ? ` (W${r.workerId})` : '';
+    const label = `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]${runTag}${workerTag}`;
     const color = speed >= 1.2 ? '#44C78A' : speed >= 1.0 ? '#E8B45C' : '#ff9ca1';
 
     barsSvg += `
@@ -289,6 +307,116 @@ function buildChunkLatencySvg(chunkResults, chunkDuration = 6) {
 }
 
 /**
+ * Builds Quality vs Bitrate / Performance Tradeoff Chart (Scatter plot)
+ */
+function buildQualityPerformanceSvg(results) {
+  const scored = results.filter(r => r.qualityMetrics?.vmaf?.mean > 0);
+  if (!scored.length) return '';
+
+  const width = 740;
+  const height = 300;
+  const padL = 60;
+  const padR = 40;
+  const padT = 30;
+  const padB = 40;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+
+  const maxBitrate = Math.max(12000, ...scored.map(r => r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || 8000));
+  const minVmaf = Math.max(0, Math.floor(Math.min(...scored.map(r => r.qualityMetrics.vmaf.min || 70)) / 10) * 10);
+  const maxVmaf = 100;
+
+  const codecColors = {
+    av1: '#FF9954',
+    vp9: '#38BDF8',
+    vp8: '#A78BFA'
+  };
+
+  let pointsSvg = '';
+  scored.forEach(r => {
+    const qm = r.qualityMetrics;
+    const bitrate = r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || 8000;
+    const vmaf = qm.vmaf.mean;
+
+    const x = padL + Math.round((bitrate / maxBitrate) * plotW);
+    const y = padT + plotH - Math.round(((vmaf - minVmaf) / (maxVmaf - minVmaf)) * plotH);
+    const color = codecColors[r.codec] || '#FF9954';
+    const efficiency = (vmaf / (bitrate / 1000)).toFixed(1);
+
+    pointsSvg += `
+      <circle cx="${x}" cy="${y}" r="7" fill="${color}" stroke="#0E1117" stroke-width="2" opacity="0.95">
+        <title>${r.codec.toUpperCase()} (${r.actualEncoder}) ${r.quality?.label || r.quality?.id}&#10;VMAF: ${vmaf.toFixed(1)} (p1: ${qm.vmaf.p1})&#10;Bitrate: ${bitrate} kbps&#10;Efficiency: ${efficiency} VMAF/Mbps&#10;Speed: ${r.performance?.speedMultiplier}x</title>
+      </circle>
+      <text x="${x + 10}" y="${y + 4}" fill="#F8F7F4" font-size="11" font-family="Inter,sans-serif">${r.codec.toUpperCase()} ${r.quality?.id || ''} (${vmaf.toFixed(1)})</text>
+    `;
+  });
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" xmlns="http://www.w3.org/2000/svg" style="max-width:${width}px;">
+      <!-- Grid lines -->
+      <line x1="${padL}" y1="${padT + plotH}" x2="${width - padR}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <!-- Axis Labels -->
+      <text x="${width - padR}" y="${padT + plotH + 30}" text-anchor="end" fill="#AAB0BC" font-size="11" font-family="Inter,sans-serif">Bitrate (kbps) &rarr;</text>
+      <text x="${padL}" y="${padT - 10}" text-anchor="start" fill="#AAB0BC" font-size="11" font-family="Inter,sans-serif">&uarr; VMAF Quality Score (0-100)</text>
+      ${pointsSvg}
+    </svg>
+  `;
+}
+
+/**
+ * Builds SVG Timeline Chart showing frame-level VMAF scores over sample duration
+ */
+function buildTimelineSvg(timeline, worstIntervals = []) {
+  if (!timeline || timeline.length === 0) return '';
+  const width = 740;
+  const height = 180;
+  const padL = 45;
+  const padR = 20;
+  const padT = 20;
+  const padB = 30;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+
+  const valid = timeline.filter(f => typeof f.vmaf === 'number');
+  if (valid.length === 0) return '';
+
+  const maxTime = Math.max(1, valid[valid.length - 1].timestampSec);
+  const minScore = Math.max(0, Math.floor(Math.min(...valid.map(f => f.vmaf)) / 10) * 10);
+  const maxScore = 100;
+
+  const points = valid.map(f => {
+    const x = padL + (f.timestampSec / maxTime) * plotW;
+    const y = padT + plotH - ((f.vmaf - minScore) / (maxScore - minScore)) * plotH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  // Highlight worst intervals
+  let intervalSvg = '';
+  worstIntervals.forEach(wi => {
+    const x1 = padL + (wi.startSec / maxTime) * plotW;
+    const x2 = padL + (wi.endSec / maxTime) * plotW;
+    intervalSvg += `
+      <rect x="${x1}" y="${padT}" width="${Math.max(4, x2 - x1)}" height="${plotH}" fill="#FF7197" opacity="0.15">
+        <title>Worst interval: ${wi.startSec}s - ${wi.endSec}s (Avg VMAF: ${wi.averageScore})</title>
+      </rect>
+    `;
+  });
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" xmlns="http://www.w3.org/2000/svg" style="max-width:${width}px;">
+      <line x1="${padL}" y1="${padT + plotH}" x2="${width - padR}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <text x="${padL - 6}" y="${padT + 10}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">${maxScore}</text>
+      <text x="${padL - 6}" y="${padT + plotH}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">${minScore}</text>
+      ${intervalSvg}
+      <polyline points="${points}" fill="none" stroke="#FF9954" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="${width - padR}" y="${padT + plotH + 20}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">Time (${maxTime.toFixed(1)}s) &rarr;</text>
+    </svg>
+  `;
+}
+
+/**
  * Generates the complete, standalone offline HTML report.
  */
 function generateHtmlReport(benchmarkData, outputPath) {
@@ -297,21 +425,19 @@ function generateHtmlReport(benchmarkData, outputPath) {
   const src = cleanData.source || {};
   const results = cleanData.results || [];
   const probed = cleanData.probedEncoders || [];
+  const concurrencySummary = cleanData.concurrencySummary;
 
+  const passResults = results.filter(r => r.status === 'pass' && r.output?.assembledFile);
+  const referenceVideoRel = src.referenceVideoRelative ? src.referenceVideoRelative.replace(/\\/g, '/') : null;
+  const chunkedRuns = results.filter(r => r.mode === 'chunked' && r.status === 'pass' && r.output?.chunks?.length);
+  const scoredRuns = results.filter(r => r.qualityMetrics?.vmaf?.mean > 0);
+
+  // Statistics
   const passedCount = results.filter(r => r.status === 'pass').length;
   const failedCount = results.filter(r => r.status === 'fail').length;
   const skippedCount = results.filter(r => r.status === 'skipped').length;
-
-  const speedChartSvg = buildSpeedChartSvg(results.filter(r => r.status === 'pass'));
-  const chunkedRuns = results.filter(r => r.mode === 'chunked' && r.output?.chunks?.length);
-
-  const referenceVideoRel = src.referenceVideoRelative ? src.referenceVideoRelative.replace(/\\/g, '/') : null;
-  const passResults = results.filter(r => r.status === 'pass' && r.output?.assembledFile);
-  const firstPassResult = passResults[0] || null;
-  const firstTargetRel = firstPassResult ? firstPassResult.output.assembledFile.replace(/\\/g, '/') : null;
-
-  const hasMultipleRuns = results.some(r => r.runIndex > 1);
-  const screenshots = cleanData.screenshots || [];
+  const totalCount = results.length;
+  const hasMultipleRuns = (cleanData.options?.runs || 1) > 1;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -322,234 +448,414 @@ function generateHtmlReport(benchmarkData, outputPath) {
   <title>uburoom Transcoding Benchmark Report</title>
   <style>
     :root {
-      --background: #101217;
-      --card: #1B1E26;
-      --elevated: #292E38;
-      --border: #393F4D;
+      --bg: #0E1117;
+      --card-bg: #181C24;
+      --card-border: #242A38;
+      --card-hover: #1E232E;
+      --primary: #FF9954;
+      --primary-hover: #FFAA6B;
+      --secondary: #FF7197;
+      --accent: #FF9954;
       --text: #F8F7F4;
       --muted: #AAB0BC;
-      --orange: #FF9954;
-      --pink: #FF7197;
-      --primary: var(--orange);
-      --secondary: var(--pink);
       --success: #44C78A;
-      --warning: #E8B45C;
-      --error: #ff9ca1;
-      --danger: #b6263c;
-      --good: #A5C96B;
-      color-scheme: dark;
-      font: 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-      color: var(--text);
-      background: var(--background);
+      --success-bg: rgba(68,199,138,0.12);
+      --error: #FF7197;
+      --error-bg: rgba(255,113,151,0.12);
+      --warn: #E8B45C;
+      --warn-bg: rgba(232,180,92,0.12);
+      --font-family: 'Inter', system-ui, -apple-system, sans-serif;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { padding: 24px 20px 60px; max-width: 1400px; margin: 0 auto; }
-    
-    header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
-    .header-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-    h1 { font-size: 24px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 12px; }
-    h1 .badge { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 20%, transparent); border: 1px solid var(--primary); color: var(--primary); }
-    .header-stats { display: flex; gap: 10px; align-items: center; }
-    .stat-pill { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
-    .stat-pill.passed { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); border: 1px solid var(--success); }
-    .stat-pill.failed { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); border: 1px solid var(--error); }
-    .stat-pill.skipped { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); border: 1px solid var(--warning); }
-    .timestamp { font-size: 13px; color: var(--muted); }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-family);
+      line-height: 1.5;
+      padding: 32px 24px;
+      -webkit-font-smoothing: antialiased;
+    }
 
-    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; }
-    .card h2 { font-size: 15px; font-weight: 600; color: var(--primary); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
-    .info-list dt { font-size: 12px; color: var(--muted); margin-top: 8px; }
-    .info-list dd { font-size: 14px; font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+    .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
 
-    .notice-box { background: color-mix(in srgb, var(--elevated) 80%, var(--card)); border-left: 4px solid var(--primary); border-radius: 8px; padding: 12px 16px; margin: 16px 0 24px; font-size: 13px; color: var(--text); }
-    .notice-box.warning { border-left-color: var(--warning); background: color-mix(in srgb, #E8B45C 10%, var(--card)); }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 16px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+    }
 
-    section { margin-top: 36px; }
-    section > h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+    h1 { font-size: 26px; font-weight: 600; color: var(--text); letter-spacing: -0.5px; }
+    h2 { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 16px; letter-spacing: -0.3px; }
+    h3 { font-size: 15px; font-weight: 600; color: var(--text); }
+    p { color: var(--muted); font-size: 14px; }
 
-    /* Filters */
-    .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
-    .filter-btn { background: var(--elevated); border: 1px solid var(--border); color: var(--muted); padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
-    .filter-btn:hover { background: color-mix(in srgb, var(--elevated), var(--text) 8%); color: var(--text); }
-    .filter-btn.active { background: color-mix(in srgb, var(--primary) 15%, var(--elevated)); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+    .header-badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--muted);
+    }
+    .badge.highlight { color: var(--primary); border-color: rgba(255,153,84,0.3); background: rgba(255,153,84,0.08); }
+    .badge.stat-pass { color: var(--success); border-color: rgba(68,199,138,0.3); background: var(--success-bg); font-weight: 600; }
+    .badge.stat-fail { color: var(--error); border-color: rgba(255,113,151,0.3); background: var(--error-bg); font-weight: 600; }
+    .badge.stat-skip { color: var(--warn); border-color: rgba(232,180,92,0.3); background: var(--warn-bg); font-weight: 600; }
 
-    /* Table */
-    .table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-    th { background: var(--elevated); color: var(--muted); font-size: 12px; font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+    .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .stat-val { font-size: 18px; font-weight: 600; color: var(--text); }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .pill.success { background: var(--success-bg); color: var(--success); border: 1px solid rgba(68,199,138,0.3); }
+    .pill.error { background: var(--error-bg); color: var(--error); border: 1px solid rgba(255,113,151,0.3); }
+    .pill.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(232,180,92,0.3); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    th {
+      background: #14171F;
+      color: var(--muted);
+      font-weight: 600;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--card-border);
+      cursor: pointer;
+      user-select: none;
+    }
     th:hover { color: var(--text); }
-    td { padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent); vertical-align: middle; white-space: nowrap; }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: color-mix(in srgb, var(--elevated) 40%, transparent); }
+    td { padding: 12px 14px; border-bottom: 1px solid var(--card-border); color: var(--text); }
+    tr:hover td { background: var(--card-hover); }
 
-    .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 500; }
-    .pill.success { background: color-mix(in srgb, var(--success) 15%, transparent); border: 1px solid var(--success); color: var(--success); }
-    .pill.warn { background: color-mix(in srgb, var(--warning) 15%, transparent); border: 1px solid var(--warning); color: var(--warning); }
-    .pill.error { background: color-mix(in srgb, var(--error) 15%, transparent); border: 1px solid var(--error); color: var(--error); }
-    .pill.info { background: color-mix(in srgb, var(--primary) 15%, transparent); border: 1px solid var(--primary); color: var(--primary); }
+    .file-link { color: var(--primary); text-decoration: none; font-weight: 500; }
+    .file-link:hover { text-decoration: underline; color: var(--primary-hover); }
 
-    /* Synchronized Player */
-    .player-workspace { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-top: 16px; }
-    .player-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
-    @media (max-width: 900px) { .player-grid { grid-template-columns: 1fr; } }
-    .player-box { background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; }
-    .player-box video { width: 100%; height: 100%; object-fit: contain; }
-    .player-label { position: absolute; top: 10px; left: 10px; background: rgba(16, 18, 23, 0.88); backdrop-filter: blur(4px); padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; z-index: 2; border: 1px solid var(--border); }
-    .player-sublabel { font-size: 11px; color: var(--muted); font-weight: normal; margin-top: 2px; }
-    
-    .player-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 16px; background: var(--elevated); border-radius: 10px; margin-top: 12px; }
-    .player-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .player-btn:hover { background: color-mix(in srgb, var(--primary) 15%, var(--card)); border-color: var(--primary); }
-    .seek-slider { flex: 1; min-width: 140px; cursor: pointer; accent-color: var(--primary); }
-    .time-readout { font-size: 13px; font-family: monospace; color: var(--muted); }
+    .filter-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
 
-    .selector-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 14px; background: var(--elevated); border-radius: 8px; }
-    .custom-select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+    button.filter-btn, button.player-btn {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    button.filter-btn:hover, button.player-btn:hover {
+      background: var(--card-hover);
+      border-color: var(--primary);
+    }
+    button.filter-btn.active, button.player-btn.active {
+      background: rgba(255,153,84,0.12);
+      border-color: var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+    button.player-btn.primary {
+      background: var(--primary);
+      color: #0E1117;
+      border-color: var(--primary);
+      font-weight: 600;
+    }
+    button.player-btn.primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .player-workspace {
+      background: #12151D;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .selector-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .custom-select {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+    }
     .custom-select:focus { border-color: var(--primary); }
 
-    /* Wipe / Split Comparison */
-    .wipe-container { position: relative; width: 100%; max-width: 960px; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); margin: 0 auto; }
-    .wipe-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
-    .wipe-top-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; clip-path: polygon(0 0, var(--wipe-pct, 50%) 0, var(--wipe-pct, 50%) 100%, 0 100%); }
-    .wipe-divider { position: absolute; top: 0; bottom: 0; left: var(--wipe-pct, 50%); width: 3px; background: var(--primary); transform: translateX(-50%); pointer-events: none; box-shadow: 0 0 8px rgba(0,0,0,0.8); }
-    .wipe-slider-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; z-index: 10; }
+    .player-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 800px) {
+      .player-grid { grid-template-columns: 1fr; }
+    }
 
-    /* Screenshots */
-    .screenshots-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
-    .screenshot-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .screenshot-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; border-bottom: 1px solid var(--border); cursor: zoom-in; }
-    .screenshot-caption { padding: 10px 14px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+    .player-box {
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      position: relative;
+    }
+    .player-box video {
+      width: 100%;
+      height: auto;
+      display: block;
+      max-height: 440px;
+      object-fit: contain;
+    }
+    .player-label {
+      background: rgba(14,17,23,0.85);
+      backdrop-filter: blur(4px);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
 
-    /* Zoom Viewer */
-    .zoom-active { transform: scale(2.2); cursor: move; }
+    /* Wipe Container */
+    .wipe-container {
+      position: relative;
+      width: 100%;
+      max-height: 440px;
+      overflow: hidden;
+      background: #000;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+    }
+    .wipe-container video {
+      width: 100%;
+      height: auto;
+      display: block;
+      max-height: 440px;
+      object-fit: contain;
+    }
+    .wipe-overlay {
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      width: 50%;
+      overflow: hidden;
+      border-right: 2px solid var(--primary);
+    }
+    .wipe-overlay video {
+      width: 100%;
+      max-height: 440px;
+      object-fit: contain;
+    }
+    .wipe-slider {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      opacity: 0;
+      cursor: ew-resize;
+      z-index: 10;
+    }
 
-    /* Links */
-    a.file-link { color: var(--primary); text-decoration: none; font-weight: 500; }
-    a.file-link:hover { text-decoration: underline; }
+    .controls-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: var(--card-bg);
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+    }
+    .seek-slider {
+      flex: 1;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .time-display { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); min-width: 90px; }
+
+    /* Zoom */
+    .zoomed video {
+      transform: scale(2);
+      transform-origin: center center;
+    }
+
+    .blind-box {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      background: #141720;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .star-rating {
+      display: inline-flex;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .star {
+      font-size: 20px;
+      color: #393F4D;
+      transition: color 0.1s;
+    }
+    .star.selected { color: var(--primary); }
   </style>
 </head>
 <body>
+<div class="container">
 
+  <!-- Header -->
   <header>
-    <div class="header-top">
-      <h1>
-        uburoom Transcoding Benchmark
-        <span class="badge">Stage 1</span>
-      </h1>
-      <div class="header-stats">
-        <span class="stat-pill passed">${passedCount} Passed</span>
-        ${failedCount > 0 ? `<span class="stat-pill failed">${failedCount} Failed</span>` : ''}
-        ${skippedCount > 0 ? `<span class="stat-pill skipped">${skippedCount} Skipped</span>` : ''}
-        <span class="timestamp">Generated: ${escapeHtml(new Date().toLocaleString())}</span>
-      </div>
+    <div>
+      <h1>uburoom Transcoding Benchmark Report</h1>
+      <p style="margin-top:4px;">Stage 2: Performance, Sustainable Concurrency &amp; Objective Video Quality</p>
+    </div>
+    <div class="header-badges">
+      <span class="badge stat-pass">${passedCount} Passed</span>
+      ${failedCount > 0 ? `<span class="badge stat-fail">${failedCount} Failed</span>` : ''}
+      ${skippedCount > 0 ? `<span class="badge stat-skip">${skippedCount} Skipped</span>` : ''}
+      <span class="badge highlight">${escapeHtml(cleanData.configProfile)}</span>
+      <span class="badge">Git: ${escapeHtml(env.gitRevision ? env.gitRevision.slice(0, 7) : 'Unknown')}</span>
+      <span class="badge">${new Date(cleanData.generatedAt || Date.now()).toLocaleDateString()}</span>
     </div>
   </header>
 
-  <!-- High-Level Summary Cards -->
-  <div class="summary-grid">
+  <!-- System & Transcoding Summary -->
+  <section class="grid-2">
     <div class="card">
-      <h2>Hardware & System</h2>
-      <dl class="info-list">
-        <dt>CPU</dt>
-        <dd>${escapeHtml(env.cpu?.model)} (${escapeHtml(env.cpu?.cores)} cores)</dd>
-        <dt>GPU</dt>
-        <dd>${escapeHtml(env.gpu || 'Not detected')}</dd>
-        <dt>Platform</dt>
-        <dd>${escapeHtml(env.platform)} (${escapeHtml(env.arch)}), Node ${escapeHtml(env.nodeVersion)}</dd>
-        <dt>RAM</dt>
-        <dd>${escapeHtml(env.memoryFreeMB)} MB free / ${escapeHtml(env.memoryTotalMB)} MB total</dd>
-      </dl>
+      <h2>Host Environment</h2>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">OS / Platform:</span><strong>${escapeHtml(env.platform)} (${escapeHtml(env.arch)})</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">CPU:</span><strong>${escapeHtml(env.cpu?.model)} (${env.cpu?.cores} cores)</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">GPU:</span><strong>${escapeHtml(env.gpu)}</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">RAM:</span><strong>${env.memoryFreeMB} MB free / ${env.memoryTotalMB} MB total</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">FFmpeg:</span><strong style="max-width:320px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(cleanData.tools?.ffmpegVersion)}">${escapeHtml(cleanData.tools?.ffmpegVersion?.split('\n')[0])}</strong></div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Configuration & Processing</h2>
-      <dl class="info-list">
-        <dt>Profile Name</dt>
-        <dd>${escapeHtml(cleanData.configProfile || 'config.yaml')}</dd>
-        <dt>Processing Engine</dt>
-        <dd>Production-Like (Single WebM container with synchronized Opus audio)</dd>
-        <dt>Configured Encoder Setting</dt>
-        <dd>${escapeHtml(cleanData.transcodingSettings?.encoder || 'auto')}</dd>
-        <dt>Hardware Decode / CPU Fallback</dt>
-        <dd>${cleanData.transcodingSettings?.hardwareDecode ? 'Enabled' : 'Disabled'} / ${cleanData.transcodingSettings?.cpuFallback ? 'Enabled' : 'Disabled'}</dd>
-      </dl>
-    </div>
-
-    <div class="card">
-      <h2>Source Video Properties</h2>
-      <dl class="info-list">
-        <dt>Source File</dt>
-        <dd>${escapeHtml(src.fileName || 'Synthetic Reference')}</dd>
-        <dt>Resolution & Cadence</dt>
-        <dd>${escapeHtml(src.video?.resolution)} @ ${escapeHtml(src.video?.fps)} fps (${escapeHtml(src.video?.codec)})</dd>
-        <dt>Color & HDR Classification</dt>
-        <dd>${escapeHtml(src.hdr?.label || 'SDR')}</dd>
-        <dt>Sample Duration</dt>
-        <dd>${escapeHtml(cleanData.sampleDuration || 60)}s (offset ${escapeHtml(cleanData.startOffset || 0)}s)</dd>
-      </dl>
-    </div>
-
-    <div class="card">
-      <h2>FFmpeg & Tools</h2>
-      <dl class="info-list">
-        <dt>FFmpeg Version</dt>
-        <dd>${escapeHtml(cleanData.tools?.ffmpegVersion || 'FFmpeg')}</dd>
-        <dt>FFprobe Version</dt>
-        <dd>${escapeHtml(cleanData.tools?.ffprobeVersion || 'FFprobe')}</dd>
-        <dt>Discovered HW Encoders</dt>
-        <dd>${escapeHtml(probed.filter(p => p.available).map(p => `${p.codec.toUpperCase()} (${p.encoder})`).join(', ') || 'Software only')}</dd>
-      </dl>
-    </div>
-  </div>
-
-  ${src.referenceNotice ? `
-  <div class="notice-box warning">
-    <strong>Viewing Proxy Notice:</strong> ${escapeHtml(src.referenceNotice)}
-  </div>
-  ` : ''}
-
-  <div class="notice-box">
-    <strong>Benchmark Reliability Notice:</strong> These results measure single-stream transcoding throughput, chunk latency, and decoder synchronization on this machine. High single-stream throughput does not prove sustainable multi-viewer capacity under concurrent server load. Stage 2 will introduce multi-stream concurrency and endurance testing.
-  </div>
-
-  <!-- Performance Comparison Chart -->
-  <section>
-    <h2>Throughput Comparison (Real-Time Speed Multiplier)</h2>
-    <div class="card" style="overflow-x: auto;">
-      ${speedChartSvg || '<p style="color:var(--muted)">No successful benchmark results to display.</p>'}
+      <h2>Source Media &amp; Pipeline</h2>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Source File:</span><strong>${escapeHtml(src.fileName)}</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Master Format:</span><strong>${escapeHtml(src.video?.resolution)} @ ${src.video?.fps} fps (${escapeHtml(src.video?.codec)}) [${escapeHtml(src.hdr?.label || 'SDR')}]</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Tested Interval:</span><strong>${cleanData.sampleDuration}s window (starting at ${cleanData.startOffset}s)</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Hardware Decode:</span><strong>${cleanData.transcodingSettings?.hardwareDecode ? 'Enabled' : 'Disabled'}</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Processing Engine:</span><strong style="color:var(--primary);">Production-Like (Single-Container WebM with synchronized Opus audio)</strong></div>
+      </div>
     </div>
   </section>
 
-  <!-- Results Table -->
-  <section>
-    <h2>Configuration Matrix & Performance Results</h2>
-    
-    <div class="filter-bar">
-      <span style="font-size:12px;color:var(--muted);margin-right:6px;">Filter Codec:</span>
-      <button class="filter-btn active" onclick="filterTable('all')">All</button>
-      <button class="filter-btn" onclick="filterTable('av1')">AV1</button>
-      <button class="filter-btn" onclick="filterTable('vp9')">VP9</button>
-      <button class="filter-btn" onclick="filterTable('vp8')">VP8</button>
+  <!-- Sustainable Capacity Summary (if tested) -->
+  ${concurrencySummary ? `
+  <section class="card" style="border-color: rgba(255,153,84,0.4); background: rgba(255,153,84,0.03);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2>Sustainable Transcoding Capacity</h2>
+      <span class="badge highlight">${escapeHtml(concurrencySummary.estimateNotice)}</span>
+    </div>
+    <div class="grid-4" style="margin-bottom:16px;">
+      <div>
+        <div class="stat-label">Highest Sustainable Jobs</div>
+        <div class="stat-val" style="color:var(--success);font-size:24px;">${concurrencySummary.highestSustainableConcurrency || 0} Streams</div>
+      </div>
+      <div>
+        <div class="stat-label">First Failing Concurrency</div>
+        <div class="stat-val" style="color:${concurrencySummary.firstFailingConcurrency ? 'var(--error)' : 'var(--muted)'};">
+          ${concurrencySummary.firstFailingConcurrency ? `${concurrencySummary.firstFailingConcurrency} Streams` : 'None (All Passed)'}
+        </div>
+      </div>
+      <div>
+        <div class="stat-label">Max Tested Concurrency</div>
+        <div class="stat-val">${concurrencySummary.maxTestedConcurrency || 0} Streams</div>
+      </div>
+      <div>
+        <div class="stat-label">Scan Stopping Condition</div>
+        <div class="stat-val" style="font-size:13px;font-weight:500;color:var(--muted);">${escapeHtml(concurrencySummary.stoppingReason || 'Completed')}</div>
+      </div>
+    </div>
+  </section>
+  ` : ''}
+
+  <!-- Quality vs Performance Section (if quality metrics present) -->
+  ${scoredRuns.length > 0 ? `
+  <section class="card">
+    <h2>Objective Video Quality vs. Bitrate Tradeoffs</h2>
+    <p style="margin-bottom:16px;">Compares measured VMAF score against actual bitrate. Evaluated against the untouched master source (not the viewing proxy).</p>
+    ${buildQualityPerformanceSvg(scoredRuns)}
+  </section>
+  ` : ''}
+
+  <!-- Throughput Chart -->
+  <section class="card">
+    <h2>Transcoding Throughput (Real-Time Speed Multiplier)</h2>
+    <p style="margin-bottom:16px;">Speed $\ge$ 1.0x indicates the transcode operates faster than real-time playback.</p>
+    ${buildSpeedChartSvg(passResults)}
+  </section>
+
+  <!-- Detailed Results Table -->
+  <section class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+      <h2>Benchmark Execution Results</h2>
+      <div class="filter-bar" style="margin-bottom:0;">
+        <button class="filter-btn active" onclick="filterCodec('all')">All Codecs</button>
+        <button class="filter-btn" onclick="filterCodec('av1')">AV1</button>
+        <button class="filter-btn" onclick="filterCodec('vp9')">VP9</button>
+        <button class="filter-btn" onclick="filterCodec('vp8')">VP8</button>
+      </div>
     </div>
 
-    <div class="table-container">
+    <div style="overflow-x:auto;">
       <table id="results-table">
         <thead>
           <tr>
             ${hasMultipleRuns ? '<th onclick="sortTable(0)">Run</th>' : ''}
-            <th onclick="sortTable(${hasMultipleRuns ? 1 : 0})">Codec / Mode</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 2 : 1})">Encoder (Actual / Req)</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 3 : 2})">Target Quality</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 4 : 3})">Resolution</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 5 : 4})">Target Bitrate</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 6 : 5})">Actual Bitrate</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 7 : 6})">Speed Multiplier</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 8 : 7})">Effective FPS</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 9 : 8})">1st Chunk</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 10 : 9})">P95 Chunk</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 11 : 10})">Missed Deadlines</th>
-            <th onclick="sortTable(${hasMultipleRuns ? 12 : 11})">Status</th>
+            <th>Codec</th>
+            <th>Encoder</th>
+            <th>Quality</th>
+            <th>Resolution</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 5 : 4})">Bitrate</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 6 : 5})">Speed</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 7 : 6})">FPS</th>
+            ${scoredRuns.length > 0 ? `<th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : ''}
+            <th onclick="sortTable(${hasMultipleRuns ? 8 : 7})">1st Chunk</th>
+            <th>Status</th>
             <th>Playable Output</th>
           </tr>
         </thead>
@@ -557,28 +863,32 @@ function generateHtmlReport(benchmarkData, outputPath) {
           ${results.map(r => {
             const perf = r.performance || {};
             const q = r.quality || {};
+            const qm = r.qualityMetrics || {};
             const speed = perf.speedMultiplier || 0;
             const speedClass = speed >= 1.2 ? 'success' : speed >= 1.0 ? 'warn' : 'error';
             const statusClass = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'warn';
-            
+
             const allFallbacks = r.fallbackEvents || (r.fallback ? [r.fallback] : []);
             const fallbackSummary = allFallbacks.map(f => `${f.type || 'step'}: ${f.from}->${f.to} (${f.reason || ''})`).join('\n');
             const encoderText = allFallbacks.length > 0
-              ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(fallbackSummary)}">Fallback from ${r.requestedEncoder} (${allFallbacks.length})</span>`
+              ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(fallbackSummary)}">Fallback (${allFallbacks.length})</span>`
               : `${r.actualEncoder || '-'} (${r.requestedEncoder})`;
 
             const outLink = r.output?.assembledFile
-              ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play Output</a>`
+              ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play</a>`
               : '<span style="color:var(--muted)">None</span>';
 
             const errTooltip = r.error ? `title="${escapeHtml(r.error)}"` : '';
 
-            // Startup latency display
             const firstChunkText = perf.firstChunkDurationSec
               ? (perf.firstChunkStartupSec && perf.firstChunkStartupSec > perf.firstChunkDurationSec
-                ? `<span title="Startup latency including fallback: ${perf.firstChunkStartupSec}s (chunk encode: ${perf.firstChunkDurationSec.toFixed(2)}s)">${perf.firstChunkDurationSec.toFixed(2)}s <span class="pill warn" style="font-size:10px;">${perf.firstChunkStartupSec.toFixed(2)}s</span></span>`
+                ? `<span title="Startup latency: ${perf.firstChunkStartupSec}s (chunk: ${perf.firstChunkDurationSec.toFixed(2)}s)">${perf.firstChunkDurationSec.toFixed(2)}s</span>`
                 : `${perf.firstChunkDurationSec.toFixed(2)}s`)
               : '-';
+
+            const vmafText = qm.vmaf?.mean ? `<strong>${qm.vmaf.mean.toFixed(1)}</strong> <span style="font-size:11px;color:var(--muted);">(${qm.vmaf.p1?.toFixed(1) || '-'})</span>` : '-';
+            const ssimText = qm.ssim?.mean ? `${qm.ssim.mean.toFixed(3)}` : '-';
+            const psnrText = qm.psnr?.mean ? `${qm.psnr.mean.toFixed(1)} dB` : '-';
 
             return `
               <tr data-codec="${escapeHtml(r.codec)}">
@@ -587,13 +897,11 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 <td>${encoderText}</td>
                 <td>${escapeHtml(q.label || q.id)}</td>
                 <td>${escapeHtml(q.width || '-')}x${escapeHtml(q.height || '-')}</td>
-                <td>${escapeHtml(q.targetBitrateKbps || '-')} kbps</td>
-                <td>${escapeHtml(perf.actualBitrateKbps || '-')} kbps</td>
+                <td>${escapeHtml(perf.actualBitrateKbps || q.targetBitrateKbps || '-')} kbps</td>
                 <td><span class="pill ${speedClass}"><strong>${speed.toFixed(2)}x</strong></span></td>
-                <td>${escapeHtml(perf.effectiveFps || '-')} fps</td>
+                <td>${escapeHtml(perf.effectiveFps || '-')}</td>
+                ${scoredRuns.length > 0 ? `<td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : ''}
                 <td>${firstChunkText}</td>
-                <td>${perf.p95ChunkSec ? perf.p95ChunkSec.toFixed(2) + 's' : '-'}</td>
-                <td>${perf.deadlineMisses > 0 ? `<span class="pill error">${perf.deadlineMisses}</span>` : '0'}</td>
                 <td><span class="pill ${statusClass}" ${errTooltip}>${escapeHtml(r.status.toUpperCase())}</span></td>
                 <td>${outLink}</td>
               </tr>
@@ -604,7 +912,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
     </div>
   </section>
 
-  <!-- Chunk Latency Charts for Chunked Runs -->
+  <!-- Chunk Latency Breakdown -->
   ${chunkedRuns.length ? `
   <section>
     <h2>Chunk Completion Breakdown (6-Second Playback Windows)</h2>
@@ -612,9 +920,9 @@ function generateHtmlReport(benchmarkData, outputPath) {
       ${chunkedRuns.map(cr => `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3>${escapeHtml(cr.codec.toUpperCase())} ${escapeHtml(cr.actualEncoder)} &bull; ${escapeHtml(cr.quality?.label)} &bull; 1st Chunk: ${cr.performance?.firstChunkDurationSec}s &bull; Mean: ${cr.performance?.meanChunkSec}s &bull; P95: ${cr.performance?.p95ChunkSec}s</h3>
+            <h3>${escapeHtml(cr.codec.toUpperCase())} ${escapeHtml(cr.actualEncoder)} &bull; ${escapeHtml(cr.quality?.label)} &bull; Mean: ${cr.performance?.meanChunkSec}s &bull; P95: ${cr.performance?.p95ChunkSec}s</h3>
             <span class="pill ${cr.performance?.deadlineMisses > 0 ? 'error' : 'success'}">
-              ${cr.performance?.deadlineMisses > 0 ? `${cr.performance.deadlineMisses} Deadline Misses` : 'Zero Missed Deadlines'}
+              ${cr.performance?.deadlineMisses > 0 ? `${cr.performance.deadlineMisses} Misses` : 'Zero Missed Deadlines'}
             </span>
           </div>
           ${buildChunkLatencySvg(cr.output.chunks, 6)}
@@ -624,13 +932,30 @@ function generateHtmlReport(benchmarkData, outputPath) {
   </section>
   ` : ''}
 
+  <!-- Quality Timeline & Worst-Moment Inspection -->
+  ${scoredRuns.some(r => r.qualityMetrics?.timeline?.length > 0) ? `
+  <section class="card">
+    <h2>Quality Score Timeline &amp; Worst-Moment Inspector</h2>
+    <p style="margin-bottom:16px;">Frame-level VMAF timeline across the sample duration. Dips indicate potential scene complexity or compression artifacts.</p>
+    ${scoredRuns.filter(r => r.qualityMetrics?.timeline?.length > 0).map(r => `
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h3>${escapeHtml(r.codec.toUpperCase())} (${escapeHtml(r.actualEncoder)}) ${escapeHtml(r.quality?.label || r.quality?.id)} &bull; Mean VMAF: ${r.qualityMetrics.vmaf.mean}</h3>
+          <span style="font-size:12px;color:var(--muted)">Min: ${r.qualityMetrics.vmaf.min} &bull; 1st Percentile: ${r.qualityMetrics.vmaf.p1}</span>
+        </div>
+        ${buildTimelineSvg(r.qualityMetrics.timeline, r.qualityMetrics.worstIntervals)}
+      </div>
+    `).join('')}
+  </section>
+  ` : ''}
+
   <!-- Synchronized Side-by-Side Video Inspection Workspace -->
   ${referenceVideoRel && passResults.length > 0 ? `
   <section>
-    <h2>Synchronized Playback Inspection & Wipe Comparison</h2>
+    <h2>Synchronized Playback Inspection &amp; Wipe Comparison</h2>
     <div class="player-workspace">
       <div class="selector-bar">
-        <label for="target-selector" style="font-weight:600;font-size:13px;color:var(--text);">Select Output to Compare:</label>
+        <label for="target-selector" style="font-weight:600;font-size:13px;color:var(--text);">Select Encoded Output:</label>
         <select id="target-selector" class="custom-select" onchange="switchTargetVideo(this.value)">
           ${passResults.map(r => `
             <option value="${escapeHtml(r.output.assembledFile)}" data-label="${escapeHtml(r.configId)}">${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)}) [${escapeHtml(r.mode)}]${r.runIndex ? ` (Run ${r.runIndex})` : ''}</option>
@@ -647,213 +972,336 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <div id="view-side-by-side" class="player-grid">
         <div class="player-box">
           <div class="player-label">
-            Viewing Proxy (Lossy 8-bit H.264/AAC Preview — Not Untouched Master)
-            <div class="player-sublabel">Source: ${escapeHtml(src.fileName || 'Master Video')} (${escapeHtml(src.video?.resolution)}, ${escapeHtml(src.hdr?.label || 'SDR')})</div>
+            <span>Viewing Proxy (Lossy 8-bit H.264/AAC Preview)</span>
           </div>
-          <video id="player-ref" src="${escapeHtml(referenceVideoRel)}" playsinline preload="metadata"></video>
+          <video id="ref-video-side" src="${escapeHtml(referenceVideoRel)}" preload="metadata" muted playsinline></video>
         </div>
         <div class="player-box">
-          <div class="player-label" id="target-box-label">
-            Transcoded Output: ${escapeHtml(firstPassResult.configId)}
-            <div class="player-sublabel">Native WebM Transcode</div>
+          <div class="player-label">
+            <span id="target-label-side">Selected Encoded Output</span>
           </div>
-          <video id="player-target" src="${escapeHtml(firstTargetRel)}" playsinline preload="metadata"></video>
+          <video id="target-video-side" src="${escapeHtml(passResults[0].output.assembledFile)}" preload="metadata" muted playsinline></video>
         </div>
       </div>
 
-      <!-- Wipe View -->
-      <div id="view-wipe" style="display:none;margin-bottom:14px;">
-        <div class="wipe-container" id="wipe-stage">
-          <video id="wipe-ref" class="wipe-video" src="${escapeHtml(referenceVideoRel)}" playsinline preload="metadata"></video>
-          <div class="wipe-top-wrapper">
-            <video id="wipe-target" class="wipe-video" src="${escapeHtml(firstTargetRel)}" playsinline preload="metadata"></video>
-          </div>
-          <div class="wipe-divider"></div>
-          <input type="range" min="0" max="100" value="50" class="wipe-slider-input" id="wipe-range" oninput="updateWipe(this.value)">
+      <!-- Wipe Comparison View -->
+      <div id="view-wipe" class="wipe-container" style="display:none;">
+        <video id="ref-video-wipe" src="${escapeHtml(referenceVideoRel)}" preload="metadata" muted playsinline></video>
+        <div id="wipe-overlay" class="wipe-overlay">
+          <video id="target-video-wipe" src="${escapeHtml(passResults[0].output.assembledFile)}" preload="metadata" muted playsinline></video>
         </div>
-        <div style="text-align:center;font-size:12px;color:var(--muted);margin-top:8px;">
-          Drag slider horizontally across the video frame to compare viewing proxy (right) and transcoded output (left).
-        </div>
+        <input type="range" min="0" max="100" value="50" class="wipe-slider" oninput="updateWipe(this.value)">
       </div>
 
-      <!-- Unified Controls -->
-      <div class="player-controls">
-        <button class="player-btn" id="play-pause-btn" onclick="togglePlayPause()">Play</button>
-        <input type="range" class="seek-slider" id="seek-bar" min="0" max="100" value="0" step="0.1" oninput="seekVideos(this.value)">
-        <span class="time-readout" id="time-display">0:00 / 0:00</span>
+      <!-- Synchronized Controls -->
+      <div class="controls-bar">
+        <button class="player-btn primary" onclick="togglePlay()" id="btn-play">Play</button>
+        <input type="range" id="seek-bar" class="seek-slider" min="0" max="100" value="0" step="0.1" oninput="onSeekInput(this.value)" onchange="onSeekChange(this.value)">
+        <span id="time-display" class="time-display">0:00 / 0:00</span>
       </div>
     </div>
   </section>
   ` : ''}
 
-  <!-- Screenshots / Contact Sheet -->
-  ${screenshots.length ? `
-  <section>
-    <h2>Visual Frame Inspection (Contact Sheet)</h2>
-    <div class="screenshots-grid">
-      ${screenshots.map(s => `
-        <div class="screenshot-card">
-          <img src="${escapeHtml(s.relativePath)}" alt="${escapeHtml(s.label)}" onclick="window.open('${escapeHtml(s.relativePath)}', '_blank')">
-          <div class="screenshot-caption">
-            <span><strong>${escapeHtml(s.label)}</strong></span>
-            <span>${escapeHtml(s.timestampSeconds)}s</span>
+  <!-- Blind A/B Subjective Testing Workspace -->
+  ${passResults.length >= 2 ? `
+  <section class="card" id="blind-ab-section">
+    <h2>Blind A/B Subjective Quality Comparison</h2>
+    <p style="margin-bottom:16px;">Compare two encoded outputs without knowing which encoder, codec, or bitrate produced them. Rate visual quality, vote your preference, and reveal identities after voting.</p>
+
+    <div class="blind-box">
+      <div class="selector-bar" id="blind-setup-bar">
+        <label for="blind-select-1" style="font-size:13px;font-weight:600;">Candidate 1:</label>
+        <select id="blind-select-1" class="custom-select">
+          ${passResults.map((r, i) => `<option value="${escapeHtml(r.output.assembledFile)}" data-id="${escapeHtml(r.configId)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)})</option>`).join('')}
+        </select>
+        <label for="blind-select-2" style="font-size:13px;font-weight:600;margin-left:12px;">Candidate 2:</label>
+        <select id="blind-select-2" class="custom-select">
+          ${passResults.map((r, i) => `<option value="${escapeHtml(r.output.assembledFile)}" data-id="${escapeHtml(r.configId)}" ${i === 1 ? 'selected' : ''}>${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)})</option>`).join('')}
+        </select>
+        <button class="player-btn primary" onclick="startBlindAB()" style="margin-left:auto;">Start Blind A/B</button>
+      </div>
+
+      <!-- Blind Players Grid -->
+      <div id="blind-players" class="player-grid" style="display:none;">
+        <div class="player-box">
+          <div class="player-label"><span id="blind-label-a">Video A</span></div>
+          <video id="blind-video-a" preload="metadata" muted playsinline></video>
+        </div>
+        <div class="player-box">
+          <div class="player-label"><span id="blind-label-b">Video B</span></div>
+          <video id="blind-video-b" preload="metadata" muted playsinline></video>
+        </div>
+      </div>
+
+      <!-- Blind Playback Controls -->
+      <div id="blind-controls" class="controls-bar" style="display:none;">
+        <button class="player-btn primary" onclick="toggleBlindPlay()" id="btn-blind-play">Play</button>
+        <input type="range" id="blind-seek-bar" class="seek-slider" min="0" max="100" value="0" step="0.1" oninput="onBlindSeek(this.value)">
+        <span id="blind-time" class="time-display">0:00 / 0:00</span>
+      </div>
+
+      <!-- Blind Voting Panel -->
+      <div id="blind-voting" style="display:none;background:#181C24;border:1px solid var(--card-border);padding:16px;border-radius:8px;">
+        <div style="font-weight:600;margin-bottom:12px;">Your Preference:</div>
+        <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+          <button class="player-btn" onclick="submitBlindVote('A')" id="vote-btn-a">Prefer Video A</button>
+          <button class="player-btn" onclick="submitBlindVote('Same')" id="vote-btn-same">No Preference / Same</button>
+          <button class="player-btn" onclick="submitBlindVote('B')" id="vote-btn-b">Prefer Video B</button>
+          <button class="player-btn quiet" onclick="revealBlindIdentities()" id="btn-reveal" style="margin-left:auto;">Reveal Identities</button>
+        </div>
+
+        <div id="blind-reveal-card" style="display:none;padding:14px;border-radius:8px;background:#1E232E;border:1px solid var(--primary);margin-top:12px;">
+          <h3 style="color:var(--primary);margin-bottom:8px;">Identities Revealed:</h3>
+          <div id="blind-reveal-content" style="font-size:13px;line-height:1.6;"></div>
+          <div style="margin-top:12px;">
+            <button class="player-btn" onclick="exportBlindResults()">Export Subjective Results (JSON)</button>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  ` : ''}
+
+  <!-- Screenshots Contact Sheet -->
+  ${cleanData.screenshots && cleanData.screenshots.length > 0 ? `
+  <section class="card">
+    <h2>Screenshot Contact Sheet (Matching Timestamps)</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;margin-top:16px;">
+      ${cleanData.screenshots.map(s => `
+        <div style="background:#000;border:1px solid var(--card-border);border-radius:8px;overflow:hidden;">
+          <div style="padding:6px 10px;background:rgba(20,23,31,0.9);font-size:11px;font-weight:600;color:var(--text);border-bottom:1px solid var(--card-border);">
+            ${escapeHtml(s.label)} (${s.timestampSeconds}s)
+          </div>
+          <a href="${escapeHtml(s.relativePath)}" target="_blank">
+            <img src="${escapeHtml(s.relativePath)}" alt="${escapeHtml(s.label)}" style="width:100%;height:auto;display:block;" loading="lazy">
+          </a>
         </div>
       `).join('')}
     </div>
   </section>
   ` : ''}
 
-  <!-- File Downloads & Raw Outputs -->
-  <section>
-    <h2>Artifacts & Machine-Readable Output Files</h2>
-    <div class="card">
-      <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
-        <li><strong>results.json:</strong> <a class="file-link" href="results.json" target="_blank">View Raw JSON (Schema v${SCHEMA_VERSION})</a></li>
-        <li><strong>results.csv:</strong> <a class="file-link" href="results.csv" target="_blank">Download CSV Summary</a></li>
-        ${referenceVideoRel ? `<li><strong>Viewing Proxy:</strong> <a class="file-link" href="${escapeHtml(referenceVideoRel)}" target="_blank">${escapeHtml(referenceVideoRel)} (Lossy 8-bit SDR Preview)</a></li>` : ''}
-      </ul>
-    </div>
-  </section>
+</div>
 
-  <script>
-    // Filtering
-    function filterTable(codec) {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      const rows = document.querySelectorAll('#results-table tbody tr');
-      rows.forEach(r => {
-        if (codec === 'all' || r.getAttribute('data-codec') === codec) {
-          r.style.display = '';
-        } else {
-          r.style.display = 'none';
-        }
-      });
+<script>
+  let isPlaying = false;
+  let isZoomed = false;
+  let currentMode = 'side-by-side';
+
+  const refSide = document.getElementById('ref-video-side');
+  const targetSide = document.getElementById('target-video-side');
+  const refWipe = document.getElementById('ref-video-wipe');
+  const targetWipe = document.getElementById('target-video-wipe');
+  const wipeOverlay = document.getElementById('wipe-overlay');
+  const seekBar = document.getElementById('seek-bar');
+  const timeDisplay = document.getElementById('time-display');
+  const btnPlay = document.getElementById('btn-play');
+
+  function togglePlay() {
+    isPlaying = !isPlaying;
+    const v1 = currentMode === 'side-by-side' ? refSide : refWipe;
+    const v2 = currentMode === 'side-by-side' ? targetSide : targetWipe;
+    if (!v1 || !v2) return;
+    if (isPlaying) {
+      v1.play(); v2.play();
+      if (btnPlay) btnPlay.textContent = 'Pause';
+    } else {
+      v1.pause(); v2.pause();
+      if (btnPlay) btnPlay.textContent = 'Play';
     }
+  }
 
-    // Sorting
-    let sortAsc = true;
-    function sortTable(colIndex) {
-      const table = document.getElementById('results-table');
-      const tbody = table.querySelector('tbody');
-      const rows = Array.from(tbody.querySelectorAll('tr'));
-      rows.sort((a, b) => {
-        const aVal = a.cells[colIndex].textContent.trim();
-        const bVal = b.cells[colIndex].textContent.trim();
-        const aNum = parseFloat(aVal);
-        const bNum = parseFloat(bVal);
-        if (!isNaN(aNum) && !isNaN(bNum)) {
-          return sortAsc ? aNum - bNum : bNum - aNum;
-        }
-        return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-      });
-      sortAsc = !sortAsc;
-      rows.forEach(r => tbody.appendChild(r));
+  function switchTargetVideo(src) {
+    if (targetSide) targetSide.src = src;
+    if (targetWipe) targetWipe.src = src;
+    const sel = document.getElementById('target-selector');
+    const label = sel ? sel.options[sel.selectedIndex].text : 'Selected Output';
+    const sideLbl = document.getElementById('target-label-side');
+    if (sideLbl) sideLbl.textContent = label;
+    if (isPlaying) {
+      if (targetSide) targetSide.play();
+      if (targetWipe) targetWipe.play();
     }
+  }
 
-    // Switch Target Video in Comparison Player
-    function switchTargetVideo(fileRel) {
-      const select = document.getElementById('target-selector');
-      const opt = select ? select.options[select.selectedIndex] : null;
-      const label = opt ? opt.getAttribute('data-label') : fileRel;
-      const targetBoxLabel = document.getElementById('target-box-label');
-      if (targetBoxLabel) {
-        targetBoxLabel.innerHTML = 'Transcoded Output: ' + label + '<div class="player-sublabel">Native WebM Transcode</div>';
+  function updateWipe(pct) {
+    if (wipeOverlay) wipeOverlay.style.width = pct + '%';
+  }
+
+  function togglePlayerView(mode) {
+    currentMode = mode;
+    const sideEl = document.getElementById('view-side-by-side');
+    const wipeEl = document.getElementById('view-wipe');
+    const btnSide = document.getElementById('btn-view-side');
+    const btnWipe = document.getElementById('btn-view-wipe');
+
+    if (mode === 'side-by-side') {
+      if (sideEl) sideEl.style.display = 'grid';
+      if (wipeEl) wipeEl.style.display = 'none';
+      if (btnSide) btnSide.classList.add('active');
+      if (btnWipe) btnWipe.classList.remove('active');
+    } else {
+      if (sideEl) sideEl.style.display = 'none';
+      if (wipeEl) wipeEl.style.display = 'block';
+      if (btnWipe) btnWipe.classList.add('active');
+      if (btnSide) btnSide.classList.remove('active');
+    }
+  }
+
+  function toggleZoom() {
+    isZoomed = !isZoomed;
+    const sideEl = document.getElementById('view-side-by-side');
+    const wipeEl = document.getElementById('view-wipe');
+    const btn = document.getElementById('btn-zoom');
+    if (sideEl) sideEl.classList.toggle('zoomed', isZoomed);
+    if (wipeEl) wipeEl.classList.toggle('zoomed', isZoomed);
+    if (btn) btn.classList.toggle('active', isZoomed);
+  }
+
+  function onSeekInput(pct) {
+    const v1 = currentMode === 'side-by-side' ? refSide : refWipe;
+    if (!v1 || !v1.duration) return;
+    const targetTime = (pct / 100) * v1.duration;
+    seekBothPlayers(targetTime);
+  }
+
+  function seekBothPlayers(sec) {
+    if (refSide) refSide.currentTime = sec;
+    if (targetSide) targetSide.currentTime = sec;
+    if (refWipe) refWipe.currentTime = sec;
+    if (targetWipe) targetWipe.currentTime = sec;
+  }
+
+  if (refSide) {
+    refSide.addEventListener('timeupdate', () => {
+      if (!refSide.duration) return;
+      const pct = (refSide.currentTime / refSide.duration) * 100;
+      if (seekBar) seekBar.value = pct;
+      if (timeDisplay) {
+        timeDisplay.textContent = formatTime(refSide.currentTime) + ' / ' + formatTime(refSide.duration);
       }
-      
-      const vT = document.getElementById('player-target');
-      const wT = document.getElementById('wipe-target');
-      if (vT) { vT.src = fileRel; vT.currentTime = 0; }
-      if (wT) { wT.src = fileRel; wT.currentTime = 0; }
-      const vR = document.getElementById('player-ref');
-      const wR = document.getElementById('wipe-ref');
-      if (vR) vR.currentTime = 0;
-      if (wR) wR.currentTime = 0;
-      const playBtn = document.getElementById('play-pause-btn');
-      if (playBtn) playBtn.textContent = 'Play';
-    }
+    });
+  }
 
-    // Synchronized Player Controls
-    const vRef = document.getElementById('player-ref');
-    const vTarget = document.getElementById('player-target');
-    const wRef = document.getElementById('wipe-ref');
-    const wTarget = document.getElementById('wipe-target');
-    const playBtn = document.getElementById('play-pause-btn');
-    const seekBar = document.getElementById('seek-bar');
-    const timeDisplay = document.getElementById('time-display');
+  function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
 
-    function allVideos() {
-      return [vRef, vTarget, wRef, wTarget].filter(Boolean);
-    }
+  /* Table Filtering */
+  function filterCodec(codec) {
+    const rows = document.querySelectorAll('#results-table tbody tr');
+    const btns = document.querySelectorAll('.filter-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
 
-    function togglePlayPause() {
-      const vids = allVideos();
-      if (!vids.length) return;
-      const isPaused = vids[0].paused;
-      vids.forEach(v => isPaused ? v.play().catch(() => {}) : v.pause());
-      if (playBtn) playBtn.textContent = isPaused ? 'Pause' : 'Play';
-    }
-
-    function seekVideos(pct) {
-      const vids = allVideos();
-      if (!vids.length || !vids[0].duration) return;
-      const targetTime = (pct / 100) * vids[0].duration;
-      vids.forEach(v => { v.currentTime = targetTime; });
-    }
-
-    if (vRef) {
-      vRef.addEventListener('timeupdate', () => {
-        if (!vRef.duration) return;
-        const pct = (vRef.currentTime / vRef.duration) * 100;
-        if (seekBar) seekBar.value = pct;
-        if (timeDisplay) {
-          const cur = formatTime(vRef.currentTime);
-          const dur = formatTime(vRef.duration);
-          timeDisplay.textContent = cur + ' / ' + dur;
-        }
-      });
-    }
-
-    function formatTime(sec) {
-      const m = Math.floor(sec / 60);
-      const s = Math.floor(sec % 60);
-      return m + ':' + (s < 10 ? '0' : '') + s;
-    }
-
-    // Wipe Comparison
-    function updateWipe(val) {
-      const stage = document.getElementById('wipe-stage');
-      if (stage) stage.style.setProperty('--wipe-pct', val + '%');
-    }
-
-    function togglePlayerView(view) {
-      const side = document.getElementById('view-side-by-side');
-      const wipe = document.getElementById('view-wipe');
-      const btnSide = document.getElementById('btn-view-side');
-      const btnWipe = document.getElementById('btn-view-wipe');
-      if (view === 'side-by-side') {
-        if (side) side.style.display = 'grid';
-        if (wipe) wipe.style.display = 'none';
-        btnSide?.classList.add('active');
-        btnWipe?.classList.remove('active');
+    rows.forEach(r => {
+      const c = r.getAttribute('data-codec');
+      if (codec === 'all' || c === codec) {
+        r.style.display = '';
       } else {
-        if (side) side.style.display = 'none';
-        if (wipe) wipe.style.display = 'block';
-        btnSide?.classList.remove('active');
-        btnWipe?.classList.add('active');
+        r.style.display = 'none';
       }
-    }
+    });
+  }
 
-    // Zoom Toggle
-    let isZoomed = false;
-    function toggleZoom() {
-      isZoomed = !isZoomed;
-      const boxes = document.querySelectorAll('.player-box video, .wipe-container video');
-      boxes.forEach(v => v.classList.toggle('zoom-active', isZoomed));
-      const btn = document.getElementById('btn-zoom');
-      if (btn) btn.textContent = isZoomed ? 'Reset Zoom' : 'Zoom 2x';
+  /* Blind A/B Implementation */
+  let blindCandidateA = null;
+  let blindCandidateB = null;
+  let blindVote = null;
+  let blindRatingA = 0;
+  let blindRatingB = 0;
+
+  function startBlindAB() {
+    const sel1 = document.getElementById('blind-select-1');
+    const sel2 = document.getElementById('blind-select-2');
+    if (!sel1 || !sel2) return;
+
+    const opt1 = { src: sel1.value, label: sel1.options[sel1.selectedIndex].text };
+    const opt2 = { src: sel2.value, label: sel2.options[sel2.selectedIndex].text };
+
+    // Randomize A and B assignment
+    const swap = Math.random() >= 0.5;
+    blindCandidateA = swap ? opt2 : opt1;
+    blindCandidateB = swap ? opt1 : opt2;
+
+    const vidA = document.getElementById('blind-video-a');
+    const vidB = document.getElementById('blind-video-b');
+    if (vidA && vidB) {
+      vidA.src = blindCandidateA.src;
+      vidB.src = blindCandidateB.src;
+      document.getElementById('blind-players').style.display = 'grid';
+      document.getElementById('blind-controls').style.display = 'flex';
+      document.getElementById('blind-voting').style.display = 'block';
+      document.getElementById('blind-reveal-card').style.display = 'none';
     }
-  </script>
+  }
+
+  function toggleBlindPlay() {
+    const vidA = document.getElementById('blind-video-a');
+    const vidB = document.getElementById('blind-video-b');
+    const btn = document.getElementById('btn-blind-play');
+    if (!vidA || !vidB) return;
+    if (vidA.paused) {
+      vidA.play(); vidB.play();
+      if (btn) btn.textContent = 'Pause';
+    } else {
+      vidA.pause(); vidB.pause();
+      if (btn) btn.textContent = 'Play';
+    }
+  }
+
+  function onBlindSeek(pct) {
+    const vidA = document.getElementById('blind-video-a');
+    const vidB = document.getElementById('blind-video-b');
+    if (!vidA || !vidA.duration) return;
+    const time = (pct / 100) * vidA.duration;
+    vidA.currentTime = time;
+    if (vidB) vidB.currentTime = time;
+  }
+
+  function submitBlindVote(preference) {
+    blindVote = preference;
+    ['vote-btn-a', 'vote-btn-same', 'vote-btn-b'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    });
+    if (preference === 'A') document.getElementById('vote-btn-a')?.classList.add('active');
+    if (preference === 'Same') document.getElementById('vote-btn-same')?.classList.add('active');
+    if (preference === 'B') document.getElementById('vote-btn-b')?.classList.add('active');
+    revealBlindIdentities();
+  }
+
+  function revealBlindIdentities() {
+    if (!blindCandidateA || !blindCandidateB) return;
+    const card = document.getElementById('blind-reveal-card');
+    const content = document.getElementById('blind-reveal-content');
+    if (card && content) {
+      card.style.display = 'block';
+      content.innerHTML = '<div><strong>Video A:</strong> ' + escapeHtml(blindCandidateA.label) + '</div>' +
+                          '<div style="margin-top:4px;"><strong>Video B:</strong> ' + escapeHtml(blindCandidateB.label) + '</div>' +
+                          '<div style="margin-top:8px;color:var(--primary);font-weight:600;">Your Preference: ' + (blindVote ? 'Prefer Video ' + blindVote : 'None Recorded') + '</div>';
+    }
+  }
+
+  function exportBlindResults() {
+    const payload = {
+      timestamp: new Date().toISOString(),
+      preference: blindVote,
+      candidateA: blindCandidateA?.label,
+      candidateB: blindCandidateB?.label
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'subjective-ab-results.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+</script>
 </body>
 </html>`;
 
@@ -861,8 +1309,14 @@ function generateHtmlReport(benchmarkData, outputPath) {
 }
 
 module.exports = {
+  SCHEMA_VERSION,
   sanitizeText,
+  sanitizeForExport,
   generateJsonReport,
   generateCsvReport,
-  generateHtmlReport
+  generateHtmlReport,
+  buildSpeedChartSvg,
+  buildChunkLatencySvg,
+  buildQualityPerformanceSvg,
+  buildTimelineSvg
 };

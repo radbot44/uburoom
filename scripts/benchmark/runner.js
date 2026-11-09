@@ -41,7 +41,7 @@ function calculateStats(numbers) {
  * relying on container duration fallbacks, complete video frame coverage, and chunk boundary continuity.
  */
 function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
-  const { expectedCodec, hasAudio, sampleDuration, fps = 30 } = options;
+  const { expectedCodec, hasAudio, sampleDuration, fps = 30, isVfr = false } = options;
   const errors = [];
 
   if (!fs.existsSync(filePath)) {
@@ -83,7 +83,7 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
     errors.push('Found unexpected audio stream in video-only output.');
   }
 
-  // 1. Packet-level video timestamps, frame count, and continuity
+  // 1. Packet-level video timestamps, packet count, and continuity
   const videoPackets = [];
   let videoStartPts = 0;
   let videoEndPts = 0;
@@ -110,32 +110,34 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
   }
 
   if (videoPackets.length === 0) {
-    errors.push('No readable video frames or packets in output file.');
+    errors.push('No readable video packets in output file.');
   } else {
     videoStartPts = videoPackets[0].pts;
     const lastPkt = videoPackets[videoPackets.length - 1];
     videoEndPts = lastPkt.pts + lastPkt.dur;
     videoDecodedDuration = Math.max(0, videoEndPts - videoStartPts);
 
-    // Frame coverage check
-    if (sampleDuration && fps) {
-      const expectedFrames = Math.round(sampleDuration * fps);
-      const actualFrames = videoPackets.length;
-      const deltaFrames = Math.abs(actualFrames - expectedFrames);
-      // Allow at most 3 frames tolerance for partial container frames / cadence rounding
-      if (deltaFrames > 3) {
-        errors.push(`Incomplete video frame coverage: expected ~${expectedFrames} frames, got ${actualFrames} frames (delta ${deltaFrames}).`);
+    // Packet coverage check (applies to constant-frame-rate sources; VFR sources naturally fluctuate in packet count)
+    if (!isVfr && sampleDuration && fps) {
+      const expectedPackets = Math.round(sampleDuration * fps);
+      const actualPackets = videoPackets.length;
+      const deltaPackets = Math.abs(actualPackets - expectedPackets);
+      // Allow at most 3 packets tolerance for partial container packets / cadence rounding
+      if (deltaPackets > 3) {
+        errors.push(`Incomplete video packet coverage: expected ~${expectedPackets} packets, got ${actualPackets} packets (delta ${deltaPackets}).`);
       }
     }
 
-    // Frame continuity & chunk boundary gap check
+    // Packet continuity & chunk boundary gap check
     for (let i = 1; i < videoPackets.length; i++) {
       const prevEnd = videoPackets[i - 1].pts + videoPackets[i - 1].dur;
       const currentPts = videoPackets[i].pts;
       const gap = currentPts - prevEnd;
       // Gaps larger than 2.5 frame intervals (~85ms at 30fps) indicate dropped or missing frames at chunk boundaries
-      if (gap > 0.085) {
-        errors.push(`Frame discontinuity detected: ${gap.toFixed(3)}s gap between ${prevEnd.toFixed(3)}s and ${currentPts.toFixed(3)}s.`);
+      // For VFR, gaps can legitimately be slightly larger, but shouldn't exceed 0.25s
+      const maxGap = isVfr ? 0.25 : 0.085;
+      if (gap > maxGap) {
+        errors.push(`Packet discontinuity detected: ${gap.toFixed(3)}s gap between ${prevEnd.toFixed(3)}s and ${currentPts.toFixed(3)}s.`);
         break;
       }
     }
@@ -252,7 +254,10 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
 
   const { codec, requestedEncoder, quality } = testConfig;
   const configId = `${codec}-${requestedEncoder}-${quality.id}-chunked`;
-  const runOutputDir = path.join(outputDir, 'outputs', `run-${runIndex}`, configId);
+  const subFolder = options.workerId
+    ? (options.concurrency ? `concurrency-${options.concurrency}/worker-${options.workerId}` : `run-${runIndex}/worker-${options.workerId}`)
+    : `run-${runIndex}`;
+  const runOutputDir = path.join(outputDir, 'outputs', subFolder, configId);
   const chunksDir = path.join(runOutputDir, 'chunks');
   fs.mkdirSync(chunksDir, { recursive: true });
 
@@ -485,6 +490,8 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
 
   return {
     runIndex,
+    workerId: options.workerId || 1,
+    concurrency: options.concurrency || 1,
     configId,
     mode: 'chunked',
     status: isPassed ? 'pass' : 'fail',
@@ -547,7 +554,10 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
 
   const { codec, requestedEncoder, quality } = testConfig;
   const configId = `${codec}-${requestedEncoder}-${quality.id}-continuous`;
-  const runOutputDir = path.join(outputDir, 'outputs', `run-${runIndex}`, configId);
+  const subFolder = options.workerId
+    ? (options.concurrency ? `concurrency-${options.concurrency}/worker-${options.workerId}` : `run-${runIndex}/worker-${options.workerId}`)
+    : `run-${runIndex}`;
+  const runOutputDir = path.join(outputDir, 'outputs', subFolder, configId);
   fs.mkdirSync(runOutputDir, { recursive: true });
 
   const rawSpec = deriveOutputSpec(sourceInfo, quality.id);
@@ -705,6 +715,8 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
 
   return {
     runIndex,
+    workerId: options.workerId || 1,
+    concurrency: options.concurrency || 1,
     configId,
     mode: 'continuous',
     status: isPassed ? 'pass' : 'fail',

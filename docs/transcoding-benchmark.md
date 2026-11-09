@@ -1,6 +1,6 @@
-# uburoom Transcoding Benchmark (Stage 1)
+# uburoom Transcoding Benchmark (Stage 2)
 
-The transcoding benchmark is a standalone command-line diagnostic tool and comparison suite for evaluating hardware and software video transcoding performance in uburoom.
+The transcoding benchmark is a standalone command-line diagnostic tool, capacity analyzer, and quality evaluation suite for video transcoding in uburoom.
 
 It reproduces the exact encoding parameters, rate control, frame pacing, scaling, WebM chunking, hardware acceleration, and fallback paths used by uburoom's native streaming engine without running the server, connecting to remote services, or modifying application state.
 
@@ -73,6 +73,11 @@ The benchmark parses only the `transcoding` and `tools` sections:
 | `-q, --qualities <list>` | Comma-separated list of qualities (e.g. `1080p8,720p4`). | All configured qualities |
 | `-e, --encoders <list>` | Comma-separated list of encoders (`nvenc,qsv,software`). | Configured encoder |
 | `--codecs <list>` | Comma-separated list of codecs (`av1,vp9,vp8`). | Configured outputs |
+| `--concurrency <N>` | Run N simultaneous independent transcode streams. | `1` |
+| `--capacity-scan` | Progressively scan concurrency from 1 stream upward to find limit. | Disabled |
+| `--max-concurrency <N>` | Upper bound for concurrency scanning. | `8` |
+| `--quality-metrics` | Compute objective quality metrics (VMAF, SSIM, PSNR, CAMBI) post-encode. | Disabled |
+| `--warmup` | Run an untimed single-chunk transcode before starting measurements. | Disabled |
 | `-o, --output <dir>` | Directory where artifacts and reports are saved. | `artifacts/transcode-benchmark/run-<timestamp>/` |
 | `-r, --runs <number>` | Number of test iterations per configuration (>= 1). | `1` |
 | `--probe-only` | Detect usable encoder capabilities, print summary, and exit. | Disabled |
@@ -88,14 +93,17 @@ The benchmark parses only the `transcoding` and `tools` sections:
 # Probe hardware capabilities and discovered encoders:
 node scripts/transcode-benchmark.js --probe-only
 
-# Benchmark a custom movie clip (60-second window starting at 2 minutes):
-node scripts/transcode-benchmark.js --input "D:\Media\sample.mkv" --start 120 --duration 60 --qualities 1080p8,720p4
+# Benchmark with post-encode objective quality metrics (VMAF, SSIM, PSNR, CAMBI):
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --quality-metrics
+
+# Fixed 3-stream concurrent load test:
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --concurrency 3
+
+# Progressive sustainable capacity scan up to 6 streams:
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --capacity-scan --max-concurrency 6
 
 # Compare all available encoders across all supported codecs:
 node scripts/transcode-benchmark.js --all-encoders --all-codecs --mode both
-
-# Quick dry run to verify test matrix:
-node scripts/transcode-benchmark.js --all-codecs --qualities 720p4 --dry-run
 ```
 
 ---
@@ -197,24 +205,73 @@ artifacts/transcode-benchmark/run-<timestamp>/
 
 ---
 
-## 10. Offline HTML Comparison Report
+## 10. Objective Quality Metrics & Analysis
+
+When `--quality-metrics` is enabled, the benchmark runs post-encode objective quality evaluation strictly outside timed benchmark loops:
+1. **Reference Media**: Evaluates distorted encoded outputs against the **untouched reference source** (never the lossy viewing proxy).
+2. **Metrics Evaluated**:
+   - **VMAF (`libvmaf`)**: Uses default `vmaf_v0.6.1` model, yielding 0-100 perceptual quality scores.
+   - **SSIM (`ssim`)**: Structural similarity index (0.0 to 1.0).
+   - **PSNR (`psnr`)**: Peak signal-to-noise ratio in decibels (dB).
+   - **CAMBI (`cambi`)**: Contrast Aware Multiscale Banding Index, detecting compression banding and false contouring artifacts.
+3. **Pacing and Normalization**:
+   - Distorted video is scaled to reference dimensions using bicubic interpolation per VMAF recommendations (`scale=W:H:flags=bicubic`).
+   - Timestamps and frame pacing are strictly aligned using `[0:v]setpts=PTS-STARTPTS,fps=N` and `[1:v]setpts=PTS-STARTPTS,fps=N`.
+   - Threading is bounded (`:n_threads=8`) with `:shortest=1` to prevent framesync stalls.
+4. **Summary Statistics**:
+   - Computes mean, harmonic mean, median, min, max, stdDev, and 1st, 5th, and 10th percentiles (`p1`, `p5`, `p10`). Percentiles expose brief quality dips and stutter that aggregate means conceal.
+   - Identifies worst 2-second intervals across the video timeline.
+5. **HDR & Dolby Vision Handling**:
+   - HDR10 sources are tonemapped to SDR BT.709 using `zscale` linear transfer.
+   - Dolby Vision Profile 5 without Vulkan `libplacebo` is gracefully rejected to prevent invalid color comparisons.
+
+---
+
+## 11. Multi-Stream Concurrency & Sustainable Capacity
+
+The benchmark supports evaluating multi-user party loads:
+1. **Fixed Concurrency (`--concurrency N`)**:
+   - Launches $N$ simultaneous, independent transcode workers in parallel.
+   - Each worker runs in an isolated directory (`outputs/concurrency-${N}/worker-${w}/<configId>/`).
+   - Measures aggregate throughput, slowest worker bottleneck speed, and individual chunk deadline misses.
+2. **Progressive Capacity Scan (`--capacity-scan`)**:
+   - Iteratively tests concurrency levels from 1 up to `--max-concurrency N` (default 8).
+   - **Conservative Stopping Rule**: Scanning stops immediately if:
+     - Any worker's overall transcode speed drops below 1.0x real-time.
+     - Any worker experiences an unrecoverable transcode or validation failure.
+     - Any worker misses a chunk deadline (transcode time > 6.0 seconds), representing an MSE buffer underrun.
+   - Reports highest sustainable concurrency and first failing tier with exact failure reasons.
+3. **Warmup (`--warmup`)**:
+   - Executes an untimed single-chunk transcode prior to starting measurements to eliminate cold GPU driver, shader cache, or thread-pool startup penalties.
+
+---
+
+## 12. Offline HTML Comparison Report
 
 Opening `report.html` locally in any web browser (`file:///...`) provides:
 1. **System & Environment Overview**: Hardware CPU/GPU specs, memory, FFmpeg build details, and sanitized profile metadata.
-2. **Interactive Performance Table**: Sortable and filterable by codec, encoder, resolution, bitrate, status, and speed multiplier.
-3. **Throughput Charts**: Visual inline SVG bar charts highlighting the 1.0x real-time threshold.
-4. **Chunk Latency Breakdowns**: Per-chunk completion timelines for chunked runs showing the 6.0-second deadline threshold.
-5. **Synchronized Video Player**:
+2. **Interactive Performance & Quality Table**: Sortable and filterable by codec, encoder, resolution, bitrate, concurrency, status, speed multiplier, VMAF (mean/p1), SSIM, PSNR, and CAMBI.
+3. **Quality vs Performance Scatter Plot**: Visual inline SVG plotting bitrate against VMAF with an efficiency index ($E = \text{VMAF} / \text{Mbps}$).
+4. **Timeline Quality Inspector**: Frame-by-frame VMAF timeline chart with highlighted worst-moment dips.
+5. **Throughput Charts**: Visual inline SVG bar charts highlighting the 1.0x real-time threshold.
+6. **Chunk Latency Breakdowns**: Per-chunk completion timelines for chunked runs showing the 6.0-second deadline threshold.
+7. **Synchronized Video Player**:
    - Target selector dropdown allowing comparison of *any* successful benchmark output.
    - Side-by-side synchronized players with unified play/pause and seek controls.
    - Interactive wipe/split overlay slider allowing the operator to drag a vertical divider across matching frames.
    - Zoom 2x toggle for pixel-level artifact and ringing inspection.
-6. **Contact Sheet**: Matching timestamp frame screenshots.
-7. **Zero CDN Dependencies**: Self-contained CSS and SVG; functions without network access or local web servers.
+8. **Blind A/B Subjective Comparison Workspace**:
+   - Operator selects two candidates to compare.
+   - Candidate identities are randomized and masked as "Candidate X" and "Candidate Y", with all identifying metadata concealed from DOM and tooltips.
+   - Synchronized side-by-side, wipe, and zoom players.
+   - Voting buttons ("Prefer X", "Equal", "Prefer Y") and text notes.
+   - Identity reveal button and offline JSON export of subjective comparison results.
+9. **Contact Sheet**: Matching timestamp frame screenshots.
+10. **Zero CDN Dependencies**: Self-contained CSS and SVG; functions without network access or local web servers.
 
 ---
 
-## 11. Safety & Production Isolation
+## 13. Safety & Production Isolation
 
 - **Zero Server Interaction**: Operates independently of any running uburoom process. Never pings endpoints, opens WebSockets, or inspects application memory.
 - **Passive Process Inspection**: Scans the OS process list for active `node` instances running uburoom. If detected, issues a non-blocking warning that benchmarking may contend for GPU/CPU resources with live party viewers.
@@ -224,13 +281,10 @@ Opening `report.html` locally in any web browser (`file:///...`) provides:
 
 ---
 
-## 12. Stage 1 Scope & Deferred Capabilities
+## 14. Stage 2 Scope & Deferred Capabilities
 
-Stage 1 provides single-stream transcoding baseline benchmarking and playable output comparison. The following capabilities are intentionally reserved for subsequent stages:
-- Interactive terminal setup wizard (Stage 2)
-- Multi-stream concurrency and maximum stream capacity discovery (Stage 2)
-- Automated objective quality metrics (VMAF, SSIM, PSNR, CAMBI) (Stage 2)
-- Subjective blind A/B comparison workflow (Stage 2)
+Stage 2 completes objective video quality analysis, multi-stream concurrency/capacity testing, and the offline visual/blind A/B comparison workflow. The following capabilities are intentionally reserved for Stage 3:
 - Extended endurance / thermal stress testing (Stage 3)
-- Direct GPU hardware sensor telemetry (power, clock, thermals) (Stage 3)
+- Direct GPU hardware sensor telemetry (power, clock, thermals) via NVML / Intel sysfs (Stage 3)
+- Automated cross-run regression tracking and SQLite historical database (Stage 3)
 - Automated configuration profile recommendations (Stage 3)
