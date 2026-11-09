@@ -5,7 +5,7 @@
 # Put IDs, secrets, and Windows paths (C:\tools\ffmpeg.exe) in single quotes.
 # Relative paths are relative to this YAML file.
 
-# Config schema v2m
+# Config schema v2n
 
 ##################################
 # NEVER SHARE THE SECTION BELOW! #
@@ -172,6 +172,14 @@ guests:
   require_sign_in: false
   max_per_room: 10 # Most guests in one room at once (1-50).
   session_hours: 24 # How long a guest stays signed in before re-entering the code (1-720).
+
+# Scheduled watch nights belong to a room and show in the lobby. Posting one to
+# Discord is optional and needs the bot's Create Events permission.
+events:
+  # Lowest server tier that may schedule: operator | admins | trusted | members.
+  # Higher tiers are included. Changing an existing room's events also needs
+  # hosting that room.
+  schedulers: 'trusted'
 
 # Show never-signed-in provider members in authorized room host search.
 # Discord discovery/presence also need the matching privileged bot intents enabled.

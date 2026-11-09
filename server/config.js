@@ -22,6 +22,7 @@ const KEYS = [
   'rooms.admin_discord_role_ids', 'rooms.trusted_discord_ids', 'rooms.trusted_plex_ids', 'rooms.trusted_discord_role_ids',
   'rooms.single_room', 'rooms.single_room_leader_plex_id',
   'guests.enabled', 'guests.default_allow', 'guests.issuers', 'guests.require_sign_in', 'guests.max_per_room', 'guests.session_hours',
+  'events.schedulers',
   'secrets.entry_password', 'access.discord', 'access.plex', 'access.require_plex', 'access.require_plex_in_activity',
   'transcoding.policy', 'transcoding.encoder', 'transcoding.outputs', 'transcoding.max_jobs', 'transcoding.cpu_fallback', 'transcoding.hardware_decode',
   'transcoding.qualities', 'transcoding.allow_original',
@@ -224,6 +225,7 @@ function normalizeConfig(value, { base = ROOT, environment = process.env, platfo
   };
   config.guests = { enabled:boolean('guests.enabled', false), defaultAllow:boolean('guests.default_allow', true), issuers:choice('guests.issuers', 'admins', Policy.TIERS),
     requireSignIn:boolean('guests.require_sign_in', false), maxPerRoom:whole('max_per_room', 10, 1, 50), sessionHours:whole('session_hours', 24, 1, 720) };
+  config.events = { schedulers:choice('events.schedulers', 'trusted', Policy.TIERS) };
   // Unverified guests cannot hold personal Plex access, so a server that
   // requires it can only admit guests who sign in.
   if (config.guests.enabled && config.accessPolicy.requirePlex && !config.guests.requireSignIn) throw new Error('guests.require_sign_in must be true when access.require_plex is true');

@@ -818,6 +818,14 @@ function checkGuestPasses(config) {
   return checks;
 }
 
+function checkEvents(config) {
+  const minimum = config.events?.schedulers || 'trusted';
+  const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
+  const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
+  const who = minimum === 'trusted' && !anyTrusted ? 'admins and the operator (no trusted members are listed)' : `${minimum} tier and above`;
+  return [{ category: 'Access', name: 'Event scheduling', status: 'pass', message: `Room hosts at ${who} can schedule watch nights` }];
+}
+
 async function runDoctor(options = {}) {
   const args = options.args || process.argv.slice(2);
   const jsonMode = args.includes('--json');
@@ -847,6 +855,7 @@ async function runDoctor(options = {}) {
     allChecks.push(...checkTlsCertificates(config));
     allChecks.push(...checkMediaTools(config));
     allChecks.push(...checkGuestPasses(config));
+    allChecks.push(...checkEvents(config));
     allChecks.push(...(await checkProviderConnectivity(config)));
   }
 

@@ -86,7 +86,7 @@ test('unsupported pre-release schema fails startup without leaving a live storag
 
 test('unsupported schemas fail without changing existing data or installing missing tables', t => {
   const {initializeSchema}=require('../server/storage');
-  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[9,'CREATE TABLE users(id TEXT);','pre-release'],[11,'CREATE TABLE future_state(id TEXT);','newer']]) {
+  for (const [version,sql,message] of [[0,'CREATE TABLE old_state(id TEXT);','pre-release'],[10,'CREATE TABLE users(id TEXT);','pre-release'],[12,'CREATE TABLE future_state(id TEXT);','newer']]) {
     const db=new DatabaseSync(':memory:');db.exec(sql+'PRAGMA user_version='+version);
     const before=db.prepare('SELECT name,sql FROM sqlite_master').all();
     assert.throws(()=>initializeSchema(db),new RegExp(message));
@@ -117,7 +117,7 @@ test('matched offline SQLite and original-key backup restores UUIDs, credentials
   fs.copyFileSync(file,copy);fs.copyFileSync(key,copyKey);
   const restored=new Accounts(copy,credentialVault(copyKey));
   try {
-    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,10);
+    assert.equal(restored.db.prepare('PRAGMA user_version').get().user_version,11);
     assert.equal(restored.identity('plex','101').userId,user.id);
     assert.equal(restored.credential('101').token,'private-restore-fixture');
     assert.equal(loginStore('baseline',restored.vault,restored).logins.get('b'.repeat(64)).oauth.refreshToken,'private-login-fixture');

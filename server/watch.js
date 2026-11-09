@@ -57,7 +57,7 @@ class Watch {
       } });
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
     this.publications = registry ? new (require('./discord-publications').DiscordPublications)(this,registry) : undefined;
-    this.events = registry ? new (require('./discord-events').DiscordEvents)(this,registry) : undefined;
+    this.events = registry ? new (require('./room-events').RoomEvents)(this,registry) : undefined;
     hub.publicationExecute = this.publications ? (id,actor,permitted)=>this.publications.command(this.rooms.get(id),'room.publish',actor,permitted) : undefined;
     hub.savedPublicationExecute = this.publications ? (id,actor,permitted)=>this.publications.removeSaved(id,actor,permitted) : undefined;
     hub.scheduledEventExecute = this.events ? (id,command,actor,permitted)=>this.events.command(id,command,actor,permitted) : undefined;

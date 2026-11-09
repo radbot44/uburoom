@@ -51,6 +51,7 @@ class WatchRooms {
   }
   reason(record) {
     if (this.watch.hub.config.singleRoom || record.keepEmpty) return 'Kept when empty';
+    if (this.watch.events?.upcoming(record.id)) return 'Event scheduled';
     if (record.bookmark && record.bookmark.position < record.bookmark.duration * .9) return 'Video in progress';
     if (this.queue.pending(record.id).length) return 'Queue pending';
     if (record.autoQueue.mode === 'following' || record.autoQueue.mode === 'random' || record.autoQueue.next) return 'Auto-queue enabled';
@@ -135,7 +136,7 @@ class WatchRooms {
       let count = this.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n;
       for (const {id} of this.store.db.prepare('SELECT id FROM watch_rooms WHERE lastAccessedAt<=? ORDER BY lastAccessedAt,id').all(cutoff)) {
         if (count <= this.limits.minRetained) break;
-        if (this.watch.rooms.has(id) || this.opening.has(id) || this.closing.has(id) || this.recoveries.has(id) || this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId')) continue;
+        if (this.watch.rooms.has(id) || this.opening.has(id) || this.closing.has(id) || this.recoveries.has(id) || this.watch.events?.upcoming(id) || this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId')) continue;
         await this.store.destroy(id); count--;
       }
     } finally { this.maintaining = false; }
@@ -220,6 +221,15 @@ class WatchRooms {
       await this.eligible(actor, current);
       return this.watch.create(actor, record.visibility, record);
     } finally { this.creating--; }
+  }
+  // A saved room that stays closed, such as one made for a scheduled watch night.
+  async createClosed(actor, options, current) {
+    if(this.watch.hub.config.singleRoom)throw failure('Room creation is disabled in single-room mode',403);
+    if(actor.guestRoomId)throw failure('Guests cannot create rooms',403);
+    await this.eligible(actor, current);
+    const record = await this.store.create(actor.userId, options);
+    await this.eligible(actor, current);
+    return record.id;
   }
   async identify(media) {
     if (media.id === 'demo' || media.mediaId === 'demo') return 'local-demo';

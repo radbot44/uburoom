@@ -2,7 +2,7 @@
 // First-release baseline. Future published schemas add explicit forward migrations.
 // Never repair or upgrade an unpublished layout implicitly: earlier pre-release
 // layouts move forward only through reviewed, explicitly run transfer scripts.
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const COLUMNS = Object.freeze({ users:['id','name','revision','retiredInto','signedInAt','guest'], identities:['provider','subject','userId','name','verified','assigned'],
   credentials:['subject','value'], meta:['key','value'], audit:['id','at','actor','action','detail'],
   browser_logins:['id','record'], playback_history:['id','userId','at','record'],
@@ -10,13 +10,20 @@ const COLUMNS = Object.freeze({ users:['id','name','revision','retiredInto','sig
   watch_room_hosts:['roomId','userId'], watch_room_host_grants:['roomId','provider','subject','name','issuerId','createdAt'],
   watch_room_progress:['roomId','serverId','mediaId'],
   watch_queue_entries:['id','roomId','state','rank','serverId','mediaId','type','title','parentTitle','grandparentTitle','thumb','duration','position','outcome','provenance','createdAt','startedAt','endedAt','updatedAt'],
-  watch_room_invites:['roomId','userId','createdAt'], watch_room_invite_blocks:['roomId','subject','createdAt'] });
+  watch_room_invites:['roomId','userId','createdAt'], watch_room_invite_blocks:['roomId','subject','createdAt'],
+  watch_room_events:['id','roomId','creatorId','title','description','start','end','timeZone','state','createdAt','updatedAt','discord'] });
 // Each room has one invite code. Signed-in people who join a private room by
 // invite are remembered until someone revokes them; revoked people and guest
 // browsers are blocked from the invite until the code is rerolled.
 const INVITE_SQL = `CREATE UNIQUE INDEX watch_rooms_invite ON watch_rooms(inviteCode);
     CREATE TABLE watch_room_invites(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,userId TEXT NOT NULL REFERENCES users(id),createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,userId));
     CREATE TABLE watch_room_invite_blocks(roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,subject TEXT NOT NULL,createdAt INTEGER NOT NULL,PRIMARY KEY(roomId,subject));`;
+// A scheduled watch night belongs to one saved room and leaves with it. Times are
+// ISO UTC strings, so text order is time order. discord holds the optional
+// Discord scheduled-event projection (JSON) or NULL.
+const EVENTS_SQL = `CREATE TABLE watch_room_events(id TEXT PRIMARY KEY,roomId TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,creatorId TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL,description TEXT NOT NULL,start TEXT NOT NULL,end TEXT NOT NULL,timeZone TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('scheduled','canceling')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,discord TEXT);
+    CREATE INDEX watch_room_events_room ON watch_room_events(roomId,start);
+    CREATE INDEX watch_room_events_end ON watch_room_events(end);`;
 function initializeSchema(db, { checkOnly = false } = {}) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   if (version > SCHEMA_VERSION) throw new Error('Account database requires a newer uburoom version');
@@ -53,6 +60,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     CREATE INDEX watch_queue_room_history ON watch_queue_entries(roomId, state, endedAt DESC);
     CREATE UNIQUE INDEX watch_queue_current ON watch_queue_entries(roomId) WHERE state='current';
     ${INVITE_SQL}
+    ${EVENTS_SQL}
     PRAGMA user_version=${SCHEMA_VERSION};
     COMMIT;`);
 }
@@ -83,4 +91,4 @@ function loginStore(context, vault, registry) {
   if (!matching) { db.exec('DELETE FROM browser_logins'); registry.meta('loginContext', context); }
   return store;
 }
-module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, INVITE_SQL };
+module.exports = { loginStore, initializeSchema, SCHEMA_VERSION, COLUMNS, INVITE_SQL, EVENTS_SQL };

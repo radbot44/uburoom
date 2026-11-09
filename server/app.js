@@ -229,7 +229,8 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     };
     hub.adminEligible = actor => RoomPolicy.administrator(registry,config,actor.userId,rawAccess);
     hub.refreshAdmin = async actor => {
-      const roles = [...(config.roomAdministrators?.discordRoles || []), ...(config.guests?.enabled ? config.trustedMembers?.discordRoles || [] : [])];
+      // Trusted roles decide who may turn on guests and who may schedule events.
+      const roles = [...(config.roomAdministrators?.discordRoles || []), ...(config.trustedMembers?.discordRoles || [])];
       const discord = registry.identities(actor.userId).find(identity => identity.provider === 'discord' && identity.verified)?.subject;
       if (roles.length && discord && !rawAccess?.isMember(discord)) {
         try { await rawAccess?.refresh(discord); } catch { /* Missing live guild authority fails closed below. */ }
@@ -270,6 +271,9 @@ function createApp(config, { authorizeUrl = 'https://discord.com/oauth2/authoriz
     hub.canAllowGuests = (record, actor) => guestsOn() && !actor.guestRoomId && !registry.isGuest(actor.userId) && !record.guests?.includes(actor.userId) &&
       RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, actor.userId, rawAccess), config.guests.issuers) &&
       (hub.isAdmin(actor) || RoomPolicy.role(record, actor.userId) !== 'viewer');
+    // Scheduling watch nights needs the configured server tier; guests never can.
+    hub.canScheduleEvents = actor => !actor.guestRoomId && !registry.isGuest(actor.userId) &&
+      RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, actor.userId, rawAccess), config.events?.schedulers || 'trusted');
     hub.accountActor=actor=>registry.canonical(actor.userId)?{...actor,name:registry.canonical(actor.userId).name}:{...actor,...discordIdentity({userId:actor.userId,name:actor.name||'Discord user'}),discordId:actor.userId};
     hub.plexFor=async actor=>{
       const identity=registry.identities(actor.userId).find(i=>i.provider==='plex' && i.verified);

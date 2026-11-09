@@ -163,6 +163,12 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.eligible(auth.actor,current);
         return result(200,watch.roomState.list(auth.actor,{offset:Number(url.searchParams.get('offset') || 0)}));
       }
+      if (url.pathname === '/api/watch/events') {
+        if (!watch.events) return result(200,{events:[],canSchedule:false,discord:{configured:false,available:false}});
+        if (!write) return result(200,await watch.events.lobby(auth.actor,current));
+        if (!throttle('room-publish:'+auth.actor.userId,20)) return result(429,{error:'Too many event changes. Try again shortly.'});
+        return result(200,await watch.events.schedule(auth.actor,data,current));
+      }
       if (url.pathname === '/api/watch/rooms') {
         if(config.singleRoom){
           if(write)return result(403,{error:'Room creation is disabled in single-room mode'});

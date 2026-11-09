@@ -381,7 +381,7 @@ class RoomStore {
   async destroy(id) {
     this.healthy();
     this.registry.transaction(() => {
-      for (const table of ['watch_room_progress','watch_queue_entries','watch_room_host_grants','watch_room_hosts','watch_rooms']) {
+      for (const table of ['watch_room_events','watch_room_progress','watch_queue_entries','watch_room_host_grants','watch_room_hosts','watch_rooms']) {
         this.db.prepare('DELETE FROM ' + table + ' WHERE ' + (table === 'watch_rooms' ? 'id' : 'roomId') + '=?').run(id);
       }
     });

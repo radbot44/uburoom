@@ -48,10 +48,10 @@
       case 'room.publish': case 'room.unpublish': break;
       case 'room.event.create': case 'room.event.edit': case 'room.event.cancel':
         if(action!=='room.event.create') {
-          if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey))throw new Error('Choose the Discord event');
+          if(typeof a.eventKey!=='string'||!/^[0-9a-f-]{36}$/i.test(a.eventKey))throw new Error('Choose the event');
           args.eventKey=a.eventKey;
           if(action==='room.event.edit') {
-            if(typeof a.eventVersion!=='string'||!/^[0-9a-f]{64}$/.test(a.eventVersion))throw new Error('Refresh the Discord event');
+            if(typeof a.eventVersion!=='string'||!/^[0-9a-f]{64}$/.test(a.eventVersion))throw new Error('Refresh the event');
             args.eventVersion=a.eventVersion;
           }
         }
@@ -61,6 +61,7 @@
           for(const field of ['startLocal','endLocal'])if(typeof a[field]!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(a[field]))throw new Error('Choose the event date and times');
           if(typeof a.timeZone!=='string'||a.timeZone.length>100)throw new Error('Choose a time zone');
           Object.assign(args,{title:a.title.trim(),description:a.description,startLocal:a.startLocal,endLocal:a.endLocal,timeZone:a.timeZone});
+          if(a.discord!==undefined){if(typeof a.discord!=='boolean')throw new Error('Choose whether to post to Discord');args.discord=a.discord;}
         }
         break;
       case 'media.previous': case 'media.next': break;

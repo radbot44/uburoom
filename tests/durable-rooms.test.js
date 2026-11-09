@@ -50,13 +50,13 @@ test('Discord scheduled events preserve explicit times and consent across closur
   try {
     assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',revision:args.revision,eventKey:updated.key,eventVersion:updated.eventVersion})).body.status,'applied','cancellation does not validate an unused invite URL');
   } finally {f.app.watch.events.config=eventConfig;}
-  assert.equal(native.status,4);assert.equal(f.app.watch.events.records.size,0);
+  assert.equal(native.status,4);assert.equal(f.app.watch.events.forRoom(id).length,0);
   assert.equal((await schedule(returning,'room.event.create',{title:'First event at this time',revision:args.revision})).body.status,'applied','an old room revision does not block scheduling');
   assert.equal((await schedule(returning,'room.event.create',{title:'Second event at this time'})).body.status,'applied','two events can share a start time');
   for(const event of (await returning.call(root+'/share')).body.scheduling.events) {
     assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:event.key})).body.status,'applied');
   }
-  assert.equal(f.app.watch.events.records.size,0);
+  assert.equal(f.app.watch.events.forRoom(id).length,0);
   remote.channel.loseEventReceipt=true;
   assert.notEqual((await returning.call(root+'/share',{...planned,action:'room.event.create'})).body.status,'applied');
   const recovered=(await returning.call(root+'/share')).body.scheduling.events;
@@ -67,7 +67,42 @@ test('Discord scheduled events preserve explicit times and consent across closur
   assert.equal((await returning.call(root+'/share',{action:'room.event.cancel',eventKey:recovered[0].key})).body.status,'applied');
   const pending=(await returning.call(root+'/share')).body.scheduling;
   assert.equal(pending.available,true,'a rate limit does not become a disconnected bot');assert.equal(pending.events[0].cancel,true);
-  await f.app.watch.events.reconcile();assert.equal(f.app.watch.events.records.size,0,'accepted cancellation completes without reopening Share');
+  await f.app.watch.events.reconcile();assert.equal(f.app.watch.events.forRoom(id).length,0,'accepted cancellation completes without reopening Share');
+});
+
+test('lobby watch nights follow room visibility and scheduler tier, keep their room and survive restart',tls,async t=>{
+  const f=await fixture(t,true,{shareChannelId:'100000000000000050',events:{schedulers:'trusted'},trustedMembers:{discord:['100000000000000002'],plex:[],discordRoles:[]}});
+  const remote=require('./helpers/discord-channel').discordChannel(f.config);remote.attach(f.app.hub);
+  f.roleUsers.delete(f.subjects.guest2);
+  const trusted=await f.login('guest'),member=await f.login('guest2');
+  const at=hours=>new Date(Date.now()+hours*3600000).toISOString().slice(0,16);
+  const night=(extra={})=>({title:'Movie night',description:'',startLocal:at(48),endLocal:at(50),timeZone:'UTC',...extra});
+  const lobby=(await member.call('/api/watch/events')).body;assert.equal(lobby.canSchedule,false,JSON.stringify(lobby));
+  assert.equal((await member.call('/api/watch/events',{room:'new',...night()})).body.status,'forbidden','members below the tier cannot schedule');
+  const rooms=()=>f.app.watch.roomState.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n,before=rooms();
+  assert.equal((await trusted.call('/api/watch/events',{room:'new',...night({startLocal:at(-1)})})).body.status,'failed');
+  assert.equal(rooms(),before,'a rejected form leaves no room behind');
+  const created=(await trusted.call('/api/watch/events',{room:'new',discord:false,...night()})).body;
+  assert.equal(created.status,'applied');assert.equal(remote.events.size,0,'posting to Discord is optional');
+  assert.equal(f.app.watch.rooms.has(created.roomId),false,'scheduling never opens a room');
+  const record=f.app.watch.roomState.store.get(created.roomId);
+  assert.equal(record.name,'Movie night');assert.equal(f.app.watch.roomState.reason(record),'Event scheduled');
+  await f.app.watch.roomState.deleteEmpty(created.roomId);assert.ok(f.app.watch.roomState.store.get(created.roomId),'an upcoming event keeps its room');
+  const listed=(await member.call('/api/watch/events')).body.events;
+  assert.equal(listed.length,1);assert.equal(listed[0].canManage,false);assert.equal(listed[0].invite,undefined);
+  await trusted.call('/api/watch/rooms/'+created.roomId+'/settings',{revision:record.revision,change:{action:'visibility',visibility:'private'}});
+  assert.equal((await member.call('/api/watch/events')).body.events.length,0,'private room events are hidden from people outside the room');
+  const mine=(await trusted.call('/api/watch/events')).body.events[0];assert.equal(mine.canEdit,true);assert.ok(mine.invite.endsWith(record.inviteCode));
+  assert.equal((await trusted.call('/api/watch/rooms/'+created.roomId+'/share',{action:'room.event.edit',...night({title:'Double feature',discord:true}),eventKey:mine.key,eventVersion:mine.eventVersion})).body.status,'applied');
+  const native=[...remote.events.values()][0];assert.equal(native.name,'Double feature','an edit can post the event to Discord');
+  native.userCount=4;await f.app.watch.events.reconcile();
+  await f.restart();remote.attach(f.app.hub);
+  const after=(await (await f.login('guest')).call('/api/watch/events')).body.events;
+  assert.equal(after.length,1);assert.equal(after[0].discord.interested,4,'the Discord interested count is kept');
+  f.app.watch.events.db.prepare('UPDATE watch_room_events SET start=?,end=?').run(new Date(Date.now()-7200000).toISOString(),new Date(Date.now()-60000).toISOString());
+  await f.app.watch.events.reconcile();
+  assert.equal((await (await f.login('host')).call('/api/watch/events')).body.events.length,0,'an ended event leaves the lobby');
+  assert.equal(f.app.watch.roomState.reason(f.app.watch.roomState.store.get(created.roomId)),null);
 });
 
 test('explicit Discord publication uses current room details, enforces host authority and preserves stable posts across restart',tls,async t=>{
