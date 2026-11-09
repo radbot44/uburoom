@@ -19,3 +19,8 @@
     --os-handle-bg-active: Highlight;
   }
 }
+/* Fallback for native scrollbars where OverlayScrollbars has not attached or is unsupported */
+:is(#empty-stage, #lobby-rooms, .room-roster, .watch-dialog, .server-settings-content) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 70%, transparent) transparent;
+}

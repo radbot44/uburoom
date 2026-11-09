@@ -32,7 +32,8 @@
     function textButton(label, icon, action, className = 'quiet') {
       const button = document.createElement('button');
       button.type = 'button'; button.className = className;
-      button.append(icons.icon(document, icon)); button.append(label);
+      if (icon) button.append(icons.icon(document, icon));
+      button.append(label);
       button.addEventListener('click', () => void action(button));
       return button;
     }
@@ -57,7 +58,7 @@
       if (event.active) {
         actions.append(textButton('Join', 'login', button => guarded(button, () => join(event.roomId)), event.live ? 'primary' : 'quiet'));
       } else if (event.canManage) {
-        actions.append(textButton('Open room', 'reopen', button => guarded(button, () => reopen(event.roomId)), event.live ? 'primary' : 'quiet'));
+        actions.append(textButton('Open room', undefined, button => guarded(button, () => reopen(event.roomId)), event.live ? 'primary' : 'quiet'));
       } else {
         const waiting = document.createElement('span'); waiting.className = 'hint'; waiting.textContent = 'Waiting for host';
         actions.append(waiting);

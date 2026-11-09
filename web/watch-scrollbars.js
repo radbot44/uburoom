@@ -66,6 +66,24 @@
     const settingsContent = document.getElementById('room-settings-content');
     toggleInner(document.getElementById('room-settings-panels'),
       useCustom && !!settings?.open && !!settingsContent && !settingsContent.hidden);
+
+    const emptyStage = document.getElementById('empty-stage');
+    toggleInner(emptyStage, useCustom && !!emptyStage && !emptyStage.hidden);
+
+    const lobbyRooms = document.getElementById('lobby-rooms');
+    toggleInner(lobbyRooms, useCustom && !!lobbyRooms && !lobbyRooms.hidden && (!emptyStage || !emptyStage.hidden));
+
+    const roster = document.getElementById('room-participants') || document.querySelector('.room-roster');
+    toggleInner(roster, useCustom && !!roster && !roster.hidden);
+
+    const serverSettings = document.getElementById('server-settings-dialog');
+    const serverSettingsContent = serverSettings?.querySelector('.server-settings-content');
+    toggleInner(serverSettingsContent, useCustom && !!serverSettings?.open);
+
+    for (const dialog of document.querySelectorAll('dialog.watch-dialog')) {
+      if (dialog.id === 'room-settings-dialog' || dialog.id === 'server-settings-dialog') continue;
+      toggleInner(dialog, useCustom && dialog.open);
+    }
   }
 
   new MutationObserver(() => {
@@ -87,6 +105,13 @@
     const settingsContent = document.getElementById('room-settings-content');
     if (settingsContent) new MutationObserver(syncInnerScrollbars)
       .observe(settingsContent, { attributes: true, attributeFilter: ['hidden'] });
+    const emptyStage = document.getElementById('empty-stage');
+    if (emptyStage) new MutationObserver(syncInnerScrollbars)
+      .observe(emptyStage, { attributes: true, attributeFilter: ['hidden'] });
+    for (const dialog of document.querySelectorAll('dialog')) {
+      new MutationObserver(syncInnerScrollbars)
+        .observe(dialog, { attributes: true, attributeFilter: ['open'] });
+    }
     for (const media of [finePointer, forcedColors])
       media.addEventListener('change', syncInnerScrollbars);
     syncInnerScrollbars();
