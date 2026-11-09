@@ -265,9 +265,64 @@ function inspectActiveUburoomProcess() {
   return { detected: false };
 }
 
+/**
+ * Resolves a unique, collision-free output directory.
+ * Prevents accidental overwriting of unrelated files, previous benchmark runs,
+ * or concurrent runs launched in the same second.
+ */
+function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
+  const resolvedCwd = path.resolve(cwd);
+
+  if (requestedPath) {
+    const target = path.resolve(resolvedCwd, requestedPath);
+    // Safety check: ensure target is not project root or critical source directory
+    const rel = path.relative(resolvedCwd, target);
+    if (!rel || rel === '.' || rel.startsWith('..') || ['server', 'web', 'shared', '.git', 'node_modules'].includes(rel.split(path.sep)[0])) {
+      throw new Error(`Output directory cannot point to project root or source directories: ${requestedPath}`);
+    }
+
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(target, { recursive: true });
+      return { dir: target, collisionAvoided: false };
+    }
+
+    // Target exists: if empty, reuse it
+    const entries = fs.readdirSync(target);
+    if (entries.length === 0) {
+      return { dir: target, collisionAvoided: false };
+    }
+
+    // Target contains files: find a unique sibling to prevent overwriting
+    let counter = 1;
+    let safeDir;
+    do {
+      safeDir = `${target}-${counter++}`;
+    } while (fs.existsSync(safeDir) && fs.readdirSync(safeDir).length > 0);
+
+    fs.mkdirSync(safeDir, { recursive: true });
+    return { dir: safeDir, collisionAvoided: true, original: target };
+  }
+
+  // Default output directory under artifacts/transcode-benchmark/run-<timestamp>-<pid>
+  const artifactsDir = path.resolve(resolvedCwd, 'artifacts', 'transcode-benchmark');
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const baseName = `run-${timestamp}-${process.pid}`;
+  let target = path.join(artifactsDir, baseName);
+
+  let counter = 1;
+  while (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
+    target = path.join(artifactsDir, `${baseName}-${counter++}`);
+  }
+
+  fs.mkdirSync(target, { recursive: true });
+  return { dir: target, collisionAvoided: false };
+}
+
 module.exports = {
   resolveConfigFile,
   loadBenchmarkConfig,
   resolveTestMatrix,
-  inspectActiveUburoomProcess
+  inspectActiveUburoomProcess,
+  resolveUniqueOutputDir
 };

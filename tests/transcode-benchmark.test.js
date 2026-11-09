@@ -9,11 +9,13 @@ const {
   resolveConfigFile,
   loadBenchmarkConfig,
   resolveTestMatrix,
-  inspectActiveUburoomProcess
+  inspectActiveUburoomProcess,
+  resolveUniqueOutputDir
 } = require('../scripts/benchmark/config');
 const { resolveEncoderForCodec } = require('../scripts/benchmark/prober');
 const { deriveOutputSpec, extractReferenceSample } = require('../scripts/benchmark/source');
 const {
+  sanitizeText,
   generateJsonReport,
   generateCsvReport,
   generateHtmlReport
@@ -104,6 +106,57 @@ test('malformed YAML configuration is handled cleanly without leaking secrets', 
   }
 });
 
+test('resolveUniqueOutputDir safely avoids collisions and protects source directories', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-out-dir-'));
+  try {
+    // 1. Rejects project root / critical source directories
+    assert.throws(() => resolveUniqueOutputDir('.', tmpDir), /cannot point to project root/i);
+    assert.throws(() => resolveUniqueOutputDir('server', tmpDir), /cannot point to project root/i);
+    assert.throws(() => resolveUniqueOutputDir('.git', tmpDir), /cannot point to project root/i);
+
+    // 2. Fresh requested directory is created directly
+    const custom1 = path.join(tmpDir, 'my-test-run');
+    const res1 = resolveUniqueOutputDir(custom1, tmpDir);
+    assert.equal(res1.dir, custom1);
+    assert.equal(res1.collisionAvoided, false);
+    assert.ok(fs.existsSync(custom1));
+
+    // 3. Put a file inside custom1 so it is non-empty
+    fs.writeFileSync(path.join(custom1, 'results.json'), '{}', 'utf8');
+
+    // 4. Second invocation targeting the same directory must NOT overwrite
+    const res2 = resolveUniqueOutputDir(custom1, tmpDir);
+    assert.notEqual(res2.dir, custom1);
+    assert.equal(res2.collisionAvoided, true);
+    assert.equal(res2.dir, `${custom1}-1`);
+    assert.ok(fs.existsSync(res2.dir));
+
+    // 5. Default directory creates a unique timestamp-pid path
+    const resDefault1 = resolveUniqueOutputDir(null, tmpDir);
+    assert.match(resDefault1.dir, /run-\d{4}-\d{2}-\d{2}T/);
+    assert.ok(fs.existsSync(resDefault1.dir));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('sanitizeText strips personal home directories, Windows drive roots, and tokens', () => {
+  const winHome = 'Error loading C:\\Users\\alice\\AppData\\Local\\uburoom\\secret.key';
+  const sanitizedWin = sanitizeText(winHome);
+  assert.ok(!sanitizedWin.includes('alice'), 'Must strip username');
+  assert.ok(sanitizedWin.includes('[home]'), 'Must replace with [home]');
+
+  const posixHome = 'Failed to open /home/bob/videos/my_private_movie.mkv';
+  const sanitizedPosix = sanitizeText(posixHome);
+  assert.ok(!sanitizedPosix.includes('bob'), 'Must strip username');
+  assert.ok(sanitizedPosix.includes('[home]'), 'Must replace with [home]');
+
+  const tokenStr = 'Connection failed: https://myplex.example.com?token=superSecretToken123&user=admin';
+  const sanitizedToken = sanitizeText(tokenStr);
+  assert.ok(!sanitizedToken.includes('superSecretToken123'), 'Must strip token value');
+  assert.ok(sanitizedToken.includes('[REDACTED]') || sanitizedToken.includes('[url]'));
+});
+
 test('prober encoder resolution correctly handles auto, fallback, and software VP8', () => {
   const mockProbedArc = [
     { codec: 'av1', encoder: 'qsv', available: true },
@@ -176,7 +229,7 @@ test('outputSpec enforces strict no-upscaling rule', () => {
   assert.equal(spec.targetWidth, 1280, 'Width must not exceed source width (1280)');
 });
 
-test('reports generate valid JSON, CSV, and HTML offline files with target switching', () => {
+test('reports generate valid JSON, CSV, and HTML offline files with viewing proxy labels and stats', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-rep-'));
   try {
     const mockData = {
@@ -189,8 +242,8 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
         runs: 2
       },
       tools: {
-        ffmpeg: 'C:\\secret\\path\\ffmpeg.exe',
-        ffprobe: 'C:\\secret\\path\\ffprobe.exe',
+        ffmpeg: 'C:\\Users\\alice\\tools\\ffmpeg.exe',
+        ffprobe: 'C:\\Users\\alice\\tools\\ffprobe.exe',
         ffmpegVersion: 'ffmpeg 7.0',
         ffprobeVersion: 'ffprobe 7.0'
       },
@@ -200,21 +253,22 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
         cpu: { model: 'Test CPU', cores: 8 },
         memoryFreeMB: 8000,
         memoryTotalMB: 16000,
-        gpu: 'Test GPU'
+        gpu: 'NVIDIA GeForce RTX 4090 (Driver C:\\Windows\\System32\\nvldumdx.dll)'
       },
       source: {
-        filePath: 'C:\\personal\\secret_home_video.mkv',
+        filePath: 'C:\\Users\\alice\\Videos\\secret_home_video.mkv',
         fileName: 'sample.mkv',
         durationSeconds: 120,
         video: { resolution: '1920x1080', fps: 30, codec: 'h264' },
         hdr: { label: 'SDR' },
-        referenceVideoRelative: 'reference-sample.mp4'
+        referenceVideoRelative: 'reference-proxy.mp4',
+        referenceNotice: 'Transcoded lightweight 8-bit SDR preview proxy for web browser inspection.'
       },
       results: [
         {
           runIndex: 1,
           configId: 'av1-nvenc-1080p8-chunked-r1',
-          mode: 'chunked',
+          mode: 'chunks',
           status: 'pass',
           codec: 'av1',
           requestedEncoder: 'nvenc',
@@ -226,14 +280,30 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
             successfulEncodeTimeSec: 12.0,
             effectiveFps: 150.0,
             speedMultiplier: 5.0,
+            totalElapsedSpeedMultiplier: 5.0,
             firstChunkDurationSec: 1.1,
+            firstChunkStartupSec: 1.1,
             meanChunkSec: 1.2,
             medianChunkSec: 1.2,
             p95ChunkSec: 1.3,
             maxChunkSec: 1.3,
             deadlineMisses: 0,
             totalBytes: 50000000,
-            actualBitrateKbps: 6667
+            actualBitrateKbps: 6667,
+            processingType: 'production-like'
+          },
+          validation: {
+            valid: true,
+            videoStartPts: 0.007,
+            videoEndPts: 60.007,
+            videoDecodedDuration: 60.0,
+            videoPacketCount: 1800,
+            expectedFrames: 1800,
+            audioStartPts: 0.0,
+            audioEndPts: 60.02,
+            audioDecodedDuration: 60.02,
+            audioPacketCount: 3001,
+            errors: []
           },
           output: {
             assembledFile: 'outputs/run-1/av1-nvenc-1080p8-chunked/assembled.webm',
@@ -243,7 +313,7 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
         {
           runIndex: 2,
           configId: 'av1-nvenc-1080p8-chunked-r2',
-          mode: 'chunked',
+          mode: 'chunks',
           status: 'pass',
           codec: 'av1',
           requestedEncoder: 'nvenc',
@@ -255,14 +325,30 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
             successfulEncodeTimeSec: 11.5,
             effectiveFps: 156.0,
             speedMultiplier: 5.2,
+            totalElapsedSpeedMultiplier: 5.2,
             firstChunkDurationSec: 1.0,
+            firstChunkStartupSec: 1.0,
             meanChunkSec: 1.15,
             medianChunkSec: 1.15,
             p95ChunkSec: 1.2,
             maxChunkSec: 1.2,
             deadlineMisses: 0,
             totalBytes: 50000000,
-            actualBitrateKbps: 6667
+            actualBitrateKbps: 6667,
+            processingType: 'production-like'
+          },
+          validation: {
+            valid: true,
+            videoStartPts: 0.007,
+            videoEndPts: 60.007,
+            videoDecodedDuration: 60.0,
+            videoPacketCount: 1800,
+            expectedFrames: 1800,
+            audioStartPts: 0.0,
+            audioEndPts: 60.02,
+            audioDecodedDuration: 60.02,
+            audioPacketCount: 3001,
+            errors: []
           },
           output: {
             assembledFile: 'outputs/run-2/av1-nvenc-1080p8-chunked/assembled.webm',
@@ -290,27 +376,29 @@ test('reports generate valid JSON, CSV, and HTML offline files with target switc
     // Absolute paths must be sanitized in exported json
     assert.equal(json.tools.ffmpeg, 'ffmpeg.exe');
     assert.equal(json.source.filePath, undefined);
+    assert.ok(!JSON.stringify(json).includes('alice'), 'Must not leak username in JSON report');
 
     const csv = fs.readFileSync(csvPath, 'utf8');
     const lines = csv.trim().split(/\r?\n/);
     assert.equal(lines.length, 3, 'CSV must have header and two rows for two runs');
-    assert.match(lines[0], /^Run,ConfigID/);
+    assert.match(lines[0], /^Run,ConfigID,Mode,ProcessingType/);
     assert.match(lines[1], /^1,av1-nvenc/);
     assert.match(lines[2], /^2,av1-nvenc/);
+    assert.ok(!csv.includes('alice'), 'Must not leak username in CSV report');
 
     const html = fs.readFileSync(htmlPath, 'utf8');
     assert.match(html, /uburoom Transcoding Benchmark/);
-    assert.match(html, /<!DOCTYPE html>/);
+    assert.match(html, /Viewing Proxy \(Lossy 8-bit H\.264\/AAC Preview/);
+    assert.match(html, /Production-Like/);
+    assert.match(html, /2 Passed/);
+
     // Offline verification: must not load remote CDN resources
     assert.ok(!html.includes('src="http://') && !html.includes('src="https://'), 'Must not load external media or scripts');
     assert.ok(!html.includes('href="http://') && !html.includes('href="https://'), 'Must not load external stylesheets');
 
-    // Verify target selector exists for comparing multiple outputs
-    assert.match(html, /id="target-selector"/);
-    assert.match(html, /switchTargetVideo/);
-
     // Verify personal path is not in HTML
     assert.ok(!html.includes('secret_home_video'), 'Personal absolute path must not appear in HTML');
+    assert.ok(!html.includes('alice'), 'Username must not appear in HTML');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

@@ -36,11 +36,12 @@ function calculateStats(numbers) {
 }
 
 /**
- * Performs deep inspection and full decoding verification of an output video file.
- * Confirms stream inventory, codecs, duration, audio/video alignment, and decodability.
+ * Performs deep packet-level inspection and full decoding verification of an output video file.
+ * Verifies stream headers, actual decoded start/end timestamps, real A/V alignment without
+ * relying on container duration fallbacks, complete video frame coverage, and chunk boundary continuity.
  */
 function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
-  const { expectedCodec, hasAudio, sampleDuration } = options;
+  const { expectedCodec, hasAudio, sampleDuration, fps = 30 } = options;
   const errors = [];
 
   if (!fs.existsSync(filePath)) {
@@ -55,7 +56,7 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
   try {
     const raw = cp.execFileSync(ffprobePath, [
       '-v', 'error',
-      '-show_entries', 'stream=index,codec_type,codec_name,width,height,duration:format=duration',
+      '-show_entries', 'stream=index,codec_type,codec_name,width,height:format=duration',
       '-of', 'json',
       filePath
     ], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
@@ -82,36 +83,151 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
     errors.push('Found unexpected audio stream in video-only output.');
   }
 
-  const formatDuration = Number(probe.format?.duration) || Number(videoStream?.duration) || 0;
-  if (sampleDuration && formatDuration > 0) {
-    if (Math.abs(formatDuration - sampleDuration) > Math.max(2.0, CHUNK + 1.0)) {
-      errors.push(`Output duration (${formatDuration.toFixed(2)}s) deviates significantly from sample duration (${sampleDuration}s).`);
-    }
-  }
-
-  if (videoStream && audioStream) {
-    const vDur = Number(videoStream.duration) || formatDuration;
-    const aDur = Number(audioStream.duration) || formatDuration;
-    if (vDur > 0 && aDur > 0 && Math.abs(vDur - aDur) > 0.45) {
-      errors.push(`Audio/video duration misalignment: video=${vDur.toFixed(2)}s, audio=${aDur.toFixed(2)}s (diff ${(Math.abs(vDur - aDur)).toFixed(2)}s).`);
-    }
-  }
-
-  // Full decoding integrity test
+  // 1. Packet-level video timestamps, frame count, and continuity
+  const videoPackets = [];
+  let videoStartPts = 0;
+  let videoEndPts = 0;
+  let videoDecodedDuration = 0;
   try {
+    const videoCsv = cp.execFileSync(ffprobePath, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time,duration_time',
+      '-of', 'csv=p=0',
+      filePath
+    ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) });
+
+    for (const line of videoCsv.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(',');
+      const pts = parseFloat(parts[0]);
+      const dur = parseFloat(parts[1]) || (fps ? 1 / fps : 0.033);
+      if (!isNaN(pts)) videoPackets.push({ pts, dur });
+    }
+  } catch (err) {
+    errors.push(`Failed to demux video packets: ${err.message}`);
+  }
+
+  if (videoPackets.length === 0) {
+    errors.push('No readable video frames or packets in output file.');
+  } else {
+    videoStartPts = videoPackets[0].pts;
+    const lastPkt = videoPackets[videoPackets.length - 1];
+    videoEndPts = lastPkt.pts + lastPkt.dur;
+    videoDecodedDuration = Math.max(0, videoEndPts - videoStartPts);
+
+    // Frame coverage check
+    if (sampleDuration && fps) {
+      const expectedFrames = Math.round(sampleDuration * fps);
+      const actualFrames = videoPackets.length;
+      const deltaFrames = Math.abs(actualFrames - expectedFrames);
+      // Allow at most 3 frames tolerance for partial container frames / cadence rounding
+      if (deltaFrames > 3) {
+        errors.push(`Incomplete video frame coverage: expected ~${expectedFrames} frames, got ${actualFrames} frames (delta ${deltaFrames}).`);
+      }
+    }
+
+    // Frame continuity & chunk boundary gap check
+    for (let i = 1; i < videoPackets.length; i++) {
+      const prevEnd = videoPackets[i - 1].pts + videoPackets[i - 1].dur;
+      const currentPts = videoPackets[i].pts;
+      const gap = currentPts - prevEnd;
+      // Gaps larger than 2.5 frame intervals (~85ms at 30fps) indicate dropped or missing frames at chunk boundaries
+      if (gap > 0.085) {
+        errors.push(`Frame discontinuity detected: ${gap.toFixed(3)}s gap between ${prevEnd.toFixed(3)}s and ${currentPts.toFixed(3)}s.`);
+        break;
+      }
+    }
+
+    // Tight duration check based on real packet timestamps
+    if (sampleDuration && Math.abs(videoDecodedDuration - sampleDuration) > 0.35) {
+      errors.push(`Decoded video duration (${videoDecodedDuration.toFixed(3)}s) deviates from requested sample duration (${sampleDuration}s) by >0.35s.`);
+    }
+  }
+
+  // 2. Packet-level audio timestamps and true A/V alignment
+  let audioStartPts = 0;
+  let audioEndPts = 0;
+  let audioDecodedDuration = 0;
+  let audioPacketsCount = 0;
+
+  if (hasAudio) {
+    const audioPackets = [];
+    try {
+      const audioCsv = cp.execFileSync(ffprobePath, [
+        '-v', 'error',
+        '-select_streams', 'a:0',
+        '-show_entries', 'packet=pts_time,duration_time',
+        '-of', 'csv=p=0',
+        filePath
+      ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) });
+
+      for (const line of audioCsv.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const parts = trimmed.split(',');
+        const pts = parseFloat(parts[0]);
+        const dur = parseFloat(parts[1]) || 0.02;
+        if (!isNaN(pts)) audioPackets.push({ pts, dur });
+      }
+    } catch (err) {
+      errors.push(`Failed to demux audio packets: ${err.message}`);
+    }
+
+    audioPacketsCount = audioPackets.length;
+    if (audioPackets.length === 0) {
+      errors.push('Expected audio stream in output, but no audio packets could be demuxed.');
+    } else {
+      audioStartPts = audioPackets[0].pts;
+      const lastAudio = audioPackets[audioPackets.length - 1];
+      audioEndPts = lastAudio.pts + lastAudio.dur;
+      audioDecodedDuration = Math.max(0, audioEndPts - audioStartPts);
+
+      // Verify real decoded A/V start alignment (independent of container headers)
+      const avStartDelta = Math.abs(videoStartPts - audioStartPts);
+      if (avStartDelta > 0.08) {
+        errors.push(`Audio/video start PTS misalignment: video starts at ${videoStartPts.toFixed(3)}s, audio at ${audioStartPts.toFixed(3)}s (delta ${avStartDelta.toFixed(3)}s).`);
+      }
+
+      // Verify real decoded A/V end alignment
+      const avEndDelta = Math.abs(videoEndPts - audioEndPts);
+      if (avEndDelta > 0.12) {
+        errors.push(`Audio/video end PTS misalignment: video ends at ${videoEndPts.toFixed(3)}s, audio at ${audioEndPts.toFixed(3)}s (delta ${avEndDelta.toFixed(3)}s).`);
+      }
+
+      // Verify real decoded A/V duration alignment
+      const avDurationDelta = Math.abs(videoDecodedDuration - audioDecodedDuration);
+      if (avDurationDelta > 0.12) {
+        errors.push(`Audio/video duration mismatch: video=${videoDecodedDuration.toFixed(3)}s, audio=${audioDecodedDuration.toFixed(3)}s (delta ${avDurationDelta.toFixed(3)}s).`);
+      }
+    }
+  }
+
+  // 3. Full decoding integrity test
+  try {
+    const decodeTimeout = Math.max(30000, Math.ceil((sampleDuration || 60) * 2000));
     cp.execFileSync(ffmpegPath, [
       '-v', 'error',
       '-i', filePath,
       '-f', 'null',
       '-'
-    ], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    ], { encoding: 'utf8', windowsHide: true, timeout: decodeTimeout });
   } catch (err) {
-    errors.push(`Decoding verification failed: ${err.message}`);
+    errors.push(`Full decoding verification failed: ${err.message}`);
   }
 
   return {
     valid: errors.length === 0,
-    formatDuration,
+    videoStartPts: Math.round(videoStartPts * 1000) / 1000,
+    videoEndPts: Math.round(videoEndPts * 1000) / 1000,
+    videoDecodedDuration: Math.round(videoDecodedDuration * 1000) / 1000,
+    videoPacketCount: videoPackets.length,
+    audioStartPts: Math.round(audioStartPts * 1000) / 1000,
+    audioEndPts: Math.round(audioEndPts * 1000) / 1000,
+    audioDecodedDuration: Math.round(audioDecodedDuration * 1000) / 1000,
+    audioPacketCount: audioPacketsCount,
+    formatDuration: videoDecodedDuration,
     videoStream,
     audioStream,
     sizeBytes: size,
@@ -185,6 +301,8 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
   let activeRoute = candidateRoutes[0];
 
   const totalRunStartHr = process.hrtime.bigint();
+  const firstChunkStartHr = process.hrtime.bigint();
+  let firstChunkStartupSec = 0;
   let accumulatedSuccessfulSec = 0;
 
   for (let i = 0; i < numChunks; i++) {
@@ -257,6 +375,10 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
         encodeDurationSec = Number(t1 - t0) / 1e9;
         accumulatedSuccessfulSec += encodeDurationSec;
         encoded = true;
+
+        if (i === 0) {
+          firstChunkStartupSec = Number(process.hrtime.bigint() - firstChunkStartHr) / 1e9;
+        }
       } catch (err) {
         // Step down route first (hardware decode -> CPU decode / placebo)
         const currentRouteIdx = candidateRoutes.indexOf(activeRoute);
@@ -325,6 +447,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
   const totalFrames = Math.round(sampleDuration * (sourceInfo.video.fps || 30));
   const effectiveFps = Math.round((totalFrames / accumulatedSuccessfulSec) * 100) / 100;
   const speedMultiplier = Math.round((sampleDuration / accumulatedSuccessfulSec) * 100) / 100;
+  const totalElapsedSpeedMultiplier = Math.round((sampleDuration / totalRunDurationSec) * 100) / 100;
   const actualBitrateKbps = Math.round((totalBytes * 8) / (sampleDuration * 1000));
 
   // Assemble measured chunks into a seekable review file without re-encoding
@@ -348,20 +471,24 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     validationResult = validateOutputVideo(tools.ffprobe, tools.ffmpeg, assembledFile, {
       expectedCodec: codec,
       hasAudio: rawSpec.hasAudio,
-      sampleDuration
+      sampleDuration,
+      fps: sourceInfo.video.fps || 30
     });
-    assembledDuration = validationResult.formatDuration || 0;
+    assembledDuration = validationResult.videoDecodedDuration || 0;
     assembledSuccess = validationResult.valid;
   } catch (err) {
     assembledSuccess = false;
     validationResult.errors.push(`Concat assembly error: ${err.message}`);
   }
 
+  const isPassed = assembledSuccess && validationResult.valid;
+
   return {
     runIndex,
     configId,
     mode: 'chunked',
-    status: assembledSuccess ? 'pass' : 'fail',
+    status: isPassed ? 'pass' : 'fail',
+    error: isPassed ? null : (validationResult.errors.join('; ') || 'Assembled validation failed'),
     codec,
     requestedEncoder,
     actualEncoder,
@@ -378,16 +505,19 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       sampleDuration,
       totalEncodingTimeSec: Math.round(totalRunDurationSec * 1000) / 1000,
       successfulEncodeTimeSec: Math.round(accumulatedSuccessfulSec * 1000) / 1000,
-      effectiveFps,
       speedMultiplier,
+      totalElapsedSpeedMultiplier,
+      effectiveFps,
       firstChunkDurationSec: chunkResults[0]?.encodeDurationSec || 0,
+      firstChunkStartupSec: Math.round(firstChunkStartupSec * 1000) / 1000,
       meanChunkSec: stats.mean,
       medianChunkSec: stats.median,
       p95ChunkSec: stats.p95,
       maxChunkSec: stats.max,
       deadlineMisses: deadlineMissCount,
       totalBytes,
-      actualBitrateKbps
+      actualBitrateKbps,
+      processingType: 'production-like'
     },
     validation: validationResult,
     output: {
@@ -561,19 +691,24 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
   const totalFrames = Math.round(sampleDuration * (sourceInfo.video.fps || 30));
   const effectiveFps = Math.round((totalFrames / successfulDurationSec) * 100) / 100;
   const speedMultiplier = Math.round((sampleDuration / successfulDurationSec) * 100) / 100;
+  const totalElapsedSpeedMultiplier = Math.round((sampleDuration / totalRunDurationSec) * 100) / 100;
   const actualBitrateKbps = Math.round((outputSizeBytes * 8) / (sampleDuration * 1000));
 
   const validationResult = validateOutputVideo(tools.ffprobe, tools.ffmpeg, outputFile, {
     expectedCodec: codec,
     hasAudio: rawSpec.hasAudio,
-    sampleDuration
+    sampleDuration,
+    fps: sourceInfo.video.fps || 30
   });
+
+  const isPassed = validationResult.valid;
 
   return {
     runIndex,
     configId,
     mode: 'continuous',
-    status: validationResult.valid ? 'pass' : 'fail',
+    status: isPassed ? 'pass' : 'fail',
+    error: isPassed ? null : validationResult.errors.join('; '),
     codec,
     requestedEncoder,
     actualEncoder,
@@ -592,19 +727,22 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       successfulEncodeTimeSec: Math.round(successfulDurationSec * 1000) / 1000,
       effectiveFps,
       speedMultiplier,
+      totalElapsedSpeedMultiplier,
       firstChunkDurationSec: null,
+      firstChunkStartupSec: null,
       meanChunkSec: null,
       medianChunkSec: null,
       p95ChunkSec: null,
       maxChunkSec: null,
       deadlineMisses: 0,
       totalBytes: outputSizeBytes,
-      actualBitrateKbps
+      actualBitrateKbps,
+      processingType: 'continuous-baseline'
     },
     validation: validationResult,
     output: {
       assembledFile: path.relative(outputDir, outputFile).replace(/\\/g, '/'),
-      assembledDuration: validationResult.formatDuration || sampleDuration,
+      assembledDuration: validationResult.videoDecodedDuration || sampleDuration,
       isReviewFile: false,
       reviewLabel: 'Continuous encode',
       chunks: []

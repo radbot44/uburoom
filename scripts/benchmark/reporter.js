@@ -15,6 +15,37 @@ function escapeHtml(str) {
 }
 
 /**
+ * Sanitizes arbitrary text (such as FFmpeg error logs or stack traces)
+ * to prevent leaking personal paths, username directories, private URLs, or tokens.
+ */
+function sanitizeText(text) {
+  if (!text || typeof text !== 'string') return '';
+  let s = text.replace(/\\/g, '/');
+
+  // Strip user home directories:
+  // e.g. C:/Users/<username> -> [home]
+  // e.g. /home/<username> or /Users/<username> -> [home]
+  s = s.replace(/(?:[a-zA-Z]:)?\/(?:Users|home)\/[^/\s"':]+/gi, '[home]');
+
+  // Strip sensitive local paths, keeping benchmark artifact references
+  s = s.replace(/[a-zA-Z]:\/[^/\s"':]+\/[^/\s"':]+/g, (m) => {
+    if (m.includes('artifacts/') || m.includes('outputs/') || m.includes('screenshots/')) {
+      const idx = m.indexOf('artifacts/');
+      if (idx >= 0) return m.slice(idx);
+      const outIdx = m.indexOf('outputs/');
+      if (outIdx >= 0) return m.slice(outIdx);
+    }
+    return '[local]';
+  });
+
+  // Strip URLs with tokens, IPs, or credentials
+  s = s.replace(/https?:\/\/[^\s"']+/gi, '[url]');
+  s = s.replace(/(?:token|key|secret|password|auth)=[^&\s"']+/gi, '$1=[REDACTED]');
+
+  return s;
+}
+
+/**
  * Sanitizes data for export to ensure no personal absolute paths or credentials appear.
  */
 function sanitizeForExport(benchmarkData) {
@@ -26,7 +57,36 @@ function sanitizeForExport(benchmarkData) {
   if (sanitized.source) {
     delete sanitized.source.filePath;
     delete sanitized.source.rawInfo;
+    if (sanitized.source.fileName) sanitized.source.fileName = path.basename(sanitized.source.fileName);
   }
+  if (sanitized.environment?.gpu) {
+    sanitized.environment.gpu = sanitizeText(sanitized.environment.gpu);
+  }
+
+  if (Array.isArray(sanitized.results)) {
+    for (const r of sanitized.results) {
+      if (r.error) r.error = sanitizeText(r.error);
+      if (r.fallback?.reason) r.fallback.reason = sanitizeText(r.fallback.reason);
+      if (Array.isArray(r.fallbackEvents)) {
+        for (const fe of r.fallbackEvents) {
+          if (fe.reason) fe.reason = sanitizeText(fe.reason);
+        }
+      }
+      if (Array.isArray(r.validation?.errors)) {
+        r.validation.errors = r.validation.errors.map(sanitizeText);
+      }
+      if (r.output?.assembledFile) {
+        r.output.assembledFile = r.output.assembledFile.replace(/\\/g, '/');
+      }
+    }
+  }
+
+  if (Array.isArray(sanitized.screenshots)) {
+    for (const s of sanitized.screenshots) {
+      if (s.relativePath) s.relativePath = s.relativePath.replace(/\\/g, '/');
+    }
+  }
+
   return sanitized;
 }
 
@@ -48,10 +108,12 @@ function generateJsonReport(benchmarkData, outputPath) {
  * Generates results.csv
  */
 function generateCsvReport(benchmarkData, outputPath) {
+  const cleanData = sanitizeForExport(benchmarkData);
   const headers = [
     'Run',
     'ConfigID',
     'Mode',
+    'ProcessingType',
     'Codec',
     'RequestedEncoder',
     'ActualEncoder',
@@ -61,48 +123,76 @@ function generateCsvReport(benchmarkData, outputPath) {
     'ActualBitrateKbps',
     'Status',
     'SpeedMultiplier',
+    'TotalElapsedSpeed',
     'EffectiveFPS',
     'SuccessfulTimeSec',
     'TotalElapsedSec',
     'FirstChunkSec',
+    'FirstChunkStartupSec',
     'MeanChunkSec',
     'P95ChunkSec',
     'MaxChunkSec',
     'DeadlineMisses',
     'TotalBytes',
-    'FallbackEvents'
+    'FrameCoveragePct',
+    'AVStartDeltaSec',
+    'AVEndDeltaSec',
+    'FallbackEvents',
+    'Errors'
   ];
 
-  const rows = (benchmarkData.results || []).map(r => {
+  const rows = (cleanData.results || []).map(r => {
     const perf = r.performance || {};
     const q = r.quality || {};
+    const val = r.validation || {};
     const fallbacks = (r.fallbackEvents || (r.fallback ? [r.fallback] : []))
       .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
       .join('; ');
+
+    const err = r.error || (val.errors?.length ? val.errors.join('; ') : '');
+
+    const frameCov = val.videoPacketCount && val.expectedFrames
+      ? Math.round((val.videoPacketCount / val.expectedFrames) * 100)
+      : '';
+
+    const avStart = val.videoStartPts !== undefined && val.audioStartPts !== undefined
+      ? Math.round(Math.abs(val.videoStartPts - val.audioStartPts) * 1000) / 1000
+      : '';
+
+    const avEnd = val.videoEndPts !== undefined && val.audioEndPts !== undefined
+      ? Math.round(Math.abs(val.videoEndPts - val.audioEndPts) * 1000) / 1000
+      : '';
 
     return [
       r.runIndex || 1,
       r.configId,
       r.mode,
+      perf.processingType || 'production-like',
       r.codec,
       r.requestedEncoder,
       r.actualEncoder,
       q.id || '',
-      `${q.width}x${q.height}`,
+      `${q.width || ''}x${q.height || ''}`,
       q.targetBitrateKbps || '',
       perf.actualBitrateKbps || '',
       r.status,
       perf.speedMultiplier || '',
+      perf.totalElapsedSpeedMultiplier || '',
       perf.effectiveFps || '',
       perf.successfulEncodeTimeSec !== undefined ? perf.successfulEncodeTimeSec : (perf.totalEncodingTimeSec || ''),
       perf.totalEncodingTimeSec || '',
       perf.firstChunkDurationSec !== null && perf.firstChunkDurationSec !== undefined ? perf.firstChunkDurationSec : '',
+      perf.firstChunkStartupSec !== null && perf.firstChunkStartupSec !== undefined ? perf.firstChunkStartupSec : '',
       perf.meanChunkSec !== null && perf.meanChunkSec !== undefined ? perf.meanChunkSec : '',
       perf.p95ChunkSec !== null && perf.p95ChunkSec !== undefined ? perf.p95ChunkSec : '',
       perf.maxChunkSec !== null && perf.maxChunkSec !== undefined ? perf.maxChunkSec : '',
       perf.deadlineMisses || 0,
       perf.totalBytes || 0,
-      fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None'
+      frameCov,
+      avStart,
+      avEnd,
+      fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None',
+      err ? `"${err.replace(/"/g, '""')}"` : ''
     ].join(',');
   });
 
@@ -202,23 +292,26 @@ function buildChunkLatencySvg(chunkResults, chunkDuration = 6) {
  * Generates the complete, standalone offline HTML report.
  */
 function generateHtmlReport(benchmarkData, outputPath) {
-  const env = benchmarkData.environment || {};
-  const src = benchmarkData.source || {};
-  const results = benchmarkData.results || [];
-  const probed = benchmarkData.probedEncoders || [];
+  const cleanData = sanitizeForExport(benchmarkData);
+  const env = cleanData.environment || {};
+  const src = cleanData.source || {};
+  const results = cleanData.results || [];
+  const probed = cleanData.probedEncoders || [];
+
+  const passedCount = results.filter(r => r.status === 'pass').length;
+  const failedCount = results.filter(r => r.status === 'fail').length;
+  const skippedCount = results.filter(r => r.status === 'skipped').length;
 
   const speedChartSvg = buildSpeedChartSvg(results.filter(r => r.status === 'pass'));
-
   const chunkedRuns = results.filter(r => r.mode === 'chunked' && r.output?.chunks?.length);
 
-  const referenceVideoRel = src.referenceVideoRelative || null;
+  const referenceVideoRel = src.referenceVideoRelative ? src.referenceVideoRelative.replace(/\\/g, '/') : null;
   const passResults = results.filter(r => r.status === 'pass' && r.output?.assembledFile);
   const firstPassResult = passResults[0] || null;
-  const firstTargetRel = firstPassResult ? firstPassResult.output.assembledFile : null;
+  const firstTargetRel = firstPassResult ? firstPassResult.output.assembledFile.replace(/\\/g, '/') : null;
 
   const hasMultipleRuns = results.some(r => r.runIndex > 1);
-
-  const screenshots = benchmarkData.screenshots || [];
+  const screenshots = cleanData.screenshots || [];
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -256,6 +349,11 @@ function generateHtmlReport(benchmarkData, outputPath) {
     .header-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
     h1 { font-size: 24px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 12px; }
     h1 .badge { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 20%, transparent); border: 1px solid var(--primary); color: var(--primary); }
+    .header-stats { display: flex; gap: 10px; align-items: center; }
+    .stat-pill { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .stat-pill.passed { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); border: 1px solid var(--success); }
+    .stat-pill.failed { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); border: 1px solid var(--error); }
+    .stat-pill.skipped { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); border: 1px solid var(--warning); }
     .timestamp { font-size: 13px; color: var(--muted); }
 
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
@@ -297,7 +395,8 @@ function generateHtmlReport(benchmarkData, outputPath) {
     @media (max-width: 900px) { .player-grid { grid-template-columns: 1fr; } }
     .player-box { background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; }
     .player-box video { width: 100%; height: 100%; object-fit: contain; }
-    .player-label { position: absolute; top: 10px; left: 10px; background: rgba(16, 18, 23, 0.85); backdrop-filter: blur(4px); padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; z-index: 2; border: 1px solid var(--border); }
+    .player-label { position: absolute; top: 10px; left: 10px; background: rgba(16, 18, 23, 0.88); backdrop-filter: blur(4px); padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; z-index: 2; border: 1px solid var(--border); }
+    .player-sublabel { font-size: 11px; color: var(--muted); font-weight: normal; margin-top: 2px; }
     
     .player-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 16px; background: var(--elevated); border-radius: 10px; margin-top: 12px; }
     .player-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -338,7 +437,12 @@ function generateHtmlReport(benchmarkData, outputPath) {
         uburoom Transcoding Benchmark
         <span class="badge">Stage 1</span>
       </h1>
-      <div class="timestamp">Generated: ${escapeHtml(new Date().toLocaleString())}</div>
+      <div class="header-stats">
+        <span class="stat-pill passed">${passedCount} Passed</span>
+        ${failedCount > 0 ? `<span class="stat-pill failed">${failedCount} Failed</span>` : ''}
+        ${skippedCount > 0 ? `<span class="stat-pill skipped">${skippedCount} Skipped</span>` : ''}
+        <span class="timestamp">Generated: ${escapeHtml(new Date().toLocaleString())}</span>
+      </div>
     </div>
   </header>
 
@@ -359,16 +463,16 @@ function generateHtmlReport(benchmarkData, outputPath) {
     </div>
 
     <div class="card">
-      <h2>Configuration Profile</h2>
+      <h2>Configuration & Processing</h2>
       <dl class="info-list">
         <dt>Profile Name</dt>
-        <dd>${escapeHtml(benchmarkData.configProfile || 'config.yaml')}</dd>
+        <dd>${escapeHtml(cleanData.configProfile || 'config.yaml')}</dd>
+        <dt>Processing Engine</dt>
+        <dd>Production-Like (Single WebM container with synchronized Opus audio)</dd>
         <dt>Configured Encoder Setting</dt>
-        <dd>${escapeHtml(benchmarkData.transcodingSettings?.encoder || 'auto')}</dd>
+        <dd>${escapeHtml(cleanData.transcodingSettings?.encoder || 'auto')}</dd>
         <dt>Hardware Decode / CPU Fallback</dt>
-        <dd>${benchmarkData.transcodingSettings?.hardwareDecode ? 'Enabled' : 'Disabled'} / ${benchmarkData.transcodingSettings?.cpuFallback ? 'Enabled' : 'Disabled'}</dd>
-        <dt>Git Revision</dt>
-        <dd>${escapeHtml(env.gitRevision ? env.gitRevision.slice(0, 10) : 'Unknown')}</dd>
+        <dd>${cleanData.transcodingSettings?.hardwareDecode ? 'Enabled' : 'Disabled'} / ${cleanData.transcodingSettings?.cpuFallback ? 'Enabled' : 'Disabled'}</dd>
       </dl>
     </div>
 
@@ -382,7 +486,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
         <dt>Color & HDR Classification</dt>
         <dd>${escapeHtml(src.hdr?.label || 'SDR')}</dd>
         <dt>Sample Duration</dt>
-        <dd>${escapeHtml(benchmarkData.sampleDuration || 60)}s (offset ${escapeHtml(benchmarkData.startOffset || 0)}s)</dd>
+        <dd>${escapeHtml(cleanData.sampleDuration || 60)}s (offset ${escapeHtml(cleanData.startOffset || 0)}s)</dd>
       </dl>
     </div>
 
@@ -390,17 +494,23 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <h2>FFmpeg & Tools</h2>
       <dl class="info-list">
         <dt>FFmpeg Version</dt>
-        <dd>${escapeHtml(benchmarkData.tools?.ffmpegVersion || 'FFmpeg')}</dd>
+        <dd>${escapeHtml(cleanData.tools?.ffmpegVersion || 'FFmpeg')}</dd>
         <dt>FFprobe Version</dt>
-        <dd>${escapeHtml(benchmarkData.tools?.ffprobeVersion || 'FFprobe')}</dd>
+        <dd>${escapeHtml(cleanData.tools?.ffprobeVersion || 'FFprobe')}</dd>
         <dt>Discovered HW Encoders</dt>
         <dd>${escapeHtml(probed.filter(p => p.available).map(p => `${p.codec.toUpperCase()} (${p.encoder})`).join(', ') || 'Software only')}</dd>
       </dl>
     </div>
   </div>
 
+  ${src.referenceNotice ? `
+  <div class="notice-box warning">
+    <strong>Viewing Proxy Notice:</strong> ${escapeHtml(src.referenceNotice)}
+  </div>
+  ` : ''}
+
   <div class="notice-box">
-    <strong>Benchmark Reliability Notice:</strong> These results measure single-stream transcoding throughput and chunk latency on this machine. High single-stream throughput does not prove sustainable multi-viewer capacity under server load. Stage 2 will introduce multi-stream concurrency and endurance testing.
+    <strong>Benchmark Reliability Notice:</strong> These results measure single-stream transcoding throughput, chunk latency, and decoder synchronization on this machine. High single-stream throughput does not prove sustainable multi-viewer capacity under concurrent server load. Stage 2 will introduce multi-stream concurrency and endurance testing.
   </div>
 
   <!-- Performance Comparison Chart -->
@@ -461,6 +571,15 @@ function generateHtmlReport(benchmarkData, outputPath) {
               ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play Output</a>`
               : '<span style="color:var(--muted)">None</span>';
 
+            const errTooltip = r.error ? `title="${escapeHtml(r.error)}"` : '';
+
+            // Startup latency display
+            const firstChunkText = perf.firstChunkDurationSec
+              ? (perf.firstChunkStartupSec && perf.firstChunkStartupSec > perf.firstChunkDurationSec
+                ? `<span title="Startup latency including fallback: ${perf.firstChunkStartupSec}s (chunk encode: ${perf.firstChunkDurationSec.toFixed(2)}s)">${perf.firstChunkDurationSec.toFixed(2)}s <span class="pill warn" style="font-size:10px;">${perf.firstChunkStartupSec.toFixed(2)}s</span></span>`
+                : `${perf.firstChunkDurationSec.toFixed(2)}s`)
+              : '-';
+
             return `
               <tr data-codec="${escapeHtml(r.codec)}">
                 ${hasMultipleRuns ? `<td><strong>#${r.runIndex || 1}</strong></td>` : ''}
@@ -472,10 +591,10 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 <td>${escapeHtml(perf.actualBitrateKbps || '-')} kbps</td>
                 <td><span class="pill ${speedClass}"><strong>${speed.toFixed(2)}x</strong></span></td>
                 <td>${escapeHtml(perf.effectiveFps || '-')} fps</td>
-                <td>${perf.firstChunkDurationSec ? perf.firstChunkDurationSec.toFixed(2) + 's' : '-'}</td>
+                <td>${firstChunkText}</td>
                 <td>${perf.p95ChunkSec ? perf.p95ChunkSec.toFixed(2) + 's' : '-'}</td>
                 <td>${perf.deadlineMisses > 0 ? `<span class="pill error">${perf.deadlineMisses}</span>` : '0'}</td>
-                <td><span class="pill ${statusClass}">${escapeHtml(r.status.toUpperCase())}</span></td>
+                <td><span class="pill ${statusClass}" ${errTooltip}>${escapeHtml(r.status.toUpperCase())}</span></td>
                 <td>${outLink}</td>
               </tr>
             `;
@@ -527,11 +646,17 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <!-- Side-by-Side View -->
       <div id="view-side-by-side" class="player-grid">
         <div class="player-box">
-          <div class="player-label">Source / Reference (${escapeHtml(src.fileName || 'Reference')})</div>
+          <div class="player-label">
+            Viewing Proxy (Lossy 8-bit H.264/AAC Preview — Not Untouched Master)
+            <div class="player-sublabel">Source: ${escapeHtml(src.fileName || 'Master Video')} (${escapeHtml(src.video?.resolution)}, ${escapeHtml(src.hdr?.label || 'SDR')})</div>
+          </div>
           <video id="player-ref" src="${escapeHtml(referenceVideoRel)}" playsinline preload="metadata"></video>
         </div>
         <div class="player-box">
-          <div class="player-label" id="target-box-label">Transcoded Output: ${escapeHtml(firstPassResult.configId)}</div>
+          <div class="player-label" id="target-box-label">
+            Transcoded Output: ${escapeHtml(firstPassResult.configId)}
+            <div class="player-sublabel">Native WebM Transcode</div>
+          </div>
           <video id="player-target" src="${escapeHtml(firstTargetRel)}" playsinline preload="metadata"></video>
         </div>
       </div>
@@ -547,7 +672,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
           <input type="range" min="0" max="100" value="50" class="wipe-slider-input" id="wipe-range" oninput="updateWipe(this.value)">
         </div>
         <div style="text-align:center;font-size:12px;color:var(--muted);margin-top:8px;">
-          Drag slider horizontally across the video frame to compare source (right) and encode (left).
+          Drag slider horizontally across the video frame to compare viewing proxy (right) and transcoded output (left).
         </div>
       </div>
 
@@ -586,7 +711,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
         <li><strong>results.json:</strong> <a class="file-link" href="results.json" target="_blank">View Raw JSON (Schema v${SCHEMA_VERSION})</a></li>
         <li><strong>results.csv:</strong> <a class="file-link" href="results.csv" target="_blank">Download CSV Summary</a></li>
-        ${referenceVideoRel ? `<li><strong>Reference Sample:</strong> <a class="file-link" href="${escapeHtml(referenceVideoRel)}" target="_blank">${escapeHtml(referenceVideoRel)}</a></li>` : ''}
+        ${referenceVideoRel ? `<li><strong>Viewing Proxy:</strong> <a class="file-link" href="${escapeHtml(referenceVideoRel)}" target="_blank">${escapeHtml(referenceVideoRel)} (Lossy 8-bit SDR Preview)</a></li>` : ''}
       </ul>
     </div>
   </section>
@@ -632,7 +757,9 @@ function generateHtmlReport(benchmarkData, outputPath) {
       const opt = select ? select.options[select.selectedIndex] : null;
       const label = opt ? opt.getAttribute('data-label') : fileRel;
       const targetBoxLabel = document.getElementById('target-box-label');
-      if (targetBoxLabel) targetBoxLabel.textContent = 'Transcoded Output: ' + label;
+      if (targetBoxLabel) {
+        targetBoxLabel.innerHTML = 'Transcoded Output: ' + label + '<div class="player-sublabel">Native WebM Transcode</div>';
+      }
       
       const vT = document.getElementById('player-target');
       const wT = document.getElementById('wipe-target');
@@ -734,6 +861,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
 }
 
 module.exports = {
+  sanitizeText,
   generateJsonReport,
   generateCsvReport,
   generateHtmlReport

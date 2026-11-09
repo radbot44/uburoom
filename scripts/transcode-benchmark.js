@@ -7,7 +7,8 @@ const {
   resolveConfigFile,
   loadBenchmarkConfig,
   resolveTestMatrix,
-  inspectActiveUburoomProcess
+  inspectActiveUburoomProcess,
+  resolveUniqueOutputDir
 } = require('./benchmark/config');
 const { resolveTools, collectEnvironmentInfo } = require('./benchmark/tools');
 const { probeAllEncoders, probeHwaccels } = require('./benchmark/prober');
@@ -133,7 +134,7 @@ OPTIONS:
                              a local synthetic test pattern is generated.
   -c, --config <file>        Select YAML configuration file (default: config.yaml
                              or fallback to config.example.yaml).
-  -d, --duration <sec>       Duration of sample segment in seconds (default: 60).
+  -d, --duration <sec>       Duration of video sample in seconds (default: 60).
       --start <sec>          Start position in source video in seconds (default: 0).
   -m, --mode <mode>          Encoding methodology: chunks | continuous | both
                              (default: chunks).
@@ -145,8 +146,8 @@ OPTIONS:
                              (e.g., "1080p8,720p4" or "720p").
   -e, --encoders <list>      Comma-separated list of encoders to test (nvenc,qsv,software).
       --codecs <list>        Comma-separated list of codecs to test (av1,vp9,vp8).
-  -o, --output <dir>         Output directory for artifacts and reports
-                             (default: artifacts/transcode-benchmark/run-<timestamp>/).
+  -o, --output <dir>         Output directory for artifacts and reports.
+                             Collision-safe: will not overwrite existing directories.
   -r, --runs <number>        Number of repetitions per configuration (default: 1).
       --probe-only           Probe available encoders and hardware acceleration,
                              print diagnostic results and exit.
@@ -155,19 +156,6 @@ OPTIONS:
       --ffmpeg <path>        Explicit path to FFmpeg binary.
       --ffprobe <path>       Explicit path to FFprobe binary.
   -h, --help                 Show this documentation.
-
-EXAMPLES:
-  # Quick baseline benchmark using synthetic 60-second video:
-  node scripts/transcode-benchmark.js
-
-  # Benchmark a custom movie clip for 1080p and 720p:
-  node scripts/transcode-benchmark.js --input "C:/videos/sample.mkv" --start 120 --duration 60 --qualities 1080p8,720p4
-
-  # Compare all available encoders (NVENC, QSV, Software) across all codecs:
-  node scripts/transcode-benchmark.js --all-encoders --all-codecs --mode both
-
-  # Probe hardware capabilities only:
-  node scripts/transcode-benchmark.js --probe-only
 `);
 }
 
@@ -272,12 +260,15 @@ async function main() {
     return;
   }
 
-  // 7. Output directory preparation
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const defaultOutputDir = path.resolve(__dirname, '..', 'artifacts', 'transcode-benchmark', `run-${timestamp}`);
-  const outputDir = path.resolve(process.cwd(), options.output || defaultOutputDir);
-  fs.mkdirSync(outputDir, { recursive: true });
-  console.log(`\nOutput directory: ${outputDir}`);
+  // 7. Output directory preparation (collision-free & safe)
+  const outputResolution = resolveUniqueOutputDir(options.output, path.resolve(__dirname, '..'));
+  const outputDir = outputResolution.dir;
+  if (outputResolution.collisionAvoided) {
+    console.log(`\n[NOTICE] Destination "${outputResolution.original}" exists and contains files.`);
+    console.log(`Using collision-free unique output directory: ${outputDir}`);
+  } else {
+    console.log(`\nOutput directory: ${outputDir}`);
+  }
 
   // 8. Source Media Resolution
   let sourceFilePath;
@@ -314,9 +305,12 @@ async function main() {
     console.log(`Clamped sample duration to ${sampleDuration.toFixed(1)}s to fit source length.`);
   }
 
-  // Extract reference sample clip for web report comparison
-  console.log('Extracting lightweight reference sample for offline report...');
-  const refSampleRelative = extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, outputDir);
+  // Extract reference viewing proxy for web report comparison
+  console.log('Extracting lightweight reference viewing proxy for offline report...');
+  const refProxy = extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, outputDir);
+  if (refProxy?.notice) {
+    console.log(`[NOTICE] ${refProxy.notice}`);
+  }
 
   // Extract reference screenshot from source
   const screenshotsDir = path.join(outputDir, 'screenshots');
@@ -399,7 +393,19 @@ async function main() {
           }
 
           const perf = result.performance;
-          console.log(`   -> PASS in ${perf.totalEncodingTimeSec}s | Speed: ${perf.speedMultiplier}x | FPS: ${perf.effectiveFps} | Deadlines missed: ${perf.deadlineMisses}`);
+          if (result.status === 'pass') {
+            const retryNote = perf.totalEncodingTimeSec > perf.successfulEncodeTimeSec
+              ? ` (Total elapsed: ${perf.totalEncodingTimeSec}s, ${perf.totalElapsedSpeedMultiplier}x)`
+              : '';
+            const startupNote = perf.firstChunkStartupSec !== null && perf.firstChunkStartupSec > perf.firstChunkDurationSec
+              ? ` | 1st chunk startup: ${perf.firstChunkStartupSec}s`
+              : (perf.firstChunkDurationSec ? ` | 1st chunk: ${perf.firstChunkDurationSec}s` : '');
+            console.log(`   -> PASS in ${perf.successfulEncodeTimeSec}s | Speed: ${perf.speedMultiplier}x${retryNote} | FPS: ${perf.effectiveFps}${startupNote} | Deadlines missed: ${perf.deadlineMisses}`);
+          } else {
+            const failReason = result.error || (result.validation?.errors?.length ? result.validation.errors.join('; ') : 'Validation failed');
+            console.log(`   -> FAIL: ${failReason}`);
+          }
+
           if (result.fallbackEvents?.length) {
             for (const f of result.fallbackEvents) {
               console.log(`   [NOTICE] Fallback occurred: ${f.from} -> ${f.to} (${f.reason})`);
@@ -438,8 +444,14 @@ async function main() {
     }
   }
 
+  // Summary counts
+  const passedCount = benchmarkResults.filter(r => r.status === 'pass').length;
+  const failedCount = benchmarkResults.filter(r => r.status === 'fail').length;
+  const skippedCount = benchmarkResults.filter(r => r.status === 'skipped').length;
+  console.log(`\nBenchmark Summary: ${totalTests} total | ${passedCount} passed | ${failedCount} failed | ${skippedCount} skipped\n`);
+
   // 10. Generate Reports
-  console.log(`\n===========================================================`);
+  console.log(`===========================================================`);
   console.log(`   Generating Benchmark Reports`);
   console.log(`===========================================================\n`);
 
@@ -465,7 +477,8 @@ async function main() {
       durationSeconds: sourceInfo.durationSeconds,
       video: sourceInfo.video,
       hdr: sourceInfo.hdr,
-      referenceVideoRelative: refSampleRelative
+      referenceVideoRelative: refProxy?.relativePath || null,
+      referenceNotice: refProxy?.notice || null
     },
     probedEncoders,
     screenshots,

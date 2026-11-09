@@ -128,10 +128,12 @@ Encodes the entire sample duration in one continuous FFmpeg process using identi
 
 ---
 
-## 6. Color Processing & Dolby Vision Profile 5
+## 6. Color Processing, Viewing Proxies & Privacy
 
 - **HDR10 & HLG**: GPU routes use `libplacebo` with Vulkan (`-init_hw_device vulkan=v`) for tone-mapping with peak detection off (`bt.2390`). CPU fallback uses `zscale` linear tone-mapping (`zscale=t=linear:npl=100 ... tonemap=hable`).
 - **Dolby Vision Profile 5 (`doviP5`)**: Uses proprietary IPTPQc2 color reshaping without an HDR10 base layer. CPU `zscale` cannot decode IPTPQc2. Profile 5 strictly requires Vulkan `libplacebo` (`apply_dolbyvision=1`). If Vulkan/libplacebo is unavailable or fails, the benchmark fails closed with `Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping`, preventing corrupt purple/green outputs from being reported as successful.
+- **Viewing Proxy (Lossy 8-bit SDR)**: The HTML report generates a lightweight `reference-proxy.mp4` aligned to the sample window for side-by-side inspection. It is clearly labeled as a lossy viewing proxy, not the untouched master. For HDR10/HLG inputs, the proxy is tonemapped using `zscale`. If an input is Dolby Vision Profile 5 and Vulkan `libplacebo` is absent, proxy generation is disabled with an explanatory notice to avoid displaying false colors.
+- **Privacy & Redaction**: All error logs, fallback reasons, validation strings, and JSON/CSV/HTML metadata pass through path and URL sanitizers that strip local usernames (`[home]`), drive prefixes, network shares, tokens, and credentials across both Windows and POSIX environments.
 
 ---
 
@@ -153,6 +155,19 @@ Encodes the entire sample duration in one continuous FFmpeg process using identi
 - **`--all-encoders` Mode**: In comparative encoder testing, unavailable hardware encoders (e.g. QSV on NVIDIA-only machines) are recorded as `skipped` / `unavailable`, rather than silently converted into duplicate software benchmarks.
 - **Configured Fallback Mode**: When running with `--encoder auto` (or configured hardware), runtime errors trigger step-downs (first GPU decode to CPU decode, then hardware encoder to CPU software). All fallback steps are recorded in `fallbackEvents` and displayed in reports.
 - **Repetition Isolation (`--runs N`)**: Each run writes to isolated directories (`outputs/run-${N}/<configId>/`) and unique screenshot filenames (`screenshots/run-${N}-<configId>-frame.jpg`), preventing file collision.
+- **Collision-Safe Output Directories**: Every benchmark invocation uses a unique, collision-free directory (e.g. `artifacts/transcode-benchmark/run-<timestamp>-<pid>/`). If an explicit `--output` points to an existing directory containing files, the benchmark automatically diverts to a safe suffix (`<output>-1`, `<output>-2`) with an operator notice, preventing accidental data loss or clobbering of previous runs. Project source roots (`server`, `web`, `shared`, `.git`) are strictly rejected.
+
+---
+
+## 9. Output Validation & Stream Health
+
+FFprobe frequently omits individual stream durations for WebM containers, causing traditional container-level duration checks to miss audio/video desync. The benchmark implements deep packet-level stream inspection:
+1. **Packet Demuxing**: Uses FFprobe packet-level queries (`-show_entries packet=pts_time,duration_time`) to extract true start PTS, end PTS, packet counts, and exact decoded duration for both video and audio.
+2. **Frame Coverage**: Compares decoded video packet count against expected frames (`Math.round(sampleDuration * fps)`), flagging missing or dropped frames within a tight tolerance (+/-3 frames).
+3. **Chunk Boundary Continuity**: Inspects consecutive video packet timestamps across 6-second chunk joins to verify seamless GOP transitions and detect timestamp jumps or gaps (> 0.085s).
+4. **Audio/Video Alignment**: Verifies that video and audio start within 0.08s of each other, end within 0.12s, and have duration deltas under 0.12s.
+5. **Full Decode Verification**: Executes a bounded FFmpeg null sink decode (`-f null -`) ensuring all bitstream packets are valid and decodable without fatal errors.
+6. **Truthful Status Reporting**: If validation fails, the benchmark reports `FAIL` (never `PASS`), displays the exact validation error reasons, preserves all timing measurements, and updates summary counters (`total`, `passed`, `failed`, `skipped`).
 
 ---
 

@@ -144,24 +144,77 @@ function generateSyntheticSource(ffmpegPath, outputDir, requiredDuration = 60) {
 }
 
 /**
- * Extracts a lightweight, web-compatible reference sample from the source video
+ * Extracts a lightweight, web-compatible reference proxy from the source video
  * matching the exact [startOffset, startOffset + sampleDuration] interval.
- * Returns the relative path to the sample inside outputDir (e.g. 'reference-sample.mp4').
- * Never exposes the absolute path of the user's source video.
+ * Returns an object with relativePath, label, and notice explaining that this is
+ * a lossy 8-bit SDR preview proxy for inspection rather than the untouched master.
+ * For HDR sources (HDR10, HLG, Dolby Vision), applies appropriate tonemapping;
+ * if trustworthy tonemapping cannot be performed (e.g. DV P5 without Vulkan libplacebo),
+ * proxy generation is skipped with an explicit notice to prevent misleading color display.
  */
 function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, outputDir) {
-  const sampleFileName = 'reference-sample.mp4';
+  const sampleFileName = 'reference-proxy.mp4';
   const targetPath = path.join(outputDir, sampleFileName);
 
-  if (fs.existsSync(targetPath)) {
+  const hasAudio = !!sourceInfo.audio?.available;
+  const isHdr = !!sourceInfo.hdr?.hdr;
+  const isDoviP5 = !!sourceInfo.hdr?.doviP5;
+
+  // Dolby Vision Profile 5 requires Vulkan libplacebo for color tonemapping
+  if (isDoviP5) {
     try {
-      if (fs.statSync(targetPath).size > 1000) return sampleFileName;
-    } catch {}
+      const args = [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-init_hw_device', 'vulkan=v',
+        '-filter_hw_device', 'v',
+        '-ss', String(startOffset),
+        '-t', String(sampleDuration),
+        '-i', sourceInfo.filePath,
+        '-map', '0:v:0',
+        '-vf', 'libplacebo=w=\'min(1920,iw)\':h=-2:format=yuv420p:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:apply_dolbyvision=1',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '22'
+      ];
+      if (hasAudio) {
+        args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'asetpts=PTS-STARTPTS');
+      } else {
+        args.push('-an');
+      }
+      args.push('-movflags', '+faststart', targetPath);
+
+      cp.execFileSync(tools.ffmpeg, args, {
+        windowsHide: true,
+        timeout: 90000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+
+      if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
+        return {
+          relativePath: sampleFileName,
+          isLossyProxy: true,
+          label: 'Viewing Proxy (Tonemapped Dolby Vision P5 — 8-bit SDR Preview)',
+          notice: 'Tonemapped via Vulkan libplacebo for browser preview; not the uncompressed master.'
+        };
+      }
+    } catch {
+      // Vulkan libplacebo is unavailable or failed; fail closed to avoid purple/green colors
+      return {
+        relativePath: null,
+        isLossyProxy: true,
+        label: 'Viewing Proxy Unavailable (Dolby Vision Profile 5)',
+        notice: 'Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping. Direct viewing proxy playback disabled to avoid misleading color representation.'
+      };
+    }
   }
 
-  const hasAudio = !!sourceInfo.audio?.available;
+  // HDR10 / HLG tone-mapping using zscale
+  let vFilter = 'scale=w=\'min(1920,iw)\':h=-2:force_original_aspect_ratio=decrease,format=yuv420p';
+  if (isHdr) {
+    const transfer = sourceInfo.hdr.transfer || 'smpte2084';
+    vFilter = `setparams=color_primaries=bt2020:color_trc=${transfer}:colorspace=bt2020nc,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale=w='min(1920,iw)':h=-2:force_original_aspect_ratio=decrease,format=yuv420p`;
+  }
 
-  // Attempt fast web-compatible encode using libx264 + aac
   try {
     const args = [
       '-hide_banner',
@@ -171,7 +224,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
       '-t', String(sampleDuration),
       '-i', sourceInfo.filePath,
       '-map', '0:v:0',
-      '-vf', 'scale=w=\'min(1920,iw)\':h=-2:force_original_aspect_ratio=decrease,format=yuv420p',
+      '-vf', vFilter,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '22'
@@ -193,18 +246,39 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
 
     cp.execFileSync(tools.ffmpeg, args, {
       windowsHide: true,
-      timeout: 120000,
+      timeout: Math.max(60000, Math.ceil(sampleDuration * 2000)),
       stdio: ['ignore', 'pipe', 'ignore']
     });
 
     if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
-      return sampleFileName;
+      return {
+        relativePath: sampleFileName,
+        isLossyProxy: true,
+        label: isHdr
+          ? 'Viewing Proxy (Tonemapped HDR — 8-bit SDR Preview)'
+          : 'Viewing Proxy (Lossy 8-bit H.264/AAC Preview — Not Untouched Master)',
+        notice: isHdr
+          ? 'Viewing proxy tonemapped from HDR to 8-bit SDR (BT.709) for standard browser inspection.'
+          : 'Viewing proxy transcoded to lightweight 8-bit H.264/AAC for browser side-by-side inspection; not the untouched master.'
+      };
     }
   } catch (err) {
-    // If reference generation fails, return null
+    return {
+      relativePath: null,
+      isLossyProxy: true,
+      label: 'Viewing Proxy Unavailable',
+      notice: isHdr
+        ? 'HDR tone-mapping could not be completed for the viewing proxy; proxy disabled to prevent misleading color representation.'
+        : 'Could not generate viewing proxy from source media.'
+    };
   }
 
-  return null;
+  return {
+    relativePath: null,
+    isLossyProxy: true,
+    label: 'Viewing Proxy Unavailable',
+    notice: 'No viewing proxy generated.'
+  };
 }
 
 /**
