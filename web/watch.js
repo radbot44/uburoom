@@ -2572,7 +2572,8 @@ function applyState(next, local=false) {
   $('quality-notice').textContent=next.qualityNotice || '';
   renderMediaInformation(next);
   const maximum = !next.fallbackActive && uburoomPlayback.convertedOriginal(next);
-  const choices = (next.qualities || uburoom.QUALITIES).map(q => maximum && q.id === 'direct' ? {...q,label:q.label.replace(/^Original/,'Maximum')} : q);
+  const maxMbps = maximum && next.deliveryInfo?.bitrateCeiling > 0 ? Math.round(next.deliveryInfo.bitrateCeiling / 1000) : null;
+  const choices = (next.qualities || uburoom.QUALITIES).map(q => maximum && q.id === 'direct' ? {...q,label:maxMbps ? 'Maximum · '+maxMbps+' Mbps' : q.label.replace(/^Original/,'Maximum')} : q);
   $('quality-detail').textContent = next.fallbackActive ? 'Using fallback · '+next.fallbackStream.height+'p · '+next.fallbackStream.bitrate+' Mbps' : maximum ? 'Converted to '+(next.deliveryInfo.videoCodec || 'another format').toUpperCase()+' at the highest quality available.' : '';
   $('quality-detail').hidden = !maximum && !next.fallbackActive;
   if (JSON.stringify([...$('quality').options].map(o => [o.value,o.textContent])) !== JSON.stringify(choices.map(q => [q.id,q.label]))) {

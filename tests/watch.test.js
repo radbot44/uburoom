@@ -544,7 +544,8 @@ test('Plex requests keep credentials server-side, restrict origins, prepare tran
   const url = new URL(transcode.start); assert.equal(url.searchParams.get('videoResolution'), '1280x720'); assert.equal(url.searchParams.get('directPlay'), '0');
   const originalFallback = await plex.prepare('12', 'direct', true, direct);
   assert.equal(originalFallback.format, 'hls'); assert.equal(originalFallback.quality, 'direct'); assert.equal(originalFallback.compatible, true);
-  assert.equal(new URL(originalFallback.start).searchParams.has('videoResolution'), false, 'Original fallback keeps source resolution');
+  assert.equal(new URL(originalFallback.start).searchParams.get('videoResolution'), '1920x1080', 'Original fallback caps resolution to the highest configured transcoding quality');
+  assert.equal(new URL(originalFallback.start).searchParams.get('maxVideoBitrate'), '20000', 'Original fallback caps bitrate to the highest configured transcoding quality');
   assert.notEqual(originalFallback.transcodeId, transcode.transcodeId);
   for (const request of requests.filter(x => x.url.pathname.endsWith('/decision'))) {
     assert.equal(request.options.headers['X-Plex-Client-Identifier'], request.url.searchParams.get('session'));

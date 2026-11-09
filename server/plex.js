@@ -556,14 +556,21 @@ class Plex {
       (!original?.height || q.height <= Math.max(original.height, (original.width || 0) * 9 / 16)))
       .map(q => q.id === 'direct' && original?.bitrate > 0 ? {...q,label:'Original · '+Math.round(original.bitrate / 1000)+' Mbps'} : q);
   }
+  maxTranscodeQuality() {
+    return this.qualityOptions.find(q => q.id !== 'direct') || QUALITIES[1];
+  }
   // The one recipe for a Plex HLS session, used to start playback and to ask Plex
   // beforehand whether it would.
   transcodeParams({ ratingKey, selected, original, quality, session, audio, burn, directStream }) {
+    const maxTranscode = this.maxTranscodeQuality();
+    const maxBitrate = quality === 'direct'
+      ? (directStream ? Math.max(20000, original.bitrate || 0) : Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000)))
+      : (this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000);
     const params = new URLSearchParams({ path: `/library/metadata/${ratingKey}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
       protocol: 'hls', directPlay: '0', directStream: directStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
       offset: '0', session, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
       'X-Plex-Client-Identifier': session, 'X-Plex-Session-Identifier': session,
-      maxVideoBitrate: quality === 'direct' ? String(Math.max(20000, original.bitrate || 0)) : String(this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000), videoQuality: '100',
+      maxVideoBitrate: String(maxBitrate), videoQuality: '100',
       'X-Plex-Client-Profile-Name': 'Generic',
       'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
     if (audio) params.set('audioStreamID',audio.id);
@@ -571,6 +578,8 @@ class Plex {
     if (burn) { params.set('advancedSubtitles','burn'); params.set('subtitleSize','100'); }
     if (quality !== 'direct') {
       const q = this.qualityOptions.find(q => q.id === qualityId(quality)); params.set('videoResolution', `${q.width}x${q.height}`);
+    } else if (!directStream && maxTranscode?.width && maxTranscode?.height) {
+      params.set('videoResolution', `${maxTranscode.width}x${maxTranscode.height}`);
     }
     return params;
   }
@@ -640,16 +649,21 @@ class Plex {
     else if (plan.route==='local') {
       const codec=plan.codec;
       try{await this.conversionPolicy.video('uburoom',codec);}catch(error){const failure=new PlaybackError(error.message);failure.media=media;throw failure;}
-      const original = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,audioTrack:audio,shareKey:choices.shareKey,burn:burn?media.selection.subtitle:undefined };
+      const maxTranscode = this.maxTranscodeQuality();
+      const preset = quality === 'direct' ? maxTranscode : this.qualityOptions.find(q => q.id === qualityId(quality));
+      media.bitrateCeiling = quality === 'direct'
+        ? Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000))
+        : preset?.bitrate;
+      const localSource = { ...media, start:media.sourceStart,audioIndex:audio?.index,audioOrdinal:audio?.ordinal,audioTrack:audio,shareKey:choices.shareKey,burn:burn?media.selection.subtitle:undefined };
       media.format = codec; media.videoCodec = codec; media.audioCodec = 'opus'; media.compatible = true;
       if(!choices.sharedOnly && this.conversionPolicy.settings && this.conversionPolicy.jobs.size>=this.conversionPolicy.settings.maxJobs) {
-        try {media.av1Lease=this.av1.acquire(original,quality,true,codec);}
+        try {media.av1Lease=this.av1.acquire(localSource,quality,true,codec);}
         catch(error) {
           if(!error.conversionCapacity)throw error;
           const release=await this.conversionPolicy.wait({authorized:choices.authorized});release();
         }
       }
-      media.av1Lease ||= this.av1.acquire(original, quality, choices.sharedOnly, codec);
+      media.av1Lease ||= this.av1.acquire(localSource, quality, choices.sharedOnly, codec);
     }
     else {
       const prepare = async () => {
@@ -667,14 +681,15 @@ class Plex {
       if (burn) restoreSubtitle = await this.selectSubtitleForBurn(media,choices);
       media.format = 'hls'; media.transcodeId = randomUUID();
       this.sessions.set(media.transcodeId,{context:this,at:Date.now()});
+      const directStream = copyOnly || (!burn && !compatible);
       const params = this.transcodeParams({ ratingKey, selected, original, quality, session: media.transcodeId, audio, burn,
-        directStream: copyOnly || (!burn && !compatible) });
+        directStream });
       const decision = await this.json('/video/:/transcode/universal/decision?' + params);
       if(copyOnly && (burn || !decision.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream?.some(stream=>Number(stream.streamType)===1 && stream.decision==='copy') ||
         decision.Metadata.some(item=>item.Media?.some(output=>output.Part?.some(part=>part.Stream?.some(stream=>Number(stream.streamType)===1&&stream.decision!=='copy')))))) {
         throw new PlaybackError('This media needs video transcoding, which Plex has disabled. Try Original playback or another compatible player.');
       }
-      const preset=quality!=='direct' ? this.qualityOptions.find(q=>q.id===qualityId(quality)) : undefined;
+      const preset=quality!=='direct' ? this.qualityOptions.find(q=>q.id===qualityId(quality)) : (!directStream ? this.maxTranscodeQuality() : undefined);
       const ceiling={bitrate:Number(params.get('maxVideoBitrate')),width:preset?.width,height:preset?.height};
       const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling});
       Object.assign(media,confirmed,{compatible,bitrateCeiling:ceiling.bitrate,output:confirmed});

@@ -217,6 +217,7 @@ transcoding:
     height: 720
     bitrate: 2 # Mbps
 
-  # Each pair is [maximum height, Mbps]. No upscaling. Original is separate.
+  # Each pair is [maximum height, Mbps]. No upscaling. Original is separate,
+  # and the highest entry here caps converted Original (Maximum).
   allow_original: true
   qualities: [[1080, 20], [1080, 12], [1080, 8], [720, 4], [720, 2]]

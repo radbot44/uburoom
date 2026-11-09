@@ -9,7 +9,7 @@ const { spawn } = require('node:child_process');
 const { randomBytes, createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { qualityDefinition, qualityId } = require('../shared/room-protocol');
+const { QUALITIES, qualityDefinition, qualityId } = require('../shared/room-protocol');
 const Playback = require('../web/playback-policy');
 const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
@@ -216,12 +216,13 @@ function classifyHdr(video = {}) {
   return { hdr:false, kind:'sdr', label:'SDR', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:transfer || 'bt709' };
 }
 
-function outputSpec(info, quality) {
+function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
   const video = info.streams?.find(s => s.codec_type === 'video');
   if (!video || !(video.width > 0 && video.height > 0)) throw new PlaybackError('Original source has no readable video.');
   const q = qualityDefinition(quality);
   if (!q) throw new PlaybackError('Invalid WebM quality.');
-  const maxWidth = q.width || 3840, maxHeight = q.height || 2160;
+  const ceiling = q.id === 'direct' && maxQuality ? maxQuality : q;
+  const maxWidth = ceiling.width || 3840, maxHeight = ceiling.height || 2160;
   const ratio = Math.min(1, maxWidth / video.width, maxHeight / video.height);
   const width = Math.max(2, Math.floor(video.width * ratio / 2) * 2), height = Math.max(2, Math.floor(video.height * ratio / 2) * 2);
   const hdrInfo = classifyHdr(video);
@@ -233,7 +234,8 @@ function outputSpec(info, quality) {
   const tonemap = hdr && !hdrInfo.doviP5 ? [`setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,'zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv'] : [];
   const filters = ['setpts=PTS-STARTPTS', ...tonemap, `scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12'];
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
-  const bitrate = q.bitrate || Math.min(40000, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : 12000));
+  const maxBitrate = ceiling.bitrate || 20000;
+  const bitrate = q.bitrate || Math.min(maxBitrate, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : Math.min(12000, maxBitrate)));
   // Carry the measured source rate through the encoder and WebM DefaultDuration.
   // Timestamp passthrough without packet durations creates MSE buffer holes on
   // some clients. This establishes CFR coverage; VFR timing needs separate tests.
@@ -301,6 +303,7 @@ class AV1 {
     this.encoder = config.transcoding?.encoder || 'auto';
     this.cpuFallback = config.transcoding?.cpuFallback ?? true;
     this.hardwareDecode = config.transcoding?.hardwareDecode ?? true;
+    this.maxQuality = (config.transcoding?.qualities || QUALITIES).find(q => q.id !== 'direct') || QUALITIES[1];
     this.logger = config.logger;
     this.maxBytes = 256 * 1024 * 1024;
     this.jobBytes = 48 * 1024 * 1024; this.pendingBytes = 0;
@@ -500,7 +503,7 @@ class AV1 {
           group.info = await group.infoTask.join(controller.signal);
         }
         return await this.input(source, controller.signal, async url => {
-          const spec = outputSpec(group.info, group.quality);
+          const spec = outputSpec(group.info, group.quality, this.maxQuality);
           const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
           const chosen = {...source};
           if (source.audioTrack && source.audioIndex !== undefined) chosen.audioIndex = fileIndex(source.tracks?.audio,source.audioTrack,group.info.streams,'audio');

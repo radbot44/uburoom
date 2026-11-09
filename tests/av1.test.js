@@ -66,7 +66,7 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
   const manager=new AV1({}, {ffmpegPath:'fixture',logger:{warn:(_,message)=>warnings.push(message)},transcoding:{encoder:'nvenc',cpuFallback:false}},async(_binary,args)=>{
     if(args.includes('-show_entries'))return Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:3840,height:2160,pix_fmt:'yuv420p10le',color_transfer:'smpte2084',r_frame_rate:'24000/1001'},{codec_type:'audio'}]}));
     if(!args.includes('-ss'))return Buffer.alloc(200);
-    if(args.includes('-hwaccel')){gpu++;assert.match(args[args.indexOf('-vf')+1],/scale_cuda=3840:2160:format=p010le,hwdownload/);tonemapped.push(args[args.indexOf('-vf')+1].includes('libplacebo'));assert.ok(!args.includes('hevc_qsv'));
+    if(args.includes('-hwaccel')){gpu++;assert.match(args[args.indexOf('-vf')+1],/scale_cuda=1920:1080:format=p010le,hwdownload/);tonemapped.push(args[args.indexOf('-vf')+1].includes('libplacebo'));assert.ok(!args.includes('hevc_qsv'));
       if(gpuFails)throw Object.assign(new PlaybackError('decode failed'),{exitFailure:true});}
     else cpu++;
     return {video:Buffer.alloc(200),audio:Buffer.alloc(50)};
@@ -78,13 +78,15 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
   }finally{manager.release(lease);await manager.close();}
 });
 
-test('quality tiers respect source bitrate/resolution; AV1 clamps Original and tonemaps PQ/HLG', async () => {
+test('quality tiers respect source bitrate/resolution; AV1 clamps Original to the highest configured quality and tonemaps PQ/HLG', async () => {
   const plex = new Plex({});
   assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:1080,bitrate:13000,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct','1080p12','1080p8','720p4','720p2']);
   assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:720,bitrate:1500,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct']);
   const info = {streams:[{codec_type:'video',width:7680,height:4320,color_transfer:'smpte2084'},{codec_type:'audio'}],format:{bit_rate:'80000000'}};
   const original = outputSpec(info,'direct');
-  assert.equal(original.width,3840); assert.equal(original.height,2160); assert.equal(original.bitrate,40000);
+  assert.equal(original.width,1920); assert.equal(original.height,1080); assert.equal(original.bitrate,20000);
+  const customMax = outputSpec(info,'direct',{id:'2160p25',width:3840,height:2160,bitrate:25000});
+  assert.equal(customMax.width,3840); assert.equal(customMax.height,2160); assert.equal(customMax.bitrate,25000);
   assert.equal(original.hdr,true); assert.equal(original.hdrKind,'hdr10');
   assert.match(original.filter,/tonemap=/); assert.equal(original.audio,true);
   assert.equal(outputSpec(info,'720p2').bitrate,2000);
