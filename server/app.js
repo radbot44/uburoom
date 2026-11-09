@@ -72,6 +72,7 @@ const STATIC_ASSETS = {
   '/ubumfa.js':['ubumfa.js','text/javascript'],
   '/watch-queue-ui.js':['watch-queue-ui.js','text/javascript'],
   '/watch-share.js':['watch-share.js','text/javascript'],
+  '/watch-events.js':['watch-events.js','text/javascript'],
   '/watch-queue.css':['watch-queue.css','text/css'],
   '/subtitle-renderers.js':['subtitle-renderers.js','text/javascript'],
   '/native-handoff.js':['native-handoff.js','text/javascript'],

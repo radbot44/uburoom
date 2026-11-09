@@ -176,7 +176,7 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         }
         return write ? result(201, { id: watch.roomState ? await watch.roomState.create(auth.actor,data,current) : watch.create(auth.actor, data.visibility) }) : result(200, { rooms: await watch.list(auth.actor, auth.identity.activity === true) });
       }
-      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|share))?$/.exec(url.pathname);
+      const match = /^\/api\/watch\/rooms\/([a-f0-9-]{36})(?:\/(command|close|leave|ready|observe|delivery|reopen|settings|queue|history|people|check|share|events))?$/.exec(url.pathname);
       if (!match || !UUID.test(match[1])) { return result(404, { error: 'Room unavailable' }); }
       if(config.singleRoom&&match[1]!==registry.meta('singleRoomId'))return result(403,{error:'Only the configured shared room is available'});
       if (watch.roomState && match[2] === 'reopen' && write) {
@@ -207,6 +207,18 @@ function watchOperations({ config, watch, hub, authorized, login, mediaGrant, co
         await watch.roomState.metadata(match[1],auth.actor);
         if (!await current()) return result(403,{error:'Room access changed'});
         return result(200,watch.roomState.summary(match[1],auth.actor));
+      }
+      if (watch.events && match[2] === 'events') {
+        await watch.roomState.eligible(auth.actor,current);
+        await watch.roomState.metadata(match[1],auth.actor);
+        if (write) {
+          if (!throttle('room-publish:'+auth.actor.userId,20)) return result(429,{error:'Too many event changes. Try again shortly.'});
+          if (!['room.event.create','room.event.edit','room.event.cancel'].includes(data.action)) return result(400,{error:'Unsupported event action'});
+          return result(200,await hub.dispatch({...auth.actor,watchCurrent:current},{roomId:match[1],action:data.action,args:data}));
+        }
+        const value = await watch.events.summary(match[1],auth.actor);
+        if (!await current()) return result(403,{error:'Room access changed'});
+        return result(200,value);
       }
       if (watch.publications && match[2] === 'share') {
         await watch.roomState.eligible(auth.actor,current);

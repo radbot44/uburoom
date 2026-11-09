@@ -1,15 +1,12 @@
 /* Room sharing and explicit server publication; no playback ownership. */
 (function(root) {
   'use strict';
-  function mount({request, share, openLink, getDuration, toasts}) {
+  function mount({request, share, openLink, getDuration, schedule}) {
     const $ = id => document.getElementById(id), dialog = $('room-share-dialog'), dialogs = root.uburoomDialogs;
-    let generation = 0, target, value, busy = false, editing, draftDirty = false, refreshTimer;
-    let selectedDuration = 60, customMinutes = 90, activePreset = 'next30';
+    let generation = 0, target, value, busy = false, refreshTimer;
 
     const titleEl = $('room-share-title');
-    const backBtn = $('room-share-back');
     const dismissBtn = $('room-share-dismiss');
-    const mainView = $('room-share-main');
     const urlInput = $('room-share-url-input');
     const copyBtn = $('room-share-copy');
     const personalBtn = $('room-share-personal');
@@ -33,237 +30,13 @@
     const eventStatus = $('room-share-event-status');
     const errorEl = $('room-share-error');
 
-    const eventForm = $('room-share-event-form');
-    const eventTitle = $('room-share-event-title');
-    const eventTitleCount = $('room-share-event-title-count');
-    const eventDescription = $('room-share-event-description');
-    const zoneToggle = $('room-share-zone-toggle');
-    const zoneDisplay = $('room-share-zone-display');
-    const zoneWrapper = $('room-share-zone-wrapper');
-    const eventZone = $('room-share-event-zone');
-
-    const chipNext30 = $('room-share-chip-next30');
-    const chipTonight8 = $('room-share-chip-tonight8');
-    const chipTomorrow8 = $('room-share-chip-tomorrow8');
-    const eventDate = $('room-share-event-date');
-    const eventTime = $('room-share-event-time');
-
-    const durationPills = Array.from(dialog.querySelectorAll('.room-share-duration-pill'));
-    const calculatedEnd = $('room-share-calculated-end');
-    const customDurationRow = $('room-share-custom-duration-row');
-    const customDurationSelect = $('room-share-custom-duration');
-
-    const startHidden = $('room-share-event-start');
-    const endHidden = $('room-share-event-end');
-    const eventDiscard = $('room-share-event-discard');
-    const eventSave = $('room-share-event-save');
-
-    const eventFields = [eventTitle, eventDescription, eventZone, eventDate, eventTime, customDurationSelect];
-
-    dialogs.register(dialog, {busy: () => busy, dirty: () => draftDirty});
+    dialogs.register(dialog, {busy: () => busy});
     dialog.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && (busy || draftDirty)) {
+      if (event.key === 'Escape' && busy) {
         event.preventDefault();
         event.stopPropagation();
       }
     });
-
-    const zones = [...new Set(['UTC', Intl.DateTimeFormat().resolvedOptions().timeZone, ...(Intl.supportedValuesOf?.('timeZone') || [])])];
-    for (const zone of zones) {
-      const option = document.createElement('option');
-      option.value = option.textContent = zone;
-      eventZone.append(option);
-    }
-
-    // Populate 15-minute time intervals
-    for (let h = 0; h < 24; h++) {
-      for (let m = 0; m < 60; m += 15) {
-        const opt = document.createElement('option');
-        opt.value = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-        opt.textContent = formatTime12h(h, m);
-        eventTime.append(opt);
-      }
-    }
-
-    for (const field of eventFields) {
-      field.addEventListener('input', () => { draftDirty = true; });
-    }
-
-    eventTitle.addEventListener('input', () => {
-      eventTitleCount.textContent = eventTitle.value.length + ' / 100';
-    });
-
-    zoneToggle.addEventListener('click', () => {
-      const isExpanded = zoneToggle.getAttribute('aria-expanded') === 'true';
-      zoneToggle.setAttribute('aria-expanded', String(!isExpanded));
-      zoneWrapper.hidden = isExpanded;
-    });
-
-    eventZone.addEventListener('change', () => {
-      zoneDisplay.textContent = formatZoneLabel(eventZone.value);
-      updateCalculatedEnd();
-    });
-
-    chipNext30.addEventListener('click', () => applyPreset('next30'));
-    chipTonight8.addEventListener('click', () => applyPreset('tonight8'));
-    chipTomorrow8.addEventListener('click', () => applyPreset('tomorrow8'));
-
-    eventDate.addEventListener('change', () => {
-      clearActivePreset();
-      updateCalculatedEnd();
-    });
-    eventTime.addEventListener('change', () => {
-      clearActivePreset();
-      updateCalculatedEnd();
-    });
-
-    for (const pill of durationPills) {
-      pill.addEventListener('click', () => {
-        setDuration(pill.dataset.duration === 'custom' ? 'custom' : Number(pill.dataset.duration));
-      });
-    }
-
-    customDurationSelect.addEventListener('change', () => {
-      customMinutes = Number(customDurationSelect.value) || 90;
-      updateCalculatedEnd();
-    });
-
-    function formatTime12h(hours, minutes) {
-      const period = hours >= 12 ? 'PM' : 'AM';
-      const h12 = hours % 12 === 0 ? 12 : hours % 12;
-      return h12 + ':' + String(minutes).padStart(2, '0') + ' ' + period;
-    }
-
-    function formatZoneLabel(zone) {
-      try {
-        const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' }).formatToParts(new Date());
-        const short = parts.find(p => p.type === 'timeZoneName')?.value;
-        return short ? zone + ' (' + short + ')' : zone;
-      } catch {
-        return zone;
-      }
-    }
-
-    function toDateInputValue(dateObj) {
-      const y = dateObj.getFullYear();
-      const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-      const d = String(dateObj.getDate()).padStart(2, '0');
-      return y + '-' + m + '-' + d;
-    }
-
-    function formatDurationLabel(mins) {
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      if (h === 0) return m + 'm';
-      if (m === 0) return h + 'h';
-      return h + 'h ' + m + 'm';
-    }
-
-    function populateCustomDurations(currentValue = customMinutes) {
-      const options = [30, 45, 75, 90, 105, 135, 150, 165, 210, 240];
-      const videoSec = Number(getDuration?.());
-      if (Number.isFinite(videoSec) && videoSec > 60) {
-        const videoMins = Math.ceil(videoSec / 60);
-        if (!options.includes(videoMins)) options.push(videoMins);
-      }
-      options.sort((a, b) => a - b);
-      customDurationSelect.replaceChildren();
-      for (const mins of options) {
-        const opt = document.createElement('option');
-        opt.value = String(mins);
-        opt.textContent = formatDurationLabel(mins);
-        if (mins === currentValue) opt.selected = true;
-        customDurationSelect.append(opt);
-      }
-    }
-
-    function setDuration(duration) {
-      selectedDuration = duration;
-      for (const pill of durationPills) {
-        pill.setAttribute('aria-pressed', pill.dataset.duration === String(duration) ? 'true' : 'false');
-      }
-      if (duration === 'custom') {
-        customDurationRow.hidden = false;
-        populateCustomDurations();
-      } else {
-        customDurationRow.hidden = true;
-      }
-      updateCalculatedEnd();
-    }
-
-    function applyPreset(preset) {
-      activePreset = preset;
-      chipNext30.setAttribute('aria-pressed', preset === 'next30' ? 'true' : 'false');
-      chipTonight8.setAttribute('aria-pressed', preset === 'tonight8' ? 'true' : 'false');
-      chipTomorrow8.setAttribute('aria-pressed', preset === 'tomorrow8' ? 'true' : 'false');
-
-      const now = new Date();
-      const target = new Date(now);
-
-      if (preset === 'next30') {
-        const m = now.getMinutes();
-        if (m < 30) {
-          target.setMinutes(30, 0, 0);
-        } else {
-          target.setHours(now.getHours() + 1, 0, 0, 0);
-        }
-        if (target.getTime() <= now.getTime() + 120000) {
-          target.setMinutes(target.getMinutes() + 30);
-        }
-      } else if (preset === 'tonight8') {
-        target.setHours(20, 0, 0, 0);
-        if (target.getTime() <= now.getTime() + 120000) {
-          target.setDate(target.getDate() + 1);
-        }
-      } else if (preset === 'tomorrow8') {
-        target.setDate(target.getDate() + 1);
-        target.setHours(20, 0, 0, 0);
-      }
-
-      eventDate.value = toDateInputValue(target);
-      eventTime.value = String(target.getHours()).padStart(2, '0') + ':' + String(target.getMinutes()).padStart(2, '0');
-      updateCalculatedEnd();
-    }
-
-    function clearActivePreset() {
-      activePreset = null;
-      chipNext30.setAttribute('aria-pressed', 'false');
-      chipTonight8.setAttribute('aria-pressed', 'false');
-      chipTomorrow8.setAttribute('aria-pressed', 'false');
-    }
-
-    function updateCalculatedEnd() {
-      const dateVal = eventDate.value;
-      const timeVal = eventTime.value;
-      if (!dateVal || !timeVal) return;
-
-      const [y, mo, d] = dateVal.split('-').map(Number);
-      const [h, mi] = timeVal.split(':').map(Number);
-      const startDate = new Date(y, mo - 1, d, h, mi);
-      const addMins = selectedDuration === 'custom' ? (Number(customDurationSelect.value) || 90) : Number(selectedDuration);
-      const endDate = new Date(startDate.getTime() + addMins * 60000);
-
-      startHidden.value = dateVal + 'T' + timeVal;
-      endHidden.value = toDateInputValue(endDate) + 'T' + String(endDate.getHours()).padStart(2, '0') + ':' + String(endDate.getMinutes()).padStart(2, '0');
-
-      const now = new Date();
-      const todayStr = toDateInputValue(now);
-      const tomorrow = new Date(now);
-      tomorrow.setDate(now.getDate() + 1);
-      const tomorrowStr = toDateInputValue(tomorrow);
-
-      const endDayStr = toDateInputValue(endDate);
-      const dayDesc = endDayStr === todayStr ? 'today' : endDayStr === tomorrowStr ? 'tomorrow' : endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const endTimeStr = formatTime12h(endDate.getHours(), endDate.getMinutes());
-
-      let tzShort = '';
-      try {
-        const parts = new Intl.DateTimeFormat('en-US', { timeZone: eventZone.value, timeZoneName: 'short' }).formatToParts(endDate);
-        tzShort = parts.find(p => p.type === 'timeZoneName')?.value || '';
-      } catch {}
-
-      calculatedEnd.textContent = 'Ends ' + dayDesc + ' at ' + endTimeStr + (tzShort ? ' ' + tzShort : '');
-    }
 
     function button(label, action, className = 'quiet') {
       const element = document.createElement('button');
@@ -275,88 +48,11 @@
       return element;
     }
 
-    function localTimeParts(at, timeZone) {
-      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-        timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-      }).formatToParts(new Date(at)).map(part => [part.type, part.value]));
-      return { date: parts.year + '-' + parts.month + '-' + parts.day, time: parts.hour + ':' + parts.minute };
-    }
-
-    function editEvent(event) {
-      if (busy || !value) return;
-      editing = event;
-      draftDirty = false;
-
-      const titleVal = event?.title || (value.preview.title === 'Nothing selected' && value.preview.name) || value.preview.title || '';
-      eventTitle.value = titleVal;
-      eventTitleCount.textContent = titleVal.length + ' / 100';
-      eventDescription.value = event?.description || '';
-
-      const zone = event?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      if (!zones.includes(zone)) {
-        const option = document.createElement('option');
-        option.value = option.textContent = zone;
-        eventZone.append(option);
-        zones.push(zone);
-      }
-      eventZone.value = zone;
-      zoneDisplay.textContent = formatZoneLabel(zone);
-      zoneWrapper.hidden = true;
-      zoneToggle.setAttribute('aria-expanded', 'false');
-
-      if (event) {
-        const startParts = localTimeParts(event.start, zone);
-        eventDate.value = startParts.date;
-        const [sh, sm] = startParts.time.split(':').map(Number);
-        const roundedM = String(Math.floor(sm / 15) * 15).padStart(2, '0');
-        eventTime.value = String(sh).padStart(2, '0') + ':' + roundedM;
-        clearActivePreset();
-
-        const diffMins = Math.round((new Date(event.end).getTime() - new Date(event.start).getTime()) / 60000);
-        if ([60, 120, 180].includes(diffMins)) {
-          setDuration(diffMins);
-        } else {
-          customMinutes = diffMins > 0 ? diffMins : 90;
-          setDuration('custom');
-          populateCustomDurations(customMinutes);
-        }
-      } else {
-        applyPreset('next30');
-        const videoSec = Number(getDuration?.());
-        if (Number.isFinite(videoSec) && videoSec > 60) {
-          const vm = Math.ceil(videoSec / 60);
-          if (vm <= 75) setDuration(60);
-          else if (vm <= 135) setDuration(120);
-          else if (vm <= 195) setDuration(180);
-          else setDuration(120);
-        } else {
-          setDuration(60);
-        }
-      }
-
-      updateCalculatedEnd();
-      eventForm.hidden = false;
-      eventSave.textContent = event ? 'Save event' : 'Schedule event';
-      eventStatus.textContent = '';
-      render();
-      eventTitle.focus();
-    }
-
-    function discardEvent() {
-      editing = undefined;
-      draftDirty = false;
-      eventForm.hidden = true;
-      render();
-    }
-
     function renderEvents() {
       const scheduling = value?.scheduling;
       const visible = !!scheduling?.configured && !!scheduling?.canManage;
-      eventsSection.hidden = !visible || !eventForm.hidden;
+      eventsSection.hidden = !visible;
       if (!visible) return;
-
-      for (const field of eventFields) field.disabled = busy;
-      eventSave.disabled = eventDiscard.disabled = busy;
       eventsList.replaceChildren();
 
       if (!scheduling.events || scheduling.events.length === 0) {
@@ -383,7 +79,7 @@
           actions.append(button('View event', () => void openLink(event.url).catch(error => { errorEl.textContent = error.message; })));
         }
         if (event.status === 1 && event.eventId && !event.cancel) {
-          const edit = button('Edit', () => editEvent(event));
+          const edit = button('Edit', () => scheduleEvent(event));
           edit.disabled = busy || !scheduling.available;
           const cancel = button('Cancel event', async () => {
             const release = dialogs.hold(dialog);
@@ -405,10 +101,7 @@
     }
 
     function render() {
-      const editorOpen = !eventForm.hidden;
-      titleEl.textContent = editorOpen ? (editing ? 'Edit Discord event' : 'Schedule Discord event') : 'Share room';
-      backBtn.hidden = !editorOpen;
-      mainView.hidden = editorOpen;
+      titleEl.textContent = 'Share room';
 
       const rawUrl = value?.invite?.url || '';
       urlInput.value = rawUrl.replace(/^https?:\/\//i, '');
@@ -418,7 +111,7 @@
       errorEl.textContent = value?.error || '';
 
       const publishing = !!value?.configured && !!value?.canManage;
-      pubSection.hidden = !publishing || editorOpen;
+      pubSection.hidden = !publishing;
       if (!publishing) return;
 
       const preview = value.preview;
@@ -460,9 +153,9 @@
 
     function scheduleRefresh(ticket = generation) {
       clearTimeout(refreshTimer);
-      if (!dialog.open || draftDirty || busy || !(value?.removing || value?.scheduling?.events.some(event => event.cancel) || value?.canManage && value?.configured && !value?.available || value?.scheduling?.canManage && value?.scheduling?.configured && !value?.scheduling?.available)) return;
+      if (!dialog.open || busy || !(value?.removing || value?.scheduling?.events.some(event => event.cancel) || value?.canManage && value?.configured && !value?.available || value?.scheduling?.canManage && value?.scheduling?.configured && !value?.scheduling?.available)) return;
       refreshTimer = setTimeout(async () => {
-        if (ticket !== generation || !dialog.open || busy || draftDirty) return;
+        if (ticket !== generation || !dialog.open || busy) return;
         try { await load(ticket); } catch { scheduleRefresh(ticket); }
       }, 5000);
     }
@@ -472,7 +165,6 @@
       const ticket = ++generation;
       target = id;
       value = undefined;
-      discardEvent();
       eventsSection.hidden = true;
       eventStatus.textContent = '';
       errorEl.textContent = '';
@@ -514,30 +206,17 @@
     async function changeEvent(action, event) {
       if (busy || !value) return;
       const ticket = generation;
-      const args = { action, ...(event ? { eventKey: event.key, ...(action === 'room.event.edit' ? { eventVersion: event.eventVersion } : {}) } : {}) };
-      if (action !== 'room.event.cancel') {
-        Object.assign(args, {
-          title: eventTitle.value,
-          description: eventDescription.value,
-          startLocal: startHidden.value,
-          endLocal: endHidden.value,
-          timeZone: eventZone.value
-        });
-      }
       busy = true;
       render();
       errorEl.textContent = '';
       try {
-        const result = await request('/api/watch/rooms/' + target + '/share', args);
-        if (result.status !== 'applied') throw new Error(result.message || 'Discord could not update the event.');
-        discardEvent();
+        const result = await request('/api/watch/rooms/' + target + '/events', {action, eventKey: event.key});
+        if (result.status !== 'applied') throw new Error(result.message || 'The event could not be canceled.');
         await load(ticket);
-        toasts?.show('room-event', { title: result.message, symbol: 'check', duration: 4000 });
       } catch (error) {
         if (ticket === generation && dialog.open) {
           try { await load(ticket); } catch {}
           value.error = error.message;
-          toasts?.show('room-event', { type: 'error', title: "Couldn't update event", hint: error.message, symbol: 'alert-triangle', duration: 8000 });
         }
       } finally {
         busy = false;
@@ -548,19 +227,20 @@
       }
     }
 
+    // Until scheduling leaves Share, its buttons open the shared scheduler for this room.
+    function scheduleEvent(event) {
+      if (busy || !value) return;
+      const ticket = generation, suggested = value.preview.title === 'Nothing selected' ? '' : value.preview.title;
+      void schedule({roomId: target, roomName: value.preview.name, event, title: suggested, duration: getDuration,
+        onChange: () => ticket === generation && dialog.open ? load(ticket) : undefined});
+    }
+
     function copyInvite() {
       if (value) void share(value.invite, value.preview.name, { copy: true });
     }
 
-    scheduleBtn.addEventListener('click', () => editEvent());
-    eventDiscard.addEventListener('click', discardEvent);
-    backBtn.addEventListener('click', discardEvent);
+    scheduleBtn.addEventListener('click', () => scheduleEvent());
     dismissBtn.addEventListener('click', () => dialogs.close(dialog));
-
-    eventForm.addEventListener('submit', event => {
-      event.preventDefault();
-      void changeEvent(editing ? 'room.event.edit' : 'room.event.create', editing);
-    });
 
     copyBtn.addEventListener('click', copyInvite);
     urlInput.addEventListener('click', copyInvite);
@@ -578,7 +258,6 @@
       generation++;
       clearTimeout(refreshTimer);
       value = undefined;
-      draftDirty = false;
     });
 
     return {open};

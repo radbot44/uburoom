@@ -93,7 +93,7 @@ test('lobby watch nights follow room visibility and scheduler tier, keep their r
   await trusted.call('/api/watch/rooms/'+created.roomId+'/settings',{revision:record.revision,change:{action:'visibility',visibility:'private'}});
   assert.equal((await member.call('/api/watch/events')).body.events.length,0,'private room events are hidden from people outside the room');
   const mine=(await trusted.call('/api/watch/events')).body.events[0];assert.equal(mine.canEdit,true);assert.ok(mine.invite.endsWith(record.inviteCode));
-  assert.equal((await trusted.call('/api/watch/rooms/'+created.roomId+'/share',{action:'room.event.edit',...night({title:'Double feature',discord:true}),eventKey:mine.key,eventVersion:mine.eventVersion})).body.status,'applied');
+  assert.equal((await trusted.call('/api/watch/rooms/'+created.roomId+'/events',{action:'room.event.edit',...night({title:'Double feature',discord:true}),eventKey:mine.key,eventVersion:mine.eventVersion})).body.status,'applied');
   const native=[...remote.events.values()][0];assert.equal(native.name,'Double feature','an edit can post the event to Discord');
   native.userCount=4;await f.app.watch.events.reconcile();
   await f.restart();remote.attach(f.app.hub);

@@ -590,7 +590,8 @@ function renderNotifications() {
 }
 $('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
 renderNotifications();
-const roomShare=uburoomShare.mount({request:api,share:shareInvite,getDuration:()=>state?.state?.duration,toasts,openLink:async url=>{
+const roomEvents=uburoomEvents.mount({request:api});
+const roomShare=uburoomShare.mount({request:api,share:shareInvite,getDuration:()=>state?.state?.duration,schedule:options=>roomEvents.open(options),openLink:async url=>{
   if(activity&&sdk){const result=await sdk.commands.openExternalLink({url});if(!result.opened)throw new Error('Discord could not open the post.');}
   else window.open(url,'_blank','noopener,noreferrer');
 }});
@@ -956,7 +957,7 @@ async function api(path, data, options = {}) {
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
   try {
   if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
-  if(transport && /^\/api\/watch\/(rooms|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
+  if(transport && /^\/api\/watch\/(rooms|events|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
     try {return await transport.request(path,data,options);} catch(error){rejection=error.rejection;if(error.status)response={status:error.status,ok:false};throw error;}
   }
   response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers, keepalive: !!options.keepalive,

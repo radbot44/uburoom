@@ -68,7 +68,7 @@ class RoomEvents {
       if(record&&this.visible(record,actor))events.push(this.present(this.decode(row),record,actor,now));
     }
     if(!await current())throw fail('Room access changed',403);
-    return {events,canSchedule:this.canSchedule(actor),discord:{configured:this.discord.configured(),available:this.discord.ready()}};
+    return {events,canSchedule:this.canSchedule(actor),singleRoom:!!this.config.singleRoom,discord:{configured:this.discord.configured(),available:this.discord.ready()}};
   }
   // One room's events, refreshed from Discord for its hosts.
   async summary(id,actor) {
