@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { watchPage } = require('../server/watch-page');
+const { homeCards } = require('../web/watch-library');
 const template = fs.readFileSync(path.join(__dirname, '../web/watch.html'), 'utf8');
 
 test('watchPage renders authenticated and unauthenticated bootstrap data safely with CSP nonce support', () => {
@@ -43,9 +44,27 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(!directRoomHtml.includes('id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden'));
   assert.ok(directRoomHtml.includes('<p class="queue-empty-title">Join a room to use the queue</p>'));
   assert.ok(directRoomHtml.includes('id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media">'));
-  assert.ok(directRoomHtml.includes('<div id="library-content"><div class="library-tools"></div><div class="library-landing">'));
+  assert.ok(directRoomHtml.includes('<div id="library-content"><div class="library-landing">'));
+  assert.deepEqual(
+    homeCards([{ id: '1', title: 'Movies', mediaType: 'movie' }, { id: '2', title: 'TV Shows', mediaType: 'show' }]),
+    [
+      { id: '1', tab: 'library', title: 'Movies', icon: 'film' },
+      { id: '2', tab: 'library', title: 'TV Shows', icon: 'tv' },
+      { id: '1', tab: 'collections', title: 'Movie Collections', icon: 'layout-grid' },
+      { id: '2', tab: 'collections', title: 'TV Shows Collections', icon: 'layout-grid' }
+    ]
+  );
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movies</span>'));
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movie Collections</span>'));
   assert.ok(directRoomHtml.includes('<span>Synchronization video</span>'));
   assert.ok(directRoomHtml.includes('id="library-codec-test"'));
+  const usedIcons = [...directRoomHtml.matchAll(/<use href="#icon-([^"]+)"><\/use>/g)].map(m => m[1]);
+  assert.ok(usedIcons.length > 0);
+  for (const iconId of usedIcons) {
+    assert.ok(directRoomHtml.includes('<symbol id="icon-' + iconId + '"'), 'icon-sprite contains symbol for ' + iconId);
+  }
+  assert.throws(
+    () => watchPage(template.replace('id="reopen"', 'id="reopen-drifted"'), initial),
+    /watch\.html template target missing/
+  );
 });

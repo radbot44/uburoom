@@ -1,6 +1,15 @@
 /* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 (function (global) {
   'use strict';
+  function homeCards(items = []) {
+    const cards = [];
+    for (const tab of ['library','collections']) for (const section of items) {
+      const title = tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
+      const icon = tab === 'library' ? (section.mediaType === 'show' ? 'tv' : 'film') : 'layout-grid';
+      cards.push({ id: section.id, tab, title, icon });
+    }
+    return cards;
+  }
   function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, isAdmin = () => false, openCodecTester, initialLibrary }) {
     const doc = host.ownerDocument;
     host.replaceChildren();
@@ -454,7 +463,7 @@
       const section = sections.find(item => item.id === screen.section);
       scopeActions.hidden = !autoQueue || !getPlayer()?.durable || screen.kind !== 'library' || screen.tab !== 'library' || section?.mediaType !== 'movie';
       if (!scopeActions.hidden) autoButton(scopeActions, { type: 'library', id: section.id }, section.title);
-      row.hidden = details || atHome; chips.hidden = details || atHome;
+      tools.hidden = details || atHome; row.hidden = details || atHome; chips.hidden = details || atHome;
       filterButton.hidden = !screen.section || collectionIndex || ['show','season'].includes(screen.kind);
       filterButton.classList.toggle('filter-active',!filters.hidden || !!(screen.genre || screen.year));
       const filterSpan = filterButton.querySelector('.filter-label');
@@ -488,10 +497,9 @@
     }
     function renderLanding() {
       landing.replaceChildren();
-      for (const tab of ['library','collections']) for (const section of sections) {
-        const title = tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections';
-        const b = button(landing,title,tab === 'library' ? section.mediaType === 'show' ? 'tv' : 'film' : 'layout-grid','library-home-card'); b.dataset.section = section.id; b.dataset.tab = tab;
-        b.append(node('span',null,title,'library-home-title')); b.onclick = () => void chooseLibrary(section.id,tab);
+      for (const card of homeCards(sections)) {
+        const b = button(landing,card.title,card.icon,'library-home-card'); b.dataset.section = card.id; b.dataset.tab = card.tab;
+        b.append(node('span',null,card.title,'library-home-title')); b.onclick = () => void chooseLibrary(card.id,card.tab);
       }
       if (testVideo || isAdmin()) {
         const other = node('article',landing,undefined,'library-home-card library-other'); node('h3',other,'Other');
@@ -670,5 +678,7 @@
     if (initialData) void setRoom('lobby');
     return {setRoom,setBusy,openItem,reveal:positionLibrary,refreshAdmin:()=>{if(screen?.kind==='home')renderLanding();}};
   }
-  global.uburoomLibrary = {mount};
+  const api = Object.freeze({mount, homeCards});
+  global.uburoomLibrary = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

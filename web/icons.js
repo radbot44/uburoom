@@ -186,8 +186,7 @@
     "crop-landscape": [["path",{"d":"M4 8a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -8"}]],
     "user-question": [["path",{"d":"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0"}],["path",{"d":"M6 21v-2a4 4 0 0 1 4 -4h3.5"}],["path",{"d":"M19 22v.01"}],["path",{"d":"M19 19a2.003 2.003 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483"}]],
     "calendar-event": [["path",{"d":"M4 5m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"}],["path",{"d":"M16 3l0 4"}],["path",{"d":"M8 3l0 4"}],["path",{"d":"M4 11l16 0"}],["path",{"d":"M8 15h2v2h-2z"}]],
-    "clock": [["path",{"d":"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"}],["path",{"d":"M12 7v5l3 3"}]],
-    "share": [["path",{"d":"M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"}],["path",{"d":"M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"}],["path",{"d":"M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"}],["path",{"d":"M8.7 10.7l6.6 -3.4"}],["path",{"d":"M8.7 13.3l6.6 3.4"}]],
+    "clock": [["path",{"d":"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"}],["path",{"d":"M12 7v5l3 3"}]]
   });
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function resolveName(name, seekSeconds = 15) {
@@ -221,7 +220,27 @@
     svg.append(use);
     return svg;
   }
-  const api = Object.freeze({icon, resolveName, volumeName, aliases, glyphs});
+  function svgMarkup(name, seekSeconds = 15) {
+    const asset = resolveName(name, seekSeconds);
+    if (!asset || !own(glyphs, asset)) throw new Error('Unknown uburoom icon: ' + name);
+    const viewBox = asset === 'oomark' ? '528.41 544.4 298.99 249.1061' : '0 0 24 24';
+    const linecap = asset === 'oomark' ? 'butt' : 'round';
+    const cls = asset === 'oomark' ? ' class="oomark-icon"' : '';
+    return '<svg viewBox="' + viewBox + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="' + linecap + '" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="' + asset + '"' + cls + '><use href="#icon-' + asset + '"></use></svg>';
+  }
+  let cachedSprite;
+  function spriteMarkup() {
+    if (cachedSprite) return cachedSprite;
+    const symbols = [];
+    for (const [id, shapes] of Object.entries(glyphs)) {
+      const viewBox = id === 'oomark' ? '528.41 544.4 298.99 249.1061' : '0 0 24 24';
+      const inner = shapes.map(([tag, attrs]) => '<' + tag + Object.entries(attrs).map(([k, v]) => ' ' + k + '="' + v + '"').join('') + '/>').join('');
+      symbols.push('<symbol id="icon-' + id + '" viewBox="' + viewBox + '">' + inner + '</symbol>');
+    }
+    cachedSprite = '<svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"><defs>' + symbols.join('') + '</defs></svg>';
+    return cachedSprite;
+  }
+  const api = Object.freeze({icon, svgMarkup, spriteMarkup, resolveName, volumeName, aliases, glyphs});
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.uburoomIcons = api;
 })(globalThis);
