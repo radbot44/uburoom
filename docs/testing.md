@@ -110,7 +110,7 @@ P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one 
 
 ### M2-P3 / M2-P9 — Invites & Discord scheduled events
 - **A/B (2026-11-08):** Room invites with guest limits and trusted server tier verified in isolated tests. Discord scheduled events lifecycle verified: start/end scheduling, room rename synchronization, cancellation with share removal, and conflict resolution without room revision locking.
-- **A/B (2026-11-08, uncommitted on 4708398):** Watch nights are now uburoom events (schema 11) with optional Discord posting. Isolated tests cover lobby visibility following room privacy, the `events.schedulers` tier, new-room scheduling leaving no room behind on a rejected form, room retention while an event is upcoming, Discord edits and interested count read back, persistence across restart and removal at the end time. Full suite 443 passed, 0 failed, 0 skipped. The private v10→v11 transfer was run on a synthetic copy, including a repeat run. No lobby or scheduler UI yet.
+- **A/B (2026-11-08, 09befae):** Watch nights are now uburoom events (schema 11) with optional Discord posting. Isolated tests cover lobby visibility following room privacy, the `events.schedulers` tier, new-room scheduling leaving no room behind on a rejected form, room retention while an event is upcoming, Discord edits and interested count read back, persistence across restart and removal at the end time. Full suite 443 passed, 0 failed, 0 skipped. The private v10→v11 transfer was run on a synthetic copy, including a repeat run. Deployed to Vigrid after the v10→v11 transfer; the Vigrid suite passed. No lobby or scheduler UI yet.
 - **Open:** Live Discord guild acceptance and human usability review.
 
 ---

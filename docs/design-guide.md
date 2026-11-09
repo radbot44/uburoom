@@ -79,13 +79,21 @@ Shared modal dialogs use `.watch-dialog` with a semantic `<header>` containing a
   - **Room settings dialog (`#room-settings-dialog`):** Full settings workspace with navigation tabs, section panels, and header Close button.
   - **Codec tester (`#codec-test-dialog`):** Semantic `<header>` with title and top-right Close button.
 
-### Share & Scheduling Dialog (`#room-share-dialog`)
+### Share Dialog (`#room-share-dialog`)
 
-A compact modal workspace utilizing the narrow width of `.dialog-small` (`max-width: 420px`) while adhering to Archetype 2 header controls:
-- **Header:** Features a top-right close icon button (`#room-share-dismiss`) and a top-left back button (`#room-share-back`, hidden while on the main Share view).
+A compact modal workspace utilizing the narrow width of `.dialog-small` (`max-width: 420px`) while adhering to Archetype 2 header controls. Share covers the invite and the Discord room post only; scheduling has its own dialog.
+- **Header:** Features a top-right close icon button (`#room-share-dismiss`).
 - **Invite link bar:** Unified invite bar with a read-only URL input omitting `https://` (clicking or tapping copies the full URL), an icon-only Copy button, and a native Share icon button.
-- **Discord publication preview:** Displays an inline channel badge pill (`.room-share-channel-pill`), a preview card with a primary accent left border (`border-left: 4px solid var(--primary)`), title, and status dot. Unpublished rooms pair Publish now (`.primary`) with Schedule event... (`.quiet`). Published rooms provide View Discord post (`.quiet`) and Remove post (`.danger-button`) with Schedule event... on the row below.
-- **Event scheduler form:** Back button returns to Share room view. Features a 100-character counter on event title; start time quick chips (Next half-hour as default, Tonight 8:00 PM, Tomorrow 8:00 PM), split Date and 15-minute Time dropdowns, and a collapsible time zone toggle; duration pills (1h, 2h, 3h, Custom) factoring active video duration with an auto-calculated end time badge. Event drafts follow shared save/cancel boundaries without locking to playback epoch.
+- **Discord publication preview:** Displays an inline channel badge pill (`.room-share-channel-pill`), a preview card with a primary accent left border (`border-left: 4px solid var(--primary)`), title, and status dot. Unpublished rooms show Publish now (`.primary`). Published rooms provide View Discord post (`.quiet`) and Remove post (`.danger-button`).
+
+### Watch nights (scheduled events)
+
+A watch night is a room with a time on it: every event belongs to one saved room, and choosing media stays in the room's queue (movies, episodes or several items), never in the scheduler.
+- **Entry points:** The lobby room bar shows **Schedule** (`.quiet`, calendar icon) between Reopen room and New room. Inside a room, a calendar icon button in the room header actions (beside Share) opens the same scheduler with that room selected. Only people the server's `events.schedulers` tier allows see these entry points; guests never do.
+- **Event scheduler dialog:** One shared Archetype 2 dialog for both entry points and for editing. Its first row is **Room**: a dropdown defaulting to **New room** (named after the event title) that also lists rooms the person hosts; single-room mode shows no Room row. It keeps the established form: a 100-character counter on event title; start time quick chips (Next half-hour as default, Tonight 8:00 PM, Tomorrow 8:00 PM), split Date and 15-minute Time dropdowns, and a collapsible time zone toggle; duration pills (1h, 2h, 3h, Custom) with an auto-calculated end time badge. A **Post to Discord** form checkbox follows, on by default when Discord is configured and hidden otherwise. Footer: `[Cancel (.quiet)]` with `[Schedule (.primary)]` (Save when editing). Event drafts follow shared save/cancel boundaries without locking to playback epoch.
+- **Lobby Upcoming list:** Above the lobby room list, shows the next 3 events the person can see (an event follows its room's visibility), with a More link for the rest. Each card shows the title, room, time ("Tonight · 8:00 PM") and, when posted to Discord, its interested count. From the start time until the end time the card reads **Starting now** with Join as its main action; at the end time it leaves the list.
+- **Card actions:** Everyone who can see the card gets Join. Room hosts also get Edit, Cancel, Open room (to queue media ahead of time) and Copy invite (also for events not posted to Discord).
+- **Waiting for host:** Opening the invite of a closed room that has a watch night shows "Starts 8:00 PM · Waiting for host" until a host opens the room; uburoom never opens it automatically.
 
 ## 4. Panel Headings & Navigation
 
