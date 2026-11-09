@@ -1,6 +1,7 @@
 'use strict';
 
 const escapeText = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const svgIcon = name => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tabler-icon="' + name + '"><use href="#icon-' + name + '"></use></svg>';
 
 // Personalized HTML is sent with no-store. JSON remains inert, and every value
 // used in the initial visible room rows is escaped independently of that JSON.
@@ -13,6 +14,10 @@ function watchPage(template, initial, scrollbarStyleNonce) {
   }
   if (initial.me?.status === 200 && initial.rooms?.status === 200) {
     const me = initial.me.value;
+    html = html.replace(
+      'id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media" disabled',
+      'id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media"'
+    );
     if (me.name) {
       const label = escapeText(me.name + (initial.config?.demo ? ' · local demo' : ''));
       const disabledAttr = initial.config?.unifiedAccounts ? '' : ' disabled';
@@ -35,6 +40,29 @@ function watchPage(template, initial, scrollbarStyleNonce) {
     }
     if (initial.events?.status === 200 && initial.events.value?.canSchedule && !initial.config?.singleRoom) {
       html = html.replace('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden', 'id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event"');
+    }
+    if (initial.library?.status === 200) {
+      const lib = initial.library.value;
+      const cards = [];
+      for (const tab of ['library', 'collections']) {
+        for (const section of lib.items || []) {
+          const title = escapeText(tab === 'library' ? section.title : (section.title === 'Movies' ? 'Movie' : section.title) + ' Collections');
+          const icon = tab === 'library' ? (section.mediaType === 'show' ? 'device-tv' : 'movie') : 'layout-grid';
+          cards.push('<button type="button" class="library-home-card" aria-label="' + title + '" title="' + title + '" data-section="' + escapeText(section.id) + '" data-tab="' + tab + '">' + svgIcon(icon) + '<span class="library-home-title">' + title + '</span></button>');
+        }
+      }
+      if (lib.testVideo || me.adminMode) {
+        let other = '<article class="library-home-card library-other"><h3>Other</h3>';
+        if (lib.testVideo) {
+          other += '<button type="button" class="library-key" aria-label="Play synchronization video" title="Play synchronization video" data-action="play" data-play="demo">' + svgIcon('player-play') + '<span>Synchronization video</span></button>';
+        }
+        if (me.adminMode) {
+          other += '<button id="library-codec-test" type="button" class="library-key" aria-label="Open codec tester" title="Open codec tester">' + svgIcon('settings') + '<span>Codec tester</span></button>';
+        }
+        other += '</article>';
+        cards.push(other);
+      }
+      html = html.replace('<div id="library-content"></div>', '<div id="library-content"><div class="library-landing">' + cards.join('') + '</div></div>');
     }
     if (!initial.targetRoom && !initial.inviteCode && !me.guestRoomId) {
       const rows = initial.rooms.value.rooms.map(room => {

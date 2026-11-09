@@ -31,6 +31,7 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
     me: { status: 200, value: { name: 'Alice <Host>', durableRooms: true, adminEligible: true, adminMode: true } },
     rooms: { status: 200, value: { rooms: [{ id: 'room', name: 'Movie Night', viewers: 2 }] } },
     events: { status: 200, value: { canSchedule: true, events: [] } },
+    library: { status: 200, value: { items: [{ id: '1', title: 'Movies', type: 'library', mediaType: 'movie' }], testVideo: true } },
     targetRoom: { id: 'room', slug: 'movie-night', name: 'Movie Night & Chill' }
   });
   assert.ok(directRoomHtml.includes('id="room-lobby" hidden'), 'direct /room/<slug> entry keeps lobby hidden on first paint');
@@ -39,4 +40,10 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(directRoomHtml.includes('aria-label="Alice &lt;Host&gt; · Account settings"'));
   assert.ok(directRoomHtml.includes('id="admin-mode" class="admin-toggle" role="switch" aria-checked="true"'));
   assert.ok(!directRoomHtml.includes('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden'));
+  assert.ok(directRoomHtml.includes('<p class="queue-empty-title">Join a room to use the queue</p>'));
+  assert.ok(directRoomHtml.includes('id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media">'));
+  assert.ok(directRoomHtml.includes('<span class="library-home-title">Movies</span>'));
+  assert.ok(directRoomHtml.includes('<span class="library-home-title">Movie Collections</span>'));
+  assert.ok(directRoomHtml.includes('<span>Synchronization video</span>'));
+  assert.ok(directRoomHtml.includes('id="library-codec-test"'));
 });

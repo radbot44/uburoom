@@ -939,6 +939,7 @@ playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,capt
 const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
   artwork: fetchArtwork,
+  initialLibrary: pageBootstrap?.library?.status === 200 ? pageBootstrap.library.value : undefined,
   load:(item, options) => selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options),
   addToQueue: async (item, trigger) => {
     if (!selected || !state?.durable) return;

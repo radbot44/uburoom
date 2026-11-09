@@ -603,7 +603,7 @@ body:not(.mobile-player) #library-panel.section-collapsed :is(#library-content,.
 .queue-settings-footer{position:sticky;bottom:-16px;background:var(--card);padding:12px 0;z-index:2}
 .queue-source-picker{border:1px solid var(--border);border-radius:10px;padding:12px;margin:12px 0}.source-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)}.source-row>span{flex:1;min-width:100px;overflow-wrap:anywhere}.source-row button{min-height:44px}#queue-source-change{min-height:44px;margin-bottom:10px}
 
-.idle-player .timeline-row,.idle-player .playback-buttons,.idle-player .volume-control,.idle-player #captions-toggle,.idle-player #tracks-open{display:none!important}
+.idle-player .timeline-row,.idle-player .playback-buttons,.idle-player .volume-control,.idle-player #captions-toggle,.idle-player #tracks-open,.no-pip #pip,.activity :is(#pip,#theater,#fullscreen){display:none!important}
 .idle-player .transport-row{justify-content:flex-end}.idle-player .player-tools{margin-left:auto}
 
 @media(max-width:620px){

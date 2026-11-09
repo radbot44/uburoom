@@ -1,8 +1,9 @@
 /* One safe-DOM Plex browser for the website, fullscreen drawer and Activity. */
 (function (global) {
   'use strict';
-  function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, isAdmin = () => false, openCodecTester }) {
+  function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, isAdmin = () => false, openCodecTester, initialLibrary }) {
     const doc = host.ownerDocument;
+    host.querySelector('.library-landing')?.remove();
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
       const b = node('button',parent,undefined,className); b.type = 'button'; b.setAttribute('aria-label',label); b.title = label;
@@ -640,6 +641,7 @@
     filterButton.onclick = () => { filters.hidden = !filters.hidden; filterButton.setAttribute('aria-expanded',String(!filters.hidden)); filterButton.classList.toggle('filter-active',!filters.hidden || !!(screen.genre || screen.year)); if (!filters.hidden && facetFailed) void fetchFacets(screen.section); };
     viewButtons.forEach(b => b.onclick = () => { if (view === b.dataset.view) return; const anchor = captureAnchor(); reserveHeight(); view = b.dataset.view; try { localStorage.setItem('uburoom-library-view',view); } catch {} renderResults(true); restoreAnchor(anchor); });
     retry.onclick = () => errorAction?.();
+    let initialData = initialLibrary;
     async function setRoom(id) {
       if (room === id) { setBusy(busy); return; }
       cancelAvailability(); room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
@@ -649,6 +651,12 @@
       previous.disabled = next.disabled = true;
       genre.replaceChildren(); year.replaceChildren(); search.value = ''; filterSection = undefined; filterStatus.textContent = ''; filters.hidden = true; filterButton.classList.remove('filter-active');
       if (!id) return;
+      if (id === 'lobby' && initialData) {
+        const data = initialData; initialData = undefined;
+        sections = data.items || []; testVideo = !!data.testVideo;
+        renderResults(); saveVisit();
+        return;
+      }
       const version = generation;
       async function start() {
         try {
@@ -659,6 +667,7 @@
       }
       await start();
     }
+    if (initialData) void setRoom('lobby');
     return {setRoom,setBusy,openItem,reveal:positionLibrary,refreshAdmin:()=>{if(screen?.kind==='home')renderLanding();}};
   }
   global.uburoomLibrary = {mount};

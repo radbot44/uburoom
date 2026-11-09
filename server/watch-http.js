@@ -565,12 +565,14 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       const ctx={headers:req.headers, remoteAddress: clientAddress(req)};
       initial.me=await operations.execute(ctx,'/api/watch/me');
       if(initial.me.status===200) {
-        const [rooms, events] = await Promise.all([
+        const [rooms, events, library] = await Promise.all([
           operations.execute(ctx,'/api/watch/rooms'),
-          watch.events ? operations.execute(ctx,'/api/watch/events') : undefined
+          watch.events ? operations.execute(ctx,'/api/watch/events') : undefined,
+          !initial.me.value.guestRoomId ? operations.execute({...ctx, signal: AbortSignal.timeout(1500)},'/api/watch/library') : undefined
         ]);
         initial.rooms = rooms;
         if (events?.status === 200) initial.events = events;
+        if (library?.status === 200) initial.library = library;
         if (config.accessPolicy) initial.admission = {identity:true,passwordNeeded:false,activityOnly:false,plexRequired:false,admitted:true,csrf:initial.me.value.csrf};
       } else if(config.accessPolicy) {
         initial.admission=await admissionStatus(req);
