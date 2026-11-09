@@ -163,6 +163,13 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 ## 6. Feedback, Toasts & Diagnostics
 
+### Feedback Selection Hierarchy
+
+Follow a clear hierarchy for user and system feedback:
+- **Anchored popovers (`.watch-popover`) — Default for direct interactions:** The primary, general-purpose method for feedback triggered by an explicit user action (button clicks, toggle pills, copy operations, queue additions, inline saves). Do not show toasts or append inline `<p class="hint">` status lines for direct control interactions; tether a precision pill popover directly to the triggering control.
+- **Toasts (`.watch-toast`) — Reserved for global, async, or actionable room events:** Reserved strictly for asynchronous or room-wide events occurring independently of a focused button, including background room updates (participant joined/left, disconnected/reconnecting), system and playback alerts (Plex connection issues, stream fallback, subtitle errors), actionable two-line prompts with buttons (host video checks with "View", remote viewer buffering with "Pause to wait", choppy playback with "Lower quality"), and keyboard-triggered actions where no mouse focus or trigger anchor exists (e.g. PiP hotkey).
+- **Inline status hints — Reserved for dialogs and static forms:** Reserved only for static containers (such as modal `<dialog>` windows or onboarding/login cards) that have dedicated, non-shifting space for multi-line explanations or persistent validation messages. Never use inline status hints in dynamic content panels or toolbars where they displace neighboring controls.
+
 ### Shared toast system
 
 Reuse the shared toast system (`.watch-toast`); preserve established placement, dismissal, timing, keyboard and error behavior instead of adding feature-specific variants. Errors must remain visible when ordinary notifications are muted; uncertain status must not appear verified.
