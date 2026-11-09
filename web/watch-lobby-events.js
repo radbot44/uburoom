@@ -103,7 +103,15 @@
       // "Starting now" and end times move on their own; Discord counts change slowly.
       timer = setTimeout(() => { if (!$('room-lobby').hidden) void refresh(); }, 60000);
     }
-    return {refresh, canSchedule: () => !!value?.canSchedule};
+    return {refresh, canSchedule: () => !!value?.canSchedule, events: () => value?.events || []};
   }
-  root.uburoomLobbyEvents = {mount};
+  // Shared wording for when an event starts, relative to the viewer's own day.
+  function startsLabel(event) {
+    const start = new Date(event.start), now = new Date(), tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const same = (a, b) => a.toDateString() === b.toDateString();
+    const time = start.toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
+    if (same(start, now)) return time;
+    return (same(start, tomorrow) ? 'tomorrow' : start.toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})) + ' · ' + time;
+  }
+  root.uburoomLobbyEvents = {mount, startsLabel};
 })(globalThis);

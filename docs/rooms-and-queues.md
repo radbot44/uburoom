@@ -15,7 +15,7 @@ Uburoom persistent rooms and playback queues provide crash-resilient playback st
 
 Missing media/access retains the bookmark with an error and authorized retry/replacement/removal. No silent edition substitution or queue skipping. Room authority does not imply Plex access.
 
-Empty-room retention, inactivity/capacity defaults and single-room reset are defined in [self-hosting](self-hosting.md#rooms-and-retention). Playback in progress (< 90% of duration) retains an empty room; completed or idle rooms without keep-when-empty or single-room protection are reclaimed during cleanup. Room retention is independent of PMS personal watch-state reporting. Closed rooms consume no active playback slot.
+Empty-room retention, inactivity/capacity defaults and single-room reset are defined in [self-hosting](self-hosting.md#rooms-and-retention). Playback in progress (< 90% of duration) retains an empty room; an upcoming [watch night](self-hosting.md#watch-nights) retains its room until the event ends; completed or idle rooms without keep-when-empty or single-room protection are reclaimed during cleanup. Room retention is independent of PMS personal watch-state reporting. Closed rooms consume no active playback slot.
 
 Previously open rooms reserve recovery slots, return paused and admit original participants with fresh authorization. Auto-resume requires prior playing intent, all expected accounts back before expiry, fresh readiness and a present authorized controller; otherwise remain paused. No old stream or countdown is restored.
 

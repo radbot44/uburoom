@@ -594,7 +594,7 @@ const roomEvents=uburoomEvents.mount({request:api});
 const roomEntry=()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};};
 const lobbyEvents=uburoomLobbyEvents.mount({request:api,schedule:options=>roomEvents.open(options),
   join:async id=>{await selectRoom(id);if(!state||selected!==id)throw new Error('Room unavailable');returnToVideo();},
-  changed:()=>renderScheduleButton(),
+  changed:()=>{renderScheduleButton();resolveWait();renderWaiting();},
   reopen:async id=>{const opened=await api('/api/watch/rooms/'+id+'/reopen',roomEntry(),{timeoutMs:35000});await selectRoom(opened.id,opened.state);if(!state)throw new Error('Room unavailable');returnToVideo();}});
 // The room header calendar button needs both hosting and the server's scheduling tier.
 function renderScheduleButton(){$('room-schedule').hidden=!state?.durable||!state.canManage||!lobbyEvents.canSchedule();}
@@ -2579,7 +2579,31 @@ async function refreshState() {
     else {diagnostics.record('room-state-unavailable',{status:error.status,connectionId:transport?.connectionId,visibility:document.visibilityState});unavailable(error.message,'room-poll');}
   } }
 }
+// Someone who arrives for a watch night before a host opens its room waits
+// here and joins as soon as the room opens. Hosts open it from the Upcoming card.
+let waitingRoom;
+// target is the room's id or, from a /room/<slug> link, its slug. It is matched
+// against the Upcoming list, which loads once the control socket is ready.
+let waitTarget;
+function waitForHost(target){waitTarget=target;resolveWait();if(transport?.ready)void lobbyEvents.refresh();}
+function resolveWait(){
+  if(!waitTarget||selected)return;
+  const event=lobbyEvents.events().find(item=>item.roomId===waitTarget||item.roomSlug===waitTarget);
+  if(!event)return;
+  waitTarget=undefined;
+  if(event.canManage)return;
+  waitingRoom={id:event.roomId,event};renderWaiting();
+}
+function renderWaiting(){
+  if(!waitingRoom||selected)return;
+  const {event}=waitingRoom;
+  if(Date.parse(event.end)<=Date.now()){waitingRoom=undefined;return;}
+  $('empty-title').textContent=event.title;
+  $('empty-hint').textContent=(Date.parse(event.start)<=Date.now()?'Starting now':'Starts '+uburoomLobbyEvents.startsLabel(event))+' · Waiting for host';
+}
 async function selectRoom(id,initial) {
+  if(waitingRoom&&waitingRoom.id!==id)waitingRoom=undefined;
+  waitTarget=undefined;
   clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
   disconnectExtended=false;hideDisconnectToast();
   if (id === selected) return;
@@ -2658,7 +2682,10 @@ function applyRooms(rooms) {
     $('ending-stage').hidden = true;
     renderEnding({ ending: null });
     $('viewers').textContent = ''; $('close-room').hidden = true; $('empty-browse').hidden = true;
-    $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.'; }
+    $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.';
+    const opened=waitingRoom&&rooms.find(room=>room.id===waitingRoom.id&&!room.locked);
+    if(opened){waitingRoom=undefined;void selectRoom(opened.id).then(()=>{if(state)returnToVideo();}).catch(error=>fail(error.message));}
+    else renderWaiting(); }
   placeRoomBar();
   renderBrowsing(); renderVisibility();
   if(config?.singleRoom)$('close-room').hidden=true;
@@ -3240,7 +3267,7 @@ async function start() {
   await bootstrap;
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/');if(typeof showAccount==='function')await showAccount();}
   // A guest goes straight to their room, or is told it isn't open.
-  if(me?.guestRoomId){try{await selectRoom(me.guestRoomId);}catch{guestRoomClosed();}return;}
+  if(me?.guestRoomId){try{await selectRoom(me.guestRoomId);}catch{guestRoomClosed();void waitForHost(me.guestRoomId);}return;}
   // A Discord share link opens the Activity with the room's invite code.
   if(activity&&INVITE_CODE.test(sdk?.customId||'')){
     try{await selectRoom((await api('/api/watch/invite',{action:'join',code:sdk.customId})).room.id);return;}
@@ -3258,6 +3285,7 @@ async function start() {
       await selectRoom(targetId);
     } catch {
       syncRoomUrl(null);
+      void waitForHost(pageBootstrap?.targetRoom?.id || requestedRoom);
     }
   }
 }
