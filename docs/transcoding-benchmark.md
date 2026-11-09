@@ -48,11 +48,12 @@ Configuration is resolved in the following priority:
 3. `config.example.yaml`: The distributed example template.
 
 The benchmark parses only the `transcoding` and `tools` sections:
-- `transcoding.outputs`: Local formats (`av1`, `vp9`, `vp8`). Non-local targets (such as `plex`) are ignored.
+- `transcoding.outputs`: Local formats (`av1`, `vp9`, `vp8`). Non-local targets (such as `plex`) are ignored. An explicitly empty `outputs: []` is respected without forcing default codecs.
 - `transcoding.encoder`: Selected encoder policy (`auto`, `hardware`, `nvenc`, `qsv`, `software`).
 - `transcoding.cpu_fallback`: Whether to fall back to CPU software encoding if hardware fails.
 - `transcoding.hardware_decode`: Whether GPU hardware decode acceleration is enabled.
 - `transcoding.qualities`: Tested `[height, Mbps]` pairs.
+- `tools.ffmpeg` / `tools.ffprobe`: Relative paths resolve beside the active configuration file.
 
 **Privacy & Security:** The tool sanitizes all data before recording. Authentication tokens, passwords, database paths, and personal directory trees are never logged or exported into benchmark artifacts.
 
@@ -64,8 +65,8 @@ The benchmark parses only the `transcoding` and `tools` sections:
 |---|---|---|
 | `-i, --input <file>` | Local video file to benchmark. | Synthetic generator |
 | `-c, --config <file>` | Path to YAML configuration profile. | `config.yaml` / `config.example.yaml` |
-| `-d, --duration <sec>` | Duration of video sample in seconds. | `60` |
-| `--start <sec>` | Start position in source file in seconds. | `0` |
+| `-d, --duration <sec>` | Duration of video sample in seconds (> 0). | `60` |
+| `--start <sec>` | Start position in source file in seconds (>= 0). | `0` |
 | `-m, --mode <mode>` | Encoding mode: `chunks`, `continuous`, or `both`. | `chunks` |
 | `--all-encoders` | Test every supported encoder available on the system. | Disabled (uses configured encoder) |
 | `--all-codecs` | Test all supported codecs (`av1`, `vp9`, `vp8`). | Disabled (uses configured outputs) |
@@ -73,7 +74,7 @@ The benchmark parses only the `transcoding` and `tools` sections:
 | `-e, --encoders <list>` | Comma-separated list of encoders (`nvenc,qsv,software`). | Configured encoder |
 | `--codecs <list>` | Comma-separated list of codecs (`av1,vp9,vp8`). | Configured outputs |
 | `-o, --output <dir>` | Directory where artifacts and reports are saved. | `artifacts/transcode-benchmark/run-<timestamp>/` |
-| `-r, --runs <number>` | Number of test iterations per configuration. | `1` |
+| `-r, --runs <number>` | Number of test iterations per configuration (>= 1). | `1` |
 | `--probe-only` | Detect usable encoder capabilities, print summary, and exit. | Disabled |
 | `--dry-run` | Print resolved test matrix without executing encodes. | Disabled |
 | `--synthetic` | Force generation of local synthetic test media. | Disabled |
@@ -93,13 +94,13 @@ node scripts/transcode-benchmark.js --input "D:\Media\sample.mkv" --start 120 --
 # Compare all available encoders across all supported codecs:
 node scripts/transcode-benchmark.js --all-encoders --all-codecs --mode both
 
-# Quick 12-second dry run to verify test matrix:
+# Quick dry run to verify test matrix:
 node scripts/transcode-benchmark.js --all-codecs --qualities 720p4 --dry-run
 ```
 
 ---
 
-## 5. Encoding Methodologies
+## 5. Encoding Methodologies & Production Parity
 
 ### A. Chunked Benchmark (Primary)
 
@@ -111,7 +112,15 @@ Models uburoom's native on-demand WebM segment delivery (`server/av1.js`):
 - Records process initialization, first-chunk latency, mean, median, P95, and maximum chunk durations.
 - Assembles all generated chunks into a seekable review file (`assembled.webm`) using FFmpeg's concat demuxer without re-encoding, verifying duration and track synchronization.
 
-### B. Continuous Benchmark (Comparison Baseline)
+### B. Production Audio & Timing Comparison
+
+In production (`server/av1.js`), uburoom prepares chunks for browser Media Source Extensions (MSE):
+1. **Split-Stream Pipes**: Production outputs video over `pipe:1` (`-map 0:v:0 -an ...`) and audio over `pipe:3` (`-map 1:a:0 -vn ...`) into separate buffers for `SourceBuffer.appendBuffer()`.
+2. **Audio Lead-In**: Production provides an audio run-in of `AUDIO_LEAD = 9912 / 48000 = 0.2065s` (`-ss start-AUDIO_LEAD`, `adelay=9912S:all=1`, duration + 0.24s) so browser MSE decoders can cross-fade and splice chunks without clicks.
+3. **Benchmark Single-Container WebM**: The benchmark outputs standard single-container WebM files containing both video (`-map 0:v:0`) and audio (`-map 0:a:0 -c:a libopus -b:a 128k -ac 2 -ar 48000 -af asetpts=PTS-STARTPTS`) when audio is present. Video-only sources apply `-an`. Audio and video start synchronously at PTS 0, avoiding 206ms accumulated drift per chunk in concatenated files.
+4. **Performance Impact**: Muxing audio into the single WebM container adds negligible CPU overhead (~0.5-1% libopus encoding) while ensuring output files and concatenated review media are immediately playable in desktop and web players.
+
+### C. Continuous Benchmark (Comparison Baseline)
 
 Encodes the entire sample duration in one continuous FFmpeg process using identical codec, resolution, bitrate, preset, and rate-control parameters.
 - Measures total wall-clock encoding time, effective FPS, and throughput multiplier.
@@ -119,36 +128,31 @@ Encodes the entire sample duration in one continuous FFmpeg process using identi
 
 ---
 
-## 6. Interpreting Performance Metrics
+## 6. Color Processing & Dolby Vision Profile 5
 
-- **Real-Time Speed Multiplier**: Calculated as `SampleDurationSeconds / TotalEncodingTimeSeconds`.
+- **HDR10 & HLG**: GPU routes use `libplacebo` with Vulkan (`-init_hw_device vulkan=v`) for tone-mapping with peak detection off (`bt.2390`). CPU fallback uses `zscale` linear tone-mapping (`zscale=t=linear:npl=100 ... tonemap=hable`).
+- **Dolby Vision Profile 5 (`doviP5`)**: Uses proprietary IPTPQc2 color reshaping without an HDR10 base layer. CPU `zscale` cannot decode IPTPQc2. Profile 5 strictly requires Vulkan `libplacebo` (`apply_dolbyvision=1`). If Vulkan/libplacebo is unavailable or fails, the benchmark fails closed with `Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping`, preventing corrupt purple/green outputs from being reported as successful.
+
+---
+
+## 7. Interpreting Performance Metrics
+
+- **Real-Time Speed Multiplier**: Calculated as `SampleDurationSeconds / SuccessfulEncodingTimeSeconds`.
   - `>= 1.2x (Green)`: Comfortable real-time headroom.
   - `1.0x – 1.2x (Yellow)`: Marginal capacity. Vulnerable to frame drops or buffering stalls under system load.
   - `< 1.0x (Red)`: Slower than real time. Transcoding cannot keep up with playback; viewers will experience buffering.
 - **First-Chunk Latency**: The time required to encode chunk 0. Directly determines how quickly playback starts after a viewer joins or seeks.
 - **Deadline Misses**: The count of individual 6-second chunks whose encoding time exceeded 6.0 seconds. Each missed deadline represents an MSE buffer underrun risk for live viewers.
 - **Effective FPS**: Average encoded frames per second across the test run.
+- **Total Elapsed vs. Successful Encode Time**: The benchmark reports both total elapsed time (including any failed attempts prior to fallback) and successful encode time. Speed multiplier and effective FPS reflect the successful attempt.
 
 ---
 
-## 7. Hardware & Software Fallback Reporting
+## 8. Fallback & Matrix Rules
 
-The benchmark reports both requested backend and actual execution backend truthfully:
-- If a hardware encoder is requested (or selected by `auto`) and fails during execution (e.g., missing CUDA runtime, unsupported device, or driver error), the tool records the failure reason and, if `cpu_fallback` is enabled, steps down to the CPU software encoder (`libsvtav1`, `libvpx-vp9`, `libvpx`).
-- Reports and structured output explicitly display both the requested encoder and the actual encoder, with a clear `Fallback` badge and explanatory details.
-- Software encoder performance is never labeled or presented as hardware acceleration.
-
----
-
-## 8. Discrepancy Notice: Implementation vs Configuration Comments
-
-During investigation of `config.example.yaml` and `server/av1.js`, an architectural discrepancy was identified:
-- **`config.example.yaml` comment**: `# NVENC can only do AV1; Intel QSV can do AV1/VP9/VP8; software does all three.`
-- **Actual implementation in `server/av1.js`**:
-  ```javascript
-  if (codec === 'vp8') throw new PlaybackError('VP8 requires the software backend. Enable CPU fallback or select software.');
-  ```
-- **Authoritative behavior**: In uburoom's codebase, QSV supports AV1 (`av1_qsv`) and VP9 (`vp9_qsv`). VP8 is software-only (`libvpx`). The benchmark adheres to the actual production implementation, running VP8 via `software` under `auto`.
+- **`--all-encoders` Mode**: In comparative encoder testing, unavailable hardware encoders (e.g. QSV on NVIDIA-only machines) are recorded as `skipped` / `unavailable`, rather than silently converted into duplicate software benchmarks.
+- **Configured Fallback Mode**: When running with `--encoder auto` (or configured hardware), runtime errors trigger step-downs (first GPU decode to CPU decode, then hardware encoder to CPU software). All fallback steps are recorded in `fallbackEvents` and displayed in reports.
+- **Repetition Isolation (`--runs N`)**: Each run writes to isolated directories (`outputs/run-${N}/<configId>/`) and unique screenshot filenames (`screenshots/run-${N}-<configId>-frame.jpg`), preventing file collision.
 
 ---
 
@@ -161,18 +165,19 @@ artifacts/transcode-benchmark/run-<timestamp>/
 ├── report.html                           # Standalone offline comparison report
 ├── results.json                          # Complete structured JSON results (Schema v1.0.0)
 ├── results.csv                           # Spreadsheet-ready CSV summary
-├── synthetic-reference-1080p30.mkv       # Reference source (when synthetic mode is used)
+├── reference-sample.mp4                  # Lightweight playable reference sample (aligned to sample interval)
 ├── screenshots/                          # Visual comparison frame captures
 │   ├── source-frame.jpg
-│   └── <config-id>-frame.jpg
+│   └── run-1-<config-id>-frame.jpg
 └── outputs/                              # Transcoded playable video files
-    └── <config-id>/
-        ├── assembled.webm                # Playable seekable review file (concat chunks)
-        ├── chunks-list.txt               # Concat demuxer input
-        └── chunks/                       # Individual measured 6-second WebM chunks
-            ├── chunk-000.webm
-            ├── chunk-001.webm
-            └── ...
+    └── run-1/
+        └── <config-id>/
+            ├── assembled.webm            # Playable seekable review file (concat chunks)
+            ├── chunks-list.txt           # Concat demuxer input
+            └── chunks/                   # Individual measured 6-second WebM chunks
+                ├── chunk-000.webm
+                ├── chunk-001.webm
+                └── ...
 ```
 
 ---
@@ -185,6 +190,7 @@ Opening `report.html` locally in any web browser (`file:///...`) provides:
 3. **Throughput Charts**: Visual inline SVG bar charts highlighting the 1.0x real-time threshold.
 4. **Chunk Latency Breakdowns**: Per-chunk completion timelines for chunked runs showing the 6.0-second deadline threshold.
 5. **Synchronized Video Player**:
+   - Target selector dropdown allowing comparison of *any* successful benchmark output.
    - Side-by-side synchronized players with unified play/pause and seek controls.
    - Interactive wipe/split overlay slider allowing the operator to drag a vertical divider across matching frames.
    - Zoom 2x toggle for pixel-level artifact and ringing inspection.

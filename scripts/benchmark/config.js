@@ -37,17 +37,20 @@ function loadBenchmarkConfig(configFilePath) {
   const content = fs.readFileSync(configFilePath, 'utf8');
   let parsed;
   try {
-    parsed = YAML.parse(content);
+    const doc = YAML.parseDocument(content, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+    const problem = doc.errors[0] || doc.warnings[0];
+    if (problem) throw new Error('Invalid YAML syntax (' + problem.code + ')');
+    parsed = doc.toJS({ maxAliasCount: 0 });
   } catch (err) {
-    throw new Error(`Failed to parse configuration YAML at ${configFilePath}: ${err.message}`);
+    throw new Error(`Invalid configuration YAML in ${path.basename(configFilePath)}: ${err.message.split(/\r?\n/)[0]}`);
   }
 
   const rawTrans = parsed?.transcoding || {};
   const rawTools = parsed?.tools || {};
 
-  // Enabled outputs from YAML (e.g. ['av1', 'plex'])
-  const outputs = Array.isArray(rawTrans.outputs) ? rawTrans.outputs : ['av1', 'plex'];
-  // Filter out 'plex' because it is not a local codec
+  // Enabled outputs from YAML. Honor explicitly empty outputs: []
+  const hasConfiguredOutputs = Array.isArray(rawTrans.outputs);
+  const outputs = hasConfiguredOutputs ? rawTrans.outputs : ['av1', 'plex'];
   const localCodecs = outputs.filter(o => o !== 'plex' && Playback.localFormat(o));
 
   const encoder = ['auto', 'hardware', 'qsv', 'nvenc', 'software'].includes(rawTrans.encoder)
@@ -65,27 +68,33 @@ function loadBenchmarkConfig(configFilePath) {
       if (Array.isArray(pair) && pair.length === 2) {
         const [height, mbps] = pair;
         const def = qualityDefinition(`${height}p${mbps}`);
-        if (def) qualities.push(def);
+        if (def && !qualities.some(q => q.id === def.id)) qualities.push(def);
       }
     }
-  }
-  if (!qualities.length) {
+  } else {
     // Default to uburoom's built-in non-direct qualities
     qualities = QUALITIES.filter(q => q.id !== 'direct');
   }
 
   const isExample = path.basename(configFilePath) === 'config.example.yaml';
+  const configDir = path.dirname(configFilePath);
+
+  const resolveTool = val => {
+    if (typeof val !== 'string' || !val.trim()) return undefined;
+    return path.isAbsolute(val.trim()) ? val.trim() : path.resolve(configDir, val.trim());
+  };
 
   return {
     configFilePath,
     profileName: isExample ? 'config.example.yaml (Default Template)' : path.basename(configFilePath),
     tools: {
-      ffmpeg: typeof rawTools.ffmpeg === 'string' && rawTools.ffmpeg.trim() ? rawTools.ffmpeg.trim() : undefined,
-      ffprobe: typeof rawTools.ffprobe === 'string' && rawTools.ffprobe.trim() ? rawTools.ffprobe.trim() : undefined
+      ffmpeg: resolveTool(rawTools.ffmpeg),
+      ffprobe: resolveTool(rawTools.ffprobe)
     },
     transcoding: {
       outputs,
-      localCodecs: localCodecs.length ? localCodecs : ['av1'],
+      localCodecs,
+      hasConfiguredOutputs,
       encoder,
       cpuFallback,
       hardwareDecode,
@@ -113,6 +122,14 @@ function resolveTestMatrix(config, options = {}) {
     }
   } else {
     targetCodecs = config.transcoding.localCodecs;
+  }
+
+  if (!targetCodecs || !targetCodecs.length) {
+    return {
+      targetCodecs: [],
+      targetQualities: [],
+      configurations: []
+    };
   }
 
   // 2. Resolve Encoders
@@ -182,6 +199,7 @@ function resolveTestMatrix(config, options = {}) {
           id: `${codec}-${encoder}-${quality.id}`,
           codec,
           requestedEncoder: encoder,
+          allowFallback: !options.allEncoders && (options.encoders ? false : config.transcoding.cpuFallback),
           quality,
           resolution: `${quality.width || (Math.round(quality.height * 16 / 9 / 2) * 2)}x${quality.height}`,
           targetBitrateKbps: quality.bitrate

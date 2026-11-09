@@ -15,13 +15,30 @@ function escapeHtml(str) {
 }
 
 /**
+ * Sanitizes data for export to ensure no personal absolute paths or credentials appear.
+ */
+function sanitizeForExport(benchmarkData) {
+  const sanitized = JSON.parse(JSON.stringify(benchmarkData));
+  if (sanitized.tools) {
+    if (sanitized.tools.ffmpeg) sanitized.tools.ffmpeg = path.basename(sanitized.tools.ffmpeg);
+    if (sanitized.tools.ffprobe) sanitized.tools.ffprobe = path.basename(sanitized.tools.ffprobe);
+  }
+  if (sanitized.source) {
+    delete sanitized.source.filePath;
+    delete sanitized.source.rawInfo;
+  }
+  return sanitized;
+}
+
+/**
  * Generates results.json
  */
 function generateJsonReport(benchmarkData, outputPath) {
+  const cleanData = sanitizeForExport(benchmarkData);
   const jsonContent = JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
-    ...benchmarkData
+    ...cleanData
   }, null, 2);
 
   fs.writeFileSync(outputPath, jsonContent, 'utf8');
@@ -32,6 +49,7 @@ function generateJsonReport(benchmarkData, outputPath) {
  */
 function generateCsvReport(benchmarkData, outputPath) {
   const headers = [
+    'Run',
     'ConfigID',
     'Mode',
     'Codec',
@@ -44,20 +62,26 @@ function generateCsvReport(benchmarkData, outputPath) {
     'Status',
     'SpeedMultiplier',
     'EffectiveFPS',
-    'TotalTimeSec',
+    'SuccessfulTimeSec',
+    'TotalElapsedSec',
     'FirstChunkSec',
     'MeanChunkSec',
     'P95ChunkSec',
     'MaxChunkSec',
     'DeadlineMisses',
     'TotalBytes',
-    'Fallback'
+    'FallbackEvents'
   ];
 
   const rows = (benchmarkData.results || []).map(r => {
     const perf = r.performance || {};
     const q = r.quality || {};
+    const fallbacks = (r.fallbackEvents || (r.fallback ? [r.fallback] : []))
+      .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
+      .join('; ');
+
     return [
+      r.runIndex || 1,
       r.configId,
       r.mode,
       r.codec,
@@ -70,14 +94,15 @@ function generateCsvReport(benchmarkData, outputPath) {
       r.status,
       perf.speedMultiplier || '',
       perf.effectiveFps || '',
+      perf.successfulEncodeTimeSec !== undefined ? perf.successfulEncodeTimeSec : (perf.totalEncodingTimeSec || ''),
       perf.totalEncodingTimeSec || '',
-      perf.firstChunkDurationSec !== null ? perf.firstChunkDurationSec : '',
-      perf.meanChunkSec !== null ? perf.meanChunkSec : '',
-      perf.p95ChunkSec !== null ? perf.p95ChunkSec : '',
-      perf.maxChunkSec !== null ? perf.maxChunkSec : '',
+      perf.firstChunkDurationSec !== null && perf.firstChunkDurationSec !== undefined ? perf.firstChunkDurationSec : '',
+      perf.meanChunkSec !== null && perf.meanChunkSec !== undefined ? perf.meanChunkSec : '',
+      perf.p95ChunkSec !== null && perf.p95ChunkSec !== undefined ? perf.p95ChunkSec : '',
+      perf.maxChunkSec !== null && perf.maxChunkSec !== undefined ? perf.maxChunkSec : '',
       perf.deadlineMisses || 0,
       perf.totalBytes || 0,
-      r.fallback ? `"${r.fallback.from}->${r.fallback.to}: ${r.fallback.reason.replace(/[\r\n]+/g, ' ').trim().replace(/"/g, '""')}"` : 'None'
+      fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None'
     ].join(',');
   });
 
@@ -92,9 +117,9 @@ function buildSpeedChartSvg(results) {
   if (!results.length) return '';
   const barHeight = 26;
   const gap = 10;
-  const labelWidth = 240;
+  const labelWidth = 260;
   const chartWidth = 500;
-  const width = labelWidth + chartWidth + 100;
+  const width = labelWidth + chartWidth + 120;
   const height = results.length * (barHeight + gap) + 40;
 
   const maxSpeed = Math.max(2.5, ...results.map(r => r.performance?.speedMultiplier || 0));
@@ -104,7 +129,8 @@ function buildSpeedChartSvg(results) {
     const y = 30 + idx * (barHeight + gap);
     const speed = r.performance?.speedMultiplier || 0;
     const barW = Math.max(4, Math.round((speed / maxSpeed) * chartWidth));
-    const label = `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]`;
+    const runTag = r.runIndex ? ` [R${r.runIndex}]` : '';
+    const label = `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]${runTag}`;
     const color = speed >= 1.2 ? '#44C78A' : speed >= 1.0 ? '#E8B45C' : '#ff9ca1';
 
     barsSvg += `
@@ -145,7 +171,6 @@ function buildChunkLatencySvg(chunkResults, chunkDuration = 6) {
   const barWidth = Math.max(6, Math.min(36, Math.floor((plotWidth / numChunks) * 0.75)));
   const step = plotWidth / numChunks;
 
-  // Deadline Y coordinate
   const deadlineY = paddingTop + plotHeight - Math.round((chunkDuration / maxVal) * plotHeight);
 
   let barsSvg = '';
@@ -165,7 +190,6 @@ function buildChunkLatencySvg(chunkResults, chunkDuration = 6) {
 
   return `
     <svg viewBox="0 0 ${svgWidth} ${svgHeight}" width="100%" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg" style="max-width:${svgWidth}px;">
-      <!-- Grid lines -->
       <line x1="${paddingLeft}" y1="${paddingTop + plotHeight}" x2="${svgWidth - paddingRight}" y2="${paddingTop + plotHeight}" stroke="#393F4D" stroke-width="1"/>
       <line x1="${paddingLeft}" y1="${deadlineY}" x2="${svgWidth - paddingRight}" y2="${deadlineY}" stroke="#FF7197" stroke-dasharray="4,4" stroke-width="2"/>
       <text x="${svgWidth - paddingRight}" y="${deadlineY - 6}" text-anchor="end" fill="#FF7197" font-size="11" font-weight="600" font-family="Inter,sans-serif">6.0s Deadline (Buffer Stall Threshold)</text>
@@ -183,17 +207,17 @@ function generateHtmlReport(benchmarkData, outputPath) {
   const results = benchmarkData.results || [];
   const probed = benchmarkData.probedEncoders || [];
 
-  const speedChartSvg = buildSpeedChartSvg(results);
+  const speedChartSvg = buildSpeedChartSvg(results.filter(r => r.status === 'pass'));
 
-  // Group chunked runs to display their latency breakdowns
   const chunkedRuns = results.filter(r => r.mode === 'chunked' && r.output?.chunks?.length);
 
-  // Reference video and first successful target output for side-by-side player
   const referenceVideoRel = src.referenceVideoRelative || null;
-  const firstPassResult = results.find(r => r.status === 'pass' && r.output?.assembledFile);
+  const passResults = results.filter(r => r.status === 'pass' && r.output?.assembledFile);
+  const firstPassResult = passResults[0] || null;
   const firstTargetRel = firstPassResult ? firstPassResult.output.assembledFile : null;
 
-  // Screenshot items
+  const hasMultipleRuns = results.some(r => r.runIndex > 1);
+
   const screenshots = benchmarkData.screenshots || [];
 
   const html = `<!DOCTYPE html>
@@ -281,6 +305,10 @@ function generateHtmlReport(benchmarkData, outputPath) {
     .seek-slider { flex: 1; min-width: 140px; cursor: pointer; accent-color: var(--primary); }
     .time-readout { font-size: 13px; font-family: monospace; color: var(--muted); }
 
+    .selector-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 14px; background: var(--elevated); border-radius: 8px; }
+    .custom-select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+    .custom-select:focus { border-color: var(--primary); }
+
     /* Wipe / Split Comparison */
     .wipe-container { position: relative; width: 100%; max-width: 960px; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); margin: 0 auto; }
     .wipe-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
@@ -354,7 +382,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
         <dt>Color & HDR Classification</dt>
         <dd>${escapeHtml(src.hdr?.label || 'SDR')}</dd>
         <dt>Sample Duration</dt>
-        <dd>${escapeHtml(benchmarkData.sampleDuration || 60)} seconds (offset ${escapeHtml(benchmarkData.startOffset || 0)}s)</dd>
+        <dd>${escapeHtml(benchmarkData.sampleDuration || 60)}s (offset ${escapeHtml(benchmarkData.startOffset || 0)}s)</dd>
       </dl>
     </div>
 
@@ -399,18 +427,19 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <table id="results-table">
         <thead>
           <tr>
-            <th onclick="sortTable(0)">Codec / Mode</th>
-            <th onclick="sortTable(1)">Encoder (Actual / Req)</th>
-            <th onclick="sortTable(2)">Target Quality</th>
-            <th onclick="sortTable(3)">Resolution</th>
-            <th onclick="sortTable(4)">Target Bitrate</th>
-            <th onclick="sortTable(5)">Actual Bitrate</th>
-            <th onclick="sortTable(6)">Speed Multiplier</th>
-            <th onclick="sortTable(7)">Effective FPS</th>
-            <th onclick="sortTable(8)">1st Chunk</th>
-            <th onclick="sortTable(9)">P95 Chunk</th>
-            <th onclick="sortTable(10)">Missed Deadlines</th>
-            <th onclick="sortTable(11)">Status</th>
+            ${hasMultipleRuns ? '<th onclick="sortTable(0)">Run</th>' : ''}
+            <th onclick="sortTable(${hasMultipleRuns ? 1 : 0})">Codec / Mode</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 2 : 1})">Encoder (Actual / Req)</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 3 : 2})">Target Quality</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 4 : 3})">Resolution</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 5 : 4})">Target Bitrate</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 6 : 5})">Actual Bitrate</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 7 : 6})">Speed Multiplier</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 8 : 7})">Effective FPS</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 9 : 8})">1st Chunk</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 10 : 9})">P95 Chunk</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 11 : 10})">Missed Deadlines</th>
+            <th onclick="sortTable(${hasMultipleRuns ? 12 : 11})">Status</th>
             <th>Playable Output</th>
           </tr>
         </thead>
@@ -421,9 +450,12 @@ function generateHtmlReport(benchmarkData, outputPath) {
             const speed = perf.speedMultiplier || 0;
             const speedClass = speed >= 1.2 ? 'success' : speed >= 1.0 ? 'warn' : 'error';
             const statusClass = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'warn';
-            const encoderText = r.fallback
-              ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(r.fallback.reason)}">Fallback from ${r.requestedEncoder}</span>`
-              : `${r.actualEncoder} (${r.requestedEncoder})`;
+            
+            const allFallbacks = r.fallbackEvents || (r.fallback ? [r.fallback] : []);
+            const fallbackSummary = allFallbacks.map(f => `${f.type || 'step'}: ${f.from}->${f.to} (${f.reason || ''})`).join('\n');
+            const encoderText = allFallbacks.length > 0
+              ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(fallbackSummary)}">Fallback from ${r.requestedEncoder} (${allFallbacks.length})</span>`
+              : `${r.actualEncoder || '-'} (${r.requestedEncoder})`;
 
             const outLink = r.output?.assembledFile
               ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play Output</a>`
@@ -431,11 +463,12 @@ function generateHtmlReport(benchmarkData, outputPath) {
 
             return `
               <tr data-codec="${escapeHtml(r.codec)}">
+                ${hasMultipleRuns ? `<td><strong>#${r.runIndex || 1}</strong></td>` : ''}
                 <td><strong>${escapeHtml(r.codec.toUpperCase())}</strong> <span style="color:var(--muted);font-size:11px;">(${escapeHtml(r.mode)})</span></td>
                 <td>${encoderText}</td>
                 <td>${escapeHtml(q.label || q.id)}</td>
-                <td>${escapeHtml(q.width)}x${escapeHtml(q.height)}</td>
-                <td>${escapeHtml(q.targetBitrateKbps)} kbps</td>
+                <td>${escapeHtml(q.width || '-')}x${escapeHtml(q.height || '-')}</td>
+                <td>${escapeHtml(q.targetBitrateKbps || '-')} kbps</td>
                 <td>${escapeHtml(perf.actualBitrateKbps || '-')} kbps</td>
                 <td><span class="pill ${speedClass}"><strong>${speed.toFixed(2)}x</strong></span></td>
                 <td>${escapeHtml(perf.effectiveFps || '-')} fps</td>
@@ -473,15 +506,18 @@ function generateHtmlReport(benchmarkData, outputPath) {
   ` : ''}
 
   <!-- Synchronized Side-by-Side Video Inspection Workspace -->
-  ${referenceVideoRel && firstTargetRel ? `
+  ${referenceVideoRel && passResults.length > 0 ? `
   <section>
     <h2>Synchronized Playback Inspection & Wipe Comparison</h2>
     <div class="player-workspace">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-        <div style="font-size:13px;color:var(--muted);">
-          Inspect source versus encoded output. Controls synchronously update both video feeds.
-        </div>
-        <div style="display:flex;gap:8px;">
+      <div class="selector-bar">
+        <label for="target-selector" style="font-weight:600;font-size:13px;color:var(--text);">Select Output to Compare:</label>
+        <select id="target-selector" class="custom-select" onchange="switchTargetVideo(this.value)">
+          ${passResults.map(r => `
+            <option value="${escapeHtml(r.output.assembledFile)}" data-label="${escapeHtml(r.configId)}">${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)}) [${escapeHtml(r.mode)}]${r.runIndex ? ` (Run ${r.runIndex})` : ''}</option>
+          `).join('')}
+        </select>
+        <div style="margin-left:auto;display:flex;gap:8px;">
           <button class="player-btn" onclick="togglePlayerView('side-by-side')" id="btn-view-side">Side-by-Side</button>
           <button class="player-btn" onclick="togglePlayerView('wipe')" id="btn-view-wipe">Wipe Comparison</button>
           <button class="player-btn" onclick="toggleZoom()" id="btn-zoom">Zoom 2x</button>
@@ -491,11 +527,11 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <!-- Side-by-Side View -->
       <div id="view-side-by-side" class="player-grid">
         <div class="player-box">
-          <div class="player-label">Source / Reference</div>
+          <div class="player-label">Source / Reference (${escapeHtml(src.fileName || 'Reference')})</div>
           <video id="player-ref" src="${escapeHtml(referenceVideoRel)}" playsinline preload="metadata"></video>
         </div>
         <div class="player-box">
-          <div class="player-label">Transcoded Output: ${escapeHtml(firstPassResult.configId)}</div>
+          <div class="player-label" id="target-box-label">Transcoded Output: ${escapeHtml(firstPassResult.configId)}</div>
           <video id="player-target" src="${escapeHtml(firstTargetRel)}" playsinline preload="metadata"></video>
         </div>
       </div>
@@ -550,7 +586,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
         <li><strong>results.json:</strong> <a class="file-link" href="results.json" target="_blank">View Raw JSON (Schema v${SCHEMA_VERSION})</a></li>
         <li><strong>results.csv:</strong> <a class="file-link" href="results.csv" target="_blank">Download CSV Summary</a></li>
-        ${referenceVideoRel ? `<li><strong>Reference Source:</strong> <a class="file-link" href="${escapeHtml(referenceVideoRel)}" target="_blank">${escapeHtml(referenceVideoRel)}</a></li>` : ''}
+        ${referenceVideoRel ? `<li><strong>Reference Sample:</strong> <a class="file-link" href="${escapeHtml(referenceVideoRel)}" target="_blank">${escapeHtml(referenceVideoRel)}</a></li>` : ''}
       </ul>
     </div>
   </section>
@@ -588,6 +624,26 @@ function generateHtmlReport(benchmarkData, outputPath) {
       });
       sortAsc = !sortAsc;
       rows.forEach(r => tbody.appendChild(r));
+    }
+
+    // Switch Target Video in Comparison Player
+    function switchTargetVideo(fileRel) {
+      const select = document.getElementById('target-selector');
+      const opt = select ? select.options[select.selectedIndex] : null;
+      const label = opt ? opt.getAttribute('data-label') : fileRel;
+      const targetBoxLabel = document.getElementById('target-box-label');
+      if (targetBoxLabel) targetBoxLabel.textContent = 'Transcoded Output: ' + label;
+      
+      const vT = document.getElementById('player-target');
+      const wT = document.getElementById('wipe-target');
+      if (vT) { vT.src = fileRel; vT.currentTime = 0; }
+      if (wT) { wT.src = fileRel; wT.currentTime = 0; }
+      const vR = document.getElementById('player-ref');
+      const wR = document.getElementById('wipe-ref');
+      if (vR) vR.currentTime = 0;
+      if (wR) wR.currentTime = 0;
+      const playBtn = document.getElementById('play-pause-btn');
+      if (playBtn) playBtn.textContent = 'Play';
     }
 
     // Synchronized Player Controls

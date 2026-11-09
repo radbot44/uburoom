@@ -14,6 +14,7 @@ const { probeAllEncoders, probeHwaccels } = require('./benchmark/prober');
 const {
   inspectSourceVideo,
   generateSyntheticSource,
+  extractReferenceSample,
   deriveOutputSpec
 } = require('./benchmark/source');
 const {
@@ -62,13 +63,13 @@ function parseArgs(args) {
     } else if (arg.startsWith('--config=')) {
       options.config = arg.slice(9);
     } else if (arg === '--start') {
-      options.start = Number(args[++i]) || 0;
+      options.start = Number(args[++i]);
     } else if (arg.startsWith('--start=')) {
-      options.start = Number(arg.slice(8)) || 0;
+      options.start = Number(arg.slice(8));
     } else if (arg === '--duration' || arg === '-d') {
-      options.duration = Number(args[++i]) || 60;
+      options.duration = Number(args[++i]);
     } else if (arg.startsWith('--duration=')) {
-      options.duration = Number(arg.slice(11)) || 60;
+      options.duration = Number(arg.slice(11));
     } else if (arg === '--mode' || arg === '-m') {
       options.mode = args[++i];
     } else if (arg.startsWith('--mode=')) {
@@ -94,9 +95,9 @@ function parseArgs(args) {
     } else if (arg.startsWith('--output=')) {
       options.output = arg.slice(9);
     } else if (arg === '--runs' || arg === '-r') {
-      options.runs = Number(args[++i]) || 1;
+      options.runs = Number(args[++i]);
     } else if (arg.startsWith('--runs=')) {
-      options.runs = Number(arg.slice(7)) || 1;
+      options.runs = Number(arg.slice(7));
     } else if (arg === '--probe-only') {
       options.probeOnly = true;
     } else if (arg === '--dry-run') {
@@ -177,6 +178,20 @@ async function main() {
     return;
   }
 
+  // Input validation
+  if (!Number.isFinite(options.duration) || options.duration <= 0) {
+    throw new Error(`Invalid --duration "${options.duration}": must be a positive number of seconds.`);
+  }
+  if (!Number.isFinite(options.start) || options.start < 0) {
+    throw new Error(`Invalid --start "${options.start}": must be a non-negative number of seconds.`);
+  }
+  if (!Number.isInteger(options.runs) || options.runs < 1) {
+    throw new Error(`Invalid --runs "${options.runs}": must be a positive integer >= 1.`);
+  }
+  if (!['chunks', 'continuous', 'both'].includes(options.mode)) {
+    throw new Error(`Invalid --mode "${options.mode}": must be one of "chunks", "continuous", or "both".`);
+  }
+
   console.log('===========================================================');
   console.log('   uburoom Transcoding Benchmark Suite (Stage 1)');
   console.log('===========================================================');
@@ -236,10 +251,15 @@ async function main() {
   const runModes = options.mode === 'both' ? ['chunks', 'continuous'] : [options.mode];
 
   console.log(`\nResolved Test Matrix:`);
-  console.log(`  Codecs:     ${testMatrix.targetCodecs.join(', ')}`);
-  console.log(`  Qualities:  ${testMatrix.targetQualities.map(q => q.label || q.id).join(', ')}`);
-  console.log(`  Modes:      ${runModes.join(', ')}`);
+  console.log(`  Codecs:         ${testMatrix.targetCodecs.join(', ') || 'None'}`);
+  console.log(`  Qualities:      ${testMatrix.targetQualities.map(q => q.label || q.id).join(', ') || 'None'}`);
+  console.log(`  Modes:          ${runModes.join(', ')}`);
   console.log(`  Configurations: ${testMatrix.configurations.length * runModes.length}`);
+
+  if (!testMatrix.configurations.length) {
+    console.log('\nNo matching transcode configurations to test. Exiting.');
+    return;
+  }
 
   if (options.dryRun) {
     console.log('\nConfigurations to be tested:');
@@ -270,7 +290,9 @@ async function main() {
     }
   } else {
     console.log('\nNo local input file specified (or --synthetic requested). Generating synthetic test source...');
-    sourceFilePath = generateSyntheticSource(tools.ffmpeg, outputDir, options.duration);
+    // Ensure synthetic video is long enough for startOffset + sampleDuration
+    const requiredSec = Math.max(60, options.start + options.duration + 2);
+    sourceFilePath = generateSyntheticSource(tools.ffmpeg, outputDir, requiredSec);
     isSynthetic = true;
   }
 
@@ -279,7 +301,7 @@ async function main() {
   console.log(`  File:       ${sourceInfo.fileName} (${(sourceInfo.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB)`);
   console.log(`  Resolution: ${sourceInfo.video.resolution} @ ${sourceInfo.video.fps} fps (${sourceInfo.video.codec})`);
   console.log(`  Color/HDR:  ${sourceInfo.hdr.label}`);
-  console.log(`  Audio:      ${sourceInfo.audio.available ? `${sourceInfo.audio.count} stream(s)` : 'None (silence generated)'}`);
+  console.log(`  Audio:      ${sourceInfo.audio.available ? `${sourceInfo.audio.count} stream(s)` : 'None (video-only)'}`);
 
   // Clamp duration to source length if necessary
   let sampleDuration = options.duration;
@@ -292,6 +314,10 @@ async function main() {
     console.log(`Clamped sample duration to ${sampleDuration.toFixed(1)}s to fit source length.`);
   }
 
+  // Extract reference sample clip for web report comparison
+  console.log('Extracting lightweight reference sample for offline report...');
+  const refSampleRelative = extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, outputDir);
+
   // Extract reference screenshot from source
   const screenshotsDir = path.join(outputDir, 'screenshots');
   fs.mkdirSync(screenshotsDir, { recursive: true });
@@ -302,7 +328,7 @@ async function main() {
   const screenshots = [];
   if (fs.existsSync(refScreenshotPath)) {
     screenshots.push({
-      label: 'Source Reference Frame',
+      label: `Source Reference Frame (${sourceInfo.fileName})`,
       timestampSeconds: Math.round(screenshotTimestamp * 10) / 10,
       relativePath: path.relative(outputDir, refScreenshotPath).replace(/\\/g, '/')
     });
@@ -314,17 +340,18 @@ async function main() {
   let testIndex = 0;
 
   console.log(`\n===========================================================`);
-  console.log(`   Executing Benchmark Runs (${totalTests} total)`);
+  console.log(`   Executing Benchmark Runs (${totalTests} total, ${options.runs} run${options.runs > 1 ? 's' : ''})`);
   console.log(`===========================================================\n`);
 
   for (let run = 1; run <= options.runs; run++) {
     for (const testConfig of testMatrix.configurations) {
       // Check if requested encoder is available
       const probeCheck = probedEncoders.find(p => p.codec === testConfig.codec && p.encoder === testConfig.requestedEncoder);
-      if (probeCheck && !probeCheck.available && !benchmarkConfig.transcoding.cpuFallback && testConfig.requestedEncoder !== 'auto') {
-        console.log(`[SKIP] ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) is unavailable and CPU fallback is disabled.`);
+      if (probeCheck && !probeCheck.available && (!testConfig.allowFallback || options.allEncoders)) {
+        console.log(`[SKIP] ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) is unavailable on this machine.`);
         benchmarkResults.push({
-          configId: testConfig.id,
+          runIndex: run,
+          configId: `${testConfig.id}${options.runs > 1 ? `-r${run}` : ''}`,
           mode: 'skipped',
           status: 'skipped',
           codec: testConfig.codec,
@@ -338,7 +365,8 @@ async function main() {
 
       for (const mode of runModes) {
         testIndex++;
-        const label = `[${testIndex}/${totalTests}] ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]`;
+        const runTag = options.runs > 1 ? ` [Run ${run}/${options.runs}]` : '';
+        const label = `[${testIndex}/${totalTests}]${runTag} ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]`;
         console.log(`${label}...`);
 
         let result;
@@ -347,6 +375,7 @@ async function main() {
             result = await runChunkedBenchmark(tools, sourceInfo, testConfig, {
               startOffset,
               sampleDuration,
+              runIndex: run,
               hardwareDecode: benchmarkConfig.transcoding.hardwareDecode,
               cpuFallback: benchmarkConfig.transcoding.cpuFallback,
               outputDir,
@@ -361,6 +390,7 @@ async function main() {
             result = await runContinuousBenchmark(tools, sourceInfo, testConfig, {
               startOffset,
               sampleDuration,
+              runIndex: run,
               hardwareDecode: benchmarkConfig.transcoding.hardwareDecode,
               cpuFallback: benchmarkConfig.transcoding.cpuFallback,
               outputDir,
@@ -370,17 +400,19 @@ async function main() {
 
           const perf = result.performance;
           console.log(`   -> PASS in ${perf.totalEncodingTimeSec}s | Speed: ${perf.speedMultiplier}x | FPS: ${perf.effectiveFps} | Deadlines missed: ${perf.deadlineMisses}`);
-          if (result.fallback) {
-            console.log(`   [NOTICE] Fallback occurred: ${result.fallback.from} -> ${result.fallback.to} (${result.fallback.reason})`);
+          if (result.fallbackEvents?.length) {
+            for (const f of result.fallbackEvents) {
+              console.log(`   [NOTICE] Fallback occurred: ${f.from} -> ${f.to} (${f.reason})`);
+            }
           }
 
           // Extract screenshot from transcoded output
           const targetVideoPath = result.output?.assembledFile ? path.join(outputDir, result.output.assembledFile) : null;
           if (targetVideoPath && fs.existsSync(targetVideoPath)) {
-            const shotPath = path.join(screenshotsDir, `${result.configId}-frame.jpg`);
+            const shotPath = path.join(screenshotsDir, `run-${run}-${result.configId}-frame.jpg`);
             if (extractScreenshot(tools.ffmpeg, targetVideoPath, sampleDuration * 0.5, shotPath)) {
               screenshots.push({
-                label: `${testConfig.codec.toUpperCase()} (${result.actualEncoder}) ${testConfig.quality.label || testConfig.quality.id}`,
+                label: `${testConfig.codec.toUpperCase()} (${result.actualEncoder}) ${testConfig.quality.label || testConfig.quality.id}${options.runs > 1 ? ` [Run ${run}]` : ''}`,
                 timestampSeconds: Math.round(sampleDuration * 0.5 * 10) / 10,
                 relativePath: path.relative(outputDir, shotPath).replace(/\\/g, '/')
               });
@@ -391,7 +423,8 @@ async function main() {
         } catch (err) {
           console.log(`   -> FAIL: ${err.message}`);
           benchmarkResults.push({
-            configId: `${testConfig.id}-${mode}`,
+            runIndex: run,
+            configId: `${testConfig.id}-${mode}${options.runs > 1 ? `-r${run}` : ''}`,
             mode,
             status: 'fail',
             codec: testConfig.codec,
@@ -415,6 +448,10 @@ async function main() {
     configProfile: benchmarkConfig.profileName,
     sampleDuration,
     startOffset,
+    options: {
+      mode: options.mode,
+      runs: options.runs
+    },
     tools: {
       ffmpeg: tools.ffmpeg,
       ffprobe: tools.ffprobe,
@@ -428,7 +465,7 @@ async function main() {
       durationSeconds: sourceInfo.durationSeconds,
       video: sourceInfo.video,
       hdr: sourceInfo.hdr,
-      referenceVideoRelative: isSynthetic ? path.relative(outputDir, sourceFilePath).replace(/\\/g, '/') : null
+      referenceVideoRelative: refSampleRelative
     },
     probedEncoders,
     screenshots,

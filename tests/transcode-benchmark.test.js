@@ -12,7 +12,7 @@ const {
   inspectActiveUburoomProcess
 } = require('../scripts/benchmark/config');
 const { resolveEncoderForCodec } = require('../scripts/benchmark/prober');
-const { deriveOutputSpec } = require('../scripts/benchmark/source');
+const { deriveOutputSpec, extractReferenceSample } = require('../scripts/benchmark/source');
 const {
   generateJsonReport,
   generateCsvReport,
@@ -62,6 +62,48 @@ test('test matrix resolution respects codecs, encoders, qualities and ignores di
   assert.ok(matrix.configurations.every(c => c.quality.id !== 'direct'));
 });
 
+test('empty outputs in configuration produces zero test configurations without error', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-empty-'));
+  const emptyConfigPath = path.join(tmpDir, 'empty-outputs.yaml');
+  try {
+    fs.writeFileSync(emptyConfigPath, 'transcoding:\n  outputs: []\n', 'utf8');
+    const config = loadBenchmarkConfig(emptyConfigPath);
+    assert.deepEqual(config.transcoding.outputs, []);
+    assert.deepEqual(config.transcoding.localCodecs, []);
+
+    const matrix = resolveTestMatrix(config);
+    assert.deepEqual(matrix.targetCodecs, []);
+    assert.deepEqual(matrix.targetQualities, []);
+    assert.deepEqual(matrix.configurations, []);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('malformed YAML configuration is handled cleanly without leaking secrets', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-bad-yaml-'));
+  const badYamlPath = path.join(tmpDir, 'bad-config.yaml');
+  try {
+    const secretText = 'SUPER_SECRET_TOKEN_DO_NOT_LEAK_12345';
+    // Malformed YAML syntax with tabs / invalid indentation
+    const content = `transcoding:\n\toutputs: [av1]\nsecret: ${secretText}\n`;
+    fs.writeFileSync(badYamlPath, content, 'utf8');
+
+    let thrownError;
+    try {
+      loadBenchmarkConfig(badYamlPath);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    assert.ok(thrownError, 'Must throw on malformed YAML');
+    assert.match(thrownError.message, /Invalid configuration YAML in bad-config\.yaml/);
+    assert.ok(!thrownError.message.includes(secretText), 'Must not leak secret text in error message');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('prober encoder resolution correctly handles auto, fallback, and software VP8', () => {
   const mockProbedArc = [
     { codec: 'av1', encoder: 'qsv', available: true },
@@ -107,6 +149,19 @@ test('prober encoder resolution correctly handles auto, fallback, and software V
   assert.match(nvdVp9.fallbackReason, /fell back to CPU software/i);
 });
 
+test('--all-encoders mode disables CPU fallback to record unavailable encoders accurately', () => {
+  const config = loadBenchmarkConfig(resolveConfigFile());
+  const matrix = resolveTestMatrix(config, {
+    allEncoders: true,
+    codecs: ['av1']
+  });
+
+  // Under allEncoders: true, allowFallback must be false
+  for (const c of matrix.configurations) {
+    assert.equal(c.allowFallback, false, `Configuration ${c.id} must not allow CPU fallback under --all-encoders`);
+  }
+});
+
 test('outputSpec enforces strict no-upscaling rule', () => {
   const source720p = {
     streams: [
@@ -121,7 +176,7 @@ test('outputSpec enforces strict no-upscaling rule', () => {
   assert.equal(spec.targetWidth, 1280, 'Width must not exceed source width (1280)');
 });
 
-test('reports generate valid JSON, CSV, and HTML offline files', () => {
+test('reports generate valid JSON, CSV, and HTML offline files with target switching', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-rep-'));
   try {
     const mockData = {
@@ -129,7 +184,13 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
       configProfile: 'config.example.yaml',
       sampleDuration: 60,
       startOffset: 0,
+      options: {
+        mode: 'chunks',
+        runs: 2
+      },
       tools: {
+        ffmpeg: 'C:\\secret\\path\\ffmpeg.exe',
+        ffprobe: 'C:\\secret\\path\\ffprobe.exe',
         ffmpegVersion: 'ffmpeg 7.0',
         ffprobeVersion: 'ffprobe 7.0'
       },
@@ -141,9 +202,18 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
         memoryTotalMB: 16000,
         gpu: 'Test GPU'
       },
+      source: {
+        filePath: 'C:\\personal\\secret_home_video.mkv',
+        fileName: 'sample.mkv',
+        durationSeconds: 120,
+        video: { resolution: '1920x1080', fps: 30, codec: 'h264' },
+        hdr: { label: 'SDR' },
+        referenceVideoRelative: 'reference-sample.mp4'
+      },
       results: [
         {
-          configId: 'av1-nvenc-1080p8-chunked',
+          runIndex: 1,
+          configId: 'av1-nvenc-1080p8-chunked-r1',
           mode: 'chunked',
           status: 'pass',
           codec: 'av1',
@@ -153,6 +223,7 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
           performance: {
             sampleDuration: 60,
             totalEncodingTimeSec: 12.0,
+            successfulEncodeTimeSec: 12.0,
             effectiveFps: 150.0,
             speedMultiplier: 5.0,
             firstChunkDurationSec: 1.1,
@@ -165,7 +236,36 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
             actualBitrateKbps: 6667
           },
           output: {
-            assembledFile: 'outputs/av1-nvenc-1080p8-chunked/assembled.webm',
+            assembledFile: 'outputs/run-1/av1-nvenc-1080p8-chunked/assembled.webm',
+            chunks: []
+          }
+        },
+        {
+          runIndex: 2,
+          configId: 'av1-nvenc-1080p8-chunked-r2',
+          mode: 'chunked',
+          status: 'pass',
+          codec: 'av1',
+          requestedEncoder: 'nvenc',
+          actualEncoder: 'nvenc',
+          quality: { id: '1080p8', label: '1080p · 8 Mbps', width: 1920, height: 1080, targetBitrateKbps: 8000 },
+          performance: {
+            sampleDuration: 60,
+            totalEncodingTimeSec: 11.5,
+            successfulEncodeTimeSec: 11.5,
+            effectiveFps: 156.0,
+            speedMultiplier: 5.2,
+            firstChunkDurationSec: 1.0,
+            meanChunkSec: 1.15,
+            medianChunkSec: 1.15,
+            p95ChunkSec: 1.2,
+            maxChunkSec: 1.2,
+            deadlineMisses: 0,
+            totalBytes: 50000000,
+            actualBitrateKbps: 6667
+          },
+          output: {
+            assembledFile: 'outputs/run-2/av1-nvenc-1080p8-chunked/assembled.webm',
             chunks: []
           }
         }
@@ -186,12 +286,17 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
 
     const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
     assert.equal(json.schemaVersion, '1.0.0');
-    assert.equal(json.results.length, 1);
+    assert.equal(json.results.length, 2);
+    // Absolute paths must be sanitized in exported json
+    assert.equal(json.tools.ffmpeg, 'ffmpeg.exe');
+    assert.equal(json.source.filePath, undefined);
 
     const csv = fs.readFileSync(csvPath, 'utf8');
     const lines = csv.trim().split(/\r?\n/);
-    assert.equal(lines.length, 2, 'CSV must have header and one row');
-    assert.match(lines[1], /av1-nvenc-1080p8-chunked/);
+    assert.equal(lines.length, 3, 'CSV must have header and two rows for two runs');
+    assert.match(lines[0], /^Run,ConfigID/);
+    assert.match(lines[1], /^1,av1-nvenc/);
+    assert.match(lines[2], /^2,av1-nvenc/);
 
     const html = fs.readFileSync(htmlPath, 'utf8');
     assert.match(html, /uburoom Transcoding Benchmark/);
@@ -199,6 +304,13 @@ test('reports generate valid JSON, CSV, and HTML offline files', () => {
     // Offline verification: must not load remote CDN resources
     assert.ok(!html.includes('src="http://') && !html.includes('src="https://'), 'Must not load external media or scripts');
     assert.ok(!html.includes('href="http://') && !html.includes('href="https://'), 'Must not load external stylesheets');
+
+    // Verify target selector exists for comparing multiple outputs
+    assert.match(html, /id="target-selector"/);
+    assert.match(html, /switchTargetVideo/);
+
+    // Verify personal path is not in HTML
+    assert.ok(!html.includes('secret_home_video'), 'Personal absolute path must not appear in HTML');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

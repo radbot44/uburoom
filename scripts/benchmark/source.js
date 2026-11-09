@@ -88,17 +88,32 @@ function inspectSourceVideo(ffprobePath, filePath) {
 
 /**
  * Generates a local synthetic video file using FFmpeg if no user input was provided.
+ * Ensures the synthetic video duration satisfies startOffset + sampleDuration.
  */
-function generateSyntheticSource(ffmpegPath, outputDir, duration = 60) {
+function generateSyntheticSource(ffmpegPath, outputDir, requiredDuration = 60) {
   fs.mkdirSync(outputDir, { recursive: true });
   const syntheticFile = path.join(outputDir, 'synthetic-reference-1080p30.mkv');
+  const targetDuration = Math.max(10, Math.ceil(requiredDuration));
 
   // Check if an existing synthetic file with sufficient duration already exists
   if (fs.existsSync(syntheticFile)) {
     try {
       const stats = fs.statSync(syntheticFile);
-      if (stats.size > 100000) {
-        return syntheticFile;
+      if (stats.size > 50000) {
+        // Quick ffprobe check if ffprobe is alongside ffmpeg
+        const probePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+        if (fs.existsSync(probePath)) {
+          const raw = cp.execFileSync(probePath, [
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            syntheticFile
+          ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          const dur = parseFloat(raw.trim());
+          if (dur >= targetDuration) {
+            return syntheticFile;
+          }
+        }
       }
     } catch {}
   }
@@ -109,9 +124,9 @@ function generateSyntheticSource(ffmpegPath, outputDir, duration = 60) {
     '-hide_banner',
     '-loglevel', 'error',
     '-y',
-    '-f', 'lavfi', '-i', `testsrc2=size=1920x1080:rate=30`,
-    '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=48000`,
-    '-t', String(duration),
+    '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+    '-t', String(targetDuration),
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-crf', '18',
@@ -121,11 +136,75 @@ function generateSyntheticSource(ffmpegPath, outputDir, duration = 60) {
     syntheticFile
   ], {
     windowsHide: true,
-    timeout: 30000,
+    timeout: 60000,
     stdio: ['ignore', 'pipe', 'ignore']
   });
 
   return syntheticFile;
+}
+
+/**
+ * Extracts a lightweight, web-compatible reference sample from the source video
+ * matching the exact [startOffset, startOffset + sampleDuration] interval.
+ * Returns the relative path to the sample inside outputDir (e.g. 'reference-sample.mp4').
+ * Never exposes the absolute path of the user's source video.
+ */
+function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, outputDir) {
+  const sampleFileName = 'reference-sample.mp4';
+  const targetPath = path.join(outputDir, sampleFileName);
+
+  if (fs.existsSync(targetPath)) {
+    try {
+      if (fs.statSync(targetPath).size > 1000) return sampleFileName;
+    } catch {}
+  }
+
+  const hasAudio = !!sourceInfo.audio?.available;
+
+  // Attempt fast web-compatible encode using libx264 + aac
+  try {
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-ss', String(startOffset),
+      '-t', String(sampleDuration),
+      '-i', sourceInfo.filePath,
+      '-map', '0:v:0',
+      '-vf', 'scale=w=\'min(1920,iw)\':h=-2:force_original_aspect_ratio=decrease,format=yuv420p',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '22'
+    ];
+
+    if (hasAudio) {
+      args.push(
+        '-map', '0:a:0',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ac', '2',
+        '-af', 'asetpts=PTS-STARTPTS'
+      );
+    } else {
+      args.push('-an');
+    }
+
+    args.push('-movflags', '+faststart', targetPath);
+
+    cp.execFileSync(tools.ffmpeg, args, {
+      windowsHide: true,
+      timeout: 120000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
+      return sampleFileName;
+    }
+  } catch (err) {
+    // If reference generation fails, return null
+  }
+
+  return null;
 }
 
 /**
@@ -160,5 +239,6 @@ function deriveOutputSpec(sourceInfo, qualityIdOrDef) {
 module.exports = {
   inspectSourceVideo,
   generateSyntheticSource,
+  extractReferenceSample,
   deriveOutputSpec
 };
