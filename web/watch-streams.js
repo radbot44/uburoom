@@ -9,7 +9,7 @@
     const seek=()=>{if(!closed && element.readyState && Math.abs(element.currentTime-target())>1)element.currentTime=target();};
     element.addEventListener('loadedmetadata',seek);element.addEventListener('error',failure);
     if(uburoomPlayback.localFormat(next.format))client=new uburoomAV1(element,next.mediaUrl,target,failure,1,{cache,ahead:seconds,background:true});
-    else if(next.format==='hls' && Hls.isSupported()) {
+    else if(next.format==='hls' && typeof Hls!=='undefined' && Hls.isSupported()) {
       client=new Hls({...hlsConfig(next,cache),maxBufferLength:seconds,maxMaxBufferLength:Math.max(30,seconds)});
       client.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal)failure();});
       client.on(Hls.Events.FRAG_LOADED,()=>{if(!anchored)client.pauseBuffering();});

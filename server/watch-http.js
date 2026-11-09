@@ -360,12 +360,7 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     }
     if(url.pathname==='/api/watch/invite' && req.method==='POST') { await joinInvite(req,res); return true; }
     if(config.accessPolicy && url.pathname==='/api/watch/admission' && req.method==='GET') {
-      const identity=await rawLogin(req);
-      json(res,200,{identity:!!identity,passwordNeeded:!entryPolicy.password(req,identity),
-        activityOnly:!config.accessPolicy.publicWeb&&!identity?.activity,
-        plexRequired:entryPolicy.requiresPlex(identity),
-        admitted:!!identity&&!!await login(req),csrf:identity?.csrf,
-        pendingIdentity:identity?{name:identity.name,csrf:identity.csrf,account:registry?.summary(identity.userId)}:undefined});return true;
+      json(res,200,await admissionStatus(req));return true;
     }
     if (['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api/watch/media/')) {
       const match = /^\/api\/watch\/media\/([a-f0-9]{48})\/(start|chunk-(?:video|audio)-\d{1,9}|captions-[a-f0-9-]{36}|subtitle-[a-f0-9-]{36}(?:\/(?:data|index|window|font-\d{1,2}))?|[a-f0-9]{24})$/.exec(url.pathname);
@@ -552,14 +547,34 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.viewers])if(ids.includes(viewer.userId)){viewer.watchSocket?.close(4003,'Sign in again');await watch.leave(room,viewer.actor,id,'account-changed');}
     for(const room of [...watch.rooms.values()])for(const [id,viewer]of [...room.disconnectedViewers])if(ids.includes(viewer.userId))await watch.leave(room,{userId:viewer.userId},id,'account-changed');
   }
+  async function admissionStatus(req) {
+    const identity=await rawLogin(req);
+    return {identity:!!identity,passwordNeeded:!entryPolicy.password(req,identity),
+      activityOnly:!config.accessPolicy.publicWeb&&!identity?.activity,
+      plexRequired:entryPolicy.requiresPlex(identity),
+      admitted:!!identity&&!!await login(req),csrf:identity?.csrf,
+      pendingIdentity:identity?{name:identity.name,csrf:identity.csrf,account:registry?.summary(identity.userId)}:undefined};
+  }
   async function bootstrap(req) {
     const initial = {config:publicConfig()};
-    const query = new URL(req.url,config.publicUrl).searchParams;
+    const reqUrl = new URL(req.url,config.publicUrl);
+    const query = reqUrl.searchParams;
     if(query.has('frame_id')||config.demo&&['host','guest','guest2'].includes(query.get('demo')))return initial;
+    if(/^\/join\/([^/]+)$/.test(reqUrl.pathname))initial.inviteCode=true;
     try {
-      initial.me=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/me');
-      if(initial.me.status===200)initial.rooms=await operations.execute({headers:req.headers, remoteAddress: clientAddress(req)},'/api/watch/rooms');
-      const reqUrl = new URL(req.url, config.publicUrl);
+      const ctx={headers:req.headers, remoteAddress: clientAddress(req)};
+      initial.me=await operations.execute(ctx,'/api/watch/me');
+      if(initial.me.status===200) {
+        const [rooms, events] = await Promise.all([
+          operations.execute(ctx,'/api/watch/rooms'),
+          watch.events ? operations.execute(ctx,'/api/watch/events') : undefined
+        ]);
+        initial.rooms = rooms;
+        if (events?.status === 200) initial.events = events;
+        if (config.accessPolicy) initial.admission = {identity:true,passwordNeeded:false,activityOnly:false,plexRequired:false,admitted:true,csrf:initial.me.value.csrf};
+      } else if(config.accessPolicy) {
+        initial.admission=await admissionStatus(req);
+      }
       const roomMatch = /^\/room\/([a-z0-9-]+)$/i.exec(reqUrl.pathname);
       const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
       if (requested && watch.roomState) {

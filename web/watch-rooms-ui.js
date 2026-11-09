@@ -798,7 +798,7 @@
     $('room-member-limit-save').addEventListener('click',() => void edit({action:'maxMembers',value:Number($('room-member-limit').value)}));
     $('room-rename').addEventListener('input',event => { renameDraft = event.target.value; });
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
-    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen']]) $(id).prepend(root.uburoomIcons.icon(document,icon));
+    for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen']]) if (!$(id).querySelector('svg')) $(id).prepend(root.uburoomIcons.icon(document,icon));
     controls.content($('reopen'),{label:'Reopen room',icon:'reopen'});
     let quickBusy = false, quickRoom;
     const quickControls = [];

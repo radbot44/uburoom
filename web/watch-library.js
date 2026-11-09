@@ -22,6 +22,7 @@
     if (topWrap) headerRight.insertBefore(scopeActions,topWrap);
     if (topWrap) controls.content(topWrap.querySelector('button'),{label:'Back to top',icon:'arrow-bar-to-up'});
     const navParent = headerLeft || host;
+    navParent.querySelector('.library-navigation-history')?.remove();
     const historyGroup = node('div',navParent,undefined,'library-navigation-history watch-control-group watch-header-actions');
     historyGroup.setAttribute('role','group'); historyGroup.setAttribute('aria-label','Navigation');
     const previous = button(historyGroup,'Back','left','library-key'); previous.id = 'library-back';
@@ -66,6 +67,7 @@
     const sentinel = node('div',host,undefined,'library-sentinel'); sentinel.setAttribute('aria-hidden','true'); sentinel.hidden = true;
     const landing = node('div',host,undefined,'library-landing'); landing.hidden = true;
     overview.before(landing);
+    tools.hidden = true; row.hidden = true; chips.hidden = true; count.hidden = true; results.hidden = true; choices.hidden = true; crumbs.hidden = true;
     const navigationControls = [home,search,sort,filterButton,...viewButtons];
     let room, generation = 0, controller, detailController, imageController, imageObserver, activeImages = 0, imageQueue = [], timer, busy = false, playing;
     let sections = [], trail = [], screen, filterSection, facetFailed = false, requestVersion = 0, errorAction, testVideo = false;
@@ -642,7 +644,7 @@
       if (room === id) { setBusy(busy); return; }
       cancelAvailability(); room = id; generation++; requestVersion++; controller?.abort(); detailController?.abort(); clearTimeout(timer); clearImages(); homes.clear(); sections = []; trail = []; screen = undefined; playing = undefined;
       testVideo = false; screen = homeContext(); beginHistory();
-      pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); crumbs.replaceChildren(); chips.replaceChildren(); scopeActions.replaceChildren(); scopeActions.hidden = true; resetStatus(); count.hidden = false; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
+      pageObserver.unobserve(sentinel); sentinel.hidden = true; host.style.minHeight = ''; clearResults(); landing.replaceChildren(); landing.hidden = true; overview.replaceChildren(); overview.hidden = true; choices.replaceChildren(); choices.hidden = true; crumbs.replaceChildren(); crumbs.hidden = true; chips.replaceChildren(); chips.hidden = true; row.hidden = true; results.hidden = true; scopeActions.replaceChildren(); scopeActions.hidden = true; resetStatus(); count.hidden = !id; count.textContent = id ? 'Loading libraries…' : ''; tools.hidden = !id;
       navigationControls.forEach(n => { n.disabled = true; }); direction.disabled = true;
       previous.disabled = next.disabled = true;
       genre.replaceChildren(); year.replaceChildren(); search.value = ''; filterSection = undefined; filterStatus.textContent = ''; filters.hidden = true; filterButton.classList.remove('filter-active');

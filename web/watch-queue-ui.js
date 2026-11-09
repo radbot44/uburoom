@@ -76,6 +76,7 @@
     const popups = root.uburoomDialogs;
     const confirm = message => popups.confirm(message, {destructive:true});
 
+    host.replaceChildren();
     host.dataset.view = view;
     const header = node('header', host, undefined, 'queue-header watch-panel-header');
     const heading = node('h2', header, undefined, 'queue-heading watch-panel-heading');

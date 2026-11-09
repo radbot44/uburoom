@@ -53,6 +53,14 @@
   }
   window.uburoomTheme={brandUrl,updateBrand};
   apply(saved());
+  if(document.readyState==='loading') {
+    const observer=new MutationObserver(()=>{
+      if(document.getElementById('theme-toggle') || document.querySelector('img.brand:not([data-brand-outgoing])'))render();
+      if(document.getElementById('theme-toggle') && document.querySelector('img.brand:not([data-brand-outgoing])'))observer.disconnect();
+    });
+    observer.observe(root,{childList:true,subtree:true});
+    document.addEventListener('DOMContentLoaded',()=>observer.disconnect(),{once:true});
+  }
   document.addEventListener('DOMContentLoaded',()=>{
     render();
     document.getElementById('theme-toggle')?.addEventListener('click',clicked);

@@ -8,7 +8,7 @@
     const popover = (anchor, options) => root.uburoomPopover?.show(anchor, options);
     let value, expanded = false, generation = 0, busy = false, timer;
 
-    scheduleButton.prepend(icons.icon(document, 'calendar-event'));
+    if (!scheduleButton.querySelector('svg')) scheduleButton.prepend(icons.icon(document, 'calendar-event'));
     scheduleButton.addEventListener('click', () => void schedule({onChange: refresh}));
     more.addEventListener('click', () => { expanded = !expanded; render(); });
 
@@ -104,7 +104,13 @@
       // "Starting now" and end times move on their own; Discord counts change slowly.
       timer = setTimeout(() => { if (!$('room-lobby').hidden) void refresh(); }, 60000);
     }
-    return {refresh, canSchedule: () => !!value?.canSchedule, events: () => value?.events || []};
+    function hydrate(next) {
+      if (!next) return;
+      value = next; render(); changed?.();
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (!$('room-lobby').hidden) void refresh(); }, 60000);
+    }
+    return {refresh, hydrate, canSchedule: () => !!value?.canSchedule, events: () => value?.events || []};
   }
   // Shared wording for when an event starts, relative to the viewer's own day.
   function startsLabel(event) {

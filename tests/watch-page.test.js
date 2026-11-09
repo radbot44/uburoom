@@ -25,4 +25,18 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(unauthHtml.includes('id="room-lobby" hidden'));
   assert.ok(!unauthHtml.includes('/room/'));
   assert.ok(unauthHtml.includes('id="welcome"'));
+
+  const directRoomHtml = watchPage(template, {
+    config: { unifiedAccounts: true },
+    me: { status: 200, value: { name: 'Alice <Host>', durableRooms: true, adminEligible: true, adminMode: true } },
+    rooms: { status: 200, value: { rooms: [{ id: 'room', name: 'Movie Night', viewers: 2 }] } },
+    events: { status: 200, value: { canSchedule: true, events: [] } },
+    targetRoom: { id: 'room', slug: 'movie-night', name: 'Movie Night & Chill' }
+  });
+  assert.ok(directRoomHtml.includes('id="room-lobby" hidden'), 'direct /room/<slug> entry keeps lobby hidden on first paint');
+  assert.ok(directRoomHtml.includes('<h1 id="empty-title">Movie Night &amp; Chill</h1>'));
+  assert.ok(directRoomHtml.includes('<p id="auth-status" role="status">Joining room...</p>'));
+  assert.ok(directRoomHtml.includes('aria-label="Alice &lt;Host&gt; · Account settings"'));
+  assert.ok(directRoomHtml.includes('id="admin-mode" class="admin-toggle" role="switch" aria-checked="true"'));
+  assert.ok(!directRoomHtml.includes('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden'));
 });

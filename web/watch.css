@@ -190,7 +190,8 @@ body:not(.immersive) #room-column{position:sticky;top:22px;align-self:start;max-
 .oomark-icon{display:inline-block;width:22px;height:20px;flex:none;fill:none;stroke:currentColor}
 :is(.watch-panel-symbol,#room-symbol,#media-symbol,#queue-symbol){width:40px;height:40px;min-width:40px;min-height:40px;border-radius:var(--watch-control-radius);background:var(--primary);color:var(--on-primary);display:inline-grid;place-items:center;flex:none;box-sizing:border-box}
 :is(.watch-panel-symbol,#room-symbol,#media-symbol,#queue-symbol) svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;display:block}
-#section-tabs{display:flex;align-items:center;gap:4px;background:var(--card);padding:5px;border-radius:15px;min-width:0}
+#section-tabs{display:none;align-items:center;gap:4px;background:var(--card);padding:5px;border-radius:15px;min-width:0}
+body.mobile-player #section-tabs:not([hidden]){display:flex}
 #section-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-width:0;min-height:44px;padding:8px;border-radius:11px;background:none;color:var(--muted);font-weight:600}
 #section-tabs button[aria-selected=true]{background:var(--primary);color:var(--on-primary)}
 #section-tabs svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
