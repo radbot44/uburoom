@@ -41,7 +41,8 @@ const {
   loadHistoryIndex,
   saveRunToHistory,
   compareRuns,
-  importHistoricalReport
+  importHistoricalReport,
+  deleteRunFromHistory
 } = require('./benchmark/history');
 const {
   generateConfigurationRecommendations
@@ -189,6 +190,14 @@ function parseArgs(args) {
       options.historyDir = args[++i];
     } else if (arg.startsWith('--history-dir=')) {
       options.historyDir = arg.slice(14);
+    } else if (arg === '--import-history') {
+      options.importHistoryPath = args[++i];
+    } else if (arg.startsWith('--import-history=')) {
+      options.importHistoryPath = arg.slice(17);
+    } else if (arg === '--delete-history') {
+      options.deleteHistoryRunId = args[++i];
+    } else if (arg.startsWith('--delete-history=')) {
+      options.deleteHistoryRunId = arg.slice(17);
     } else if (arg === '--compare-with') {
       options.compareWith = args[++i];
     } else if (arg.startsWith('--compare-with=')) {
@@ -275,6 +284,8 @@ STAGE 3 HISTORY & REGRESSION TRACKING:
       --no-history           Do not save run to history.
       --history-dir <dir>    Custom history directory (default: artifacts/transcode-benchmark/history).
       --compare-with <id|file> Compare current run against baseline run ID or JSON report.
+      --import-history <file> Import an existing benchmark JSON report into history and exit.
+      --delete-history <runId> Safely remove a benchmark run record from history and exit.
 
 STAGE 3 CONFIGURATION RECOMMENDATIONS:
       --recommendations      Generate conservative configuration advice (default: true).
@@ -295,6 +306,21 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     printHelp();
+    return;
+  }
+
+  // Handle standalone history subcommands
+  if (options.importHistoryPath) {
+    const historyDir = resolveHistoryDir(options.historyDir);
+    const imported = importHistoricalReport(options.importHistoryPath, historyDir);
+    console.log(`Successfully imported report into benchmark history as run: ${imported.runId}`);
+    return;
+  }
+
+  if (options.deleteHistoryRunId) {
+    const historyDir = resolveHistoryDir(options.historyDir);
+    deleteRunFromHistory(options.deleteHistoryRunId, historyDir);
+    console.log(`Successfully deleted run "${options.deleteHistoryRunId}" from benchmark history.`);
     return;
   }
 
@@ -461,12 +487,14 @@ async function main() {
     }
   } else {
     console.log('\nNo local input file specified (or --synthetic requested). Generating synthetic test source...');
-    const requiredSec = Math.max(60, options.start + options.duration + 2);
+    const stabilityTarget = options.stability ? (options.stabilityDuration || 120) : 0;
+    const requiredSec = Math.max(60, options.start + Math.max(options.duration, stabilityTarget) + 5);
     sourceFilePath = generateSyntheticSource(tools.ffmpeg, outputDir, requiredSec);
     isSynthetic = true;
   }
 
   const sourceInfo = inspectSourceVideo(tools.ffprobe, sourceFilePath);
+  sourceInfo.isSynthetic = isSynthetic;
   console.log(`\nSource Media Properties:`);
   console.log(`  File:       ${sourceInfo.fileName} (${(sourceInfo.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB)`);
   console.log(`  Resolution: ${sourceInfo.video.resolution} @ ${sourceInfo.video.fps} fps (${sourceInfo.video.codec}) [${sourceInfo.video.isVfr ? 'VFR' : 'CFR'}]`);
@@ -583,6 +611,7 @@ async function main() {
     // Collect all worker results across tested tiers
     for (const tier of scanResult.testedTiers) {
       for (const w of tier.workers) {
+        w.telemetry = telemetryCollector ? telemetryCollector.getSummary(w.configId) : null;
         benchmarkResults.push(w);
       }
     }
@@ -603,6 +632,8 @@ async function main() {
       for (const testConfig of testMatrix.configurations) {
         for (const mode of runModes) {
           const runTag = options.runs > 1 ? ` [Run ${run}/${options.runs}]` : '';
+          const currentConfigId = `${testConfig.id}-${mode}-c${options.concurrency}${options.runs > 1 ? `-r${run}` : ''}`;
+          telemetryCollector?.setPhase('encoding', { configId: currentConfigId, runIndex: run, mode });
           console.log(`Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]${runTag}...`);
           const tierResult = await runConcurrentTier({
             concurrency: options.concurrency,
@@ -623,6 +654,7 @@ async function main() {
           console.log(`   -> ${tierResult.passedWorkers}/${options.concurrency} passed | Aggregate throughput: ${tierResult.aggregateThroughputMultiplier}x | Slowest: ${tierResult.minWorkerSpeed}x | Deadlines missed: ${tierResult.totalDeadlineMisses}`);
 
           for (const w of tierResult.workers) {
+            w.telemetry = telemetryCollector ? telemetryCollector.getSummary(currentConfigId) : null;
             benchmarkResults.push(w);
           }
           concurrencyTrials.push(tierResult);
@@ -674,6 +706,9 @@ async function main() {
           const label = `[${testIndex}/${totalTests}]${runTag} ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]`;
           console.log(`${label}...`);
 
+          const currentConfigId = `${testConfig.id}-${mode}${options.runs > 1 ? `-r${run}` : ''}`;
+          telemetryCollector?.setPhase('encoding', { configId: currentConfigId, runIndex: run, mode });
+
           let result;
           try {
             if (mode === 'chunks') {
@@ -702,6 +737,8 @@ async function main() {
                 probedEncoders
               });
             }
+
+            result.telemetry = telemetryCollector ? telemetryCollector.getSummary(currentConfigId) : null;
 
             const perf = result.performance;
             if (result.status === 'pass') {
@@ -962,6 +999,9 @@ async function main() {
     transcodingSettings: benchmarkConfig.transcoding,
     source: {
       fileName: sourceInfo.fileName,
+      filePath: sourceFilePath,
+      fileSizeBytes: sourceInfo.fileSizeBytes,
+      isSynthetic,
       durationSeconds: sourceInfo.durationSeconds,
       video: sourceInfo.video,
       hdr: sourceInfo.hdr,

@@ -217,12 +217,14 @@ function generateCsvReport(benchmarkData, outputPath) {
       qm.ssim?.mean || '',
       qm.psnr?.mean || '',
       qm.cambi?.mean || '',
-      telem.gpuUtilization?.mean !== undefined ? telem.gpuUtilization.mean : '',
-      telem.encoderUtilization?.mean !== undefined ? telem.encoderUtilization.mean : '',
-      telem.temperatureC?.mean !== undefined ? telem.temperatureC.mean : '',
-      telem.powerWatts?.mean !== undefined ? telem.powerWatts.mean : '',
-      r.telemetry?.encoding?.thermalClimbC !== undefined ? r.telemetry.encoding.thermalClimbC : '',
-      r.telemetry?.encoding?.throttlingDetected ? (r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Yes') : 'None',
+      telem.gpuUtilization?.mean !== undefined && telem.gpuUtilization?.mean !== null ? telem.gpuUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('gpuUtilization') ? 'N/A' : ''),
+      telem.encoderUtilization?.mean !== undefined && telem.encoderUtilization?.mean !== null ? telem.encoderUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('encoderUtilization') ? 'N/A' : ''),
+      telem.temperatureC?.mean !== undefined && telem.temperatureC?.mean !== null ? telem.temperatureC.mean : (cleanData.telemetry?.unavailableFields?.includes('temperatureC') ? 'N/A' : ''),
+      telem.powerWatts?.mean !== undefined && telem.powerWatts?.mean !== null ? telem.powerWatts.mean : (cleanData.telemetry?.unavailableFields?.includes('powerWatts') ? 'N/A' : ''),
+      r.telemetry?.encoding?.thermalClimbC !== undefined && r.telemetry?.encoding?.thermalClimbC !== null ? r.telemetry.encoding.thermalClimbC : '',
+      cleanData.telemetry?.throttlingSupported === false || r.telemetry?.encoding?.throttlingSupported === false
+        ? 'N/A'
+        : (r.telemetry?.encoding?.throttlingDetected ? (r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Active') : 'None'),
       fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None',
       err ? `"${err.replace(/"/g, '""')}"` : ''
     ].join(',');
@@ -894,8 +896,8 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
       <div>
         <div class="stat-label">Hardware Throttling</div>
-        <div class="stat-val" style="font-size:14px;color:${cleanData.telemetry.encoding?.throttlingDetected ? 'var(--error)' : 'var(--success)'};">
-          ${cleanData.telemetry.encoding?.throttlingDetected ? escapeHtml(cleanData.telemetry.encoding.activeThrottleReasons?.join(', ') || 'Active') : 'None'}
+        <div class="stat-val" style="font-size:14px;color:${cleanData.telemetry.encoding?.throttlingSupported === false ? 'var(--muted)' : (cleanData.telemetry.encoding?.throttlingDetected ? 'var(--error)' : 'var(--success)')};">
+          ${cleanData.telemetry.encoding?.throttlingSupported === false ? 'N/A (Unsupported)' : (cleanData.telemetry.encoding?.throttlingDetected ? escapeHtml(cleanData.telemetry.encoding.activeThrottleReasons?.join(', ') || 'Active') : 'None')}
         </div>
       </div>
     </div>
@@ -964,17 +966,19 @@ function generateHtmlReport(benchmarkData, outputPath) {
         </thead>
         <tbody>
           ${(cleanData.historyComparison.matchedComparisons || []).map(m => {
-            const badgeClass = m.classification === 'regression' ? 'pill error' : m.classification === 'improvement' ? 'pill success' : 'pill';
-            const deltaColor = m.speedDeltaPercent > 0 ? 'var(--success)' : m.speedDeltaPercent < 0 ? 'var(--error)' : 'var(--muted)';
+            const badgeClass = m.classification === 'regression' ? 'pill error' : (m.classification === 'improvement' ? 'pill success' : (m.classification === 'cross_hardware_comparison' ? 'pill highlight' : 'pill'));
+            const displayClassification = m.classification === 'cross_hardware_comparison' ? 'CROSS HARDWARE' : m.classification.toUpperCase();
+            const deltaColor = m.classification === 'cross_hardware_comparison' ? 'var(--text)' : (m.speedDeltaPercent > 0 ? 'var(--success)' : m.speedDeltaPercent < 0 ? 'var(--error)' : 'var(--muted)');
+            const noticeRow = m.notice ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${escapeHtml(m.notice)}</div>` : '';
             return `
               <tr>
-                <td><strong>${escapeHtml(m.codec.toUpperCase())} (${escapeHtml(m.encoder)})</strong> ${escapeHtml(m.qualityLabel)}</td>
+                <td><strong>${escapeHtml(m.codec.toUpperCase())} (${escapeHtml(m.encoder)})</strong> ${escapeHtml(m.qualityLabel)}${noticeRow}</td>
                 <td>${m.speedBase.toFixed(2)}x</td>
                 <td><strong>${m.speedTarget.toFixed(2)}x</strong></td>
                 <td style="color:${deltaColor};font-weight:600;">${m.speedDeltaPercent > 0 ? `+${m.speedDeltaPercent}%` : `${m.speedDeltaPercent}%`}</td>
                 <td>${m.p95DeltaPercent > 0 ? `+${m.p95DeltaPercent}%` : `${m.p95DeltaPercent}%`}</td>
                 <td>${m.vmafDelta !== null ? (m.vmafDelta > 0 ? `+${m.vmafDelta}` : `${m.vmafDelta}`) : '-'}</td>
-                <td><span class="${badgeClass}">${escapeHtml(m.classification.toUpperCase())}</span></td>
+                <td><span class="${badgeClass}">${escapeHtml(displayClassification)}</span></td>
               </tr>
             `;
           }).join('')}

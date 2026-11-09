@@ -297,6 +297,8 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 
   // Use libvmaf if VMAF or CAMBI is active and libvmaf is available
   const canUseLibvmaf = (wantsVmaf || wantsCambi) && capabilities.libvmaf;
+  const secondaryMetrics = [];
+  let secondaryFilterGraph = null;
 
   if (canUseLibvmaf) {
     const features = [];
@@ -313,6 +315,26 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
     const featureArg = features.length ? `:feature=${features.join('|')}` : '';
     const logFilename = path.basename(jsonLogPath);
     metricFilter = `[dist_norm][ref_norm]libvmaf=log_fmt=json:log_path=${logFilename}${featureArg}:n_threads=8:shortest=1[out]`;
+
+    // When libvmaf lacks optional float_ssim or psnr but standalone filters exist,
+    // prepare a secondary standalone filter graph so metrics are not silently omitted.
+    const needsStandaloneSsim = wantsSsim && !capabilities.vmafFeatures?.float_ssim && capabilities.ssim;
+    const needsStandalonePsnr = wantsPsnr && !capabilities.vmafFeatures?.psnr && capabilities.psnr;
+
+    if (needsStandaloneSsim || needsStandalonePsnr) {
+      if (needsStandaloneSsim) secondaryMetrics.push('ssim');
+      if (needsStandalonePsnr) secondaryMetrics.push('psnr');
+
+      let secondaryMetricFilter = '';
+      if (needsStandaloneSsim && needsStandalonePsnr) {
+        secondaryMetricFilter = `[dist_norm]split=2[d1][d2];[ref_norm]split=2[r1][r2];[d1][r1]ssim=stats_file=ssim.log:shortest=1[s_out];[d2][r2]psnr=stats_file=psnr.log:shortest=1[p_out];[s_out][p_out]overlay[out]`;
+      } else if (needsStandaloneSsim) {
+        secondaryMetricFilter = `[dist_norm][ref_norm]ssim=stats_file=ssim.log:shortest=1[out]`;
+      } else if (needsStandalonePsnr) {
+        secondaryMetricFilter = `[dist_norm][ref_norm]psnr=stats_file=psnr.log:shortest=1[out]`;
+      }
+      secondaryFilterGraph = `${parts[0]};${parts[1]};${secondaryMetricFilter}`;
+    }
   } else {
     // Standalone metric fallback when libvmaf is not used or unavailable
     const wantsStandaloneSsim = wantsSsim && capabilities.ssim;
@@ -340,6 +362,9 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
     supported: true,
     usesLibvmaf: canUseLibvmaf,
     filterGraph: parts.join(';'),
+    needsSecondaryStandalonePass: secondaryMetrics.length > 0,
+    secondaryMetrics,
+    secondaryFilterGraph,
     unavailableMetrics,
     activeMetrics,
     normalization: {
@@ -465,52 +490,96 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
   // 3. Content correspondence verification
   // Verify that the decoded frames of the encoded video visually correspond to the source interval,
   // rather than a time-shifted or content-divergent stream whose timestamps were reset to 0.
-  let contentCheckResult = { status: 'unverified', reason: 'FFmpeg binary not available for content correspondence check.' };
+  // Performs multi-anchor checking (start and midpoint) and distinguishes high vs heuristic confidence.
+  let contentCheckResult = { status: 'unverified', confidence: 'unverified', reason: 'FFmpeg binary not available for content correspondence check.' };
 
   if (ffmpegPath) {
     try {
       const probeDuration = Math.min(1.0, Math.max(0.4, sampleDuration * 0.2));
-      // Fast downscaled structural similarity check on initial decoded frames (160x90, yuv420p)
-      const res = cp.spawnSync(ffmpegPath, [
-        '-v', 'info',
-        '-ss', String(startOffset),
-        '-t', String(probeDuration),
-        '-i', sourcePath,
-        '-t', String(probeDuration),
-        '-i', encodedPath,
-        '-filter_complex', '[0:v]scale=160:90,format=yuv420p[r];[1:v]scale=160:90,format=yuv420p[e];[e][r]ssim',
-        '-f', 'null',
-        '-'
-      ], {
-        encoding: 'utf8',
-        windowsHide: true,
-        timeout: 15000
-      });
+      const runProbe = (srcSeek, encSeek) => {
+        const probeArgs = [
+          '-v', 'info',
+          '-ss', String(srcSeek),
+          '-t', String(probeDuration),
+          '-i', sourcePath
+        ];
+        if (encSeek > 0) {
+          probeArgs.push('-ss', String(encSeek));
+        }
+        probeArgs.push(
+          '-t', String(probeDuration),
+          '-i', encodedPath,
+          '-filter_complex', '[0:v]scale=160:90,format=yuv420p[r];[1:v]scale=160:90,format=yuv420p[e];[e][r]ssim',
+          '-f', 'null',
+          '-'
+        );
+        const res = cp.spawnSync(ffmpegPath, probeArgs, {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 15000
+        });
+        const combinedOutput = (res.stderr || '') + '\n' + (res.stdout || '');
+        const match = /All:([0-9.]+)/.exec(combinedOutput);
+        return match ? parseFloat(match[1]) : null;
+      };
 
-      const combinedOutput = (res.stderr || '') + '\n' + (res.stdout || '');
-      const match = /All:([0-9.]+)/.exec(combinedOutput);
-      if (match) {
-        const score = parseFloat(match[1]);
-        if (!isNaN(score)) {
-          if (score >= 0.80) {
-            contentCheckResult = { status: 'verified', score };
+      const startScore = runProbe(startOffset, 0);
+
+      if (startScore !== null && !isNaN(startScore)) {
+        if (startScore < 0.80) {
+          contentCheckResult = {
+            status: 'misaligned',
+            confidence: 'high',
+            score: startScore,
+            reason: `Content correspondence check failed at start anchor: encoded frames visually diverge from requested source interval (correlation SSIM: ${startScore.toFixed(3)} < 0.80). Content appears shifted or mismatched.`
+          };
+        } else {
+          // If sample interval is sufficiently long, test second temporal anchor at midpoint
+          let midScore = null;
+          if (sampleDuration >= 4.0) {
+            const midOffset = startOffset + Math.round((sampleDuration * 0.5) * 100) / 100;
+            const encMidOffset = Math.round((sampleDuration * 0.5) * 100) / 100;
+            midScore = runProbe(midOffset, encMidOffset);
+          }
+
+          if (midScore !== null && !isNaN(midScore)) {
+            if (midScore < 0.80) {
+              contentCheckResult = {
+                status: 'misaligned',
+                confidence: 'high',
+                score: midScore,
+                reason: `Content correspondence check failed at midpoint anchor: encoded stream drifted or diverged from source (correlation SSIM: ${midScore.toFixed(3)} < 0.80).`
+              };
+            } else {
+              const avgScore = Math.round(((startScore + midScore) / 2) * 1000) / 1000;
+              contentCheckResult = {
+                status: 'verified',
+                confidence: 'high',
+                score: avgScore,
+                anchorScores: { start: startScore, mid: midScore }
+              };
+            }
           } else {
+            // Single anchor probe (short duration or midpoint probe unparseable)
             contentCheckResult = {
-              status: 'misaligned',
-              score,
-              reason: `Content correspondence check failed: encoded frames visually diverge from requested source interval (correlation SSIM: ${score.toFixed(3)} < 0.80). Content appears shifted or mismatched.`
+              status: 'verified',
+              confidence: 'heuristic',
+              score: startScore,
+              anchorScores: { start: startScore }
             };
           }
         }
       } else {
         contentCheckResult = {
           status: 'unverified',
+          confidence: 'unverified',
           reason: 'Could not extract content correlation score from verification probe.'
         };
       }
     } catch (checkErr) {
       contentCheckResult = {
         status: 'unverified',
+        confidence: 'unverified',
         reason: `Content correspondence probe could not be completed: ${checkErr.message}`
       };
     }
@@ -519,19 +588,22 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
   if (contentCheckResult.status === 'misaligned') {
     return {
       status: 'misaligned',
+      confidence: contentCheckResult.confidence || 'high',
       reason: contentCheckResult.reason,
       errors: [contentCheckResult.reason],
       encodedFirstPts,
       encodedDuration: Math.round(encodedDuration * 1000) / 1000,
       encodedPacketCount: encodedPackets.length,
       sourcePacketCount: sourceDecodedFrameCount,
-      contentScore: contentCheckResult.score
+      contentScore: contentCheckResult.score,
+      anchorScores: contentCheckResult.anchorScores || null
     };
   }
 
   if (contentCheckResult.status === 'unverified') {
     return {
       status: 'unverified',
+      confidence: 'unverified',
       reason: contentCheckResult.reason,
       errors: [],
       encodedFirstPts,
@@ -543,13 +615,15 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
 
   return {
     status: 'verified',
+    confidence: contentCheckResult.confidence || 'high',
     reason: null,
     errors: [],
     encodedFirstPts,
     encodedDuration: Math.round(encodedDuration * 1000) / 1000,
     encodedPacketCount: encodedPackets.length,
     sourcePacketCount: sourceDecodedFrameCount,
-    contentScore: contentCheckResult.score
+    contentScore: contentCheckResult.score,
+    anchorScores: contentCheckResult.anchorScores || null
   };
 }
 
@@ -684,6 +758,34 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
+  // Execute secondary standalone pass if libvmaf lacked requested SSIM or PSNR
+  if (chain.needsSecondaryStandalonePass && chain.secondaryFilterGraph) {
+    const secArgs = [
+      '-v', 'error',
+      '-ss', String(startOffset),
+      '-t', String(sampleDuration),
+      '-i', source.filePath,
+      '-t', String(sampleDuration),
+      '-i', encodedFilePath,
+      '-filter_complex', chain.secondaryFilterGraph,
+      '-map', '[out]',
+      '-f', 'null',
+      '-'
+    ];
+    try {
+      await spawnSafe(ffmpegPath, secArgs, {
+        cwd: outputDir,
+        timeout: timeoutMs,
+        signal,
+        onStderr: chunk => {
+          stderrOutput += chunk.toString();
+        }
+      });
+    } catch (secErr) {
+      stderrOutput += '\nSecondary standalone pass error: ' + secErr.message;
+    }
+  }
+
   // 1. Parse libvmaf JSON log if libvmaf was executed
   if (chain.usesLibvmaf && fs.existsSync(jsonLogPath)) {
     try {
@@ -748,6 +850,46 @@ async function runQualityAnalysis(ffmpegPath, options) {
         }
 
         timeline.push(entry);
+      }
+
+      // If secondary standalone pass was executed, parse ssim.log and/or psnr.log
+      if (chain.needsSecondaryStandalonePass) {
+        const ssimLogPath = path.join(outputDir, 'ssim.log');
+        const psnrLogPath = path.join(outputDir, 'psnr.log');
+
+        if (chain.secondaryMetrics?.includes('ssim') && fs.existsSync(ssimLogPath) && ssimValues.length === 0) {
+          try {
+            const ssimRaw = fs.readFileSync(ssimLogPath, 'utf8');
+            const lines = ssimRaw.split(/\r?\n/).filter(Boolean);
+            for (let i = 0; i < lines.length; i++) {
+              const match = /All:([0-9.]+)/.exec(lines[i]);
+              if (match) {
+                const val = parseFloat(match[1]);
+                ssimValues.push(val);
+                if (timeline[i]) {
+                  timeline[i].ssim = Math.round(val * 10000) / 10000;
+                }
+              }
+            }
+          } catch {}
+        }
+
+        if (chain.secondaryMetrics?.includes('psnr') && fs.existsSync(psnrLogPath) && psnrValues.length === 0) {
+          try {
+            const psnrRaw = fs.readFileSync(psnrLogPath, 'utf8');
+            const lines = psnrRaw.split(/\r?\n/).filter(Boolean);
+            for (let i = 0; i < lines.length; i++) {
+              const match = /psnr_avg:([0-9.]+|inf)/.exec(lines[i]);
+              if (match) {
+                const val = match[1] === 'inf' ? 60 : parseFloat(match[1]);
+                psnrValues.push(val);
+                if (timeline[i]) {
+                  timeline[i].psnr = Math.round(val * 100) / 100;
+                }
+              }
+            }
+          } catch {}
+        }
       }
 
       const vmafStats = selectedMetrics.includes('vmaf') ? calculateMetricStats(vmafValues) : null;

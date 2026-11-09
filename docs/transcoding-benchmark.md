@@ -89,6 +89,8 @@ The benchmark parses only the `transcoding` and `tools` sections:
 | `--no-history` | Disable saving run to history. | |
 | `--history-dir <dir>` | Custom directory for local benchmark history index and records. | `artifacts/transcode-benchmark/history` |
 | `--compare-with <id\|file>` | Compare current run against a historical run ID or baseline `results.json`. | None |
+| `--import-history <file>` | Import an existing benchmark JSON report into history and exit. | None |
+| `--delete-history <runId>` | Safely remove a benchmark run record from history and exit. | None |
 | `--recommendations` | Generate conservative configuration recommendations for `config.yaml`. | Enabled |
 | `--no-recommendations` | Disable configuration advice generation. | |
 | `-o, --output <dir>` | Directory where artifacts and reports are saved. | `artifacts/transcode-benchmark/run-<timestamp>/` |
@@ -322,7 +324,9 @@ The benchmark monitors hardware resource consumption in real-time during executi
    - **Encoding Isolation**: Performance summaries, average encoder utilization, peak memory, and thermal climb ($\Delta T$) strictly isolate the active encoding phase. Post-encode CPU quality scoring (e.g. multi-threaded VMAF/SSIM calculation) is recorded in a separate phase and does not distort transcoding metrics.
 3. **Thermal Rise & Throttle Detection**:
    - Tracks net temperature change ($\Delta T$) across the encoding session.
-   - Probes hardware throttle reason codes (power cap, thermal slowdown, reliability voltage, SW power cap).
+   - Non-blocking async telemetry sampling keeps the Node event loop and chunk timers accurate.
+   - Probes hardware throttle reason codes (power cap, thermal slowdown, HW slowdown). Strictly distinguishes active hardware throttling from normal idle states (e.g. `0x01` idle clock reduction, `None`) and unsupported sensors (`N/A`).
+   - Windows WDDM PDH counters mark device attribution as unverified and do not equate video-engine utilization with total GPU load or fabricate zero values.
 4. **Offline Timeline Charts**:
    - The offline HTML report visualizes encoder utilization, core temperature, and power draw over time using embedded, dependency-free SVGs.
 
@@ -331,18 +335,21 @@ The benchmark monitors hardware resource consumption in real-time during executi
 ## 14. Bounded Stability & Thermal Soak Testing
 
 When `--stability` (or `--soak`) is enabled, the benchmark runs an extended chunked transcoding endurance test (`--stability-duration <sec>`, default: 120s):
-1. **Performance Trend Analysis**:
+1. **Source Duration Validation**:
+   - Refuses to start if the input media file is shorter than the requested start offset plus stability test interval.
+2. **Performance Trend Analysis**:
    - Compares the first half of completed chunks against the second half.
-   - Computes throughput evolution (speed change percentage) and P95 latency evolution.
+   - Computes throughput evolution (speed change percentage) and true P95 chunk latency evolution.
    - Quantifies the first-chunk startup penalty versus steady-state chunk completion.
-2. **Honest Degradation Phrasing**:
+3. **Honest Degradation Phrasing**:
    - Distinguishes confirmed hardware thermal throttling from software queueing or cache degradation.
    - Summaries explicitly declare when hardware throttle flags are asserted versus unthrottled temperature rise.
-3. **Operational Safety Protections**:
-   - **Disk Space Ceiling**: Automatically terminates early if temporary chunk storage exceeds 4 GB.
-   - **Repeated Failure Ceiling**: Aborts if 3 consecutive chunks fail or exceed $1.5\times$ chunk duration.
+4. **Operational Safety Protections**:
+   - **Disk Space Ceiling**: Gracefully stops further chunk generation if temporary chunk storage exceeds 4 GB.
+   - **Repeated Failure Ceiling**: Gracefully stops if 3 consecutive chunks fail or exceed $1.5\times$ chunk duration.
+   - **Measurement Preservation**: Early stops return `status: 'early_stopped'` with `earlyStopReason` while preserving all completed chunk measurements and partial trends.
    - **Cancellation Cleanup**: Cleanly aborts subprocesses and removes intermediate files on `SIGINT`.
-4. **Production Caveat**:
+5. **Production Caveat**:
    - Formally designated as measuring short-to-medium duration thermal and throughput trends. 24/7 production capacity requires extended soak testing under real multi-user network conditions.
 
 ---
@@ -350,16 +357,19 @@ When `--stability` (or `--soak`) is enabled, the benchmark runs an extended chun
 ## 15. Local Benchmark History & Regression Tracking
 
 The benchmark maintains a lightweight, local-only historical archive (`artifacts/transcode-benchmark/history/`):
-1. **Schema 3.0.0 & Fingerprinting**:
-   - Each run generates a compact metadata record (`run-<timestamp>-<pid>.json`) and updates `history-index.json`.
+1. **Schema 3.0.0 & Canonical Content Fingerprinting**:
+   - Each run generates a compact metadata record (`run-<timestamp>-<pid>.json`) and updates `history-index.json` using atomic write-and-rename.
    - Never duplicates multi-megabyte video files in history storage.
-   - Uses privacy-preserving deterministic source fingerprints (`<basename>#<sha256-hash>`) that avoid leaking personal path names.
+   - Uses canonical content fingerprints (`v1:<sha256>`) derived deterministically from head, middle, and tail content chunks plus byte size, without storing personal paths or filenames.
+   - Safely rejects path-traversal attempts when removing history records (`--delete-history <runId>`).
 2. **Importing Previous Results**:
-   - Existing Stage 1 or Stage 2 `results.json` files can be imported into history via `importHistoricalReport()`.
+   - Existing Stage 1, 2, or 3 `results.json` files can be imported into history via `--import-history <file>`.
 3. **Rigorous Regression Tracking (`--compare-with <id|file>`)**:
    - Evaluates current performance against a previous baseline run.
    - **Classification Rules**:
-     - `matched`: Exactly identical source media, sample interval, codec, encoder, mode, and concurrency. Flags throughput changes $\le -10\%$ as regressions and $\ge +10\%$ as improvements.
+     - `matched`: Identical source content fingerprint, sample interval, codec, encoder, mode, hardware decode, and concurrency. Flags throughput changes $\le -10\%$ as regressions and $\ge +10\%$ as improvements.
+     - `cross_hardware_comparison`: Detected when test hardware or GPU differs between runs (e.g. NVIDIA RTX 4090 vs Intel Arc A380). Prevents classifying distinct hardware performance as false software regressions.
+     - `failed_trial`: Trials where either base or current run failed validation. Not evaluated for regression.
      - `partially_matched`: Shared codec and quality, but differing conditions (different source media, sample interval, encoder, mode, or concurrency). Marked strictly as non-comparable to prevent false regression alarms.
      - `not_comparable`: Configurations not present in the baseline run.
 
@@ -368,13 +378,18 @@ The benchmark maintains a lightweight, local-only historical archive (`artifacts
 ## 16. Evidence-Based Configuration Advice
 
 When `--recommendations` is active (default: enabled), the benchmark generates conservative, evidence-based recommendations strictly adhering to `server/config.js` schema:
-1. **Targeted Settings**:
-   - `transcoding.encoder`: Recommends dedicated hardware encoder (`nvenc`, `qsv`) only when tested throughput exceeds $1.5\times$ real-time with zero fallbacks. Recommends `auto` if runtime fallbacks were observed.
+1. **Strict Evidence Thresholds**:
+   - **High Confidence**: Requires repeated runs (`runs >= 2`), sustained duration ($\ge 30$s), real reference media, throughput margin $\ge 1.5\times$, zero fallbacks, and verified visual quality.
+   - **Preliminary Observations**: Benchmarks run on synthetic test media or single short runs are capped at `preliminary` confidence, warning operators to test real media before mutating production settings.
+   - **Quality Gating**: If visual quality analysis fails or detects temporal misalignment, hardware encoder recommendations are withheld.
+2. **Targeted Settings**:
+   - `transcoding.encoder`: Recommends dedicated hardware encoder (`nvenc`, `qsv`) only when tested throughput meets criteria with zero fallbacks. Recommends `auto` if runtime fallbacks were observed.
    - `transcoding.max_jobs`: Recommends sustainable concurrency based on capacity scans, enforcing a conservative 1-job headroom buffer when tested concurrency $> 2$.
    - `transcoding.outputs`: Recommends enabling `av1` when verified throughput achieves $\ge 1.2\times$ real-time headroom.
-2. **Conservative & Read-Only**:
+3. **Conservative & Read-Only**:
    - Never automatically alters `config.yaml` or restarts live services.
    - Issues warnings and lists settings with insufficient evidence when tests were omitted.
+   - Suggests `--allow-load-test` when capacity testing is required.
    - Generates a copyable YAML configuration snippet in both CLI output and the offline HTML report.
 
 ---

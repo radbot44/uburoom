@@ -23,6 +23,16 @@ function getDirectorySize(dirPath) {
 }
 
 /**
+ * Calculates P95 percentile of an array of numeric values.
+ */
+function calculateP95(arr) {
+  if (!arr || !arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  return Math.round(sorted[idx] * 1000) / 1000;
+}
+
+/**
  * Executes a bounded stability benchmark session measuring performance trends,
  * latency evolution, thermal climb, and resource saturation over extended chunks.
  */
@@ -53,6 +63,14 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     probedEncoders = []
   } = opts;
 
+  // 1. Validate source media duration: fail fast if source is shorter than requested interval
+  const sourceDuration = source?.durationSeconds ?? source?.duration ?? source?.format?.duration ?? null;
+  if (sourceDuration !== null && typeof sourceDuration === 'number' && !isNaN(sourceDuration)) {
+    if (sourceDuration < startOffset + duration) {
+      throw new Error(`Source duration (${sourceDuration}s) is shorter than requested stability test interval (${startOffset + duration}s). Provide a longer source media file.`);
+    }
+  }
+
   const stabilityOutputDir = path.join(outputDir, `stability-${config.id}`);
   fs.mkdirSync(stabilityOutputDir, { recursive: true });
 
@@ -60,94 +78,135 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
   const chunkResults = [];
   let consecutiveFailures = 0;
   let earlyStopReason = null;
+  let fallbackCount = 0;
 
   if (telemetryCollector) {
     telemetryCollector.setPhase('encoding', { mode: 'stability', configId: config.id });
   }
 
-  // Execute chunked transcoding over the stability duration
-  const benchmarkResult = await runChunkedBenchmark(tools, source, config, {
-    startOffset,
-    sampleDuration: duration,
-    outputDir: stabilityOutputDir,
-    signal,
-    hardwareDecode,
-    cpuFallback,
-    probedEncoders,
-    onProgress: prog => {
-      chunkResults.push({
-        chunkIndex: prog.chunkIndex,
-        totalChunks: prog.totalChunks,
-        encodeTimeSeconds: prog.encodeDurationSec,
-        speedRatio: prog.realTimeSpeed,
-        fps: 0,
-        missedDeadline: prog.deadlineMissed,
-        fallbackOccurred: false
-      });
+  const internalAbort = new AbortController();
+  const linkedSignal = signal || internalAbort.signal;
 
-      opts.onProgress?.({
-        chunkIndex: prog.chunkIndex,
-        totalChunks: prog.totalChunks,
-        elapsedSec: (prog.chunkIndex + 1) * chunkDuration,
-        chunkLatencySec: prog.encodeDurationSec,
-        realTimeSpeed: prog.realTimeSpeed
-      });
+  let benchmarkResult = null;
 
-      // Safety check: disk usage
-      const currentDiskBytes = getDirectorySize(stabilityOutputDir);
-      if (currentDiskBytes > maxDiskBytes) {
-        earlyStopReason = `Maximum allowed disk consumption exceeded (${(currentDiskBytes / (1024 * 1024)).toFixed(1)} MB > ${(maxDiskBytes / (1024 * 1024)).toFixed(1)} MB)`;
-        throw new Error(earlyStopReason);
-      }
+  try {
+    benchmarkResult = await runChunkedBenchmark(tools, source, config, {
+      startOffset,
+      sampleDuration: duration,
+      outputDir: stabilityOutputDir,
+      signal: linkedSignal,
+      hardwareDecode,
+      cpuFallback,
+      probedEncoders,
+      onProgress: prog => {
+        const isFallback = Boolean(prog.fallbackOccurred || prog.fallback);
+        if (isFallback) fallbackCount++;
 
-      if (prog.encodeDurationSec > chunkDuration * 1.5) {
-        consecutiveFailures++;
-        if (consecutiveFailures >= maxConsecutiveFailures) {
-          earlyStopReason = `Aborted after ${consecutiveFailures} consecutive severe chunk performance failures or fallbacks.`;
-          throw new Error(earlyStopReason);
+        chunkResults.push({
+          chunkIndex: prog.chunkIndex,
+          totalChunks: prog.totalChunks,
+          encodeTimeSeconds: prog.encodeDurationSec,
+          speedRatio: prog.realTimeSpeed,
+          fps: 0,
+          missedDeadline: prog.deadlineMissed,
+          fallbackOccurred: isFallback
+        });
+
+        opts.onProgress?.({
+          chunkIndex: prog.chunkIndex,
+          totalChunks: prog.totalChunks,
+          elapsedSec: (prog.chunkIndex + 1) * chunkDuration,
+          chunkLatencySec: prog.encodeDurationSec,
+          realTimeSpeed: prog.realTimeSpeed,
+          fallbackOccurred: isFallback
+        });
+
+        // Safety check 1: disk consumption ceiling (4GB)
+        const currentDiskBytes = getDirectorySize(stabilityOutputDir);
+        if (currentDiskBytes > maxDiskBytes) {
+          earlyStopReason = `Maximum allowed disk consumption exceeded (${(currentDiskBytes / (1024 * 1024)).toFixed(1)} MB > ${(maxDiskBytes / (1024 * 1024)).toFixed(1)} MB)`;
+          internalAbort.abort();
+          return;
         }
-      } else {
-        consecutiveFailures = 0;
+
+        // Safety check 2: consecutive severe chunk performance failures
+        if (prog.encodeDurationSec > chunkDuration * 1.5) {
+          consecutiveFailures++;
+          if (consecutiveFailures >= maxConsecutiveFailures) {
+            earlyStopReason = `Early stop triggered after ${consecutiveFailures} consecutive severe chunk performance failures or fallbacks.`;
+            internalAbort.abort();
+            return;
+          }
+        } else {
+          consecutiveFailures = 0;
+        }
       }
+    });
+  } catch (err) {
+    // If early stop was triggered, preserve all completed measurements without failing the test run
+    if (earlyStopReason) {
+      benchmarkResult = {
+        configId: config.id,
+        mode: 'chunks',
+        status: 'early_stopped',
+        codec: config.codec,
+        requestedEncoder: config.requestedEncoder,
+        actualEncoder: config.requestedEncoder,
+        quality: config.quality,
+        performance: {
+          speedMultiplier: chunkResults.length ? Math.round((chunkResults.reduce((acc, c) => acc + c.speedRatio, 0) / chunkResults.length) * 100) / 100 : 0,
+          effectiveFps: 0,
+          totalEncodingTimeSec: chunkResults.reduce((acc, c) => acc + c.encodeTimeSeconds, 0),
+          successfulEncodeTimeSec: chunkResults.reduce((acc, c) => acc + c.encodeTimeSeconds, 0),
+          firstChunkDurationSec: chunkResults[0]?.encodeTimeSeconds || null,
+          deadlineMisses: chunkResults.filter(c => c.missedDeadline).length
+        },
+        fallbackEvents: []
+      };
+    } else {
+      throw err;
     }
-  });
+  }
 
   // Trend Analysis: compare first half vs second half
   const halfCount = Math.floor(chunkResults.length / 2);
   let firstHalfSpeed = null;
   let secondHalfSpeed = null;
   let throughputChangePercent = 0;
-  let latencyChangePercent = 0;
+  let p95LatencyFirstHalf = null;
+  let p95LatencySecondHalf = null;
+  let p95LatencyChangePercent = 0;
 
   if (halfCount >= 1) {
     const firstHalf = chunkResults.slice(0, halfCount);
     const secondHalf = chunkResults.slice(halfCount);
 
     const avg = arr => arr.reduce((acc, c) => acc + c.speedRatio, 0) / arr.length;
-    const avgLatency = arr => arr.reduce((acc, c) => acc + c.encodeTimeSeconds, 0) / arr.length;
 
     firstHalfSpeed = Math.round(avg(firstHalf) * 100) / 100;
     secondHalfSpeed = Math.round(avg(secondHalf) * 100) / 100;
 
-    const firstHalfLat = avgLatency(firstHalf);
-    const secondHalfLat = avgLatency(secondHalf);
+    p95LatencyFirstHalf = calculateP95(firstHalf.map(c => c.encodeTimeSeconds));
+    p95LatencySecondHalf = calculateP95(secondHalf.map(c => c.encodeTimeSeconds));
 
     if (firstHalfSpeed > 0) {
       throughputChangePercent = Math.round(((secondHalfSpeed - firstHalfSpeed) / firstHalfSpeed) * 1000) / 10;
     }
-    if (firstHalfLat > 0) {
-      latencyChangePercent = Math.round(((secondHalfLat - firstHalfLat) / firstHalfLat) * 1000) / 10;
+    if (p95LatencyFirstHalf > 0) {
+      p95LatencyChangePercent = Math.round(((p95LatencySecondHalf - p95LatencyFirstHalf) / p95LatencyFirstHalf) * 1000) / 10;
     }
   }
 
   // Telemetry correlation
-  const telemetrySummary = telemetryCollector ? telemetryCollector.getSummary() : null;
+  const telemetrySummary = telemetryCollector ? telemetryCollector.getSummary(config.id) : null;
   const thermalClimb = telemetrySummary?.encoding?.thermalClimbC || 0;
   const throttlingConfirmed = telemetrySummary?.encoding?.throttlingDetected || false;
   const activeThrottles = telemetrySummary?.encoding?.activeThrottleReasons || [];
 
   let degradationSummary = 'Steady performance maintained across the stability test.';
-  if (throughputChangePercent <= -10) {
+  if (earlyStopReason) {
+    degradationSummary = `Stability test stopped early: ${earlyStopReason}`;
+  } else if (throughputChangePercent <= -10) {
     if (throttlingConfirmed) {
       degradationSummary = `Performance declined by ${Math.abs(throughputChangePercent)}% under active hardware throttling (${activeThrottles.join(', ')}). Temperature rose by ${thermalClimb}°C.`;
     } else if (thermalClimb >= 5) {
@@ -160,6 +219,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
   return {
     ...benchmarkResult,
     stability: {
+      status: earlyStopReason ? 'early_stopped' : benchmarkResult.status,
       testedDurationSeconds: duration,
       totalChunksRequested: totalChunks,
       chunksCompleted: chunkResults.length,
@@ -168,7 +228,11 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
       firstHalfSpeedRatio: firstHalfSpeed,
       secondHalfSpeedRatio: secondHalfSpeed,
       throughputChangePercent,
-      latencyChangePercent,
+      p95LatencyFirstHalf,
+      p95LatencySecondHalf,
+      p95LatencyChangePercent,
+      latencyChangePercent: p95LatencyChangePercent,
+      fallbacksObserved: fallbackCount > 0,
       thermalClimbC: thermalClimb,
       throttlingConfirmed,
       activeThrottles,
@@ -181,5 +245,6 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
 
 module.exports = {
   getDirectorySize,
+  calculateP95,
   runStabilityBenchmark
 };

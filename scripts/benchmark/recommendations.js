@@ -3,6 +3,7 @@
 /**
  * Generates evidence-based, conservative configuration recommendations
  * strictly mapping to uburoom's production transcoding schema (server/config.js).
+ * Adheres to strict evidence thresholds to prevent overconfident or misleading advice.
  */
 function generateConfigurationRecommendations(benchmarkPayload, currentConfig = {}) {
   const currentTranscoding = currentConfig.transcoding || {};
@@ -10,44 +11,35 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
   const concurrencySummary = benchmarkPayload.concurrencySummary || null;
   const passedResults = results.filter(r => r.status === 'pass');
 
+  const source = benchmarkPayload.source || {};
+  const isSynthetic = Boolean(source.isSynthetic || source.synthetic || String(source.fileName || '').includes('synthetic'));
+  const sampleDuration = benchmarkPayload.sampleDuration || 60;
+  const runsCount = benchmarkPayload.runs || (results.some(r => (r.runIndex || 1) > 1) ? Math.max(...results.map(r => r.runIndex || 1)) : 1);
+
   const recommendations = [];
   const insufficientEvidence = [];
   const warningsAndUncertainties = [];
   const untestedSettings = [];
 
+  // Helper accessors
+  const getSpeed = r => r.performance?.speedMultiplier ?? r.measurements?.speedRatio ?? r.speedRatio ?? 0;
+  const getFps = r => r.performance?.effectiveFps ?? r.measurements?.fps ?? r.fps ?? 0;
+
+  // Track synthetic media limitation
+  if (isSynthetic) {
+    warningsAndUncertainties.push('Benchmark was executed on synthetic test media. Real media validation across complex film content is required before updating production settings.');
+  }
+
   // 1. Encoder Recommendation (transcoding.encoder)
   const currentEncoderSetting = currentTranscoding.encoder || 'auto';
   const hwEncodersTested = passedResults.filter(r => ['nvenc', 'qsv'].includes(r.actualEncoder || r.requestedEncoder));
-  const fallbacksObserved = results.some(r => r.fallbackEvents?.length > 0);
+  const fallbacksObserved = results.some(r => (r.fallbackEvents && r.fallbackEvents.length > 0) || r.fallback);
 
-  const getSpeed = r => r.performance?.speedMultiplier ?? r.measurements?.speedRatio ?? 0;
-  const getFps = r => r.performance?.effectiveFps ?? r.measurements?.fps ?? 0;
+  // Quality check across tested hardware encoders
+  const qualityFailedOrMisaligned = hwEncodersTested.some(r => r.qualityMetrics?.status === 'failed' || r.qualityMetrics?.status === 'misaligned');
+  const qualityVerified = hwEncodersTested.some(r => r.qualityMetrics?.status === 'pass');
 
-  if (hwEncodersTested.length > 0 && !fallbacksObserved) {
-    const bestHw = hwEncodersTested.find(r => getSpeed(r) >= 1.5);
-    if (bestHw) {
-      const hwEncoderName = bestHw.actualEncoder || bestHw.requestedEncoder;
-      const speed = getSpeed(bestHw);
-      const fps = getFps(bestHw);
-      if (currentEncoderSetting !== hwEncoderName) {
-        recommendations.push({
-          setting: 'transcoding.encoder',
-          currentValue: currentEncoderSetting,
-          recommendedValue: hwEncoderName,
-          reason: `Dedicated hardware encoder (${hwEncoderName}) consistently delivered stable real-time encoding (${speed}x speed, ${fps.toFixed(1)} fps) with zero fallbacks.`,
-          expectedBenefit: `Reduces CPU load to near zero and guarantees dedicated hardware video encoding for all active viewers.`,
-          supportingEvidence: `Tested ${bestHw.codec.toUpperCase()} (${hwEncoderName}) @ ${bestHw.quality?.label || bestHw.quality?.id} in ${speed}x speed.`,
-          confidence: 'high'
-        });
-      }
-    } else {
-      insufficientEvidence.push({
-        setting: 'transcoding.encoder',
-        reason: 'Hardware encoder was detected, but encoding throughput remained below the 1.5x real-time safety threshold.',
-        neededTests: 'Test lower resolution profiles or check GPU driver and clocks.'
-      });
-    }
-  } else if (fallbacksObserved) {
+  if (fallbacksObserved) {
     warningsAndUncertainties.push('Hardware encoding experienced runtime fallback to CPU during testing. Recommending auto or software encoder to protect stream availability.');
     if (currentEncoderSetting !== 'auto') {
       recommendations.push({
@@ -58,6 +50,53 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
         expectedBenefit: 'Prevents playback interruption if GPU runs out of sessions or encounters unsupported formats.',
         supportingEvidence: 'Fallback events recorded in benchmark logs.',
         confidence: 'high'
+      });
+    }
+  } else if (qualityFailedOrMisaligned) {
+    warningsAndUncertainties.push('Objective quality validation failed or detected temporal misalignment for hardware encoded streams. Withholding hardware encoder recommendation until visual quality is verified.');
+    insufficientEvidence.push({
+      setting: 'transcoding.encoder',
+      reason: 'Hardware encoder output failed objective quality or temporal alignment checks.',
+      neededTests: 'Inspect quality validation logs and verify encoding parameters with real reference media.'
+    });
+  } else if (hwEncodersTested.length > 0) {
+    const bestHw = hwEncodersTested.find(r => getSpeed(r) >= 1.5);
+    if (bestHw) {
+      const hwEncoderName = bestHw.actualEncoder || bestHw.requestedEncoder;
+      const speed = getSpeed(bestHw);
+      const fps = getFps(bestHw);
+
+      // Determine confidence level strictly based on evidence
+      let confidence = 'preliminary';
+      const confidenceReasons = [];
+
+      if (isSynthetic) {
+        confidenceReasons.push('capped at preliminary because test used synthetic media');
+      } else if (runsCount < 2 || sampleDuration < 30) {
+        confidenceReasons.push(`preliminary observation from ${runsCount} run(s) over ${sampleDuration}s interval`);
+      } else if (speed >= 1.5 && !fallbacksObserved && (qualityVerified || !bestHw.qualityMetrics)) {
+        confidence = 'high';
+      } else {
+        confidence = 'medium';
+      }
+
+      if (currentEncoderSetting !== hwEncoderName) {
+        const synthNotice = isSynthetic ? ' (Note: Tested on synthetic media; verify with real media before production deployment).' : '';
+        recommendations.push({
+          setting: 'transcoding.encoder',
+          currentValue: currentEncoderSetting,
+          recommendedValue: hwEncoderName,
+          reason: `Measured ${speed}x real-time throughput (${fps.toFixed(1)} fps) with 0 missed deadlines and 0 fallback events during benchmark trials${synthNotice}`,
+          expectedBenefit: `Utilizes hardware video encoding (${hwEncoderName}), offloading video encode workload from the host CPU.`,
+          supportingEvidence: `Tested ${bestHw.codec.toUpperCase()} (${hwEncoderName}) @ ${bestHw.quality?.label || bestHw.quality?.id} at ${speed}x speed.`,
+          confidence
+        });
+      }
+    } else {
+      insufficientEvidence.push({
+        setting: 'transcoding.encoder',
+        reason: 'Hardware encoder was detected, but encoding throughput remained below the 1.5x real-time safety threshold.',
+        neededTests: 'Test lower resolution profiles or check GPU driver, thermals, and clocks.'
       });
     }
   } else {
@@ -74,17 +113,20 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
   if (concurrencySummary && (concurrencySummary.totalTrials > 0 || concurrencySummary.testedTiers?.length > 0)) {
     const highestTested = concurrencySummary.highestSustainableConcurrency || 0;
     if (highestTested >= 1) {
-      // Conservative recommendation: provide at least 1 job of headroom if > 2, or keep tested
+      // Conservative recommendation: apply headroom of N - 1 if > 2 streams
       const recommendedJobs = Math.max(1, highestTested > 2 ? highestTested - 1 : highestTested);
+      let concurrencyConfidence = isSynthetic || sampleDuration < 30 ? 'preliminary' : (highestTested >= 2 ? 'high' : 'medium');
+
       if (recommendedJobs !== currentMaxJobs) {
+        const shortRunNote = sampleDuration < 30 ? ' Derived from short-run chunk tests; monitor long-term thermals and memory under real production load.' : '';
         recommendations.push({
           setting: 'transcoding.max_jobs',
           currentValue: currentMaxJobs,
           recommendedValue: recommendedJobs,
-          reason: `Capacity scan demonstrated sustainable real-time encoding up to ${highestTested} concurrent streams with zero missed deadlines. Applying conservative headroom of ${highestTested - recommendedJobs} stream(s) preserves playback reliability under network jitter.`,
-          expectedBenefit: `Prevents server overload while utilizing verified GPU capacity.`,
-          supportingEvidence: `Highest sustainable: ${highestTested} streams.`,
-          confidence: highestTested >= 2 ? 'high' : 'medium'
+          reason: `Capacity scan demonstrated sustainable real-time encoding up to ${highestTested} concurrent streams with zero missed deadlines. Applying conservative headroom of ${highestTested - recommendedJobs} stream(s) preserves playback reliability under network jitter.${shortRunNote}`,
+          expectedBenefit: `Protects server playback reliability while utilizing verified hardware capacity.`,
+          supportingEvidence: `Highest sustainable: ${highestTested} streams (conservative recommendation: ${recommendedJobs}).`,
+          confidence: concurrencyConfidence
         });
       }
     } else {
@@ -94,7 +136,7 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
     insufficientEvidence.push({
       setting: 'transcoding.max_jobs',
       reason: 'No concurrent capacity scan was conducted during this benchmark run.',
-      neededTests: 'Run benchmark with --capacity-scan --acknowledge-concurrency to measure sustainable multi-stream limits.'
+      neededTests: 'Run benchmark with --capacity-scan --allow-load-test to measure sustainable multi-stream limits.'
     });
   }
 
@@ -112,7 +154,7 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
       reason: 'AV1 encoding achieved fast, reliable real-time throughput. Enabling AV1 offers superior visual quality at lower bitrates.',
       expectedBenefit: 'Significantly lower bandwidth consumption for viewers while preserving sharp picture quality.',
       supportingEvidence: 'AV1 transcode succeeded with > 1.2x throughput margin.',
-      confidence: 'medium'
+      confidence: isSynthetic ? 'preliminary' : 'medium'
     });
   } else if (!av1Passed && currentOutputs.includes('av1') && vp9Passed) {
     warningsAndUncertainties.push('AV1 encoding failed or remained below real-time margin. Consider prioritizing VP9 in transcoding.outputs for smoother playback.');

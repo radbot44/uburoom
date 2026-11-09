@@ -35,9 +35,12 @@ const {
 } = require('../scripts/benchmark/reporter');
 const {
   TelemetryCollector,
-  detectTelemetryProvider
+  detectTelemetryProvider,
+  parseMetricNumber,
+  decodeNvidiaThrottleReasons
 } = require('../scripts/benchmark/telemetry');
 const {
+  computeFileContentFingerprint,
   deriveSourceFingerprint,
   saveRunToHistory,
   loadHistoryIndex,
@@ -45,6 +48,10 @@ const {
   deleteRunFromHistory,
   compareRuns
 } = require('../scripts/benchmark/history');
+const {
+  calculateP95,
+  runStabilityBenchmark
+} = require('../scripts/benchmark/stability');
 const {
   generateConfigurationRecommendations
 } = require('../scripts/benchmark/recommendations');
@@ -1083,7 +1090,7 @@ test('history management derives fingerprints, saves runs, updates index, and sa
     };
     const fingerprint = deriveSourceFingerprint(mockSource);
     assert.ok(fingerprint, 'Fingerprint must be generated');
-    assert.equal(fingerprint.length, 32, 'Fingerprint must be 32-character hex string');
+    assert.ok(fingerprint.startsWith('unverified:') || fingerprint.startsWith('v1:'), 'Fingerprint must follow versioned scheme');
     assert.equal(fingerprint, deriveSourceFingerprint(mockSource), 'Fingerprint must be deterministic');
 
     const mockPayload = {
@@ -1251,6 +1258,9 @@ test('generateConfigurationRecommendations produces conservative advice adhering
 
   const benchmarkPayload = {
     benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'real-feature.mkv' },
     results: [
       {
         codec: 'av1',
@@ -1294,4 +1304,231 @@ test('generateConfigurationRecommendations produces conservative advice adhering
   assert.match(advice.yamlSnippet, /max_jobs: 3/);
   assert.match(advice.yamlSnippet, /- 'av1'/);
   assert.ok(advice.operatorNotice.includes('never automatically alters'));
+});
+
+test('decodeNvidiaThrottleReasons correctly classifies idle, active throttle bitmasks, and unavailable sensors', () => {
+  // Idle GPU: normal idle clock state (0x01) or explicit None
+  const idleHex = decodeNvidiaThrottleReasons('0x0000000000000001');
+  assert.equal(idleHex.isSupported, true);
+  assert.equal(idleHex.isThrottling, false);
+  assert.deepEqual(idleHex.reasons, []);
+
+  const noneStr = decodeNvidiaThrottleReasons('None');
+  assert.equal(noneStr.isSupported, true);
+  assert.equal(noneStr.isThrottling, false);
+  assert.deepEqual(noneStr.reasons, []);
+
+  // Applications and display clocks setting (0x02, 0x100) are not throttle reasons
+  const appClocks = decodeNvidiaThrottleReasons('0x0000000000000002');
+  assert.equal(appClocks.isThrottling, false);
+
+  const dispClocks = decodeNvidiaThrottleReasons('0x0000000000000100');
+  assert.equal(dispClocks.isThrottling, false);
+
+  // Confirmed hardware thermal slowdown (0x40)
+  const thermalHw = decodeNvidiaThrottleReasons('0x0000000000000040');
+  assert.equal(thermalHw.isSupported, true);
+  assert.equal(thermalHw.isThrottling, true);
+  assert.deepEqual(thermalHw.reasons, ['hw_thermal_slowdown']);
+
+  // Confirmed power cap (0x04) + SW thermal slowdown (0x20)
+  const powerAndThermal = decodeNvidiaThrottleReasons('0x0000000000000024');
+  assert.equal(powerAndThermal.isSupported, true);
+  assert.equal(powerAndThermal.isThrottling, true);
+  assert.deepEqual(powerAndThermal.reasons, ['sw_power_cap', 'sw_thermal_slowdown']);
+
+  // Unsupported or unavailable sensors
+  assert.equal(decodeNvidiaThrottleReasons('N/A').isSupported, false);
+  assert.equal(decodeNvidiaThrottleReasons('[Not Supported]').isSupported, false);
+  assert.equal(decodeNvidiaThrottleReasons(null).isSupported, false);
+});
+
+test('parseMetricNumber handles N/A, unsupported strings, and valid numbers without fabricating zeros', () => {
+  assert.equal(parseMetricNumber('N/A'), null);
+  assert.equal(parseMetricNumber('[Not Supported]'), null);
+  assert.equal(parseMetricNumber('None'), null);
+  assert.equal(parseMetricNumber(''), null);
+  assert.equal(parseMetricNumber(null), null);
+  assert.equal(parseMetricNumber(undefined), null);
+  assert.equal(parseMetricNumber(NaN), null);
+
+  assert.equal(parseMetricNumber(' 42.5 '), 42.5);
+  assert.equal(parseMetricNumber(100), 100);
+  assert.equal(parseMetricNumber(0), 0);
+  assert.equal(parseMetricNumber('0'), 0);
+});
+
+test('computeFileContentFingerprint generates deterministic v1 fingerprints based on content, not paths', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-fp-'));
+  try {
+    const fileA = path.join(tmpDir, 'video-original.mkv');
+    const fileB = path.join(tmpDir, 'different-name-same-content.mp4');
+    const fileC = path.join(tmpDir, 'video-original.mkv.modified');
+
+    const sampleContent = Buffer.alloc(128 * 1024, 0x5a); // 128 KB
+    fs.writeFileSync(fileA, sampleContent);
+    fs.writeFileSync(fileB, sampleContent);
+
+    const differentContent = Buffer.alloc(128 * 1024, 0xa5);
+    fs.writeFileSync(fileC, differentContent);
+
+    const fpA = computeFileContentFingerprint(fileA);
+    const fpB = computeFileContentFingerprint(fileB);
+    const fpC = computeFileContentFingerprint(fileC);
+
+    assert.ok(fpA.startsWith('v1:'), 'Must use canonical v1: prefix');
+    assert.equal(fpA.length, 35, 'v1: + 32-character hex hash');
+    assert.equal(fpA, fpB, 'Files with identical content must yield identical fingerprints regardless of filename or path');
+    assert.notEqual(fpA, fpC, 'Files with different content must yield different fingerprints');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('compareRuns classifies cross-hardware comparisons and ignores false regressions', () => {
+  const baselineRun = {
+    runId: 'base-rtx4090',
+    environment: { gpu: 'NVIDIA GeForce RTX 4090' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.5,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const targetRun = {
+    runId: 'target-arc-a380',
+    environment: { gpu: 'Intel(R) Arc(TM) A380 Graphics' },
+    sourceFingerprint: 'v1:11223344556677889900aabbccddeeff',
+    sampleDuration: 60,
+    startOffset: 0,
+    results: [
+      {
+        configId: 'av1-1080p8-chunks',
+        codec: 'av1',
+        qualityId: '1080p8',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 1.1,
+        status: 'pass'
+      }
+    ]
+  };
+
+  const comp = compareRuns(baselineRun, targetRun);
+  assert.equal(comp.isCrossHardware, true);
+  assert.equal(comp.matchedComparisons.length, 1);
+  assert.equal(comp.matchedComparisons[0].classification, 'cross_hardware_comparison');
+  assert.ok(!comp.matchedComparisons.some(m => m.classification === 'regression'), 'Cross-hardware run must NEVER be classified as a regression');
+});
+
+test('deleteRunFromHistory strictly rejects path traversal attempts', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-del-'));
+  try {
+    assert.throws(() => deleteRunFromHistory('../traversal', tmpDir), /invalid runid format/i);
+    assert.throws(() => deleteRunFromHistory('run/sub', tmpDir), /invalid runid format/i);
+    assert.throws(() => deleteRunFromHistory('..\\windows\\traversal', tmpDir), /invalid runid format/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('generateConfigurationRecommendations caps synthetic runs and short durations at preliminary confidence', () => {
+  // Case A: 6-second synthetic run
+  const synthPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 1,
+    sampleDuration: 6,
+    source: { isSynthetic: true, fileName: 'synthetic-test.mkv' },
+    results: [
+      {
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
+        fallbackEvents: []
+      }
+    ]
+  };
+  const synthAdvice = generateConfigurationRecommendations(synthPayload);
+  assert.equal(synthAdvice.recommendations[0]?.confidence, 'preliminary');
+  assert.ok(synthAdvice.warningsAndUncertainties.some(w => w.includes('synthetic test media')));
+
+  // Case B: Hardware encoder output with quality failure withholds encoder recommendation
+  const qualityFailPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'camera.mp4' },
+    results: [
+      {
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'failed' },
+        fallbackEvents: []
+      }
+    ]
+  };
+  const failAdvice = generateConfigurationRecommendations(qualityFailPayload);
+  assert.ok(!failAdvice.recommendations.some(r => r.setting === 'transcoding.encoder'), 'Must withhold encoder recommendation if visual quality failed');
+  assert.ok(failAdvice.warningsAndUncertainties.some(w => w.includes('quality validation failed')));
+
+  // Case C: Insufficient concurrency scan evidence suggests --allow-load-test
+  const noScanAdvice = generateConfigurationRecommendations({ results: [] });
+  const maxJobEvidence = noScanAdvice.insufficientEvidence.find(e => e.setting === 'transcoding.max_jobs');
+  assert.ok(maxJobEvidence);
+  assert.ok(maxJobEvidence.neededTests.includes('--allow-load-test'), 'Must recommend --allow-load-test, not obsolete flag');
+});
+
+test('runStabilityBenchmark verifies source duration and rejects inputs shorter than test interval', async () => {
+  await assert.rejects(
+    () => runStabilityBenchmark(null, { durationSeconds: 20 }, null, { duration: 60, startOffset: 0 }),
+    /shorter than requested stability test interval/i
+  );
+});
+
+test('calculateP95 calculates true 95th percentile latency', () => {
+  // 20 values from 1 to 20: 95th percentile index is 19 -> value 20
+  const values = Array.from({ length: 20 }, (_, i) => i + 1);
+  assert.equal(calculateP95(values), 20);
+
+  // Array with outlier
+  const latencyList = [1.0, 1.1, 1.0, 1.2, 1.0, 1.1, 1.0, 1.1, 1.0, 10.5];
+  assert.equal(calculateP95(latencyList), 10.5);
+});
+
+test('buildQualityFilterChain builds secondary standalone pass when libvmaf lacks float_ssim or psnr', () => {
+  const source = { video: { width: 1920, height: 1080, fps: 24 } };
+  const targetQuality = { width: 1920, height: 1080 };
+  const capabilities = {
+    libvmaf: true,
+    ssim: true,
+    psnr: true,
+    vmafFeatures: { cambi: false, psnr: false, float_ssim: false }
+  };
+
+  const chain = buildQualityFilterChain(source, targetQuality, capabilities, 'metrics.json', ['vmaf', 'ssim', 'psnr']);
+  assert.equal(chain.supported, true);
+  assert.equal(chain.usesLibvmaf, true);
+  assert.equal(chain.needsSecondaryStandalonePass, true);
+  assert.deepEqual(chain.secondaryMetrics, ['ssim', 'psnr']);
+  assert.ok(chain.secondaryFilterGraph.includes('ssim=stats_file=ssim.log'));
+  assert.ok(chain.secondaryFilterGraph.includes('psnr=stats_file=psnr.log'));
 });

@@ -3,6 +3,100 @@ const cp = require('node:child_process');
 const os = require('node:os');
 
 /**
+ * Safely parses a telemetry metric string or number into a valid float or null.
+ * Never substitutes zero for unsupported, N/A, or missing values.
+ */
+function parseMetricNumber(val) {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
+  if (typeof val === 'string') {
+    const t = val.trim();
+    if (!t || t === 'N/A' || t === '[Not Supported]' || t === 'None' || t === 'unknown' || t === '[Unknown]') {
+      return null;
+    }
+    const n = parseFloat(t);
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
+
+/**
+ * Decodes NVML / nvidia-smi clocks_throttle_reasons.active values.
+ * Strictly distinguishes:
+ * - Confirmed active hardware throttle reasons (power cap, thermal slowdown, HW slowdown)
+ * - Confirmed absence of throttling (None, Idle 0x01, Applications Clocks 0x02, Display Clock 0x100)
+ * - Unsupported or unavailable throttle sensors
+ */
+function decodeNvidiaThrottleReasons(raw) {
+  if (raw === null || raw === undefined) {
+    return { isSupported: false, isThrottling: null, reasons: [] };
+  }
+
+  const str = String(raw).trim();
+  if (!str || str === 'N/A' || str === '[Not Supported]' || str === '[Unknown]') {
+    return { isSupported: false, isThrottling: null, reasons: [] };
+  }
+
+  if (str.toLowerCase() === 'none' || str === '0x0000000000000000' || str === '0x0') {
+    return { isSupported: true, isThrottling: false, reasons: [] };
+  }
+
+  // Hexadecimal bitmask parsing (NVML specification)
+  if (str.startsWith('0x') || str.startsWith('0X')) {
+    try {
+      const mask = BigInt(str);
+      const reasons = [];
+
+      // NVML bit definitions:
+      // 0x0000000000000001: gpu_idle (NOT throttling; clock reduction while GPU is idle)
+      // 0x0000000000000002: applications_clocks_setting (NOT throttling; target app clocks set)
+      // 0x0000000000000004: sw_power_cap (Active throttle: SW power capping)
+      // 0x0000000000000008: hw_slowdown (Active throttle: HW slowdown signal asserted)
+      // 0x0000000000000010: sync_boost (NOT throttling; clock sync)
+      // 0x0000000000000020: sw_thermal_slowdown (Active throttle: SW thermal slowdown)
+      // 0x0000000000000040: hw_thermal_slowdown (Active throttle: HW thermal slowdown)
+      // 0x0000000000000080: hw_power_brake (Active throttle: HW power brake / external power drop)
+      // 0x0000000000000100: display_clocks_setting (NOT throttling; display clock requirement)
+
+      if ((mask & 0x0000000000000004n) !== 0n) reasons.push('sw_power_cap');
+      if ((mask & 0x0000000000000008n) !== 0n) reasons.push('hw_slowdown');
+      if ((mask & 0x0000000000000020n) !== 0n) reasons.push('sw_thermal_slowdown');
+      if ((mask & 0x0000000000000040n) !== 0n) reasons.push('hw_thermal_slowdown');
+      if ((mask & 0x0000000000000080n) !== 0n) reasons.push('hw_power_brake');
+
+      return {
+        isSupported: true,
+        isThrottling: reasons.length > 0,
+        reasons
+      };
+    } catch {}
+  }
+
+  // Text-based throttle reason parsing
+  const reasons = [];
+  if (/sw_power_cap|power_cap/i.test(str)) reasons.push('sw_power_cap');
+  if (/hw_thermal|thermal_slowdown/i.test(str)) reasons.push('hw_thermal_slowdown');
+  if (/sw_thermal/i.test(str)) reasons.push('sw_thermal_slowdown');
+  if (/hw_slowdown/i.test(str)) reasons.push('hw_slowdown');
+  if (/hw_power_brake|power_brake/i.test(str)) reasons.push('hw_power_brake');
+
+  if (reasons.length === 0) {
+    if (/idle|none|not_active|idle_clock/i.test(str)) {
+      return { isSupported: true, isThrottling: false, reasons: [] };
+    }
+    if (/active|slowdown|throttl/i.test(str)) {
+      reasons.push('active_throttle');
+    }
+  }
+
+  return {
+    isSupported: true,
+    isThrottling: reasons.length > 0,
+    reasons
+  };
+}
+
+/**
  * Detects available hardware and OS telemetry providers.
  * Returns provider capabilities, supported fields, units, and unavailable fields.
  */
@@ -27,6 +121,8 @@ function detectTelemetryProvider() {
         available: true,
         device: raw.split(',')[0]?.trim() || 'NVIDIA GPU',
         driver: raw.split(',')[1]?.trim() || 'NVIDIA Driver',
+        deviceAttribution: 'verified',
+        throttlingSupported: true,
         supportedFields: [
           'gpuUtilization',
           'encoderUtilization',
@@ -74,28 +170,29 @@ function detectTelemetryProvider() {
           available: true,
           device: 'Windows WDDM GPU (DirectX / QSV / Intel Arc)',
           driver: 'Windows Graphics Driver',
+          deviceAttribution: 'unverified',
+          throttlingSupported: false,
           supportedFields: [
-            'gpuUtilization',
             'encoderUtilization',
             'hostCpuUtilization',
             'hostMemoryUsedMb',
             'hostMemoryTotalMb'
           ],
           units: {
-            gpuUtilization: '%',
             encoderUtilization: '%',
             hostCpuUtilization: '%',
             hostMemoryUsedMb: 'MB',
             hostMemoryTotalMb: 'MB'
           },
           unavailableFields: [
+            'gpuUtilization',
             'temperatureC',
             'powerWatts',
             'graphicsClockMhz',
             'memoryClockMhz',
             'throttling'
           ],
-          limitations: 'Windows Performance Counters expose engine utilization and memory, but do not expose direct hardware temperature or power sensors without vendor-specific kernel drivers.'
+          limitations: 'Windows Performance Counters sample OS-level VideoEncode engine utilization across active processes. Device attribution cannot be guaranteed on multi-GPU systems, and direct GPU temperature, power, and clock sensors are not exposed by WDDM counters.'
         };
       }
     } catch {}
@@ -109,6 +206,8 @@ function detectTelemetryProvider() {
     available: true,
     device: `${os.cpus()[0]?.model || 'Host CPU'} (${os.cpus().length} cores)`,
     driver: os.type(),
+    deviceAttribution: 'verified',
+    throttlingSupported: false,
     supportedFields: [
       'hostCpuUtilization',
       'hostMemoryUsedMb',
@@ -136,20 +235,16 @@ function detectTelemetryProvider() {
 }
 
 /**
- * Samples current hardware state once based on the resolved provider.
+ * Calculates host CPU and memory metrics.
  */
-function sampleHardwareState(providerInfo, prevCpuInfo = null) {
-  const timestampMs = Date.now();
-  const sample = {
-    timestampMs,
-    metrics: {}
-  };
-
-  // Host CPU & Memory baseline calculation
+function sampleHostCpuAndMemory(prevCpuInfo = null) {
   const totalMem = Math.round(os.totalmem() / (1024 * 1024));
   const freeMem = Math.round(os.freemem() / (1024 * 1024));
-  sample.metrics.hostMemoryTotalMb = totalMem;
-  sample.metrics.hostMemoryUsedMb = totalMem - freeMem;
+  const metrics = {
+    hostMemoryTotalMb: totalMem,
+    hostMemoryUsedMb: totalMem - freeMem,
+    hostCpuUtilization: null
+  };
 
   const cpus = os.cpus();
   let totalCpuUser = 0;
@@ -168,9 +263,23 @@ function sampleHardwareState(providerInfo, prevCpuInfo = null) {
     const deltaIdle = currentCpuInfo.idle - prevCpuInfo.idle;
     const deltaTotal = deltaUser + deltaSys + deltaIdle;
     if (deltaTotal > 0) {
-      sample.metrics.hostCpuUtilization = Math.round(((deltaUser + deltaSys) / deltaTotal) * 1000) / 10;
+      metrics.hostCpuUtilization = Math.round(((deltaUser + deltaSys) / deltaTotal) * 1000) / 10;
     }
   }
+
+  return { metrics, currentCpuInfo };
+}
+
+/**
+ * Samples current hardware state synchronously based on the resolved provider.
+ */
+function sampleHardwareState(providerInfo, prevCpuInfo = null) {
+  const timestampMs = Date.now();
+  const { metrics: hostMetrics, currentCpuInfo } = sampleHostCpuAndMemory(prevCpuInfo);
+  const sample = {
+    timestampMs,
+    metrics: { ...hostMetrics }
+  };
 
   if (providerInfo.provider === 'nvidia-smi') {
     try {
@@ -186,19 +295,19 @@ function sampleHardwareState(providerInfo, prevCpuInfo = null) {
 
       const parts = raw.trim().split(',').map(s => s.trim());
       if (parts.length >= 10) {
-        sample.metrics.gpuUtilization = parseFloat(parts[0]) || 0;
-        sample.metrics.encoderUtilization = parseFloat(parts[1]) || 0;
-        sample.metrics.decoderUtilization = parseFloat(parts[2]) || 0;
-        sample.metrics.memoryUsedMb = parseFloat(parts[3]) || 0;
-        sample.metrics.memoryTotalMb = parseFloat(parts[4]) || 0;
-        sample.metrics.temperatureC = parseFloat(parts[5]) || 0;
-        sample.metrics.powerWatts = parseFloat(parts[6]) || 0;
-        sample.metrics.graphicsClockMhz = parseFloat(parts[7]) || 0;
-        sample.metrics.memoryClockMhz = parseFloat(parts[8]) || 0;
-        sample.metrics.pstate = parts[9] || 'P0';
+        sample.metrics.gpuUtilization = parseMetricNumber(parts[0]);
+        sample.metrics.encoderUtilization = parseMetricNumber(parts[1]);
+        sample.metrics.decoderUtilization = parseMetricNumber(parts[2]);
+        sample.metrics.memoryUsedMb = parseMetricNumber(parts[3]);
+        sample.metrics.memoryTotalMb = parseMetricNumber(parts[4]);
+        sample.metrics.temperatureC = parseMetricNumber(parts[5]);
+        sample.metrics.powerWatts = parseMetricNumber(parts[6]);
+        sample.metrics.graphicsClockMhz = parseMetricNumber(parts[7]);
+        sample.metrics.memoryClockMhz = parseMetricNumber(parts[8]);
+        sample.metrics.pstate = parts[9] && parts[9] !== 'N/A' ? parts[9] : null;
       }
 
-      // Query throttling status if exposed
+      // Query throttling status
       try {
         const throttleRaw = cp.execFileSync('nvidia-smi', [
           '--query-gpu=clocks_throttle_reasons.active',
@@ -209,16 +318,25 @@ function sampleHardwareState(providerInfo, prevCpuInfo = null) {
           windowsHide: true,
           timeout: 2000
         });
-        const throttleVal = throttleRaw.trim();
-        sample.metrics.throttling = throttleVal && throttleVal !== '0x0000000000000000' && throttleVal !== 'None'
-          ? throttleVal
-          : 'None';
+        const decoded = decodeNvidiaThrottleReasons(throttleRaw.trim());
+        sample.metrics.throttlingSupported = decoded.isSupported;
+        sample.metrics.throttlingDetected = decoded.isThrottling;
+        sample.metrics.activeThrottleReasons = decoded.reasons;
+        sample.metrics.throttling = decoded.isThrottling ? decoded.reasons.join(', ') : (decoded.isSupported ? 'None' : null);
       } catch {
-        sample.metrics.throttling = 'None';
+        sample.metrics.throttlingSupported = true;
+        sample.metrics.throttlingDetected = null;
+        sample.metrics.activeThrottleReasons = [];
+        sample.metrics.throttling = null;
       }
     } catch {}
   } else if (providerInfo.provider === 'windows-pdh') {
-    // Windows Performance Counters for GPU Engine VideoEncode
+    sample.metrics.throttlingSupported = false;
+    sample.metrics.throttlingDetected = null;
+    sample.metrics.activeThrottleReasons = [];
+    sample.metrics.throttling = null;
+    sample.metrics.gpuUtilization = null; // Do not equate encoder to total GPU
+
     try {
       const out = cp.execFileSync('typeperf', [
         '\\GPU Engine(*engtype_VideoEncode*)\\Utilization Percentage',
@@ -235,9 +353,114 @@ function sampleHardwareState(providerInfo, prevCpuInfo = null) {
         const values = lines[2].split(',').map(s => parseFloat(s.replace(/"/g, ''))).filter(n => !isNaN(n));
         const maxEncode = values.length ? Math.max(...values) : 0;
         sample.metrics.encoderUtilization = Math.round(maxEncode * 10) / 10;
-        sample.metrics.gpuUtilization = sample.metrics.encoderUtilization;
       }
     } catch {}
+  } else {
+    sample.metrics.throttlingSupported = false;
+    sample.metrics.throttlingDetected = null;
+    sample.metrics.activeThrottleReasons = [];
+    sample.metrics.throttling = null;
+  }
+
+  return { sample, currentCpuInfo };
+}
+
+/**
+ * Executes a command asynchronously and returns stdout string, or rejects on error/timeout.
+ */
+function execFileAsync(cmd, args, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    cp.execFile(cmd, args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: timeoutMs
+    }, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+}
+
+/**
+ * Samples hardware state asynchronously without blocking Node event loop.
+ */
+async function sampleHardwareStateAsync(providerInfo, prevCpuInfo = null) {
+  const timestampMs = Date.now();
+  const { metrics: hostMetrics, currentCpuInfo } = sampleHostCpuAndMemory(prevCpuInfo);
+  const sample = {
+    timestampMs,
+    metrics: { ...hostMetrics }
+  };
+
+  if (providerInfo.provider === 'nvidia-smi') {
+    try {
+      const [rawMetrics, rawThrottle] = await Promise.all([
+        execFileAsync('nvidia-smi', [
+          '--query-gpu=utilization.gpu,utilization.encoder,utilization.decoder,memory.used,memory.total,temperature.gpu,power.draw,clocks.current.graphics,clocks.current.memory,pstate',
+          '--format=csv,noheader,nounits'
+        ], 2000).catch(() => null),
+        execFileAsync('nvidia-smi', [
+          '--query-gpu=clocks_throttle_reasons.active',
+          '--format=csv,noheader,nounits'
+        ], 2000).catch(() => null)
+      ]);
+
+      if (rawMetrics) {
+        const parts = rawMetrics.trim().split(',').map(s => s.trim());
+        if (parts.length >= 10) {
+          sample.metrics.gpuUtilization = parseMetricNumber(parts[0]);
+          sample.metrics.encoderUtilization = parseMetricNumber(parts[1]);
+          sample.metrics.decoderUtilization = parseMetricNumber(parts[2]);
+          sample.metrics.memoryUsedMb = parseMetricNumber(parts[3]);
+          sample.metrics.memoryTotalMb = parseMetricNumber(parts[4]);
+          sample.metrics.temperatureC = parseMetricNumber(parts[5]);
+          sample.metrics.powerWatts = parseMetricNumber(parts[6]);
+          sample.metrics.graphicsClockMhz = parseMetricNumber(parts[7]);
+          sample.metrics.memoryClockMhz = parseMetricNumber(parts[8]);
+          sample.metrics.pstate = parts[9] && parts[9] !== 'N/A' ? parts[9] : null;
+        }
+      }
+
+      if (rawThrottle !== null) {
+        const decoded = decodeNvidiaThrottleReasons(rawThrottle.trim());
+        sample.metrics.throttlingSupported = decoded.isSupported;
+        sample.metrics.throttlingDetected = decoded.isThrottling;
+        sample.metrics.activeThrottleReasons = decoded.reasons;
+        sample.metrics.throttling = decoded.isThrottling ? decoded.reasons.join(', ') : (decoded.isSupported ? 'None' : null);
+      } else {
+        sample.metrics.throttlingSupported = true;
+        sample.metrics.throttlingDetected = null;
+        sample.metrics.activeThrottleReasons = [];
+        sample.metrics.throttling = null;
+      }
+    } catch {}
+  } else if (providerInfo.provider === 'windows-pdh') {
+    sample.metrics.throttlingSupported = false;
+    sample.metrics.throttlingDetected = null;
+    sample.metrics.activeThrottleReasons = [];
+    sample.metrics.throttling = null;
+    sample.metrics.gpuUtilization = null; // Do not equate encoder to total GPU
+
+    try {
+      const out = await execFileAsync('typeperf', [
+        '\\GPU Engine(*engtype_VideoEncode*)\\Utilization Percentage',
+        '-sc', '1'
+      ], 2500).catch(() => null);
+
+      if (out) {
+        const lines = out.trim().split(/\r?\n/).filter(Boolean);
+        if (lines.length >= 3) {
+          const values = lines[2].split(',').map(s => parseFloat(s.replace(/"/g, ''))).filter(n => !isNaN(n));
+          const maxEncode = values.length ? Math.max(...values) : 0;
+          sample.metrics.encoderUtilization = Math.round(maxEncode * 10) / 10;
+        }
+      }
+    } catch {}
+  } else {
+    sample.metrics.throttlingSupported = false;
+    sample.metrics.throttlingDetected = null;
+    sample.metrics.activeThrottleReasons = [];
+    sample.metrics.throttling = null;
   }
 
   return { sample, currentCpuInfo };
@@ -245,11 +468,12 @@ function sampleHardwareState(providerInfo, prevCpuInfo = null) {
 
 /**
  * Calculates statistical summary (mean, min, max, p95) for a numeric telemetry metric.
+ * Discards null, undefined, and NaN entries.
  */
 function calculateMetricSummary(samples, metricKey) {
   const values = samples
     .map(s => s.metrics?.[metricKey])
-    .filter(v => typeof v === 'number' && !isNaN(v));
+    .filter(v => typeof v === 'number' && !isNaN(v) && v !== null);
 
   if (!values.length) return null;
 
@@ -268,18 +492,20 @@ function calculateMetricSummary(samples, metricKey) {
 
 /**
  * Telemetry Collector class that manages periodic sampling, phase labeling,
- * and clean isolation between encoding and post-encode quality analysis.
+ * non-blocking async execution, and clean isolation between encoding configurations
+ * and post-encode quality analysis.
  */
 class TelemetryCollector {
   constructor(options = {}) {
     this.intervalMs = Math.max(200, options.intervalMs || 500);
-    this.providerInfo = options.providerInfo || detectTelemetryProvider();
+    this.providerInfo = options.providerInfo || (typeof options.provider === 'string' ? { provider: options.provider, throttlingSupported: true } : detectTelemetryProvider());
     this.signal = options.signal || null;
     this.samples = [];
     this.activePhase = 'idle_baseline';
     this.activeContext = {};
     this.timer = null;
     this.isRunning = false;
+    this.isSampling = false;
     this.prevCpuInfo = null;
     this.startTimeMs = null;
   }
@@ -297,19 +523,25 @@ class TelemetryCollector {
     sample.elapsedSec = 0;
     this.samples.push(sample);
 
-    this.timer = setInterval(() => {
+    this.timer = setInterval(async () => {
       if (!this.isRunning) return;
       if (this.signal?.aborted) {
         this.stop();
         return;
       }
+      if (this.isSampling) return; // Prevent overlapping async calls
 
-      const { sample: s, currentCpuInfo: c } = sampleHardwareState(this.providerInfo, this.prevCpuInfo);
-      this.prevCpuInfo = c;
-      s.phase = this.activePhase;
-      s.context = { ...this.activeContext };
-      s.elapsedSec = Math.round(((Date.now() - this.startTimeMs) / 1000) * 10) / 10;
-      this.samples.push(s);
+      this.isSampling = true;
+      try {
+        const { sample: s, currentCpuInfo: c } = await sampleHardwareStateAsync(this.providerInfo, this.prevCpuInfo);
+        this.prevCpuInfo = c;
+        s.phase = this.activePhase;
+        s.context = { ...this.activeContext };
+        s.elapsedSec = Math.round(((Date.now() - this.startTimeMs) / 1000) * 10) / 10;
+        this.samples.push(s);
+      } catch {} finally {
+        this.isSampling = false;
+      }
     }, this.intervalMs);
 
     // Ensure timer does not prevent process exit
@@ -320,7 +552,7 @@ class TelemetryCollector {
 
   setPhase(phase, context = {}) {
     this.activePhase = phase;
-    this.activeContext = context;
+    this.activeContext = { ...context };
   }
 
   get phase() {
@@ -328,6 +560,12 @@ class TelemetryCollector {
   }
 
   recordSample(metrics = {}) {
+    if (metrics.throttling === true || metrics.throttlingDetected === true || (Array.isArray(metrics.throttleReasons) && metrics.throttleReasons.length > 0)) {
+      metrics.throttlingDetected = true;
+      if (!metrics.activeThrottleReasons && Array.isArray(metrics.throttleReasons)) {
+        metrics.activeThrottleReasons = metrics.throttleReasons;
+      }
+    }
     const s = {
       timestampMs: Date.now(),
       phase: this.activePhase,
@@ -351,11 +589,18 @@ class TelemetryCollector {
   /**
    * Generates summary statistics strictly isolating transcoding execution
    * from warm-up and post-encode quality analysis.
+   * If configId is specified, restricts analysis to samples tagged with that configuration.
    */
-  getSummary() {
-    const encodingSamples = this.samples.filter(s => s.phase === 'encoding');
+  getSummary(configId = null) {
+    let encodingSamples = this.samples.filter(s => s.phase === 'encoding');
+    if (configId) {
+      const tagged = encodingSamples.filter(s => s.context?.configId === configId);
+      if (tagged.length > 0) {
+        encodingSamples = tagged;
+      }
+    }
+
     const qualitySamples = this.samples.filter(s => s.phase === 'quality_analysis');
-    const baselineSamples = this.samples.filter(s => s.phase === 'idle_baseline');
 
     const encodingMetrics = {};
     const relevantKeys = [
@@ -395,24 +640,35 @@ class TelemetryCollector {
     // Thermal delta during encoding
     const temps = encodingSamples
       .map(s => s.metrics?.temperatureC)
-      .filter(v => typeof v === 'number' && !isNaN(v));
+      .filter(v => typeof v === 'number' && !isNaN(v) && v !== null);
     const thermalClimb = temps.length >= 2 ? Math.round((temps[temps.length - 1] - temps[0]) * 10) / 10 : 0;
 
-    // Active throttling during encoding
-    const activeReasons = [];
-    for (const s of encodingSamples) {
-      if (typeof s.metrics?.throttling === 'string' && s.metrics.throttling !== 'None') {
-        activeReasons.push(s.metrics.throttling);
-      }
-      if (Array.isArray(s.metrics?.throttleReasons)) {
-        for (const r of s.metrics.throttleReasons) {
-          if (r && r !== 'None') activeReasons.push(r);
+    // Active hardware throttling during encoding
+    let throttlingSupported = Boolean(this.providerInfo.throttlingSupported);
+    let throttlingDetected = null;
+    let activeThrottleReasons = [];
+
+    if (throttlingSupported) {
+      const activeReasonsSet = new Set();
+      let asserted = false;
+
+      for (const s of encodingSamples) {
+        const isAsserted = s.metrics?.throttlingDetected === true || s.metrics?.throttling === true || (Array.isArray(s.metrics?.throttleReasons) && s.metrics.throttleReasons.length > 0);
+        if (isAsserted) {
+          asserted = true;
+          const reasons = s.metrics.activeThrottleReasons || s.metrics.throttleReasons;
+          if (Array.isArray(reasons)) {
+            for (const r of reasons) {
+              if (r && r !== 'None') activeReasonsSet.add(r);
+            }
+          } else if (typeof s.metrics.throttling === 'string' && s.metrics.throttling !== 'None') {
+            activeReasonsSet.add(s.metrics.throttling);
+          }
         }
       }
-    }
-    const throttlingDetected = encodingSamples.some(s => Boolean(s.metrics?.throttling));
-    if (throttlingDetected && activeReasons.length === 0) {
-      activeReasons.push('Active');
+
+      throttlingDetected = asserted;
+      activeThrottleReasons = [...activeReasonsSet];
     }
 
     return {
@@ -427,8 +683,9 @@ class TelemetryCollector {
         sampleCount: encodingSamples.length,
         metrics: encodingMetrics,
         thermalClimbC: thermalClimb,
+        throttlingSupported,
         throttlingDetected,
-        activeThrottleReasons: [...new Set(activeReasons)]
+        activeThrottleReasons
       },
       qualityAnalysis: {
         sampleCount: qualitySamples.length,
@@ -442,8 +699,11 @@ class TelemetryCollector {
 }
 
 module.exports = {
+  parseMetricNumber,
+  decodeNvidiaThrottleReasons,
   detectTelemetryProvider,
   sampleHardwareState,
+  sampleHardwareStateAsync,
   calculateMetricSummary,
   TelemetryCollector
 };
