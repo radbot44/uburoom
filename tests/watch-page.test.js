@@ -36,8 +36,12 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
     targetRoom: { id: 'room', slug: 'movie-night', name: 'Movie Night & Chill' }
   });
   assert.ok(directRoomHtml.includes('id="room-lobby" hidden'), 'direct /room/<slug> entry keeps lobby hidden on first paint');
+  assert.ok(directRoomHtml.includes('id="auth-overlay" class="lobby-auth" hidden'), 'direct /room/<slug> keeps auth-overlay hidden for authorized viewers');
+  assert.ok(directRoomHtml.includes('<span id="options-title" class="watch-panel-title">Movie Night &amp; Chill</span>'), 'direct /room/<slug> sets options title to room name on first paint');
+  assert.ok(!directRoomHtml.includes('class="outside-room'), 'direct /room/<slug> removes outside-room class on first paint');
+  assert.ok(directRoomHtml.includes('aria-label="Switch room" title="Switch room"'), 'direct /room/<slug> renders switch-room control on first paint');
+  assert.ok(!directRoomHtml.includes('id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room" hidden'), 'direct /room/<slug> reveals leave room control');
   assert.ok(directRoomHtml.includes('<h1 id="empty-title">Movie Night &amp; Chill</h1>'));
-  assert.ok(directRoomHtml.includes('<p id="auth-status" role="status">Joining room...</p>'));
   assert.ok(directRoomHtml.includes('aria-label="Alice &lt;Host&gt; · Account settings"'));
   assert.ok(directRoomHtml.includes('id="admin-mode" class="admin-toggle" role="switch" aria-checked="true"'));
   assert.ok(!directRoomHtml.includes('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden'));
@@ -45,6 +49,17 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(directRoomHtml.includes('<p class="queue-empty-title">Join a room to use the queue</p>'));
   assert.ok(directRoomHtml.includes('id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media">'));
   assert.ok(directRoomHtml.includes('<div id="library-content"><div class="library-landing">'));
+
+  const directRoomWithMediaHtml = watchPage(template, {
+    config: { unifiedAccounts: true },
+    me: { status: 200, value: { name: 'Alice <Host>' } },
+    rooms: { status: 200, value: { rooms: [{ id: 'room', name: 'Movie Night', viewers: 2 }] } },
+    targetRoom: { id: 'room', slug: 'movie-night', name: 'Movie Night & Chill', media: { title: "The 'High Sign'", subtitle: '1921' } }
+  });
+  assert.ok(directRoomWithMediaHtml.includes('id="empty-stage" hidden'), 'direct room with media hides empty stage on first paint');
+  assert.ok(directRoomWithMediaHtml.includes('<h1 id="title">The &#39;High Sign&#39;</h1><p id="details">1921</p>'), 'direct room with media sets player title on first paint');
+  assert.ok(!directRoomWithMediaHtml.includes('idle-player'), 'direct room with media removes idle-player class');
+  assert.ok(!directRoomWithMediaHtml.includes('outside-room'), 'direct room with media removes outside-room class');
   assert.deepEqual(
     homeCards([{ id: '1', title: 'Movies', mediaType: 'movie' }, { id: '2', title: 'TV Shows', mediaType: 'show' }]),
     [

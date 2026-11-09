@@ -85,8 +85,36 @@ function watchPage(template, initial, scrollbarStyleNonce) {
       html = replaceTemplate(html, 'id="room-lobby" hidden', 'id="room-lobby"');
       html = replaceTemplate(html, '<div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms"></div>', '<div id="lobby-rooms" class="lobby-rooms" aria-label="Active rooms">' + rows + '</div>');
     } else if (initial.targetRoom?.name) {
-      html = replaceTemplate(html, '<h1 id="empty-title">Join or create a room</h1>', '<h1 id="empty-title">' + escapeText(initial.targetRoom.name) + '</h1>');
-      html = replaceTemplate(html, '<p id="auth-status" role="status">Loading rooms...</p>', '<p id="auth-status" role="status">Joining room...</p>');
+      const roomName = escapeText(initial.targetRoom.name);
+      const media = initial.targetRoom.media;
+      html = replaceTemplate(html, 'id="auth-overlay" class="lobby-auth"', 'id="auth-overlay" class="lobby-auth" hidden');
+      html = replaceTemplate(html, '<span id="options-title" class="watch-panel-title">Room</span>', '<span id="options-title" class="watch-panel-title">' + roomName + '</span>');
+      html = replaceTemplate(html, '<div id="current-room" class="room-content-columns" hidden>', '<div id="current-room" class="room-content-columns">');
+      html = replaceTemplate(html,
+        '<button id="switch-room" class="quiet watch-control" aria-label="Choose room" title="Choose room"><span class="watch-control-label">Choose room</span></button>',
+        '<button id="switch-room" class="quiet watch-control" aria-label="Switch room" title="Switch room"><span class="watch-control-label">Switch room</span></button>'
+      );
+      html = replaceTemplate(html,
+        '<button id="create" class="quiet watch-control" aria-label="New room" title="New room"><span class="watch-control-label">New room</span></button>',
+        '<button id="create" class="quiet watch-control" aria-label="New room" title="New room" hidden><span class="watch-control-label">New room</span></button>'
+      );
+      html = replaceTemplate(html,
+        'id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room" hidden',
+        'id="close-room" class="quiet watch-control watch-control-responsive" aria-label="Leave room" title="Leave room"'
+      );
+      if (media?.title) {
+        html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class=""');
+        html = replaceTemplate(html, '<div id="empty-stage">', '<div id="empty-stage" hidden>');
+        html = replaceTemplate(html,
+          '<h1 id="title">Watch together</h1><p id="details"></p>',
+          '<h1 id="title">' + escapeText(media.title) + '</h1><p id="details">' + escapeText(media.subtitle || '') + '</p>'
+        );
+        html = replaceTemplate(html, '<p class="queue-empty-title">Join a room to use the queue</p>', '<p class="queue-empty-title" hidden>Join a room to use the queue</p>');
+      } else {
+        html = replaceTemplate(html, 'class="auth-pending outside-room idle-player"', 'class="idle-player"');
+        html = replaceTemplate(html, '<h1 id="empty-title">Join or create a room</h1>', '<h1 id="empty-title">' + roomName + '</h1>');
+        html = replaceTemplate(html, '<p id="empty-hint">Choose an active room or create your own.</p>', '<p id="empty-hint"></p>');
+      }
     }
   }
   const data = JSON.stringify(initial).replace(/[<>&\u2028\u2029]/g, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));

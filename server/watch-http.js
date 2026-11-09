@@ -579,14 +579,40 @@ function watchHttp({ config, watch, hub, user, webActor, body, json, oauthFetch,
       }
       const roomMatch = /^\/room\/([a-z0-9-]+)$/i.exec(reqUrl.pathname);
       const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
-      if (requested && watch.roomState) {
-        try {
-          const room = watch.roomState.store.getBySlug(requested);
-          initial.targetRoom = { id: room.id, slug: room.slug, name: room.name };
-        } catch {
-          const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
+      if (requested) {
+        let roomId, roomSlug, roomName;
+        if (watch.roomState) {
+          try {
+            const room = watch.roomState.store.getBySlug(requested);
+            roomId = room.id; roomSlug = room.slug; roomName = room.name;
+          } catch {
+            const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
+            if (activeRoom) {
+              roomId = activeRoom.s.roomId; roomSlug = activeRoom.s.slug; roomName = activeRoom.s.name;
+            }
+          }
+        }
+        if (!roomId && watch.rooms) {
+          const activeRoom = [...watch.rooms.values()].find(r => r.s?.slug === requested || r.s?.roomId === requested);
           if (activeRoom) {
-            initial.targetRoom = { id: activeRoom.s.roomId, slug: activeRoom.s.slug, name: activeRoom.s.name };
+            roomId = activeRoom.s.roomId; roomSlug = activeRoom.s.slug; roomName = activeRoom.s.name;
+          }
+        }
+        if (roomId) {
+          initial.targetRoom = { id: roomId, slug: roomSlug, name: roomName };
+          const active = watch.rooms?.get(roomId);
+          if (active?.media?.title) {
+            initial.targetRoom.media = {
+              title: active.media.title,
+              subtitle: active.media.subtitle || (active.media.year ? String(active.media.year) : '')
+            };
+          } else {
+            const listed = initial.rooms?.status === 200 && Array.isArray(initial.rooms.value?.rooms)
+              ? initial.rooms.value.rooms.find(r => r.id === roomId || r.slug === roomSlug)
+              : undefined;
+            if (listed?.title && listed.title !== 'No video selected') {
+              initial.targetRoom.media = { title: listed.title, subtitle: listed.subtitle || '' };
+            }
           }
         }
       }

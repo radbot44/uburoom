@@ -35,9 +35,11 @@ let reconnecting=false;
 let disconnectGraceTimer, disconnectExtended = false;
 const DISCONNECT_GRACE_MS = 8000;
 let switchingRoom=false, knownRooms=[];
+let directRoomEntry=false, directRoomFailed=false;
 let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
 if(pageBootstrap?.config)config=pageBootstrap.config;
 if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
+directRoomEntry = Boolean(!activity && (pageBootstrap?.targetRoom?.id || /^\/room\/[a-z0-9-]+$/i.test(location.pathname) || new URLSearchParams(location.search).has('room')) || pageBootstrap?.me?.value?.guestRoomId || pageBootstrap?.config?.singleRoom);
 let hlsLoading, discordSdkLoading;
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -1154,7 +1156,8 @@ function updateFullscreenLayout() {
 }
 function placeRoomBar() {
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
-  const lobbyHidden = !!selected || !me;
+  const inRoom = Boolean(selected || (directRoomEntry && !directRoomFailed));
+  const lobbyHidden = inRoom || !me;
   // The Upcoming list refreshes whenever the lobby comes back into view.
   if ($('room-lobby').hidden && !lobbyHidden && transport?.ready && me?.durableRooms && !config?.singleRoom) void lobbyEvents.refresh();
   $('room-lobby').hidden = lobbyHidden;
@@ -2043,17 +2046,19 @@ function renderMediaInformation(next) {
 }
 function renderVisibility() {
   $('empty-hint').hidden=!me;
-  document.body.classList.toggle('outside-room', !state); document.body.classList.toggle('idle-player',!state?.mediaId);
-  $('current-room').hidden = !state;
+  const inRoom = Boolean(state || (directRoomEntry && !directRoomFailed));
+  document.body.classList.toggle('outside-room', !inRoom);
+  document.body.classList.toggle('idle-player', !state?.mediaId && (!pageBootstrap?.targetRoom?.media || directRoomFailed));
+  $('current-room').hidden = !inRoom;
   $('rooms').hidden = true;
   $('refresh').hidden = true;
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
-  $('switch-room').textContent = state ? 'Switch room' : 'Choose room';
+  $('switch-room').textContent = inRoom ? 'Switch room' : 'Choose room';
   $('switch-room').hidden=!!config?.singleRoom;
-  $('create').hidden = !!state||!!config?.singleRoom||!!me?.guestRoomId;
+  $('create').hidden = inRoom||!!config?.singleRoom||!!me?.guestRoomId;
   if(config?.singleRoom||me?.guestRoomId)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
   if(me?.guestRoomId)$('switch-room').hidden=true;
-  if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : 'Room';
+  if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : (pageBootstrap?.targetRoom?.name || 'Room');
   if (state) {
     if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room',iconOnly:true});
     $('room-share').setAttribute('aria-label','Share room');
@@ -3247,7 +3252,7 @@ async function start() {
   if(pageBootstrap?.events?.status===200)lobbyEvents.hydrate(pageBootstrap.events.value);
   let initialRooms=pageBootstrap?.rooms?.status===200?pageBootstrap.rooms.value.rooms:undefined;
   let initialEvents=pageBootstrap?.events?.status===200;
-  const directRoomEntry = !activity && !!initialRoom || !!me?.guestRoomId || !!config.singleRoom;
+  directRoomEntry = !activity && !!initialRoom || !!me?.guestRoomId || !!config.singleRoom;
   if(directRoomEntry)void ensureHls().catch(()=>{});
   if(initialRooms){
     if(directRoomEntry){knownRooms=initialRooms;renderRooms($('rooms'),initialRooms);renderRoomChoices(initialRooms,$('lobby-rooms'));}
@@ -3256,15 +3261,55 @@ async function start() {
   $('diagnostic-actions').hidden=!controlProbe&&!soakMode;
   await syncReady;
   let bootstrap;
+  async function enterDirectRoom() {
+    if(me?.guestRoomId){
+      try{await selectRoom(me.guestRoomId);}catch{directRoomFailed=true;guestRoomClosed();void waitForHost(me.guestRoomId);}
+      return;
+    }
+    if(activity&&INVITE_CODE.test(sdk?.customId||'')){
+      try{await selectRoom((await api('/api/watch/invite',{action:'join',code:sdk.customId})).room.id);}
+      catch(error){directRoomFailed=true;fail(error.message);if(initialRooms)applyRooms(initialRooms);}
+      return;
+    }
+    const requestedRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+    if (!activity && requestedRoom) {
+      let targetId = requestedRoom;
+      if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
+        const found = knownRooms.find(r => r.slug === targetId || r.id === targetId);
+        if (found) targetId = found.id;
+        else if (pageBootstrap?.targetRoom?.id) targetId = pageBootstrap.targetRoom.id;
+      }
+      try {
+        await selectRoom(targetId);
+      } catch {
+        directRoomFailed = true;
+        syncRoomUrl(null);
+        void waitForHost(pageBootstrap?.targetRoom?.id || requestedRoom);
+        if(!waitingRoom && initialRooms) applyRooms(initialRooms);
+      }
+      return;
+    }
+    if(config?.singleRoom && knownRooms[0] && !knownRooms[0].locked) {
+      try { await selectRoom(knownRooms[0].id); }
+      catch(error) { directRoomFailed = true; fail(error.message); if(initialRooms) applyRooms(initialRooms); }
+    }
+  }
   transport?.close();
   transport=new uburoomWatchTransport({
     url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
     onReady:()=>bootstrap=(async()=>{
       diagnostics.record('control-connected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt,visibility:document.visibilityState});
-      await refreshState();if(initialRooms){if(directRoomEntry&&!selected)applyRooms(initialRooms);initialRooms=undefined;}else await refreshRooms();
+      if(selected){
+        await refreshState();
+      }else if(directRoomEntry&&!directRoomFailed){
+        await enterDirectRoom();
+      }else{
+        if(initialRooms){applyRooms(initialRooms);initialRooms=undefined;}
+        else await refreshRooms();
+      }
       if(me?.durableRooms){if(initialEvents)initialEvents=false;else void lobbyEvents.refresh();}
       if(!selected){if(reconnecting)diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
-      if(!directRoomEntry || selected){
+      if(!directRoomEntry || selected || directRoomFailed){
         $('auth-loading').hidden=$('auth-overlay').hidden=true;
         document.body.classList.remove('auth-pending');
         renderBrowsing();renderVisibility();placeRoomBar();
@@ -3297,7 +3342,7 @@ async function start() {
       }
     }
   });
-  $('create').hidden = false; renderBrowsing(); renderVisibility(); renderTransport();
+  $('create').hidden = (directRoomEntry && !directRoomFailed) || !!config?.singleRoom || !!me?.guestRoomId; renderBrowsing(); renderVisibility(); renderTransport();
   clearInterval(identityTimer);
   identityTimer = setInterval(async () => {
     try { await renewIdentity(); }
@@ -3306,31 +3351,6 @@ async function start() {
   await transport.connect();
   await bootstrap;
   if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/');if(typeof showAccount==='function')await showAccount();}
-  // A guest goes straight to their room, or is told it isn't open.
-  if(me?.guestRoomId){try{await selectRoom(me.guestRoomId);}catch{guestRoomClosed();void waitForHost(me.guestRoomId);}return;}
-  // A Discord share link opens the Activity with the room's invite code.
-  if(activity&&INVITE_CODE.test(sdk?.customId||'')){
-    try{await selectRoom((await api('/api/watch/invite',{action:'join',code:sdk.customId})).room.id);return;}
-    catch(error){fail(error.message);}
-  }
-  const requestedRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
-  if (!activity && requestedRoom) {
-    try {
-      let targetId = requestedRoom;
-      if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
-        const found = knownRooms.find(r => r.slug === targetId || r.id === targetId);
-        if (found) targetId = found.id;
-        else if (pageBootstrap?.targetRoom?.id) targetId = pageBootstrap.targetRoom.id;
-      }
-      await selectRoom(targetId);
-    } catch {
-      syncRoomUrl(null);
-      void waitForHost(pageBootstrap?.targetRoom?.id || requestedRoom);
-    }
-    $('auth-loading').hidden=$('auth-overlay').hidden=true;
-    document.body.classList.remove('auth-pending');
-    renderBrowsing();renderVisibility();placeRoomBar();
-  }
   const idlePreload = typeof requestIdleCallback === 'function' ? requestIdleCallback : fn => setTimeout(fn, 250);
   idlePreload(() => { void ensureHls().catch(() => {}); });
 }
