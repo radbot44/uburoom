@@ -3,7 +3,7 @@
   'use strict';
   function mount(host, { request, artwork, load, close, getPlayer, addToQueue, addBulkToQueue, autoQueue, isAdmin = () => false, openCodecTester, initialLibrary }) {
     const doc = host.ownerDocument;
-    host.querySelector('.library-landing')?.remove();
+    host.replaceChildren();
     function node(tag, parent, text, className) { const n = doc.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; parent?.append(n); return n; }
     function button(parent, label, symbol, className = 'library-key') {
       const b = node('button',parent,undefined,className); b.type = 'button'; b.setAttribute('aria-label',label); b.title = label;

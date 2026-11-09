@@ -40,8 +40,10 @@ test('watchPage renders authenticated and unauthenticated bootstrap data safely 
   assert.ok(directRoomHtml.includes('aria-label="Alice &lt;Host&gt; · Account settings"'));
   assert.ok(directRoomHtml.includes('id="admin-mode" class="admin-toggle" role="switch" aria-checked="true"'));
   assert.ok(!directRoomHtml.includes('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden'));
+  assert.ok(!directRoomHtml.includes('id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden'));
   assert.ok(directRoomHtml.includes('<p class="queue-empty-title">Join a room to use the queue</p>'));
   assert.ok(directRoomHtml.includes('id="queue-empty-browse" type="button" class="quiet" aria-label="Browse media" title="Browse media">'));
+  assert.ok(directRoomHtml.includes('<div id="library-content"><div class="library-tools"></div><div class="library-landing">'));
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movies</span>'));
   assert.ok(directRoomHtml.includes('<span class="library-home-title">Movie Collections</span>'));
   assert.ok(directRoomHtml.includes('<span>Synchronization video</span>'));

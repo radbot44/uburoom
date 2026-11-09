@@ -36,7 +36,7 @@ function watchPage(template, initial, scrollbarStyleNonce) {
     }
     if (me.durableRooms && !me.guestRoomId && !initial.config?.singleRoom) {
       html = html.replace('id="lobby-reopen" class="quiet" hidden', 'id="lobby-reopen" class="quiet"')
-        .replace('id="reopen" class="quiet" hidden', 'id="reopen" class="quiet"');
+        .replace('id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room" hidden', 'id="reopen" class="quiet watch-control watch-control-responsive" aria-label="Reopen room" title="Reopen room"');
     }
     if (initial.events?.status === 200 && initial.events.value?.canSchedule && !initial.config?.singleRoom) {
       html = html.replace('id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event" hidden', 'id="lobby-schedule" class="quiet" type="button" aria-label="Schedule event"');
@@ -62,7 +62,7 @@ function watchPage(template, initial, scrollbarStyleNonce) {
         other += '</article>';
         cards.push(other);
       }
-      html = html.replace('<div id="library-content"></div>', '<div id="library-content"><div class="library-landing">' + cards.join('') + '</div></div>');
+      html = html.replace('<div id="library-content"></div>', '<div id="library-content"><div class="library-tools"></div><div class="library-landing">' + cards.join('') + '</div></div>');
     }
     if (!initial.targetRoom && !initial.inviteCode && !me.guestRoomId) {
       const rows = initial.rooms.value.rooms.map(room => {
