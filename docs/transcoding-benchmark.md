@@ -1,6 +1,6 @@
-# uburoom Transcoding Benchmark (Stage 2)
+# uburoom Transcoding Benchmark (Stage 3)
 
-The transcoding benchmark is a standalone command-line diagnostic tool, capacity analyzer, and quality evaluation suite for video transcoding in uburoom.
+The transcoding benchmark is a standalone command-line diagnostic tool, capacity analyzer, quality evaluation suite, hardware telemetry monitor, and regression tracker for video transcoding in uburoom.
 
 It reproduces the exact encoding parameters, rate control, frame pacing, scaling, WebM chunking, hardware acceleration, and fallback paths used by uburoom's native streaming engine without running the server, connecting to remote services, or modifying application state.
 
@@ -80,6 +80,17 @@ The benchmark parses only the `transcoding` and `tools` sections:
 | `--max-concurrency <N>` | Upper bound for concurrency scanning (clamped to max 16). | `8` |
 | `--quality-metrics[=list]` | Compute objective quality metrics (VMAF, SSIM, PSNR, CAMBI) post-encode. Optional list: `--quality-metrics=vmaf,ssim,psnr`. | Disabled |
 | `--warmup` | Run an untimed single-chunk transcode before starting measurements. | Disabled |
+| `--telemetry` | Enable periodic hardware telemetry and resource utilization tracking. | Enabled |
+| `--no-telemetry` | Disable hardware telemetry sampling. | |
+| `--telemetry-interval <ms>` | Polling interval for telemetry sampling in milliseconds. | `500` |
+| `--stability, --soak` | Run bounded chunked soak testing over extended duration. | Disabled |
+| `--stability-duration <sec>` | Target duration for stability benchmark in seconds. | `120` |
+| `--save-history` | Save execution payload to local benchmark history repository. | Enabled |
+| `--no-history` | Disable saving run to history. | |
+| `--history-dir <dir>` | Custom directory for local benchmark history index and records. | `artifacts/transcode-benchmark/history` |
+| `--compare-with <id\|file>` | Compare current run against a historical run ID or baseline `results.json`. | None |
+| `--recommendations` | Generate conservative configuration recommendations for `config.yaml`. | Enabled |
+| `--no-recommendations` | Disable configuration advice generation. | |
 | `-o, --output <dir>` | Directory where artifacts and reports are saved. | `artifacts/transcode-benchmark/run-<timestamp>/` |
 | `-r, --runs <number>` | Number of test iterations per configuration (>= 1). | `1` |
 | `--probe-only` | Detect usable encoder capabilities, print summary, and exit. | Disabled |
@@ -98,11 +109,17 @@ node scripts/transcode-benchmark.js --probe-only
 # Benchmark with post-encode objective quality metrics (VMAF, SSIM, PSNR, CAMBI):
 node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --quality-metrics
 
+# Bounded stability / soak test measuring thermal rise and throughput degradation:
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --stability --stability-duration 180
+
+# Compare current benchmark against a previous baseline run:
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --compare-with run-2026-11-09T22-20-47-149Z-76356
+
 # Fixed 3-stream concurrent load test:
 node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --concurrency 3
 
 # Progressive sustainable capacity scan up to 6 streams:
-node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --capacity-scan --max-concurrency 6
+node scripts/transcode-benchmark.js --codecs av1 --encoders nvenc --qualities 1080p8 --capacity-scan --max-concurrency 6 --allow-load-test
 
 # Compare all available encoders across all supported codecs:
 node scripts/transcode-benchmark.js --all-encoders --all-codecs --mode both
@@ -293,7 +310,76 @@ Opening `report.html` locally in any web browser (`file:///...`) provides:
 
 ---
 
-## 13. Safety & Production Isolation
+## 13. Hardware Telemetry & Resource Utilization
+
+The benchmark monitors hardware resource consumption in real-time during execution via periodic sampling (default: every 500ms):
+1. **Provider Resolution & Multi-GPU Capabilities**:
+   - **NVIDIA (`nvidia-smi`)**: Queries GPU utilization, dedicated video encoder utilization, decoder utilization, VRAM usage, core temperature, power consumption (watts), graphics clock, memory clock, and hardware throttling flags.
+   - **Windows WDDM (`typeperf` GPU Engine)**: Captures hardware engine percentages (`\GPU Engine(*engtype_VideoEncode*)\Utilization Percentage`) without requiring third-party tools or administrative privileges. Supports Intel Arc (e.g. A380 on Vigrid), Intel Quick Sync, and AMD GPUs under Windows.
+   - **Host CPU / OS Fallback**: Collects host CPU delta utilization and system RAM usage when no dedicated GPU telemetry driver is available.
+2. **Lifecycle Phase Isolation**:
+   - The telemetry collector tracks discrete phases: `idle_baseline`, `warmup`, `encoding`, and `quality_analysis`.
+   - **Encoding Isolation**: Performance summaries, average encoder utilization, peak memory, and thermal climb ($\Delta T$) strictly isolate the active encoding phase. Post-encode CPU quality scoring (e.g. multi-threaded VMAF/SSIM calculation) is recorded in a separate phase and does not distort transcoding metrics.
+3. **Thermal Rise & Throttle Detection**:
+   - Tracks net temperature change ($\Delta T$) across the encoding session.
+   - Probes hardware throttle reason codes (power cap, thermal slowdown, reliability voltage, SW power cap).
+4. **Offline Timeline Charts**:
+   - The offline HTML report visualizes encoder utilization, core temperature, and power draw over time using embedded, dependency-free SVGs.
+
+---
+
+## 14. Bounded Stability & Thermal Soak Testing
+
+When `--stability` (or `--soak`) is enabled, the benchmark runs an extended chunked transcoding endurance test (`--stability-duration <sec>`, default: 120s):
+1. **Performance Trend Analysis**:
+   - Compares the first half of completed chunks against the second half.
+   - Computes throughput evolution (speed change percentage) and P95 latency evolution.
+   - Quantifies the first-chunk startup penalty versus steady-state chunk completion.
+2. **Honest Degradation Phrasing**:
+   - Distinguishes confirmed hardware thermal throttling from software queueing or cache degradation.
+   - Summaries explicitly declare when hardware throttle flags are asserted versus unthrottled temperature rise.
+3. **Operational Safety Protections**:
+   - **Disk Space Ceiling**: Automatically terminates early if temporary chunk storage exceeds 4 GB.
+   - **Repeated Failure Ceiling**: Aborts if 3 consecutive chunks fail or exceed $1.5\times$ chunk duration.
+   - **Cancellation Cleanup**: Cleanly aborts subprocesses and removes intermediate files on `SIGINT`.
+4. **Production Caveat**:
+   - Formally designated as measuring short-to-medium duration thermal and throughput trends. 24/7 production capacity requires extended soak testing under real multi-user network conditions.
+
+---
+
+## 15. Local Benchmark History & Regression Tracking
+
+The benchmark maintains a lightweight, local-only historical archive (`artifacts/transcode-benchmark/history/`):
+1. **Schema 3.0.0 & Fingerprinting**:
+   - Each run generates a compact metadata record (`run-<timestamp>-<pid>.json`) and updates `history-index.json`.
+   - Never duplicates multi-megabyte video files in history storage.
+   - Uses privacy-preserving deterministic source fingerprints (`<basename>#<sha256-hash>`) that avoid leaking personal path names.
+2. **Importing Previous Results**:
+   - Existing Stage 1 or Stage 2 `results.json` files can be imported into history via `importHistoricalReport()`.
+3. **Rigorous Regression Tracking (`--compare-with <id|file>`)**:
+   - Evaluates current performance against a previous baseline run.
+   - **Classification Rules**:
+     - `matched`: Exactly identical source media, sample interval, codec, encoder, mode, and concurrency. Flags throughput changes $\le -10\%$ as regressions and $\ge +10\%$ as improvements.
+     - `partially_matched`: Shared codec and quality, but differing conditions (different source media, sample interval, encoder, mode, or concurrency). Marked strictly as non-comparable to prevent false regression alarms.
+     - `not_comparable`: Configurations not present in the baseline run.
+
+---
+
+## 16. Evidence-Based Configuration Advice
+
+When `--recommendations` is active (default: enabled), the benchmark generates conservative, evidence-based recommendations strictly adhering to `server/config.js` schema:
+1. **Targeted Settings**:
+   - `transcoding.encoder`: Recommends dedicated hardware encoder (`nvenc`, `qsv`) only when tested throughput exceeds $1.5\times$ real-time with zero fallbacks. Recommends `auto` if runtime fallbacks were observed.
+   - `transcoding.max_jobs`: Recommends sustainable concurrency based on capacity scans, enforcing a conservative 1-job headroom buffer when tested concurrency $> 2$.
+   - `transcoding.outputs`: Recommends enabling `av1` when verified throughput achieves $\ge 1.2\times$ real-time headroom.
+2. **Conservative & Read-Only**:
+   - Never automatically alters `config.yaml` or restarts live services.
+   - Issues warnings and lists settings with insufficient evidence when tests were omitted.
+   - Generates a copyable YAML configuration snippet in both CLI output and the offline HTML report.
+
+---
+
+## 17. Safety & Production Isolation
 
 - **Zero Server Interaction**: Operates independently of any running uburoom process. Never pings endpoints, opens WebSockets, or inspects application memory.
 - **Passive Process Inspection**: Scans the OS process list for active `node` instances running uburoom. If detected, issues a non-blocking warning that benchmarking may contend for GPU/CPU resources with live party viewers.
@@ -303,10 +389,11 @@ Opening `report.html` locally in any web browser (`file:///...`) provides:
 
 ---
 
-## 14. Stage 2 Scope & Deferred Capabilities
+## 18. Stage 3 Scope & Completion
 
-Stage 2 completes objective video quality analysis, multi-stream concurrency/capacity testing, and the offline visual/blind A/B comparison workflow. The following capabilities are intentionally reserved for Stage 3:
-- Extended endurance / thermal stress testing (Stage 3)
-- Direct GPU hardware sensor telemetry (power, clock, thermals) via NVML / Intel sysfs (Stage 3)
-- Automated cross-run regression tracking and SQLite historical database (Stage 3)
-- Automated configuration profile recommendations (Stage 3)
+Stage 3 completes the comprehensive transcoding benchmark suite:
+- Hardware telemetry (NVIDIA `nvidia-smi`, Windows WDDM PDH, System)
+- Bounded stability and soak trend analysis
+- Local historical archive, index, and regression comparison (Schema 3.0.0)
+- Evidence-based conservative configuration recommendations
+- Fully validated offline HTML report with telemetry timelines, stability trends, regression tables, and copyable YAML snippets.

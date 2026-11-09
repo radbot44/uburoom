@@ -251,33 +251,54 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
   distFilter += `,format=pix_fmts=yuv420p[dist_norm]`;
   parts.push(distFilter);
 
-  // 3. Metric filter resolution
+  // 3. Metric filter resolution & partial availability tracking
+  const unavailableMetrics = [];
+
+  for (const metric of selectedMetrics) {
+    if (metric === 'cambi') {
+      if (!capabilities.libvmaf) {
+        unavailableMetrics.push({ metric: 'cambi', reason: 'CAMBI requires libvmaf which is not available in FFmpeg build.' });
+      } else if (!capabilities.vmafFeatures?.cambi) {
+        unavailableMetrics.push({ metric: 'cambi', reason: 'CAMBI feature is not available in FFmpeg libvmaf build.' });
+      }
+    } else if (metric === 'vmaf') {
+      if (!capabilities.libvmaf) {
+        unavailableMetrics.push({ metric: 'vmaf', reason: 'libvmaf filter is not available in FFmpeg build.' });
+      }
+    } else if (metric === 'ssim') {
+      const hasVmafSsim = capabilities.libvmaf && capabilities.vmafFeatures?.float_ssim;
+      if (!hasVmafSsim && !capabilities.ssim) {
+        unavailableMetrics.push({ metric: 'ssim', reason: 'Neither libvmaf float_ssim nor standalone ssim filter is available in FFmpeg build.' });
+      }
+    } else if (metric === 'psnr') {
+      const hasVmafPsnr = capabilities.libvmaf && capabilities.vmafFeatures?.psnr;
+      if (!hasVmafPsnr && !capabilities.psnr) {
+        unavailableMetrics.push({ metric: 'psnr', reason: 'Neither libvmaf psnr nor standalone psnr filter is available in FFmpeg build.' });
+      }
+    }
+  }
+
+  const activeMetrics = selectedMetrics.filter(m => !unavailableMetrics.some(u => u.metric === m));
+
+  if (activeMetrics.length === 0) {
+    return {
+      supported: false,
+      reason: unavailableMetrics.map(u => `${u.metric.toUpperCase()}: ${u.reason}`).join('; '),
+      unavailableMetrics,
+      activeMetrics: []
+    };
+  }
+
   let metricFilter = '';
-  const wantsVmaf = selectedMetrics.includes('vmaf');
-  const wantsCambi = selectedMetrics.includes('cambi');
-  const wantsSsim = selectedMetrics.includes('ssim');
-  const wantsPsnr = selectedMetrics.includes('psnr');
+  const wantsVmaf = activeMetrics.includes('vmaf');
+  const wantsCambi = activeMetrics.includes('cambi');
+  const wantsSsim = activeMetrics.includes('ssim');
+  const wantsPsnr = activeMetrics.includes('psnr');
 
-  // libvmaf is used whenever VMAF or CAMBI is requested (CAMBI is evaluated via libvmaf)
-  const needsLibvmaf = wantsVmaf || wantsCambi;
+  // Use libvmaf if VMAF or CAMBI is active and libvmaf is available
+  const canUseLibvmaf = (wantsVmaf || wantsCambi) && capabilities.libvmaf;
 
-  if (needsLibvmaf) {
-    if (!capabilities.libvmaf) {
-      return {
-        supported: false,
-        reason: wantsCambi && !wantsVmaf
-          ? 'CAMBI requires libvmaf which is not available in the current FFmpeg installation.'
-          : 'libvmaf is not available in the current FFmpeg installation.'
-      };
-    }
-
-    if (wantsCambi && !capabilities.vmafFeatures?.cambi) {
-      return {
-        supported: false,
-        reason: 'CAMBI feature is not available in the current FFmpeg libvmaf build.'
-      };
-    }
-
+  if (canUseLibvmaf) {
     const features = [];
     if (wantsCambi && capabilities.vmafFeatures?.cambi) {
       features.push('name=cambi');
@@ -293,7 +314,7 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
     const logFilename = path.basename(jsonLogPath);
     metricFilter = `[dist_norm][ref_norm]libvmaf=log_fmt=json:log_path=${logFilename}${featureArg}:n_threads=8:shortest=1[out]`;
   } else {
-    // Standalone metric fallback when neither VMAF nor CAMBI is requested
+    // Standalone metric fallback when libvmaf is not used or unavailable
     const wantsStandaloneSsim = wantsSsim && capabilities.ssim;
     const wantsStandalonePsnr = wantsPsnr && capabilities.psnr;
 
@@ -306,7 +327,9 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
     } else {
       return {
         supported: false,
-        reason: 'None of the requested quality metrics are available in the current FFmpeg installation.'
+        reason: 'None of the requested quality metrics are available in the current FFmpeg installation.',
+        unavailableMetrics,
+        activeMetrics: []
       };
     }
   }
@@ -315,8 +338,10 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 
   return {
     supported: true,
-    usesLibvmaf: needsLibvmaf,
+    usesLibvmaf: canUseLibvmaf,
     filterGraph: parts.join(';'),
+    unavailableMetrics,
+    activeMetrics,
     normalization: {
       method: 'VMAF standard (distorted upscaled to reference resolution with bicubic)',
       refResolution: `${refWidth}x${refHeight}`,
@@ -375,50 +400,29 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
   const encodedLastPts = encodedPackets[encodedPackets.length - 1].pts;
   const encodedDuration = encodedLastPts - encodedFirstPts + encodedPackets[encodedPackets.length - 1].dur;
 
-  // 2. Demux packet timestamps from source interval [startOffset, startOffset + sampleDuration]
-  const sourcePackets = [];
-  let sourceReadFailed = false;
-  try {
-    const rawSource = cp.execFileSync(ffprobePath, [
-      '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'packet=pts_time,duration_time',
-      '-read_intervals', `${startOffset}%+${sampleDuration}`,
-      '-of', 'csv=p=0',
-      sourcePath
-    ], { encoding: 'utf8', windowsHide: true, timeout: 25000 });
+  // 2. Inspect decoded frames from the exact requested source interval [-ss startOffset -t sampleDuration]
+  // Note: FFprobe -read_intervals seeks to the preceding keyframe, which on long-GOP / B-frame content
+  // begins earlier than startOffset. Decoding through FFmpeg extracts the exact frames presented to the quality filter.
+  const ffmpegPath = options.ffmpegPath || (path.isAbsolute(ffprobePath) ? ffprobePath.replace(/ffprobe(\.exe)?$/i, 'ffmpeg$1') : 'ffmpeg');
+  let sourceDecodedFrameCount = null;
 
-    for (const line of rawSource.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const [ptsStr, durStr] = trimmed.split(',');
-      const pts = parseFloat(ptsStr);
-      const dur = parseFloat(durStr) || (fps ? 1 / fps : 0.033);
-      if (!isNaN(pts)) sourcePackets.push({ pts, dur });
-    }
-  } catch {
-    // If -read_intervals is unsupported by this container/demuxer, try -ss / -t fallback
+  if (ffmpegPath) {
     try {
-      const rawSource = cp.execFileSync(ffprobePath, [
-        '-v', 'error',
+      const probeRes = cp.spawnSync(ffmpegPath, [
+        '-v', 'info',
         '-ss', String(startOffset),
         '-t', String(sampleDuration),
-        '-select_streams', 'v:0',
-        '-show_entries', 'packet=pts_time,duration_time',
-        '-of', 'csv=p=0',
-        sourcePath
-      ], { encoding: 'utf8', windowsHide: true, timeout: 25000 });
-      for (const line of rawSource.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const [ptsStr, durStr] = trimmed.split(',');
-        const pts = parseFloat(ptsStr);
-        const dur = parseFloat(durStr) || (fps ? 1 / fps : 0.033);
-        if (!isNaN(pts)) sourcePackets.push({ pts, dur });
+        '-i', sourcePath,
+        '-map', '0:v:0',
+        '-f', 'null',
+        '-'
+      ], { encoding: 'utf8', windowsHide: true, timeout: 20000 });
+
+      const frameMatch = /frame=\s*(\d+)/.exec(probeRes.stderr || '');
+      if (frameMatch) {
+        sourceDecodedFrameCount = parseInt(frameMatch[1], 10);
       }
-    } catch {
-      sourceReadFailed = true;
-    }
+    } catch {}
   }
 
   // Presentation start check: encoded video should start at 0.0s (<= 0.08s)
@@ -437,8 +441,8 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
     if (Math.abs(encodedPackets.length - expectedFrames) > 3) {
       errors.push(`Encoded frame count mismatch: expected ~${expectedFrames} frames, demuxed ${encodedPackets.length}.`);
     }
-    if (sourcePackets.length > 0 && Math.abs(encodedPackets.length - sourcePackets.length) > 3) {
-      errors.push(`Source/encoded frame count divergence: source interval has ${sourcePackets.length} frames, encoded has ${encodedPackets.length}.`);
+    if (sourceDecodedFrameCount !== null && Math.abs(encodedPackets.length - sourceDecodedFrameCount) > 3) {
+      errors.push(`Source/encoded frame count divergence: source interval decoded ${sourceDecodedFrameCount} frames, encoded has ${encodedPackets.length}.`);
     }
   } else {
     if (encodedDuration < sampleDuration * 0.85) {
@@ -454,18 +458,86 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
       encodedFirstPts,
       encodedDuration: Math.round(encodedDuration * 1000) / 1000,
       encodedPacketCount: encodedPackets.length,
-      sourcePacketCount: sourcePackets.length
+      sourcePacketCount: sourceDecodedFrameCount
     };
   }
 
-  if (sourceReadFailed || sourcePackets.length === 0) {
+  // 3. Content correspondence verification
+  // Verify that the decoded frames of the encoded video visually correspond to the source interval,
+  // rather than a time-shifted or content-divergent stream whose timestamps were reset to 0.
+  let contentCheckResult = { status: 'unverified', reason: 'FFmpeg binary not available for content correspondence check.' };
+
+  if (ffmpegPath) {
+    try {
+      const probeDuration = Math.min(1.0, Math.max(0.4, sampleDuration * 0.2));
+      // Fast downscaled structural similarity check on initial decoded frames (160x90, yuv420p)
+      const res = cp.spawnSync(ffmpegPath, [
+        '-v', 'info',
+        '-ss', String(startOffset),
+        '-t', String(probeDuration),
+        '-i', sourcePath,
+        '-t', String(probeDuration),
+        '-i', encodedPath,
+        '-filter_complex', '[0:v]scale=160:90,format=yuv420p[r];[1:v]scale=160:90,format=yuv420p[e];[e][r]ssim',
+        '-f', 'null',
+        '-'
+      ], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000
+      });
+
+      const combinedOutput = (res.stderr || '') + '\n' + (res.stdout || '');
+      const match = /All:([0-9.]+)/.exec(combinedOutput);
+      if (match) {
+        const score = parseFloat(match[1]);
+        if (!isNaN(score)) {
+          if (score >= 0.80) {
+            contentCheckResult = { status: 'verified', score };
+          } else {
+            contentCheckResult = {
+              status: 'misaligned',
+              score,
+              reason: `Content correspondence check failed: encoded frames visually diverge from requested source interval (correlation SSIM: ${score.toFixed(3)} < 0.80). Content appears shifted or mismatched.`
+            };
+          }
+        }
+      } else {
+        contentCheckResult = {
+          status: 'unverified',
+          reason: 'Could not extract content correlation score from verification probe.'
+        };
+      }
+    } catch (checkErr) {
+      contentCheckResult = {
+        status: 'unverified',
+        reason: `Content correspondence probe could not be completed: ${checkErr.message}`
+      };
+    }
+  }
+
+  if (contentCheckResult.status === 'misaligned') {
+    return {
+      status: 'misaligned',
+      reason: contentCheckResult.reason,
+      errors: [contentCheckResult.reason],
+      encodedFirstPts,
+      encodedDuration: Math.round(encodedDuration * 1000) / 1000,
+      encodedPacketCount: encodedPackets.length,
+      sourcePacketCount: sourceDecodedFrameCount,
+      contentScore: contentCheckResult.score
+    };
+  }
+
+  if (contentCheckResult.status === 'unverified') {
     return {
       status: 'unverified',
-      reason: 'Source interval packet timestamps could not be extracted; temporal alignment verified from encoded presentation timing only.',
+      reason: contentCheckResult.reason,
       errors: [],
       encodedFirstPts,
       encodedDuration: Math.round(encodedDuration * 1000) / 1000,
-      encodedPacketCount: encodedPackets.length
+      encodedPacketCount: encodedPackets.length,
+      sourcePacketCount: sourceDecodedFrameCount
     };
   }
 
@@ -476,7 +548,8 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
     encodedFirstPts,
     encodedDuration: Math.round(encodedDuration * 1000) / 1000,
     encodedPacketCount: encodedPackets.length,
-    sourcePacketCount: sourcePackets.length
+    sourcePacketCount: sourceDecodedFrameCount,
+    contentScore: contentCheckResult.score
   };
 }
 
@@ -530,17 +603,27 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
-  const ffprobePath = options.ffprobePath || ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  const ffprobePath = options.ffprobePath;
+  if (!ffprobePath || !fs.existsSync(ffprobePath)) {
+    return {
+      available: false,
+      status: 'failed',
+      reason: 'Resolved FFprobe binary path was not provided or does not exist.'
+    };
+  }
+
   const fps = source.video?.fps || 30;
   const isVfr = Boolean(source.video?.isVfr);
   const expectedFrames = Math.round(sampleDuration * fps);
 
-  // Validate actual presentation timestamps and decoded-frame timing between source and encode
+  // Validate actual presentation timestamps, exact requested source interval,
+  // and visual content correspondence between source and encode
   const temporal = validateTemporalAlignment(ffprobePath, source.filePath, encodedFilePath, {
     startOffset,
     sampleDuration,
     fps,
-    isVfr
+    isVfr,
+    ffmpegPath
   });
 
   if (temporal.status === 'misaligned') {
@@ -681,11 +764,13 @@ async function runQualityAnalysis(ffmpegPath, options) {
 
       return {
         available: true,
-        status: 'pass',
+        status: temporal.status === 'unverified' ? 'unverified' : 'pass',
+        reason: temporal.status === 'unverified' ? `Temporal alignment unverified: ${temporal.reason}` : null,
         vmaf: vmafStats,
         ssim: ssimStats,
         psnr: psnrStats,
         cambi: cambiStats,
+        unavailableMetrics: chain.unavailableMetrics || [],
         worstIntervals,
         timeline,
         totalFramesEvaluated: frames.length,
@@ -697,7 +782,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
           isVfr
         },
         temporalAlignment: temporal,
-        validation: { valid: true, errors: [] },
+        validation: { valid: temporal.status !== 'misaligned', errors: temporal.errors || [] },
         rawLogRelative: path.basename(jsonLogPath)
       };
     } catch (parseErr) {
@@ -771,11 +856,13 @@ async function runQualityAnalysis(ffmpegPath, options) {
 
   return {
     available: true,
-    status: 'pass',
+    status: temporal.status === 'unverified' ? 'unverified' : 'pass',
+    reason: temporal.status === 'unverified' ? `Temporal alignment unverified: ${temporal.reason}` : null,
     vmaf: null,
     ssim: selectedMetrics.includes('ssim') ? calculateMetricStats(ssimValues) : null,
     psnr: selectedMetrics.includes('psnr') ? calculateMetricStats(psnrValues) : null,
     cambi: null,
+    unavailableMetrics: chain.unavailableMetrics || [],
     worstIntervals: ssimValues.length ? findWorstIntervals(timeline, 'ssim', fps, 2) : [],
     timeline,
     totalFramesEvaluated: scoredCount,
@@ -787,7 +874,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
       isVfr
     },
     temporalAlignment: temporal,
-    validation: { valid: true, errors: [] }
+    validation: { valid: temporal.status !== 'misaligned', errors: temporal.errors || [] }
   };
 }
 

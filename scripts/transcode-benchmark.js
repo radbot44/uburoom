@@ -32,6 +32,21 @@ const {
   runCapacityScan
 } = require('./benchmark/concurrency');
 const {
+  detectTelemetryProvider,
+  TelemetryCollector
+} = require('./benchmark/telemetry');
+const { runStabilityBenchmark } = require('./benchmark/stability');
+const {
+  resolveHistoryDir,
+  loadHistoryIndex,
+  saveRunToHistory,
+  compareRuns,
+  importHistoricalReport
+} = require('./benchmark/history');
+const {
+  generateConfigurationRecommendations
+} = require('./benchmark/recommendations');
+const {
   generateJsonReport,
   generateCsvReport,
   generateHtmlReport
@@ -62,6 +77,15 @@ function parseArgs(args) {
     maxConcurrency: 6,
     qualityMetrics: false,
     warmup: false,
+    // Stage 3 additions
+    telemetry: true,
+    telemetryInterval: 500,
+    stability: false,
+    stabilityDuration: 120,
+    saveHistory: true,
+    historyDir: null,
+    compareWith: null,
+    recommendations: true,
     help: false
   };
 
@@ -141,6 +165,38 @@ function parseArgs(args) {
       options.qualityMetrics = false;
     } else if (arg === '--warmup') {
       options.warmup = true;
+    } else if (arg === '--telemetry') {
+      options.telemetry = true;
+    } else if (arg === '--no-telemetry') {
+      options.telemetry = false;
+    } else if (arg === '--telemetry-interval') {
+      options.telemetryInterval = Number(args[++i]);
+    } else if (arg.startsWith('--telemetry-interval=')) {
+      options.telemetryInterval = Number(arg.slice(21));
+    } else if (arg === '--stability' || arg === '--soak') {
+      options.stability = true;
+    } else if (arg === '--stability-duration') {
+      options.stability = true;
+      options.stabilityDuration = Number(args[++i]);
+    } else if (arg.startsWith('--stability-duration=')) {
+      options.stability = true;
+      options.stabilityDuration = Number(arg.slice(21));
+    } else if (arg === '--save-history') {
+      options.saveHistory = true;
+    } else if (arg === '--no-history') {
+      options.saveHistory = false;
+    } else if (arg === '--history-dir') {
+      options.historyDir = args[++i];
+    } else if (arg.startsWith('--history-dir=')) {
+      options.historyDir = arg.slice(14);
+    } else if (arg === '--compare-with') {
+      options.compareWith = args[++i];
+    } else if (arg.startsWith('--compare-with=')) {
+      options.compareWith = arg.slice(15);
+    } else if (arg === '--recommendations') {
+      options.recommendations = true;
+    } else if (arg === '--no-recommendations') {
+      options.recommendations = false;
     } else if (arg === '--probe-only') {
       options.probeOnly = true;
     } else if (arg === '--dry-run') {
@@ -165,8 +221,8 @@ function parseArgs(args) {
 
 function printHelp() {
   console.log(`
-uburoom Transcoding Benchmark — Stage 2
-Standalone performance measurement, sustainable concurrency, and objective quality analysis
+uburoom Transcoding Benchmark — Stage 3
+Standalone performance measurement, telemetry, stability trends, regression tracking & recommendations
 
 USAGE:
   node scripts/transcode-benchmark.js [OPTIONS]
@@ -204,6 +260,25 @@ STAGE 2 OBJECTIVE QUALITY METRICS:
                              Scoring runs strictly after encoding and uses the untouched
                              master video as reference.
       --no-quality-metrics   Explicitly disable quality metrics analysis.
+
+STAGE 3 HARDWARE TELEMETRY:
+      --telemetry            Enable hardware telemetry sampling (default: true).
+      --no-telemetry         Disable hardware telemetry sampling.
+      --telemetry-interval <ms> Polling interval in milliseconds (default: 500).
+
+STAGE 3 STABILITY & SOAK TESTING:
+      --stability, --soak    Run bounded chunked stability benchmark.
+      --stability-duration <sec> Target soak duration in seconds (default: 120).
+
+STAGE 3 HISTORY & REGRESSION TRACKING:
+      --save-history         Save run to local benchmark history (default: true).
+      --no-history           Do not save run to history.
+      --history-dir <dir>    Custom history directory (default: artifacts/transcode-benchmark/history).
+      --compare-with <id|file> Compare current run against baseline run ID or JSON report.
+
+STAGE 3 CONFIGURATION RECOMMENDATIONS:
+      --recommendations      Generate conservative configuration advice (default: true).
+      --no-recommendations   Disable configuration advice generation.
 
 DIAGNOSTIC & TOOL OPTIONS:
       --probe-only           Probe available encoders and hardware acceleration,
@@ -317,6 +392,14 @@ async function main() {
   console.log(`Hardware decode accelerators: ${probedHwaccels.join(', ') || 'none'}`);
   console.log(`Quality analysis metrics:     ${qualityCapabilities.availableMetrics.join(', ') || 'none'}`);
 
+  // Stage 3: Detect Hardware Telemetry Provider
+  let telemetryProvider = null;
+  let telemetryCollector = null;
+  if (options.telemetry) {
+    telemetryProvider = detectTelemetryProvider({ ffmpegPath: tools.ffmpeg });
+  }
+  console.log(`Hardware telemetry:           ${telemetryProvider ? `${telemetryProvider.displayName} (${telemetryProvider.provider})` : 'Disabled'}`);
+
   if (options.probeOnly) {
     console.log(`\n--probe-only completed successfully.`);
     return;
@@ -424,8 +507,20 @@ async function main() {
     });
   }
 
+  // Initialize Stage 3 Hardware Telemetry Collector
+  if (options.telemetry && telemetryProvider) {
+    telemetryCollector = new TelemetryCollector({
+      provider: telemetryProvider.provider,
+      intervalMs: options.telemetryInterval,
+      device: telemetryProvider.device
+    });
+    telemetryCollector.start();
+    telemetryCollector.setPhase('idle_baseline');
+  }
+
   // Optional Encoder Warm-Up
   if (options.warmup && testMatrix.configurations.length > 0) {
+    telemetryCollector?.setPhase('warmup');
     console.log('\n[WARMUP] Executing 1-chunk encoder warm-up...');
     try {
       const warmupConfig = testMatrix.configurations[0];
@@ -445,6 +540,7 @@ async function main() {
   }
 
   // 8. Execute Benchmark Runs
+  telemetryCollector?.setPhase('encoding');
   const benchmarkResults = [];
   let concurrencySummary = null;
 
@@ -647,6 +743,39 @@ async function main() {
     }
   }
 
+  // Optional Stage 3 Stability / Soak Benchmark
+  let stabilitySummary = null;
+  if (options.stability && testMatrix.configurations.length > 0) {
+    telemetryCollector?.setPhase('encoding');
+    const primaryConfig = testMatrix.configurations[0];
+    console.log(`\n===========================================================`);
+    console.log(`   Executing Bounded Stability / Soak Test (${options.stabilityDuration}s target)`);
+    console.log(`   Target: ${primaryConfig.codec.toUpperCase()} (${primaryConfig.requestedEncoder}) @ ${primaryConfig.quality.label || primaryConfig.quality.id}`);
+    console.log(`===========================================================\n`);
+
+    const stabRes = await runStabilityBenchmark({
+      tools,
+      source: sourceInfo,
+      testConfig: primaryConfig,
+      targetDurationSec: options.stabilityDuration,
+      outputDir,
+      startOffset,
+      hardwareDecode: benchmarkConfig.transcoding.hardwareDecode,
+      cpuFallback: benchmarkConfig.transcoding.cpuFallback,
+      probedEncoders,
+      telemetryCollector,
+      signal: abortController.signal,
+      onProgress: p => {
+        process.stdout.write(`   Chunk ${p.chunkIndex + 1} (${p.elapsedSec.toFixed(1)}s/${options.stabilityDuration}s): latency ${p.chunkLatencySec.toFixed(2)}s | speed ${p.realTimeSpeed.toFixed(2)}x\r`);
+      }
+    });
+    process.stdout.write('\n');
+    stabilitySummary = stabRes.stability;
+    console.log(`[STABILITY] Completed ${stabilitySummary.chunksCompleted} chunks in ${stabilitySummary.testedDurationSeconds}s`);
+    console.log(`[STABILITY] Trend: ${stabilitySummary.throughputChangePercent > 0 ? '+' : ''}${stabilitySummary.throughputChangePercent}% throughput change | P95 latency change: ${stabilitySummary.latencyChangePercent > 0 ? '+' : ''}${stabilitySummary.latencyChangePercent}%`);
+    console.log(`[STABILITY] Assessment: ${stabilitySummary.degradationSummary}\n`);
+  }
+
   // Extract representative screenshots from all successful outputs (single-stream, concurrent, capacity)
   for (const result of benchmarkResults) {
     if (result.status === 'pass' && result.output?.assembledFile) {
@@ -673,6 +802,7 @@ async function main() {
 
   // 9. Objective Quality Metrics Analysis (Stage 2)
   if (options.qualityMetrics) {
+    telemetryCollector?.setPhase('quality_analysis');
     const selectedMetricsList = Array.isArray(options.qualityMetrics)
       ? options.qualityMetrics
       : ['vmaf', 'ssim', 'psnr', 'cambi'];
@@ -691,6 +821,8 @@ async function main() {
       process.stdout.write(`Analyzing ${r.codec.toUpperCase()} (${r.actualEncoder}) @ ${r.quality?.label || r.quality?.id}... `);
 
       const qResult = await runQualityAnalysis(tools.ffmpeg, {
+        ffprobePath: tools.ffprobe,
+        ffmpegPath: tools.ffmpeg,
         source: sourceInfo,
         encodedFilePath: assembledFullPath,
         startOffset,
@@ -704,18 +836,28 @@ async function main() {
 
       r.qualityMetrics = qResult;
 
+      const vmafStr = qResult.vmaf?.mean ? `VMAF ${qResult.vmaf.mean} (p1: ${qResult.vmaf.p1}, min: ${qResult.vmaf.min})` : '';
+      const ssimStr = qResult.ssim?.mean ? `SSIM ${qResult.ssim.mean}` : '';
+      const psnrStr = qResult.psnr?.mean ? `PSNR ${qResult.psnr.mean} dB` : '';
+      const cambiStr = qResult.cambi?.mean ? `CAMBI ${qResult.cambi.mean}` : '';
+      const unavailStr = qResult.unavailableMetrics?.length
+        ? `(${qResult.unavailableMetrics.map(u => `${u.metric.toUpperCase()} unavailable`).join(', ')})`
+        : '';
+      const parts = [vmafStr, ssimStr, psnrStr, cambiStr, unavailStr].filter(Boolean);
+
       if (qResult.available && qResult.status === 'pass') {
-        const vmafStr = qResult.vmaf?.mean ? `VMAF ${qResult.vmaf.mean} (p1: ${qResult.vmaf.p1}, min: ${qResult.vmaf.min})` : '';
-        const ssimStr = qResult.ssim?.mean ? `SSIM ${qResult.ssim.mean}` : '';
-        const psnrStr = qResult.psnr?.mean ? `PSNR ${qResult.psnr.mean} dB` : '';
-        const cambiStr = qResult.cambi?.mean ? `CAMBI ${qResult.cambi.mean}` : '';
-        const parts = [vmafStr, ssimStr, psnrStr, cambiStr].filter(Boolean);
         console.log(`[PASS] ${parts.join(' | ')}`);
+      } else if (qResult.status === 'unverified') {
+        console.log(`[UNVERIFIED] ${parts.join(' | ')} (${qResult.reason || 'Temporal alignment unverified'})`);
       } else {
         console.log(`[${qResult.status ? qResult.status.toUpperCase() : 'SKIPPED'}] ${qResult.reason || 'Not evaluated'}`);
       }
     }
   }
+
+  // Stop telemetry and compute final summary
+  telemetryCollector?.stop();
+  const telemetrySummary = telemetryCollector ? telemetryCollector.getSummary() : null;
 
   // Summary counts
   const passedCount = benchmarkResults.filter(r => r.status === 'pass').length;
@@ -723,14 +865,78 @@ async function main() {
   const skippedCount = benchmarkResults.filter(r => r.status === 'skipped').length;
   console.log(`\nBenchmark Summary: ${benchmarkResults.length} total | ${passedCount} passed | ${failedCount} failed | ${skippedCount} skipped\n`);
 
-  // 10. Generate Reports
+  // 10. Historical Comparison & Recommendations (Stage 3)
+  let historyComparison = null;
+  const historyDir = resolveHistoryDir(options.historyDir);
+  if (options.compareWith) {
+    let baseReport = null;
+    const directPath = path.resolve(process.cwd(), options.compareWith);
+    if (fs.existsSync(directPath)) {
+      try {
+        baseReport = JSON.parse(fs.readFileSync(directPath, 'utf8'));
+      } catch (err) {
+        console.warn(`[WARN] Could not parse baseline comparison file "${directPath}": ${err.message}`);
+      }
+    } else {
+      const idx = loadHistoryIndex(historyDir);
+      const found = idx.runs.find(r => r.runId === options.compareWith);
+      if (found) {
+        const foundPath = path.join(historyDir, found.recordFile);
+        if (fs.existsSync(foundPath)) {
+          try {
+            baseReport = JSON.parse(fs.readFileSync(foundPath, 'utf8'));
+          } catch (err) {
+            console.warn(`[WARN] Could not parse history baseline file "${foundPath}": ${err.message}`);
+          }
+        }
+      }
+    }
+
+    if (baseReport) {
+      historyComparison = compareRuns(baseReport, {
+        results: benchmarkResults,
+        source: sourceInfo,
+        sampleDuration,
+        startOffset,
+        environment: envInfo,
+        tools
+      });
+      console.log(`\nHistorical Comparison against ${options.compareWith}:`);
+      console.log(`  Matched configurations:  ${historyComparison.matchedComparisons.length}`);
+      if (historyComparison.partiallyMatchedComparisons.length) {
+        console.log(`  Partially matched:       ${historyComparison.partiallyMatchedComparisons.length} (differing conditions)`);
+      }
+    } else {
+      console.warn(`[WARN] Baseline comparison target not found: ${options.compareWith}`);
+    }
+  }
+
+  let recommendations = null;
+  if (options.recommendations) {
+    recommendations = generateConfigurationRecommendations({
+      benchmarkVersion: 'Stage 3',
+      results: benchmarkResults,
+      concurrencySummary,
+      stabilitySummary,
+      telemetrySummary
+    }, benchmarkConfig);
+
+    if (recommendations.recommendations?.length > 0) {
+      console.log(`\nConservative Configuration Advice:`);
+      for (const rec of recommendations.recommendations) {
+        console.log(`  - ${rec.setting}: ${JSON.stringify(rec.recommendedValue)} (${rec.reason})`);
+      }
+    }
+  }
+
+  // 11. Generate Reports
   console.log(`===========================================================`);
   console.log(`   Generating Benchmark Reports (JSON, CSV, HTML)`);
   console.log(`===========================================================\n`);
 
   const benchmarkPayload = {
-    schemaVersion: '2.0.0',
-    benchmarkVersion: 'Stage 2',
+    schemaVersion: '3.0.0',
+    benchmarkVersion: 'Stage 3',
     configProfile: benchmarkConfig.profileName,
     sampleDuration,
     startOffset,
@@ -740,7 +946,11 @@ async function main() {
       concurrency: options.concurrency,
       capacityScan: options.capacityScan,
       maxConcurrency: options.maxConcurrency,
-      qualityMetrics: Boolean(options.qualityMetrics)
+      qualityMetrics: Boolean(options.qualityMetrics),
+      telemetry: options.telemetry,
+      stability: options.stability,
+      stabilityDuration: options.stabilityDuration,
+      saveHistory: options.saveHistory
     },
     tools: {
       ffmpeg: tools.ffmpeg,
@@ -760,6 +970,10 @@ async function main() {
     },
     probedEncoders,
     concurrencySummary,
+    telemetry: telemetrySummary,
+    stability: stabilitySummary,
+    historyComparison,
+    recommendations,
     screenshots,
     results: benchmarkResults
   };
@@ -775,6 +989,11 @@ async function main() {
   console.log(`[OK] results.json generated: ${jsonPath}`);
   console.log(`[OK] results.csv  generated: ${csvPath}`);
   console.log(`[OK] report.html  generated: ${htmlPath}`);
+
+  if (options.saveHistory) {
+    const saveRec = saveRunToHistory(benchmarkPayload, historyDir);
+    console.log(`[OK] Saved run to benchmark history (${saveRec.runId}): ${path.join(historyDir, `${saveRec.runId}.json`)}`);
+  }
 
   console.log(`\nBenchmark run complete! View the interactive report by opening:\n  file:///${htmlPath.replace(/\\/g, '/')}\n`);
 }

@@ -33,6 +33,21 @@ const {
   generateCsvReport,
   generateHtmlReport
 } = require('../scripts/benchmark/reporter');
+const {
+  TelemetryCollector,
+  detectTelemetryProvider
+} = require('../scripts/benchmark/telemetry');
+const {
+  deriveSourceFingerprint,
+  saveRunToHistory,
+  loadHistoryIndex,
+  importHistoricalReport,
+  deleteRunFromHistory,
+  compareRuns
+} = require('../scripts/benchmark/history');
+const {
+  generateConfigurationRecommendations
+} = require('../scripts/benchmark/recommendations');
 
 test('benchmark configuration loader discovers fallback and sanitizes secrets', () => {
   const configFile = resolveConfigFile();
@@ -814,7 +829,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     assert.ok(fs.existsSync(htmlPath), 'report.html must exist');
 
     const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    assert.equal(json.schemaVersion, '2.1.0');
+    assert.equal(json.schemaVersion, '3.0.0');
     assert.equal(json.benchmarkVersion, 'Stage 2');
     assert.equal(json.results.length, 2);
     assert.equal(json.results[0].qualityMetrics.vmaf.mean, 94.5);
@@ -828,7 +843,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     assert.match(lines[1], /94\.5,88,86\.2,0\.985,42\.5,0\.045/);
 
     const html = fs.readFileSync(htmlPath, 'utf8');
-    assert.match(html, /Stage 2: Performance, Sustainable Concurrency &amp; Objective Video Quality/);
+    assert.match(html, /Stage 3: Telemetry, Stability Trends, Historical Regressions &amp; Recommendations/);
     assert.match(html, /Sustainable Transcoding Capacity/);
     assert.match(html, /4 Streams/);
     assert.match(html, /Blind A\/B Subjective Quality Comparison/);
@@ -844,4 +859,439 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('buildQualityFilterChain handles partial metric availability cleanly without suppressing supported metrics', () => {
+  const source = { video: { width: 1920, height: 1080, fps: 30 }, hdr: { hdr: false } };
+  const target = { width: 1920, height: 1080 };
+
+  // 1. libvmaf available, but CAMBI unavailable: must compute VMAF, SSIM, PSNR and mark CAMBI unavailable
+  const capsNoCambi = {
+    libvmaf: true,
+    vmafFeatures: { cambi: false, psnr: true, float_ssim: true },
+    ssim: true,
+    psnr: true
+  };
+  const chain1 = buildQualityFilterChain(source, target, capsNoCambi, 'test.json', ['vmaf', 'ssim', 'psnr', 'cambi']);
+  assert.ok(chain1.supported, 'Should remain supported for VMAF/SSIM/PSNR');
+  assert.ok(chain1.usesLibvmaf);
+  assert.equal(chain1.activeMetrics.length, 3);
+  assert.ok(!chain1.activeMetrics.includes('cambi'));
+  assert.equal(chain1.unavailableMetrics.length, 1);
+  assert.equal(chain1.unavailableMetrics[0].metric, 'cambi');
+
+  // 2. libvmaf unavailable: must fall back to standalone SSIM and PSNR
+  const capsNoVmaf = {
+    libvmaf: false,
+    ssim: true,
+    psnr: true
+  };
+  const chain2 = buildQualityFilterChain(source, target, capsNoVmaf, 'test.json', ['vmaf', 'ssim', 'psnr', 'cambi']);
+  assert.ok(chain2.supported, 'Should remain supported for standalone SSIM/PSNR');
+  assert.ok(!chain2.usesLibvmaf);
+  assert.deepEqual(chain2.activeMetrics, ['ssim', 'psnr']);
+  assert.equal(chain2.unavailableMetrics.length, 2);
+  assert.ok(chain2.unavailableMetrics.some(u => u.metric === 'vmaf'));
+  assert.ok(chain2.unavailableMetrics.some(u => u.metric === 'cambi'));
+  assert.ok(chain2.filterGraph.includes('split=2'));
+
+  // 3. All selected metrics unavailable: returns supported: false with individual reasons
+  const capsNone = { libvmaf: false, ssim: false, psnr: false };
+  const chain3 = buildQualityFilterChain(source, target, capsNone, 'test.json', ['vmaf', 'cambi']);
+  assert.equal(chain3.supported, false);
+  assert.equal(chain3.unavailableMetrics.length, 2);
+});
+
+test('validateTemporalAlignment rejects deliberately content-shifted encode despite matching duration and frame counts', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-content-shift-'));
+  const cameraSample = path.join(__dirname, 'fixtures', 'camera-sample.mp4');
+
+  if (!fs.existsSync(cameraSample)) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return; // Skip if fixture not generated
+  }
+
+  try {
+    const cp = require('child_process');
+    // Encode segment A: from startOffset 0.0s for 0.8s
+    const fileA = path.join(tmpDir, 'encode-a.webm');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-ss', '0.0', '-t', '0.8',
+      '-i', cameraSample,
+      '-c:v', 'libvpx',
+      fileA
+    ], { windowsHide: true });
+
+    // Encode segment B: from startOffset 1.0s for 0.8s (content shifted by 1 second)
+    const fileB = path.join(tmpDir, 'encode-b.webm');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-ss', '1.0', '-t', '0.8',
+      '-i', cameraSample,
+      '-c:v', 'libvpx',
+      fileB
+    ], { windowsHide: true });
+
+    // 1. Matching validation: segment A compared against source at startOffset 0.0
+    const resMatching = validateTemporalAlignment('ffprobe', cameraSample, fileA, {
+      startOffset: 0.0,
+      sampleDuration: 0.8,
+      fps: 24,
+      ffmpegPath: 'ffmpeg'
+    });
+    assert.equal(resMatching.status, 'verified', 'Matching segment must be verified');
+
+    // 2. Deliberately shifted comparison: segment B compared against source at startOffset 0.0
+    // Segment B has 0.8s duration and starts at PTS 0, but content is from 1.0s!
+    const resShifted = validateTemporalAlignment('ffprobe', cameraSample, fileB, {
+      startOffset: 0.0,
+      sampleDuration: 0.8,
+      fps: 24,
+      ffmpegPath: 'ffmpeg'
+    });
+    assert.equal(resShifted.status, 'misaligned', 'Content-shifted encode must be flagged misaligned');
+    assert.match(resShifted.reason, /Content correspondence check failed/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('validateTemporalAlignment verifies exact source interval with B-frames and non-keyframe start offset', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-nonkey-'));
+  const cameraSample = path.join(__dirname, 'fixtures', 'camera-sample.mp4');
+
+  if (!fs.existsSync(cameraSample)) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return;
+  }
+
+  try {
+    const cp = require('child_process');
+    // Start at non-keyframe offset 0.5s in 24fps video with B-frames for 1.0s
+    const matchingFile = path.join(tmpDir, 'nonkey-encode.webm');
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-ss', '0.5', '-t', '1.0',
+      '-i', cameraSample,
+      '-c:v', 'libvpx',
+      matchingFile
+    ], { windowsHide: true });
+
+    const res = validateTemporalAlignment('ffprobe', cameraSample, matchingFile, {
+      startOffset: 0.5,
+      sampleDuration: 1.0,
+      fps: 24,
+      ffmpegPath: 'ffmpeg'
+    });
+
+    assert.equal(res.status, 'verified', 'Non-keyframe start offset on B-frame clip must be verified');
+    assert.ok(res.encodedFirstPts <= 0.08);
+    assert.ok(Math.abs(res.encodedDuration - 1.0) <= 0.25);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding metrics, and detects thermal climb', () => {
+  const collector = new TelemetryCollector({ provider: 'system', intervalMs: 1000 });
+  assert.equal(collector.phase, 'idle_baseline');
+
+  // Push sample into idle_baseline
+  collector.recordSample({
+    gpuUtilization: 5,
+    encoderUtilization: 0,
+    temperatureC: 42,
+    powerWatts: 30,
+    throttling: false,
+    throttleReasons: []
+  });
+
+  // Switch to warmup
+  collector.setPhase('warmup');
+  collector.recordSample({
+    gpuUtilization: 40,
+    encoderUtilization: 35,
+    temperatureC: 46,
+    powerWatts: 60,
+    throttling: false,
+    throttleReasons: []
+  });
+
+  // Switch to encoding (measurements must isolate to this phase)
+  collector.setPhase('encoding');
+  collector.recordSample({
+    gpuUtilization: 75,
+    encoderUtilization: 65,
+    temperatureC: 50,
+    powerWatts: 120,
+    throttling: false,
+    throttleReasons: []
+  });
+  collector.recordSample({
+    gpuUtilization: 85,
+    encoderUtilization: 75,
+    temperatureC: 56,
+    powerWatts: 140,
+    throttling: true,
+    throttleReasons: ['thermal_slowdown']
+  });
+
+  // Switch to quality analysis (should NOT distort encoding phase thermal climb or utilization)
+  collector.setPhase('quality_analysis');
+  collector.recordSample({
+    gpuUtilization: 10,
+    encoderUtilization: 0,
+    temperatureC: 68, // higher temp during CPU quality analysis
+    powerWatts: 50,
+    throttling: false,
+    throttleReasons: []
+  });
+
+  const summary = collector.getSummary();
+  assert.ok(summary.encoding, 'Must have encoding phase summary');
+  assert.equal(summary.encoding.sampleCount, 2, 'Encoding phase must contain exactly 2 samples');
+  assert.equal(summary.encoding.metrics.encoderUtilization.mean, 70);
+  assert.equal(summary.encoding.metrics.temperatureC.min, 50);
+  assert.equal(summary.encoding.metrics.temperatureC.max, 56);
+  assert.equal(summary.encoding.thermalClimbC, 6, 'Thermal climb in encoding phase must be 56 - 50 = 6C');
+  assert.equal(summary.encoding.throttlingDetected, true, 'Throttling must be detected');
+  assert.deepEqual(summary.encoding.activeThrottleReasons, ['thermal_slowdown']);
+
+  // Quality analysis phase must be isolated
+  assert.ok(summary.qualityAnalysis, 'Must have quality_analysis phase summary');
+  assert.equal(summary.qualityAnalysis.sampleCount, 1);
+  assert.equal(summary.qualityAnalysis.metrics.temperatureC.mean, 68);
+});
+
+test('detectTelemetryProvider probes host capabilities returning standard provider schema', () => {
+  const provider = detectTelemetryProvider();
+  assert.ok(provider, 'Provider must not be null');
+  assert.ok(['nvidia-smi', 'windows-pdh', 'system'].includes(provider.provider));
+  assert.ok(typeof provider.displayName === 'string' && provider.displayName.length > 0);
+  assert.equal(provider.available, true);
+});
+
+test('history management derives fingerprints, saves runs, updates index, and safely deletes', () => {
+  const tmpHistoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-history-'));
+
+  try {
+    const mockSource = {
+      fileName: 'test-source.mkv',
+      durationSeconds: 120,
+      video: { resolution: '1920x1080', fps: 24, codec: 'hevc' }
+    };
+    const fingerprint = deriveSourceFingerprint(mockSource);
+    assert.ok(fingerprint, 'Fingerprint must be generated');
+    assert.equal(fingerprint.length, 32, 'Fingerprint must be 32-character hex string');
+    assert.equal(fingerprint, deriveSourceFingerprint(mockSource), 'Fingerprint must be deterministic');
+
+    const mockPayload = {
+      benchmarkVersion: 'Stage 3',
+      source: mockSource,
+      sampleDuration: 60,
+      startOffset: 0,
+      environment: { gpu: 'Test GPU RTX', cpu: 'Test CPU' },
+      concurrencySummary: null,
+      results: [
+        {
+          configId: 'av1-1080p8-chunks',
+          codec: 'av1',
+          requestedEncoder: 'nvenc',
+          actualEncoder: 'nvenc',
+          quality: { id: '1080p8', label: '1080p 8Mbps', width: 1920, height: 1080, bitrate: 8 },
+          mode: 'chunks',
+          status: 'pass',
+          concurrency: 1,
+          performance: {
+            speedMultiplier: 2.45,
+            effectiveFps: 58.8,
+            totalEncodingTimeSec: 24.5,
+            firstChunkDurationSec: 2.1,
+            p95ChunkSec: 2.3,
+            deadlineMisses: 0
+          }
+        }
+      ]
+    };
+
+    // 1. Save run to history
+    const savedRecord = saveRunToHistory(mockPayload, tmpHistoryDir);
+    assert.ok(savedRecord.runId, 'Must generate runId');
+    assert.equal(savedRecord.sourceFingerprint, fingerprint);
+    assert.equal(savedRecord.results[0].speedRatio, 2.45);
+
+    // 2. Load history index
+    const index = loadHistoryIndex(tmpHistoryDir);
+    assert.equal(index.schemaVersion, '3.0.0');
+    assert.equal(index.runs.length, 1);
+    assert.equal(index.runs[0].runId, savedRecord.runId);
+
+    // 3. Delete run from history
+    deleteRunFromHistory(savedRecord.runId, tmpHistoryDir);
+    const indexAfter = loadHistoryIndex(tmpHistoryDir);
+    assert.equal(indexAfter.runs.length, 0, 'Index must be empty after deletion');
+    assert.ok(!fs.existsSync(path.join(tmpHistoryDir, `${savedRecord.runId}.json`)), 'Record file must be deleted');
+  } finally {
+    fs.rmSync(tmpHistoryDir, { recursive: true, force: true });
+  }
+});
+
+test('compareRuns produces matched regression/improvement classifications and flags differing conditions', () => {
+  const commonSource = { fileName: 'clip.mp4', durationSeconds: 60, video: { resolution: '1920x1080', fps: 30, codec: 'h264' } };
+  const sourceFp = deriveSourceFingerprint(commonSource);
+
+  const baselineRun = {
+    runId: 'base-01',
+    timestamp: '2026-11-01T00:00:00Z',
+    sourceFingerprint: sourceFp,
+    sampleDuration: 60,
+    startOffset: 0,
+    environment: { gpu: 'Test GPU', cpu: 'Test CPU' },
+    results: [
+      {
+        configId: 'av1-1080p-nvenc',
+        codec: 'av1',
+        qualityId: '1080p',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 2.0,
+        p95ChunkLatencySeconds: 2.5,
+        qualityMetrics: { vmaf: 92.0 }
+      },
+      {
+        configId: 'vp9-720p-nvenc',
+        codec: 'vp9',
+        qualityId: '720p',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.0,
+        p95ChunkLatencySeconds: 1.8,
+        qualityMetrics: { vmaf: 88.0 }
+      }
+    ]
+  };
+
+  const currentRun = {
+    runId: 'curr-02',
+    timestamp: '2026-11-09T00:00:00Z',
+    sourceFingerprint: sourceFp,
+    sampleDuration: 60,
+    startOffset: 0,
+    environment: { gpu: 'Test GPU', cpu: 'Test CPU' },
+    results: [
+      // 1. Matched regression: 2.0x -> 1.6x (-20%)
+      {
+        configId: 'av1-1080p-nvenc',
+        codec: 'av1',
+        qualityId: '1080p',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 1.6,
+        p95ChunkLatencySeconds: 3.1,
+        qualityMetrics: { vmaf: 91.5 }
+      },
+      // 2. Matched improvement: 3.0x -> 3.6x (+20%)
+      {
+        configId: 'vp9-720p-nvenc',
+        codec: 'vp9',
+        qualityId: '720p',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 1,
+        speedRatio: 3.6,
+        p95ChunkLatencySeconds: 1.5,
+        qualityMetrics: { vmaf: 88.5 }
+      },
+      // 3. Different concurrency -> partially matched
+      {
+        configId: 'vp9-720p-nvenc-c4',
+        codec: 'vp9',
+        qualityId: '720p',
+        requestedEncoder: 'nvenc',
+        mode: 'chunks',
+        concurrency: 4,
+        speedRatio: 5.2,
+        p95ChunkLatencySeconds: 3.2
+      }
+    ]
+  };
+
+  const comp = compareRuns(baselineRun, currentRun);
+  assert.equal(comp.matchedComparisons.length, 2);
+
+  const regMatch = comp.matchedComparisons.find(m => m.codec === 'av1');
+  assert.ok(regMatch);
+  assert.equal(regMatch.classification, 'regression');
+  assert.equal(regMatch.speedDeltaPercent, -20);
+  assert.equal(regMatch.vmafDelta, -0.5);
+
+  const impMatch = comp.matchedComparisons.find(m => m.codec === 'vp9');
+  assert.ok(impMatch);
+  assert.equal(impMatch.classification, 'improvement');
+  assert.equal(impMatch.speedDeltaPercent, 20);
+
+  assert.equal(comp.partiallyMatchedComparisons.length, 1);
+  assert.ok(comp.partiallyMatchedComparisons[0].differingConditions.some(c => c.includes('concurrency')));
+});
+
+test('generateConfigurationRecommendations produces conservative advice adhering to server/config.js schema', () => {
+  const currentConfig = {
+    transcoding: {
+      encoder: 'auto',
+      maxJobs: 2,
+      outputs: ['plex'],
+      hardwareDecode: true,
+      cpuFallback: true
+    }
+  };
+
+  const benchmarkPayload = {
+    benchmarkVersion: 'Stage 3',
+    results: [
+      {
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8', label: '1080p 8Mbps' },
+        performance: { speedMultiplier: 2.2, effectiveFps: 66.0, deadlineMisses: 0 },
+        fallbackEvents: []
+      }
+    ],
+    concurrencySummary: {
+      highestSustainableConcurrency: 4,
+      totalTrials: 4,
+      passedTrials: 4
+    }
+  };
+
+  const advice = generateConfigurationRecommendations(benchmarkPayload, currentConfig);
+  assert.ok(advice.recommendations.length >= 2);
+
+  // 1. Encoder recommended
+  const encRec = advice.recommendations.find(r => r.setting === 'transcoding.encoder');
+  assert.ok(encRec);
+  assert.equal(encRec.recommendedValue, 'nvenc');
+  assert.equal(encRec.confidence, 'high');
+
+  // 2. Max jobs recommended with 1-job conservative headroom (4 tested -> 3 recommended)
+  const jobRec = advice.recommendations.find(r => r.setting === 'transcoding.max_jobs');
+  assert.ok(jobRec);
+  assert.equal(jobRec.recommendedValue, 3);
+
+  // 3. Outputs recommended (AV1 added)
+  const outRec = advice.recommendations.find(r => r.setting === 'transcoding.outputs');
+  assert.ok(outRec);
+  assert.ok(outRec.recommendedValue.includes('av1'));
+
+  // 4. YAML snippet valid
+  assert.ok(advice.yamlSnippet);
+  assert.match(advice.yamlSnippet, /encoder: 'nvenc'/);
+  assert.match(advice.yamlSnippet, /max_jobs: 3/);
+  assert.match(advice.yamlSnippet, /- 'av1'/);
+  assert.ok(advice.operatorNotice.includes('never automatically alters'));
 });

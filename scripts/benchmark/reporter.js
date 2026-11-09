@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = '2.1.0';
+const SCHEMA_VERSION = '3.0.0';
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -146,6 +146,12 @@ function generateCsvReport(benchmarkData, outputPath) {
     'SSIM',
     'PSNR_dB',
     'CAMBI',
+    'Avg_GPU_Util',
+    'Avg_Enc_Util',
+    'Avg_Temp_C',
+    'Avg_Power_W',
+    'Thermal_Climb_C',
+    'Throttling',
     'FallbackEvents',
     'Errors'
   ];
@@ -155,6 +161,7 @@ function generateCsvReport(benchmarkData, outputPath) {
     const q = r.quality || {};
     const val = r.validation || {};
     const qm = r.qualityMetrics || {};
+    const telem = r.telemetry?.encoding?.metrics || {};
     const fallbacks = (r.fallbackEvents || (r.fallback ? [r.fallback] : []))
       .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
       .join('; ');
@@ -210,6 +217,12 @@ function generateCsvReport(benchmarkData, outputPath) {
       qm.ssim?.mean || '',
       qm.psnr?.mean || '',
       qm.cambi?.mean || '',
+      telem.gpuUtilization?.mean !== undefined ? telem.gpuUtilization.mean : '',
+      telem.encoderUtilization?.mean !== undefined ? telem.encoderUtilization.mean : '',
+      telem.temperatureC?.mean !== undefined ? telem.temperatureC.mean : '',
+      telem.powerWatts?.mean !== undefined ? telem.powerWatts.mean : '',
+      r.telemetry?.encoding?.thermalClimbC !== undefined ? r.telemetry.encoding.thermalClimbC : '',
+      r.telemetry?.encoding?.throttlingDetected ? (r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Yes') : 'None',
       fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None',
       err ? `"${err.replace(/"/g, '""')}"` : ''
     ].join(',');
@@ -414,6 +427,78 @@ function buildTimelineSvg(timeline, worstIntervals = []) {
       ${intervalSvg}
       <polyline points="${points}" fill="none" stroke="#FF9954" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <text x="${width - padR}" y="${padT + plotH + 20}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">Time (${maxTime.toFixed(1)}s) &rarr;</text>
+    </svg>
+  `;
+}
+
+/**
+ * Builds SVG Hardware Telemetry Timeline Chart
+ */
+function buildTelemetryTimelineSvg(telemetryTimeline) {
+  if (!telemetryTimeline || !telemetryTimeline.length) return '';
+  const width = 850;
+  const height = 240;
+  const padL = 50;
+  const padR = 140;
+  const padT = 30;
+  const padB = 40;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+
+  const validSamples = telemetryTimeline.filter(s => s.elapsedSec !== undefined);
+  if (validSamples.length < 2) return '';
+
+  const maxTime = Math.max(1, validSamples[validSamples.length - 1].elapsedSec || 1);
+  const getX = t => padL + Math.round((t / maxTime) * plotW);
+
+  const powerVals = validSamples.map(s => s.metrics?.powerWatts).filter(v => typeof v === 'number');
+  const maxPower = Math.max(100, Math.ceil(Math.max(100, ...powerVals) / 50) * 50);
+
+  const encPoints = [];
+  const tempPoints = [];
+  const powerPoints = [];
+
+  for (const s of validSamples) {
+    const x = getX(s.elapsedSec);
+    if (typeof s.metrics?.encoderUtilization === 'number') {
+      const y = padT + plotH - Math.round((Math.min(100, Math.max(0, s.metrics.encoderUtilization)) / 100) * plotH);
+      encPoints.push(`${x},${y}`);
+    }
+    if (typeof s.metrics?.temperatureC === 'number') {
+      const y = padT + plotH - Math.round((Math.min(100, Math.max(0, s.metrics.temperatureC)) / 100) * plotH);
+      tempPoints.push(`${x},${y}`);
+    }
+    if (typeof s.metrics?.powerWatts === 'number') {
+      const y = padT + plotH - Math.round((Math.min(maxPower, Math.max(0, s.metrics.powerWatts)) / maxPower) * plotH);
+      powerPoints.push(`${x},${y}`);
+    }
+  }
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" xmlns="http://www.w3.org/2000/svg" style="max-width:${width}px;">
+      <!-- Grid & Axis -->
+      <line x1="${padL}" y1="${padT + plotH}" x2="${width - padR}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#393F4D" stroke-width="1"/>
+      <text x="${padL - 8}" y="${padT + 10}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">100% / 100°C</text>
+      <text x="${padL - 8}" y="${padT + plotH / 2}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">50% / 50°C</text>
+      <text x="${padL - 8}" y="${padT + plotH}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">0</text>
+
+      <!-- Plot lines -->
+      ${encPoints.length ? `<polyline points="${encPoints.join(' ')}" fill="none" stroke="#44C78A" stroke-width="2" stroke-linecap="round"/>` : ''}
+      ${tempPoints.length ? `<polyline points="${tempPoints.join(' ')}" fill="none" stroke="#FF9954" stroke-width="2" stroke-linecap="round"/>` : ''}
+      ${powerPoints.length ? `<polyline points="${powerPoints.join(' ')}" fill="none" stroke="#FF7197" stroke-width="1.5" stroke-dasharray="3,3" stroke-linecap="round"/>` : ''}
+
+      <!-- Legend -->
+      <g transform="translate(${width - padR + 15}, ${padT + 10})">
+        <line x1="0" y1="0" x2="16" y2="0" stroke="#44C78A" stroke-width="2"/>
+        <text x="22" y="4" fill="#F8F7F4" font-size="11" font-family="Inter,sans-serif">Encoder Util %</text>
+        <line x1="0" y1="20" x2="16" y2="20" stroke="#FF9954" stroke-width="2"/>
+        <text x="22" y="24" fill="#F8F7F4" font-size="11" font-family="Inter,sans-serif">Temp (°C)</text>
+        <line x1="0" y1="40" x2="16" y2="40" stroke="#FF7197" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <text x="22" y="44" fill="#F8F7F4" font-size="11" font-family="Inter,sans-serif">Power (${maxPower}W max)</text>
+      </g>
+
+      <text x="${width - padR}" y="${padT + plotH + 20}" text-anchor="end" fill="#AAB0BC" font-size="10" font-family="Inter,sans-serif">Elapsed Time (${maxTime.toFixed(1)}s) &rarr;</text>
     </svg>
   `;
 }
@@ -748,7 +833,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
   <header>
     <div>
       <h1>uburoom Transcoding Benchmark Report</h1>
-      <p style="margin-top:4px;">Stage 2: Performance, Sustainable Concurrency &amp; Objective Video Quality</p>
+      <p style="margin-top:4px;">Stage 3: Telemetry, Stability Trends, Historical Regressions &amp; Recommendations</p>
     </div>
     <div class="header-badges">
       <span class="badge stat-pass">${passedCount} Passed</span>
@@ -784,6 +869,180 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
   </section>
+
+  <!-- Hardware Telemetry Section -->
+  ${cleanData.telemetry ? `
+  <section class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2>Hardware Telemetry &amp; Resource Utilization</h2>
+      <span class="badge highlight">Provider: ${escapeHtml(cleanData.telemetry.provider)} (${escapeHtml(cleanData.telemetry.device)})</span>
+    </div>
+    <div class="grid-4" style="margin-bottom:16px;">
+      <div>
+        <div class="stat-label">Avg GPU Encoder Util</div>
+        <div class="stat-val" style="color:var(--success);">${cleanData.telemetry.encoding?.metrics?.encoderUtilization?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.encoderUtilization.mean}%` : 'N/A'}</div>
+      </div>
+      <div>
+        <div class="stat-label">Avg GPU Core Temp</div>
+        <div class="stat-val" style="color:var(--primary);">${cleanData.telemetry.encoding?.metrics?.temperatureC?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.temperatureC.mean}°C` : 'N/A'}</div>
+      </div>
+      <div>
+        <div class="stat-label">Thermal Climb (ΔT)</div>
+        <div class="stat-val" style="color:${(cleanData.telemetry.encoding?.thermalClimbC || 0) > 8 ? 'var(--warn)' : 'var(--text)'};">
+          ${cleanData.telemetry.encoding?.thermalClimbC !== undefined ? `+${cleanData.telemetry.encoding.thermalClimbC}°C` : '0°C'}
+        </div>
+      </div>
+      <div>
+        <div class="stat-label">Hardware Throttling</div>
+        <div class="stat-val" style="font-size:14px;color:${cleanData.telemetry.encoding?.throttlingDetected ? 'var(--error)' : 'var(--success)'};">
+          ${cleanData.telemetry.encoding?.throttlingDetected ? escapeHtml(cleanData.telemetry.encoding.activeThrottleReasons?.join(', ') || 'Active') : 'None'}
+        </div>
+      </div>
+    </div>
+    ${cleanData.telemetry.timeline?.length ? `
+      <div style="margin-top:16px;">
+        <div class="stat-label" style="margin-bottom:8px;">Real-Time Telemetry Timeline (Encoding Phase Isolated)</div>
+        ${buildTelemetryTimelineSvg(cleanData.telemetry.timeline)}
+      </div>
+    ` : ''}
+  </section>
+  ` : ''}
+
+  <!-- Stability & Soak Performance Section -->
+  ${cleanData.stability ? `
+  <section class="card" style="border-color: rgba(68,199,138,0.4); background: rgba(68,199,138,0.02);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2>Stability &amp; Soak Benchmark Trends</h2>
+      <span class="badge highlight">Duration: ${cleanData.stability.testedDurationSeconds}s (${cleanData.stability.chunksCompleted} chunks)</span>
+    </div>
+    <div class="grid-4" style="margin-bottom:16px;">
+      <div>
+        <div class="stat-label">Throughput Evolution (1st vs 2nd Half)</div>
+        <div class="stat-val" style="color:${cleanData.stability.throughputChangePercent < -10 ? 'var(--warn)' : 'var(--success)'};">
+          ${cleanData.stability.throughputChangePercent > 0 ? `+${cleanData.stability.throughputChangePercent}%` : `${cleanData.stability.throughputChangePercent}%`}
+        </div>
+      </div>
+      <div>
+        <div class="stat-label">P95 Chunk Latency Evolution</div>
+        <div class="stat-val">${cleanData.stability.latencyChangePercent > 0 ? `+${cleanData.stability.latencyChangePercent}%` : `${cleanData.stability.latencyChangePercent}%`}</div>
+      </div>
+      <div>
+        <div class="stat-label">First-Chunk Startup Penalty</div>
+        <div class="stat-val">${cleanData.stability.firstChunkLatencySeconds ? `${cleanData.stability.firstChunkLatencySeconds.toFixed(2)}s` : '-'}</div>
+      </div>
+      <div>
+        <div class="stat-label">Observed Thermal Rise</div>
+        <div class="stat-val">+${cleanData.stability.thermalClimbC}°C</div>
+      </div>
+    </div>
+    <div style="padding:12px;background:#14171F;border-radius:6px;border:1px solid var(--card-border);font-size:13px;line-height:1.5;">
+      <strong>Stability Assessment:</strong> ${escapeHtml(cleanData.stability.degradationSummary)}
+      <div style="margin-top:6px;color:var(--muted);font-size:12px;">${escapeHtml(cleanData.stability.notice)}</div>
+    </div>
+  </section>
+  ` : ''}
+
+  <!-- Historical Comparisons & Regression Tracking Section -->
+  ${cleanData.historyComparison && (cleanData.historyComparison.matchedComparisons?.length || cleanData.historyComparison.partiallyMatchedComparisons?.length) ? `
+  <section class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2>Historical Comparisons &amp; Regression Tracking</h2>
+      <span class="badge highlight">Baseline: ${escapeHtml(cleanData.historyComparison.baseRunId)}</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Configuration</th>
+            <th>Baseline Speed</th>
+            <th>Current Speed</th>
+            <th>Throughput Δ</th>
+            <th>P95 Latency Δ</th>
+            <th>VMAF Δ</th>
+            <th>Assessment</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(cleanData.historyComparison.matchedComparisons || []).map(m => {
+            const badgeClass = m.classification === 'regression' ? 'pill error' : m.classification === 'improvement' ? 'pill success' : 'pill';
+            const deltaColor = m.speedDeltaPercent > 0 ? 'var(--success)' : m.speedDeltaPercent < 0 ? 'var(--error)' : 'var(--muted)';
+            return `
+              <tr>
+                <td><strong>${escapeHtml(m.codec.toUpperCase())} (${escapeHtml(m.encoder)})</strong> ${escapeHtml(m.qualityLabel)}</td>
+                <td>${m.speedBase.toFixed(2)}x</td>
+                <td><strong>${m.speedTarget.toFixed(2)}x</strong></td>
+                <td style="color:${deltaColor};font-weight:600;">${m.speedDeltaPercent > 0 ? `+${m.speedDeltaPercent}%` : `${m.speedDeltaPercent}%`}</td>
+                <td>${m.p95DeltaPercent > 0 ? `+${m.p95DeltaPercent}%` : `${m.p95DeltaPercent}%`}</td>
+                <td>${m.vmafDelta !== null ? (m.vmafDelta > 0 ? `+${m.vmafDelta}` : `${m.vmafDelta}`) : '-'}</td>
+                <td><span class="${badgeClass}">${escapeHtml(m.classification.toUpperCase())}</span></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${cleanData.historyComparison.partiallyMatchedComparisons?.length ? `
+      <div style="margin-top:14px;font-size:12px;color:var(--muted);">
+        <strong>Note on Partially Matched Runs:</strong> ${cleanData.historyComparison.partiallyMatchedComparisons.length} configuration(s) were tested under differing conditions (${cleanData.historyComparison.partiallyMatchedComparisons.map(p => p.differingConditions.join(', ')).join('; ')}). These are strictly marked non-comparable and are not evaluated as performance regressions.
+      </div>
+    ` : ''}
+  </section>
+  ` : ''}
+
+  <!-- Evidence-Based Configuration Advice Section -->
+  ${cleanData.recommendations ? `
+  <section class="card" style="border-color: rgba(255,153,84,0.5); background: rgba(255,153,84,0.02);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2>Evidence-Based Configuration Advice</h2>
+      <span class="badge highlight">Read-Only Advisory</span>
+    </div>
+    <div style="margin-bottom:16px;padding:12px;background:#14171F;border-radius:6px;border:1px solid rgba(255,153,84,0.3);font-size:13px;color:var(--text);">
+      <strong>Operator Notice:</strong> ${escapeHtml(cleanData.recommendations.operatorNotice)}
+    </div>
+
+    ${cleanData.recommendations.recommendations?.length ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;margin-bottom:16px;">
+        ${cleanData.recommendations.recommendations.map(rec => `
+          <div style="background:#14171F;padding:16px;border-radius:8px;border:1px solid var(--card-border);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong style="color:var(--primary);font-size:14px;">${escapeHtml(rec.setting)}</strong>
+              <span class="pill ${rec.confidence === 'high' ? 'success' : 'warn'}">${escapeHtml(rec.confidence.toUpperCase())} CONFIDENCE</span>
+            </div>
+            <div style="display:flex;gap:12px;margin-bottom:10px;font-size:13px;">
+              <div>Current: <code style="color:var(--muted);">${escapeHtml(JSON.stringify(rec.currentValue))}</code></div>
+              <div>&rarr;</div>
+              <div>Recommended: <code style="color:var(--success);font-weight:600;">${escapeHtml(JSON.stringify(rec.recommendedValue))}</code></div>
+            </div>
+            <div style="font-size:13px;margin-bottom:6px;color:var(--text);">${escapeHtml(rec.reason)}</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px;"><strong>Expected Benefit:</strong> ${escapeHtml(rec.expectedBenefit)}</div>
+            <div style="font-size:11px;color:var(--muted);"><strong>Evidence:</strong> ${escapeHtml(rec.supportingEvidence)}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : `
+      <div style="padding:14px;color:var(--muted);font-size:13px;">No configuration changes recommended based on current benchmark observations. Current settings match verified hardware capabilities.</div>
+    `}
+
+    ${cleanData.recommendations.yamlSnippet ? `
+      <div style="margin-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div class="stat-label">Proposed config.yaml Snippet</div>
+          <button class="player-btn" onclick="copyYamlSnippet()">Copy YAML</button>
+        </div>
+        <pre id="yaml-snippet-block" style="background:#0F1218;padding:14px;border-radius:8px;border:1px solid var(--card-border);font-family:monospace;font-size:13px;color:#44C78A;overflow-x:auto;">${escapeHtml(cleanData.recommendations.yamlSnippet)}</pre>
+      </div>
+    ` : ''}
+
+    ${cleanData.recommendations.insufficientEvidence?.length ? `
+      <div style="margin-top:14px;padding:12px;background:#14171F;border-radius:6px;font-size:12px;color:var(--muted);">
+        <strong>Settings with Insufficient Evidence:</strong>
+        <ul style="margin:4px 0 0 16px;">
+          ${cleanData.recommendations.insufficientEvidence.map(ie => `<li><strong>${escapeHtml(ie.setting)}:</strong> ${escapeHtml(ie.reason)} <em>(Required: ${escapeHtml(ie.neededTests)})</em></li>`).join('')}
+        </ul>
+      </div>
+    ` : ''}
+  </section>
+  ` : ''}
 
   <!-- Sustainable Capacity Summary (if tested) -->
   ${concurrencySummary ? `
@@ -1593,6 +1852,23 @@ function generateHtmlReport(benchmarkData, outputPath) {
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  function copyYamlSnippet() {
+    const el = document.getElementById('yaml-snippet-block');
+    if (el) {
+      navigator.clipboard.writeText(el.textContent).then(() => {
+        alert('YAML configuration snippet copied to clipboard.');
+      }).catch(() => {
+        // Fallback for non-https/clipboard permission
+        const range = document.createRange();
+        range.selectNode(el);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        alert('YAML configuration snippet copied to clipboard.');
+      });
+    }
+  }
 </script>
 </body>
 </html>`;
@@ -1610,5 +1886,6 @@ module.exports = {
   buildSpeedChartSvg,
   buildChunkLatencySvg,
   buildQualityPerformanceSvg,
-  buildTimelineSvg
+  buildTimelineSvg,
+  buildTelemetryTimelineSvg
 };
