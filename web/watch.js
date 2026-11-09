@@ -494,14 +494,17 @@ setInterval(()=>void uploadDiagnostics(),30000);
 window.addEventListener('pagehide',()=>void uploadDiagnostics(true));
 $('copy-diagnostics').prepend(uburoomIcons.icon(document,'copy'));
 $('copy-diagnostics').addEventListener('click',async()=>{
+  const btn = $('copy-diagnostics');
   const text=JSON.stringify(diagnosticReport());
   try {
     await navigator.clipboard.writeText(text);
-    toasts.show('diagnostic-report',{title:'Report copied',hint:'Paste it in a message to the host.',symbol:'check',duration:4000});
+    if (globalThis.uburoomPopover) uburoomPopover.show(btn, { text: 'Report copied', state: 'success' });
+    else toasts.show('diagnostic-report',{title:'Report copied',hint:'Paste it in a message to the host.',symbol:'check',duration:4000});
   } catch {
     const url=URL.createObjectURL(new Blob([text+'\n'],{type:'application/json'})),link=document.createElement('a');
     link.href=url;link.download='uburoom-diagnostic-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    toasts.show('diagnostic-report',{type:'error',title:"Couldn't copy",hint:'Saved the report as a file instead.',symbol:'copy',duration:6000});
+    if (globalThis.uburoomPopover) uburoomPopover.show(btn, { text: 'Saved report as file', state: 'normal', symbol: 'copy' });
+    else toasts.show('diagnostic-report',{type:'error',title:"Couldn't copy",hint:'Saved the report as a file instead.',symbol:'copy',duration:6000});
   }
 });
 // The server checks each video for hosts. They read it in Player settings and get one
@@ -910,11 +913,11 @@ const library = uburoomLibrary.mount($('library-content'), {
   request:(path,signal) => api(path,undefined,{signal}),
   artwork: fetchArtwork,
   load:(item, options) => selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options),
-  addToQueue: async item => {
+  addToQueue: async (item, trigger) => {
     if (!selected || !state?.durable) return;
-    await queueUI.add(item);
+    await queueUI.add(item, trigger);
   },
-  addBulkToQueue: item => queueUI.bulk(item),
+  addBulkToQueue: (item, trigger) => queueUI.bulk(item, trigger),
   autoQueue: source => queueUI.openAuto(source),
   isAdmin:() => !!me?.adminMode,
   openCodecTester:() => {
@@ -2128,8 +2131,21 @@ async function shareInvite(invite = state?.invite, roomName = state?.roomName ||
     try { await navigator.share({ title:roomName, text:message, url:invite.url }); return; }
     catch (error) { if (error.name === 'AbortError') return; }
   }
-  try { await navigator.clipboard.writeText(invite.url); toasts.show('room-invite',{title:'Invite link copied',hint:'Code: ' + invite.code,symbol:'check',duration:4000}); }
-  catch { toasts.show('room-invite',{type:'error',title:"Couldn't copy the invite",hint:invite.url,symbol:'copy',duration:12000}); }
+  const anchor = $('room-share-copy') || $('room-share-url-input');
+  try {
+    await navigator.clipboard.writeText(invite.url);
+    if (globalThis.uburoomPopover && anchor && anchor.offsetParent !== null) {
+      uburoomPopover.show(anchor, { text: 'Invite link copied', state: 'success' });
+    } else {
+      toasts.show('room-invite',{title:'Invite link copied',hint:'Code: ' + invite.code,symbol:'check',duration:4000});
+    }
+  } catch {
+    if (globalThis.uburoomPopover && anchor && anchor.offsetParent !== null) {
+      uburoomPopover.show(anchor, { text: "Couldn't copy invite", state: 'error' });
+    } else {
+      toasts.show('room-invite',{type:'error',title:"Couldn't copy the invite",hint:invite.url,symbol:'copy',duration:12000});
+    }
+  }
 }
 $('room-share').addEventListener('click', () => void roomShare.open(selected));
 function renderTransport() {

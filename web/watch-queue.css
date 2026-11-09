@@ -54,8 +54,6 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-column-heading{margin:0;font-size:13px}
 .queue-history-heading{min-height:28px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .queue-empty{font-size:12px;line-height:1.6;padding:18px 12px;margin:0;color:var(--muted)}
-.queue-notice{margin:0;color:var(--accent-text);flex:1;min-width:min(100%,120px);overflow-wrap:anywhere}
-.queue-notice:empty{display:none}
 .queue-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:0}
 .queue-continuation{display:flex;align-items:center;gap:var(--watch-control-gap);flex-wrap:wrap;flex:1}
 #queue-auto-open{color:var(--muted)}
@@ -119,7 +117,7 @@ button.queue-title-link:hover{color:var(--accent-text);text-decoration:underline
 .queue-empty-title{margin:0;color:var(--muted);font-size:14px}
 .queue-empty-screen button{display:flex;align-items:center;gap:8px;min-height:44px}
 .queue-is-empty .queue-footer-actions{display:none}
-.queue-is-empty .queue-footer:has(.queue-notice:empty){display:none}
+.queue-is-empty .queue-footer{display:none}
 .queue-playback-state{margin-right:auto}
 @container queue (max-width:370px){#queue-center{max-width:40px;padding:0}#queue-center .watch-control-label{display:none}}
 

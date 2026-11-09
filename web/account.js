@@ -100,7 +100,6 @@ async function showAccount(){
     if(known){for(const provider of ['discord','plex']){const list=$('known-'+provider);list.replaceChildren();for(const account of known.accounts)for(const identity of account.identities.filter(i=>i.provider===provider)){const option=document.createElement('option');option.value=identity.subject;option.label=identity.name;list.append(option);}}}
     accountValue=value.account;
     $('account-display-name').value=accountNameDraft?.id===value.account.id?accountNameDraft.name:value.account.name;
-    $('account-name-status').textContent='';
     $('account-content').hidden=false;
   }catch(error){if(load===accountLoad&&$('account-dialog').open){accountError(error.message);$('account-retry').hidden=false;}}
   finally{if(load===accountLoad)$('account-loading').hidden=true;}
@@ -114,8 +113,8 @@ $('account-name-save').addEventListener('click',async()=>{
     me=await api('/api/watch/me');renderAccount();
     accountValue=me.account;
     if($('account-display-name').value===submittedName){accountNameDraft=undefined;$('account-display-name').value=me.name;}
-    $('account-name-status').textContent='Saved';
-  } catch(error){accountError(error.message);} finally{button.disabled=false;release();}
+    if(globalThis.uburoomPopover) uburoomPopover.show(button, { text: 'Saved', state: 'success' });
+  } catch(error){accountError(error.message); if(globalThis.uburoomPopover) uburoomPopover.show(button, { text: error.message, state: 'error' });} finally{button.disabled=false;release();}
 });
 accountButton.addEventListener('click',showAccount);
 $('account-retry').addEventListener('click',showAccount);

@@ -288,16 +288,17 @@
         if (b.disabled || !addToQueue) return;
         b.disabled = true;
         try {
-          await addToQueue(item);
+          await addToQueue(item, b);
           const span = b.querySelector('span');
           if (span) span.textContent = 'Added!';
-          note.textContent = 'Added ' + identity(item) + ' to queue.';
+          if (root.uburoomPopover) root.uburoomPopover.show(b, { text: 'Added to queue', state: 'success' });
           setTimeout(() => {
             if (span) span.textContent = 'Add to queue';
             b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
           }, 1500);
         } catch (error) {
-          signalError(error.message, () => b.click());
+          if (root.uburoomPopover) root.uburoomPopover.show(b, { text: error.message, state: 'error' });
+          else signalError(error.message, () => b.click());
           b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
         }
       });
@@ -308,7 +309,7 @@
       const b = button(parent, label, 'queue', 'library-queue-add library-play-now');
       b.dataset.queue = item.id;
       b.append(node('span', null, label));
-      b.onclick = () => { if (!b.disabled) void addBulkToQueue(item); };
+      b.onclick = () => { if (!b.disabled) void addBulkToQueue(item, b); };
       return b;
     }
     function autoButton(parent, scope, title) {

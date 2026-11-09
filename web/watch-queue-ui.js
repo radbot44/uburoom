@@ -122,8 +122,6 @@
     const emptyTitle = node('p', emptyScreen, '', 'queue-empty-title');
     const emptyBrowse = button(emptyScreen, 'Browse media', 'media', () => browseMedia()); node('span', emptyBrowse, 'Browse media');
     const footer = node('div', body, undefined, 'queue-footer');
-    const notice = node('p', footer, '', 'hint queue-notice'); notice.setAttribute('role', 'status');
-
 
     const continuation = node('div', header, undefined, 'queue-continuation queue-quick-controls watch-control-group');
     const autoplayLabel = node('label', continuation, undefined, 'watch-toggle-pill');
@@ -152,20 +150,33 @@
     autoToggle.addEventListener('change', async () => {
       if (autoPending) return;
       autoPending = true; autoToggle.disabled = true;
-      notice.textContent = 'Saving Auto-queue…';
+      root.uburoomPopover?.show(autoLabel, { text: 'Saving…', state: 'loading' });
       const targetAuto = autoToggle.checked ? (rememberedAuto || { mode: 'continue', scope: null, includeSpecials: false }) : { mode: 'off', scope: null, includeSpecials: false };
-      try { await mutate('auto', targetAuto); await changed(); }
-      catch (error) { notice.textContent = error.message; }
-      finally { autoPending = false; if (notice.textContent === 'Saving Auto-queue…') notice.textContent = 'Auto-queue saved.'; renderContinuation(); }
+      try {
+        await mutate('auto', targetAuto);
+        await changed();
+        root.uburoomPopover?.show(autoLabel, { text: 'Auto-queue saved.', state: 'success' });
+      } catch (error) {
+        root.uburoomPopover?.show(autoLabel, { text: error.message, state: 'error' });
+      } finally {
+        autoPending = false;
+        renderContinuation();
+      }
     });
 
     autoplayToggle.addEventListener('change', async () => {
       if (autoplayPending) return;
       autoplayPending = true; autoplayToggle.disabled = true;
-      notice.textContent = 'Saving Auto-play…';
-      try { await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } }); }
-      catch (error) { notice.textContent = error.message; }
-      finally { autoplayPending = false; if (notice.textContent === 'Saving Auto-play…') notice.textContent = 'Auto-play saved.'; renderContinuation(); }
+      root.uburoomPopover?.show(autoplayLabel, { text: 'Saving…', state: 'loading' });
+      try {
+        await execute({ action: 'media.autoplay.set', args: { enabled: autoplayToggle.checked } });
+        root.uburoomPopover?.show(autoplayLabel, { text: 'Auto-play saved.', state: 'success' });
+      } catch (error) {
+        root.uburoomPopover?.show(autoplayLabel, { text: error.message, state: 'error' });
+      } finally {
+        autoplayPending = false;
+        renderContinuation();
+      }
     });
 
     function renderContinuation() {
@@ -187,8 +198,9 @@
       autoLabel.classList.toggle('is-disabled', autoToggle.disabled);
       autoToggle.title = autoToggle.disabled ? (autoPending ? 'Saving Auto-queue…' : 'Queue editing is unavailable for your role.') : 'Auto-queue';
       autoLabel.title = autoToggle.title;
-      if (state?.autoplay?.error) notice.textContent = state.autoplay.error;
-      else if (lastAutoplayError && notice.textContent === lastAutoplayError) notice.textContent = '';
+      if (state?.autoplay?.error && state.autoplay.error !== lastAutoplayError) {
+        root.uburoomPopover?.show(autoplayLabel, { text: state.autoplay.error, state: 'error' });
+      }
       lastAutoplayError = state?.autoplay?.error || '';
     }
     setInterval(renderContinuation, 250);
@@ -220,7 +232,7 @@
     bulkSpecials.addEventListener('change',() => { bulkDirty = true; });
     popups.register(bulkDialog, {busy:() => bulkPending, dirty:() => bulkDirty});
 
-    async function bulk(item) {
+    async function bulk(item, trigger) {
       if (bulkDialog.open) return;
       const roomId = getState()?.id;
       if (!roomId) return;
@@ -233,7 +245,9 @@
         try {
           const result = await mutate('bulk', { type: item.type, mediaId: item.id, unfinished: bulkFilter.value === 'unfinished', includeSpecials: bulkSpecials.checked });
           bulkDialog.close('added');
-          notice.textContent = 'Episodes added to queue' + (Number.isInteger(result?.addedCount) ? ': ' + result.addedCount : '') + '.';
+          if (trigger && root.uburoomPopover) {
+            root.uburoomPopover.show(trigger, { text: 'Episodes added to queue' + (Number.isInteger(result?.addedCount) ? ': ' + result.addedCount : '') + '.', state: 'success' });
+          }
         } catch (error) { bulkStatus.textContent = error.message; }
         finally { bulkPending = false; bulkSubmit.disabled = bulkCancel.disabled = bulkFilter.disabled = bulkSpecials.disabled = false; }
       };
@@ -635,9 +649,9 @@
         progress.setAttribute('aria-label', 'Current video progress');
         const actions = node('div', nowPlayingBox, undefined, 'queue-entry-actions');
         node('span', actions, '', 'queue-card-caption queue-playback-state');
-        button(actions, 'Play', 'play', async () => {
+        const playBtn = button(actions, 'Play', 'play', async () => {
           try { await execute({ action: getState()?.state?.paused ? 'media.play' : 'media.pause' }); }
-          catch (error) { notice.textContent = error.message; }
+          catch (error) { root.uburoomPopover?.show(playBtn, { text: error.message, state: 'error' }); }
         }, !state?.mediaId || !state?.capabilities?.playPause, 'icon-button quiet queue-current-toggle');
         action(actions, 'Skip to next video', 'end', () => execute({ action: 'media.next' }), !state?.hasNext || !state?.capabilities?.chooseMedia, 'queue-current-skip');
       }
@@ -656,13 +670,15 @@
     }
 
     function action(parent, label, icon, callback, disabled, className = '') {
-      return button(parent, label, icon, async () => {
+      let btn;
+      btn = button(parent, label, icon, async () => {
         if (busy) return;
         busy = true;
         try { await callback(); }
-        catch (error) { notice.textContent = error.message; }
+        catch (error) { root.uburoomPopover?.show(btn, { text: error.message, state: 'error' }); }
         finally { busy = false; }
       }, disabled, 'icon-button quiet ' + className);
+      return btn;
     }
 
     function updateUpcomingTimes() {
@@ -743,7 +759,7 @@
             const page = await request('/api/watch/rooms/' + roomId + '/queue?limit=100&offset=' + items.length);
             if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
             currentQueue = {...currentQueue,items:[...items,...page.items],total:page.total}; renderTab();
-          } catch (error) { notice.textContent = error.message; }
+          } catch (error) { root.uburoomPopover?.show(more, { text: error.message, state: 'error' }); }
         });
         root.uburoomControls.content(more,{label:'Load more upcoming'});
       }
@@ -757,7 +773,7 @@
         const roomId = getState().id;
         if (await confirm('Clear all upcoming videos from the queue?') && getState()?.id === roomId) {
           busy = true;
-          try { await clearQueue(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
+          try { await clearQueue(); } catch (error) { root.uburoomPopover?.show(clear, { text: error.message, state: 'error' }); } finally { busy = false; }
         }
       }, !canEdit || !items.length);
       root.uburoomControls.content(clear,{label:'Clear queue'});
@@ -777,7 +793,7 @@
         const roomId = getState().id;
         if (await confirm('Clear all playback history for this room?') && getState()?.id === roomId) {
           busy = true;
-          try { await clearHistory(); } catch (error) { notice.textContent = error.message; } finally { busy = false; }
+          try { await clearHistory(); } catch (error) { root.uburoomPopover?.show(clear, { text: error.message, state: 'error' }); } finally { busy = false; }
         }
       }, !state?.capabilities?.editQueue || !items.length, 'queue-clear-history');
       root.uburoomControls.content(clear,{label:'Clear history'});
@@ -795,7 +811,7 @@
             if (getState()?.id !== roomId || lastFetchedRevision !== revision || page.queueRevision !== revision || getState()?.queueSummary?.queueRevision !== revision) return;
             currentHistory = { items: [...items, ...page.items], total: page.total };
             renderTab();
-          } catch (error) { notice.textContent = error.message; }
+          } catch (error) { root.uburoomPopover?.show(older, { text: error.message, state: 'error' }); }
           finally { older.disabled = false; }
         }, false, 'quiet queue-history-older');
       }
@@ -871,7 +887,7 @@
             renderNowPlaying();
             if (centerAfterFetch) { centerPending = true; centerAfterFetch = false; }
             renderTab();
-          } catch (error) { notice.textContent = error.message; break; }
+          } catch (error) { fail?.(error.message); break; }
         } while (refetchNeeded);
       })().finally(() => { fetching = null; });
       return fetching;
@@ -881,7 +897,7 @@
       return Math.max(state.queueSummary?.queueRevision ?? 0, lastFetchedRoomId === state.id ? currentQueue.queueRevision ?? 0 : 0);
     }
 
-    async function add(item) {
+    async function add(item, trigger) {
       const state = getState();
       if (!state?.id || !state.durable) throw new Error('Durable room required');
       const roomId = state.id;
@@ -891,8 +907,9 @@
         item,
         expectedRevision: rev
       });
-      notice.textContent = 'Added ' + (item.title || 'item') + ' to queue.';
-      setTimeout(() => { if (notice.textContent.startsWith('Added')) notice.textContent = ''; }, 3000);
+      if (trigger && root.uburoomPopover) {
+        root.uburoomPopover.show(trigger, { text: 'Added ' + (item.title || 'item') + ' to queue.', state: 'success' });
+      }
       await fetchData(true);
       return res;
     }

@@ -239,7 +239,6 @@
       parent.append(control); return control;
     }
     let rosterBusy = false, rosterRoom;
-    const rosterStatus = node('p',$('room-roster-frame').parentElement,'','hint'); rosterStatus.setAttribute('role','status');
     const expand = $('room-participants-expand'), rosterFrame = $('room-roster-frame');
     controls.content(expand,{icon:'chevron',label:'Expand participants',iconOnly:true});
     const settingsRoster = $('room-current-people'), settingsFrame = document.createElement('div');
@@ -268,7 +267,7 @@
       return (value.roomRole || value.role) !== 'host' || !!getMe()?.adminMode ||
         await confirm('Make ' + name + ' a host? You cannot remove their host role afterward. Only the room leader or an administrator can remove it.');
     }
-    async function personAction(person, value, inSettings, kick = false) {
+    async function personAction(person, value, inSettings, kick = false, trigger = null) {
       if (rosterBusy || inSettings && busy) return;
       if (person.pending) { await edit({action:'host.pending.remove',provider:person.provider,subject:person.subject}); return; }
       const self = person.id === (value.actorId || getMe()?.account?.id);
@@ -278,7 +277,9 @@
       const change = {action:person.explicitHost ? self ? 'host.leave' : 'host.remove' : 'host.add',userId:person.id};
       if (!kick && inSettings) { await edit(change); return; }
       if (rosterBusy) return;
-      const id = value.id; rosterBusy = true; rosterStatus.textContent = kick ? 'Removing participant…' : 'Saving host role…'; renderLivePeople();
+      const id = value.id; rosterBusy = true;
+      if (trigger && !inSettings) root.uburoomPopover?.show(trigger, { text: kick ? 'Removing…' : 'Saving…', state: 'loading' });
+      renderLivePeople();
       if (inSettings) { renderSettings(); setSettingsStatus('Removing participant…'); }
       try {
         if (inSettings ? details?.id !== id : getState()?.id !== id) throw new Error('Room changed; try again');
@@ -293,10 +294,13 @@
         }
         await changed();
         if (inSettings && dialog.open && details?.id === id) { await open(id,'people'); setSettingsStatus('Participant removed',true); }
-        if (getState()?.id === id) rosterStatus.textContent = kick ? 'Participant removed' : 'Host role saved';
+        if (trigger && !inSettings) root.uburoomPopover?.show(trigger, { text: kick ? 'Participant removed' : 'Host role saved', state: 'success' });
       } catch (error) {
         if (inSettings && dialog.open && details?.id === id) setSettingsStatus(error.message,false,true);
-        else if (getState()?.id === id) { rosterStatus.textContent = error.message; fail(error.message); }
+        else if (getState()?.id === id) {
+          if (trigger && !inSettings) root.uburoomPopover?.show(trigger, { text: error.message, state: 'error' });
+          fail(error.message);
+        }
       }
       finally {
         rosterBusy = false; renderLivePeople();
@@ -331,7 +335,8 @@
         const allowed = person.role !== 'creator' && !person.passGuest && (person.explicitHost ? person.id === self || caps.manageHosts : caps.addHosts);
         if (allowed) {
           const label = person.pending ? 'Remove assignment' : person.explicitHost ? person.id === self ? 'Give up host role' : 'Remove host' : 'Make host';
-          const action = controls.button(document,{label:label + ': ' + person.name,icon:glyph,iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings)});
+          let action;
+          action = controls.button(document,{label:label + ': ' + person.name,icon:glyph,iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings,false,action)});
           action.classList.add('room-host-action');
           if (person.role === 'viewer') {
             action.classList.add('room-host-promote');
@@ -358,14 +363,14 @@
           const quality = node('button',row,undefined,'room-roster-sync-quality');
           quality.type = 'button';
           quality.dataset.quality = level; quality.dataset.confidence=sync.confidence==='confident'?'confident':sync.confidence==='provisional'?'provisional':'reduced';
-          quality.title = tooltip; quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + tooltip.replace(/\n/g,', '));
+          quality.title = tooltip; quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + tooltip.replace(/\g/g,', '));
           quality.setAttribute('aria-haspopup','dialog');
           quality.setAttribute('aria-expanded', activeTelemetryPersonId === person.id ? 'true' : 'false');
           // A guest with a playback issue shows a warning instead of their sync level.
           if (sync.issue) {
             quality.dataset.issue = sync.issue === 'error' ? 'error' : 'warning';
             quality.title = ISSUE_LABELS[sync.issue] + '\n' + tooltip;
-            quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\n/g,', '));
+            quality.setAttribute('aria-label','Sync details for ' + person.name + ': ' + ISSUE_LABELS[sync.issue] + ', ' + tooltip.replace(/\g/g,', '));
           }
           const qualityIcon = root.uburoomIcons.icon(document,sync.issue ? 'alert-triangle' : icons[level]||'wifi');
           qualityIcon.setAttribute('aria-hidden','true'); quality.append(qualityIcon);
@@ -384,7 +389,8 @@
         row.classList.toggle('has-kick',!!kickable);
         if (kickable) {
           const cell = node('span',row,undefined,'room-roster-action');
-          const action = controls.button(document,{label:'Kick ' + person.name,icon:'karate',iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings,true)});
+          let action;
+          action = controls.button(document,{label:'Kick ' + person.name,icon:'karate',iconOnly:true,disabled:rosterBusy || inSettings && busy,action:()=>void personAction(person,value,inSettings,true,action)});
           action.classList.add('watch-header-control');
           action.id = (inSettings ? 'room-settings-kick-' : 'room-kick-') + person.id; cell.append(action);
         }
@@ -393,7 +399,7 @@
     }
     function renderLivePeople() {
       const state = getState();
-      if (rosterRoom !== state?.id) { rosterRoom = state?.id; rosterFrame.classList.remove('expanded'); rosterStatus.textContent = ''; }
+      if (rosterRoom !== state?.id) { rosterRoom = state?.id; rosterFrame.classList.remove('expanded'); }
       renderPeople($('room-participants'),state?.participants || [],state || {});
       updateRosterSize();
     }
@@ -794,12 +800,7 @@
     $('room-people-open').addEventListener('click',() => { if (getState()?.durable) void open(getState().id,'people'); });
     for (const [id,icon] of [['lobby-create','plus'],['lobby-reopen','reopen'],['room-chooser-new','plus'],['room-create-back','reopen']]) $(id).prepend(root.uburoomIcons.icon(document,icon));
     controls.content($('reopen'),{label:'Reopen room',icon:'reopen'});
-    let quickBusy = false, quickRoom, quickStatusTimer;
-    function setQuickStatus(text, transient = false) {
-      clearTimeout(quickStatusTimer);
-      $('room-quick-status').textContent = text;
-      if (transient) quickStatusTimer = setTimeout(() => { if ($('room-quick-status').textContent === text) $('room-quick-status').textContent = ''; }, 2500);
-    }
+    let quickBusy = false, quickRoom;
     const quickControls = [];
     for (const [role,title,icon] of [['viewer','Participants','users'],['host','Hosts','host']]) {
       const heading = node('h4',$('room-quick-switches'),undefined,'room-control-row room-control-heading');
@@ -813,20 +814,24 @@
         input.addEventListener('click',async () => {
           const state = getState(), enabled = input.getAttribute('aria-pressed') !== 'true';
           if (quickBusy || !state?.capabilities?.managePermissions) { renderQuick(); return; }
-          const id = state.id, focused = document.activeElement === input; quickBusy = true; renderQuick(); setQuickStatus('Saving…');
+          const id = state.id, focused = document.activeElement === input; quickBusy = true; renderQuick();
+          root.uburoomPopover?.show(input, { text: 'Saving…', state: 'loading' });
           try {
             const current = await request('/api/watch/rooms/' + id + '/settings');
             if (getState()?.id !== id) return;
             if (!!current.allHosts !== !!state.allHosts) throw new Error('Room mode changed; check the controls again');
             await request('/api/watch/rooms/' + id + '/settings',{revision:current.revision,change:{action:'permissions',role,permissions:{[key]:enabled}}});
-            await changed(); if (getState()?.id === id) setQuickStatus('Saved', true);
-          } catch (error) { if (getState()?.id === id) setQuickStatus(error.message); }
+            await changed();
+            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: 'Saved', state: 'success' });
+          } catch (error) {
+            if (getState()?.id === id) root.uburoomPopover?.show(input, { text: error.message, state: 'error' });
+          }
           finally { quickBusy = false; renderQuick(); if (focused && getState()?.id === id && document.activeElement === document.body) input.focus(); }
         });
       }
     }
     function renderQuick() {
-      const state = getState(); if (quickRoom !== state?.id) { quickRoom = state?.id; setQuickStatus(''); }
+      const state = getState(); if (quickRoom !== state?.id) quickRoom = state?.id;
       $('room-quick-permissions').hidden = !state?.durable;
       const canEdit = !!state?.capabilities?.managePermissions;
       $('room-quick-switches').hidden = false;

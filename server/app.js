@@ -66,6 +66,7 @@ const STATIC_ASSETS = {
   '/watch-transport.js':['watch-transport.js','text/javascript'],
   '/watch-rooms-ui.js':['watch-rooms-ui.js','text/javascript'],
   '/watch-controls.js':['watch-controls.js','text/javascript'],
+  '/watch-popover.js':['watch-popover.js','text/javascript'],
   '/watch-toasts.js':['watch-toasts.js','text/javascript'],
   '/watch-feedback.js':['watch-feedback.js','text/javascript'],
   '/ubumfa.js':['ubumfa.js','text/javascript'],

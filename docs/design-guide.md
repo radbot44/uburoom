@@ -162,6 +162,17 @@ Reuse the shared toast system (`.watch-toast`); preserve established placement, 
 - **Fullscreen error behavior:** In fullscreen, errors never open the drawer. They display as the shared error toast with one action: the fix when there is a direct one, otherwise "Open menu", which opens the drawer over fullscreen. Outside fullscreen, the error line stays in the menu.
 - **Saved preference recovery:** After a reconnect or reload, quality, volume, subtitles (language and Burn-in) and audio language restore automatically from saved preferences; fullscreen is re-entered by the viewer.
 
+### Anchored popover system
+
+Use the shared anchored popover (`.watch-popover`) for immediate, localized feedback tethered directly to interactive triggers (e.g. Auto-queue and Auto-play pills, quick permissions, roster host/kick actions, copy buttons, and account name saving), replacing distant inline layout notices and localized toasts.
+- **Silhouette & Geometry (Precision Pill):** Full capsule (`border-radius: 999px`, 32px height, `0 12px` padding), single-line 12px text (`font-weight: 600`), and a 14×14px status icon. Uses a centered 7×7px diamond caret pointing to the trigger, automatically positioning above or below the control with viewport edge clamping.
+- **Surface & Material:** Solid `var(--card)` background (no glassmorphism/backdrop blur) with a 1px solid border (`var(--border)`) and `0 6px 20px rgba(0, 0, 0, 0.45)` shadow.
+- **Semantic States:**
+  - *Success:* Green icon (`var(--success)`) with subtle green border tint (`color-mix(in srgb, var(--success) 35%, var(--border))`).
+  - *Loading:* Rotating loader (`loader-4`) in `var(--primary)` with muted text (`var(--muted)`).
+  - *Error:* Solid `var(--danger)` background (`#b6263c`) with pure white text and alert icon (`alert-triangle`), directly matching the error toast theme.
+- **Dismissal & Accessibility:** Auto-dismisses after 2.5 seconds (`2500ms`), or on outside click / window scroll. Declares `role="status"` and `aria-live="polite"` for assistive technology. Respects `prefers-reduced-motion`.
+
 ### Subtitle loading & catch-up
 
 Subtitle loading and progressive catch-up display a delayed (`250ms`) top-right spinning `loader-4` icon in orange (`var(--primary)`) over the subtitle button without showing a toast, keeping the button interactive so subtitles can be disabled during loading. Bounded subtitle-window recovery uses existing loading/error feedback and explicit Burn-in choice; a failed or unauthorized window must not clear its error as successful caption coverage, and subtitle recovery remains independent of video playback.
@@ -175,7 +186,7 @@ Subtitle loading and progressive catch-up display a delayed (`250ms`) top-right 
 ### Video Check & Diagnostics
 
 - **Host video check:** Hosts receive a Video check in Player settings under Media information, listing file and Plex checks most serious first (problem, warning, information, fine) with an icon each, and a quiet "Check again" button. When a check finds a problem or warning, hosts get one two-line action toast per video with "View", which opens Player settings at the check. Viewers never see it.
-- **Diagnostic report:** "Copy diagnostic report" is a quiet button with the `copy` icon inside Technical details in the player settings Media information section. It copies a recent player report to clipboard and confirms with the shared toast; if clipboard access is blocked, the report downloads directly as a file. When the server retains diagnostics, its hint indicates retention duration without requiring a separate privacy notice.
+- **Diagnostic report:** "Copy diagnostic report" is a quiet button with the `copy` icon inside Technical details in the player settings Media information section. It copies a recent player report to clipboard and confirms with an anchored tooltip popover on the button; if clipboard access is blocked, the report downloads directly as a file. When the server retains diagnostics, its hint indicates retention duration without requiring a separate privacy notice.
 
 ## 7. Review and Maintenance
 
