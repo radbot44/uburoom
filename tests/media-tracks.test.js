@@ -575,4 +575,34 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   const problem = checks.trackItem(pcmMedia, mismatchStreams);
   assert.equal(problem.level, 'problem');
   assert.match(problem.detail, /tracks do not match Plex's saved stream information/);
+
+  // HDR and Dolby Vision profile diagnostics and client passthrough vs SDR fallback
+  const Playback = require('../web/playback-policy');
+  assert.equal(checks.hdrItem({ codec_type: 'video', color_transfer: 'bt709' }), null);
+  assert.equal(checks.hdrItem({ codec_type: 'video', color_transfer: 'smpte2084' }).title, 'HDR10');
+  const p5Item = checks.hdrItem({ codec_type: 'video', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }] });
+  assert.equal(p5Item.level, 'warning');
+  assert.equal(p5Item.title, 'Dolby Vision (Profile 5)');
+  const p7Item = checks.hdrItem({ codec_type: 'video', color_transfer: 'smpte2084', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 7, bl_signal_compatibility_id: 1 }] });
+  assert.equal(p7Item.level, 'info');
+  assert.equal(p7Item.title, 'Dolby Vision (Profile 7, HDR10 base)');
+  const p82Item = checks.hdrItem({ codec_type: 'video', color_transfer: 'bt709', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 8, bl_signal_compatibility_id: 2 }] });
+  assert.equal(p82Item.level, 'info');
+  assert.equal(p82Item.title, 'Dolby Vision (Profile 8, SDR base)');
+
+  const hdrScreen = q => ({ matches: q.includes('dynamic-range: high') });
+  const sdrScreen = () => ({ matches: false });
+  const hevcMain10 = type => /hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '';
+  const hevc8BitOnly = type => /hvc1\.1\.6\.L93\.B0|mp4a/.test(type) ? 'probably' : '';
+  const doviP5Browser = type => /dvh1\.05\.06|hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '';
+
+  const hdr10Source = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'aac', hdr: true, hdrKind: 'hdr10', bitDepth: 10 };
+  assert.equal(Playback.needsCompatible(hdr10Source, hevcMain10, hdrScreen), false, 'capable HDR display + Main10 HEVC passes Original through');
+  assert.equal(Playback.needsCompatible(hdr10Source, hevcMain10, sdrScreen), true, 'SDR display converts HDR Original to tone-mapped SDR');
+  assert.equal(Playback.needsCompatible(hdr10Source, hevc8BitOnly, hdrScreen), true, '8-bit-only HEVC decoder converts 10-bit HDR');
+
+  const doviP5Source = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'aac', hdr: true, hdrKind: 'dovi-p5', doviProfile: 5, bitDepth: 10 };
+  assert.equal(Playback.needsCompatible(doviP5Source, hevcMain10, hdrScreen), true, 'DV Profile 5 without explicit dvh1.05/dvhe.05 support converts via libplacebo');
+  assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, hdrScreen), false, 'DV Profile 5 on a DV-capable HDR client passes Original through');
+  assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, sdrScreen), true, 'DV Profile 5 on an SDR display converts to SDR');
 });

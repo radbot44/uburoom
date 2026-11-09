@@ -189,6 +189,33 @@ async function probeEncoder(ffmpeg, signal, execute = run, encoder = 'hardware',
   return output;
 }
 
+function classifyHdr(video = {}) {
+  const sideData = Array.isArray(video.side_data_list) ? video.side_data_list : [];
+  const dovi = sideData.find(entry => /dovi|dolby vision/i.test(entry?.side_data_type || '') || entry?.dv_profile !== undefined);
+  const dvProfile = Number(dovi?.dv_profile ?? video.DOVIProfile);
+  const dvCompat = Number(dovi?.bl_signal_compatibility_id ?? video.DOVIBLCompatID);
+  const hasDovi = Boolean(dovi || video.DOVIPresent || Number.isFinite(dvProfile));
+  const transfer = String(video.color_transfer || video.colorTrc || '').toLowerCase();
+  if (hasDovi) {
+    if (dvProfile === 5 || (dvCompat === 0 && !['smpte2084','arib-std-b67'].includes(transfer))) {
+      return { hdr:true, kind:'dovi-p5', label:'Dolby Vision (Profile 5)', dovi:true, doviProfile:Number.isFinite(dvProfile) ? dvProfile : 5, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 0, doviP5:true, transfer:'smpte2084' };
+    }
+    if (dvCompat === 2 && !['smpte2084','arib-std-b67'].includes(transfer)) {
+      const profile = Number.isFinite(dvProfile) ? dvProfile : 8;
+      return { hdr:false, kind:'dovi-sdr', label:`Dolby Vision (Profile ${profile}, SDR base)`, dovi:true, doviProfile:profile, doviCompat:2, doviP5:false, transfer:'bt709' };
+    }
+    if (transfer === 'arib-std-b67' || dvCompat === 4) {
+      const profile = Number.isFinite(dvProfile) ? dvProfile : null;
+      return { hdr:true, kind:'dovi-hlg', label:profile !== null ? `Dolby Vision (Profile ${profile}, HLG base)` : 'Dolby Vision (HLG base)', dovi:true, doviProfile:profile, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 4, doviP5:false, transfer:'arib-std-b67' };
+    }
+    const profile = Number.isFinite(dvProfile) ? dvProfile : null;
+    return { hdr:true, kind:'dovi-hdr10', label:profile !== null ? `Dolby Vision (Profile ${profile}, HDR10 base)` : 'Dolby Vision', dovi:true, doviProfile:profile, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 1, doviP5:false, transfer:'smpte2084' };
+  }
+  if (transfer === 'smpte2084') return { hdr:true, kind:'hdr10', label:'HDR10', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:'smpte2084' };
+  if (transfer === 'arib-std-b67') return { hdr:true, kind:'hlg', label:'HLG', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:'arib-std-b67' };
+  return { hdr:false, kind:'sdr', label:'SDR', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:transfer || 'bt709' };
+}
+
 function outputSpec(info, quality) {
   const video = info.streams?.find(s => s.codec_type === 'video');
   if (!video || !(video.width > 0 && video.height > 0)) throw new PlaybackError('Original source has no readable video.');
@@ -197,10 +224,13 @@ function outputSpec(info, quality) {
   const maxWidth = q.width || 3840, maxHeight = q.height || 2160;
   const ratio = Math.min(1, maxWidth / video.width, maxHeight / video.height);
   const width = Math.max(2, Math.floor(video.width * ratio / 2) * 2), height = Math.max(2, Math.floor(video.height * ratio / 2) * 2);
-  const hdr = ['smpte2084','arib-std-b67'].includes(video.color_transfer);
+  const hdrInfo = classifyHdr(video);
+  const hdr = hdrInfo.hdr;
   // Keep constant-rate source cadence. Forcing 30 fps duplicates film frames and
   // discards half of a 60 fps source, even when both decoder and encoder keep up.
-  const tonemap = hdr ? ['zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv'] : [];
+  // Dolby Vision Profile 5 uses proprietary IPTPQc2 color reshaping without an
+  // HDR10 base layer; CPU zscale cannot decode IPTPQc2 and must use libplacebo.
+  const tonemap = hdr && !hdrInfo.doviP5 ? [`setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,'zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv'] : [];
   const filters = ['setpts=PTS-STARTPTS', ...tonemap, `scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12'];
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
   const bitrate = q.bitrate || Math.min(40000, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : 12000));
@@ -214,7 +244,7 @@ function outputSpec(info, quality) {
       frameRate = rate; break;
     }
   }
-  return { width, height, hdr, bitrate, frameRate, tonemap, sourceFormat:video.pix_fmt, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
+  return { width, height, hdr, hdrKind:hdrInfo.kind, hdrLabel:hdrInfo.label, doviProfile:hdrInfo.doviProfile, doviP5:hdrInfo.doviP5, bitrate, frameRate, tonemap, sourceFormat:video.pix_fmt, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
 }
 
 // Decoding and scaling on the GPU removes the 4K cost. Every route uses FFmpeg's
@@ -231,25 +261,36 @@ const bitmapSubtitle = track => ['pgs','hdmv_pgs_subtitle','vobsub','dvd_subtitl
 const filterPath = file => file.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");
 const SURFACES = { yuv420p:'nv12', nv12:'nv12', yuv420p10le:'p010le', p010le:'p010le' };
 const VAAPI_DEVICE = '/dev/dri/renderD128';
+function cpuPlaceboRoute(spec, platform = process.platform) {
+  if (!spec.hdr || platform === 'darwin') return;
+  const surface = SURFACES[spec.sourceFormat] || 'p010le';
+  return {
+    input:['-init_hw_device','vulkan=v','-filter_hw_device','v'],
+    filter:['setpts=PTS-STARTPTS',`format=${surface}`,
+      `libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`].join(',')
+  };
+}
 function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = true) {
   const surface = SURFACES[spec.sourceFormat];
   if (!surface) return;
+  if (spec.doviP5 && (!gpuTonemap || platform === 'darwin')) return;
   const size = `${spec.width}:${spec.height}`, vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
   const placebo = spec.hdr && gpuTonemap && platform !== 'darwin';
   const route = (input, gpu, downloaded = true) => ({
     input:placebo ? ['-init_hw_device','vulkan=v',...input.filter((_,i) => input[i] !== '-filter_hw_device' && input[i-1] !== '-filter_hw_device'),'-filter_hw_device','v'] : input,
     filter:['setpts=PTS-STARTPTS', ...gpu, ...(downloaded ? ['hwdownload',`format=${surface}`] : []),
-      ...(placebo ? [`libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0`] :
+      ...(placebo ? [`libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`] :
         [...(gpu.length ? [] : [`scale=${size}`]), ...spec.tonemap, `scale=${size}:out_color_matrix=bt709`, 'format=nv12'])].join(',') });
-  if (encoder === 'nvenc') return route(['-hwaccel','cuda','-hwaccel_output_format','cuda'], [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`]);
+  if (encoder === 'nvenc') return route(['-hwaccel','cuda','-hwaccel_output_format','cuda'], spec.doviP5 ? [] : [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`]);
   if (encoder === 'qsv') {
     const device = platform === 'win32' ? ['d3d11va=d,vendor_id=0x8086','d3d11va','d3d11'] : [`vaapi=d:${VAAPI_DEVICE}`,'vaapi','vaapi'];
+    if (placebo) return route(['-init_hw_device',device[0],'-hwaccel',device[1],'-hwaccel_device','d','-hwaccel_output_format',device[2]], []);
     return route(['-init_hw_device',device[0],'-init_hw_device','qsv=q@d','-hwaccel',device[1],'-hwaccel_device','d','-hwaccel_output_format',device[2],'-filter_hw_device','q'],
       ['hwmap=derive_device=qsv','format=qsv',vpp]);
   }
   if (platform === 'win32') return route(['-hwaccel','d3d11va','-hwaccel_output_format','d3d11'], []);
   if (platform === 'darwin') return route(['-hwaccel','videotoolbox'], [], false);
-  return route(['-hwaccel','vaapi','-hwaccel_device',VAAPI_DEVICE,'-hwaccel_output_format','vaapi'], [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`]);
+  return route(['-hwaccel','vaapi','-hwaccel_device',VAAPI_DEVICE,'-hwaccel_output_format','vaapi'], spec.doviP5 ? [] : [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`]);
 }
 
 const { SharedTask, runOperation } = require('./operation');
@@ -450,7 +491,7 @@ class AV1 {
           if (!group.infoTask || group.infoTask.signal.aborted) {
             const task = new SharedTask(signal => this.input(source, signal, async url => {
               const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
-                'stream=index,codec_type,codec_name,width,height,pix_fmt,color_transfer,r_frame_rate,avg_frame_rate:format=bit_rate','-of','json',url], signal);
+                'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate','-of','json',url], signal);
               return JSON.parse(raw.toString());
             }));
             group.infoTask = task;
@@ -500,8 +541,10 @@ class AV1 {
               job(['-hide_banner','-loglevel','error','-nostdin',...audioInput,...silence,...audio(0),'pipe:1'])]);
             return {video,audio:sound};
           };
-          const routes = this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : [];
-          routes.push(undefined);
+          const routes = spec.doviP5
+            ? [...(this.hardwareDecode ? [decodeRoute(spec,encoder)] : []),cpuPlaceboRoute(spec)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i)
+            : [...(this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : []),undefined];
+          if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
           try {
             let level = Math.min(group.decodeLevel || 0, routes.length - 1), bytes;
             for (;;) {
@@ -509,7 +552,11 @@ class AV1 {
               catch (error) {
                 // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
                 // success proves the step, so upstream failures change nothing for the group.
-                if (level === routes.length - 1 || !error.exitFailure || controller.signal.aborted) throw error;
+                if (level === routes.length - 1) {
+                  if (spec.doviP5 && error.exitFailure && !controller.signal.aborted) throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
+                  throw error;
+                }
+                if (!error.exitFailure || controller.signal.aborted) throw error;
                 level++;
               }
             }
@@ -522,7 +569,7 @@ class AV1 {
             // Retry only an encoder process failure, under the same job lease.
             // Cancellation, limits and upstream failures never trigger CPU work.
             if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted) throw error;
-            const bytes = await encode('software');
+            const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
             group.encoder='software'; group.cpuFallback=true; return bytes;
           } finally { await burn?.cleanup?.(); }
         });
@@ -586,4 +633,4 @@ class AV1 {
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, codecMatches, MIME, AUDIO_MIME, encoderArgs, probeEncoder, outputSpec, decodeRoute, rateArgs, run, stream };
+module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, codecMatches, MIME, AUDIO_MIME, classifyHdr, encoderArgs, probeEncoder, outputSpec, decodeRoute, cpuPlaceboRoute, rateArgs, run, stream };

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV1, PlaybackError, outputSpec, run } = require('../server/av1');
+const { AV1, PlaybackError, classifyHdr, outputSpec, decodeRoute, cpuPlaceboRoute, run } = require('../server/av1');
 const { Plex } = require('../server/plex');
 const Engine = require('../shared/engine');
 
@@ -78,19 +78,57 @@ test('hardware decode falls back to the CPU for the stream only when the CPU pro
   }finally{manager.release(lease);await manager.close();}
 });
 
-test('quality tiers respect source bitrate/resolution; AV1 clamps Original and tonemaps PQ/HLG', () => {
+test('quality tiers respect source bitrate/resolution; AV1 clamps Original and tonemaps PQ/HLG', async () => {
   const plex = new Plex({});
   assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:1080,bitrate:13000,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct','1080p12','1080p8','720p4','720p2']);
   assert.deepEqual(plex.qualities({source:{duration:60000,Media:[{height:720,bitrate:1500,Part:[{key:"/library/parts/1/file"}]}]}}).map(q => q.id), ['direct']);
   const info = {streams:[{codec_type:'video',width:7680,height:4320,color_transfer:'smpte2084'},{codec_type:'audio'}],format:{bit_rate:'80000000'}};
   const original = outputSpec(info,'direct');
   assert.equal(original.width,3840); assert.equal(original.height,2160); assert.equal(original.bitrate,40000);
+  assert.equal(original.hdr,true); assert.equal(original.hdrKind,'hdr10');
   assert.match(original.filter,/tonemap=/); assert.equal(original.audio,true);
   assert.equal(outputSpec(info,'720p2').bitrate,2000);
   assert.doesNotMatch(outputSpec({streams:[{codec_type:'video',width:640,height:360}]},'1080p20').filter,/tonemap/);
   assert.equal(outputSpec({streams:[{codec_type:'video',width:640,height:360}]},'1080p20').width,640);
   assert.equal(Engine.validate({action:'media.quality.set',args:{quality:'720p4',fallback:'av1'}}).args.fallback,'av1');
   assert.throws(() => Engine.validate({action:'media.quality.set',args:{quality:'720p4',fallback:'cpu'}}));
+
+  // Distinguish Dolby Vision profiles (Profile 5 vs Profile 7/8.1 HDR10 base, 8.4 HLG base, 8.2 SDR base)
+  const doviP5 = outputSpec({streams:[{codec_type:'video',width:3840,height:2160,pix_fmt:'yuv420p10le',color_transfer:'unspecified',side_data_list:[{side_data_type:'DOVI configuration record',dv_profile:5,bl_signal_compatibility_id:0}]}]},'1080p8');
+  assert.equal(doviP5.hdr,true); assert.equal(doviP5.hdrKind,'dovi-p5'); assert.equal(doviP5.doviP5,true);
+  assert.deepEqual(doviP5.tonemap,[]); assert.doesNotMatch(doviP5.filter,/zscale/);
+  assert.equal(decodeRoute(doviP5,'nvenc','win32',false),undefined);
+  assert.equal(decodeRoute(doviP5,'software','darwin',true),undefined);
+  assert.match(decodeRoute(doviP5,'nvenc','win32',true).filter,/^setpts=PTS-STARTPTS,hwdownload,format=p010le,libplacebo=.*apply_dolbyvision=1$/);
+  const qsvPlacebo = decodeRoute(doviP5,'qsv','win32',true);
+  assert.ok(!qsvPlacebo.input.includes('qsv=q@d') && !qsvPlacebo.filter.includes('vpp_qsv'));
+  assert.match(cpuPlaceboRoute(doviP5,'win32').filter,/format=p010le,libplacebo=.*apply_dolbyvision=1/);
+
+  const doviP7 = outputSpec({streams:[{codec_type:'video',width:3840,height:2160,pix_fmt:'yuv420p10le',color_transfer:'smpte2084',side_data_list:[{side_data_type:'DOVI configuration record',dv_profile:7,bl_signal_compatibility_id:1}]}]},'1080p8');
+  assert.equal(doviP7.hdr,true); assert.equal(doviP7.hdrKind,'dovi-hdr10'); assert.equal(doviP7.doviP5,false);
+  assert.match(doviP7.filter,/setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,zscale=t=linear:npl=100/);
+
+  const doviHlg = classifyHdr({DOVIPresent:1,DOVIProfile:8,DOVIBLCompatID:4,colorTrc:'arib-std-b67'});
+  assert.equal(doviHlg.hdr,true); assert.equal(doviHlg.kind,'dovi-hlg'); assert.equal(doviHlg.transfer,'arib-std-b67');
+
+  const doviSdr = outputSpec({streams:[{codec_type:'video',width:1920,height:1080,pix_fmt:'yuv420p10le',color_transfer:'bt709',side_data_list:[{side_data_type:'DOVI configuration record',dv_profile:8,bl_signal_compatibility_id:2}]}]},'1080p8');
+  assert.equal(doviSdr.hdr,false); assert.equal(doviSdr.hdrKind,'dovi-sdr'); assert.doesNotMatch(doviSdr.filter,/tonemap/);
+
+  // DV Profile 5 steps down from hardware decode + libplacebo to software decode + libplacebo, never raw CPU zscale
+  const filters = [];
+  const p5Manager = new AV1({}, {ffmpegPath:'fixture',transcoding:{encoder:'nvenc',cpuFallback:false}}, async (binary,args) => {
+    if (args.includes('testsrc2=size=320x180:rate=30')) return Buffer.alloc(200,1);
+    if (args.includes('-show_entries')) return Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:3840,height:2160,pix_fmt:'yuv420p10le',side_data_list:[{side_data_type:'DOVI configuration record',dv_profile:5,bl_signal_compatibility_id:0}]}]}));
+    filters.push(args[args.indexOf('-vf') + 1]);
+    if (args.includes('-hwaccel')) { const err = new Error('hwaccel failed'); err.exitFailure = true; throw err; }
+    return args.includes('pipe:3') ? {video:Buffer.alloc(200),audio:Buffer.alloc(50)} : Buffer.alloc(200,1);
+  });
+  const p5Lease = p5Manager.acquire({id:'p5',duration:60,start:'http://127.0.0.1:1/file'},'1080p8');
+  try {
+    await p5Manager.chunk(p5Lease,0,new AbortController().signal);
+    assert.equal(filters.length,2);
+    assert.ok(filters.every(f => f.includes('libplacebo=')));
+  } finally { p5Manager.release(p5Lease); await p5Manager.close(); }
 });
 
 test('AV1 shares one encode per source/tier/chunk and releases/cancels its last viewer', async () => {

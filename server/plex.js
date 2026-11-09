@@ -2,7 +2,7 @@
 const { CacheBudget } = require('./cache-budget');
 const { randomUUID, createHash } = require('node:crypto');
 const { QUALITIES, qualityId } = require('../shared/engine');
-const { AV1, PlaybackError } = require('./av1');
+const { AV1, PlaybackError, classifyHdr } = require('./av1');
 const Tracks = require('./media-tracks');
 const Output = require('./plex-output');
 const Sources = require('./plex-source');
@@ -595,9 +595,14 @@ class Plex {
     if (!item || !['movie', 'episode'].includes(item.type)) throw new Error('Select a movie or episode');
     const pinned = targetMediaId ? { mediaId: targetMediaId } : source?.sourceSelection;
     const selected=Sources.select(item,pinned),{media:original,part}=selected;
+    const videoStream = part.Stream?.find(x => Number(x.streamType) === 1);
+    const hdrInfo = classifyHdr(videoStream || original);
+    const sourceBitDepth = Number(videoStream?.bitDepth || original?.bitDepth) || (hdrInfo.hdr ? 10 : 8);
     const media = { title: String(item.title).slice(0, 200), subtitle: this.subtitle(item), duration: item.duration / 1000, quality, kind: 'plex', resources: new Map(), id,
-      source:item,sourceSelection:selected.identity,principal:this.principal, plexContext:this, videoCodec: original.videoCodec || part.Stream?.find(x => x.streamType === 1)?.codec,
+      source:item,sourceSelection:selected.identity,principal:this.principal, plexContext:this, videoCodec: original.videoCodec || videoStream?.codec,
       audioCodec:original.audioCodec || part.Stream?.find(x => x.streamType === 2 && x.selected)?.codec || part.Stream?.find(x => x.streamType === 2)?.codec,
+      hdr:hdrInfo.hdr, hdrKind:hdrInfo.kind, hdrLabel:hdrInfo.label, doviProfile:hdrInfo.doviProfile, bitDepth:sourceBitDepth,
+      sourceHdr:hdrInfo.hdr, sourceHdrKind:hdrInfo.kind, sourceHdrLabel:hdrInfo.label,
       ...(sameSource ? { previousId: source.previousId, nextId: source.nextId } : await this.neighbors(item)) };
     media.chapters = parseChapters(item);
     media.markers = parseMarkers(item);
@@ -609,9 +614,11 @@ class Plex {
     const audio = media.selection.audio;
     if (audio) media.audioCodec = audio.codec;
     const burn = media.selection.subtitle?.available && media.selection.subtitle.delivery==='burn';
-    const conversion = !choices.sourceOnly && (!fallback || fallback === 'audio') && (burn || compatible || quality !== 'direct' || media.tracks.audio.length > 1);
-    const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:media.tracks.audio.length,sourceOnly:choices.sourceOnly,outputs:conversion?await this.usableOutputs(choices.localCodecs):undefined});
+    const effectiveAudioTracks = hdrInfo.hdr && (!audio || audio.ordinal === 0) ? 1 : media.tracks.audio.length;
+    const conversion = !choices.sourceOnly && (!fallback || fallback === 'audio') && (burn || compatible || quality !== 'direct' || effectiveAudioTracks > 1);
+    const plan = planDelivery({quality,compatible,fallback,burn,audioTracks:effectiveAudioTracks,sourceOnly:choices.sourceOnly,outputs:conversion?await this.usableOutputs(choices.localCodecs):undefined});
     media.deliveryReason = plan.reason;
+    if (plan.route !== 'file') { media.hdr = false; media.hdrKind = 'sdr'; media.hdrLabel = 'SDR'; media.doviProfile = null; media.bitDepth = 8; }
     this.av1.logger?.info('Delivery',`"${media.title}" ${quality}: ${plan.route}${plan.codec ? ' '+plan.codec : ''} (${plan.reason}), source ${media.videoCodec}/${media.audioCodec}${fallback ? ', requested '+fallback : ''}`);
     const directPlan = plan.route==='plex-hls' ? await choices.directPlan?.() : undefined;
     const directHls = !!(directPlan || choices.directHls);

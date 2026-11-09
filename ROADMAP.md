@@ -94,7 +94,7 @@ Select and scope these individually after the relevant foundations are ready. Th
 
 | ID | Capability | Boundary / prerequisite |
 | --- | --- | --- |
-| M2-P1 | HDR | Verify capable-client passthrough and HDR-to-SDR tone mapping; distinguish Dolby Vision profiles |
+| M2-P1 | HDR | Implemented: Dolby Vision profile classification (Profile 5 `IPTPQc2` vs Profile 7/8.1 HDR10 base, 8.4 HLG base and 8.2 SDR base), Vulkan `libplacebo` (`apply_dolbyvision=1`) and CPU `zscale` HDR-to-SDR tone mapping, and display-aware Original HDR passthrough with SDR fallback; live HDR/DV media and display acceptance open |
 | M2-P2 | Subtitle-aware Picture-in-Picture | Implemented: Document Picture-in-Picture with stage reparenting, full hover transport bar, and vector/bitmap subtitle canvas layers; native video PiP fallback with client-subtitle burn-in recommendation toast; live browser acceptance open |
 | M2-P3 | Room invites and guests | Single invite per room with Allow guests and the trusted tier is implemented; source review and isolated execution pass. Real-provider (Discord share link) and human acceptance remain open. Invites and guests never imply media or host authority |
 | M2-P4 | Local video library | Operator-selected folders, basic playback/conversion; no Plex-style metadata platform |

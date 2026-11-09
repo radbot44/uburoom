@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, STREAM_CODECS, codecMatches } = require('./av1');
+const { run, STREAM_CODECS, codecMatches, classifyHdr } = require('./av1');
 
 const GB = 1024 ** 3;
 // Plex refuses to transcode when its drive is nearly full; warn well before that.
@@ -60,15 +60,14 @@ class MediaChecks {
     return av1.input({ ...media, start: media.sourceStart }, signal, url => run(av1.ffprobe, ['-v', 'error', ...args, url], signal, 120000, 16 * 1024 * 1024));
   }
   async fileItems(media) {
-    const raw = await this.probe(media, ['-show_entries', 'stream=index,codec_type,codec_name,color_transfer:stream_side_data=side_data_type:format=duration,bit_rate', '-of', 'json']);
+    const raw = await this.probe(media, ['-show_entries', 'stream=index,codec_type,codec_name,color_transfer:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=duration,bit_rate', '-of', 'json']);
     const info = JSON.parse(raw.toString()), streams = info.streams || [], items = [];
     items.push(this.trackItem(media, streams));
     const decisions = await this.decisionItem(media);
     if (decisions) items.push(decisions);
     const video = streams.find(stream => stream.codec_type === 'video');
-    const dolby = video?.side_data_list?.some(data => /DOVI|Dolby Vision/i.test(data.side_data_type || ''));
-    const hdr = dolby ? 'Dolby Vision' : video?.color_transfer === 'smpte2084' ? 'HDR10' : video?.color_transfer === 'arib-std-b67' ? 'HLG' : '';
-    if (hdr) items.push({ level: 'info', topic: 'hdr', title: hdr, detail: 'Converted qualities are tone-mapped for ordinary screens. Original keeps ' + hdr + ' for screens that support it.' });
+    const hdr = this.hdrItem(video);
+    if (hdr) items.push(hdr);
     const images = (media.tracks?.subtitles || []).filter(track => IMAGE_SUBTITLES.has(track.codec));
     if (images.length) items.push({ level: 'info', topic: 'subtitles', title: images.length + (images.length === 1 ? ' subtitle track is' : ' subtitle tracks are') + ' images',
       detail: 'They show on the page, but need Burn-in in iPhone fullscreen.' });
@@ -76,6 +75,23 @@ class MediaChecks {
     const duration = Number(info.format?.duration), average = Number(info.format?.bit_rate) / 1e6;
     if (duration > 60) items.push(await this.bitrateItem(media, duration, average));
     return items.filter(Boolean);
+  }
+  hdrItem(video) {
+    if (!video) return null;
+    const hdrInfo = classifyHdr(video);
+    if (hdrInfo.kind === 'dovi-p5') {
+      return { level: 'warning', topic: 'hdr', title: hdrInfo.label, detail: 'Profile 5 uses proprietary Dolby Vision color without an HDR10 fallback layer; browsers without Profile 5 support require uburoom tone-mapping.' };
+    }
+    if (hdrInfo.kind === 'dovi-hdr10' || hdrInfo.kind === 'dovi-hlg') {
+      return { level: 'info', topic: 'hdr', title: hdrInfo.label, detail: 'Converted qualities are tone-mapped for ordinary screens. Original keeps the compatible HDR base layer for screens that support it.' };
+    }
+    if (hdrInfo.kind === 'dovi-sdr') {
+      return { level: 'info', topic: 'hdr', title: hdrInfo.label, detail: 'Includes an SDR-compatible base layer.' };
+    }
+    if (hdrInfo.hdr) {
+      return { level: 'info', topic: 'hdr', title: hdrInfo.label, detail: 'Converted qualities are tone-mapped for ordinary screens. Original keeps ' + hdrInfo.label + ' for screens that support it.' };
+    }
+    return null;
   }
   /** Plex's track list against the file it serves (the Star Wars remux case). */
   trackItem(media, streams) {

@@ -178,13 +178,31 @@
     const notchLayer = notchStops.length ? `linear-gradient(to right,transparent 0%,${notchStops.join(',')},transparent 100%),` : '';
     return `${notchLayer}linear-gradient(to right,var(--primary) 0%,var(--primary) ${progress},transparent ${progress},transparent 100%),linear-gradient(to right,${stops.join(',')})`;
   }
-  function needsCompatible(source,canPlayType) {
+  function supportsHdrDisplay(matchMedia = typeof root.matchMedia === 'function' ? root.matchMedia.bind(root) : null) {
+    if (typeof matchMedia !== 'function') return false;
+    try {
+      return Boolean(matchMedia('(video-dynamic-range: high)')?.matches || matchMedia('(dynamic-range: high)')?.matches);
+    } catch {
+      return false;
+    }
+  }
+  function needsCompatible(source,canPlayType,matchMedia) {
     // Positive answers remain only hints. Only an explicit negative for every
     // representative family probe rules out an initial HEVC direct-play trial.
     // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
+    if (!source || typeof canPlayType !== 'function') return false;
     try {
+      if (source.hdrKind === 'dovi-p5') {
+        if (!supportsHdrDisplay(matchMedia)) return true;
+        const dovi = ['dvh1.05.06','dvhe.05.06'];
+        if (dovi.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
+      } else if (source.hdr) {
+        if (!supportsHdrDisplay(matchMedia)) return true;
+      }
       if (/^(hevc|h265|hvc1|hev1)$/i.test(source.videoCodec || '')) {
-        const codecs = ['hvc1.1.6.L93.B0','hev1.1.6.L93.B0','hvc1.2.4.L153.B0','hev1.2.4.L153.B0'];
+        const codecs = source.hdr || Number(source.bitDepth) >= 10
+          ? ['hvc1.2.4.L153.B0','hev1.2.4.L153.B0']
+          : ['hvc1.1.6.L93.B0','hev1.1.6.L93.B0','hvc1.2.4.L153.B0','hev1.2.4.L153.B0'];
         if (codecs.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
       }
       const audio = {aac:'mp4a.40.2',ac3:'ac-3',eac3:'ec-3',dca:'dtsc',dts:'dtsc',truehd:'mlpa'}[String(source.audioCodec || '').toLowerCase()];
@@ -394,7 +412,7 @@
       /iPad|Tablet/.test(agent) || /Macintosh/.test(agent) && nav?.maxTouchPoints > 1 ? 'tablet' : /Mobi|iPhone|Android/.test(agent) ? 'phone' : 'desktop';
     return { browser, device };
   }
-  const api = {BUFFER,healthTracker,clientKind,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,needsCompatible,observationClock,observationFrames,choppinessDetector};
+  const api = {BUFFER,healthTracker,clientKind,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,supportsHdrDisplay,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);
