@@ -566,13 +566,15 @@ class Plex {
     const maxBitrate = quality === 'direct'
       ? (directStream ? Math.max(20000, original.bitrate || 0) : Math.min(maxTranscode?.bitrate || 20000, Math.max(2000, original.bitrate || maxTranscode?.bitrate || 20000)))
       : (this.qualityOptions.find(q => q.id === qualityId(quality))?.bitrate || 4000);
+    const sourceVideo = original?.videoCodec || selected?.part?.Stream?.find(x => Number(x.streamType) === 1)?.codec || '';
+    const videoCodecs = directStream && /^(hevc|h265|hvc1|hev1)$/i.test(sourceVideo) ? 'h264,hevc' : 'h264';
     const params = new URLSearchParams({ path: `/library/metadata/${ratingKey}`, mediaIndex:String(selected.mediaIndex),partIndex:String(selected.partIndex),
       protocol: 'hls', directPlay: '0', directStream: directStream ? '1' : '0', fastSeek: '1', hasMDE: '1',
       offset: '0', session, subtitles: burn ? 'burn' : 'none', audioBoost: '100',
       'X-Plex-Client-Identifier': session, 'X-Plex-Session-Identifier': session,
       maxVideoBitrate: String(maxBitrate), videoQuality: '100',
       'X-Plex-Client-Profile-Name': 'Generic',
-      'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)' });
+      'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=' + videoCodecs + '&audioCodec=aac)' });
     if (audio) params.set('audioStreamID',audio.id);
     params.set('audioChannelCount','2');
     if (burn) { params.set('advancedSubtitles','burn'); params.set('subtitleSize','100'); }
@@ -638,7 +640,7 @@ class Plex {
       let shared;
       try {shared=await this.hlsPool.acquire(key,authorized=>this.prepare(id,quality,compatible,source,fallback,{...choices,directPlan:undefined,directHls,shareKey:undefined,excludeLease:undefined,authorized}),choices.authorized,choices.excludeLease,choices.shareWaitMs,choices.sharedOnly,directHls);}
       catch(error){media.subtitleAbort.abort();if(error instanceof PlaybackError){const failure=Object.assign(new PlaybackError(error.message),{conversionCapacity:!!error.conversionCapacity,media});throw failure;}throw error;}
-      for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate','bitrateCeiling','output'])media[field]=shared.media[field];
+      for(const field of['format','transcodeId','start','initialManifest','videoCodec','audioCodec','bitrate','bitrateCeiling','output','hdr','hdrKind','hdrLabel','doviProfile','bitDepth'])media[field]=shared.media[field];
       media.compatible=compatible;
       media.hlsContext=shared.media.plexContext;
       if(shared.lease)media.hlsLease=shared.lease;
@@ -691,8 +693,12 @@ class Plex {
       }
       const preset=quality!=='direct' ? this.qualityOptions.find(q=>q.id===qualityId(quality)) : (!directStream ? this.maxTranscodeQuality() : undefined);
       const ceiling={bitrate:Number(params.get('maxVideoBitrate')),width:preset?.width,height:preset?.height};
-      const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling});
+      const allowHevcCopy = directStream && hdrInfo.kind !== 'dovi-p5';
+      const confirmed=Output.confirm(decision,{audio,burn,subtitle:media.selection.subtitle,ceiling,allowHevcCopy});
       Object.assign(media,confirmed,{compatible,bitrateCeiling:ceiling.bitrate,output:confirmed});
+      if (confirmed.videoCodec === 'hevc' && confirmed.videoDecision === 'copy') {
+        media.hdr = hdrInfo.hdr; media.hdrKind = hdrInfo.kind; media.hdrLabel = hdrInfo.label; media.doviProfile = hdrInfo.doviProfile; media.bitDepth = sourceBitDepth;
+      }
       media.start = this.url('/video/:/transcode/universal/start.m3u8?' + params).href;
       if (burn || audio || directHls) {
         if (choices.authorized && !await choices.authorized()) throw new PlaybackError('Viewing access or track selection expired.');

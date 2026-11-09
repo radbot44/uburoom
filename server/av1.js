@@ -195,7 +195,7 @@ function classifyHdr(video = {}) {
   const dvProfile = Number(dovi?.dv_profile ?? video.DOVIProfile);
   const dvCompat = Number(dovi?.bl_signal_compatibility_id ?? video.DOVIBLCompatID);
   const hasDovi = Boolean(dovi || video.DOVIPresent || Number.isFinite(dvProfile));
-  const transfer = String(video.color_transfer || video.colorTrc || '').toLowerCase();
+  const transfer = String(video.color_transfer || video.colorTrc || video.colorTransfer || '').toLowerCase();
   if (hasDovi) {
     if (dvProfile === 5 || (dvCompat === 0 && !['smpte2084','arib-std-b67'].includes(transfer))) {
       return { hdr:true, kind:'dovi-p5', label:'Dolby Vision (Profile 5)', dovi:true, doviProfile:Number.isFinite(dvProfile) ? dvProfile : 5, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 0, doviP5:true, transfer:'smpte2084' };

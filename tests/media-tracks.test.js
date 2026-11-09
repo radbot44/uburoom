@@ -534,7 +534,7 @@ test('embedded text stays client-rendered, so Original is not forced into a conv
   assert.equal(planDelivery({quality:'direct',fallback:'audio',burn:true,audioTracks:1,outputs:['av1','plex']}).route,'local');
 });
 
-test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', () => {
+test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', async () => {
   const { fileIndex } = require('../server/av1');
   const { MediaChecks } = require('../server/media-check');
   const checks = new MediaChecks({});
@@ -601,8 +601,51 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   assert.equal(Playback.needsCompatible(hdr10Source, hevcMain10, sdrScreen), true, 'SDR display converts HDR Original to tone-mapped SDR');
   assert.equal(Playback.needsCompatible(hdr10Source, hevc8BitOnly, hdrScreen), true, '8-bit-only HEVC decoder converts 10-bit HDR');
 
+  const hdr10TrueHdSource = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'truehd', hdr: true, hdrKind: 'hdr10', bitDepth: 10 };
+  assert.equal(Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, hdrScreen), false, 'HDR10 HEVC + TrueHD does not need video conversion on HDR Main10 client');
+  assert.equal(Playback.needsAudioConversion(hdr10TrueHdSource, hevcMain10), true, 'TrueHD requires audio conversion in browser');
+  assert.equal(Playback.needsCompatible(hdr10TrueHdSource, hevcMain10, hdrScreen), true, 'HDR10 HEVC + TrueHD triggers compatible fallback (audio-only)');
+  assert.equal(Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, sdrScreen), true, 'HDR10 HEVC + TrueHD on SDR display requires video conversion');
+
   const doviP5Source = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'aac', hdr: true, hdrKind: 'dovi-p5', doviProfile: 5, bitDepth: 10 };
   assert.equal(Playback.needsCompatible(doviP5Source, hevcMain10, hdrScreen), true, 'DV Profile 5 without explicit dvh1.05/dvhe.05 support converts via libplacebo');
   assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, hdrScreen), false, 'DV Profile 5 on a DV-capable HDR client passes Original through');
   assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, sdrScreen), true, 'DV Profile 5 on an SDR display converts to SDR');
+
+  let decisionUrl;
+  const hdrPlex = new Plex({ plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' }, async input => {
+    const url = new URL(input);
+    const json = value => new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
+    if (url.pathname === '/library/metadata/1') {
+      return json({ Metadata: [{ ratingKey: '1', type: 'movie', title: '10 Cloverfield Lane', duration: 60000, Media: [{ id: 1, videoCodec: 'hevc', audioCodec: 'truehd', height: 2160, width: 3840, bitrate: 55000, Part: [{ id: 5, key: '/library/parts/5/file', size: 1000, Stream: [
+        { id: 10, index: 0, streamType: 1, codec: 'hevc', bitDepth: 10, colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' },
+        { id: 11, index: 1, streamType: 2, codec: 'truehd', languageCode: 'eng', selected: true, channels: 8 }
+      ] }] }] }] });
+    }
+    if (url.pathname.endsWith('/decision')) {
+      decisionUrl = url;
+      return json({ generalDecisionCode: 1001, Metadata: [{ Media: [{ videoCodec: 'hevc', audioCodec: 'aac', subtitleDecision: 'none', Part: [{ Stream: [
+        { streamType: 1, codec: 'hevc', decision: 'copy', bitDepth: 10 },
+        { streamType: 2, id: 11, codec: 'aac', decision: 'transcode', selected: 1 }
+      ] }] }] }] });
+    }
+    if (url.pathname.endsWith('/start.m3u8')) return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=55000000\nchild.m3u8\n');
+    if (url.pathname.endsWith('/child.m3u8')) return new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');
+    return json({});
+  });
+  try {
+    const audioCopy = await hdrPlex.prepare('1', 'direct', false, undefined, 'audio');
+    assert.equal(audioCopy.format, 'hls');
+    assert.equal(audioCopy.deliveryReason, 'audio-conversion');
+    assert.equal(audioCopy.videoCodec, 'hevc');
+    assert.equal(audioCopy.videoDecision, 'copy');
+    assert.equal(audioCopy.audioCodec, 'aac');
+    assert.equal(audioCopy.hdr, true, 'HEVC video stream-copy preserves HDR flag');
+    assert.equal(audioCopy.hdrKind, 'hdr10');
+    assert.equal(audioCopy.hdrLabel, 'HDR10');
+    assert.equal(audioCopy.bitDepth, 10);
+    assert.match(decisionUrl.searchParams.get('X-Plex-Client-Profile-Extra'), /videoCodec=h264,hevc/);
+  } finally {
+    await hdrPlex.close();
+  }
 });

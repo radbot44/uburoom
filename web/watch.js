@@ -1406,8 +1406,10 @@ async function compatibleFallback(reason, preferHLS = false) {
     mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
   const order=config.outputs || [...localCandidates,'plex'];
   const candidates=order.filter(output=>output==='plex'?!skipPlex && !localFallbackAttempts.has('plex'):localCandidates.includes(output));
-  // H.264 with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
-  if(preferHLS && order.includes('plex') && !state.hdr && /^(h264|avc1)$/i.test(state.videoCodec || '') && !localFallbackAttempts.has('audio') && !localFallbackAttempts.has('plex'))candidates.unshift('audio');
+  // H.264 or browser-supported HEVC with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
+  const canCopyVideo = /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(state.videoCodec || '') &&
+    !uburoomPlayback.needsVideoConversion(state,type => video.canPlayType(type));
+  if(preferHLS && order.includes('plex') && canCopyVideo && !localFallbackAttempts.has('audio') && !localFallbackAttempts.has('plex'))candidates.unshift('audio');
   if (!candidates.length) {
     av1?.destroy();av1=undefined;video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
     $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
@@ -1679,8 +1681,9 @@ function canHoldStream(next) {
   if(Date.now()-lastQualityRequest>10000 || video.readyState<3 || uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)<=HOLD_RESERVE+1)return false;
   return next.format==='hls' && typeof Hls!=='undefined' && Hls.isSupported() || uburoomPlayback.localFormat(next.format) || fileNeedsAudioStream(next);
 }
-const fileNeedsAudioStream=next=>next.format==='file' && !next.hdr && /^(h264|avc1)$/i.test(next.videoCodec || '') && (config.outputs || ['plex']).includes('plex') &&
-  uburoomPlayback.needsCompatible(next,type => video.canPlayType(type));
+const fileNeedsAudioStream=next=>next.format==='file' && /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
+  !uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type)) && (config.outputs || ['plex']).includes('plex') &&
+  uburoomPlayback.needsAudioConversion(next,type => video.canPlayType(type));
 function holdStream(next) {
   const hold=heldStream={next,started:performance.now()};
   diagnostics.record('stream-hold',{format:next.format});
@@ -2470,11 +2473,13 @@ function applyState(next, local=false) {
       $('ending-stage').hidden = true;
       $('empty-stage').hidden = true;
       watchFrames();
-      if (next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) {
-        const reason = next.hdrKind === 'dovi-p5' ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
+      if ((next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) ||
+          (next.format === 'hls' && uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type)))) {
+        const videoUnsupported = uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type));
+        const reason = next.hdrKind === 'dovi-p5' && videoUnsupported ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
           : next.hdr && !uburoomPlayback.supportsHdrDisplay() ? 'HDR Original requires an HDR display; converting to SDR.'
           : 'The browser does not support the original codecs.';
-        queueMicrotask(() => { if (state === next) void compatibleFallback(reason,true); });
+        queueMicrotask(() => { if (state === next) void compatibleFallback(reason,!videoUnsupported); });
       } else if (uburoomPlayback.localFormat(next.format)) {
         // With no other codec to try, giving up ends playback, so ride out a slow
         // or briefly unavailable source for about 40 seconds instead of 7.

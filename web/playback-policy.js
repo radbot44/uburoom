@@ -186,7 +186,7 @@
       return false;
     }
   }
-  function needsCompatible(source,canPlayType,matchMedia) {
+  function needsVideoConversion(source,canPlayType,matchMedia) {
     // Positive answers remain only hints. Only an explicit negative for every
     // representative family probe rules out an initial HEVC direct-play trial.
     // Test Main/Main10 and both sample entries: bare `hvc1` alone is insufficient.
@@ -205,10 +205,20 @@
           : ['hvc1.1.6.L93.B0','hev1.1.6.L93.B0','hvc1.2.4.L153.B0','hev1.2.4.L153.B0'];
         if (codecs.every(codec => canPlayType(`video/mp4; codecs="${codec}"`) === '')) return true;
       }
-      const audio = {aac:'mp4a.40.2',ac3:'ac-3',eac3:'ec-3',dca:'dtsc',dts:'dtsc',truehd:'mlpa'}[String(source.audioCodec || '').toLowerCase()];
+    } catch { /* Unknown capability keeps the normal observed-playback path. */ }
+    return false;
+  }
+  function needsAudioConversion(source,canPlayType) {
+    if (!source || typeof canPlayType !== 'function') return false;
+    try {
+      const codec = typeof source === 'string' ? source : source.audioCodec;
+      const audio = {aac:'mp4a.40.2',ac3:'ac-3',eac3:'ec-3',dca:'dtsc',dts:'dtsc',truehd:'mlpa'}[String(codec || '').toLowerCase()];
       if (audio && canPlayType(`audio/mp4; codecs="${audio}"`) === '') return true;
     } catch { /* Unknown capability keeps the normal observed-playback path. */ }
     return false;
+  }
+  function needsCompatible(source,canPlayType,matchMedia) {
+    return needsVideoConversion(source,canPlayType,matchMedia) || needsAudioConversion(source,canPlayType);
   }
   function observationClock() {
     return timingApi().observationClock();
@@ -412,7 +422,7 @@
       /iPad|Tablet/.test(agent) || /Macintosh/.test(agent) && nav?.maxTouchPoints > 1 ? 'tablet' : /Mobi|iPhone|Android/.test(agent) ? 'phone' : 'desktop';
     return { browser, device };
   }
-  const api = {BUFFER,healthTracker,clientKind,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,supportsHdrDisplay,needsCompatible,observationClock,observationFrames,choppinessDetector};
+  const api = {BUFFER,healthTracker,clientKind,LOCAL_CODECS,localFormat,fallbackCodecs,convertedOriginal,hlsConfig,hlsErrorDetail,decodingCapability,directHlsUrl,chunkWindow,ranges,bufferedAhead,readinessBuffered,timeline,supportsHdrDisplay,needsVideoConversion,needsAudioConversion,needsCompatible,observationClock,observationFrames,choppinessDetector};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.uburoomPlayback = api;
 })(globalThis);

@@ -4,11 +4,13 @@ const selected=value=>[true,1,'1'].includes(value);
 
 // A request describes desired output; only the decision describes confirmed output.
 // maxVideoBitrate limits video, whereas Media.bitrate may include audio/container overhead.
-function confirm(decision,{audio,burn,subtitle,ceiling}) {
+function confirm(decision,{audio,burn,subtitle,ceiling,allowHevcCopy}) {
   const outputs=decision.Metadata?.flatMap(item=>item.Media || []) || [];
   const output=outputs[0],parts=output?.Part || [],videos=parts[0]?.Stream?.filter(s=>Number(s.streamType)===1) || [];
-  if(Number(decision.generalDecisionCode)>=2000 || outputs.length!==1 || parts.length!==1 || videos.length!==1 ||
-    videos[0].codec!=='h264' || output.videoCodec && output.videoCodec!=='h264') {
+  const videoCodec=videos[0]?.codec;
+  const validVideo=videoCodec==='h264' && (!output?.videoCodec || output.videoCodec==='h264') ||
+    (allowHevcCopy && videoCodec==='hevc' && videos[0]?.decision==='copy' && (!output?.videoCodec || output.videoCodec==='hevc'));
+  if(Number(decision.generalDecisionCode)>=2000 || outputs.length!==1 || parts.length!==1 || videos.length!==1 || !validVideo) {
     throw new PlaybackError('Plex could not provide H.264 video; check transcoding settings');
   }
   const streams=parts[0].Stream,listedAudio=streams.filter(s=>Number(s.streamType)===2);
@@ -24,7 +26,7 @@ function confirm(decision,{audio,burn,subtitle,ceiling}) {
     throw new PlaybackError('Plex did not confirm burning the requested subtitle. Your previous player is unchanged.');
   }
   const result={
-    videoCodec:'h264',
+    videoCodec,
     audioCodec:chosen.length?'aac':undefined,
     ...(videos[0].decision ? {videoDecision:videos[0].decision} : {}),
     ...(chosen[0]?.decision ? {audioDecision:chosen[0].decision} : {})
