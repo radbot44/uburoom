@@ -47,6 +47,7 @@ async function main() {
         return browser.evaluate(host, expression);
       };
       const until = (expression, label) => browser.until(host, expression, label);
+      require('node:fs').mkdirSync(path.resolve('artifacts'), { recursive: true });
       const shot = label => browser.screenshot(host, path.resolve('artifacts/room-ui-' + name + '-' + label + '.png'));
       await browser.viewport(host, 1360, 1000);
       await browser.activate(host);
