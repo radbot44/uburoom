@@ -20,6 +20,10 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 
 | Need | Command |
 | --- | --- |
+| Format / check formatting | `npm run format` / `npm run format:check` |
+| Lint (unused bindings, undeclared globals) | `npm run lint` |
+| Type check (`// @ts-check` files in `server/` and `shared/`, no emit) | `npm run typecheck` |
+| All of the above plus the Node suite | `npm run check` |
 | Focused regression | `node --test tests/<relevant-file>.test.js` |
 | Installation diagnostics / doctor | `npm run doctor` / `node scripts/doctor.js` |
 | Node suite | `npm test` |

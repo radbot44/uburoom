@@ -17,7 +17,7 @@
 ## Architecture
 
 - One Node server process; no clustering. Bounded media child processes and built-in worker threads are allowed. Keep synchronous disk/SQLite I/O and heavy crypto off the playback/tick loop.
-- Plain JavaScript: server CommonJS, browser native modules/scripts; 2 spaces, semicolons, single quotes. Use JSDoc and `// @ts-check` for complex contracts. No framework, TypeScript compiler, JSX, transpilation or minification; esbuild is only for vendor bundles.
+- Plain JavaScript: server CommonJS, browser native modules/scripts; 2 spaces, semicolons, single quotes. Use JSDoc and `// @ts-check` for complex contracts. No framework, compiled TypeScript output, JSX, transpilation or minification; `tsc --noEmit` is for type checking only, Prettier and ESLint are dev tooling, and esbuild is only for vendor bundles.
 - Use built-in SQLite and the existing storage worker/database. No ORM, external or secondary database. Preserve schema versioning for published upgrades; do not restore private pre-release import/compatibility paths.
 - Minimize dependencies; justify additions and prefer Node built-ins. Tests use `node:test` and `node:assert/strict`. Runtime requirements and dependencies belong in `package.json`.
 - Keep reusable timeline, clock, readiness, drift, generic room-role, envelope and room-scoped publication logic in `shared/sync/` free of Plex, Discord, FFmpeg, TLS, YAML configuration and SQLite dependencies; see [sync core](docs/sync-core.md).
