@@ -8,7 +8,6 @@ const { randomBytes } = require('node:crypto');
 const { createApp } = require('../server/app');
 const { accountFixture } = require('../scripts/account-fixture');
 const { ConversionPolicy } = require('../server/transcoding-policy');
-const { normalizeConfig } = require('../server/config');
 
 async function fixture(t, changes = {}) {
   const provider = accountFixture(),

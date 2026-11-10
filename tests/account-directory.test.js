@@ -68,7 +68,7 @@ test('host delegation defaults off, allows additions only, supports self-demotio
   await assert.rejects(edit(host.id, { action: 'host.leave' }), { status: 403 });
 });
 test('all-hosts changes controls without exposing private rooms or conferring saved-room access', async t => {
-  const { store, creator, host, viewer } = fixture(t);
+  const { store, creator, viewer } = fixture(t);
   let room = await store.create(creator.id, { visibility: 'private', permissions: { allHosts: true } });
   assert.equal(Policy.allowed(room, viewer.id, 'roomSettings'), true);
   assert.equal(store.list(viewer.id).total, 0);

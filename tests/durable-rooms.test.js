@@ -1126,8 +1126,7 @@ test(
       creator = await f.login('host'),
       guest = await f.login('guest');
     const id = (await creator.call('/api/watch/rooms', { name: 'Queue live room' })).body.id;
-    const a = randomUUID(),
-      b = randomUUID();
+    const a = randomUUID();
 
     // Load first video (sets as current in queue)
     await command(creator, id, a, 'media.load', { mediaId: 'demo', quality: 'direct' });

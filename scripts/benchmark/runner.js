@@ -652,7 +652,6 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     cpuFallback = true,
     outputDir,
     runIndex = 1,
-    onProgress,
     probedEncoders = [],
   } = options;
 

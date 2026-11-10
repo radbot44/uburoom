@@ -1,11 +1,9 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const assert = require('node:assert/strict');
 const { createApp } = require('../server/app');
 const { fixturePlex, installMeter } = require('./playback-baseline');
 const { playbackBrowser, pause } = require('./lib/playback-browser');
-const p = require('../web/playback-policy');
 
 // 1. Bitrate & Buffer Target Mathematical Analysis
 function analyzeTargetFormulas() {
@@ -278,7 +276,6 @@ async function runPlexSessionLifecycleTests() {
 
     // Test 1: Outage < 8s (Silent Grace, Transcode session maintained)
     console.log('[PlexEval] Test: 5s outage (within silent grace)...');
-    const session1 = control.events.find(e => e.event === 'start')?.session;
     // Simulate sync disconnect for 5s
     await evaluate(`
       window.__origOnMessage = transport.onMessage;

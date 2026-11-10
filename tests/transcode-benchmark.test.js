@@ -10,11 +10,10 @@ const {
   resolveConfigFile,
   loadBenchmarkConfig,
   resolveTestMatrix,
-  inspectActiveUburoomProcess,
   resolveUniqueOutputDir,
 } = require('../scripts/benchmark/config');
 const { resolveEncoderForCodec } = require('../scripts/benchmark/prober');
-const { deriveOutputSpec, extractReferenceSample } = require('../scripts/benchmark/source');
+const { deriveOutputSpec } = require('../scripts/benchmark/source');
 const {
   detectQualityCapabilities,
   calculateMetricStats,
@@ -43,7 +42,6 @@ const {
   deriveSourceFingerprint,
   saveRunToHistory,
   loadHistoryIndex,
-  importHistoricalReport,
   deleteRunFromHistory,
   compareRuns,
 } = require('../scripts/benchmark/history');
@@ -657,7 +655,7 @@ test('repeated concurrent trials produce completely isolated artifact directorie
     };
 
     // Run trial 1
-    const trial1 = await runConcurrentTier({
+    await runConcurrentTier({
       concurrency: 2,
       runIndex: 1,
       outputDir: tmpDir,
@@ -666,7 +664,7 @@ test('repeated concurrent trials produce completely isolated artifact directorie
     });
 
     // Run trial 2
-    const trial2 = await runConcurrentTier({
+    await runConcurrentTier({
       concurrency: 2,
       runIndex: 2,
       outputDir: tmpDir,

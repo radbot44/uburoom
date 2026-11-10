@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const Engine = require('../shared/engine');
-const { Hub, resolve, hash, PRESENCE_MS } = require('../server/core');
+const { Hub } = require('../server/core');
 const config = { ownerId: 'owner', guildId: 'guild', channels: ['commands'] };
 const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' };
 

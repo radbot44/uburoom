@@ -41,10 +41,6 @@ function getDuration(room) {
   return room.media?.duration || 0;
 }
 
-function getEpoch(room) {
-  return room.s ? room.s.epoch : room.epoch;
-}
-
 function setEpoch(room, epoch) {
   if (room.s) room.s.epoch = epoch;
   else room.epoch = epoch;

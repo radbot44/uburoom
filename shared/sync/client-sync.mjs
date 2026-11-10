@@ -75,7 +75,6 @@ import { normalizePlayerAdapter } from './player-adapter.mjs';
  */
 export function createSync(host) {
   const timingApi = host.timing || defaultTiming;
-  const playbackApi = host.playback;
   const player = normalizePlayerAdapter(host);
   const {
     clock: playbackClock,
@@ -110,9 +109,6 @@ export function createSync(host) {
     host.mediaReady
       ? Boolean(host.mediaReady(snapshot))
       : Boolean(snapshot.state?.mediaUrl && snapshot.mediaSource === snapshot.state.mediaUrl);
-  const isLocalFormat = format =>
-    playbackApi?.localFormat ? playbackApi.localFormat(format) : ['av1', 'vp9', 'vp8'].includes(format || '');
-
   function resetDriftCorrection(full = false) {
     if (full) jumpDriftCorrection.reset();
     driftCorrection.reset();

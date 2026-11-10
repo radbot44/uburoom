@@ -286,7 +286,7 @@ function installMeter() {
   canvas.width = canvas.height = 2;
   const picture = canvas.getContext('2d', { willReadFrequently: true });
   let data;
-  const meter = (globalThis.playbackMeter = {
+  globalThis.playbackMeter = {
     reset(id, format) {
       data = { id, format, started: performance.now(), firstFrameMs: null, samples: [], events: [], callbacks: 0 };
     },
@@ -337,7 +337,7 @@ function installMeter() {
       await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 1500))]);
       return context.state;
     },
-  });
+  };
   for (const event of ['playing', 'waiting', 'stalled', 'seeking', 'seeked', 'pause', 'ended', 'error'])
     video.addEventListener(event, () => {
       if (data && state?.mediaId === data.id && (!data.format || state.format === data.format))

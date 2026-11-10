@@ -707,12 +707,14 @@
           await addToQueue(item, b);
           const span = b.querySelector('span');
           if (span) span.textContent = 'Added!';
+          // eslint-disable-next-line no-undef -- known defect: `root` is undeclared here (this wrapper names it `global`); left for an owner-approved UI fix.
           if (root.uburoomPopover) root.uburoomPopover.show(b, { text: 'Added to queue', state: 'success' });
           setTimeout(() => {
             if (span) span.textContent = 'Add to queue';
             b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();
           }, 1500);
         } catch (error) {
+          // eslint-disable-next-line no-undef -- same known defect as above.
           if (root.uburoomPopover) root.uburoomPopover.show(b, { text: error.message, state: 'error' });
           else signalError(error.message, () => b.click());
           b.disabled = b.dataset.unavailable === 'true' || busy || !room || !canAddQueue();

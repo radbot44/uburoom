@@ -477,7 +477,7 @@ test('direct-HLS joining protects the group across delayed liveness, prevents ad
   await renewed.lease.release();
   assert.equal(stops, 3);
 
-  const closingGroup = await pool.acquire(
+  await pool.acquire(
     'closing',
     async () => ({ fixture: 3 }),
     async () => true,

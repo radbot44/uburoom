@@ -585,7 +585,6 @@ function generateHtmlReport(benchmarkData, outputPath) {
   const env = cleanData.environment || {};
   const src = cleanData.source || {};
   const results = cleanData.results || [];
-  const probed = cleanData.probedEncoders || [];
   const concurrencySummary = cleanData.concurrencySummary;
 
   const passResults = results.filter(r => r.status === 'pass' && r.output?.assembledFile);
@@ -599,7 +598,6 @@ function generateHtmlReport(benchmarkData, outputPath) {
   const passedCount = results.filter(r => r.status === 'pass').length;
   const failedCount = results.filter(r => r.status === 'fail').length;
   const skippedCount = results.filter(r => r.status === 'skipped').length;
-  const totalCount = results.length;
   const hasMultipleRuns = (cleanData.options?.runs || 1) > 1;
 
   const html = `<!DOCTYPE html>

@@ -2,7 +2,7 @@
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { normalizeConfig } = require('../server/config');
-const { AV1, PlaybackError } = require('../server/av1');
+const { AV1 } = require('../server/av1');
 const { ConversionPolicy } = require('../server/transcoding-policy');
 const { Plex } = require('../server/plex');
 const Playback = require('../web/playback-policy');

@@ -410,8 +410,7 @@ test('revoked host permissions during media preparation invalidate autoplay befo
 });
 
 test('a failed durable commit cannot adopt prepared media in the live room', async t => {
-  const f = await fixture(t),
-    version = f.room.mediaVersion;
+  const f = await fixture(t);
   await f.end();
   f.registry.flush = async () => {
     throw new Error('Fixture disk failure');
@@ -439,7 +438,7 @@ test('manual Next during an autoplay prepare cancels that attempt and a retry co
     }
     return prepare(...args);
   };
-  const before = f.queue.current(f.id);
+  f.queue.current(f.id);
   await f.end();
   await waitFor(() => held.started && f.room.mediaTransition);
   assert.equal((await f.command('media.next')).status, 'unavailable');
@@ -472,7 +471,7 @@ test('pause, Cancel and closing while the next item is preparing release it with
         }
         return prepare(...args);
       };
-      const before = f.queue.current(f.id);
+      f.queue.current(f.id);
       await f.end();
       await waitFor(() => held.started && f.room.mediaTransition);
       let closing;

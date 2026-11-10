@@ -1,6 +1,5 @@
 'use strict';
 const fs = require('node:fs');
-const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { randomBytes, randomUUID } = require('node:crypto');

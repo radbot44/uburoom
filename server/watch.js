@@ -2135,7 +2135,6 @@ class Watch {
   async finishQueueMediaOwned(room, data, work) {
     if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion)
       return;
-    const intent = room.playbackIntent || 0;
     const endedVersion = room.mediaVersion;
     room.endedVersion = endedVersion;
     room.initialGate = false;
@@ -2683,7 +2682,6 @@ class Watch {
           return { status: 'applied', message: 'Preferred quality updated for future videos.' };
         if (viewer.preparing || viewer.updating)
           return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
-        const version = room.mediaVersion;
         if (args.reset) {
           viewer.fallback = undefined;
           viewer.compatible = false;

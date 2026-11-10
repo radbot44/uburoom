@@ -2091,7 +2091,7 @@ test(
 test('PlexAuth and administrator identity lookups ignore unverified assigned identities', async t => {
   const accounts = new Accounts(undefined, credentialVault());
   t.after(() => accounts.close());
-  const user = accounts.resolve('discord', '123456789012345678', 'Assigned user', false);
+  accounts.resolve('discord', '123456789012345678', 'Assigned user', false);
   assert.equal(accounts.identity('discord', '123456789012345678').verified, 0);
 
   const plexUser = accounts.resolve('plex', '101', 'Assigned Plex', false);

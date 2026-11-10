@@ -540,8 +540,8 @@ async function main() {
       };
     });
     await check('fatal HLS retry exhaustion recovers on a slow retry', async () => {
-      const before = await snapshot(host),
-        guestBefore = await snapshot(guest);
+      const before = await snapshot(host);
+      await snapshot(guest);
       // Exhaust the real hls.js loader with actual failed segment requests.
       // Only this disposable client's internal retry budget is shortened;
       // application retry delays and production configuration stay unchanged.
@@ -572,8 +572,8 @@ async function main() {
       const recoveryMs = Date.now() - returnedAt,
         recovered = await snapshot(host);
       await pause(3000);
-      const after = await snapshot(host),
-        guestAfter = await snapshot(guest);
+      const after = await snapshot(host);
+      await snapshot(guest);
       let tones = 0;
       for (let i = 0; i < 15; i++) {
         await pause(100);

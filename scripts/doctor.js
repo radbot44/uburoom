@@ -7,7 +7,7 @@ const http = require('node:http');
 const https = require('node:https');
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
-const { ROOT, configPath, parseConfig, normalizeConfig } = require('../server/config');
+const { ROOT, parseConfig, normalizeConfig } = require('../server/config');
 const { findOnPath } = require('../server/media-tools');
 
 /**

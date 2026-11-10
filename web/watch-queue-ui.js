@@ -61,7 +61,6 @@
     let refetchForce = false;
     let busy = false;
     let autoplayPending = false;
-    let cancelPending = false;
     let bulkPending = false;
     let autoPending = false;
     let lastAutoplayError = '';
@@ -177,7 +176,7 @@
     const autoplayBadge = node('span', autoplayLabel, undefined, 'watch-toggle-badge');
     autoplayBadge.setAttribute('aria-hidden', 'true');
     autoplayBadge.append(root.uburoomIcons.icon(doc, 'play'));
-    const autoplayText = node('span', autoplayLabel, 'Auto-play', 'watch-toggle-label');
+    node('span', autoplayLabel, 'Auto-play', 'watch-toggle-label');
     const autoOpen = button(continuation, 'Queue settings', 'settings', () => openSettings(), false, 'icon-button');
     root.uburoomControls.content(autoOpen, { label: 'Queue settings', icon: 'settings', iconOnly: true });
     autoOpen.id = 'queue-auto-open';
@@ -191,7 +190,7 @@
     const autoBadge = node('span', autoLabel, undefined, 'watch-toggle-badge');
     autoBadge.setAttribute('aria-hidden', 'true');
     autoBadge.append(root.uburoomIcons.icon(doc, 'sparkle'));
-    const autoText = node('span', autoLabel, 'Auto-queue', 'watch-toggle-label');
+    node('span', autoLabel, 'Auto-queue', 'watch-toggle-label');
     continuation.append(autoOpen);
     let rememberedAuto = null,
       rememberedRoom,
@@ -1631,21 +1630,6 @@
       const state = getState();
       if (!state?.id) return;
       await mutate(skipPrevious ? 'skipTo' : 'playEntry', { entryId, skipPrevious });
-      await changed();
-    }
-
-    async function playNow(item) {
-      const state = getState();
-      if (!state?.id) return;
-      await request(
-        '/api/watch/rooms/' + state.id + '/queue',
-        {
-          action: 'playNow',
-          item: { mediaId: item.mediaId || item.id },
-        },
-        { timeoutMs: 35000 },
-      );
-      await fetchData(true);
       await changed();
     }
 

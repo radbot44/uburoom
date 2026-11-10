@@ -12,12 +12,7 @@ const {
 } = require('./benchmark/config');
 const { resolveTools, collectEnvironmentInfo } = require('./benchmark/tools');
 const { probeAllEncoders, probeHwaccels } = require('./benchmark/prober');
-const {
-  inspectSourceVideo,
-  generateSyntheticSource,
-  extractReferenceSample,
-  deriveOutputSpec,
-} = require('./benchmark/source');
+const { inspectSourceVideo, generateSyntheticSource, extractReferenceSample } = require('./benchmark/source');
 const { runChunkedBenchmark, runContinuousBenchmark, extractScreenshot } = require('./benchmark/runner');
 const { detectQualityCapabilities, runQualityAnalysis } = require('./benchmark/quality');
 const { runConcurrentTier, runCapacityScan } = require('./benchmark/concurrency');

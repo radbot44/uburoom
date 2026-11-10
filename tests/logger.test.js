@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { Logger, redact, stripAnsi } = require('../server/logger');
+const { Logger, redact } = require('../server/logger');
 
 function temporary(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-logger-'));

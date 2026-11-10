@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, STREAM_CODECS, codecMatches, classifyHdr } = require('./av1');
+const { run, codecMatches, classifyHdr } = require('./av1');
 
 const GB = 1024 ** 3;
 // Plex refuses to transcode when its drive is nearly full; warn well before that.
