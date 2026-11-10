@@ -1,0 +1,711 @@
+{
+  "scenario": "play-pause-seek-readiness",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice creates a public room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "bob joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 3000,
+      "step": "alice loads the demo video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 4000,
+      "step": "alice reports ready; bob is still buffering",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 7000,
+      "step": "three seconds pass",
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": [
+                "bob"
+              ]
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": [
+                "bob"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 8000,
+      "step": "bob reports ready",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.6,
+            "duration": 60,
+            "startAt": 7400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.6,
+            "duration": 60,
+            "startAt": 7400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 10000,
+      "step": "two seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 2.6,
+            "duration": 60,
+            "startAt": 7400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 2.6,
+            "duration": 60,
+            "startAt": 7400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 11000,
+      "step": "bob pauses",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": true,
+            "position": 3,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": true,
+            "position": 3,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 12000,
+      "step": "alice seeks to 30s while paused",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": true,
+            "position": 30,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": true,
+            "position": 30,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 13000,
+      "step": "both report ready at 30s",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {}
+    },
+    {
+      "at": 14000,
+      "step": "alice plays",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 30.6,
+            "duration": 60,
+            "startAt": 13400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 30.6,
+            "duration": 60,
+            "startAt": 13400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 17000,
+      "step": "three seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 33.6,
+            "duration": 60,
+            "startAt": 13400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 33.6,
+            "duration": 60,
+            "startAt": 13400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 18000,
+      "step": "alice seeks back 10s while playing",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": true,
+            "position": 23.6,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": true,
+            "position": 23.6,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 19000,
+      "step": "only alice reports ready after the seek",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 20000,
+      "step": "bob reports ready after the seek",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 24.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 24.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 22000,
+      "step": "two seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 26.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 26.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 23000,
+      "step": "bob pauses with a stale room epoch",
+      "result": {
+        "ok": false,
+        "status": 409,
+        "error": "Room changed or command expired; retry manually"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 27.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 27.2,
+            "duration": 60,
+            "startAt": 19400,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 24000,
+      "step": "alice seeks while bob never reports ready",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": true,
+            "position": 10,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": true,
+            "position": 10,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 25000,
+      "step": "alice alone reports ready",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": true,
+              "blockers": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "at": 35000,
+      "step": "the readiness wait runs out",
+      "views": {
+        "alice": {
+          "readiness": {
+            "waiting": false,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": true,
+              "canStart": true,
+              "blockers": [
+                "bob"
+              ]
+            }
+          }
+        },
+        "bob": {
+          "readiness": {
+            "waiting": false,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": true,
+              "canStart": true,
+              "blockers": [
+                "bob"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

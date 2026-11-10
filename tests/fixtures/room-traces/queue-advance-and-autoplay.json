@@ -1,0 +1,791 @@
+{
+  "scenario": "queue-advance-and-autoplay",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice creates a public room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "bob joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 3000,
+      "step": "alice queues the first video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 4000,
+      "step": "alice queues two more",
+      "result": {
+        "second": {
+          "ok": true,
+          "outcome": "applied"
+        },
+        "third": {
+          "ok": true,
+          "outcome": "applied"
+        }
+      },
+      "views": {
+        "alice": {
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": "Second video",
+            "pending": 2,
+            "history": 0
+          }
+        },
+        "bob": {
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": "Second video",
+            "pending": 2,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 5000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.6,
+            "duration": 60,
+            "startAt": 4400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.6,
+            "duration": 60,
+            "startAt": 4400,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 6000,
+      "step": "alice seeks to the end",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": "Second video",
+            "pending": 2,
+            "history": 1
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": {
+              "title": "Second video",
+              "endsAt": 15000
+            }
+          },
+          "ending": {
+            "state": "countdown",
+            "completed": "uburoom synchronization test",
+            "next": "Second video"
+          }
+        },
+        "bob": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": "Second video",
+            "pending": 2,
+            "history": 1
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": {
+              "title": "Second video",
+              "endsAt": 15000
+            }
+          },
+          "ending": {
+            "state": "countdown",
+            "completed": "uburoom synchronization test",
+            "next": "Second video"
+          }
+        }
+      }
+    },
+    {
+      "at": 11000,
+      "step": "five seconds of countdown",
+      "views": {}
+    },
+    {
+      "at": 16000,
+      "step": "the countdown finishes",
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#2"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Second video",
+            "next": "Third video",
+            "pending": 1,
+            "history": 1
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#2"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#2",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Second video",
+            "next": "Third video",
+            "pending": 1,
+            "history": 1
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null
+        }
+      }
+    },
+    {
+      "at": 17000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 16750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 16750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 19000,
+      "step": "two seconds of playback",
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 16750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 16750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 20000,
+      "step": "alice seeks to the end again",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": "Third video",
+            "pending": 1,
+            "history": 2
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": {
+              "title": "Third video",
+              "endsAt": 29000
+            }
+          },
+          "ending": {
+            "state": "countdown",
+            "completed": "Second video",
+            "next": "Third video"
+          }
+        },
+        "bob": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": "Third video",
+            "pending": 1,
+            "history": 2
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": {
+              "title": "Third video",
+              "endsAt": 29000
+            }
+          },
+          "ending": {
+            "state": "countdown",
+            "completed": "Second video",
+            "next": "Third video"
+          }
+        }
+      }
+    },
+    {
+      "at": 21000,
+      "step": "bob, a viewer, tries to cancel the countdown",
+      "result": {
+        "ok": false,
+        "outcome": "forbidden",
+        "message": "Your room permissions do not allow this action."
+      },
+      "views": {}
+    },
+    {
+      "at": 22000,
+      "step": "alice cancels the countdown",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": {
+            "state": "upNext",
+            "completed": "Second video",
+            "next": "Third video"
+          }
+        },
+        "bob": {
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": {
+            "state": "upNext",
+            "completed": "Second video",
+            "next": "Third video"
+          }
+        }
+      }
+    },
+    {
+      "at": 32000,
+      "step": "ten seconds pass",
+      "views": {}
+    },
+    {
+      "at": 33000,
+      "step": "alice skips to the next video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#3"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Third video",
+            "next": null,
+            "pending": 0,
+            "history": 2
+          },
+          "ending": null
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#3"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#3",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "Third video",
+            "next": null,
+            "pending": 0,
+            "history": 2
+          },
+          "ending": null
+        }
+      }
+    },
+    {
+      "at": 34000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 33750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 33750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 35000,
+      "step": "alice turns autoplay off",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 33750,
+            "pauseAt": null
+          },
+          "autoplay": {
+            "enabled": false,
+            "countdown": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 33750,
+            "pauseAt": null
+          },
+          "autoplay": {
+            "enabled": false,
+            "countdown": null
+          }
+        }
+      }
+    },
+    {
+      "at": 36000,
+      "step": "alice seeks to the end of the last video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 3
+          },
+          "ending": {
+            "state": "finished",
+            "completed": "Third video",
+            "next": null
+          }
+        },
+        "bob": {
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 3
+          },
+          "ending": {
+            "state": "finished",
+            "completed": "Third video",
+            "next": null
+          }
+        }
+      }
+    },
+    {
+      "at": 46000,
+      "step": "ten seconds pass",
+      "views": {}
+    }
+  ]
+}
