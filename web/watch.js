@@ -2759,7 +2759,7 @@ function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = fal
   autoplayBlocked = false;
   $('join-playback').hidden = true;
   const isEnding = !!(state && !state.mediaUrl && state.ending);
-  stage.classList.toggle('ending-active', isEnding);
+  $('stage').classList.toggle('ending-active', isEnding);
   $('ending-stage').hidden = !isEnding;
   $('empty-stage').hidden = isEnding;
   if (isEnding) renderEnding(state);
@@ -4189,7 +4189,7 @@ function applyState(next, local = false) {
     mediaVersion = next.mediaVersion;
     mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
-      stage.classList.remove('ending-active');
+      $('stage').classList.remove('ending-active');
       $('ending-stage').hidden = true;
       $('empty-stage').hidden = true;
       watchFrames();
@@ -4326,7 +4326,7 @@ function applyState(next, local = false) {
   video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
   const isIdle = !next.mediaUrl;
   const isEnding = isIdle && !!next.ending;
-  stage.classList.toggle('ending-active', isEnding);
+  $('stage').classList.toggle('ending-active', isEnding);
   $('ending-stage').hidden = !isEnding;
   $('empty-stage').hidden = !isIdle || isEnding;
   if (isEnding) renderEnding(next);
@@ -4626,7 +4626,7 @@ function applyRooms(rooms) {
       void selectRoom(rooms[0].id).catch(error => fail(error.message));
   }
   if (!selected) {
-    stage.classList.remove('ending-active');
+    $('stage').classList.remove('ending-active');
     $('ending-stage').hidden = true;
     renderEnding({ ending: null });
     $('viewers').textContent = '';
