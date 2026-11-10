@@ -136,6 +136,8 @@ export function createQualityApi() {
   }
   /**
    * The one rule for whether a viewer is having trouble right now.
+   * @param {any} health
+   * @param {{status?: string, score?: number, confidence?: string}} [report]
    * @returns {string|undefined} one of HEALTH_ISSUES
    */
   function healthIssue(health, { status, score, confidence } = {}) {
@@ -167,6 +169,11 @@ export function createQualityApi() {
     return score >= 0.9 ? 'excellent' : score >= 0.75 ? 'good' : score >= 0.5 ? 'fair' : 'poor';
   }
 
+  /**
+   * @param {{measuredSeconds?: number, outOfSync250Seconds?: number, outOfSync500Seconds?: number,
+   *   automaticCorrectionCount?: number, automaticCorrectionMagnitudeMs?: number, rateAdjustedSeconds?: number,
+   *   rateAdjustmentSeconds?: number, bufferingSeconds?: number}} [metrics]
+   */
   function calculate({
     measuredSeconds,
     outOfSync250Seconds,
@@ -255,6 +262,10 @@ export function createQualityApi() {
       clearWindow();
     }
 
+    /**
+     * @param {{at?: number, errorMs?: number, playbackRate?: number, eligible?: boolean, source?: string,
+     *   context?: any, clockRevision?: any}} [point]
+     */
     function sample({
       at = now(),
       errorMs,
@@ -317,6 +328,7 @@ export function createQualityApi() {
       return true;
     }
 
+    /** @param {{at?: number, magnitudeMs?: number, kind?: string}} [correction] */
     function recordCorrection({ at = now(), magnitudeMs, kind = 'seek' } = {}) {
       if (!finite(at) || !finite(magnitudeMs) || magnitudeMs < 0 || (kind !== 'seek' && kind !== 'jump')) return false;
       const slot = corrections[correctionCount++ % CORRECTION_SLOTS];
@@ -405,6 +417,10 @@ export function createQualityApi() {
       };
     }
 
+    /**
+     * @param {{at?: number, clockValid?: boolean, clockAgeMs?: number, clockUncertaintyMs?: number,
+     *   playbackStatus?: string, unknownReason?: string}} [state]
+     */
     function refresh({
       at = now(),
       clockValid,
@@ -500,6 +516,10 @@ export function createQualityApi() {
   /**
    * Reduce an authenticated viewer's ephemeral sync-quality telemetry state.
    * Preserves anti-manufacture rules for paused/seeking reports and minimum update intervals.
+   * @param {any} previous
+   * @param {any} message
+   * @param {{now?: number, mediaVersion?: string, streamVersion?: string, lastAt?: number, lastStatus?: string,
+   *   lastConfidence?: string}} [options]
    */
   function reduceViewerSyncQuality(
     previous = {},

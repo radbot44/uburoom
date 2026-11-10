@@ -406,6 +406,10 @@ export function createTimingApi() {
     return { reset, interrupt, cadence, frame, read };
   }
 
+  /**
+   * @param {{target?: number, currentTime?: number, presentation?: any, clockValid?: boolean, visible?: boolean,
+   *   eligible?: boolean}} [input]
+   */
   function controlSignal({
     target: expectedTarget,
     currentTime,

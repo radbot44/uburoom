@@ -130,6 +130,7 @@ export function validateCommandEnvelope(
 /**
  * Compute bounded admission and execution deadlines for a command.
  * Preserves Uburoom's rule that stale `expiresAt` timestamps never execute.
+ * @param {{acceptedAt?: number, expiresAt?: number, commandTtlMs?: number, extendedTtlMs?: number}} [input]
  */
 export function resolveCommandDeadlines({
   acceptedAt = Date.now(),

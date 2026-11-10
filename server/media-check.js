@@ -24,7 +24,9 @@ const LEVELS = ['problem', 'warning', 'info', 'ok'];
 class MediaChecks {
   /** @param {{plex:any, config:any, sessions?:() => any}} options */
   constructor({ plex, config, sessions }) {
-    Object.assign(this, { plex, config, sessions });
+    this.plex = plex;
+    this.config = config;
+    this.sessions = sessions;
     /** @type {Map<string,{promise:Promise<CheckItem[]>, items?:CheckItem[], checkedAt?:number}>} */
     this.files = new Map();
   }
@@ -41,6 +43,7 @@ class MediaChecks {
       this.files.set(key, entry);
       return entry;
     }
+    /** @type {Promise<CheckItem[]>} */
     const promise = this.fileItems(media).catch(error => [
       {
         level: 'warning',

@@ -10,6 +10,7 @@ const {
   isRoomLocalAction,
   classifyMutationScope,
 } = require('../shared/sync');
+/** @typedef {import('ws').WebSocket & {watchKick?: (roomId: string) => void, watchRtts?: Array<{at:number,ms:number}>}} WatchSocket */
 /**
  * @typedef {Object} ControlRequest
  * @property {'request'} type
@@ -227,12 +228,16 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
       clients.size >= 128
     )
       return socket.destroy();
-    wss.handleUpgrade(req, socket, head, ws => {
+    wss.handleUpgrade(req, socket, head, (/** @type {WatchSocket} */ ws) => {
       const client = {
         ws,
         socket: req.socket,
         remoteAddress: clientAddress(req),
-        headers: { cookie: req.headers.cookie, origin: req.headers.origin, 'content-type': 'application/json' },
+        headers: /** @type {Record<string, string | undefined>} */ ({
+          cookie: req.headers.cookie,
+          origin: req.headers.origin,
+          'content-type': 'application/json',
+        }),
         lastSeen: Date.now(),
         inflight: new Map(),
         running: new Set(),

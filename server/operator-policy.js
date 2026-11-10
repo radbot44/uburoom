@@ -3,7 +3,7 @@
 // Call with the canonical account UUID from a current authenticated server
 // session, never a provider ID or client-supplied actor. Recheck after awaited
 // work before committing a future administration operation.
-/** @param {import('./accounts').Accounts | undefined} registry */
+/** @param {InstanceType<typeof import('./accounts').Accounts> | undefined} registry */
 function isServerOperator(registry, config, userId) {
   if (!registry || typeof userId !== 'string' || !userId) return false;
   const account = registry.canonical(userId);

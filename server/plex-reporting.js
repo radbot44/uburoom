@@ -2,6 +2,7 @@
 'use strict';
 const { runOperation } = require('./operation');
 const { randomUUID } = require('node:crypto');
+/** @type {import('../shared/room-protocol').MediaIdentityExport} */
 const { mediaIdentity } = require('../shared/room-protocol');
 const { RECONNECT_GRACE_MS } = require('../shared/sync');
 const RECOVERABLE = new Set(['stream-changed', 'delivery-changed', 'observation-timeout']);

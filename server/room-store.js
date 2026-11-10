@@ -4,6 +4,7 @@
 const { randomUUID } = require('node:crypto');
 const Policy = require('./room-policy');
 const { validateAuto } = require('./room-queue');
+/** @type {import('../shared/room-protocol').MediaIdentityExport} */
 const { mediaIdentity } = require('../shared/room-protocol');
 const ubumfa = require('../web/ubumfa');
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -20,7 +21,11 @@ function deduplicateSlug(db, baseSlug, currentRoomId) {
 }
 
 /** @typedef {{serverId:string,mediaId:string,type:'movie'|'episode',title:string,duration:number,position:number}} RoomBookmark */
-/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],invited:string[],inviteCode:string,allowGuests:boolean,name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
+/**
+ * A watch_rooms row as node:sqlite returns it.
+ * @typedef {{id:string,creatorId:string,name:string,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,permissions:string,bookmark:string|null,autoQueue:string|null,autoplay:number,lastAccessedAt:number,keepEmpty:number,maxMembers:number|null,liveState:string|null,slug:string|null,ubumfaWord:string|null,inviteCode:string|null,allowGuests:number}} RoomRow
+ */
+/** @typedef {{id:string,creatorId:string,hosts:string[],guests:string[],invited:string[],inviteCode:string,allowGuests:boolean,name:string,slug:string|null,ubumfaWord:string|null,visibility:'public'|'private',revision:number,checkpointRevision:number,queueRevision:number,createdAt:number,updatedAt:number,lastAccessedAt:number,keepEmpty:boolean,maxMembers:number|null,liveState:{viewers:string[],wasPlaying:boolean}|null,permissions:Object,bookmark:RoomBookmark|null,autoQueue:Object,autoplay:boolean}} SavedRoom */
 
 // A room invite is two six-letter ubumfa words. People may type it in any case,
 // with a hyphen, a space or nothing between the words.
@@ -87,8 +92,9 @@ function bookmark(value) {
 // command epochs and active-room allocation belong to the Watch integration.
 class RoomStore {
   /**
-   * @param {import('./accounts').Accounts} registry
-   * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean,limits?:typeof import('./room-limits').DEFAULTS}} [options]
+   * @param {InstanceType<typeof import('./accounts').Accounts>} registry
+   * @param {{defaults?:Object,now?:()=>number,isAdmin?:(userId:string)=>boolean,guests?:(roomId:string)=>Iterable<string>,
+   *   limits?:typeof import('./room-limits').DEFAULTS,defaultAllowGuests?:boolean}} [options]
    */
   constructor(
     registry,
@@ -125,7 +131,7 @@ class RoomStore {
   get(id) {
     this.healthy();
     if (!UUID.test(id)) throw error('Room unavailable', 404);
-    const row = this.db.prepare('SELECT * FROM watch_rooms WHERE id=?').get(id);
+    const row = /** @type {RoomRow|undefined} */ (this.db.prepare('SELECT * FROM watch_rooms WHERE id=?').get(id));
     if (!row) throw error('Room unavailable', 404);
     const creatorId = this.account(row.creatorId);
     const hosts = [
@@ -133,7 +139,7 @@ class RoomStore {
         this.db
           .prepare('SELECT userId FROM watch_room_hosts WHERE roomId=? ORDER BY userId')
           .all(id)
-          .map(entry => this.account(entry.userId)),
+          .map(entry => this.account(/** @type {string} */ (entry.userId))),
       ),
     ].filter(userId => userId !== creatorId);
     return {
@@ -149,7 +155,7 @@ class RoomStore {
           this.db
             .prepare('SELECT userId FROM watch_room_invites WHERE roomId=? ORDER BY createdAt')
             .all(id)
-            .map(entry => this.account(entry.userId)),
+            .map(entry => this.account(/** @type {string} */ (entry.userId))),
         ),
       ],
       slug: row.slug,
@@ -190,6 +196,12 @@ class RoomStore {
     }
     return result;
   }
+  /**
+   * @param {string} userId
+   * @param {{name?:string,isCustom?:boolean,visibility?:string,fullPermissions?:boolean,permissionPreset?:string,
+   *   permissions?:{host?:Record<string,boolean>,viewer?:Record<string,boolean>,allHosts?:boolean},autoplay?:boolean,
+   *   autoQueue?:Object,keepEmpty?:boolean,maxMembers?:number|null,allowGuests?:boolean}} [options]
+   */
   async create(
     userId,
     {
@@ -207,7 +219,10 @@ class RoomStore {
     } = {},
   ) {
     this.healthy();
-    if (this.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n >= this.limits.maxSaved)
+    if (
+      /** @type {{n:number}} */ (this.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get()).n >=
+      this.limits.maxSaved
+    )
       throw error('Saved room limit reached', 429);
     if (typeof keepEmpty !== 'boolean') throw error('Choose whether to keep the room when empty');
     this.validateMembers(maxMembers);

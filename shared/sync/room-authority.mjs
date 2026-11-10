@@ -111,6 +111,10 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
   }
 }
 
+/**
+ * @param {any} room
+ * @param {{createId?: () => string}} [options]
+ */
 export function invalidateEpoch(room, { createId = defaultCreateId } = {}) {
   const next = createId();
   setEpoch(room, next);
@@ -934,6 +938,12 @@ export function createRoomCoordinator(options = {}) {
     return createdRoom;
   }
 
+  /**
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {{tenantId?: string, expectedRevision?: number, duration?: number, position?: number,
+   *   autoplay?: boolean, content?: object}} [options]
+   */
   async function loadTimeline(
     roomId,
     actor,
@@ -1110,6 +1120,11 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
+  /**
+   * @param {any} draft
+   * @param {string} viewerId
+   * @param {{reason?: string, now?: number, monoNow?: number, preserveGrace?: boolean}} [options]
+   */
   function removeViewerFromDraft(draft, viewerId, { reason = 'left', now, monoNow, preserveGrace = false } = {}) {
     if (!preserveGrace) {
       draft.disconnectedViewers.delete(viewerId);
@@ -1278,6 +1293,12 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
+  /**
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {any} envelopeInput
+   * @param {{tenantId?: string}} [options]
+   */
   async function executeCommand(roomId, actor, envelopeInput, { tenantId } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
@@ -1482,6 +1503,12 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
+  /**
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {any} message
+   * @param {{tenantId?: string}} [options]
+   */
   async function recordSyncQuality(roomId, actor, message, { tenantId } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     if (!resolvedTenant) return { ok: false, code: 4003 };
@@ -1563,6 +1590,9 @@ export function createRoomCoordinator(options = {}) {
    * Retrieve an authorized, tenant-isolated, read-only room snapshot for `actor`.
    * Reads committed room state only; never mutates authoritative timeline, revision,
    * readiness, or membership state, and never exposes uncommitted transitions.
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {{viewerId?: string, tenantId?: string, envelopeOnly?: boolean}} [options]
    */
   async function snapshot(roomId, actor, { viewerId, tenantId, envelopeOnly = false } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
@@ -1627,6 +1657,10 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
+  /**
+   * @param {any} actor
+   * @param {{tenantId?: string}} [options]
+   */
   async function listRooms(actor, { tenantId } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     if (!resolvedTenant) {
@@ -1654,6 +1688,11 @@ export function createRoomCoordinator(options = {}) {
     return visible;
   }
 
+  /**
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {{epoch?: string, expectedRevision?: number, tenantId?: string}} [options]
+   */
   async function closeRoom(roomId, actor, { epoch, expectedRevision, tenantId } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     if (!resolvedTenant) {
@@ -1733,6 +1772,9 @@ export function createRoomCoordinator(options = {}) {
    * Enforces tenant isolation, viewer ownership, fast synchronous revocation, and bounded
    * periodic `options.authorize` revalidation (`presenceAuthIntervalMs`) without hitting
    * external storage on every rapid clock/pong frame.
+   * @param {string} roomId
+   * @param {any} actor
+   * @param {{viewerId?: string, tenantId?: string, rttMs?: number}} [options]
    */
   async function touchViewer(roomId, actor, { viewerId, tenantId, rttMs } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
@@ -1793,6 +1835,7 @@ export function createRoomCoordinator(options = {}) {
    * Privileged server-internal immediate revocation helper.
    * Evicts matching viewer session(s) under per-room serialization so revoked users
    * lose presence, readiness membership, and snapshot access immediately.
+   * @param {{userId?: string, tenantId?: string, roomId?: string, viewerId?: string}} [target]
    */
   async function revokeActor({ userId, tenantId = 'default', roomId, viewerId } = {}) {
     const normalizedTenant = normalizeTenantId(tenantId);

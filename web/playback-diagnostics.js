@@ -378,6 +378,7 @@
     return row;
   }
   // A recorded row as received from a browser: known event, sane times, allowed fields only.
+  /** @returns {({sequence:number, at:number, ms:number, event:string} & Record<string, unknown>) | undefined} */
   function cleanRow(row) {
     if (
       !row ||

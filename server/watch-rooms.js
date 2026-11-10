@@ -207,7 +207,7 @@ class WatchRooms {
         }
       if (!this.limits.inactiveDays) return;
       const cutoff = now - this.limits.inactiveDays * 86400000;
-      let count = this.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get().n;
+      let count = /** @type {{n:number}} */ (this.store.db.prepare('SELECT COUNT(*) AS n FROM watch_rooms').get()).n;
       for (const { id } of this.store.db
         .prepare('SELECT id FROM watch_rooms WHERE lastAccessedAt<=? ORDER BY lastAccessedAt,id')
         .all(cutoff)) {

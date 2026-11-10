@@ -1,6 +1,11 @@
 /* Room and playback command validation. Generic sync commands come from shared/sync;
  * Plex media, track, quality and catalog queue extensions stay here.
  */
+/**
+ * Type of `mediaIdentity` for checked CommonJS callers; the UMD wrapper hides its exports from tsc.
+ * @typedef {{id: string, demo: boolean, ratingKey?: string, mediaId?: string}} MediaIdentity
+ * @typedef {{mediaIdentity: (value: unknown) => MediaIdentity | undefined}} MediaIdentityExport
+ */
 (function (root) {
   'use strict';
   const syncProtocol =

@@ -82,7 +82,11 @@
  * An individual viewer inside a watch room.
  * @typedef {Object} Viewer
  * @property {string} userId - Account UUID of the viewer.
+ * @property {string} [viewerId] - Per-tab viewing ID this viewer is keyed by.
  * @property {Actor} actor - Actor context for this viewer.
+ * @property {boolean} [plexReporting] - Viewer consent to Plex activity reporting (absent means allowed).
+ * @property {boolean} [plexWatchState] - Viewer consent to Plex watch-state updates.
+ * @property {string} [observationEpoch] - Playback observation generation used to fence stale Plex reports.
  * @property {number} at - Timestamp (ms) of last viewer poll/heartbeat.
  * @property {string} [preferredQuality] - Explicit quality preference, retained independently of effective output.
  * @property {string} quality - Selected quality preset ID (e.g. 'direct', '1080p8', '720p4').
@@ -105,7 +109,7 @@
  * @property {{status:string,score:number,lastKnownScore?:number,lastKnownLevel?:string,lastKnownAt?:number,updatedAt:number,
  *   confidence?:'confident'|'reduced'|'provisional',measurementFreshnessMs?:number,mediaVersion:string,streamVersion:string,
  *   reason?:string}} [syncQuality] - Ephemeral per-tab playback quality from the viewer's authenticated socket.
- * @property {import('./operation').SharedTask & {bootstrap?:Promise<void>}} [preparing] - One chosen-output preparation lifetime, optionally publishing authorized fallback metadata first.
+ * @property {InstanceType<typeof import('./operation').SharedTask> & {bootstrap?:Promise<void>}} [preparing] - One chosen-output preparation lifetime, optionally publishing authorized fallback metadata first.
  * @property {number} [fallbackRetryAt] - Next allowed retry of an unavailable chosen output while fallback plays.
  * @property {Function} [alive] - Optional liveness check callback.
  * @property {() => Promise<boolean>} [reportingAuthorized] - Current login check independent of control-socket liveness, for bounded reporting continuity.
@@ -116,8 +120,9 @@
  * An active watch room instance managing shared timeline and viewers.
  * @typedef {Object} Room
  * @property {RoomDescriptor} s - Underlying hub room descriptor.
+ * @property {boolean} [saved] - Whether the room is backed by a saved room record.
  * @property {any} media - Currently loaded Plex media metadata object (or null).
- * @property {import('./fallback-stream').FallbackStream} [fallbackStream] - Ephemeral room-owned fallback; never persisted.
+ * @property {InstanceType<typeof import('./fallback-stream').FallbackStream>} [fallbackStream] - Ephemeral room-owned fallback; never persisted.
  * @property {string} mediaVersion - Random UUID rotated on media load/change.
  * @property {number} revision - Monotonically increasing room revision counter.
  * @property {number} position - Base timeline position in seconds at `changedAt`.
@@ -139,6 +144,15 @@
  * @property {boolean} hadViewers - Whether any viewer has ever joined this room.
  * @property {number} [lastPing] - Timestamp (ms) of last transcode session keep-alive ping.
  * @property {number} lastActivity - Timestamp (ms) of last command or viewer interaction.
+ * @property {number} [playbackIntent] - Generation of the latest explicit play/pause intent.
+ * @property {boolean} [removing] - Set while the room is being torn down.
+ * @property {boolean} [mediaTransition] - Set while queued media is being prepared and adopted.
+ * @property {boolean} [queueEditing] - Set while a queue edit is being committed.
+ * @property {boolean} [waitingForHost] - Playback is held until a host returns.
+ * @property {string} [endedVersion] - Media generation whose natural end has been handled.
+ * @property {any} [autoplayCountdown] - Active cancellable autoplay countdown.
+ * @property {ReturnType<typeof setTimeout>} [autoplayTimer] - Timer that fires the autoplay countdown.
+ * @property {string} [autoplayError] - Last autoplay failure shown to the room.
  */
 
 /**

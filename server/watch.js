@@ -6,6 +6,7 @@
 /** @typedef {import('./types').RoomDescriptor} RoomDescriptor */
 /** @typedef {import('./types').EngineCommand} EngineCommand */
 /** @typedef {{room: Room, kind: 'preload'|'transition'|'cleanup', controller: AbortController, signal: AbortSignal, committing: boolean, promise: Promise<any>}} MediaWork */
+/** @typedef {{countdown: any, mediaId: string, startAt: number, viewers: Map<string, any>, work?: MediaWork, dropped?: boolean, media?: any, fallbackStream?: InstanceType<typeof import('./fallback-stream').FallbackStream>, source?: Promise<any>}} Preload */
 
 const { MediaChecks } = require('./media-check');
 const { FallbackStream } = require('./fallback-stream');
@@ -87,6 +88,8 @@ class Watch {
     this.providerDownSince = undefined;
     this.providerRecoveredAt = 0;
     this.mediaChecks = new MediaChecks({ plex, config: hub?.config || {}, sessions: () => this.plexSessions });
+    /** @type {InstanceType<typeof import('./plex-delivery').PlexDelivery> | undefined} Attached by server/watch-http.js. */
+    this.delivery = undefined;
   }
   providerFailed(error) {
     if (!isProviderOutage(error)) return false;
@@ -290,12 +293,12 @@ class Watch {
   preloadNext(room, countdown, next, actor) {
     this.dropPreload(room);
     if (this.shuttingDown || room.removing || !next?.mediaId || next.mediaId === 'demo') return;
-    const preload = (room.preload = {
+    const preload = (room.preload = /** @type {Preload} */ ({
       countdown: countdown.id,
       mediaId: next.mediaId,
       startAt: Number(next.position) || 0,
       viewers: new Map(),
-    });
+    }));
     preload.work = this.startMediaWork(room, async work => {
       const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
       const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
@@ -605,6 +608,7 @@ class Watch {
     const bootstrap = new Promise(resolve => {
       bootstrapReady = resolve;
     });
+    /** @type {InstanceType<typeof SharedTask> & {bootstrap?: Promise<void>}} */
     const job = new SharedTask(
       async () => {
         // Bootstrap and the chosen output share one preparation lifetime, so
@@ -696,6 +700,13 @@ class Watch {
       if (!job.signal.aborted && !this.providerFailed(error)) throw error;
     }
   }
+  /**
+   * @param {Room} room
+   * @param {Actor} actor
+   * @param {string} viewerId
+   * @param {(authorized: () => Promise<boolean>, source: any) => Promise<any>} prepare
+   * @param {{permitted?: () => boolean, retainUnavailable?: boolean, accept?: (media: any) => boolean}} [options]
+   */
   async replaceViewer(
     room,
     actor,
@@ -743,9 +754,10 @@ class Watch {
             playbackError: error.message,
           };
         } else {
-          if (!retainUnavailable || !(error instanceof PlaybackError) || !error.media) throw error;
+          const failure = /** @type {InstanceType<typeof PlaybackError> & {media?: any}} */ (error);
+          if (!retainUnavailable || !(failure instanceof PlaybackError) || !failure.media) throw error;
           // Preserve the catalog so Off/another subtitle can recover a failed burn.
-          media = error.media;
+          media = failure.media;
           media.format = 'unavailable';
           media.playbackError = error.message;
         }
@@ -2037,6 +2049,10 @@ class Watch {
       }
     }
   }
+  /**
+   * @param {Room} room
+   * @param {{intent?: number, data?: any}} [options]
+   */
   async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
     if (this.shuttingDown || room.removing) return;
     const record = this.roomState?.store.get(room.s.roomId);

@@ -49,6 +49,11 @@ export function preset(name) {
   };
 }
 
+/**
+ * @param {Record<string, boolean>} value
+ * @param {Record<string, boolean>} base
+ * @param {{role?: string, stored?: boolean}} [options]
+ */
 export function permissions(value, base, { role: targetRole, stored = false } = {}) {
   if (
     !value ||
@@ -71,6 +76,7 @@ export function permissions(value, base, { role: targetRole, stored = false } = 
   );
 }
 
+/** @param {{host?: Record<string, boolean>, viewer?: Record<string, boolean>, allHosts?: boolean}} [value] */
 export function policy(value = {}) {
   if (
     !value ||

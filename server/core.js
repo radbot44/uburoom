@@ -110,6 +110,27 @@ class Hub {
     this.adminMode = false;
     this.adminEpoch = 0;
     this.adminUsers = new Set();
+    // Integration hooks that server/app.js, server/watch.js and server/discord.js attach after construction.
+    /** @type {any} Discord or test membership policy (isMember, canWatch, refresh, refreshWatch, voiceChannel, ...). */
+    this.access = undefined;
+    /** @type {((actor: Actor) => boolean) | undefined} */
+    this.adminEligible = undefined;
+    /** @type {((actor: Actor) => Promise<void>) | undefined} */
+    this.refreshAdmin = undefined;
+    /** @type {((actor: Actor) => Actor | undefined) | undefined} */
+    this.accountActor = undefined;
+    /** @type {((room: RoomDescriptor, actor: Actor) => boolean | Promise<boolean>) | undefined} */
+    this.watchCanView = undefined;
+    /** @type {((roomId: string) => boolean) | undefined} */
+    this.watchIdle = undefined;
+    /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    this.publicationExecute = undefined;
+    /** @type {((roomId: string, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    this.savedPublicationExecute = undefined;
+    /** @type {((roomId: string, command: EngineCommand, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    this.scheduledEventExecute = undefined;
+    /** @type {((roomId: string, command: EngineCommand, actor: Actor, permitted: () => boolean) => Promise<any>) | undefined} */
+    this.savedQueueExecute = undefined;
   }
   isOwner(actor) {
     return isOwner(actor, this.config);
@@ -384,7 +405,10 @@ class Hub {
             }
           : {
               status: 'failed',
-              message: error instanceof Error && error.status ? error.message : 'Playback could not be updated.',
+              message:
+                error instanceof Error && /** @type {Error & {status?: number}} */ (error).status
+                  ? error.message
+                  : 'Playback could not be updated.',
             };
       }
     }

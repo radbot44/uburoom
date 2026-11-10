@@ -5,8 +5,17 @@ const Tracks = require('./media-tracks');
 
 /** One cancellable, speculative encoder lease. No timer, credentials or viewer grants are owned here. */
 class FallbackStream {
+  /**
+   * @param {{av1:any, settings:any, source:any, shareKey:unknown[], authorized:() => Promise<boolean>|boolean,
+   *   event?:(name:string, fields?:object) => void}} options
+   */
   constructor({ av1, settings, source, shareKey, authorized, event = () => {} }) {
-    Object.assign(this, { av1, settings, source, shareKey, authorized, event });
+    this.av1 = av1;
+    this.settings = settings;
+    this.source = source;
+    this.shareKey = shareKey;
+    this.authorized = authorized;
+    this.event = event;
     this.position = 0;
     this.active = false;
     this.closed = false;

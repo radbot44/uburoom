@@ -76,7 +76,7 @@ const TIERS = Object.freeze(['members', 'trusted', 'admins', 'operator']);
 
 // Provider identities and role membership must come from the server registry and
 // current guild access, never actor fields supplied in a command body.
-/** @param {import('./accounts').Accounts} registry */
+/** @param {InstanceType<typeof import('./accounts').Accounts>} registry */
 function administrator(registry, config, userId, access) {
   const account = registry.canonical(userId);
   if (!account) return false;
@@ -88,7 +88,7 @@ function administrator(registry, config, userId, access) {
 // Server-wide standing: operator > admins > trusted > members. Admins include the
 // Discord owner. Unverified guests have no verified identities, so they are
 // members at most; callers decide whether guests may act at all.
-/** @param {import('./accounts').Accounts} registry @returns {'operator'|'admins'|'trusted'|'members'} */
+/** @param {InstanceType<typeof import('./accounts').Accounts>} registry @returns {'operator'|'admins'|'trusted'|'members'} */
 function serverTier(registry, config, userId, access) {
   const account = registry.canonical(userId);
   if (!account) return 'members';

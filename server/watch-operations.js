@@ -4,6 +4,7 @@ const { UUID, hash } = require('./core');
 const { randomUUID } = require('node:crypto');
 const RoomPolicy = require('./room-policy');
 const { validateCommandEnvelope } = require('../shared/sync/envelope.mjs');
+/** @type {import('../shared/room-protocol').MediaIdentityExport} */
 const { mediaIdentity } = require('../shared/room-protocol');
 const { PlaybackError } = require('./av1');
 const { localFormat } = require('../web/playback-policy');
@@ -86,7 +87,7 @@ function watchOperations({
 }) {
   const result = (status, value) => ({ status, value });
   /**
-   * @param {{headers: Object, controlSocket?: {readyState: number}}} context Auth credentials and optional live connection.
+   * @param {{headers: Object, signal?: AbortSignal, controlSocket?: {readyState: number, watchHeaders?: Object}}} context Auth credentials and optional live connection.
    * @param {string} path Allowlisted operation path and query.
    * @param {Object} [data] Validated mutation input; absence selects a read.
    */

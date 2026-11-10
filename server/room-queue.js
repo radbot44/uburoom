@@ -1,10 +1,17 @@
 // @ts-check
 'use strict';
+/** @type {import('../shared/room-protocol').MediaIdentityExport} */
 const { mediaIdentity } = require('../shared/room-protocol');
 
 const { randomUUID, randomInt } = require('node:crypto');
 const Policy = require('./room-policy');
 
+/**
+ * Options shared by the queue-advancing operations.
+ * @typedef {{currentPosition?:number,expectedRevision?:number,autoCorpus?:any[],corpus?:any[],guard?:()=>boolean,
+ *   skipPrevious?:boolean,initialAdd?:boolean,discardCurrent?:boolean,outcome?:string,currentEntryId?:string,
+ *   nextEntryId?:string}} QueueAdvanceOptions
+ */
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const MAX_PENDING = 50;
 const MAX_HISTORY = 150;
@@ -133,8 +140,8 @@ function validateAuto(config) {
 
 class RoomQueue {
   /**
-   * @param {import('./accounts').Accounts} registry
-   * @param {import('./room-store').RoomStore} store
+   * @param {InstanceType<typeof import('./accounts').Accounts>} registry
+   * @param {InstanceType<typeof import('./room-store').RoomStore>} store
    * @param {{now?: () => number,randomIndex?:(max:number)=>number}} [options]
    */
   constructor(registry, store, { now, randomIndex = randomInt } = {}) {
@@ -235,6 +242,12 @@ class RoomQueue {
     return rowToEntry(row);
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any} rawItem
+   * @param {{expectedRevision?:number}} [options]
+   */
   async add(roomId, userId, rawItem, { expectedRevision } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -242,9 +255,11 @@ class RoomQueue {
     if (expectedRevision !== undefined) this.assertRevision(room, expectedRevision);
     const item = validateItem(rawItem);
 
-    const pendingCount = this.db
-      .prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
-      .get(roomId).count;
+    const pendingCount = /** @type {{count:number}} */ (
+      this.db
+        .prepare("SELECT COUNT(*) AS count FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
+        .get(roomId)
+    ).count;
     if (pendingCount >= this.maxPending) {
       throw error('Queue limit reached (maximum ' + this.maxPending + ' upcoming items)', 400);
     }
@@ -322,6 +337,12 @@ class RoomQueue {
     });
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any[]} rawItems
+   * @param {{expectedRevision?:number,unfinished?:boolean}} [options]
+   */
   async addBulk(roomId, userId, rawItems, { expectedRevision, unfinished = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -385,6 +406,12 @@ class RoomQueue {
     return { queueRevision: room.queueRevision + 1 };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any} config
+   * @param {{expectedRevision?:number}} [options]
+   */
   async configureAuto(roomId, userId, config, { expectedRevision } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -564,6 +591,12 @@ class RoomQueue {
     });
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any[]} rawItems
+   * @param {{expectedRevision?:number,continuation?:boolean,forceAdvance?:boolean}} [options]
+   */
   async generate(roomId, userId, rawItems, { expectedRevision, continuation = false, forceAdvance = false } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -599,6 +632,12 @@ class RoomQueue {
     };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any[]} rawItems
+   * @param {{expectedRevision?:number}} [options]
+   */
   async skipAuto(roomId, userId, rawItems, { expectedRevision } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -621,6 +660,12 @@ class RoomQueue {
     return { skipped: autoNext, next: result.next, autoQueue: result.autoQueue, queueRevision: room.queueRevision + 1 };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {any[]} rawItems
+   * @param {{expectedRevision?:number}} [options]
+   */
   async pinAuto(roomId, userId, rawItems, { expectedRevision } = {}) {
     this.healthy();
     const room = this.room(roomId);
@@ -663,6 +708,11 @@ class RoomQueue {
     };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {QueueAdvanceOptions} [options]
+   */
   async playAutoNow(
     roomId,
     userId,
@@ -952,6 +1002,12 @@ class RoomQueue {
     return { current: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {string} entryId
+   * @param {QueueAdvanceOptions} [options]
+   */
   async playEntry(
     roomId,
     userId,
@@ -1101,6 +1157,11 @@ class RoomQueue {
     return { completed: current, queueRevision: room.queueRevision + 1 };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {QueueAdvanceOptions} [options]
+   */
   async next(
     roomId,
     userId,
@@ -1402,6 +1463,13 @@ class RoomQueue {
     return { action: 'replayed', current: this.getEntry(id), previous: current, queueRevision: room.queueRevision + 1 };
   }
 
+  /**
+   * @param {string} roomId
+   * @param {string} userId
+   * @param {string} historyEntryId
+   * @param {{resume?:boolean,restore?:boolean,expectedRevision?:number}} [options]
+   * @param {number} [currentPosition]
+   */
   async historyReplay(
     roomId,
     userId,
@@ -1612,13 +1680,17 @@ class RoomQueue {
     this.healthy();
     if (!UUID.test(roomId)) return null;
     const pendingCount =
-      this.db
-        .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
-        .get(roomId)?.c || 0;
+      /** @type {{c:number}|undefined} */ (
+        this.db
+          .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'pending'")
+          .get(roomId)
+      )?.c || 0;
     const historyCount =
-      this.db
-        .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'history'")
-        .get(roomId)?.c || 0;
+      /** @type {{c:number}|undefined} */ (
+        this.db
+          .prepare("SELECT COUNT(*) AS c FROM watch_queue_entries WHERE roomId = ? AND state = 'history'")
+          .get(roomId)
+      )?.c || 0;
     const currentRow = this.db
       .prepare("SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'current'")
       .get(roomId);
@@ -1630,9 +1702,9 @@ class RoomQueue {
         "SELECT * FROM watch_queue_entries WHERE roomId = ? AND state = 'history' ORDER BY endedAt DESC, rowid DESC LIMIT 1",
       )
       .get(roomId);
-    const roomRow = this.db
-      .prepare('SELECT queueRevision,autoQueue,autoplay FROM watch_rooms WHERE id = ?')
-      .get(roomId);
+    const roomRow = /** @type {{queueRevision:number,autoQueue:string|null,autoplay:number}|undefined} */ (
+      this.db.prepare('SELECT queueRevision,autoQueue,autoplay FROM watch_rooms WHERE id = ?').get(roomId)
+    );
     const autoQueue = roomRow?.autoQueue
       ? { next: null, ...JSON.parse(roomRow.autoQueue) }
       : { mode: 'off', scope: null, includeSpecials: false, cycle: 0, used: [], next: null };

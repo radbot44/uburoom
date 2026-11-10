@@ -87,6 +87,10 @@ class Accounts {
       throw error;
     }
   }
+  /**
+   * @param {string} id
+   * @returns {{id:string,name:string,revision:number,retiredInto:string|null,signedInAt:number|null,guest:number}|undefined}
+   */
   canonical(id) {
     let row = this.db.prepare('SELECT * FROM users WHERE id=?').get(id);
     for (let n = 0; row?.retiredInto && n < 20; n++)

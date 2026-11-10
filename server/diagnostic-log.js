@@ -45,7 +45,11 @@ class DiagnosticLog {
    * @param {{directory:string, keepDays:number, maxBytes:number, logger?:any, now?:() => number}} options
    */
   constructor({ directory, keepDays, maxBytes, logger, now = Date.now }) {
-    Object.assign(this, { directory, keepDays, maxBytes, logger, now });
+    this.directory = directory;
+    this.keepDays = keepDays;
+    this.maxBytes = maxBytes;
+    this.logger = logger;
+    this.now = now;
     /** @type {Map<string,string[]>} lines waiting to be written, per day */
     this.pending = new Map();
     /** @type {Map<string,number>} bytes on disk per day */
