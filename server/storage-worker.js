@@ -6,15 +6,24 @@ db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
 let histories = Promise.resolve();
 parentPort.on('message', ({ id, changes, close, history }) => {
   if (history) {
-    histories = histories.then(() => require('./history-projection').historyProjection(db, history))
-      .then(value => parentPort.postMessage({id,value}), () => parentPort.postMessage({id,readError:'History temporarily unavailable'}));
+    histories = histories
+      .then(() => require('./history-projection').historyProjection(db, history))
+      .then(
+        value => parentPort.postMessage({ id, value }),
+        () => parentPort.postMessage({ id, readError: 'History temporarily unavailable' }),
+      );
     return;
   }
   try {
-    if(changes){
+    if (changes) {
       db.exec('BEGIN IMMEDIATE');
-      try{for(const change of changes)if(!db.applyChangeset(change))throw new Error('Changeset rejected');db.exec('COMMIT');}
-      catch(error){db.exec('ROLLBACK');throw error;}
+      try {
+        for (const change of changes) if (!db.applyChangeset(change)) throw new Error('Changeset rejected');
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     }
     if (close) db.close();
     parentPort.postMessage({ id });

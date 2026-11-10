@@ -1,446 +1,1047 @@
 'use strict';
-const test=require('node:test');
-const assert=require('node:assert/strict');
-const {randomUUID}=require('node:crypto');
-const {Plex}=require('../server/plex');
-const {Watch}=require('../server/watch');
-const {Hub}=require('../server/core');
-const Tracks=require('../server/media-tracks');
-const Subtitles=require('../server/subtitles');
-const SubtitleResources=require('../server/subtitle-resources');
-const Engine=require('../shared/engine');
-const fs=require('node:fs');
-const path=require('node:path');
-const https=require('node:https');
-const {createApp}=require('../server/app');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { Plex } = require('../server/plex');
+const { Watch } = require('../server/watch');
+const { Hub } = require('../server/core');
+const Tracks = require('../server/media-tracks');
+const Subtitles = require('../server/subtitles');
+const SubtitleResources = require('../server/subtitle-resources');
+const Engine = require('../shared/engine');
+const fs = require('node:fs');
+const path = require('node:path');
+const https = require('node:https');
+const { createApp } = require('../server/app');
 
 function provider() {
-  const state={selected:undefined,audio:'11',events:[],wrongBurn:false,wrongAudio:false,decisionAudio:'confirmed',deny:false,heldPlaylists:new Set()};
-  const streams=()=>[
-    {id:10,index:0,streamType:1,codec:'h264'},
-    {id:11,index:1,streamType:2,codec:'ac3',languageCode:'eng',displayTitle:'English',selected:state.audio==='11',channels:6},
-    {id:12,index:2,streamType:2,codec:'ac3',languageCode:'fra',displayTitle:'French',selected:state.audio==='12',channels:6},
-    {id:21,streamType:3,codec:'srt',languageCode:'fra',displayTitle:'French text',key:'/library/streams/21',selected:state.selected==='21'},
-    {id:22,index:3,streamType:3,codec:'ass',languageCode:'eng',displayTitle:'English styled',selected:state.selected==='22'},
-    {id:23,index:4,streamType:3,codec:'pgs',languageCode:'eng',displayTitle:'English image',selected:state.selected==='23'}];
-  const fetch=async(input,options={})=>{
-    const url=new URL(input), json=value=>new Response(JSON.stringify({MediaContainer:value}),{headers:{'Content-Type':'application/json'}});
-    state.events.push({path:url.pathname,method:options.method || 'GET',token:options.headers['X-Plex-Token']});
-    if(url.pathname==='/library/metadata/1') {
-      if(state.deny)return new Response(null,{status:403});
-      return json({Metadata:[{ratingKey:'1',type:'movie',title:'Track fixture',duration:60000,Media:[{videoCodec:'h264',height:1080,bitrate:24000,Part:[{id:5,key:'/library/parts/5/file',Stream:streams()}]}]}]});
+  const state = {
+    selected: undefined,
+    audio: '11',
+    events: [],
+    wrongBurn: false,
+    wrongAudio: false,
+    decisionAudio: 'confirmed',
+    deny: false,
+    heldPlaylists: new Set(),
+  };
+  const streams = () => [
+    { id: 10, index: 0, streamType: 1, codec: 'h264' },
+    {
+      id: 11,
+      index: 1,
+      streamType: 2,
+      codec: 'ac3',
+      languageCode: 'eng',
+      displayTitle: 'English',
+      selected: state.audio === '11',
+      channels: 6,
+    },
+    {
+      id: 12,
+      index: 2,
+      streamType: 2,
+      codec: 'ac3',
+      languageCode: 'fra',
+      displayTitle: 'French',
+      selected: state.audio === '12',
+      channels: 6,
+    },
+    {
+      id: 21,
+      streamType: 3,
+      codec: 'srt',
+      languageCode: 'fra',
+      displayTitle: 'French text',
+      key: '/library/streams/21',
+      selected: state.selected === '21',
+    },
+    {
+      id: 22,
+      index: 3,
+      streamType: 3,
+      codec: 'ass',
+      languageCode: 'eng',
+      displayTitle: 'English styled',
+      selected: state.selected === '22',
+    },
+    {
+      id: 23,
+      index: 4,
+      streamType: 3,
+      codec: 'pgs',
+      languageCode: 'eng',
+      displayTitle: 'English image',
+      selected: state.selected === '23',
+    },
+  ];
+  const fetch = async (input, options = {}) => {
+    const url = new URL(input),
+      json = value =>
+        new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
+    state.events.push({ path: url.pathname, method: options.method || 'GET', token: options.headers['X-Plex-Token'] });
+    if (url.pathname === '/library/metadata/1') {
+      if (state.deny) return new Response(null, { status: 403 });
+      return json({
+        Metadata: [
+          {
+            ratingKey: '1',
+            type: 'movie',
+            title: 'Track fixture',
+            duration: 60000,
+            Media: [
+              {
+                videoCodec: 'h264',
+                height: 1080,
+                bitrate: 24000,
+                Part: [{ id: 5, key: '/library/parts/5/file', Stream: streams() }],
+              },
+            ],
+          },
+        ],
+      });
     }
-    if(url.pathname==='/library/parts/5' && options.method==='PUT'){
-      if(state.failSubtitleRestore && url.searchParams.get('subtitleStreamID')==='0')return new Response(null,{status:503});
-      if(url.searchParams.has('subtitleStreamID')){state.selected=url.searchParams.get('subtitleStreamID');state.events.push({selection:state.selected});}
-      if(url.searchParams.has('audioStreamID')){state.audio=url.searchParams.get('audioStreamID');state.events.push({audioSelection:state.audio});}
+    if (url.pathname === '/library/parts/5' && options.method === 'PUT') {
+      if (state.failSubtitleRestore && url.searchParams.get('subtitleStreamID') === '0')
+        return new Response(null, { status: 503 });
+      if (url.searchParams.has('subtitleStreamID')) {
+        state.selected = url.searchParams.get('subtitleStreamID');
+        state.events.push({ selection: state.selected });
+      }
+      if (url.searchParams.has('audioStreamID')) {
+        state.audio = url.searchParams.get('audioStreamID');
+        state.events.push({ audioSelection: state.audio });
+      }
       return json({});
     }
-    if(url.pathname.endsWith('/decision')) {
+    if (url.pathname.endsWith('/decision')) {
       // Model measured PMS behavior: the universal query hint is ignored.
-      const burned=url.searchParams.get('subtitles')==='burn', audioId=state.wrongAudio ? 11 : Number(state.audio);
-      const audioRows=state.decisionAudio==='missing' ? [] : state.decisionAudio==='ambiguous' ?
-        [11,12].map(id=>({streamType:2,id,codec:'aac',selected:1})) :
-        [{streamType:2,...(state.decisionAudio==='unidentified' ? {} : {id:audioId}),codec:'aac',selected:1}];
-      return json({generalDecisionCode:1001,Metadata:[{Media:[{videoCodec:'h264',audioCodec:'aac',subtitleDecision:burned?'burn':'none',Part:[{Stream:[{streamType:1,codec:'h264'},
-        ...audioRows,...(burned ? [{streamType:3,id:state.wrongBurn ? 999 : Number(state.selected),decision:'burn'}] : [])]}]}]}]});
+      const burned = url.searchParams.get('subtitles') === 'burn',
+        audioId = state.wrongAudio ? 11 : Number(state.audio);
+      const audioRows =
+        state.decisionAudio === 'missing'
+          ? []
+          : state.decisionAudio === 'ambiguous'
+            ? [11, 12].map(id => ({ streamType: 2, id, codec: 'aac', selected: 1 }))
+            : [
+                {
+                  streamType: 2,
+                  ...(state.decisionAudio === 'unidentified' ? {} : { id: audioId }),
+                  codec: 'aac',
+                  selected: 1,
+                },
+              ];
+      return json({
+        generalDecisionCode: 1001,
+        Metadata: [
+          {
+            Media: [
+              {
+                videoCodec: 'h264',
+                audioCodec: 'aac',
+                subtitleDecision: burned ? 'burn' : 'none',
+                Part: [
+                  {
+                    Stream: [
+                      { streamType: 1, codec: 'h264' },
+                      ...audioRows,
+                      ...(burned
+                        ? [{ streamType: 3, id: state.wrongBurn ? 999 : Number(state.selected), decision: 'burn' }]
+                        : []),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
     }
-    if(url.pathname.endsWith('/start.m3u8')) {state.events.push({startedWith:state.selected,startedAudio:state.audio});state.onStart?.();await new Promise(r=>setTimeout(r,5));return state.failStart ? new Response(null,{status:503}) : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');}
-    if(url.pathname.endsWith('/child.m3u8')) {
-      const body='#EXTM3U\n#EXTINF:6\nsegment.ts\n';
-      if(state.holdPlaylist && (!state.heldClient || state.heldClient===options.headers['X-Plex-Client-Identifier']))return new Response(new ReadableStream({start(controller){
-        state.heldClient ||= options.headers['X-Plex-Client-Identifier'];
-        const release=()=>{controller.enqueue(new TextEncoder().encode(body));controller.close();state.heldPlaylists.delete(release);};
-        state.heldPlaylists.add(release);state.releasePlaylist=()=>{for(const resume of [...state.heldPlaylists])resume();};state.playlistStarted?.();
-      }}),{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
-      return new Response(body,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+    if (url.pathname.endsWith('/start.m3u8')) {
+      state.events.push({ startedWith: state.selected, startedAudio: state.audio });
+      state.onStart?.();
+      await new Promise(r => setTimeout(r, 5));
+      return state.failStart
+        ? new Response(null, { status: 503 })
+        : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nchild.m3u8\n');
     }
-    if(url.pathname==='/library/streams/21.srt')return new Response('1\n00:00:01,000 --> 00:00:04,000\nBonjour\n');
-    if(url.pathname.endsWith('/segment.ts')) {
-      if(state.slowSegment) {
-        return new Response(new ReadableStream({
-          async start(controller){
-            for(let i=0;i<4;i++){
-              await new Promise(r=>setTimeout(r,15));
-              if(options.signal?.aborted)return;
-              controller.enqueue(new Uint8Array([0x47, i]));
-            }
-            controller.close();
-          }
-        }),{headers:{'Content-Type':'video/mp2t'}});
+    if (url.pathname.endsWith('/child.m3u8')) {
+      const body = '#EXTM3U\n#EXTINF:6\nsegment.ts\n';
+      if (state.holdPlaylist && (!state.heldClient || state.heldClient === options.headers['X-Plex-Client-Identifier']))
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              state.heldClient ||= options.headers['X-Plex-Client-Identifier'];
+              const release = () => {
+                controller.enqueue(new TextEncoder().encode(body));
+                controller.close();
+                state.heldPlaylists.delete(release);
+              };
+              state.heldPlaylists.add(release);
+              state.releasePlaylist = () => {
+                for (const resume of [...state.heldPlaylists]) resume();
+              };
+              state.playlistStarted?.();
+            },
+          }),
+          { headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } },
+        );
+      return new Response(body, { headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } });
+    }
+    if (url.pathname === '/library/streams/21.srt') return new Response('1\n00:00:01,000 --> 00:00:04,000\nBonjour\n');
+    if (url.pathname.endsWith('/segment.ts')) {
+      if (state.slowSegment) {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              for (let i = 0; i < 4; i++) {
+                await new Promise(r => setTimeout(r, 15));
+                if (options.signal?.aborted) return;
+                controller.enqueue(new Uint8Array([0x47, i]));
+              }
+              controller.close();
+            },
+          }),
+          { headers: { 'Content-Type': 'video/mp2t' } },
+        );
       }
-      return new Response(Buffer.from([0x47]),{headers:{'Content-Type':'video/mp2t'}});
+      return new Response(Buffer.from([0x47]), { headers: { 'Content-Type': 'video/mp2t' } });
     }
     return json({});
   };
-  const plex=new Plex({plexUrl:'http://fixture.invalid:32400',plexToken:'fixture',ffmpegPath:'fixture'},fetch);
-  return {plex,state,streams};
+  const plex = new Plex(
+    { plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' },
+    fetch,
+  );
+  return { plex, state, streams };
 }
-test('track catalog distinguishes source IDs, selected flags, roles and text versus burn-in',()=>{
-  const {streams}=provider(), rows=Tracks.catalog({Stream:streams()});
-  assert.equal(rows.audio[1].selected,false); assert.equal(Tracks.select(rows).audio.id,'11');
-  assert.equal(rows.subtitles[0].delivery,'text'); assert.equal(rows.subtitles[1].delivery,'burn'); assert.equal(rows.subtitles[2].available,true);
-  assert.equal(Tracks.select(rows,{subtitleId:'off'}).subtitle,undefined);
-  assert.throws(()=>Tracks.select(rows,{subtitleId:'999'}),/does not belong/);
-  const next=Tracks.catalog({Stream:[{id:99,streamType:2,languageCode:'fra',codec:'aac',selected:'0'}]});
-  assert.equal(Tracks.select(next,{audioIntent:Tracks.intent(rows.audio[1])}).audio.id,'99','language/role intent crosses items without reusing numeric IDs');
-  const publicRows=Tracks.publicCatalog(rows);
-  assert.equal('index' in publicRows.audio[0],false); assert.equal('key' in publicRows.subtitles[0],false);
+test('track catalog distinguishes source IDs, selected flags, roles and text versus burn-in', () => {
+  const { streams } = provider(),
+    rows = Tracks.catalog({ Stream: streams() });
+  assert.equal(rows.audio[1].selected, false);
+  assert.equal(Tracks.select(rows).audio.id, '11');
+  assert.equal(rows.subtitles[0].delivery, 'text');
+  assert.equal(rows.subtitles[1].delivery, 'burn');
+  assert.equal(rows.subtitles[2].available, true);
+  assert.equal(Tracks.select(rows, { subtitleId: 'off' }).subtitle, undefined);
+  assert.throws(() => Tracks.select(rows, { subtitleId: '999' }), /does not belong/);
+  const next = Tracks.catalog({
+    Stream: [{ id: 99, streamType: 2, languageCode: 'fra', codec: 'aac', selected: '0' }],
+  });
+  assert.equal(
+    Tracks.select(next, { audioIntent: Tracks.intent(rows.audio[1]) }).audio.id,
+    '99',
+    'language/role intent crosses items without reusing numeric IDs',
+  );
+  const publicRows = Tracks.publicCatalog(rows);
+  assert.equal('index' in publicRows.audio[0], false);
+  assert.equal('key' in publicRows.subtitles[0], false);
 
   const intentTracks = [
     { id: '1', language: 'eng', available: true, title: 'English Stereo', default: false, selected: false },
     { id: '2', language: 'eng', available: true, title: 'English 5.1', default: true, selected: false },
-    { id: '3', language: 'eng', available: true, title: 'English Commentary', commentary: true, default: false, selected: false }
+    {
+      id: '3',
+      language: 'eng',
+      available: true,
+      title: 'English Commentary',
+      commentary: true,
+      default: false,
+      selected: false,
+    },
   ];
   assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', commentary: true }).id, '3');
   assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', commentary: false }).id, '2');
-  assert.equal(Tracks.matchIntent(intentTracks, { language: 'eng', title: 'English Stereo', commentary: false }).id, '1');
+  assert.equal(
+    Tracks.matchIntent(intentTracks, { language: 'eng', title: 'English Stereo', commentary: false }).id,
+    '1',
+  );
 });
-test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal media cue text',()=>{
-  assert.deepEqual(Subtitles.parse('\uFEFF1\r\n00:00:01,100 --> 00:00:04,250\r\nDeuxième\r\nligne\r\n'),[{start:1.1,end:4.25,text:'Deuxième\nligne',settings:''}]);
-  const cues=Subtitles.parse('WEBVTT\n\nSTYLE\n::cue{color:red}\n\n00:01.000 --> 00:04.000 align:start position:20%\n<script>literal</script>\n');
-  assert.equal(cues[0].settings,'align:start position:20%'); assert.equal(cues[0].text,'<script>literal</script>');
-  assert.throws(()=>Subtitles.parse('<html>Not subtitles</html>'),/usable/);
-  assert.throws(()=>Subtitles.parse('1\n00:99:01,000 --> 00:00:04,000\nbad'),/invalid/);
+test('SRT/WebVTT parsing preserves timing, Unicode, cue settings and literal media cue text', () => {
+  assert.deepEqual(Subtitles.parse('\uFEFF1\r\n00:00:01,100 --> 00:00:04,250\r\nDeuxième\r\nligne\r\n'), [
+    { start: 1.1, end: 4.25, text: 'Deuxième\nligne', settings: '' },
+  ]);
+  const cues = Subtitles.parse(
+    'WEBVTT\n\nSTYLE\n::cue{color:red}\n\n00:01.000 --> 00:04.000 align:start position:20%\n<script>literal</script>\n',
+  );
+  assert.equal(cues[0].settings, 'align:start position:20%');
+  assert.equal(cues[0].text, '<script>literal</script>');
+  assert.throws(() => Subtitles.parse('<html>Not subtitles</html>'), /usable/);
+  assert.throws(() => Subtitles.parse('1\n00:99:01,000 --> 00:00:04,000\nbad'), /invalid/);
 });
-test('Plex selects and confirms the exact subtitle before starting its private burn session',async()=>{
-  const {plex,state}=provider();
+test('Plex selects and confirms the exact subtitle before starting its private burn session', async () => {
+  const { plex, state } = provider();
   try {
-    const media=await plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',subtitleId:'22'});
-    assert.equal(media.selection.audio.id,'12'); assert.equal(media.selection.subtitle.id,'22'); assert.equal(media.format,'hls');
-    assert.match(media.initialManifest,/EXTM3U/); assert.equal(new URL(media.start).searchParams.get('advancedSubtitles'),'burn');
-    assert.equal(new URL(media.start).searchParams.get('audioStreamID'),'12'); assert.deepEqual(state.events.filter(e=>e.startedWith).map(e=>e.startedWith),['22']);
-    state.wrongBurn=true;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{subtitleId:'23'}),/did not confirm burning/);
-    state.wrongBurn=false; state.wrongAudio=true;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}),/requested audio/);
-  } finally {await plex.close();}
+    const media = await plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', subtitleId: '22' });
+    assert.equal(media.selection.audio.id, '12');
+    assert.equal(media.selection.subtitle.id, '22');
+    assert.equal(media.format, 'hls');
+    assert.match(media.initialManifest, /EXTM3U/);
+    assert.equal(new URL(media.start).searchParams.get('advancedSubtitles'), 'burn');
+    assert.equal(new URL(media.start).searchParams.get('audioStreamID'), '12');
+    assert.deepEqual(
+      state.events.filter(e => e.startedWith).map(e => e.startedWith),
+      ['22'],
+    );
+    state.wrongBurn = true;
+    await assert.rejects(
+      plex.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '23' }),
+      /did not confirm burning/,
+    );
+    state.wrongBurn = false;
+    state.wrongAudio = true;
+    await assert.rejects(
+      plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12' }),
+      /requested audio/,
+    );
+  } finally {
+    await plex.close();
+  }
 });
-test('concurrent burn requests capture their own choices before another viewer changes Plex selection',async()=>{
-  const {plex,state}=provider();
+test('concurrent burn requests capture their own choices before another viewer changes Plex selection', async () => {
+  const { plex, state } = provider();
   try {
-    const [a,b]=await Promise.all(['22','23'].map(subtitleId=>plex.prepare('1','direct',false,undefined,undefined,{subtitleId})));
-    assert.notEqual(a.transcodeId,b.transcodeId); assert.deepEqual(state.events.filter(e=>e.startedWith).map(e=>e.startedWith),['22','23']);
-    const events=state.events.filter(e=>e.selection || e.startedWith).map(e=>e.selection ? 'select:'+e.selection : 'start:'+e.startedWith);
-    assert.deepEqual(events,['select:22','start:22','select:0','select:23','start:23','select:0']); assert.equal(state.selected,'0');assert.equal(plex.partQueues.size,0);
-    const before=state.events.filter(e=>e.method==='PUT').length;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{subtitleId:'22',authorized:async()=>false}),/expired/);
-    assert.equal(state.events.filter(e=>e.method==='PUT').length,before,'expired work cannot mutate Plex selections');
-  } finally {await plex.close();}
+    const [a, b] = await Promise.all(
+      ['22', '23'].map(subtitleId => plex.prepare('1', 'direct', false, undefined, undefined, { subtitleId })),
+    );
+    assert.notEqual(a.transcodeId, b.transcodeId);
+    assert.deepEqual(
+      state.events.filter(e => e.startedWith).map(e => e.startedWith),
+      ['22', '23'],
+    );
+    const events = state.events
+      .filter(e => e.selection || e.startedWith)
+      .map(e => (e.selection ? 'select:' + e.selection : 'start:' + e.startedWith));
+    assert.deepEqual(events, ['select:22', 'start:22', 'select:0', 'select:23', 'start:23', 'select:0']);
+    assert.equal(state.selected, '0');
+    assert.equal(plex.partQueues.size, 0);
+    const before = state.events.filter(e => e.method === 'PUT').length;
+    await assert.rejects(
+      plex.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '22', authorized: async () => false }),
+      /expired/,
+    );
+    assert.equal(
+      state.events.filter(e => e.method === 'PUT').length,
+      before,
+      'expired work cannot mutate Plex selections',
+    );
+  } finally {
+    await plex.close();
+  }
 });
-test('burn sessions restore Off or a selected subtitle on success, rejected decisions and failed startup',async()=>{
-  const {plex,state}=provider();
+test('burn sessions restore Off or a selected subtitle on success, rejected decisions and failed startup', async () => {
+  const { plex, state } = provider();
   try {
-    for (const original of ['0','21','23']) for (const failure of ['none','decision','start']) {
-      state.selected=original;state.wrongBurn=failure==='decision';state.failStart=failure==='start';
-      const prepare=plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',subtitleId:'22'});
-      if (failure==='none') assert.equal((await prepare).selection.subtitle.id,'22');else await assert.rejects(prepare);
-      assert.equal(state.selected,original,`${original}/${failure} restores the saved subtitle`);
-      assert.equal(state.audio,'11','audio restoration still runs');
+    for (const original of ['0', '21', '23'])
+      for (const failure of ['none', 'decision', 'start']) {
+        state.selected = original;
+        state.wrongBurn = failure === 'decision';
+        state.failStart = failure === 'start';
+        const prepare = plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', subtitleId: '22' });
+        if (failure === 'none') assert.equal((await prepare).selection.subtitle.id, '22');
+        else await assert.rejects(prepare);
+        assert.equal(state.selected, original, `${original}/${failure} restores the saved subtitle`);
+        assert.equal(state.audio, '11', 'audio restoration still runs');
+      }
+    state.wrongBurn = false;
+    state.failStart = false;
+    state.selected = '22';
+    const before = state.events.filter(e => e.selection).length;
+    await plex.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '22' });
+    assert.equal(
+      state.events.filter(e => e.selection).length,
+      before,
+      'an already selected subtitle needs no mutation',
+    );
+  } finally {
+    await plex.close();
+  }
+});
+
+test('subtitle restoration respects an external choice and uses only the viewer credential', async () => {
+  const { plex, state } = provider();
+  try {
+    const scoped = plex.scope('viewer-only', 'viewer');
+    for (const external of ['0', '21', '23']) {
+      state.selected = '0';
+      state.onStart = () => {
+        state.selected = external;
+      };
+      const media = await scoped.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '22' });
+      assert.equal(media.selection.subtitle.id, '22');
+      assert.equal(state.selected, external);
     }
-    state.wrongBurn=false;state.failStart=false;state.selected='22';
-    const before=state.events.filter(e=>e.selection).length;
-    await plex.prepare('1','direct',false,undefined,undefined,{subtitleId:'22'});
-    assert.equal(state.events.filter(e=>e.selection).length,before,'an already selected subtitle needs no mutation');
-  } finally {await plex.close();}
+    assert.ok(state.events.filter(e => e.path).every(e => e.token === 'viewer-only'));
+    assert.equal(state.events.filter(e => e.selection).length, 3, 'only the temporary selections are written');
+  } finally {
+    await plex.close();
+  }
 });
 
-test('subtitle restoration respects an external choice and uses only the viewer credential',async()=>{
-  const {plex,state}=provider();
+test('a failed subtitle restoration fails preparation but still restores audio and stops the captured session', async () => {
+  const { plex, state } = provider();
   try {
-    const scoped=plex.scope('viewer-only','viewer');
-    for (const external of ['0','21','23']) {
-      state.selected='0';state.onStart=()=>{state.selected=external;};
-      const media=await scoped.prepare('1','direct',false,undefined,undefined,{subtitleId:'22'});
-      assert.equal(media.selection.subtitle.id,'22');assert.equal(state.selected,external);
-    }
-    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
-    assert.equal(state.events.filter(e=>e.selection).length,3,'only the temporary selections are written');
-  } finally {await plex.close();}
+    state.failSubtitleRestore = true;
+    await assert.rejects(plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', subtitleId: '22' }));
+    assert.equal(state.audio, '11');
+    assert.equal(plex.partQueues.size, 0);
+    assert.ok(
+      state.events.some(e => e.path?.endsWith('/stop')),
+      'failed restoration releases the captured conversion',
+    );
+  } finally {
+    await plex.close();
+  }
 });
 
-test('a failed subtitle restoration fails preparation but still restores audio and stops the captured session',async()=>{
-  const {plex,state}=provider();
+test('audio starts capture different per-viewer choices and restore the saved preference, including failures', async () => {
+  const { plex, state } = provider();
   try {
-    state.failSubtitleRestore=true;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',subtitleId:'22'}));
-    assert.equal(state.audio,'11');assert.equal(plex.partQueues.size,0);
-    assert.ok(state.events.some(e=>e.path?.endsWith('/stop')),'failed restoration releases the captured conversion');
-  } finally {await plex.close();}
-});
-
-test('audio starts capture different per-viewer choices and restore the saved preference, including failures',async()=>{
-  const {plex,state}=provider();
-  try {
-    const scoped=plex.scope('viewer-only','viewer');
-    await scoped.prepare('1','direct',false,undefined,undefined,{audioId:'12'});
-    assert.equal(state.audio,'11');
-    assert.ok(state.events.some(e=>e.method==='PUT'));
-    assert.ok(state.events.filter(e=>e.path).every(e=>e.token==='viewer-only'));
+    const scoped = plex.scope('viewer-only', 'viewer');
+    await scoped.prepare('1', 'direct', false, undefined, undefined, { audioId: '12' });
+    assert.equal(state.audio, '11');
+    assert.ok(state.events.some(e => e.method === 'PUT'));
+    assert.ok(state.events.filter(e => e.path).every(e => e.token === 'viewer-only'));
     state.events.length = 0;
 
-    const [french,english]=await Promise.all(['12','11'].map(audioId=>plex.prepare('1','direct',false,undefined,undefined,{audioId,subtitleId:'off'})));
-    assert.notEqual(french.transcodeId,english.transcodeId);
-    assert.deepEqual(state.events.filter(e=>e.startedAudio).map(e=>e.startedAudio),['12','11']);
-    assert.equal(state.audio,'11');assert.equal(french.selection.audio.id,'12');assert.equal(english.selection.audio.id,'11');
-    const events=state.events.filter(e=>e.audioSelection || e.startedAudio).map(e=>e.audioSelection ? 'select:'+e.audioSelection : 'start:'+e.startedAudio);
-    assert.deepEqual(events,['select:12','start:12','select:11','start:11']);
-    assert.match(english.initialManifest,/EXTM3U/,'default audio is captured before another selection can start');
-    state.wrongAudio=true;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}),/requested audio/);
-    assert.equal(state.audio,'11','wrong decision restores the original preference');
-    state.wrongAudio=false;state.failStart=true;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}));
-    assert.equal(state.audio,'11','failed startup restores the original preference');
-    const before=state.events.filter(e=>e.method==='PUT').length;
-    await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12',authorized:async()=>false}),/expired/);
-    assert.equal(state.events.filter(e=>e.method==='PUT').length,before);
-  } finally {await plex.close();}
+    const [french, english] = await Promise.all(
+      ['12', '11'].map(audioId =>
+        plex.prepare('1', 'direct', false, undefined, undefined, { audioId, subtitleId: 'off' }),
+      ),
+    );
+    assert.notEqual(french.transcodeId, english.transcodeId);
+    assert.deepEqual(
+      state.events.filter(e => e.startedAudio).map(e => e.startedAudio),
+      ['12', '11'],
+    );
+    assert.equal(state.audio, '11');
+    assert.equal(french.selection.audio.id, '12');
+    assert.equal(english.selection.audio.id, '11');
+    const events = state.events
+      .filter(e => e.audioSelection || e.startedAudio)
+      .map(e => (e.audioSelection ? 'select:' + e.audioSelection : 'start:' + e.startedAudio));
+    assert.deepEqual(events, ['select:12', 'start:12', 'select:11', 'start:11']);
+    assert.match(english.initialManifest, /EXTM3U/, 'default audio is captured before another selection can start');
+    state.wrongAudio = true;
+    await assert.rejects(
+      plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12' }),
+      /requested audio/,
+    );
+    assert.equal(state.audio, '11', 'wrong decision restores the original preference');
+    state.wrongAudio = false;
+    state.failStart = true;
+    await assert.rejects(plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12' }));
+    assert.equal(state.audio, '11', 'failed startup restores the original preference');
+    const before = state.events.filter(e => e.method === 'PUT').length;
+    await assert.rejects(
+      plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12', authorized: async () => false }),
+      /expired/,
+    );
+    assert.equal(state.events.filter(e => e.method === 'PUT').length, before);
+  } finally {
+    await plex.close();
+  }
 });
 
-test('HLS preparation rejects decisions that cannot identify one matching source audio stream',async()=>{
-  const {plex,state}=provider();
+test('HLS preparation rejects decisions that cannot identify one matching source audio stream', async () => {
+  const { plex, state } = provider();
   try {
-    for(const kind of ['missing','unidentified','ambiguous']) {
-      state.decisionAudio=kind;
-      await assert.rejects(plex.prepare('1','direct',false,undefined,undefined,{audioId:'12'}),/did not confirm the requested audio/);
-      assert.equal(state.audio,'11',`${kind} decision restores the saved audio preference`);
+    for (const kind of ['missing', 'unidentified', 'ambiguous']) {
+      state.decisionAudio = kind;
+      await assert.rejects(
+        plex.prepare('1', 'direct', false, undefined, undefined, { audioId: '12' }),
+        /did not confirm the requested audio/,
+      );
+      assert.equal(state.audio, '11', `${kind} decision restores the saved audio preference`);
     }
-    assert.equal(state.events.filter(e=>e.startedAudio).length,0,'unconfirmed audio never starts a private stream');
-    assert.equal(plex.partQueues.size,0);
-  } finally {await plex.close();}
+    assert.equal(state.events.filter(e => e.startedAudio).length, 0, 'unconfirmed audio never starts a private stream');
+    assert.equal(plex.partQueues.size, 0);
+  } finally {
+    await plex.close();
+  }
 });
 
-test('sidecar requests retain the viewer Plex scope, cap content, and do not fetch embedded streams as sidecars',async()=>{
-  const {plex,state}=provider(), scoped=plex.scope('viewer-only','viewer');
+test('sidecar requests retain the viewer Plex scope, cap content, and do not fetch embedded streams as sidecars', async () => {
+  const { plex, state } = provider(),
+    scoped = plex.scope('viewer-only', 'viewer');
   try {
-    const media=await scoped.prepare('1','direct',false,undefined,undefined,{subtitleId:'21'});
-    const cues=await Subtitles.load(scoped,media,new AbortController().signal); assert.equal(cues[0].text,'Bonjour');
-    assert.equal(state.events.find(e=>e.path==='/library/streams/21.srt').token,'viewer-only');
-    const burn=await scoped.prepare('1','direct',false,undefined,undefined,{subtitleId:'22'});
-    await assert.rejects(Subtitles.load(scoped,burn,new AbortController().signal),/external text/);
-  } finally {await plex.close();}
+    const media = await scoped.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '21' });
+    const cues = await Subtitles.load(scoped, media, new AbortController().signal);
+    assert.equal(cues[0].text, 'Bonjour');
+    assert.equal(state.events.find(e => e.path === '/library/streams/21.srt').token, 'viewer-only');
+    const burn = await scoped.prepare('1', 'direct', false, undefined, undefined, { subtitleId: '22' });
+    await assert.rejects(Subtitles.load(scoped, burn, new AbortController().signal), /external text/);
+  } finally {
+    await plex.close();
+  }
 });
-test('personal tracks preserve room state, isolate viewers, reject stale choices and roll back refused conversions',async()=>{
-  const {plex,state}=provider(), hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  hub.access={isMember:()=>true,refresh:async()=>true,options:()=>({available:true})};
-  const watch=new Watch(hub,plex), actor=userId=>({userId,guildId:'guild',channelId:'commands',surface:'web'}), host=actor('host'), guest=actor('guest');
-  const room=watch.rooms.get(watch.create(host)), a=randomUUID(), b=randomUUID();
+test('personal tracks preserve room state, isolate viewers, reject stale choices and roll back refused conversions', async () => {
+  const { plex, state } = provider(),
+    hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  const watch = new Watch(hub, plex),
+    actor = userId => ({ userId, guildId: 'guild', channelId: 'commands', surface: 'web' }),
+    host = actor('host'),
+    guest = actor('guest');
+  const room = watch.rooms.get(watch.create(host)),
+    a = randomUUID(),
+    b = randomUUID();
   try {
-    watch.snapshot(room,host,a); watch.snapshot(room,guest,b); room.media=await plex.prepare('1','direct',false,undefined,undefined,{sourceOnly:true});
-    await watch.prepareViewer(room,host,a); await watch.prepareViewer(room,guest,b); room.position=12; room.s.state.paused=true;
-    const command=async(args,who=guest,viewerId=b)=>hub.dispatch({...who,watchViewerId:viewerId},{roomId:room.s.roomId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:room.viewers.get(viewerId).streamVersion,...args}});
-    const other=room.viewers.get(a).media, previous=room.viewers.get(b).media;
-    assert.equal((await command({subtitleId:'21'})).status,'applied');
-    assert.equal(room.viewers.get(b).media,previous,'external subtitles do not restart video');
-    assert.equal((await command({audioId:'12'})).status,'applied'); assert.equal(room.viewers.get(b).media.selection.audio.id,'12');
-    assert.equal(room.viewers.get(a).media,other); assert.equal(room.position,12); assert.equal(room.s.state.paused,true);
-    const good=room.viewers.get(b).media; state.wrongBurn=true;
-    assert.equal((await command({subtitleId:'22'})).status,'failed'); assert.equal(room.viewers.get(b).media,good);
-    assert.equal((await command({streamVersion:randomUUID(),subtitleId:'off'})).status,'unavailable');
-    assert.equal((await command({subtitleId:'off'},guest,a)).status,'unsupported');
-    state.wrongBurn=false;
-    assert.equal((await command({subtitleId:'22'})).status,'applied');
-    const burned=room.viewers.get(b).media;
-    assert.equal((await command({subtitleOffset:2})).status,'failed'); assert.equal(room.viewers.get(b).media,burned);
-    assert.equal((await command({subtitleId:'off'})).status,'applied'); assert.equal(room.viewers.get(b).media.selection.subtitle,undefined);
-    watch.dropMedia(room); assert.equal(room.viewers.get(b).trackChoice.audioId,'auto'); assert.equal(room.viewers.get(b).trackChoice.subtitleId,'off');
-    assert.equal(room.viewers.get(b).trackChoice.audioIntent.language,'fra');
-  } finally {watch.close();await plex.close();}
+    watch.snapshot(room, host, a);
+    watch.snapshot(room, guest, b);
+    room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
+    await watch.prepareViewer(room, host, a);
+    await watch.prepareViewer(room, guest, b);
+    room.position = 12;
+    room.s.state.paused = true;
+    const command = async (args, who = guest, viewerId = b) =>
+      hub.dispatch(
+        { ...who, watchViewerId: viewerId },
+        {
+          roomId: room.s.roomId,
+          action: 'media.tracks.set',
+          args: { mediaVersion: room.mediaVersion, streamVersion: room.viewers.get(viewerId).streamVersion, ...args },
+        },
+      );
+    const other = room.viewers.get(a).media,
+      previous = room.viewers.get(b).media;
+    assert.equal((await command({ subtitleId: '21' })).status, 'applied');
+    assert.equal(room.viewers.get(b).media, previous, 'external subtitles do not restart video');
+    assert.equal((await command({ audioId: '12' })).status, 'applied');
+    assert.equal(room.viewers.get(b).media.selection.audio.id, '12');
+    assert.equal(room.viewers.get(a).media, other);
+    assert.equal(room.position, 12);
+    assert.equal(room.s.state.paused, true);
+    const good = room.viewers.get(b).media;
+    state.wrongBurn = true;
+    assert.equal((await command({ subtitleId: '22' })).status, 'failed');
+    assert.equal(room.viewers.get(b).media, good);
+    assert.equal((await command({ streamVersion: randomUUID(), subtitleId: 'off' })).status, 'unavailable');
+    assert.equal((await command({ subtitleId: 'off' }, guest, a)).status, 'unsupported');
+    state.wrongBurn = false;
+    assert.equal((await command({ subtitleId: '22' })).status, 'applied');
+    const burned = room.viewers.get(b).media;
+    assert.equal((await command({ subtitleOffset: 2 })).status, 'failed');
+    assert.equal(room.viewers.get(b).media, burned);
+    assert.equal((await command({ subtitleId: 'off' })).status, 'applied');
+    assert.equal(room.viewers.get(b).media.selection.subtitle, undefined);
+    watch.dropMedia(room);
+    assert.equal(room.viewers.get(b).trackChoice.audioId, 'auto');
+    assert.equal(room.viewers.get(b).trackChoice.subtitleId, 'off');
+    assert.equal(room.viewers.get(b).trackChoice.audioIntent.language, 'fra');
+  } finally {
+    watch.close();
+    await plex.close();
+  }
 });
-test('a failed automatic burn keeps its catalog available for an explicit Off recovery',async()=>{
-  const {plex,state}=provider(), hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  hub.access={isMember:()=>true,refresh:async()=>true,options:()=>({available:true})};
-  const watch=new Watch(hub,plex), host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'}, viewerId=randomUUID();
-  const room=watch.rooms.get(watch.create(host));state.selected='22';state.wrongBurn=true;
+test('a failed automatic burn keeps its catalog available for an explicit Off recovery', async () => {
+  const { plex, state } = provider(),
+    hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  const watch = new Watch(hub, plex),
+    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    viewerId = randomUUID();
+  const room = watch.rooms.get(watch.create(host));
+  state.selected = '22';
+  state.wrongBurn = true;
   try {
-    watch.snapshot(room,host,viewerId);room.media=await plex.prepare('1','direct',false,undefined,undefined,{sourceOnly:true});
-    await watch.prepareViewer(room,host,viewerId);const viewer=room.viewers.get(viewerId);
-    assert.match(viewer.media.playbackError,/did not confirm burning/);assert.ok(watch.snapshot(room,host,viewerId).tracks.subtitles.length);
-    const result=await hub.dispatch({...host,watchViewerId:viewerId},{roomId:room.s.roomId,action:'media.tracks.set',args:{mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,subtitleId:'off'}});
-    assert.equal(result.status,'applied');assert.equal(viewer.media.playbackError,undefined);assert.equal(viewer.media.selection.subtitle,undefined);
-  } finally {watch.close();await plex.close();}
+    watch.snapshot(room, host, viewerId);
+    room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
+    await watch.prepareViewer(room, host, viewerId);
+    const viewer = room.viewers.get(viewerId);
+    assert.match(viewer.media.playbackError, /did not confirm burning/);
+    assert.ok(watch.snapshot(room, host, viewerId).tracks.subtitles.length);
+    const result = await hub.dispatch(
+      { ...host, watchViewerId: viewerId },
+      {
+        roomId: room.s.roomId,
+        action: 'media.tracks.set',
+        args: { mediaVersion: room.mediaVersion, streamVersion: viewer.streamVersion, subtitleId: 'off' },
+      },
+    );
+    assert.equal(result.status, 'applied');
+    assert.equal(viewer.media.playbackError, undefined);
+    assert.equal(viewer.media.selection.subtitle, undefined);
+  } finally {
+    watch.close();
+    await plex.close();
+  }
 });
 
-test('track command validation binds current media and stream versions and never accepts source URLs',()=>{
-  const versions={mediaVersion:randomUUID(),streamVersion:randomUUID()};
-  assert.equal(Engine.validate({action:'media.tracks.set',args:{...versions,audioId:'12'}}).args.audioId,'12');
-  for(const args of [{subtitleId:'off'},{...versions,audioId:'https://example.com'},{...versions,subtitleOffset:31},{...versions}])assert.throws(()=>Engine.validate({action:'media.tracks.set',args}));
+test('track command validation binds current media and stream versions and never accepts source URLs', () => {
+  const versions = { mediaVersion: randomUUID(), streamVersion: randomUUID() };
+  assert.equal(
+    Engine.validate({ action: 'media.tracks.set', args: { ...versions, audioId: '12' } }).args.audioId,
+    '12',
+  );
+  for (const args of [
+    { subtitleId: 'off' },
+    { ...versions, audioId: 'https://example.com' },
+    { ...versions, subtitleOffset: 31 },
+    { ...versions },
+  ])
+    assert.throws(() => Engine.validate({ action: 'media.tracks.set', args }));
 });
-test('browser subtitle resources enforce grants, selection generations and explicit burn-in fallback',async t=>{
-  const fixture=provider(),cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
-  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture',ffmpegPath:'fixture'};
-  let member=true;
-  const app=createApp(config,{plexFetch:fixture.plex.fetch});app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
-  app.watch.plex.av1.input=async(source,signal,action)=>action('http://127.0.0.1/synthetic-capability');
-  app.watch.plex.av1.run=async(binary)=>Buffer.from(binary.includes('ffprobe')?'{"streams":[]}':'[Script Info]\n[Events]\n');
-  app.watch.plex.av1.stream=async(binary,args,signal,onChunk)=>{
+test('browser subtitle resources enforce grants, selection generations and explicit burn-in fallback', async t => {
+  const fixture = provider(),
+    cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
+  const config = {
+    cert,
+    key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+    publicUrl: 'https://localhost',
+    demo: true,
+    ownerId: 'demo-host',
+    guildId: 'guild',
+    channels: ['commands'],
+    plexUrl: 'http://fixture.invalid:32400',
+    plexToken: 'fixture',
+    ffmpegPath: 'fixture',
+  };
+  let member = true;
+  const app = createApp(config, { plexFetch: fixture.plex.fetch });
+  app.hub.access = { isMember: () => member, refresh: async () => member, options: () => ({ available: true }) };
+  app.watch.plex.av1.input = async (source, signal, action) => action('http://127.0.0.1/synthetic-capability');
+  app.watch.plex.av1.run = async binary =>
+    Buffer.from(binary.includes('ffprobe') ? '{"streams":[]}' : '[Script Info]\n[Events]\n');
+  app.watch.plex.av1.stream = async (binary, args, signal, onChunk) => {
     onChunk(Buffer.from('PGS-RAW-CHUNK-1'));
     onChunk(Buffer.from('PGS-RAW-CHUNK-2'));
   };
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
-  const port=app.server.address().port;config.publicUrl='https://localhost:'+port;
-  const control=require('./helpers/control-client').controlClient(t,config,cert);
-  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
-    const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})}},res=>{
-      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,body:text&&res.headers['content-type']?.includes('application/json')?JSON.parse(text):text});});
-    });req.on('error',reject);req.end(data&&JSON.stringify(data));
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    fixture.state.holdPlaylist = false;
+    fixture.state.releasePlaylist?.();
   });
-  const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token,viewerId=randomUUID();
-  const room=(await request('/api/watch/rooms','POST',{},token)).body.id;
-  const snapshot=async()=> (await request('/api/watch/rooms/'+room+'?viewer='+viewerId+'&subtitles=browser','GET',undefined,token)).body;
-  const command=async(action,args)=>{const state=await snapshot();return request('/api/watch/rooms/'+room+'/command','POST',
-    {viewerId,epoch:state.epoch,expiresAt:Date.now()+2500,command:{action,args:{...args,...(action==='media.tracks.set'?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:{})}}},token);};
-  await snapshot();await command('media.load',{mediaId:'1',quality:'direct'});await command('media.tracks.set',{subtitleId:'22'});
-  const state=await snapshot();assert.equal(state.tracks.subtitleDelivery,'ass');
-  const descriptor=await request(state.subtitleUrl);assert.equal(descriptor.status,200);assert.equal(descriptor.body.format,'ass');
-  assert.equal(descriptor.body.window, undefined, 'ASS load manifest omits window property');
-  assert.equal((await request(state.subtitleUrl+'/window?atMs=1000')).status, 404, 'ASS rejects /window endpoint');
-  const asset=await request(descriptor.body.data);assert.equal(asset.status,200);assert.match(asset.body,/Script Info/);assert.equal(asset.headers['cache-control'],'no-store');
-  assert.equal((await request(state.subtitleUrl+'/font-0')).status,404);assert.equal((await request(state.subtitleUrl.replace(/media\/[a-f0-9]+/,'media/'+ '0'.repeat(48)))).status,403);
-  const old=app.watch.rooms.get(room).viewers.get(viewerId).media;fixture.state.wrongBurn=true;
-  assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'failed');assert.equal(app.watch.rooms.get(room).viewers.get(viewerId).media,old);
-  fixture.state.wrongBurn=false;assert.equal((await command('media.tracks.set',{subtitleMode:'burn'})).body.status,'applied');assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
-  assert.equal((await request(descriptor.body.data)).status,403);
-  assert.equal((await command('media.tracks.set',{subtitleId:'23'})).body.status,'applied');
-  assert.equal((await snapshot()).tracks.subtitleMode,'burn');assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
-  await command('media.tracks.set',{subtitleId:'off'});assert.equal((await snapshot()).tracks.subtitleMode,'burn');
-  await command('media.tracks.set',{subtitleId:'22'});assert.equal((await snapshot()).tracks.subtitleDelivery,'burn');
-  await command('media.tracks.set',{subtitleMode:'auto'});const next=await snapshot();assert.equal(next.tracks.subtitleDelivery,'ass');
-  await command('media.tracks.set',{subtitleId:'23'});
-  const pgsState=await snapshot();assert.equal(pgsState.tracks.subtitleDelivery,'pgs');
-  const pgsDescriptor=await request(pgsState.subtitleUrl);assert.equal(pgsDescriptor.status,200);assert.equal(pgsDescriptor.body.format,'pgs');
-  assert.ok(pgsDescriptor.body.window, 'embedded PGS manifest includes window');
-  assert.equal(pgsDescriptor.body.fonts.length,0);
-  const pgsAsset=await request(pgsDescriptor.body.data);assert.equal(pgsAsset.status,200);
-  assert.equal(pgsAsset.body,'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');
-  // Hold real window work across selection replacement and detected revocation.
-  let started,windowSignal;
-  app.watch.plex.av1.run=async(binary,args,signal)=>{
-    windowSignal=signal;started?.();
-    return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  t.after(() => app.close());
+  t.after(() => fixture.plex.close());
+  const port = app.server.address().port;
+  config.publicUrl = 'https://localhost:' + port;
+  const control = require('./helpers/control-client').controlClient(t, config, cert);
+  const request = (route, method = 'GET', data, token) =>
+    control.handles(route)
+      ? control.request(route, data, token ? { Authorization: 'Bearer ' + token } : {})
+      : new Promise((resolve, reject) => {
+          const req = https.request(
+            {
+              hostname: 'localhost',
+              port,
+              path: route,
+              method,
+              ca: cert,
+              headers: {
+                Origin: config.publicUrl,
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: 'Bearer ' + token } : {}),
+              },
+            },
+            res => {
+              const chunks = [];
+              res.on('data', bytes => chunks.push(bytes));
+              res.on('end', () => {
+                const text = Buffer.concat(chunks).toString();
+                resolve({
+                  status: res.statusCode,
+                  headers: res.headers,
+                  body: text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text,
+                });
+              });
+            },
+          );
+          req.on('error', reject);
+          req.end(data && JSON.stringify(data));
+        });
+  const token = (await request('/api/watch/demo-login', 'POST', { persona: 'host' })).body.token,
+    viewerId = randomUUID();
+  const room = (await request('/api/watch/rooms', 'POST', {}, token)).body.id;
+  const snapshot = async () =>
+    (await request('/api/watch/rooms/' + room + '?viewer=' + viewerId + '&subtitles=browser', 'GET', undefined, token))
+      .body;
+  const command = async (action, args) => {
+    const state = await snapshot();
+    return request(
+      '/api/watch/rooms/' + room + '/command',
+      'POST',
+      {
+        viewerId,
+        epoch: state.epoch,
+        expiresAt: Date.now() + 2500,
+        command: {
+          action,
+          args: {
+            ...args,
+            ...(action === 'media.tracks.set'
+              ? { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion }
+              : {}),
+          },
+        },
+      },
+      token,
+    );
   };
-  const pgsMedia=app.watch.rooms.get(room).viewers.get(viewerId).media;pgsMedia.subtitleOrigin=0;
-  let waiting=new Promise(resolve=>started=resolve),pendingWindow=request(pgsDescriptor.body.window+'?atMs=3600000');
-  await waiting;await command('media.tracks.set',{subtitleId:'off'});
-  assert.notEqual((await pendingWindow).status,200);assert.equal(windowSignal.aborted,true);assert.equal(pgsMedia.windowJobs.size,0);
-  await command('media.tracks.set',{subtitleId:'23'});
-  const authorizedPgs=await snapshot(),windowManifest=await request(authorizedPgs.subtitleUrl);
-  waiting=new Promise(resolve=>started=resolve);pendingWindow=request(windowManifest.body.window+'?atMs=7190000');
-  await waiting;member=false;
-  assert.notEqual((await pendingWindow).status,200);assert.equal(windowSignal.aborted,true);assert.equal(pgsMedia.windowJobs.size,0);
-  assert.equal((await request(windowManifest.body.window+'?atMs=0')).status,403);
-
-  member=false;assert.equal((await request(next.subtitleUrl)).status,403);
-  const page=await request('/');assert.match(page.headers['content-security-policy'],/'wasm-unsafe-eval'/);assert.doesNotMatch(page.headers['content-security-policy'],/'unsafe-eval'/);
-});
-
-test('media grants reject stale playlists, subtitles and revoked viewers during pending fetches',async t=>{
-  const fixture=provider(), cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
-  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture'};
-  let member=true, waitCaption, releaseCaption;
-  const app=createApp(config,{plexFetch:async(input,options)=>{
-    if(new URL(input).pathname.startsWith('/library/streams/') && waitCaption){const announce=waitCaption;waitCaption=undefined;announce();await new Promise(resolve=>releaseCaption=resolve);}
-    return fixture.plex.fetch(input,options);
-  }});
-  app.hub.access={isMember:()=>member,refresh:async()=>member,options:()=>({available:true})};
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
-  const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
-  const control=require('./helpers/control-client').controlClient(t,config,cert);
-  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
-    const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
-      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
-    });req.on('error',reject);req.end(data && JSON.stringify(data));
-  });
-  const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token;
-  const room=(await request('/api/watch/rooms','POST',{},token)).body.id, viewerId=randomUUID();
-  const snapshot=async()=> (await request('/api/watch/rooms/'+room+'?viewer='+viewerId,'GET',undefined,token)).body;
-  const command=async(action,args)=>{
-    const state=await snapshot();
-    return request('/api/watch/rooms/'+room+'/command','POST',{viewerId,epoch:state.epoch,expiresAt:Date.now()+2500,command:{action,args:{...args,...(action==='media.tracks.set' ? {mediaVersion:state.mediaVersion,streamVersion:state.streamVersion} : {})}}},token);
-  };
-  await snapshot();await command('media.load',{mediaId:'1',quality:'direct'});await command('media.tracks.set',{subtitleId:'21'});
-  const first=await snapshot(), captions=await request(first.subtitleUrl);
-  assert.equal(captions.status,200);assert.equal(captions.body.cues[0].text,'Bonjour');assert.equal(JSON.stringify(first.tracks).includes('/library/'),false);
-  const starts=fixture.state.events.filter(e=>e.startedAudio).length;
-  const master=await request(first.mediaUrl), repeated=await request(first.mediaUrl);
-  assert.equal((await request(first.mediaUrl,'HEAD')).status,200);
-  assert.equal(master.status,200);assert.match(master.body,/#EXTM3U/);assert.equal(repeated.body,master.body);
-  assert.equal(fixture.state.events.filter(e=>e.startedAudio).length,starts,'master reloads never renegotiate restored audio preferences');
-  const childUrl=master.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
-  assert.ok(childUrl,'captured master points to a private child playlist');
-  const playlistStarted=new Promise(resolve=>fixture.state.playlistStarted=resolve);
-  fixture.state.holdPlaylist=true;
-  const pendingPlaylist=request(childUrl);await playlistStarted;
-  assert.equal((await command('media.tracks.set',{audioId:'12'})).body.status,'applied');
-  fixture.state.releasePlaylist();
-  assert.equal((await pendingPlaylist).status,403,'an old playlist cannot arrive after audio selection changes');
-  fixture.state.holdPlaylist=false;
-  const chosen=await snapshot();
-  assert.equal(chosen.tracks.audioId,'12');
-  assert.equal((await command('media.stream.refresh',{mediaVersion:chosen.mediaVersion,streamVersion:chosen.streamVersion})).body.status,'applied');
-  const refreshed=await snapshot();
-  assert.equal(refreshed.tracks.audioId,'12','session refresh retains the personal source audio');
-  assert.equal(fixture.state.events.filter(e=>e.startedAudio).at(-1).startedAudio,'12');
-  assert.equal(fixture.state.audio,'11','session refresh restores Plex saved audio');
-  assert.equal((await request(refreshed.mediaUrl)).status,200);
-  assert.equal((await request(chosen.mediaUrl,'HEAD')).status,403,'old master grant is revoked after session refresh');
-  await command('media.tracks.set',{subtitleId:'off'});assert.equal((await request(first.subtitleUrl)).status,403);
-  await command('media.tracks.set',{subtitleId:'21'});const current=await snapshot();
-  const pending=new Promise(resolve=>waitCaption=resolve), fetching=request(current.subtitleUrl);await pending;
-  await command('media.tracks.set',{subtitleId:'off'});releaseCaption();
-  const stale=await fetching;assert.notEqual(stale.status,200);assert.equal(stale.body.cues,undefined,'late old captions cannot escape a selection change');
-  await command('media.tracks.set',{subtitleId:'21'});const revoked=await snapshot();member=false;
-  assert.equal((await request(revoked.subtitleUrl)).status,403,'media grant rechecks current membership');
-});
-
-test('streaming media bodies complete with progressing chunks beyond header deadline and cancel on disconnect',async t=>{
-  const fixture=provider(), cert=fs.readFileSync(path.join(__dirname,'../certs/server-cert.pem'));
-  const config={cert,key:fs.readFileSync(path.join(__dirname,'../certs/server-key.pem')),publicUrl:'https://localhost',demo:true,ownerId:'demo-host',guildId:'guild',channels:['commands'],plexUrl:'http://fixture.invalid:32400',plexToken:'fixture'};
-  let upstreamAborted=false;
-  const app=createApp(config,{plexFetch:async(input,options)=>{
-    if(new URL(input).pathname.endsWith('/segment.ts')&&options.signal){
-      options.signal.addEventListener('abort',()=>{upstreamAborted=true;},{once:true});
-    }
-    return fixture.plex.fetch(input,options);
-  }});
-  app.hub.access={isMember:()=>true,refresh:async()=>true,options:()=>({available:true})};
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>{fixture.state.holdPlaylist=false;fixture.state.releasePlaylist?.();});t.after(()=>app.close());t.after(()=>fixture.plex.close());
-  const port=app.server.address().port; config.publicUrl='https://localhost:'+port;
-  const control=require('./helpers/control-client').controlClient(t,config,cert);
-  const request=(route,method='GET',data,token)=>control.handles(route)?control.request(route,data,token?{Authorization:'Bearer '+token}:{}):new Promise((resolve,reject)=>{
-    const req=https.request({hostname:'localhost',port,path:route,method,ca:cert,headers:{Origin:config.publicUrl,'Content-Type':'application/json',...(token ? {Authorization:'Bearer '+token} : {})}},res=>{
-      const chunks=[];res.on('data',bytes=>chunks.push(bytes));res.on('end',()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,body:text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text});});
-    });req.on('error',reject);req.end(data && JSON.stringify(data));
-  });
-  const token=(await request('/api/watch/demo-login','POST',{persona:'host'})).body.token;
-  const room=(await request('/api/watch/rooms','POST',{},token)).body.id, viewerId=randomUUID();
-  const snapshot=async()=> (await request('/api/watch/rooms/'+room+'?viewer='+viewerId,'GET',undefined,token)).body;
   await snapshot();
-  await request('/api/watch/rooms/'+room+'/command','POST',{viewerId,epoch:(await snapshot()).epoch,expiresAt:Date.now()+2500,command:{action:'media.load',args:{mediaId:'1',quality:'direct'}}},token);
-  const first=await snapshot();
-  const master=await request(first.mediaUrl);
-  const childUrl=master.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
-  const childPlaylist=await request(childUrl);
-  const segmentUrl=childPlaylist.body.split('\n').find(line=>line.startsWith('/api/watch/media/'));
+  await command('media.load', { mediaId: '1', quality: 'direct' });
+  await command('media.tracks.set', { subtitleId: '22' });
+  const state = await snapshot();
+  assert.equal(state.tracks.subtitleDelivery, 'ass');
+  const descriptor = await request(state.subtitleUrl);
+  assert.equal(descriptor.status, 200);
+  assert.equal(descriptor.body.format, 'ass');
+  assert.equal(descriptor.body.window, undefined, 'ASS load manifest omits window property');
+  assert.equal((await request(state.subtitleUrl + '/window?atMs=1000')).status, 404, 'ASS rejects /window endpoint');
+  const asset = await request(descriptor.body.data);
+  assert.equal(asset.status, 200);
+  assert.match(asset.body, /Script Info/);
+  assert.equal(asset.headers['cache-control'], 'no-store');
+  assert.equal((await request(state.subtitleUrl + '/font-0')).status, 404);
+  assert.equal((await request(state.subtitleUrl.replace(/media\/[a-f0-9]+/, 'media/' + '0'.repeat(48)))).status, 403);
+  const old = app.watch.rooms.get(room).viewers.get(viewerId).media;
+  fixture.state.wrongBurn = true;
+  assert.equal((await command('media.tracks.set', { subtitleMode: 'burn' })).body.status, 'failed');
+  assert.equal(app.watch.rooms.get(room).viewers.get(viewerId).media, old);
+  fixture.state.wrongBurn = false;
+  assert.equal((await command('media.tracks.set', { subtitleMode: 'burn' })).body.status, 'applied');
+  assert.equal((await snapshot()).tracks.subtitleDelivery, 'burn');
+  assert.equal((await request(descriptor.body.data)).status, 403);
+  assert.equal((await command('media.tracks.set', { subtitleId: '23' })).body.status, 'applied');
+  assert.equal((await snapshot()).tracks.subtitleMode, 'burn');
+  assert.equal((await snapshot()).tracks.subtitleDelivery, 'burn');
+  await command('media.tracks.set', { subtitleId: 'off' });
+  assert.equal((await snapshot()).tracks.subtitleMode, 'burn');
+  await command('media.tracks.set', { subtitleId: '22' });
+  assert.equal((await snapshot()).tracks.subtitleDelivery, 'burn');
+  await command('media.tracks.set', { subtitleMode: 'auto' });
+  const next = await snapshot();
+  assert.equal(next.tracks.subtitleDelivery, 'ass');
+  await command('media.tracks.set', { subtitleId: '23' });
+  const pgsState = await snapshot();
+  assert.equal(pgsState.tracks.subtitleDelivery, 'pgs');
+  const pgsDescriptor = await request(pgsState.subtitleUrl);
+  assert.equal(pgsDescriptor.status, 200);
+  assert.equal(pgsDescriptor.body.format, 'pgs');
+  assert.ok(pgsDescriptor.body.window, 'embedded PGS manifest includes window');
+  assert.equal(pgsDescriptor.body.fonts.length, 0);
+  const pgsAsset = await request(pgsDescriptor.body.data);
+  assert.equal(pgsAsset.status, 200);
+  assert.equal(pgsAsset.body, 'PGS-RAW-CHUNK-1PGS-RAW-CHUNK-2');
+  // Hold real window work across selection replacement and detected revocation.
+  let started, windowSignal;
+  app.watch.plex.av1.run = async (binary, args, signal) => {
+    windowSignal = signal;
+    started?.();
+    return new Promise((resolve, reject) =>
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+    );
+  };
+  const pgsMedia = app.watch.rooms.get(room).viewers.get(viewerId).media;
+  pgsMedia.subtitleOrigin = 0;
+  let waiting = new Promise(resolve => (started = resolve)),
+    pendingWindow = request(pgsDescriptor.body.window + '?atMs=3600000');
+  await waiting;
+  await command('media.tracks.set', { subtitleId: 'off' });
+  assert.notEqual((await pendingWindow).status, 200);
+  assert.equal(windowSignal.aborted, true);
+  assert.equal(pgsMedia.windowJobs.size, 0);
+  await command('media.tracks.set', { subtitleId: '23' });
+  const authorizedPgs = await snapshot(),
+    windowManifest = await request(authorizedPgs.subtitleUrl);
+  waiting = new Promise(resolve => (started = resolve));
+  pendingWindow = request(windowManifest.body.window + '?atMs=7190000');
+  await waiting;
+  member = false;
+  assert.notEqual((await pendingWindow).status, 200);
+  assert.equal(windowSignal.aborted, true);
+  assert.equal(pgsMedia.windowJobs.size, 0);
+  assert.equal((await request(windowManifest.body.window + '?atMs=0')).status, 403);
+
+  member = false;
+  assert.equal((await request(next.subtitleUrl)).status, 403);
+  const page = await request('/');
+  assert.match(page.headers['content-security-policy'], /'wasm-unsafe-eval'/);
+  assert.doesNotMatch(page.headers['content-security-policy'], /'unsafe-eval'/);
+});
+
+test('media grants reject stale playlists, subtitles and revoked viewers during pending fetches', async t => {
+  const fixture = provider(),
+    cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
+  const config = {
+    cert,
+    key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+    publicUrl: 'https://localhost',
+    demo: true,
+    ownerId: 'demo-host',
+    guildId: 'guild',
+    channels: ['commands'],
+    plexUrl: 'http://fixture.invalid:32400',
+    plexToken: 'fixture',
+  };
+  let member = true,
+    waitCaption,
+    releaseCaption;
+  const app = createApp(config, {
+    plexFetch: async (input, options) => {
+      if (new URL(input).pathname.startsWith('/library/streams/') && waitCaption) {
+        const announce = waitCaption;
+        waitCaption = undefined;
+        announce();
+        await new Promise(resolve => (releaseCaption = resolve));
+      }
+      return fixture.plex.fetch(input, options);
+    },
+  });
+  app.hub.access = { isMember: () => member, refresh: async () => member, options: () => ({ available: true }) };
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    fixture.state.holdPlaylist = false;
+    fixture.state.releasePlaylist?.();
+  });
+  t.after(() => app.close());
+  t.after(() => fixture.plex.close());
+  const port = app.server.address().port;
+  config.publicUrl = 'https://localhost:' + port;
+  const control = require('./helpers/control-client').controlClient(t, config, cert);
+  const request = (route, method = 'GET', data, token) =>
+    control.handles(route)
+      ? control.request(route, data, token ? { Authorization: 'Bearer ' + token } : {})
+      : new Promise((resolve, reject) => {
+          const req = https.request(
+            {
+              hostname: 'localhost',
+              port,
+              path: route,
+              method,
+              ca: cert,
+              headers: {
+                Origin: config.publicUrl,
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: 'Bearer ' + token } : {}),
+              },
+            },
+            res => {
+              const chunks = [];
+              res.on('data', bytes => chunks.push(bytes));
+              res.on('end', () => {
+                const text = Buffer.concat(chunks).toString();
+                resolve({
+                  status: res.statusCode,
+                  body: text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text,
+                });
+              });
+            },
+          );
+          req.on('error', reject);
+          req.end(data && JSON.stringify(data));
+        });
+  const token = (await request('/api/watch/demo-login', 'POST', { persona: 'host' })).body.token;
+  const room = (await request('/api/watch/rooms', 'POST', {}, token)).body.id,
+    viewerId = randomUUID();
+  const snapshot = async () =>
+    (await request('/api/watch/rooms/' + room + '?viewer=' + viewerId, 'GET', undefined, token)).body;
+  const command = async (action, args) => {
+    const state = await snapshot();
+    return request(
+      '/api/watch/rooms/' + room + '/command',
+      'POST',
+      {
+        viewerId,
+        epoch: state.epoch,
+        expiresAt: Date.now() + 2500,
+        command: {
+          action,
+          args: {
+            ...args,
+            ...(action === 'media.tracks.set'
+              ? { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion }
+              : {}),
+          },
+        },
+      },
+      token,
+    );
+  };
+  await snapshot();
+  await command('media.load', { mediaId: '1', quality: 'direct' });
+  await command('media.tracks.set', { subtitleId: '21' });
+  const first = await snapshot(),
+    captions = await request(first.subtitleUrl);
+  assert.equal(captions.status, 200);
+  assert.equal(captions.body.cues[0].text, 'Bonjour');
+  assert.equal(JSON.stringify(first.tracks).includes('/library/'), false);
+  const starts = fixture.state.events.filter(e => e.startedAudio).length;
+  const master = await request(first.mediaUrl),
+    repeated = await request(first.mediaUrl);
+  assert.equal((await request(first.mediaUrl, 'HEAD')).status, 200);
+  assert.equal(master.status, 200);
+  assert.match(master.body, /#EXTM3U/);
+  assert.equal(repeated.body, master.body);
+  assert.equal(
+    fixture.state.events.filter(e => e.startedAudio).length,
+    starts,
+    'master reloads never renegotiate restored audio preferences',
+  );
+  const childUrl = master.body.split('\n').find(line => line.startsWith('/api/watch/media/'));
+  assert.ok(childUrl, 'captured master points to a private child playlist');
+  const playlistStarted = new Promise(resolve => (fixture.state.playlistStarted = resolve));
+  fixture.state.holdPlaylist = true;
+  const pendingPlaylist = request(childUrl);
+  await playlistStarted;
+  assert.equal((await command('media.tracks.set', { audioId: '12' })).body.status, 'applied');
+  fixture.state.releasePlaylist();
+  assert.equal((await pendingPlaylist).status, 403, 'an old playlist cannot arrive after audio selection changes');
+  fixture.state.holdPlaylist = false;
+  const chosen = await snapshot();
+  assert.equal(chosen.tracks.audioId, '12');
+  assert.equal(
+    (await command('media.stream.refresh', { mediaVersion: chosen.mediaVersion, streamVersion: chosen.streamVersion }))
+      .body.status,
+    'applied',
+  );
+  const refreshed = await snapshot();
+  assert.equal(refreshed.tracks.audioId, '12', 'session refresh retains the personal source audio');
+  assert.equal(fixture.state.events.filter(e => e.startedAudio).at(-1).startedAudio, '12');
+  assert.equal(fixture.state.audio, '11', 'session refresh restores Plex saved audio');
+  assert.equal((await request(refreshed.mediaUrl)).status, 200);
+  assert.equal(
+    (await request(chosen.mediaUrl, 'HEAD')).status,
+    403,
+    'old master grant is revoked after session refresh',
+  );
+  await command('media.tracks.set', { subtitleId: 'off' });
+  assert.equal((await request(first.subtitleUrl)).status, 403);
+  await command('media.tracks.set', { subtitleId: '21' });
+  const current = await snapshot();
+  const pending = new Promise(resolve => (waitCaption = resolve)),
+    fetching = request(current.subtitleUrl);
+  await pending;
+  await command('media.tracks.set', { subtitleId: 'off' });
+  releaseCaption();
+  const stale = await fetching;
+  assert.notEqual(stale.status, 200);
+  assert.equal(stale.body.cues, undefined, 'late old captions cannot escape a selection change');
+  await command('media.tracks.set', { subtitleId: '21' });
+  const revoked = await snapshot();
+  member = false;
+  assert.equal((await request(revoked.subtitleUrl)).status, 403, 'media grant rechecks current membership');
+});
+
+test('streaming media bodies complete with progressing chunks beyond header deadline and cancel on disconnect', async t => {
+  const fixture = provider(),
+    cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
+  const config = {
+    cert,
+    key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+    publicUrl: 'https://localhost',
+    demo: true,
+    ownerId: 'demo-host',
+    guildId: 'guild',
+    channels: ['commands'],
+    plexUrl: 'http://fixture.invalid:32400',
+    plexToken: 'fixture',
+  };
+  let upstreamAborted = false;
+  const app = createApp(config, {
+    plexFetch: async (input, options) => {
+      if (new URL(input).pathname.endsWith('/segment.ts') && options.signal) {
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            upstreamAborted = true;
+          },
+          { once: true },
+        );
+      }
+      return fixture.plex.fetch(input, options);
+    },
+  });
+  app.hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    fixture.state.holdPlaylist = false;
+    fixture.state.releasePlaylist?.();
+  });
+  t.after(() => app.close());
+  t.after(() => fixture.plex.close());
+  const port = app.server.address().port;
+  config.publicUrl = 'https://localhost:' + port;
+  const control = require('./helpers/control-client').controlClient(t, config, cert);
+  const request = (route, method = 'GET', data, token) =>
+    control.handles(route)
+      ? control.request(route, data, token ? { Authorization: 'Bearer ' + token } : {})
+      : new Promise((resolve, reject) => {
+          const req = https.request(
+            {
+              hostname: 'localhost',
+              port,
+              path: route,
+              method,
+              ca: cert,
+              headers: {
+                Origin: config.publicUrl,
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: 'Bearer ' + token } : {}),
+              },
+            },
+            res => {
+              const chunks = [];
+              res.on('data', bytes => chunks.push(bytes));
+              res.on('end', () => {
+                const text = Buffer.concat(chunks).toString();
+                resolve({
+                  status: res.statusCode,
+                  body: text && res.headers['content-type']?.includes('application/json') ? JSON.parse(text) : text,
+                });
+              });
+            },
+          );
+          req.on('error', reject);
+          req.end(data && JSON.stringify(data));
+        });
+  const token = (await request('/api/watch/demo-login', 'POST', { persona: 'host' })).body.token;
+  const room = (await request('/api/watch/rooms', 'POST', {}, token)).body.id,
+    viewerId = randomUUID();
+  const snapshot = async () =>
+    (await request('/api/watch/rooms/' + room + '?viewer=' + viewerId, 'GET', undefined, token)).body;
+  await snapshot();
+  await request(
+    '/api/watch/rooms/' + room + '/command',
+    'POST',
+    {
+      viewerId,
+      epoch: (await snapshot()).epoch,
+      expiresAt: Date.now() + 2500,
+      command: { action: 'media.load', args: { mediaId: '1', quality: 'direct' } },
+    },
+    token,
+  );
+  const first = await snapshot();
+  const master = await request(first.mediaUrl);
+  const childUrl = master.body.split('\n').find(line => line.startsWith('/api/watch/media/'));
+  const childPlaylist = await request(childUrl);
+  const segmentUrl = childPlaylist.body.split('\n').find(line => line.startsWith('/api/watch/media/'));
   assert.ok(segmentUrl);
 
-  fixture.state.slowSegment=true;
-  const segmentRes=await request(segmentUrl);
-  assert.equal(segmentRes.status,200);
-  assert.ok(segmentRes.body.length>=4,'progressing slow body completes successfully');
+  fixture.state.slowSegment = true;
+  const segmentRes = await request(segmentUrl);
+  assert.equal(segmentRes.status, 200);
+  assert.ok(segmentRes.body.length >= 4, 'progressing slow body completes successfully');
 
-  await new Promise(resolve=>{
-    const req=https.request({hostname:'localhost',port,path:segmentUrl,method:'GET',ca:cert,headers:{Origin:config.publicUrl}});
-    req.on('response',res=>{
-      res.once('data',()=>{
+  await new Promise(resolve => {
+    const req = https.request({
+      hostname: 'localhost',
+      port,
+      path: segmentUrl,
+      method: 'GET',
+      ca: cert,
+      headers: { Origin: config.publicUrl },
+    });
+    req.on('response', res => {
+      res.once('data', () => {
         req.destroy();
-        setTimeout(resolve,50);
+        setTimeout(resolve, 50);
       });
     });
     req.end();
   });
-  assert.equal(upstreamAborted,true,'disconnect terminates streaming body upstream promptly');
+  assert.equal(upstreamAborted, true, 'disconnect terminates streaming body upstream promptly');
 });
 
 test('multi-version Plex items resolve subtitles and metadata from the selected/eligible part', async () => {
@@ -460,26 +1061,28 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
         videoResolution: '4k',
         videoCodec: 'hevc',
         bitrate: 40000,
-        Part: [{ id: 10, key: '/library/parts/10/file', accessible: 0, exists: 0, duration: 120000, Stream: [] }]
+        Part: [{ id: 10, key: '/library/parts/10/file', accessible: 0, exists: 0, duration: 120000, Stream: [] }],
       },
       {
         id: 2,
         videoResolution: '1080',
         videoCodec: 'h264',
         bitrate: 8000,
-        Part: [{
-          id: 20,
-          key: '/library/parts/20/file',
-          accessible: 1,
-          exists: 1,
-          duration: 120000,
-          Stream: [
-            { id: 31, streamType: 3, codec: 'srt', key: '/library/streams/31' },
-            { id: 32, streamType: 3, codec: 'ass', key: '/library/streams/32' }
-          ]
-        }]
-      }
-    ]
+        Part: [
+          {
+            id: 20,
+            key: '/library/parts/20/file',
+            accessible: 1,
+            exists: 1,
+            duration: 120000,
+            Stream: [
+              { id: 31, streamType: 3, codec: 'srt', key: '/library/streams/31' },
+              { id: 32, streamType: 3, codec: 'ass', key: '/library/streams/32' },
+            ],
+          },
+        ],
+      },
+    ],
   };
 
   const selected = Sources.select(multiItem);
@@ -487,21 +1090,26 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
 
   // Test Plex.details picks eligible available media (Media[1])
   const plex = new Plex({ plexUrl: 'https://plex.example.com', plexToken: 'tok' }, async () => {
-    return new Response(JSON.stringify({ MediaContainer: { Metadata: [multiItem] } }), { headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ MediaContainer: { Metadata: [multiItem] } }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   });
   const details = await plex.details('100');
-  assert.ok(details.mediaInfo.some(m => m.includes('1080p') || m.includes('H264')), 'details picks 1080p eligible media');
+  assert.ok(
+    details.mediaInfo.some(m => m.includes('1080p') || m.includes('H264')),
+    'details picks 1080p eligible media',
+  );
 
   // Test SubtitleResources.load with sourceSelection
   const assPlex = {
-    request: async () => new Response('Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hello')
+    request: async () => new Response('Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hello'),
   };
   const assMedia = {
     source: multiItem,
     sourceSelection: selected.identity,
     selection: { subtitle: { id: '32', delivery: 'ass', external: true } },
     captionVersion: '1',
-    subtitleAbort: new AbortController()
+    subtitleAbort: new AbortController(),
   };
   const assResult = await SubtitleResources.load(assPlex, assMedia, new AbortController().signal);
   assert.equal(assResult.format, 'ass');
@@ -509,29 +1117,45 @@ test('multi-version Plex items resolve subtitles and metadata from the selected/
 
   // Test Subtitles.load with sourceSelection
   const mockPlex = {
-    url: (k) => new URL('https://plex.example.com' + k),
-    request: async () => new Response('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello')
+    url: k => new URL('https://plex.example.com' + k),
+    request: async () => new Response('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello'),
   };
   const textMedia = {
     source: multiItem,
     sourceSelection: selected.identity,
     selection: { subtitle: { id: '31', delivery: 'text', available: true } },
-    subtitleAbort: new AbortController()
+    subtitleAbort: new AbortController(),
   };
   const cues = await Subtitles.load(mockPlex, textMedia, new AbortController().signal);
   assert.equal(cues.length, 1);
   assert.equal(cues[0].text, 'Hello');
 });
 
-test('embedded text stays client-rendered, so Original is not forced into a conversion',()=>{
-  const {planDelivery}=require('../server/delivery-plan');
-  const [track]=Tracks.catalog({Stream:[{id:1,streamType:3,codec:'srt',index:2}]},{browserSubtitles:true,extractSubtitles:true}).subtitles;
-  assert.equal(track.delivery,'cues');
-  assert.equal(planDelivery({quality:'direct',burn:track.delivery==='burn',audioTracks:1,outputs:['av1','plex']}).route,'file');
+test('embedded text stays client-rendered, so Original is not forced into a conversion', () => {
+  const { planDelivery } = require('../server/delivery-plan');
+  const [track] = Tracks.catalog(
+    { Stream: [{ id: 1, streamType: 3, codec: 'srt', index: 2 }] },
+    { browserSubtitles: true, extractSubtitles: true },
+  ).subtitles;
+  assert.equal(track.delivery, 'cues');
+  assert.equal(
+    planDelivery({ quality: 'direct', burn: track.delivery === 'burn', audioTracks: 1, outputs: ['av1', 'plex'] })
+      .route,
+    'file',
+  );
   // Unplayable audio alone keeps the picture, unless another reason needs a conversion.
-  assert.equal(planDelivery({quality:'direct',fallback:'audio',audioTracks:1,outputs:['av1','plex']}).reason,'audio-conversion');
-  assert.equal(planDelivery({quality:'720p4',fallback:'audio',audioTracks:1,outputs:['av1','plex']}).route,'local');
-  assert.equal(planDelivery({quality:'direct',fallback:'audio',burn:true,audioTracks:1,outputs:['av1','plex']}).route,'local');
+  assert.equal(
+    planDelivery({ quality: 'direct', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'plex'] }).reason,
+    'audio-conversion',
+  );
+  assert.equal(
+    planDelivery({ quality: '720p4', fallback: 'audio', audioTracks: 1, outputs: ['av1', 'plex'] }).route,
+    'local',
+  );
+  assert.equal(
+    planDelivery({ quality: 'direct', fallback: 'audio', burn: true, audioTracks: 1, outputs: ['av1', 'plex'] }).route,
+    'local',
+  );
 });
 
 test('codecMatches and trackItem handle PCM audio and embedded closed captions without false warnings', async () => {
@@ -543,12 +1167,12 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   const pcmMedia = {
     tracks: {
       audio: [{ id: '1', index: 1, codec: 'pcm' }],
-      subtitles: []
-    }
+      subtitles: [],
+    },
   };
   const pcmStreams = [
     { index: 0, codec_type: 'video', codec_name: 'h264' },
-    { index: 1, codec_type: 'audio', codec_name: 'pcm_s16le' }
+    { index: 1, codec_type: 'audio', codec_name: 'pcm_s16le' },
   ];
   assert.equal(checks.trackItem(pcmMedia, pcmStreams).level, 'ok');
   assert.equal(fileIndex(pcmMedia.tracks.audio, pcmMedia.tracks.audio[0], pcmStreams, 'audio'), 1);
@@ -557,20 +1181,23 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   const ccMedia = {
     tracks: {
       audio: [{ id: '1', index: 1, codec: 'aac' }],
-      subtitles: [{ id: '2', index: 0, codec: 'eia_608' }, { id: '3', index: 2, codec: 'srt' }]
-    }
+      subtitles: [
+        { id: '2', index: 0, codec: 'eia_608' },
+        { id: '3', index: 2, codec: 'srt' },
+      ],
+    },
   };
   const ccStreams = [
     { index: 0, codec_type: 'video', codec_name: 'h264' },
     { index: 1, codec_type: 'audio', codec_name: 'aac' },
-    { index: 2, codec_type: 'subtitle', codec_name: 'subrip' }
+    { index: 2, codec_type: 'subtitle', codec_name: 'subrip' },
   ];
   assert.equal(checks.trackItem(ccMedia, ccStreams).level, 'ok');
 
   // Real mismatch: file stream index 1 is unexpectedly ac3 instead of pcm
   const mismatchStreams = [
     { index: 0, codec_type: 'video', codec_name: 'h264' },
-    { index: 1, codec_type: 'audio', codec_name: 'ac3' }
+    { index: 1, codec_type: 'audio', codec_name: 'ac3' },
   ];
   const problem = checks.trackItem(pcmMedia, mismatchStreams);
   assert.equal(problem.level, 'problem');
@@ -580,59 +1207,201 @@ test('codecMatches and trackItem handle PCM audio and embedded closed captions w
   const Playback = require('../web/playback-policy');
   assert.equal(checks.hdrItem({ codec_type: 'video', color_transfer: 'bt709' }), null);
   assert.equal(checks.hdrItem({ codec_type: 'video', color_transfer: 'smpte2084' }).title, 'HDR10');
-  const p5Item = checks.hdrItem({ codec_type: 'video', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }] });
+  const p5Item = checks.hdrItem({
+    codec_type: 'video',
+    side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 5, bl_signal_compatibility_id: 0 }],
+  });
   assert.equal(p5Item.level, 'warning');
   assert.equal(p5Item.title, 'Dolby Vision (Profile 5)');
-  const p7Item = checks.hdrItem({ codec_type: 'video', color_transfer: 'smpte2084', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 7, bl_signal_compatibility_id: 1 }] });
+  const p7Item = checks.hdrItem({
+    codec_type: 'video',
+    color_transfer: 'smpte2084',
+    side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 7, bl_signal_compatibility_id: 1 }],
+  });
   assert.equal(p7Item.level, 'info');
   assert.equal(p7Item.title, 'Dolby Vision (Profile 7, HDR10 base)');
-  const p82Item = checks.hdrItem({ codec_type: 'video', color_transfer: 'bt709', side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 8, bl_signal_compatibility_id: 2 }] });
+  const p82Item = checks.hdrItem({
+    codec_type: 'video',
+    color_transfer: 'bt709',
+    side_data_list: [{ side_data_type: 'DOVI configuration record', dv_profile: 8, bl_signal_compatibility_id: 2 }],
+  });
   assert.equal(p82Item.level, 'info');
   assert.equal(p82Item.title, 'Dolby Vision (Profile 8, SDR base)');
 
   const hdrScreen = q => ({ matches: q.includes('dynamic-range: high') });
   const sdrScreen = () => ({ matches: false });
-  const hevcMain10 = type => /hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '';
-  const hevc8BitOnly = type => /hvc1\.1\.6\.L93\.B0|mp4a/.test(type) ? 'probably' : '';
-  const doviP5Browser = type => /dvh1\.05\.06|hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '';
+  const hevcMain10 = type => (/hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '');
+  const hevc8BitOnly = type => (/hvc1\.1\.6\.L93\.B0|mp4a/.test(type) ? 'probably' : '');
+  const doviP5Browser = type => (/dvh1\.05\.06|hvc1\.2\.4\.L153\.B0|mp4a/.test(type) ? 'probably' : '');
 
-  const hdr10Source = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'aac', hdr: true, hdrKind: 'hdr10', bitDepth: 10 };
-  assert.equal(Playback.needsCompatible(hdr10Source, hevcMain10, hdrScreen), false, 'capable HDR display + Main10 HEVC passes Original through');
-  assert.equal(Playback.needsCompatible(hdr10Source, hevcMain10, sdrScreen), true, 'SDR display converts HDR Original to tone-mapped SDR');
-  assert.equal(Playback.needsCompatible(hdr10Source, hevc8BitOnly, hdrScreen), true, '8-bit-only HEVC decoder converts 10-bit HDR');
+  const hdr10Source = {
+    format: 'file',
+    quality: 'direct',
+    videoCodec: 'hevc',
+    audioCodec: 'aac',
+    hdr: true,
+    hdrKind: 'hdr10',
+    bitDepth: 10,
+  };
+  assert.equal(
+    Playback.needsCompatible(hdr10Source, hevcMain10, hdrScreen),
+    false,
+    'capable HDR display + Main10 HEVC passes Original through',
+  );
+  assert.equal(
+    Playback.needsCompatible(hdr10Source, hevcMain10, sdrScreen),
+    true,
+    'SDR display converts HDR Original to tone-mapped SDR',
+  );
+  assert.equal(
+    Playback.needsCompatible(hdr10Source, hevc8BitOnly, hdrScreen),
+    true,
+    '8-bit-only HEVC decoder converts 10-bit HDR',
+  );
 
-  const hdr10TrueHdSource = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'truehd', hdr: true, hdrKind: 'hdr10', bitDepth: 10 };
-  assert.equal(Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, hdrScreen), false, 'HDR10 HEVC + TrueHD does not need video conversion on HDR Main10 client');
-  assert.equal(Playback.needsAudioConversion(hdr10TrueHdSource, hevcMain10), true, 'TrueHD requires audio conversion in browser');
-  assert.equal(Playback.needsCompatible(hdr10TrueHdSource, hevcMain10, hdrScreen), true, 'HDR10 HEVC + TrueHD triggers compatible fallback (audio-only)');
-  assert.equal(Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, sdrScreen), true, 'HDR10 HEVC + TrueHD on SDR display requires video conversion');
+  const hdr10TrueHdSource = {
+    format: 'file',
+    quality: 'direct',
+    videoCodec: 'hevc',
+    audioCodec: 'truehd',
+    hdr: true,
+    hdrKind: 'hdr10',
+    bitDepth: 10,
+  };
+  assert.equal(
+    Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, hdrScreen),
+    false,
+    'HDR10 HEVC + TrueHD does not need video conversion on HDR Main10 client',
+  );
+  assert.equal(
+    Playback.needsAudioConversion(hdr10TrueHdSource, hevcMain10),
+    true,
+    'TrueHD requires audio conversion in browser',
+  );
+  assert.equal(
+    Playback.needsCompatible(hdr10TrueHdSource, hevcMain10, hdrScreen),
+    true,
+    'HDR10 HEVC + TrueHD triggers compatible fallback (audio-only)',
+  );
+  assert.equal(
+    Playback.needsVideoConversion(hdr10TrueHdSource, hevcMain10, sdrScreen),
+    true,
+    'HDR10 HEVC + TrueHD on SDR display requires video conversion',
+  );
 
-  const doviP5Source = { format: 'file', quality: 'direct', videoCodec: 'hevc', audioCodec: 'aac', hdr: true, hdrKind: 'dovi-p5', doviProfile: 5, bitDepth: 10 };
-  assert.equal(Playback.needsCompatible(doviP5Source, hevcMain10, hdrScreen), true, 'DV Profile 5 without explicit dvh1.05/dvhe.05 support converts via libplacebo');
-  assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, hdrScreen), false, 'DV Profile 5 on a DV-capable HDR client passes Original through');
-  assert.equal(Playback.needsCompatible(doviP5Source, doviP5Browser, sdrScreen), true, 'DV Profile 5 on an SDR display converts to SDR');
+  const doviP5Source = {
+    format: 'file',
+    quality: 'direct',
+    videoCodec: 'hevc',
+    audioCodec: 'aac',
+    hdr: true,
+    hdrKind: 'dovi-p5',
+    doviProfile: 5,
+    bitDepth: 10,
+  };
+  assert.equal(
+    Playback.needsCompatible(doviP5Source, hevcMain10, hdrScreen),
+    true,
+    'DV Profile 5 without explicit dvh1.05/dvhe.05 support converts via libplacebo',
+  );
+  assert.equal(
+    Playback.needsCompatible(doviP5Source, doviP5Browser, hdrScreen),
+    false,
+    'DV Profile 5 on a DV-capable HDR client passes Original through',
+  );
+  assert.equal(
+    Playback.needsCompatible(doviP5Source, doviP5Browser, sdrScreen),
+    true,
+    'DV Profile 5 on an SDR display converts to SDR',
+  );
 
   let decisionUrl;
-  const hdrPlex = new Plex({ plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' }, async input => {
-    const url = new URL(input);
-    const json = value => new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
-    if (url.pathname === '/library/metadata/1') {
-      return json({ Metadata: [{ ratingKey: '1', type: 'movie', title: '10 Cloverfield Lane', duration: 60000, Media: [{ id: 1, videoCodec: 'hevc', audioCodec: 'truehd', height: 2160, width: 3840, bitrate: 55000, Part: [{ id: 5, key: '/library/parts/5/file', size: 1000, Stream: [
-        { id: 10, index: 0, streamType: 1, codec: 'hevc', bitDepth: 10, colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' },
-        { id: 11, index: 1, streamType: 2, codec: 'truehd', languageCode: 'eng', selected: true, channels: 8 }
-      ] }] }] }] });
-    }
-    if (url.pathname.endsWith('/decision')) {
-      decisionUrl = url;
-      return json({ generalDecisionCode: 1001, Metadata: [{ Media: [{ videoCodec: 'hevc', audioCodec: 'aac', subtitleDecision: 'none', Part: [{ Stream: [
-        { streamType: 1, codec: 'hevc', decision: 'copy', bitDepth: 10 },
-        { streamType: 2, id: 11, codec: 'aac', decision: 'transcode', selected: 1 }
-      ] }] }] }] });
-    }
-    if (url.pathname.endsWith('/start.m3u8')) return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=55000000\nchild.m3u8\n');
-    if (url.pathname.endsWith('/child.m3u8')) return new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');
-    return json({});
-  });
+  const hdrPlex = new Plex(
+    { plexUrl: 'http://fixture.invalid:32400', plexToken: 'fixture', ffmpegPath: 'fixture' },
+    async input => {
+      const url = new URL(input);
+      const json = value =>
+        new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
+      if (url.pathname === '/library/metadata/1') {
+        return json({
+          Metadata: [
+            {
+              ratingKey: '1',
+              type: 'movie',
+              title: '10 Cloverfield Lane',
+              duration: 60000,
+              Media: [
+                {
+                  id: 1,
+                  videoCodec: 'hevc',
+                  audioCodec: 'truehd',
+                  height: 2160,
+                  width: 3840,
+                  bitrate: 55000,
+                  Part: [
+                    {
+                      id: 5,
+                      key: '/library/parts/5/file',
+                      size: 1000,
+                      Stream: [
+                        {
+                          id: 10,
+                          index: 0,
+                          streamType: 1,
+                          codec: 'hevc',
+                          bitDepth: 10,
+                          colorTransfer: 'smpte2084',
+                          colorPrimaries: 'bt2020',
+                        },
+                        {
+                          id: 11,
+                          index: 1,
+                          streamType: 2,
+                          codec: 'truehd',
+                          languageCode: 'eng',
+                          selected: true,
+                          channels: 8,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.pathname.endsWith('/decision')) {
+        decisionUrl = url;
+        return json({
+          generalDecisionCode: 1001,
+          Metadata: [
+            {
+              Media: [
+                {
+                  videoCodec: 'hevc',
+                  audioCodec: 'aac',
+                  subtitleDecision: 'none',
+                  Part: [
+                    {
+                      Stream: [
+                        { streamType: 1, codec: 'hevc', decision: 'copy', bitDepth: 10 },
+                        { streamType: 2, id: 11, codec: 'aac', decision: 'transcode', selected: 1 },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.pathname.endsWith('/start.m3u8'))
+        return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=55000000\nchild.m3u8\n');
+      if (url.pathname.endsWith('/child.m3u8')) return new Response('#EXTM3U\n#EXTINF:6\nsegment.ts\n');
+      return json({});
+    },
+  );
   try {
     const audioCopy = await hdrPlex.prepare('1', 'direct', false, undefined, 'audio');
     assert.equal(audioCopy.format, 'hls');

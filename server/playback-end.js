@@ -57,35 +57,63 @@ function observePlaybackEnd(room, viewer, data, result, now = Date.now()) {
   const previous = evidence.get(viewer);
   evidence.delete(viewer);
   const duration = room.media?.duration;
-  if (!result?.accepted || !Number.isFinite(duration) || duration <= 0 ||
-      !room.viewers.size || room.manualPaused || room.initialGate || room.pauseAt ||
-      data.epoch !== room.s.epoch || data.mediaVersion !== room.mediaVersion ||
-      viewer.mediaVersion !== room.mediaVersion || data.streamVersion !== viewer.streamVersion ||
-      data.observationEpoch !== viewer.observationEpoch) return false;
+  if (
+    !result?.accepted ||
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    !room.viewers.size ||
+    room.manualPaused ||
+    room.initialGate ||
+    room.pauseAt ||
+    data.epoch !== room.s.epoch ||
+    data.mediaVersion !== room.mediaVersion ||
+    viewer.mediaVersion !== room.mediaVersion ||
+    data.streamVersion !== viewer.streamVersion ||
+    data.observationEpoch !== viewer.observationEpoch
+  )
+    return false;
 
-  const generation = [data.epoch, data.mediaVersion, data.streamVersion, data.observationEpoch, result.playbackId].join('\0');
-  const continuous = previous?.room === room && previous.generation === generation && previous.discontinuity === data.discontinuity;
+  const generation = [data.epoch, data.mediaVersion, data.streamVersion, data.observationEpoch, result.playbackId].join(
+    '\0',
+  );
+  const continuous =
+    previous?.room === room && previous.generation === generation && previous.discontinuity === data.discontinuity;
   const required = Math.min(REQUIRED_PROGRESS, duration / 2);
   if (data.state === 'playing' && result.credit.reason === 'credited') {
     const advanced = result.credit.positionDelta;
     if (typeof advanced !== 'number' || !Number.isFinite(advanced) || advanced <= 0) return false;
-    const adjoining = continuous && Math.abs(previous.position - (data.position - advanced)) < .001;
+    const adjoining = continuous && Math.abs(previous.position - (data.position - advanced)) < 0.001;
     evidence.set(viewer, {
-      room, generation, discontinuity: data.discontinuity, sampleAt: data.sampleAt,
-      receivedAt: now, position: data.position, rate: data.rate, frames: data.frames,
-      progress: Math.min(required, advanced + (adjoining ? previous.progress : 0))
+      room,
+      generation,
+      discontinuity: data.discontinuity,
+      sampleAt: data.sampleAt,
+      receivedAt: now,
+      position: data.position,
+      rate: data.rate,
+      frames: data.frames,
+      progress: Math.min(required, advanced + (adjoining ? previous.progress : 0)),
     });
     return false;
   }
   if (data.state !== 'ended' || !continuous || previous.progress < required) return false;
-  const elapsed = data.sampleAt - previous.sampleAt, received = now - previous.receivedAt;
+  const elapsed = data.sampleAt - previous.sampleAt,
+    received = now - previous.receivedAt;
   const advanced = data.position - previous.position;
   // The final, uncredited sliver must follow the last verified playing sample.
   // In particular, an ended event after a jump to the end cannot use old credit.
-  return elapsed >= 0 && elapsed <= MAX_END_DELAY_MS && received >= 0 && received <= MAX_END_DELAY_MS &&
-    Math.abs(data.position - duration) <= .5 && previous.position >= duration - 1.5 &&
-    advanced >= -.01 && advanced <= elapsed / 1000 * (previous.rate + data.rate) / 2 + .25 &&
-    data.frames >= previous.frames && (advanced <= .25 || data.frames > previous.frames);
+  return (
+    elapsed >= 0 &&
+    elapsed <= MAX_END_DELAY_MS &&
+    received >= 0 &&
+    received <= MAX_END_DELAY_MS &&
+    Math.abs(data.position - duration) <= 0.5 &&
+    previous.position >= duration - 1.5 &&
+    advanced >= -0.01 &&
+    advanced <= ((elapsed / 1000) * (previous.rate + data.rate)) / 2 + 0.25 &&
+    data.frames >= previous.frames &&
+    (advanced <= 0.25 || data.frames > previous.frames)
+  );
 }
 
 module.exports = { observePlaybackEnd, clearPlaybackEnd };

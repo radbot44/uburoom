@@ -20,11 +20,41 @@ function analyzeTargetFormulas() {
   ];
 
   const configs = [
-    { name: 'Baseline 64 MiB (Old Clamped)', maxBufferSize: 64 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 60, legacy: true },
-    { name: '64 MiB (Standard HLS.js)', maxBufferSize: 64 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
-    { name: '128 MiB (Standard HLS.js)', maxBufferSize: 128 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
-    { name: '256 MiB (Standard HLS.js)', maxBufferSize: 256 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
-    { name: '256 MiB (Max 240s)', maxBufferSize: 256 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 240, backBufferLength: 30 },
+    {
+      name: 'Baseline 64 MiB (Old Clamped)',
+      maxBufferSize: 64 * 1024 * 1024,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      legacy: true,
+    },
+    {
+      name: '64 MiB (Standard HLS.js)',
+      maxBufferSize: 64 * 1024 * 1024,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 180,
+      backBufferLength: 30,
+    },
+    {
+      name: '128 MiB (Standard HLS.js)',
+      maxBufferSize: 128 * 1024 * 1024,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 180,
+      backBufferLength: 30,
+    },
+    {
+      name: '256 MiB (Standard HLS.js)',
+      maxBufferSize: 256 * 1024 * 1024,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 180,
+      backBufferLength: 30,
+    },
+    {
+      name: '256 MiB (Max 240s)',
+      maxBufferSize: 256 * 1024 * 1024,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 240,
+      backBufferLength: 30,
+    },
   ];
 
   const results = [];
@@ -34,17 +64,17 @@ function analyzeTargetFormulas() {
       let targetSeconds;
       if (cfg.legacy) {
         const rate = b.bps / 1000;
-        const seconds = 64 * 1024 * 1024 * 8 / (rate * 1000);
-        targetSeconds = Math.min(60, Math.max(12, Math.floor(seconds * 2 / 3)));
+        const seconds = (64 * 1024 * 1024 * 8) / (rate * 1000);
+        targetSeconds = Math.min(60, Math.max(12, Math.floor((seconds * 2) / 3)));
       } else {
-        const hlsCalculated = 8 * cfg.maxBufferSize / b.bps;
+        const hlsCalculated = (8 * cfg.maxBufferSize) / b.bps;
         targetSeconds = Math.min(Math.max(hlsCalculated, cfg.maxBufferLength), cfg.maxMaxBufferLength);
       }
       const bufferBytesEst = (targetSeconds * b.bps) / 8;
       streamResults.push({
         stream: b.name,
         targetSeconds: Math.round(targetSeconds * 10) / 10,
-        bufferMB: Math.round(bufferBytesEst / (1024 * 1024) * 10) / 10
+        bufferMB: Math.round((bufferBytesEst / (1024 * 1024)) * 10) / 10,
       });
     }
     results.push({ config: cfg.name, streams: streamResults });
@@ -62,16 +92,28 @@ async function runBrowserBufferTests(browserName) {
   const config = {
     cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),
     key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
-    publicUrl: 'https://localhost', demo: true, ownerId: 'demo-host', guildId: 'synthetic-guild',
-    channels: ['synthetic-commands'], plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only'
+    publicUrl: 'https://localhost',
+    demo: true,
+    ownerId: 'demo-host',
+    guildId: 'synthetic-guild',
+    channels: ['synthetic-commands'],
+    plexUrl: 'http://playback-fixture.invalid:32400',
+    plexToken: 'synthetic-playback-only',
   };
 
   const app = createApp(config, {
     plexFetch: fixturePlex(directory, manifest, control),
-    oauthFetch: async () => { throw new Error('Live OAuth disabled.'); }
+    oauthFetch: async () => {
+      throw new Error('Live OAuth disabled.');
+    },
   });
-  app.hub.access = { refresh: async () => true, isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
+  app.hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
 
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;
@@ -82,18 +124,38 @@ async function runBrowserBufferTests(browserName) {
 
   try {
     const page = await browser.page(config.publicUrl + '/watch?demo=host&playbackProbe=1');
-    const evaluate = (code) => browser.evaluate(page, code);
+    const evaluate = code => browser.evaluate(page, code);
     const until = (code, label, timeout) => browser.until(page, code, label, timeout);
 
     await until('!!me', 'Host login');
-    await evaluate('preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');
+    await evaluate(
+      'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true',
+    );
     await until('!!state', 'Room creation');
     await evaluate('(' + installMeter.toString() + ')()');
 
     const testConfigs = [
-      { id: '64MB', maxBufferSize: 64 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
-      { id: '128MB', maxBufferSize: 128 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
-      { id: '256MB', maxBufferSize: 256 * 1024 * 1024, maxBufferLength: 30, maxMaxBufferLength: 180, backBufferLength: 30 },
+      {
+        id: '64MB',
+        maxBufferSize: 64 * 1024 * 1024,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 180,
+        backBufferLength: 30,
+      },
+      {
+        id: '128MB',
+        maxBufferSize: 128 * 1024 * 1024,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 180,
+        backBufferLength: 30,
+      },
+      {
+        id: '256MB',
+        maxBufferSize: 256 * 1024 * 1024,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 180,
+        backBufferLength: 30,
+      },
     ];
 
     for (const tc of testConfigs) {
@@ -134,7 +196,9 @@ async function runBrowserBufferTests(browserName) {
       })`).then(JSON.parse);
 
       testResults.push({ browser: browserName, config: tc.id, snapshot });
-      console.log(`[BufferEval] ${browserName} ${tc.id}: bufferedAhead=${snapshot.bufferedAhead.toFixed(1)}s, ranges=${JSON.stringify(snapshot.ranges)}, errors=${snapshot.errors.length}`);
+      console.log(
+        `[BufferEval] ${browserName} ${tc.id}: bufferedAhead=${snapshot.bufferedAhead.toFixed(1)}s, ranges=${JSON.stringify(snapshot.ranges)}, errors=${snapshot.errors.length}`,
+      );
     }
 
     // Back-buffer eviction test
@@ -149,8 +213,9 @@ async function runBrowserBufferTests(browserName) {
       flushes: window.__flushes
     })`).then(JSON.parse);
     testResults.push({ browser: browserName, test: 'eviction', evictionSnap });
-    console.log(`[BufferEval] ${browserName} eviction ranges after seek to 60s: ${JSON.stringify(evictionSnap.ranges)}`);
-
+    console.log(
+      `[BufferEval] ${browserName} eviction ranges after seek to 60s: ${JSON.stringify(evictionSnap.ranges)}`,
+    );
   } finally {
     await browser.close();
     await app.close();
@@ -168,16 +233,28 @@ async function runPlexSessionLifecycleTests() {
   const config = {
     cert: fs.readFileSync(path.join(root, 'certs/server-cert.pem')),
     key: fs.readFileSync(path.join(root, 'certs/server-key.pem')),
-    publicUrl: 'https://localhost', demo: true, ownerId: 'demo-host', guildId: 'synthetic-guild',
-    channels: ['synthetic-commands'], plexUrl: 'http://playback-fixture.invalid:32400',
-    plexToken: 'synthetic-playback-only'
+    publicUrl: 'https://localhost',
+    demo: true,
+    ownerId: 'demo-host',
+    guildId: 'synthetic-guild',
+    channels: ['synthetic-commands'],
+    plexUrl: 'http://playback-fixture.invalid:32400',
+    plexToken: 'synthetic-playback-only',
   };
 
   const app = createApp(config, {
     plexFetch: fixturePlex(directory, manifest, control),
-    oauthFetch: async () => { throw new Error('Live OAuth disabled.'); }
+    oauthFetch: async () => {
+      throw new Error('Live OAuth disabled.');
+    },
   });
-  app.hub.access = { refresh: async () => true, isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
+  app.hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
 
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;
@@ -188,11 +265,13 @@ async function runPlexSessionLifecycleTests() {
 
   try {
     const page = await browser.page(config.publicUrl + '/watch?demo=host&playbackProbe=1');
-    const evaluate = (code) => browser.evaluate(page, code);
+    const evaluate = code => browser.evaluate(page, code);
     const until = (code, label, timeout) => browser.until(page, code, label, timeout);
 
     await until('!!me', 'Host login');
-    await evaluate('preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true');
+    await evaluate(
+      'preferredQuality="direct";document.getElementById("create").click();document.getElementById("room-create").click();true',
+    );
     await until('!!state', 'Room creation');
     await evaluate('execute({action:"media.load",args:{mediaId:"104",quality:"direct"}}).then(()=>true)');
     await until('state.format==="hls" && video.readyState>=2', 'HLS loaded');
@@ -234,10 +313,9 @@ async function runPlexSessionLifecycleTests() {
       oldSession: currentSession,
       newSession,
       sessionRefreshed: newSession !== currentSession,
-      streamVersionChanged: newStreamVersion !== oldStreamVersion
+      streamVersionChanged: newStreamVersion !== oldStreamVersion,
     });
     console.log('[PlexEval] 410 handled: new transcode session created:', newSession !== currentSession);
-
   } finally {
     await browser.close();
     await app.close();
@@ -263,14 +341,24 @@ async function main() {
   // Save report artifact
   const outDir = path.resolve(__dirname, '../artifacts/hls-buffer-evaluation');
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, 'evaluation-results.json'), JSON.stringify({
-    timestamp: new Date().toISOString(),
-    mathResults,
-    chromeResults,
-    firefoxResults,
-    plexResults
-  }, null, 2) + '\n');
+  fs.writeFileSync(
+    path.join(outDir, 'evaluation-results.json'),
+    JSON.stringify(
+      {
+        timestamp: new Date().toISOString(),
+        mathResults,
+        chromeResults,
+        firefoxResults,
+        plexResults,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
   console.log('\n=== Complete. Results saved to artifacts/hls-buffer-evaluation/evaluation-results.json ===');
 }
 
-main().catch(err => { console.error('Error in main:', err); process.exit(1); });
+main().catch(err => {
+  console.error('Error in main:', err);
+  process.exit(1);
+});

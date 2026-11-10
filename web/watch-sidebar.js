@@ -14,7 +14,8 @@
   function update() {
     scheduled = false;
     const y = window.scrollY;
-    const enabled = desktop.matches &&
+    const enabled =
+      desktop.matches &&
       !document.body.classList.contains('immersive') &&
       !document.body.classList.contains('activity-pip') &&
       !document.body.classList.contains('mobile-player');
@@ -51,7 +52,7 @@
   new ResizeObserver(schedule).observe(column);
   new MutationObserver(schedule).observe(document.body, {
     attributes: true,
-    attributeFilter: ['class']
+    attributeFilter: ['class'],
   });
   update();
 })();

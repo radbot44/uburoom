@@ -31,11 +31,19 @@
 
   function show(trigger, options = {}) {
     if (!trigger || !trigger.isConnected) return null;
-    const text = typeof options === 'string' ? options : (options.text || '');
+    const text = typeof options === 'string' ? options : options.text || '';
     const state = options.state || 'success';
-    const duration = options.duration !== undefined ? options.duration : (state === 'loading' ? 0 : 2500);
+    const duration = options.duration !== undefined ? options.duration : state === 'loading' ? 0 : 2500;
     const placement = options.placement || 'auto';
-    const iconName = options.symbol || (state === 'success' ? 'check' : state === 'loading' ? 'loader-4' : state === 'error' ? 'alert-triangle' : undefined);
+    const iconName =
+      options.symbol ||
+      (state === 'success'
+        ? 'check'
+        : state === 'loading'
+          ? 'loader-4'
+          : state === 'error'
+            ? 'alert-triangle'
+            : undefined);
 
     dismiss();
 
@@ -82,8 +90,8 @@
       popover.dataset.placement = chosenPlacement;
 
       const margin = 8;
-      const triggerCenter = triggerRect.left + (triggerRect.width / 2);
-      let left = triggerCenter - (popoverRect.width / 2);
+      const triggerCenter = triggerRect.left + triggerRect.width / 2;
+      let left = triggerCenter - popoverRect.width / 2;
       const minLeft = margin;
       const maxLeft = Math.max(minLeft, viewportWidth - popoverRect.width - margin);
       left = Math.max(minLeft, Math.min(left, maxLeft));
@@ -139,7 +147,7 @@
           popover.className = 'watch-popover state-' + nextState + ' visible';
         }
         position();
-      }
+      },
     };
   }
 

@@ -1,17 +1,21 @@
 /* Reusable display-word generator matching Ububall uburithm. Words are not unique identifiers or secrets. */
-(function(root) {
+(function (root) {
   'use strict';
   const V = 'AEIOU';
   const C = 'BCDFGHJKLMNPQRSTVWXYZ';
   const BEFORE_X = 'HLNRSWYXZ';
   const C_NO_X = C.replace('X', '');
-  const weight = ch => (ch === 'X' || ch === 'Z' ? 1 : ch === 'Q' ? 2 : (ch === 'K' || ch === 'Y' ? 3 : 6));
+  const weight = ch => (ch === 'X' || ch === 'Z' ? 1 : ch === 'Q' ? 2 : ch === 'K' || ch === 'Y' ? 3 : 6);
   const C_POOL = [...C].flatMap(ch => Array(weight(ch)).fill(ch));
   const C_AFTER_VV_POOL = C_POOL.filter(ch => ch !== 'Y');
   const VOWEL_PAIRS = [...V].flatMap(a => [...V].map(b => a + b));
   const PAIRS = [C, C.replace(/[HWY]/g, '')].map(starters =>
-    [...starters].flatMap(first => [...(BEFORE_X.includes(first) ? C : C_NO_X)].flatMap(second =>
-      Array(weight(first) * weight(second)).fill(first + second))));
+    [...starters].flatMap(first =>
+      [...(BEFORE_X.includes(first) ? C : C_NO_X)].flatMap(second =>
+        Array(weight(first) * weight(second)).fill(first + second),
+      ),
+    ),
+  );
   const MASK = 0xffffffffffffffffn;
 
   class NameRandom {
@@ -30,7 +34,10 @@
       this.haveLow = true;
     }
     next32() {
-      if (this.haveLow) { this.haveLow = false; return this.low; }
+      if (this.haveLow) {
+        this.haveLow = false;
+        return this.low;
+      }
       let state = (this.state + 0x9e3779b97f4a7c15n) & MASK;
       this.state = state;
       let z = state;
@@ -70,36 +77,42 @@
   const CC0_LO = PAIRS[0].map(cc => cc.toLowerCase());
   const CC1_LO = PAIRS[1].map(cc => cc.toLowerCase());
 
-  const CAP_CV = C0_UP.flatMap(c => VY_LO.map(v => c + v));     // 3,286
-  const LOW_CV = C0_LO.flatMap(c => VY_LO.map(v => c + v));     // 3,286
-  const CAP_VC = VY_UP.flatMap(v => C0_LO.map(c => v + c));     // 3,286
-  const LOW_VC = VY_LO.flatMap(v => C0_LO.map(c => v + c));     // 3,286
-  const WORD_2 = CAP_CV.concat(CAP_VC);                         // 6,572
-  const CAP_CVV = C0_UP.flatMap(c => VV_LO.map(vv => c + vv));  // 2,650
+  const CAP_CV = C0_UP.flatMap(c => VY_LO.map(v => c + v)); // 3,286
+  const LOW_CV = C0_LO.flatMap(c => VY_LO.map(v => c + v)); // 3,286
+  const CAP_VC = VY_UP.flatMap(v => C0_LO.map(c => v + c)); // 3,286
+  const LOW_VC = VY_LO.flatMap(v => C0_LO.map(c => v + c)); // 3,286
+  const WORD_2 = CAP_CV.concat(CAP_VC); // 6,572
+  const CAP_CVV = C0_UP.flatMap(c => VV_LO.map(vv => c + vv)); // 2,650
   const LOW_VVC1 = VV_LO.flatMap(vv => C1_LO.map(c => vv + c)); // 2,575
-  const LOW_C1V = C1_LO.flatMap(c => VY_LO.map(v => c + v));    // 3,193
-  const LOW_V5C = V5_LO.flatMap(v => C0_LO.map(c => v + c));    // 530
-  const VY_PAIR_HEAD = VY_UP.flatMap(v1 => VY_LO.map(() => v1));// 961
-  const VY_PAIR_TAIL = VY_UP.flatMap(() => VY_LO);              // 961
-  const V5_VY_HEAD = V5_LO.flatMap(v1 => VY_LO.map(() => v1));  // 155
-  const V5_VY_TAIL = V5_LO.flatMap(() => VY_LO);                // 155
+  const LOW_C1V = C1_LO.flatMap(c => VY_LO.map(v => c + v)); // 3,193
+  const LOW_V5C = V5_LO.flatMap(v => C0_LO.map(c => v + c)); // 530
+  const VY_PAIR_HEAD = VY_UP.flatMap(v1 => VY_LO.map(() => v1)); // 961
+  const VY_PAIR_TAIL = VY_UP.flatMap(() => VY_LO); // 961
+  const V5_VY_HEAD = V5_LO.flatMap(v1 => VY_LO.map(() => v1)); // 155
+  const V5_VY_TAIL = V5_LO.flatMap(() => VY_LO); // 155
 
   function word6(random) {
     switch (random.int(8)) {
-      case 0: return CAP_CV[random.int(3286)] + LOW_CV[random.int(3286)] + LOW_CV[random.int(3286)];
-      case 1: return CAP_CV[random.int(3286)] + C0_LO[random.int(106)] + LOW_VVC1[random.int(2575)];
-      case 2: return CAP_CVV[random.int(2650)] + CC1_LO[random.int(9581)] + VY_LO[random.int(31)];
-      case 3: return CAP_CVV[random.int(2650)] + LOW_C1V[random.int(3193)] + C0_LO[random.int(106)];
+      case 0:
+        return CAP_CV[random.int(3286)] + LOW_CV[random.int(3286)] + LOW_CV[random.int(3286)];
+      case 1:
+        return CAP_CV[random.int(3286)] + C0_LO[random.int(106)] + LOW_VVC1[random.int(2575)];
+      case 2:
+        return CAP_CVV[random.int(2650)] + CC1_LO[random.int(9581)] + VY_LO[random.int(31)];
+      case 3:
+        return CAP_CVV[random.int(2650)] + LOW_C1V[random.int(3193)] + C0_LO[random.int(106)];
       case 4: {
         const vv = random.int(961);
         return VY_PAIR_HEAD[vv] + CC0_LO[random.int(11171)] + LOW_V5C[random.int(530)] + VY_PAIR_TAIL[vv];
       }
-      case 5: return VY_UP[random.int(31)] + CC0_LO[random.int(11171)] + LOW_VVC1[random.int(2575)];
+      case 5:
+        return VY_UP[random.int(31)] + CC0_LO[random.int(11171)] + LOW_VVC1[random.int(2575)];
       case 6: {
         const vv = random.int(155);
         return CAP_VC[random.int(3286)] + V5_VY_HEAD[vv] + CC0_LO[random.int(11171)] + V5_VY_TAIL[vv];
       }
-      default: return CAP_VC[random.int(3286)] + LOW_VC[random.int(3286)] + LOW_VC[random.int(3286)];
+      default:
+        return CAP_VC[random.int(3286)] + LOW_VC[random.int(3286)] + LOW_VC[random.int(3286)];
     }
   }
 
@@ -112,13 +125,16 @@
         : CAP_VC[random.int(3286)] + VY_LO[random.int(31)];
     }
     switch (random.int(4)) {
-      case 0: return CAP_CV[random.int(3286)] + LOW_CV[random.int(3286)];
+      case 0:
+        return CAP_CV[random.int(3286)] + LOW_CV[random.int(3286)];
       case 1: {
         const vv = random.int(961);
         return VY_PAIR_HEAD[vv] + CC0_LO[random.int(11171)] + VY_PAIR_TAIL[vv];
       }
-      case 2: return CAP_CVV[random.int(2650)] + C1_LO[random.int(103)];
-      default: return CAP_VC[random.int(3286)] + LOW_VC[random.int(3286)];
+      case 2:
+        return CAP_CVV[random.int(2650)] + C1_LO[random.int(103)];
+      default:
+        return CAP_VC[random.int(3286)] + LOW_VC[random.int(3286)];
     }
   }
 
@@ -208,10 +224,15 @@
     roomName,
     slugify,
     roomSlug,
-    ubunym: seed => ubunym(seed !== undefined ? seedToBigInt(typeof seed === 'object' && seed !== null && 'seed' in seed ? seed.seed : seed) : randomState()),
+    ubunym: seed =>
+      ubunym(
+        seed !== undefined
+          ? seedToBigInt(typeof seed === 'object' && seed !== null && 'seed' in seed ? seed.seed : seed)
+          : randomState(),
+      ),
     word,
     word6,
-    NameRandom
+    NameRandom,
   };
 
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -15,28 +15,19 @@ function temporary(t) {
 test('redact masks sensitive tokens, passwords, cookies, binary views, and cyclic objects', () => {
   assert.equal(
     redact('Connecting to Plex at https://192.168.1.50:32400?X-Plex-Token=secret12345&foo=bar'),
-    'Connecting to Plex at https://192.168.1.50:32400?X-Plex-Token=[REDACTED]&foo=bar'
+    'Connecting to Plex at https://192.168.1.50:32400?X-Plex-Token=[REDACTED]&foo=bar',
   );
 
-  assert.equal(
-    redact("Setting token: 'my-super-secret-token'"),
-    "Setting token: '[REDACTED]'"
-  );
+  assert.equal(redact("Setting token: 'my-super-secret-token'"), "Setting token: '[REDACTED]'");
 
-  assert.equal(
-    redact('Cookie: uburoom=abcdef1234567890; other=ok'),
-    'Cookie: uburoom=[REDACTED]; other=ok'
-  );
+  assert.equal(redact('Cookie: uburoom=abcdef1234567890; other=ok'), 'Cookie: uburoom=[REDACTED]; other=ok');
 
   assert.equal(
     redact('Cookie: uburoom_session=secret123; uburoom_csrf=csrf456; uburoom=main789; other=fine'),
-    'Cookie: uburoom_session=[REDACTED]; uburoom_csrf=[REDACTED]; uburoom=[REDACTED]; other=fine'
+    'Cookie: uburoom_session=[REDACTED]; uburoom_csrf=[REDACTED]; uburoom=[REDACTED]; other=fine',
   );
 
-  assert.equal(
-    redact('Authorization: Bearer my_jwt_token_here!'),
-    'Authorization: Bearer [REDACTED]!'
-  );
+  assert.equal(redact('Authorization: Bearer my_jwt_token_here!'), 'Authorization: Bearer [REDACTED]!');
 
   const error = new Error('Plex rejected token=bad_token_99');
   const redactedError = redact(error);
@@ -47,8 +38,8 @@ test('redact masks sensitive tokens, passwords, cookies, binary views, and cycli
     token: 'direct_secret',
     nested: {
       password: 'mypassword',
-      safe: 'visible'
-    }
+      safe: 'visible',
+    },
   };
   const redactedObj = redact(obj);
   assert.equal(redactedObj.url, 'https://plex.example.com?token=[REDACTED]');
@@ -77,7 +68,7 @@ test('redact masks sensitive tokens, passwords, cookies, binary views, and cycli
     csrfToken: 'token123',
     secretBuffer: Buffer.from('bytes'),
     hasToken: true,
-    hasPassword: false
+    hasPassword: false,
   };
   const redactedAuth = redact(authObj);
   assert.equal(redactedAuth.authorization, '[REDACTED]');
@@ -114,7 +105,7 @@ test('redact masks sensitive tokens, passwords, cookies, binary views, and cycli
   assert.equal(redactedOuter.cause.message, 'Root cause token=[REDACTED]');
 });
 
-test('Logger respects log levels, gating, child tags, and debug output', async (t) => {
+test('Logger respects log levels, gating, child tags, and debug output', async t => {
   const dir = temporary(t);
   const logFile = path.join(dir, 'test.log');
   const logger = new Logger({ level: 'info', file: logFile, isTTY: false });

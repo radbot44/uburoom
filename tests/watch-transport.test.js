@@ -44,8 +44,10 @@ MockSocket.nextId = 0;
 test('socket diagnostics distinguish an abnormal loss from an intentional reconnect', async () => {
   const closes = [];
   const transport = new WatchTransport({
-    url: 'wss://example.test/watch-socket', WebSocket: MockSocket,
-    identity: () => ({ token: 'tok', csrf: 'csr' }), onClose: details => closes.push(details)
+    url: 'wss://example.test/watch-socket',
+    WebSocket: MockSocket,
+    identity: () => ({ token: 'tok', csrf: 'csr' }),
+    onClose: details => closes.push(details),
   });
   await transport.connect();
   const firstId = transport.connectionId;
@@ -73,11 +75,27 @@ test('socket diagnostics distinguish an abnormal loss from an intentional reconn
 
 test('diagnostic exports distinguish missing and locked rooms without leaking room identifiers', () => {
   const diagnostics = PlaybackDiagnostics.create({ now: () => 1000, monotonic: () => 0 });
-  diagnostics.record('control-connected', { connectionId: 4, connectionAttempt: 2, visibility: 'hidden', url: 'wss://secret' });
-  diagnostics.record('room-list-unavailable', { roomListState: 'locked', roomCount: 2, connectionId: 4, roomId: 'secret', reason: 'private' });
+  diagnostics.record('control-connected', {
+    connectionId: 4,
+    connectionAttempt: 2,
+    visibility: 'hidden',
+    url: 'wss://secret',
+  });
+  diagnostics.record('room-list-unavailable', {
+    roomListState: 'locked',
+    roomCount: 2,
+    connectionId: 4,
+    roomId: 'secret',
+    reason: 'private',
+  });
   diagnostics.record('control-disconnected', {
-    socketCloseCode: 1006, connectionId: 4, connectionAgeMs: 400000,
-    closeInitiator: 'none', socketCloseClean: false, socketWasReady: true, reason: 'secret'
+    socketCloseCode: 1006,
+    connectionId: 4,
+    connectionAgeMs: 400000,
+    closeInitiator: 'none',
+    socketCloseClean: false,
+    socketWasReady: true,
+    reason: 'secret',
   });
   const rows = diagnostics.snapshot().entries;
   const room = rows.find(row => row.event === 'room-list-unavailable');
@@ -90,7 +108,13 @@ test('diagnostic exports distinguish missing and locked rooms without leaking ro
   assert.equal(closed.socketWasReady, true);
   assert.equal(closed.socketCloseClean, false);
   assert.equal(Object.hasOwn(closed, 'reason'), false);
-  assert.equal(Object.hasOwn(rows.find(row => row.event === 'control-connected'), 'url'), false);
+  assert.equal(
+    Object.hasOwn(
+      rows.find(row => row.event === 'control-connected'),
+      'url',
+    ),
+    false,
+  );
 });
 
 test('clock sample resolves promptly, suppresses inflight duplicates, expires on timeout, and reacquires cleanly', async () => {
@@ -103,7 +127,7 @@ test('clock sample resolves promptly, suppresses inflight duplicates, expires on
     beginClock: () => ({ sample: ++sampleNum }),
     onClock: (msg, ex) => clocks.push({ msg, ex }),
     clockTimeoutMs: 40,
-    heartbeatTimeoutMs: 300
+    heartbeatTimeoutMs: 300,
   });
 
   await transport.connect();
@@ -121,7 +145,12 @@ test('clock sample resolves promptly, suppresses inflight duplicates, expires on
   assert.equal(socket.sent.filter(m => m.type === 'clock').length, 1);
 
   // Prompt resolution
-  socket.receive({ type: 'clock', id: firstId, serverNow: 500, timing: { serverReceivedAt: 200, serverSentAt: 205, serverProcessingMs: 5 } });
+  socket.receive({
+    type: 'clock',
+    id: firstId,
+    serverNow: 500,
+    timing: { serverReceivedAt: 200, serverSentAt: 205, serverProcessingMs: 5 },
+  });
   assert.equal(clocks.length, 1);
   assert.equal(clocks[0].ex.sample, 1);
   assert.equal(transport.pending.size, 0);
@@ -164,7 +193,7 @@ test('socket liveness timeout resets on healthy traffic and closes socket when d
     identity: () => ({ token: 'tok', csrf: 'csr' }),
     onClose: detail => closes.push(detail),
     clockTimeoutMs: 20,
-    heartbeatTimeoutMs: 60
+    heartbeatTimeoutMs: 60,
   });
   await transport.connect();
   const socket = transport.socket;
@@ -197,19 +226,23 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
       if (msg.type === 'auth') {
         ws.send(JSON.stringify({ type: 'auth-ok' }));
       } else if (msg.type === 'clock') {
-        ws.send(JSON.stringify({
-          type: 'clock',
-          id: msg.id,
-          serverNow: 12345,
-          timing: { serverReceivedAt: 10, serverSentAt: 11, serverProcessingMs: 1, clockEpoch: 'epoch-1' }
-        }));
+        ws.send(
+          JSON.stringify({
+            type: 'clock',
+            id: msg.id,
+            serverNow: 12345,
+            timing: { serverReceivedAt: 10, serverSentAt: 11, serverProcessingMs: 1, clockEpoch: 'epoch-1' },
+          }),
+        );
       } else if (msg.type === 'request') {
-        ws.send(JSON.stringify({
-          type: 'response',
-          id: msg.id,
-          status: 200,
-          value: { ok: true, echo: msg.path }
-        }));
+        ws.send(
+          JSON.stringify({
+            type: 'response',
+            id: msg.id,
+            status: 200,
+            value: { ok: true, echo: msg.path },
+          }),
+        );
       }
     });
   });
@@ -221,7 +254,7 @@ test('real WebSocket server integration verifies auth, clock exchanges, and requ
     beginClock: () => ({ t: Date.now() }),
     onClock: (msg, ex) => clocks.push({ msg, ex }),
     clockTimeoutMs: 1000,
-    heartbeatTimeoutMs: 5000
+    heartbeatTimeoutMs: 5000,
   });
 
   await transport.connect();

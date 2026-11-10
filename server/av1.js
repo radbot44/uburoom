@@ -15,16 +15,27 @@ const CHUNK = Playback.BUFFER.chunkSeconds;
 // Audio starts this early so Opus has settled before the chunk's first sample, and the
 // player keeps only the chunk's own window. 312 samples of encoder delay plus ten
 // 20 ms frames puts a packet edge exactly on the chunk boundary.
-const AUDIO_LEAD_SAMPLES = 9912, AUDIO_LEAD = AUDIO_LEAD_SAMPLES / 48000;
+const AUDIO_LEAD_SAMPLES = 9912,
+  AUDIO_LEAD = AUDIO_LEAD_SAMPLES / 48000;
 const { processMemory } = require('./process-memory');
-const MIME = 'video/webm; codecs="av01.0.12M.08"', AUDIO_MIME = 'audio/webm; codecs="opus"';
+const MIME = 'video/webm; codecs="av01.0.12M.08"',
+  AUDIO_MIME = 'audio/webm; codecs="opus"';
 class PlaybackError extends Error {}
 
-async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 1024, diagnostic, { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete } = {}) {
+async function run(
+  binary,
+  args,
+  signal,
+  timeout = 30000,
+  maxOutput = 1024 * 1024,
+  diagnostic,
+  { memoryLimit = 1024 * 1024 * 1024, memory = processMemory, memoryInterval = 1000, outputComplete } = {},
+) {
   if (signal?.aborted) throw new PlaybackError('WebM preparation cancelled.');
   const split = args.includes('pipe:3');
   const webm = args.includes('webm') && args.includes('pipe:1');
-  let directory, files = [];
+  let directory,
+    files = [];
   try {
     if (webm) {
       // QSV (and libaom) may supply AV1 codec extradata only with the first
@@ -40,81 +51,175 @@ async function run(binary, args, signal, timeout = 30000, maxOutput = 1024 * 102
       }
     }
     const output = await new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
-    const child = spawn(binary, args, { windowsHide:true, stdio:['ignore','pipe','pipe'] });
-    let size = 0, chunks = [], settled = false, failure, stderr = '', checking = false, checkingMemory = false, drainTimer, complete=false, exited = false;
-    const finish = (error, output) => {
-      if (settled) return; settled = true; clearTimeout(timer); clearTimeout(drainTimer); clearInterval(sizeCheck); clearInterval(memoryCheck); signal?.removeEventListener('abort', cancel);
-      error ? reject(error) : resolve(output);
-    };
-    // Wait for process close before rejecting, so cleanup can delete open files
-    // on Windows and server shutdown can await it.
-    const stop = error => { failure ||= error; child.kill('SIGKILL'); };
-    const cancel = () => stop(new PlaybackError('WebM preparation cancelled.'));
-    const timer = setTimeout(() => stop(new PlaybackError('WebM encoder timed out. Check the server GPU/FFmpeg support.')), timeout);
-    const sizeCheck = webm ? setInterval(async () => {
-      if (checking || settled) return; checking = true;
-      try {
-        const sizes = await Promise.all(files.map(file => fs.stat(file).then(s => s.size, () => 0)));
-        if (sizes.reduce((a,b) => a + b, 0) > maxOutput) stop(new PlaybackError('WebM output exceeded the supported limit.'));
-      } finally { checking = false; }
-    }, 250) : undefined;
-    const memoryCheck = setInterval(async () => {
-      if (checkingMemory || settled || exited || failure || !child.pid) return;
-      checkingMemory = true;
-      try {
-        const rss = await memory(child.pid);
-        if (!settled && !exited && !failure && rss > memoryLimit) stop(Object.assign(new PlaybackError('WebM process exceeded the server memory limit.'),{exitFailure:true}));
-      } catch {
-        let alive = false;
-        try { process.kill(child.pid, 0); alive = true; } catch (probeError) { alive = probeError?.code === 'EPERM'; }
-        if (alive && !settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
-          stop(new PlaybackError('WebM process resource monitoring unavailable.'));
+      if (signal?.aborted) return reject(new PlaybackError('WebM preparation cancelled.'));
+      const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let size = 0,
+        chunks = [],
+        settled = false,
+        failure,
+        stderr = '',
+        checking = false,
+        checkingMemory = false,
+        drainTimer,
+        complete = false,
+        exited = false;
+      const finish = (error, output) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(drainTimer);
+        clearInterval(sizeCheck);
+        clearInterval(memoryCheck);
+        signal?.removeEventListener('abort', cancel);
+        error ? reject(error) : resolve(output);
+      };
+      // Wait for process close before rejecting, so cleanup can delete open files
+      // on Windows and server shutdown can await it.
+      const stop = error => {
+        failure ||= error;
+        child.kill('SIGKILL');
+      };
+      const cancel = () => stop(new PlaybackError('WebM preparation cancelled.'));
+      const timer = setTimeout(
+        () => stop(new PlaybackError('WebM encoder timed out. Check the server GPU/FFmpeg support.')),
+        timeout,
+      );
+      const sizeCheck = webm
+        ? setInterval(async () => {
+            if (checking || settled) return;
+            checking = true;
+            try {
+              const sizes = await Promise.all(
+                files.map(file =>
+                  fs.stat(file).then(
+                    s => s.size,
+                    () => 0,
+                  ),
+                ),
+              );
+              if (sizes.reduce((a, b) => a + b, 0) > maxOutput)
+                stop(new PlaybackError('WebM output exceeded the supported limit.'));
+            } finally {
+              checking = false;
+            }
+          }, 250)
+        : undefined;
+      const memoryCheck = setInterval(async () => {
+        if (checkingMemory || settled || exited || failure || !child.pid) return;
+        checkingMemory = true;
+        try {
+          const rss = await memory(child.pid);
+          if (!settled && !exited && !failure && rss > memoryLimit)
+            stop(
+              Object.assign(new PlaybackError('WebM process exceeded the server memory limit.'), { exitFailure: true }),
+            );
+        } catch {
+          let alive = false;
+          try {
+            process.kill(child.pid, 0);
+            alive = true;
+          } catch (probeError) {
+            alive = probeError?.code === 'EPERM';
+          }
+          if (alive && !settled && !exited && !failure && child.exitCode === null && child.signalCode === null) {
+            stop(new PlaybackError('WebM process resource monitoring unavailable.'));
+          }
+        } finally {
+          checkingMemory = false;
         }
-      } finally { checkingMemory = false; }
-    }, memoryInterval);
-    signal?.addEventListener('abort', cancel, {once:true});
-    child.stdout.on('data', bytes => {
-      size += bytes.length;
-      if (size > maxOutput) stop(new PlaybackError('WebM output exceeded the supported limit.'));
-      else if(!failure){
-        chunks.push(bytes);
-        try{if(outputComplete?.(bytes)){complete=true;child.kill('SIGKILL');}}
-        catch(error){stop(error);}
-      }
-    });
-    // Drain, but never log stderr: FFmpeg may print its input URL.
-    // Retain a bounded private tail solely to classify encoder initialization
-    // errors. Never expose it: it can contain an authenticated source URL.
-    child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
-    child.on('error', () => finish(new PlaybackError('WebM unavailable: configure an existing FFmpeg/FFprobe installation on the server.')));
-    // An exited tool cannot keep shutdown waiting on inherited pipe handles.
-    child.on('exit',()=>{exited=true;clearInterval(memoryCheck);child.stdout.resume();child.stderr.resume();drainTimer=setTimeout(()=>{child.stdout.destroy();child.stderr.destroy();},250);});
-    child.on('close', code => {
-      diagnostic?.(code, stderr);
-      const encoderFailure=/(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(stderr);
-      finish(failure || (code === 0 || complete ? null : Object.assign(new PlaybackError('The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.'),{encoderFailure,exitFailure:true})), Buffer.concat(chunks));
-    });
+      }, memoryInterval);
+      signal?.addEventListener('abort', cancel, { once: true });
+      child.stdout.on('data', bytes => {
+        size += bytes.length;
+        if (size > maxOutput) stop(new PlaybackError('WebM output exceeded the supported limit.'));
+        else if (!failure) {
+          chunks.push(bytes);
+          try {
+            if (outputComplete?.(bytes)) {
+              complete = true;
+              child.kill('SIGKILL');
+            }
+          } catch (error) {
+            stop(error);
+          }
+        }
+      });
+      // Drain, but never log stderr: FFmpeg may print its input URL.
+      // Retain a bounded private tail solely to classify encoder initialization
+      // errors. Never expose it: it can contain an authenticated source URL.
+      child.stderr.on('data', bytes => {
+        stderr = (stderr + bytes.toString()).slice(-16000);
+      });
+      child.on('error', () =>
+        finish(new PlaybackError('WebM unavailable: configure an existing FFmpeg/FFprobe installation on the server.')),
+      );
+      // An exited tool cannot keep shutdown waiting on inherited pipe handles.
+      child.on('exit', () => {
+        exited = true;
+        clearInterval(memoryCheck);
+        child.stdout.resume();
+        child.stderr.resume();
+        drainTimer = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, 250);
+      });
+      child.on('close', code => {
+        diagnostic?.(code, stderr);
+        const encoderFailure =
+          /(?:Error while opening encoder|Error initializing (?:output|an internal MFX)|No capable devices found|Cannot load (?:nvcuda|libcuda)|InitializeEncoder failed|unsupported device|MFX_ERR_UNSUPPORTED)/i.test(
+            stderr,
+          );
+        finish(
+          failure ||
+            (code === 0 || complete
+              ? null
+              : Object.assign(
+                  new PlaybackError(
+                    'The configured video encoder/probe failed. Check the selected encoder and run the AV1 probe on the server.',
+                  ),
+                  { encoderFailure, exitFailure: true },
+                )),
+          Buffer.concat(chunks),
+        );
+      });
     });
     if (!webm) return output;
     const sizes = await Promise.all(files.map(file => fs.stat(file).then(s => s.size)));
-    if (sizes.some(size => size < 100) || sizes.reduce((a,b) => a + b, 0) > maxOutput) throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'),{exitFailure:true});
+    if (sizes.some(size => size < 100) || sizes.reduce((a, b) => a + b, 0) > maxOutput)
+      throw Object.assign(new PlaybackError('WebM output is empty or exceeded the supported limit.'), {
+        exitFailure: true,
+      });
     const bytes = await Promise.all(files.map(file => fs.readFile(file)));
-    return split ? {video:bytes[0],audio:bytes[1]} : bytes[0];
+    return split ? { video: bytes[0], audio: bytes[1] } : bytes[0];
   } finally {
     if (directory) {
-      await Promise.all(files.map(file => fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; })));
+      await Promise.all(
+        files.map(file =>
+          fs.unlink(file).catch(error => {
+            if (error.code !== 'ENOENT') throw error;
+          }),
+        ),
+      );
       await fs.rmdir(directory);
     }
   }
 }
 
-const STREAM_CODECS = {srt:'subrip',vtt:'webvtt',ssa:'ass',pgs:'hdmv_pgs_subtitle',vobsub:'dvd_subtitle',dca:'dts'};
+const STREAM_CODECS = {
+  srt: 'subrip',
+  vtt: 'webvtt',
+  ssa: 'ass',
+  pgs: 'hdmv_pgs_subtitle',
+  vobsub: 'dvd_subtitle',
+  dca: 'dts',
+};
 function codecMatches(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
   if ((a === 'pcm' && b.startsWith('pcm')) || (b === 'pcm' && a.startsWith('pcm'))) return true;
-  const ca = STREAM_CODECS[a] || a, cb = STREAM_CODECS[b] || b;
+  const ca = STREAM_CODECS[a] || a,
+    cb = STREAM_CODECS[b] || b;
   return ca === cb;
 }
 
@@ -125,8 +230,13 @@ function fileIndex(rows = [], track, streams = [], type) {
   const same = streams.filter(stream => stream.codec_type === type && codecMatches(track.codec, stream.codec_name));
   const at = streams.find(stream => stream.index === track.index);
   if (at?.codec_type === type && (codecMatches(track.codec, at.codec_name) || !same.length)) return track.index;
-  const order = rows.filter(row => !row.external && codecMatches(track.codec, row.codec)).findIndex(row => row.id === track.id);
-  if (!same[order]) throw new PlaybackError('This track is not in the video file. Refresh its metadata in Plex or choose another track.');
+  const order = rows
+    .filter(row => !row.external && codecMatches(track.codec, row.codec))
+    .findIndex(row => row.id === track.id);
+  if (!same[order])
+    throw new PlaybackError(
+      'This track is not in the video file. Refresh its metadata in Plex or choose another track.',
+    );
   return same[order].index;
 }
 
@@ -134,12 +244,22 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new PlaybackError('Subtitle loading was cancelled.'));
     const child = spawn(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let size = 0, settled = false, failure, stderr = '', idleTimer;
+    let size = 0,
+      settled = false,
+      failure,
+      stderr = '',
+      idleTimer;
     const finish = error => {
-      if (settled) return; settled = true; clearTimeout(idleTimer); signal?.removeEventListener('abort', cancel);
+      if (settled) return;
+      settled = true;
+      clearTimeout(idleTimer);
+      signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve();
     };
-    const stop = error => { failure ||= error; child.kill('SIGKILL'); };
+    const stop = error => {
+      failure ||= error;
+      child.kill('SIGKILL');
+    };
     const cancel = () => stop(new PlaybackError('Subtitle loading was cancelled.'));
     const resetIdle = () => {
       clearTimeout(idleTimer);
@@ -148,15 +268,20 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
     signal?.addEventListener('abort', cancel, { once: true });
     resetIdle();
     child.stdout.on('data', chunk => {
-      resetIdle(); size += chunk.length;
-      if (size > maxOutput) stop(new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try burn-in.'));
+      resetIdle();
+      size += chunk.length;
+      if (size > maxOutput)
+        stop(new PlaybackError('Subtitle resource or fonts exceeded the supported limits. Try burn-in.'));
       else if (!failure) onChunk?.(chunk);
     });
-    child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-16000); });
+    child.stderr.on('data', bytes => {
+      stderr = (stderr + bytes.toString()).slice(-16000);
+    });
     child.on('error', () => finish(new PlaybackError('Subtitle extraction failed: FFmpeg unavailable on the server.')));
     child.on('close', code => {
       if (failure) return finish(failure);
-      if (code !== 0) return finish(new PlaybackError('Subtitle extraction failed during media demuxing. Try burn-in.'));
+      if (code !== 0)
+        return finish(new PlaybackError('Subtitle extraction failed during media demuxing. Try burn-in.'));
       if (size === 0) return finish(new PlaybackError('Subtitle extraction produced no usable data. Try burn-in.'));
       finish(null);
     });
@@ -166,87 +291,253 @@ function stream(binary, args, signal, onChunk, { idleTimeout = 30000, maxOutput 
 function encoderArgs(encoder = 'qsv', codec = 'av1') {
   if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
   if (encoder === 'software') {
-    if (codec === 'av1') return ['-c:v','libsvtav1','-preset','10','-pix_fmt','yuv420p','-flags','+global_header'];
-    return ['-c:v',codec === 'vp9'?'libvpx-vp9':'libvpx','-deadline','realtime','-cpu-used',codec === 'vp9'?'6':'8',
-      '-threads','2','-lag-in-frames','0','-auto-alt-ref','0',...(codec==='vp9'?['-row-mt','1']:[]),'-pix_fmt','yuv420p'];
+    if (codec === 'av1')
+      return ['-c:v', 'libsvtav1', '-preset', '10', '-pix_fmt', 'yuv420p', '-flags', '+global_header'];
+    return [
+      '-c:v',
+      codec === 'vp9' ? 'libvpx-vp9' : 'libvpx',
+      '-deadline',
+      'realtime',
+      '-cpu-used',
+      codec === 'vp9' ? '6' : '8',
+      '-threads',
+      '2',
+      '-lag-in-frames',
+      '0',
+      '-auto-alt-ref',
+      '0',
+      ...(codec === 'vp9' ? ['-row-mt', '1'] : []),
+      '-pix_fmt',
+      'yuv420p',
+    ];
   }
   if (encoder === 'nvenc') {
-    if(codec!=='av1')throw new PlaybackError('NVENC does not encode '+codec.toUpperCase()+'. Enable CPU fallback or choose another backend.');
-    return ['-c:v','av1_nvenc','-preset','p4','-pix_fmt','yuv420p','-bf','0','-flags','+global_header'];
+    if (codec !== 'av1')
+      throw new PlaybackError(
+        'NVENC does not encode ' + codec.toUpperCase() + '. Enable CPU fallback or choose another backend.',
+      );
+    return ['-c:v', 'av1_nvenc', '-preset', 'p4', '-pix_fmt', 'yuv420p', '-bf', '0', '-flags', '+global_header'];
   }
-  if(codec==='vp8')throw new PlaybackError('VP8 requires the software backend. Enable CPU fallback or select software.');
-  return ['-c:v',codec==='vp9'?'vp9_qsv':'av1_qsv','-preset','veryfast','-pix_fmt','nv12','-bf','0','-flags','+global_header'];
+  if (codec === 'vp8')
+    throw new PlaybackError('VP8 requires the software backend. Enable CPU fallback or select software.');
+  return [
+    '-c:v',
+    codec === 'vp9' ? 'vp9_qsv' : 'av1_qsv',
+    '-preset',
+    'veryfast',
+    '-pix_fmt',
+    'nv12',
+    '-bf',
+    '0',
+    '-flags',
+    '+global_header',
+  ];
 }
 // SVT-AV1 rejects a maximum bitrate outside CRF mode, so it gets a plain target.
 function rateArgs(encoder, codec, bitrate) {
-  const target = ['-b:v',`${bitrate}k`];
-  return encoder === 'software' && codec === 'av1' ? target : [...target,'-maxrate',`${bitrate}k`,'-bufsize',`${bitrate * 2}k`];
+  const target = ['-b:v', `${bitrate}k`];
+  return encoder === 'software' && codec === 'av1'
+    ? target
+    : [...target, '-maxrate', `${bitrate}k`, '-bufsize', `${bitrate * 2}k`];
 }
 async function probeEncoder(ffmpeg, signal, execute = run, encoder = 'hardware', codec = 'av1') {
-  const output = await execute(ffmpeg, ['-hide_banner','-loglevel','error','-nostdin','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
-    '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','0.5', ...encoderArgs(encoder,codec), '-b:v','500k','-c:a','libopus','-ac','2','-f','webm','-live','1','pipe:1'], signal, 15000);
+  const output = await execute(
+    ffmpeg,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-nostdin',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=320x180:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000',
+      '-t',
+      '0.5',
+      ...encoderArgs(encoder, codec),
+      '-b:v',
+      '500k',
+      '-c:a',
+      'libopus',
+      '-ac',
+      '2',
+      '-f',
+      'webm',
+      '-live',
+      '1',
+      'pipe:1',
+    ],
+    signal,
+    15000,
+  );
   if (output.length < 100) throw new PlaybackError('WebM hardware probe produced no video.');
   return output;
 }
 
 function classifyHdr(video = {}) {
   const sideData = Array.isArray(video.side_data_list) ? video.side_data_list : [];
-  const dovi = sideData.find(entry => /dovi|dolby vision/i.test(entry?.side_data_type || '') || entry?.dv_profile !== undefined);
+  const dovi = sideData.find(
+    entry => /dovi|dolby vision/i.test(entry?.side_data_type || '') || entry?.dv_profile !== undefined,
+  );
   const dvProfile = Number(dovi?.dv_profile ?? video.DOVIProfile);
   const dvCompat = Number(dovi?.bl_signal_compatibility_id ?? video.DOVIBLCompatID);
   const hasDovi = Boolean(dovi || video.DOVIPresent || Number.isFinite(dvProfile));
   const transfer = String(video.color_transfer || video.colorTrc || video.colorTransfer || '').toLowerCase();
   if (hasDovi) {
-    if (dvProfile === 5 || (dvCompat === 0 && !['smpte2084','arib-std-b67'].includes(transfer))) {
-      return { hdr:true, kind:'dovi-p5', label:'Dolby Vision (Profile 5)', dovi:true, doviProfile:Number.isFinite(dvProfile) ? dvProfile : 5, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 0, doviP5:true, transfer:'smpte2084' };
+    if (dvProfile === 5 || (dvCompat === 0 && !['smpte2084', 'arib-std-b67'].includes(transfer))) {
+      return {
+        hdr: true,
+        kind: 'dovi-p5',
+        label: 'Dolby Vision (Profile 5)',
+        dovi: true,
+        doviProfile: Number.isFinite(dvProfile) ? dvProfile : 5,
+        doviCompat: Number.isFinite(dvCompat) ? dvCompat : 0,
+        doviP5: true,
+        transfer: 'smpte2084',
+      };
     }
-    if (dvCompat === 2 && !['smpte2084','arib-std-b67'].includes(transfer)) {
+    if (dvCompat === 2 && !['smpte2084', 'arib-std-b67'].includes(transfer)) {
       const profile = Number.isFinite(dvProfile) ? dvProfile : 8;
-      return { hdr:false, kind:'dovi-sdr', label:`Dolby Vision (Profile ${profile}, SDR base)`, dovi:true, doviProfile:profile, doviCompat:2, doviP5:false, transfer:'bt709' };
+      return {
+        hdr: false,
+        kind: 'dovi-sdr',
+        label: `Dolby Vision (Profile ${profile}, SDR base)`,
+        dovi: true,
+        doviProfile: profile,
+        doviCompat: 2,
+        doviP5: false,
+        transfer: 'bt709',
+      };
     }
     if (transfer === 'arib-std-b67' || dvCompat === 4) {
       const profile = Number.isFinite(dvProfile) ? dvProfile : null;
-      return { hdr:true, kind:'dovi-hlg', label:profile !== null ? `Dolby Vision (Profile ${profile}, HLG base)` : 'Dolby Vision (HLG base)', dovi:true, doviProfile:profile, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 4, doviP5:false, transfer:'arib-std-b67' };
+      return {
+        hdr: true,
+        kind: 'dovi-hlg',
+        label: profile !== null ? `Dolby Vision (Profile ${profile}, HLG base)` : 'Dolby Vision (HLG base)',
+        dovi: true,
+        doviProfile: profile,
+        doviCompat: Number.isFinite(dvCompat) ? dvCompat : 4,
+        doviP5: false,
+        transfer: 'arib-std-b67',
+      };
     }
     const profile = Number.isFinite(dvProfile) ? dvProfile : null;
-    return { hdr:true, kind:'dovi-hdr10', label:profile !== null ? `Dolby Vision (Profile ${profile}, HDR10 base)` : 'Dolby Vision', dovi:true, doviProfile:profile, doviCompat:Number.isFinite(dvCompat) ? dvCompat : 1, doviP5:false, transfer:'smpte2084' };
+    return {
+      hdr: true,
+      kind: 'dovi-hdr10',
+      label: profile !== null ? `Dolby Vision (Profile ${profile}, HDR10 base)` : 'Dolby Vision',
+      dovi: true,
+      doviProfile: profile,
+      doviCompat: Number.isFinite(dvCompat) ? dvCompat : 1,
+      doviP5: false,
+      transfer: 'smpte2084',
+    };
   }
-  if (transfer === 'smpte2084') return { hdr:true, kind:'hdr10', label:'HDR10', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:'smpte2084' };
-  if (transfer === 'arib-std-b67') return { hdr:true, kind:'hlg', label:'HLG', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:'arib-std-b67' };
-  return { hdr:false, kind:'sdr', label:'SDR', dovi:false, doviProfile:null, doviCompat:null, doviP5:false, transfer:transfer || 'bt709' };
+  if (transfer === 'smpte2084')
+    return {
+      hdr: true,
+      kind: 'hdr10',
+      label: 'HDR10',
+      dovi: false,
+      doviProfile: null,
+      doviCompat: null,
+      doviP5: false,
+      transfer: 'smpte2084',
+    };
+  if (transfer === 'arib-std-b67')
+    return {
+      hdr: true,
+      kind: 'hlg',
+      label: 'HLG',
+      dovi: false,
+      doviProfile: null,
+      doviCompat: null,
+      doviP5: false,
+      transfer: 'arib-std-b67',
+    };
+  return {
+    hdr: false,
+    kind: 'sdr',
+    label: 'SDR',
+    dovi: false,
+    doviProfile: null,
+    doviCompat: null,
+    doviP5: false,
+    transfer: transfer || 'bt709',
+  };
 }
 
 function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
   const video = info.streams?.find(s => s.codec_type === 'video');
-  if (!video || !(video.width > 0 && video.height > 0)) throw new PlaybackError('Original source has no readable video.');
+  if (!video || !(video.width > 0 && video.height > 0))
+    throw new PlaybackError('Original source has no readable video.');
   const q = qualityDefinition(quality);
   if (!q) throw new PlaybackError('Invalid WebM quality.');
   const ceiling = q.id === 'direct' && maxQuality ? maxQuality : q;
-  const maxWidth = ceiling.width || 3840, maxHeight = ceiling.height || 2160;
+  const maxWidth = ceiling.width || 3840,
+    maxHeight = ceiling.height || 2160;
   const ratio = Math.min(1, maxWidth / video.width, maxHeight / video.height);
-  const width = Math.max(2, Math.floor(video.width * ratio / 2) * 2), height = Math.max(2, Math.floor(video.height * ratio / 2) * 2);
+  const width = Math.max(2, Math.floor((video.width * ratio) / 2) * 2),
+    height = Math.max(2, Math.floor((video.height * ratio) / 2) * 2);
   const hdrInfo = classifyHdr(video);
   const hdr = hdrInfo.hdr;
   // Keep constant-rate source cadence. Forcing 30 fps duplicates film frames and
   // discards half of a 60 fps source, even when both decoder and encoder keep up.
   // Dolby Vision Profile 5 uses proprietary IPTPQc2 color reshaping without an
   // HDR10 base layer; CPU zscale cannot decode IPTPQc2 and must use libplacebo.
-  const tonemap = hdr && !hdrInfo.doviP5 ? [`setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,'zscale=t=linear:npl=100','format=gbrpf32le','zscale=p=bt709','tonemap=tonemap=hable:desat=0','zscale=t=bt709:m=bt709:r=tv'] : [];
+  const tonemap =
+    hdr && !hdrInfo.doviP5
+      ? [
+          `setparams=color_primaries=bt2020:color_trc=${hdrInfo.transfer}:colorspace=bt2020nc`,
+          'zscale=t=linear:npl=100',
+          'format=gbrpf32le',
+          'zscale=p=bt709',
+          'tonemap=tonemap=hable:desat=0',
+          'zscale=t=bt709:m=bt709:r=tv',
+        ]
+      : [];
   const filters = ['setpts=PTS-STARTPTS', ...tonemap, `scale=${width}:${height}:out_color_matrix=bt709`, 'format=nv12'];
   const sourceBitrate = Number(info.format?.bit_rate) / 1000;
   const maxBitrate = ceiling.bitrate || 20000;
-  const bitrate = q.bitrate || Math.min(maxBitrate, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : Math.min(12000, maxBitrate)));
+  const bitrate =
+    q.bitrate ||
+    Math.min(maxBitrate, Math.max(2000, Number.isFinite(sourceBitrate) ? sourceBitrate : Math.min(12000, maxBitrate)));
   // Carry the measured source rate through the encoder and WebM DefaultDuration.
   // Timestamp passthrough without packet durations creates MSE buffer holes on
   // some clients. This establishes CFR coverage; VFR timing needs separate tests.
   let frameRate;
-  for (const rate of [video.r_frame_rate,video.avg_frame_rate]) {
+  for (const rate of [video.r_frame_rate, video.avg_frame_rate]) {
     const match = /^(\d+)\/(\d+)$/.exec(rate || '');
-    if (match && Number(match[2]) > 0 && Number(match[1])/Number(match[2]) > 0 && Number(match[1])/Number(match[2]) <= 240) {
-      frameRate = rate; break;
+    if (
+      match &&
+      Number(match[2]) > 0 &&
+      Number(match[1]) / Number(match[2]) > 0 &&
+      Number(match[1]) / Number(match[2]) <= 240
+    ) {
+      frameRate = rate;
+      break;
     }
   }
-  return { width, height, hdr, hdrKind:hdrInfo.kind, hdrLabel:hdrInfo.label, doviProfile:hdrInfo.doviProfile, doviP5:hdrInfo.doviP5, bitrate, frameRate, tonemap, sourceFormat:video.pix_fmt, filter:filters.join(','), audio:info.streams.some(s => s.codec_type === 'audio') };
+  return {
+    width,
+    height,
+    hdr,
+    hdrKind: hdrInfo.kind,
+    hdrLabel: hdrInfo.label,
+    doviProfile: hdrInfo.doviProfile,
+    doviP5: hdrInfo.doviP5,
+    bitrate,
+    frameRate,
+    tonemap,
+    sourceFormat: video.pix_fmt,
+    filter: filters.join(','),
+    audio: info.streams.some(s => s.codec_type === 'audio'),
+  };
 }
 
 // Decoding and scaling on the GPU removes the 4K cost. Every route uses FFmpeg's
@@ -258,115 +549,249 @@ function outputSpec(info, quality, maxQuality = QUALITIES[1]) {
 // Sources without a listed surface format stay on the CPU path.
 // Burned subtitles need cues that began before the chunk. Bitmap tracks decode a
 // short run-in, so GPU routes stay real time; text cues only need reading.
-const BITMAP_RUN_IN = 8, TEXT_RUN_IN = 15;
-const bitmapSubtitle = track => ['pgs','hdmv_pgs_subtitle','vobsub','dvd_subtitle'].includes(track.codec);
-const filterPath = file => file.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");
-const SURFACES = { yuv420p:'nv12', nv12:'nv12', yuv420p10le:'p010le', p010le:'p010le' };
+const BITMAP_RUN_IN = 8,
+  TEXT_RUN_IN = 15;
+const bitmapSubtitle = track => ['pgs', 'hdmv_pgs_subtitle', 'vobsub', 'dvd_subtitle'].includes(track.codec);
+const filterPath = file => file.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+const SURFACES = { yuv420p: 'nv12', nv12: 'nv12', yuv420p10le: 'p010le', p010le: 'p010le' };
 const VAAPI_DEVICE = '/dev/dri/renderD128';
 function cpuPlaceboRoute(spec, platform = process.platform) {
   if (!spec.hdr || platform === 'darwin') return;
   const surface = SURFACES[spec.sourceFormat] || 'p010le';
   return {
-    input:['-init_hw_device','vulkan=v','-filter_hw_device','v'],
-    filter:['setpts=PTS-STARTPTS',`format=${surface}`,
-      `libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`].join(',')
+    input: ['-init_hw_device', 'vulkan=v', '-filter_hw_device', 'v'],
+    filter: [
+      'setpts=PTS-STARTPTS',
+      `format=${surface}`,
+      `libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`,
+    ].join(','),
   };
 }
 function decodeRoute(spec, encoder, platform = process.platform, gpuTonemap = true) {
   const surface = SURFACES[spec.sourceFormat];
   if (!surface) return;
   if (spec.doviP5 && (!gpuTonemap || platform === 'darwin')) return;
-  const size = `${spec.width}:${spec.height}`, vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
+  const size = `${spec.width}:${spec.height}`,
+    vpp = `vpp_qsv=w=${spec.width}:h=${spec.height}:format=${surface}`;
   const placebo = spec.hdr && gpuTonemap && platform !== 'darwin';
   const route = (input, gpu, downloaded = true) => ({
-    input:placebo ? ['-init_hw_device','vulkan=v',...input.filter((_,i) => input[i] !== '-filter_hw_device' && input[i-1] !== '-filter_hw_device'),'-filter_hw_device','v'] : input,
-    filter:['setpts=PTS-STARTPTS', ...gpu, ...(downloaded ? ['hwdownload',`format=${surface}`] : []),
-      ...(placebo ? [`libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`] :
-        [...(gpu.length ? [] : [`scale=${size}`]), ...spec.tonemap, `scale=${size}:out_color_matrix=bt709`, 'format=nv12'])].join(',') });
-  if (encoder === 'nvenc') return route(['-hwaccel','cuda','-hwaccel_output_format','cuda'], spec.doviP5 ? [] : [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`]);
+    input: placebo
+      ? [
+          '-init_hw_device',
+          'vulkan=v',
+          ...input.filter((_, i) => input[i] !== '-filter_hw_device' && input[i - 1] !== '-filter_hw_device'),
+          '-filter_hw_device',
+          'v',
+        ]
+      : input,
+    filter: [
+      'setpts=PTS-STARTPTS',
+      ...gpu,
+      ...(downloaded ? ['hwdownload', `format=${surface}`] : []),
+      ...(placebo
+        ? [
+            `libplacebo=w=${spec.width}:h=${spec.height}:format=nv12:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:peak_detect=0:apply_dolbyvision=1`,
+          ]
+        : [
+            ...(gpu.length ? [] : [`scale=${size}`]),
+            ...spec.tonemap,
+            `scale=${size}:out_color_matrix=bt709`,
+            'format=nv12',
+          ]),
+    ].join(','),
+  });
+  if (encoder === 'nvenc')
+    return route(
+      ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+      spec.doviP5 ? [] : [`scale_cuda=${spec.width}:${spec.height}:format=${surface}`],
+    );
   if (encoder === 'qsv') {
-    const device = platform === 'win32' ? ['d3d11va=d,vendor_id=0x8086','d3d11va','d3d11'] : [`vaapi=d:${VAAPI_DEVICE}`,'vaapi','vaapi'];
-    if (placebo) return route(['-init_hw_device',device[0],'-hwaccel',device[1],'-hwaccel_device','d','-hwaccel_output_format',device[2]], []);
-    return route(['-init_hw_device',device[0],'-init_hw_device','qsv=q@d','-hwaccel',device[1],'-hwaccel_device','d','-hwaccel_output_format',device[2],'-filter_hw_device','q'],
-      ['hwmap=derive_device=qsv','format=qsv',vpp]);
+    const device =
+      platform === 'win32'
+        ? ['d3d11va=d,vendor_id=0x8086', 'd3d11va', 'd3d11']
+        : [`vaapi=d:${VAAPI_DEVICE}`, 'vaapi', 'vaapi'];
+    if (placebo)
+      return route(
+        [
+          '-init_hw_device',
+          device[0],
+          '-hwaccel',
+          device[1],
+          '-hwaccel_device',
+          'd',
+          '-hwaccel_output_format',
+          device[2],
+        ],
+        [],
+      );
+    return route(
+      [
+        '-init_hw_device',
+        device[0],
+        '-init_hw_device',
+        'qsv=q@d',
+        '-hwaccel',
+        device[1],
+        '-hwaccel_device',
+        'd',
+        '-hwaccel_output_format',
+        device[2],
+        '-filter_hw_device',
+        'q',
+      ],
+      ['hwmap=derive_device=qsv', 'format=qsv', vpp],
+    );
   }
-  if (platform === 'win32') return route(['-hwaccel','d3d11va','-hwaccel_output_format','d3d11'], []);
-  if (platform === 'darwin') return route(['-hwaccel','videotoolbox'], [], false);
-  return route(['-hwaccel','vaapi','-hwaccel_device',VAAPI_DEVICE,'-hwaccel_output_format','vaapi'], spec.doviP5 ? [] : [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`]);
+  if (platform === 'win32') return route(['-hwaccel', 'd3d11va', '-hwaccel_output_format', 'd3d11'], []);
+  if (platform === 'darwin') return route(['-hwaccel', 'videotoolbox'], [], false);
+  return route(
+    ['-hwaccel', 'vaapi', '-hwaccel_device', VAAPI_DEVICE, '-hwaccel_output_format', 'vaapi'],
+    spec.doviP5 ? [] : [`scale_vaapi=w=${spec.width}:h=${spec.height}:format=${surface}`],
+  );
 }
 
 const { SharedTask, runOperation } = require('./operation');
 
 class AV1 {
   constructor(plex, config, execute = run) {
-    this.plex = plex; this.ffmpeg = config.ffmpegPath; this.jobs = new Set();
+    this.plex = plex;
+    this.ffmpeg = config.ffmpegPath;
+    this.jobs = new Set();
     this.encoder = config.transcoding?.encoder || 'auto';
     this.cpuFallback = config.transcoding?.cpuFallback ?? true;
     this.hardwareDecode = config.transcoding?.hardwareDecode ?? true;
     this.maxQuality = (config.transcoding?.qualities || QUALITIES).find(q => q.id !== 'direct') || QUALITIES[1];
     this.logger = config.logger;
     this.maxBytes = 256 * 1024 * 1024;
-    this.jobBytes = 48 * 1024 * 1024; this.pendingBytes = 0;
+    this.jobBytes = 48 * 1024 * 1024;
+    this.pendingBytes = 0;
     this.maxActive = Math.min(config.transcoding?.maxJobs || 2, Math.floor(this.maxBytes / this.jobBytes));
     this.run = (...args) => {
-      const job = Promise.resolve().then(() => execute(...args)); this.jobs.add(job);
-      job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
+      const job = Promise.resolve().then(() => execute(...args));
+      this.jobs.add(job);
+      job.finally(() => this.jobs.delete(job)).catch(() => {});
+      return job;
     };
     this.stream = (...args) => {
-      const job = Promise.resolve().then(() => stream(...args)); this.jobs.add(job);
-      job.finally(() => this.jobs.delete(job)).catch(() => {}); return job;
+      const job = Promise.resolve().then(() => stream(...args));
+      this.jobs.add(job);
+      job.finally(() => this.jobs.delete(job)).catch(() => {});
+      return job;
     };
-    this.ffprobe = config.ffprobePath || (this.ffmpeg && path.join(path.dirname(this.ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'));
-    this.groups = new Map(); this.inputs = new Map(); this.controllers = new Set(); this.queue = []; this.active = 0; this.closed = false;
+    this.ffprobe =
+      config.ffprobePath ||
+      (this.ffmpeg && path.join(path.dirname(this.ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'));
+    this.groups = new Map();
+    this.inputs = new Map();
+    this.controllers = new Set();
+    this.queue = [];
+    this.active = 0;
+    this.closed = false;
   }
   async selectEncoder(codec = 'av1') {
     this.probePromises ||= new Map();
     if (!this.probePromises.has(codec)) {
       const promise = (async () => {
-        const preferred = this.encoder === 'auto' || this.encoder === 'hardware' ? (codec==='av1'?['qsv','nvenc']:codec==='vp9'?['qsv']:[]) : [this.encoder];
-        const candidates = [...new Set([...preferred,...(this.cpuFallback?['software']:[])])];
-        if (!candidates.length) throw new PlaybackError(codec.toUpperCase()+' has no available hardware backend; enable CPU fallback or select software.');
+        const preferred =
+          this.encoder === 'auto' || this.encoder === 'hardware'
+            ? codec === 'av1'
+              ? ['qsv', 'nvenc']
+              : codec === 'vp9'
+                ? ['qsv']
+                : []
+            : [this.encoder];
+        const candidates = [...new Set([...preferred, ...(this.cpuFallback ? ['software'] : [])])];
+        if (!candidates.length)
+          throw new PlaybackError(
+            codec.toUpperCase() + ' has no available hardware backend; enable CPU fallback or select software.',
+          );
         for (const encoder of candidates) {
           try {
-            await probeEncoder(this.ffmpeg,this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal,this.run,encoder,codec);
+            await probeEncoder(
+              this.ffmpeg,
+              (this.shutdownSignal ||= (this.shutdownController = new AbortController()).signal),
+              this.run,
+              encoder,
+              codec,
+            );
             return encoder;
-          } catch (error) { if (this.closed || encoder === candidates.at(-1)) throw error; }
+          } catch (error) {
+            if (this.closed || encoder === candidates.at(-1)) throw error;
+          }
         }
-      })().catch(error=>{this.probePromises.delete(codec);throw error;});
-      this.probePromises.set(codec,promise);
+      })().catch(error => {
+        this.probePromises.delete(codec);
+        throw error;
+      });
+      this.probePromises.set(codec, promise);
     }
     return this.probePromises.get(codec);
   }
-  acquire(source, quality, existingOnly = false, codec = 'av1', {background=false} = {}) {
+  acquire(source, quality, existingOnly = false, codec = 'av1', { background = false } = {}) {
     if (!Playback.localFormat(codec)) throw new PlaybackError('Unknown local output codec.');
-    if (!this.ffmpeg) throw new PlaybackError('WebM unavailable: install FFmpeg on the server PATH or set tools.ffmpeg in config.yaml, then run the encoder probe.');
+    if (!this.ffmpeg)
+      throw new PlaybackError(
+        'WebM unavailable: install FFmpeg on the server PATH or set tools.ffmpeg in config.yaml, then run the encoder probe.',
+      );
     if (this.closed) throw new PlaybackError('Server is shutting down.');
-    const scope=source.shareKey?[source.shareKey,source.sourceKey]:source.principal;
-    const key = createHash('sha256').update(JSON.stringify([scope,source.id,source.partId,source.audioIndex,source.audioOrdinal,qualityId(quality),codec,source.burn?.id])).digest('hex');
-    if(existingOnly && !this.groups.has(key))throw Object.assign(new PlaybackError('No matching shared output is available.'),{conversionCapacity:true});
+    const scope = source.shareKey ? [source.shareKey, source.sourceKey] : source.principal;
+    const key = createHash('sha256')
+      .update(
+        JSON.stringify([
+          scope,
+          source.id,
+          source.partId,
+          source.audioIndex,
+          source.audioOrdinal,
+          qualityId(quality),
+          codec,
+          source.burn?.id,
+        ]),
+      )
+      .digest('hex');
+    if (existingOnly && !this.groups.has(key))
+      throw Object.assign(new PlaybackError('No matching shared output is available.'), { conversionCapacity: true });
     let group = this.groups.get(key);
     if (!group) {
-      if(!background && this.groups.size>=8) {
-        for(const candidate of this.groups.values()) {
-          if(candidate.leases.size && [...candidate.leases].every(lease=>lease.background) && Date.now()-(candidate.viewerDemandAt || 0)>15000) {
-            for(const lease of [...candidate.leases])this.release(lease);
+      if (!background && this.groups.size >= 8) {
+        for (const candidate of this.groups.values()) {
+          if (
+            candidate.leases.size &&
+            [...candidate.leases].every(lease => lease.background) &&
+            Date.now() - (candidate.viewerDemandAt || 0) > 15000
+          ) {
+            for (const lease of [...candidate.leases]) this.release(lease);
             break;
           }
         }
       }
-      if (this.groups.size >= 8) throw Object.assign(new PlaybackError('WebM is busy; close an unused player or choose a shared quality.'),{conversionCapacity:true});
-      group = { key, source, quality, codec, refs:0, chunks:new Map(), controllers:new Set(), leases:new Set(), bytes:0 };
+      if (this.groups.size >= 8)
+        throw Object.assign(new PlaybackError('WebM is busy; close an unused player or choose a shared quality.'), {
+          conversionCapacity: true,
+        });
+      group = {
+        key,
+        source,
+        quality,
+        codec,
+        refs: 0,
+        chunks: new Map(),
+        controllers: new Set(),
+        leases: new Set(),
+        bytes: 0,
+      };
       this.groups.set(key, group);
     }
     group.refs++;
     // Each lease keeps its authorized source for future uncached chunk work.
     group.source = source;
-    const lease = { group, source, background, released:false };
+    const lease = { group, source, background, released: false };
     group.leases.add(lease);
     return lease;
   }
   release(lease) {
-    if (!lease || lease.released) return; lease.released = true;
+    if (!lease || lease.released) return;
+    lease.released = true;
     const group = lease.group;
     group.leases?.delete(lease);
     if (group.leases?.size) group.source = group.leases.values().next().value.source;
@@ -374,50 +799,87 @@ class AV1 {
     this.groups.delete(group.key);
     group.infoTask?.abort();
     for (const controller of group.controllers) controller.abort();
-    group.chunks.clear(); group.bytes = 0;
+    group.chunks.clear();
+    group.bytes = 0;
   }
-  bridge() { return runOperation(undefined, () => this.openBridge()); }
+  bridge() {
+    return runOperation(undefined, () => this.openBridge());
+  }
   async openBridge() {
     if (this.bridgePromise) return this.bridgePromise;
     this.bridgePromise = (async () => {
-      const server = this.server = http.createServer(async (req, res) => {
+      const server = (this.server = http.createServer(async (req, res) => {
         const entry = this.inputs.get(req.url);
-        if (!entry || entry.signal.aborted || !['GET','HEAD'].includes(req.method)) { res.writeHead(403); return res.end(); }
-        const abort = new AbortController(), cancel = () => abort.abort();
-        res.on('close', cancel); entry.signal.addEventListener('abort', cancel, {once:true});
+        if (!entry || entry.signal.aborted || !['GET', 'HEAD'].includes(req.method)) {
+          res.writeHead(403);
+          return res.end();
+        }
+        const abort = new AbortController(),
+          cancel = () => abort.abort();
+        res.on('close', cancel);
+        entry.signal.addEventListener('abort', cancel, { once: true });
         const timer = setTimeout(cancel, 30000);
         try {
-          const response = await (entry.source.plexContext||this.plex).request(entry.source.start, { method:req.method, signal:abort.signal, streaming: true,
-            headers:{Accept:'*/*', ...(req.headers.range ? {Range:req.headers.range} : {})} });
+          const response = await (entry.source.plexContext || this.plex).request(entry.source.start, {
+            method: req.method,
+            signal: abort.signal,
+            streaming: true,
+            headers: { Accept: '*/*', ...(req.headers.range ? { Range: req.headers.range } : {}) },
+          });
           clearTimeout(timer);
-          if(entry.source.subtitleWindow&&req.headers.range){
-            const requested=/^bytes=(\d+)-/.exec(req.headers.range),received=/^bytes (\d+)-\d+\/\d+$/.exec(response.headers.get('content-range')||'');
-            if(response.status!==206||!requested||!received||requested[1]!==received[1]){
-              await response.body?.cancel().catch(()=>{});
-              res.writeHead(502);res.end();return;
+          if (entry.source.subtitleWindow && req.headers.range) {
+            const requested = /^bytes=(\d+)-/.exec(req.headers.range),
+              received = /^bytes (\d+)-\d+\/\d+$/.exec(response.headers.get('content-range') || '');
+            if (response.status !== 206 || !requested || !received || requested[1] !== received[1]) {
+              await response.body?.cancel().catch(() => {});
+              res.writeHead(502);
+              res.end();
+              return;
             }
           }
           const headers = {};
-          for (const key of ['content-type','content-length','content-range','accept-ranges']) if (response.headers.has(key)) headers[key] = response.headers.get(key);
+          for (const key of ['content-type', 'content-length', 'content-range', 'accept-ranges'])
+            if (response.headers.has(key)) headers[key] = response.headers.get(key);
           res.writeHead(response.status, headers);
-          if (req.method === 'HEAD') res.end(); else await pipeline(Readable.fromWeb(response.body), res);
-        } catch { res.destroy(); }
-        finally { clearTimeout(timer); res.off('close', cancel); entry.signal.removeEventListener('abort', cancel); }
-      });
+          if (req.method === 'HEAD') res.end();
+          else await pipeline(Readable.fromWeb(response.body), res);
+        } catch {
+          res.destroy();
+        } finally {
+          clearTimeout(timer);
+          res.off('close', cancel);
+          entry.signal.removeEventListener('abort', cancel);
+        }
+      }));
       server.requestTimeout = 0;
       server.headersTimeout = 30000;
-      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-      if (this.closed) { server.close(); throw new PlaybackError('Server is shutting down.'); }
-      server.unref(); return server.address().port;
-    })().catch(error => { this.bridgePromise = undefined; throw error; });
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+      });
+      if (this.closed) {
+        server.close();
+        throw new PlaybackError('Server is shutting down.');
+      }
+      server.unref();
+      return server.address().port;
+    })().catch(error => {
+      this.bridgePromise = undefined;
+      throw error;
+    });
     return this.bridgePromise;
   }
   async input(source, signal, action) {
-    const port = await this.bridge(), key = '/' + randomBytes(24).toString('hex');
+    const port = await this.bridge(),
+      key = '/' + randomBytes(24).toString('hex');
     // A short-lived loopback capability is visible in the process arguments;
     // the Plex URL/token is never passed to FFmpeg or FFprobe.
-    this.inputs.set(key, {source, signal});
-    try { return await action(`http://127.0.0.1:${port}${key}`); } finally { this.inputs.delete(key); }
+    this.inputs.set(key, { source, signal });
+    try {
+      return await action(`http://127.0.0.1:${port}${key}`);
+    } finally {
+      this.inputs.delete(key);
+    }
   }
   // Prepare what one chunk needs to burn the selected subtitle. Each process sees
   // only its own window, so cue timing comes from the same source position.
@@ -426,214 +888,479 @@ class AV1 {
     if (!track) return;
     if (bitmapSubtitle(track)) {
       if (track.external) throw new PlaybackError('External image subtitles cannot be burned by local conversion.');
-      return { bitmap:true, runIn:Math.min(BITMAP_RUN_IN,start) };
+      return { bitmap: true, runIn: Math.min(BITMAP_RUN_IN, start) };
     }
     let data;
     if (track.external) {
-      const key = /\.[a-z0-9]+$/.test(track.key) ? track.key : track.key+'.'+({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec);
-      const response = await (source.plexContext||this.plex).request(key,{signal,headers:{Accept:'*/*'}});
+      const key = /\.[a-z0-9]+$/.test(track.key)
+        ? track.key
+        : track.key + '.' + ({ subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec);
+      const response = await (source.plexContext || this.plex).request(key, { signal, headers: { Accept: '*/*' } });
       if (!response.ok) throw new PlaybackError('The subtitle file is unavailable.');
       data = Buffer.from(await response.arrayBuffer());
     } else {
       // Source timestamps, so cue times do not depend on the keyframe the seek landed on.
-      data = await this.run(this.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-ss',String(Math.max(0,start-TEXT_RUN_IN)),'-copyts','-i',url,'-to',String(start+duration),'-map','0:'+track.index,'-c:s','ass','-f','ass','pipe:1'],signal,20000,4*1024*1024);
+      data = await this.run(
+        this.ffmpeg,
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-nostdin',
+          '-ss',
+          String(Math.max(0, start - TEXT_RUN_IN)),
+          '-copyts',
+          '-i',
+          url,
+          '-to',
+          String(start + duration),
+          '-map',
+          '0:' + track.index,
+          '-c:s',
+          'ass',
+          '-f',
+          'ass',
+          'pipe:1',
+        ],
+        signal,
+        20000,
+        4 * 1024 * 1024,
+      );
     }
     if (!data.length) return;
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(),'uburoom-burn-')), file = path.join(directory,'subtitle.'+(track.external ? ({subrip:'srt',webvtt:'vtt'}[track.codec] || track.codec) : 'ass'));
-    await fs.writeFile(file,data);
-    return { file, offset:start, cleanup:() => fs.rm(directory,{recursive:true,force:true}) };
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'uburoom-burn-')),
+      file = path.join(
+        directory,
+        'subtitle.' + (track.external ? { subrip: 'srt', webvtt: 'vtt' }[track.codec] || track.codec : 'ass'),
+      );
+    await fs.writeFile(file, data);
+    return { file, offset: start, cleanup: () => fs.rm(directory, { recursive: true, force: true }) };
   }
   async slot(signal, action, owner, priority = { urgent: true }) {
     if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
     if (this.active >= this.maxActive) {
       if (this.queue.length >= (priority.urgent ? 12 : 10)) throw new PlaybackError('WebM encoder is busy.');
       await new Promise((resolve, reject) => {
-        const entry = { owner, priority, at:Date.now(), resolve:() => { signal.removeEventListener('abort', cancel); resolve(); } };
-        const cancel = () => { this.queue = this.queue.filter(x => x !== entry); reject(new PlaybackError('WebM preparation cancelled.')); };
-        signal.addEventListener('abort', cancel, {once:true}); this.queue.push(entry);
+        const entry = {
+          owner,
+          priority,
+          at: Date.now(),
+          resolve: () => {
+            signal.removeEventListener('abort', cancel);
+            resolve();
+          },
+        };
+        const cancel = () => {
+          this.queue = this.queue.filter(x => x !== entry);
+          reject(new PlaybackError('WebM preparation cancelled.'));
+        };
+        signal.addEventListener('abort', cancel, { once: true });
+        this.queue.push(entry);
       });
     } else this.active++;
-    try { if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.'); return await action(); }
-    finally {
+    try {
+      if (signal.aborted) throw new PlaybackError('WebM preparation cancelled.');
+      return await action();
+    } finally {
       const now = Date.now();
-      this.queue.sort((a,b) => Number(!!a.priority.background)-Number(!!b.priority.background) || Number(b.priority.urgent || now-b.at>=2000)-Number(a.priority.urgent || now-a.at>=2000) ||
-        Number(a.owner===owner)-Number(b.owner===owner) || a.at-b.at);
-      const next = this.queue.shift(); if (next) next.resolve(); else this.active--;
+      this.queue.sort(
+        (a, b) =>
+          Number(!!a.priority.background) - Number(!!b.priority.background) ||
+          Number(b.priority.urgent || now - b.at >= 2000) - Number(a.priority.urgent || now - a.at >= 2000) ||
+          Number(a.owner === owner) - Number(b.owner === owner) ||
+          a.at - b.at,
+      );
+      const next = this.queue.shift();
+      if (next) next.resolve();
+      else this.active--;
     }
   }
   async chunk(lease, index, signal, { urgent = true, background = false } = {}) {
     if (lease.released || this.closed) throw new PlaybackError('WebM stream was replaced.');
-    const group = lease.group, source=lease.source||group.source, start = index * CHUNK;
-    if(!background)group.viewerDemandAt=Date.now();
-    if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration) throw new PlaybackError('Invalid WebM chunk.');
+    const group = lease.group,
+      source = lease.source || group.source,
+      start = index * CHUNK;
+    if (!background) group.viewerDemandAt = Date.now();
+    if (!Number.isSafeInteger(index) || index < 0 || start >= source.duration)
+      throw new PlaybackError('Invalid WebM chunk.');
     let entry = group.chunks.get(index);
     if (entry?.controller.signal.aborted && !entry.error) {
-      group.chunks.delete(index); entry = undefined;
+      group.chunks.delete(index);
+      entry = undefined;
     }
     // Briefly memoize failures to collapse concurrent track/viewer requests.
     // A later bounded client retry must be able to recover a temporary Plex
     // outage; caching a rejected chunk forever makes that source time unusable.
     if (entry?.error && !entry.users && Date.now() - entry.failedAt >= 5000) {
-      group.chunks.delete(index); entry = undefined;
+      group.chunks.delete(index);
+      entry = undefined;
     }
     if (!entry) {
-      const controller = new AbortController(); group.controllers.add(controller); this.controllers.add(controller);
+      const controller = new AbortController();
+      group.controllers.add(controller);
+      this.controllers.add(controller);
       // A seek can make an already queued prefetch imminent; joining raises it.
-      entry = { users:0, at:Date.now(), queued:Date.now(), controller, priority:{urgent,background} };
-      entry.promise = runOperation(controller.signal, () => this.slot(controller.signal, async () => {
-        this.pruneAll(this.jobBytes);
-        if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes) throw new PlaybackError('Encoded video memory is busy; retry shortly.');
-        this.pendingBytes += this.jobBytes; entry.reserved = true;
-        await this.conversionPolicy?.video('uburoom',group.codec);
-        const releaseConversion=await this.conversionPolicy?.wait({signal:controller.signal,background:entry.priority.background});
-        entry.began=Date.now();
-        try {
-        const codec = group.codec;
-        const encoder = group.encoder || await this.selectEncoder(codec);
-        if (!group.info) {
-          if (!group.infoTask || group.infoTask.signal.aborted) {
-            const task = new SharedTask(signal => this.input(source, signal, async url => {
-              const raw = await this.run(this.ffprobe, ['-v','error','-show_entries',
-                'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate','-of','json',url], signal);
-              return JSON.parse(raw.toString());
-            }));
-            group.infoTask = task;
-            task.promise.catch(() => { if (group.infoTask === task) group.infoTask = undefined; });
-          }
-          group.info = await group.infoTask.join(controller.signal);
-        }
-        return await this.input(source, controller.signal, async url => {
-          const spec = outputSpec(group.info, group.quality, this.maxQuality);
-          const audioStreams = group.info.streams.filter(s=>s.codec_type==='audio');
-          const chosen = {...source};
-          if (source.audioTrack && source.audioIndex !== undefined) chosen.audioIndex = fileIndex(source.tracks?.audio,source.audioTrack,group.info.streams,'audio');
-          if (source.burn && !source.burn.external && source.burn.index !== undefined) chosen.burn = {...source.burn,index:fileIndex(source.tracks?.subtitles,source.burn,group.info.streams,'subtitle')};
-          const selectedAudio = chosen.audioIndex !== undefined ? audioStreams.find(s=>s.index===chosen.audioIndex) : audioStreams[chosen.audioOrdinal ?? 0];
-          if (spec.audio && !selectedAudio) throw new PlaybackError('The selected audio track is not present in the source.');
-          const audioMap = input => chosen.audioIndex !== undefined ? input+':'+chosen.audioIndex : input+':a:'+(chosen.audioOrdinal ?? 0);
-          const duration = String(Math.min(CHUNK, source.duration - start));
-          const burn = await this.burnInput(chosen,url,start,Number(duration),controller.signal);
-          const runIn = burn?.runIn || 0;
-          const video = route => {
-            const filter = route?.filter || spec.filter;
-            if (burn?.bitmap) return ['-filter_complex',`[0:v:0]${filter.replace('setpts=PTS-STARTPTS,','')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,'-map','[video]','-an'];
-            const text = burn?.file ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12` : '';
-            return ['-map','0:v:0','-an','-filter_threads','2','-vf',filter+text];
-          };
-          const silence = spec.audio ? [] : ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo'];
-          const audioInput = ['-ss',String(Math.max(0,start-AUDIO_LEAD)),'-i',url];
-          // The first chunk has nothing before it, so silence takes the lead's place.
-          const audio = input => ['-t',String(Number(duration)+AUDIO_LEAD+.04),'-map',spec.audio ? audioMap(input) : '1:a:0','-vn','-sn','-dn','-map_metadata','-1','-c:a','libopus','-b:a','128k','-ac','2','-ar','48000',
-            '-af','asetpts=PTS-STARTPTS'+(start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),'-f','webm','-live','1','-cluster_time_limit','1000'];
-          const command = (selected, route) => [
-            '-hide_banner','-loglevel','error','-nostdin','-threads','2',...(route?.input || []),'-ss',String(start-runIn),'-i',url,
-            ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
-            '-t',duration,...video(route),
-            '-sn','-dn','-map_metadata','-1','-map_chapters','-1',
-            ...encoderArgs(selected,codec),...rateArgs(selected,codec,spec.bitrate),
-            ...(spec.frameRate ? ['-r',spec.frameRate,'-fps_mode','cfr'] : []),
-            '-g','180','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709',
-            '-f','webm','-live','1','-cluster_time_limit','1000','pipe:1',...(burn?.bitmap ? [] : [...audio(1),'pipe:3'])];
-          // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
-          // run-in for image subtitles adds about the same again.
-          const encode = async (selected, route) => {
-            const job = args => this.run(this.ffmpeg,args,controller.signal,30000,48*1024*1024,undefined,{memoryLimit:(burn?.bitmap?3:2)*1024*1024*1024});
-            if (!burn?.bitmap) return job(command(selected,route));
-            // Audio in the same process as an image overlay runs about ten times slower.
-            const [video,sound] = await Promise.all([job(command(selected,route)),
-              job(['-hide_banner','-loglevel','error','-nostdin',...audioInput,...silence,...audio(0),'pipe:1'])]);
-            return {video,audio:sound};
-          };
-          const routes = spec.doviP5
-            ? [...(this.hardwareDecode ? [decodeRoute(spec,encoder)] : []),cpuPlaceboRoute(spec)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i)
-            : [...(this.hardwareDecode ? [decodeRoute(spec,encoder),decodeRoute(spec,encoder,undefined,false)].filter((route,i,all) => route && all.findIndex(other => other?.filter === route.filter) === i) : []),undefined];
-          if (!routes.length) throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
-          try {
-            let level = Math.min(group.decodeLevel || 0, routes.length - 1), bytes;
-            for (;;) {
-              try { bytes = await encode(encoder,routes[level]); break; }
-              catch (error) {
-                // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
-                // success proves the step, so upstream failures change nothing for the group.
-                if (level === routes.length - 1) {
-                  if (spec.doviP5 && error.exitFailure && !controller.signal.aborted) throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
-                  throw error;
+      entry = { users: 0, at: Date.now(), queued: Date.now(), controller, priority: { urgent, background } };
+      entry.promise = runOperation(controller.signal, () =>
+        this.slot(
+          controller.signal,
+          async () => {
+            this.pruneAll(this.jobBytes);
+            if (this.retainedBytes + this.pendingBytes + this.jobBytes > this.maxBytes)
+              throw new PlaybackError('Encoded video memory is busy; retry shortly.');
+            this.pendingBytes += this.jobBytes;
+            entry.reserved = true;
+            await this.conversionPolicy?.video('uburoom', group.codec);
+            const releaseConversion = await this.conversionPolicy?.wait({
+              signal: controller.signal,
+              background: entry.priority.background,
+            });
+            entry.began = Date.now();
+            try {
+              const codec = group.codec;
+              const encoder = group.encoder || (await this.selectEncoder(codec));
+              if (!group.info) {
+                if (!group.infoTask || group.infoTask.signal.aborted) {
+                  const task = new SharedTask(signal =>
+                    this.input(source, signal, async url => {
+                      const raw = await this.run(
+                        this.ffprobe,
+                        [
+                          '-v',
+                          'error',
+                          '-show_entries',
+                          'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=bit_rate',
+                          '-of',
+                          'json',
+                          url,
+                        ],
+                        signal,
+                      );
+                      return JSON.parse(raw.toString());
+                    }),
+                  );
+                  group.infoTask = task;
+                  task.promise.catch(() => {
+                    if (group.infoTask === task) group.infoTask = undefined;
+                  });
                 }
-                if (!error.exitFailure || controller.signal.aborted) throw error;
-                level++;
+                group.info = await group.infoTask.join(controller.signal);
               }
+              return await this.input(source, controller.signal, async url => {
+                const spec = outputSpec(group.info, group.quality, this.maxQuality);
+                const audioStreams = group.info.streams.filter(s => s.codec_type === 'audio');
+                const chosen = { ...source };
+                if (source.audioTrack && source.audioIndex !== undefined)
+                  chosen.audioIndex = fileIndex(source.tracks?.audio, source.audioTrack, group.info.streams, 'audio');
+                if (source.burn && !source.burn.external && source.burn.index !== undefined)
+                  chosen.burn = {
+                    ...source.burn,
+                    index: fileIndex(source.tracks?.subtitles, source.burn, group.info.streams, 'subtitle'),
+                  };
+                const selectedAudio =
+                  chosen.audioIndex !== undefined
+                    ? audioStreams.find(s => s.index === chosen.audioIndex)
+                    : audioStreams[chosen.audioOrdinal ?? 0];
+                if (spec.audio && !selectedAudio)
+                  throw new PlaybackError('The selected audio track is not present in the source.');
+                const audioMap = input =>
+                  chosen.audioIndex !== undefined
+                    ? input + ':' + chosen.audioIndex
+                    : input + ':a:' + (chosen.audioOrdinal ?? 0);
+                const duration = String(Math.min(CHUNK, source.duration - start));
+                const burn = await this.burnInput(chosen, url, start, Number(duration), controller.signal);
+                const runIn = burn?.runIn || 0;
+                const video = route => {
+                  const filter = route?.filter || spec.filter;
+                  if (burn?.bitmap)
+                    return [
+                      '-filter_complex',
+                      `[0:v:0]${filter.replace('setpts=PTS-STARTPTS,', '')}[picture];[0:${chosen.burn.index}]scale=${spec.width}:${spec.height}[subtitle];[picture][subtitle]overlay,format=nv12,trim=start=${runIn},setpts=PTS-STARTPTS[video]`,
+                      '-map',
+                      '[video]',
+                      '-an',
+                    ];
+                  const text = burn?.file
+                    ? `,setpts=PTS+${burn.offset}/TB,subtitles=filename='${filterPath(burn.file)}',setpts=PTS-STARTPTS,format=nv12`
+                    : '';
+                  return ['-map', '0:v:0', '-an', '-filter_threads', '2', '-vf', filter + text];
+                };
+                const silence = spec.audio ? [] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
+                const audioInput = ['-ss', String(Math.max(0, start - AUDIO_LEAD)), '-i', url];
+                // The first chunk has nothing before it, so silence takes the lead's place.
+                const audio = input => [
+                  '-t',
+                  String(Number(duration) + AUDIO_LEAD + 0.04),
+                  '-map',
+                  spec.audio ? audioMap(input) : '1:a:0',
+                  '-vn',
+                  '-sn',
+                  '-dn',
+                  '-map_metadata',
+                  '-1',
+                  '-c:a',
+                  'libopus',
+                  '-b:a',
+                  '128k',
+                  '-ac',
+                  '2',
+                  '-ar',
+                  '48000',
+                  '-af',
+                  'asetpts=PTS-STARTPTS' + (start ? '' : `,aresample=48000,adelay=${AUDIO_LEAD_SAMPLES}S:all=1`),
+                  '-f',
+                  'webm',
+                  '-live',
+                  '1',
+                  '-cluster_time_limit',
+                  '1000',
+                ];
+                const command = (selected, route) => [
+                  '-hide_banner',
+                  '-loglevel',
+                  'error',
+                  '-nostdin',
+                  '-threads',
+                  '2',
+                  ...(route?.input || []),
+                  '-ss',
+                  String(start - runIn),
+                  '-i',
+                  url,
+                  ...(burn?.bitmap ? [] : spec.audio ? audioInput : silence),
+                  '-t',
+                  duration,
+                  ...video(route),
+                  '-sn',
+                  '-dn',
+                  '-map_metadata',
+                  '-1',
+                  '-map_chapters',
+                  '-1',
+                  ...encoderArgs(selected, codec),
+                  ...rateArgs(selected, codec, spec.bitrate),
+                  ...(spec.frameRate ? ['-r', spec.frameRate, '-fps_mode', 'cfr'] : []),
+                  '-g',
+                  '180',
+                  '-color_primaries',
+                  'bt709',
+                  '-color_trc',
+                  'bt709',
+                  '-colorspace',
+                  'bt709',
+                  '-f',
+                  'webm',
+                  '-live',
+                  '1',
+                  '-cluster_time_limit',
+                  '1000',
+                  'pipe:1',
+                  ...(burn?.bitmap ? [] : [...audio(1), 'pipe:3']),
+                ];
+                // 4K jobs commit about 1 GiB on either path, GPU surfaces add to that, and the
+                // run-in for image subtitles adds about the same again.
+                const encode = async (selected, route) => {
+                  const job = args =>
+                    this.run(this.ffmpeg, args, controller.signal, 30000, 48 * 1024 * 1024, undefined, {
+                      memoryLimit: (burn?.bitmap ? 3 : 2) * 1024 * 1024 * 1024,
+                    });
+                  if (!burn?.bitmap) return job(command(selected, route));
+                  // Audio in the same process as an image overlay runs about ten times slower.
+                  const [video, sound] = await Promise.all([
+                    job(command(selected, route)),
+                    job([
+                      '-hide_banner',
+                      '-loglevel',
+                      'error',
+                      '-nostdin',
+                      ...audioInput,
+                      ...silence,
+                      ...audio(0),
+                      'pipe:1',
+                    ]),
+                  ]);
+                  return { video, audio: sound };
+                };
+                const routes = spec.doviP5
+                  ? [...(this.hardwareDecode ? [decodeRoute(spec, encoder)] : []), cpuPlaceboRoute(spec)].filter(
+                      (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
+                    )
+                  : [
+                      ...(this.hardwareDecode
+                        ? [decodeRoute(spec, encoder), decodeRoute(spec, encoder, undefined, false)].filter(
+                            (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
+                          )
+                        : []),
+                      undefined,
+                    ];
+                if (!routes.length)
+                  throw new PlaybackError('Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping.');
+                try {
+                  let level = Math.min(group.decodeLevel || 0, routes.length - 1),
+                    bytes;
+                  for (;;) {
+                    try {
+                      bytes = await encode(encoder, routes[level]);
+                      break;
+                    } catch (error) {
+                      // Step down from GPU tonemapping, to GPU decode, to the CPU. Only a later
+                      // success proves the step, so upstream failures change nothing for the group.
+                      if (level === routes.length - 1) {
+                        if (spec.doviP5 && error.exitFailure && !controller.signal.aborted)
+                          throw new PlaybackError('Dolby Vision Profile 5 tone-mapping failed.');
+                        throw error;
+                      }
+                      if (!error.exitFailure || controller.signal.aborted) throw error;
+                      level++;
+                    }
+                  }
+                  if (level > (group.decodeLevel || 0)) {
+                    group.decodeLevel = level;
+                    this.logger?.warn(
+                      'Conversion',
+                      `${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`,
+                    );
+                  }
+                  group.encoder = encoder;
+                  group.cpuFallback = encoder === 'software' && this.encoder !== 'software';
+                  return bytes;
+                } catch (error) {
+                  // Retry only an encoder process failure, under the same job lease.
+                  // Cancellation, limits and upstream failures never trigger CPU work.
+                  if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted)
+                    throw error;
+                  const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
+                  group.encoder = 'software';
+                  group.cpuFallback = true;
+                  return bytes;
+                } finally {
+                  await burn?.cleanup?.();
+                }
+              });
+            } finally {
+              releaseConversion?.();
             }
-            if (level > (group.decodeLevel || 0)) {
-              group.decodeLevel = level;
-              this.logger?.warn('Conversion',`${routes[level] ? 'GPU tonemapping' : 'Hardware decode'} failed for a ${spec.sourceFormat} source; using a slower path for this stream.`);
-            }
-            group.encoder=encoder;group.cpuFallback=encoder==='software'&&this.encoder!=='software'; return bytes;
-          } catch (error) {
-            // Retry only an encoder process failure, under the same job lease.
-            // Cancellation, limits and upstream failures never trigger CPU work.
-            if (!error.encoderFailure || encoder === 'software' || !this.cpuFallback || controller.signal.aborted) throw error;
-            const bytes = await encode('software', spec.doviP5 ? cpuPlaceboRoute(spec) : undefined);
-            group.encoder='software'; group.cpuFallback=true; return bytes;
-          } finally { await burn?.cleanup?.(); }
+          },
+          group.key,
+          entry.priority,
+        ),
+      )
+        .then(bytes => {
+          if (controller.signal.aborted || group.chunks.get(index) !== entry)
+            throw new PlaybackError('WebM preparation cancelled.');
+          if (entry.reserved) {
+            this.pendingBytes -= this.jobBytes;
+            entry.reserved = false;
+          }
+          entry.bytes = bytes;
+          entry.size = bytes.video.length + bytes.audio.length;
+          group.bytes += entry.size;
+          this.prune(group, entry);
+          // A chunk slower than real time means viewers will catch up and wait.
+          const took = (Date.now() - entry.began) / 1000,
+            waited = (entry.began - entry.queued) / 1000;
+          if (took > CHUNK * 0.8 || waited > CHUNK)
+            this.logger?.warn(
+              'Conversion',
+              `Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}); viewers may wait.`,
+            );
+          return bytes;
+        })
+        .catch(error => {
+          if (controller.signal.aborted) {
+            if (group.chunks.get(index) === entry) group.chunks.delete(index);
+          } else {
+            // Keep failure local to this chunk and cool down before re-encoding.
+            entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
+            this.logger?.warn('Conversion', `Chunk ${index} failed: ${entry.error.message}`);
+            entry.failedAt = Date.now();
+            this.prune(group, entry);
+          }
+          throw entry.error || error;
+        })
+        .finally(() => {
+          if (entry.reserved) {
+            this.pendingBytes -= this.jobBytes;
+            entry.reserved = false;
+          }
+          group.controllers.delete(controller);
+          this.controllers.delete(controller);
         });
-        } finally {releaseConversion?.();}
-      }, group.key, entry.priority)).then(bytes => {
-        if (controller.signal.aborted || group.chunks.get(index)!==entry) throw new PlaybackError('WebM preparation cancelled.');
-        if (entry.reserved) { this.pendingBytes -= this.jobBytes; entry.reserved = false; }
-        entry.bytes = bytes; entry.size = bytes.video.length + bytes.audio.length; group.bytes += entry.size; this.prune(group, entry);
-        // A chunk slower than real time means viewers will catch up and wait.
-        const took = (Date.now() - entry.began) / 1000, waited = (entry.began - entry.queued) / 1000;
-        if (took > CHUNK * .8 || waited > CHUNK) this.logger?.warn('Conversion',`Chunk ${index} of ${group.quality} took ${took.toFixed(1)}s to encode and waited ${waited.toFixed(1)}s for a slot (${group.encoder || 'auto'}${group.cpuFallback ? ', software fallback' : ''}); viewers may wait.`);
-        return bytes;
-      }).catch(error => {
-        if (controller.signal.aborted) { if (group.chunks.get(index)===entry) group.chunks.delete(index); }
-        else {
-          // Keep failure local to this chunk and cool down before re-encoding.
-          entry.error = error instanceof PlaybackError ? error : new PlaybackError('WebM chunk preparation failed.');
-          this.logger?.warn('Conversion',`Chunk ${index} failed: ${entry.error.message}`);
-          entry.failedAt = Date.now();
-          this.prune(group,entry);
-        }
-        throw entry.error || error;
-      }).finally(() => { if (entry.reserved) { this.pendingBytes -= this.jobBytes; entry.reserved = false; } group.controllers.delete(controller); this.controllers.delete(controller); });
       // Caller disconnects can stop waiting without leaving an unhandled rejection.
-      entry.promise.catch(() => {}); group.chunks.set(index, entry);
+      entry.promise.catch(() => {});
+      group.chunks.set(index, entry);
     }
-    entry.at = Date.now(); entry.users++; if (urgent) entry.priority.urgent = true;
-    if(!background)entry.priority.background=false;
+    entry.at = Date.now();
+    entry.users++;
+    if (urgent) entry.priority.urgent = true;
+    if (!background) entry.priority.background = false;
     try {
       return await new Promise((resolve, reject) => {
         const cancel = () => reject(new PlaybackError('WebM client disconnected.'));
         if (signal.aborted) return cancel();
-        signal.addEventListener('abort', cancel, {once:true});
+        signal.addEventListener('abort', cancel, { once: true });
         entry.promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', cancel));
       });
     } finally {
       if (--entry.users === 0 && !entry.bytes) entry.controller.abort();
     }
   }
-  get retainedBytes() { return [...this.groups.values()].reduce((sum,group)=>sum+group.bytes,0); }
+  get retainedBytes() {
+    return [...this.groups.values()].reduce((sum, group) => sum + group.bytes, 0);
+  }
   pruneAll(reserve = 0, keep) {
-    const candidates = [...this.groups.values()].flatMap(group => [...group.chunks].map(([index,entry])=>({group,index,entry})))
-      .filter(({entry})=>entry!==keep && !entry.users && (entry.bytes || entry.error)).sort((a,b)=>Number(b.entry.priority?.background)-Number(a.entry.priority?.background) || a.entry.at-b.entry.at);
-    for (const {group,index,entry} of candidates) {
+    const candidates = [...this.groups.values()]
+      .flatMap(group => [...group.chunks].map(([index, entry]) => ({ group, index, entry })))
+      .filter(({ entry }) => entry !== keep && !entry.users && (entry.bytes || entry.error))
+      .sort(
+        (a, b) =>
+          Number(b.entry.priority?.background) - Number(a.entry.priority?.background) || a.entry.at - b.entry.at,
+      );
+    for (const { group, index, entry } of candidates) {
       if (this.retainedBytes + this.pendingBytes + reserve <= this.maxBytes) break;
-      group.chunks.delete(index); group.bytes -= entry.size || 0;
+      group.chunks.delete(index);
+      group.bytes -= entry.size || 0;
     }
   }
   prune(group, keep) {
     this.pruneAll(0, keep);
-    for (const [index, entry] of [...group.chunks].sort((a,b) => a[1].at - b[1].at)) {
+    for (const [index, entry] of [...group.chunks].sort((a, b) => a[1].at - b[1].at)) {
       if (group.chunks.size <= 12 && group.bytes <= 128 * 1024 * 1024) break;
-      if (entry !== keep && (entry.bytes || entry.error) && !entry.users) { group.chunks.delete(index); group.bytes -= entry.size || 0; }
+      if (entry !== keep && (entry.bytes || entry.error) && !entry.users) {
+        group.chunks.delete(index);
+        group.bytes -= entry.size || 0;
+      }
     }
   }
   close() {
-    this.closed = true; this.shutdownController?.abort();
+    this.closed = true;
+    this.shutdownController?.abort();
     for (const controller of this.controllers) controller.abort();
     for (const group of this.groups.values()) group.infoTask?.abort();
-    this.groups.clear(); this.inputs.clear(); this.server?.closeAllConnections(); this.server?.close();
+    this.groups.clear();
+    this.inputs.clear();
+    this.server?.closeAllConnections();
+    this.server?.close();
     return Promise.allSettled([...this.jobs]);
   }
 }
-module.exports = { AV1, PlaybackError, CHUNK, AUDIO_LEAD, fileIndex, STREAM_CODECS, codecMatches, MIME, AUDIO_MIME, classifyHdr, encoderArgs, probeEncoder, outputSpec, decodeRoute, cpuPlaceboRoute, rateArgs, run, stream };
+module.exports = {
+  AV1,
+  PlaybackError,
+  CHUNK,
+  AUDIO_LEAD,
+  fileIndex,
+  STREAM_CODECS,
+  codecMatches,
+  MIME,
+  AUDIO_MIME,
+  classifyHdr,
+  encoderArgs,
+  probeEncoder,
+  outputSpec,
+  decodeRoute,
+  cpuPlaceboRoute,
+  rateArgs,
+  run,
+  stream,
+};

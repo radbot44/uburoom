@@ -1,9 +1,15 @@
 /* Room sharing and explicit server publication; no playback ownership. */
-(function(root) {
+(function (root) {
   'use strict';
-  function mount({request, share, openLink}) {
-    const $ = id => document.getElementById(id), dialog = $('room-share-dialog'), dialogs = root.uburoomDialogs;
-    let generation = 0, target, value, busy = false, refreshTimer;
+  function mount({ request, share, openLink }) {
+    const $ = id => document.getElementById(id),
+      dialog = $('room-share-dialog'),
+      dialogs = root.uburoomDialogs;
+    let generation = 0,
+      target,
+      value,
+      busy = false,
+      refreshTimer;
 
     const titleEl = $('room-share-title');
     const dismissBtn = $('room-share-dismiss');
@@ -26,7 +32,7 @@
 
     const errorEl = $('room-share-error');
 
-    dialogs.register(dialog, {busy: () => busy});
+    dialogs.register(dialog, { busy: () => busy });
     dialog.addEventListener('keydown', event => {
       if (event.key === 'Escape' && busy) {
         event.preventDefault();
@@ -58,7 +64,8 @@
 
       previewName.textContent = preview.name;
       previewTitle.textContent = [preview.title, preview.subtitle].filter(Boolean).join(' · ');
-      previewStatus.textContent = preview.status + ' · ' + preview.viewers + ' viewer' + (preview.viewers === 1 ? '' : 's');
+      previewStatus.textContent =
+        preview.status + ' · ' + preview.viewers + ' viewer' + (preview.viewers === 1 ? '' : 's');
 
       previewDot.className = 'room-share-status-dot';
       if (preview.status === 'Playing') previewDot.classList.add('playing');
@@ -67,13 +74,22 @@
       const isPublished = !!value.published;
       publishedActions.hidden = !isPublished;
       publishBtn.hidden = isPublished || !!value.removing;
-      publishBtn.disabled = busy || !value.available || !value.canPublish || preview.status === 'Closed' || value.uncertain;
+      publishBtn.disabled =
+        busy || !value.available || !value.canPublish || preview.status === 'Closed' || value.uncertain;
       viewPostBtn.hidden = !value.messageUrl;
       viewPostBtn.disabled = busy;
       removePostBtn.hidden = !value.hasPost && !value.published && !value.uncertain && !value.removing;
       removePostBtn.disabled = busy;
 
-      pubStatus.textContent = value.removing ? 'Removing post…' : value.uncertain ? 'The post could not be confirmed. Check Discord before retrying.' : isPublished ? 'Published' : preview.status === 'Closed' ? 'Open this room to publish it.' : '';
+      pubStatus.textContent = value.removing
+        ? 'Removing post…'
+        : value.uncertain
+          ? 'The post could not be confirmed. Check Discord before retrying.'
+          : isPublished
+            ? 'Published'
+            : preview.status === 'Closed'
+              ? 'Open this room to publish it.'
+              : '';
     }
 
     async function load(ticket) {
@@ -86,10 +102,15 @@
 
     function scheduleRefresh(ticket = generation) {
       clearTimeout(refreshTimer);
-      if (!dialog.open || busy || !(value?.removing || value?.canManage && value?.configured && !value?.available)) return;
+      if (!dialog.open || busy || !(value?.removing || (value?.canManage && value?.configured && !value?.available)))
+        return;
       refreshTimer = setTimeout(async () => {
         if (ticket !== generation || !dialog.open || busy) return;
-        try { await load(ticket); } catch { scheduleRefresh(ticket); }
+        try {
+          await load(ticket);
+        } catch {
+          scheduleRefresh(ticket);
+        }
       }, 5000);
     }
 
@@ -117,12 +138,14 @@
       render();
       errorEl.textContent = '';
       try {
-        const response = await request('/api/watch/rooms/' + target + '/share', {action});
+        const response = await request('/api/watch/rooms/' + target + '/share', { action });
         if (response.status !== 'applied') throw new Error(response.message || 'Discord could not update the post.');
         await load(ticket);
       } catch (error) {
         if (ticket === generation && dialog.open) {
-          try { await load(ticket); } catch {}
+          try {
+            await load(ticket);
+          } catch {}
           value.error = error.message;
         }
       } finally {
@@ -149,7 +172,10 @@
     publishBtn.addEventListener('click', () => void change('room.publish'));
     removePostBtn.addEventListener('click', () => void change('room.unpublish'));
     viewPostBtn.addEventListener('click', () => {
-      if (value?.messageUrl) void openLink(value.messageUrl).catch(error => { errorEl.textContent = error.message; });
+      if (value?.messageUrl)
+        void openLink(value.messageUrl).catch(error => {
+          errorEl.textContent = error.message;
+        });
     });
 
     dialog.addEventListener('close', () => {
@@ -158,7 +184,7 @@
       value = undefined;
     });
 
-    return {open};
+    return { open };
   }
-  root.uburoomShare = {mount};
+  root.uburoomShare = { mount };
 })(globalThis);

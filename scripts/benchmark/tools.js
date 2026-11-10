@@ -51,13 +51,22 @@ function resolveTools(configTools = {}, overrides = {}) {
 
   const ffmpeg = overrides.ffmpeg || configTools.ffmpeg || findOnPath('ffmpeg');
   if (!ffmpeg || !fs.existsSync(ffmpeg)) {
-    throw new Error('FFmpeg executable not found. Configure tools.ffmpeg in config.yaml, pass --ffmpeg, or install FFmpeg on PATH.');
+    throw new Error(
+      'FFmpeg executable not found. Configure tools.ffmpeg in config.yaml, pass --ffmpeg, or install FFmpeg on PATH.',
+    );
   }
 
-  const defaultProbe = ffmpeg ? path.join(path.dirname(ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe') : undefined;
-  const ffprobeCandidate = overrides.ffprobe || configTools.ffprobe || (defaultProbe && fs.existsSync(defaultProbe) ? defaultProbe : findOnPath('ffprobe'));
+  const defaultProbe = ffmpeg
+    ? path.join(path.dirname(ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe')
+    : undefined;
+  const ffprobeCandidate =
+    overrides.ffprobe ||
+    configTools.ffprobe ||
+    (defaultProbe && fs.existsSync(defaultProbe) ? defaultProbe : findOnPath('ffprobe'));
   if (!ffprobeCandidate || !fs.existsSync(ffprobeCandidate)) {
-    throw new Error('FFprobe executable not found. Configure tools.ffprobe in config.yaml, pass --ffprobe, or install FFprobe on PATH.');
+    throw new Error(
+      'FFprobe executable not found. Configure tools.ffprobe in config.yaml, pass --ffprobe, or install FFprobe on PATH.',
+    );
   }
 
   // Probe version information
@@ -68,7 +77,7 @@ function resolveTools(configTools = {}, overrides = {}) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
-      timeout: 5000
+      timeout: 5000,
     });
     const lines = raw.split(/\r?\n/);
     ffmpegVersion = lines[0] || '';
@@ -83,7 +92,7 @@ function resolveTools(configTools = {}, overrides = {}) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
-      timeout: 5000
+      timeout: 5000,
     });
     ffprobeVersion = raw.split(/\r?\n/)[0] || '';
   } catch (err) {
@@ -95,7 +104,7 @@ function resolveTools(configTools = {}, overrides = {}) {
     ffprobe: path.resolve(ffprobeCandidate),
     ffmpegVersion,
     ffprobeVersion,
-    ffmpegBuildInfo
+    ffmpegBuildInfo,
   };
 }
 
@@ -110,26 +119,35 @@ function collectEnvironmentInfo() {
   let gpuModel = 'Not detected';
   // 1. Try nvidia-smi
   try {
-    const smi = cp.execFileSync('nvidia-smi', ['--query-gpu=name,driver_version,memory.total', '--format=csv,noheader,nounits'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3000,
-      windowsHide: true
-    });
+    const smi = cp.execFileSync(
+      'nvidia-smi',
+      ['--query-gpu=name,driver_version,memory.total', '--format=csv,noheader,nounits'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+        windowsHide: true,
+      },
+    );
     if (smi && smi.trim()) {
-      const parts = smi.trim().split(/\r?\n/)[0].split(',').map(s => s.trim());
+      const parts = smi
+        .trim()
+        .split(/\r?\n/)[0]
+        .split(',')
+        .map(s => s.trim());
       gpuModel = `${parts[0]} (Driver ${parts[1]}, ${Math.round(Number(parts[2]) / 1024)}GB VRAM)`;
     }
   } catch {
     // 2. Try Windows WMI / CimInstance
     if (process.platform === 'win32') {
       try {
-        const out = cp.execFileSync('powershell.exe', [
-          '-NoProfile',
-          '-Command',
-          'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'
-        ], { encoding: 'utf8', timeout: 3000, windowsHide: true });
-        const gpus = out.split(/\r?\n/)
+        const out = cp.execFileSync(
+          'powershell.exe',
+          ['-NoProfile', '-Command', 'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'],
+          { encoding: 'utf8', timeout: 3000, windowsHide: true },
+        );
+        const gpus = out
+          .split(/\r?\n/)
           .map(s => s.trim())
           .filter(s => s && !/virtual|parsec|remote|basic display/i.test(s));
         if (gpus.length) {
@@ -155,12 +173,14 @@ function collectEnvironmentInfo() {
   // Git revision
   let gitRevision = 'Unknown';
   try {
-    gitRevision = cp.execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: path.resolve(__dirname, '../..'),
-      encoding: 'utf8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim();
+    gitRevision = cp
+      .execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: path.resolve(__dirname, '../..'),
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      .trim();
   } catch {
     // Not a git clone or git unavailable
   }
@@ -172,12 +192,12 @@ function collectEnvironmentInfo() {
     nodeVersion: process.version,
     cpu: {
       model: cpuModel,
-      cores: cpuCores
+      cores: cpuCores,
     },
     memoryTotalMB: Math.round(os.totalmem() / (1024 * 1024)),
     memoryFreeMB: Math.round(os.freemem() / (1024 * 1024)),
     gpu: gpuModel,
-    gitRevision
+    gitRevision,
   };
 }
 
@@ -185,14 +205,7 @@ function collectEnvironmentInfo() {
  * Spawns an executable safely using argument arrays with tracking and timeout.
  */
 function spawnSafe(binary, args, options = {}) {
-  const {
-    timeout = 30000,
-    signal,
-    onStdout,
-    onStderr,
-    windowsHide = true,
-    cwd
-  } = options;
+  const { timeout = 30000, signal, onStdout, onStderr, windowsHide = true, cwd } = options;
 
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error('Process cancelled before start.'));
@@ -200,7 +213,7 @@ function spawnSafe(binary, args, options = {}) {
     const child = cp.spawn(binary, args, {
       windowsHide,
       cwd,
-      stdio: ['ignore', onStdout ? 'pipe' : 'ignore', onStderr ? 'pipe' : 'ignore']
+      stdio: ['ignore', onStdout ? 'pipe' : 'ignore', onStderr ? 'pipe' : 'ignore'],
     });
 
     activeProcesses.add(child);
@@ -269,5 +282,5 @@ module.exports = {
   resolveTools,
   collectEnvironmentInfo,
   spawnSafe,
-  activeProcesses
+  activeProcesses,
 };

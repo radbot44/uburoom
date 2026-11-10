@@ -11,73 +11,150 @@ const { Watch } = require('../server/watch');
 const { Plex } = require('../server/plex');
 
 test('each server member owns their watch session; administrators cannot manage or discover another private room', async () => {
-  const hub = new Hub({ownerId:'admin',guildId:'guild',channels:['commands']}, []);
-  const members = new Set(['admin','a','b']);
-  hub.access = {refresh:async id=>members.has(id),isMember:id=>members.has(id),options:()=>({available:true})};
-  const watch = new Watch(hub, {stop:async()=>{}});
-  const actor = userId => ({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'});
-  const a = actor('a'), b = actor('b'), admin = actor('admin'), id = watch.create(a), room = watch.rooms.get(id);
+  const hub = new Hub({ ownerId: 'admin', guildId: 'guild', channels: ['commands'] }, []);
+  const members = new Set(['admin', 'a', 'b']);
+  hub.access = {
+    refresh: async id => members.has(id),
+    isMember: id => members.has(id),
+    options: () => ({ available: true }),
+  };
+  const watch = new Watch(hub, { stop: async () => {} });
+  const actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' });
+  const a = actor('a'),
+    b = actor('b'),
+    admin = actor('admin'),
+    id = watch.create(a),
+    room = watch.rooms.get(id);
   const bRoom = watch.rooms.get(watch.create(b));
-  const dispatch = (who, action, args) => hub.dispatch(who,{roomId:id,action,args});
-  assert.equal(watch.snapshot(room,a,randomUUID()).canManage,true);
-  assert.equal(watch.snapshot(bRoom,b,randomUUID()).canManage,true);
-  assert.equal((await dispatch(b,'room.visibility',{visibility:'private'})).status,'forbidden');
-  await dispatch(a,'room.visibility',{visibility:'private'});
-  assert.equal(await watch.canView(room,admin),false); assert.equal(await watch.canView(room,b),false);
-  assert.equal((await hub.list(admin)).some(s=>s.id===id),false);
-  assert.equal((await hub.list(a)).some(s=>s.id===id),true);
-  members.delete('a'); assert.equal(await watch.canView(room,a),false);
-  assert.equal((await dispatch(a,'room.visibility',{visibility:'public'})).status,'forbidden');
-  assert.throws(()=>watch.create(a)); assert.throws(()=>watch.create({...b,guildId:'other'}));
+  const dispatch = (who, action, args) => hub.dispatch(who, { roomId: id, action, args });
+  assert.equal(watch.snapshot(room, a, randomUUID()).canManage, true);
+  assert.equal(watch.snapshot(bRoom, b, randomUUID()).canManage, true);
+  assert.equal((await dispatch(b, 'room.visibility', { visibility: 'private' })).status, 'forbidden');
+  await dispatch(a, 'room.visibility', { visibility: 'private' });
+  assert.equal(await watch.canView(room, admin), false);
+  assert.equal(await watch.canView(room, b), false);
+  assert.equal(
+    (await hub.list(admin)).some(s => s.id === id),
+    false,
+  );
+  assert.equal(
+    (await hub.list(a)).some(s => s.id === id),
+    true,
+  );
+  members.delete('a');
+  assert.equal(await watch.canView(room, a), false);
+  assert.equal((await dispatch(a, 'room.visibility', { visibility: 'public' })).status, 'forbidden');
+  assert.throws(() => watch.create(a));
+  assert.throws(() => watch.create({ ...b, guildId: 'other' }));
   watch.close();
 });
 
-
 test('initial readiness honors deliberate pause; episode navigation and host succession preserve the room', async () => {
-  const config = { ownerId: 'host', guildId: 'guild', channels: ['commands'] }, hub = new Hub(config, []);
-  hub.access = { refresh: async () => true, isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
-  const plex = { stop: async () => {}, prepare: async (id, quality) => ({ id, title: 'Episode ' + id, subtitle: 'Show · Season 1 · 2026', duration: 120, quality, format: 'file',
-    previousId: Number(id) > 1 ? String(Number(id) - 1) : undefined, nextId: Number(id) < 3 ? String(Number(id) + 1) : undefined }) };
+  const config = { ownerId: 'host', guildId: 'guild', channels: ['commands'] },
+    hub = new Hub(config, []);
+  hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  const plex = {
+    stop: async () => {},
+    prepare: async (id, quality) => ({
+      id,
+      title: 'Episode ' + id,
+      subtitle: 'Show · Season 1 · 2026',
+      duration: 120,
+      quality,
+      format: 'file',
+      previousId: Number(id) > 1 ? String(Number(id) - 1) : undefined,
+      nextId: Number(id) < 3 ? String(Number(id) + 1) : undefined,
+    }),
+  };
   const watch = new Watch(hub, plex);
   const actor = id => ({ userId: id, guildId: 'guild', channelId: 'commands', surface: 'web', name: id });
-  const host = actor('host'), a = actor('a'), b = actor('b'), late = actor('late');
-  const id = watch.create(host), room = watch.rooms.get(id), hId = randomUUID(), aId = randomUUID(), bId = randomUUID(), lateId = randomUUID();
+  const host = actor('host'),
+    a = actor('a'),
+    b = actor('b'),
+    late = actor('late');
+  const id = watch.create(host),
+    room = watch.rooms.get(id),
+    hId = randomUUID(),
+    aId = randomUUID(),
+    bId = randomUUID(),
+    lateId = randomUUID();
   const dispatch = (who, action, args) => hub.dispatch(who, { roomId: id, action, args });
   watch.snapshot(room, host, hId);
-  watch.snapshot(room, a, aId); room.viewers.get(aId).joinedAt -= 100;
+  watch.snapshot(room, a, aId);
+  room.viewers.get(aId).joinedAt -= 100;
   watch.snapshot(room, b, bId);
   assert.throws(() => watch.snapshot(room, b, aId), /identity mismatch/);
   await assert.rejects(watch.ready(room, b, aId, room.mediaVersion, true), /Invalid readiness/);
-  await watch.leave(room, b, aId); assert.equal(room.viewers.has(aId), true, 'a viewer cannot remove someone else');
+  await watch.leave(room, b, aId);
+  assert.equal(room.viewers.has(aId), true, 'a viewer cannot remove someone else');
   await dispatch(host, 'media.load', { mediaId: '2', quality: 'direct' });
   const ready = (who, viewer) => watch.ready(room, who, viewer, room.mediaVersion, true);
-  await ready(host, hId); await ready(a, aId); assert.equal(room.s.state.paused, true);
-  await dispatch(host, 'media.pause'); await ready(b, bId); assert.equal(room.s.state.paused, true, 'readiness cannot undo an explicit pause');
-  await dispatch(host, 'media.play'); await ready(b, bId); assert.equal(room.s.state.paused, false);
-  watch.snapshot(room, late, lateId); assert.equal(room.s.state.paused, false, 'unready late joiner does not pause the group');
-  await dispatch(host, 'media.pause'); await dispatch(host, 'media.seek.absolute', { seconds: 30 });
-  await dispatch(a, 'media.previous'); assert.equal(room.media.id, '2'); assert.equal(room.position, 0);
-  await dispatch(a, 'media.previous'); assert.equal(room.media.id, '1'); assert.equal(room.position, 0);
-  await dispatch(a, 'media.next'); assert.equal(room.media.id, '2', 'next loads the next episode regardless of current position');
-  await dispatch(host, 'media.pause'); await dispatch(host, 'media.seek.absolute', { seconds: 35 });
-  await dispatch(host, 'media.quality.set', { quality: '1080p' }); assert.equal(room.position, 35); assert.equal(room.manualPaused, true);
+  await ready(host, hId);
+  await ready(a, aId);
+  assert.equal(room.s.state.paused, true);
+  await dispatch(host, 'media.pause');
+  await ready(b, bId);
+  assert.equal(room.s.state.paused, true, 'readiness cannot undo an explicit pause');
+  await dispatch(host, 'media.play');
+  await ready(b, bId);
+  assert.equal(room.s.state.paused, false);
+  watch.snapshot(room, late, lateId);
+  assert.equal(room.s.state.paused, false, 'unready late joiner does not pause the group');
+  await dispatch(host, 'media.pause');
+  await dispatch(host, 'media.seek.absolute', { seconds: 30 });
+  await dispatch(a, 'media.previous');
+  assert.equal(room.media.id, '2');
+  assert.equal(room.position, 0);
+  await dispatch(a, 'media.previous');
+  assert.equal(room.media.id, '1');
+  assert.equal(room.position, 0);
+  await dispatch(a, 'media.next');
+  assert.equal(room.media.id, '2', 'next loads the next episode regardless of current position');
+  await dispatch(host, 'media.pause');
+  await dispatch(host, 'media.seek.absolute', { seconds: 35 });
+  await dispatch(host, 'media.quality.set', { quality: '1080p' });
+  assert.equal(room.position, 35);
+  assert.equal(room.manualPaused, true);
   assert.equal(room.s.state.paused, true, 'quality changes retain pause and position');
-  const version = room.mediaVersion, epoch = room.s.epoch;
+  const version = room.mediaVersion,
+    epoch = room.s.epoch;
   await watch.leave(room, host, hId);
-  assert.equal(room.s.hostId, 'a'); assert.equal(room.s.ownerId, 'host', 'administrator identity is not transferred');
-  assert.equal(room.mediaVersion, version); assert.equal(room.position, 35);
+  assert.equal(room.s.hostId, 'a');
+  assert.equal(room.s.ownerId, 'host', 'administrator identity is not transferred');
+  assert.equal(room.mediaVersion, version);
+  assert.equal(room.position, 35);
   assert.notEqual(room.s.epoch, epoch);
   assert.equal(watch.snapshot(room, a, aId).canManage, true);
-  assert.equal((await dispatch(host, 'media.load', { mediaId: '3', quality: 'direct' })).status, 'forbidden', 'former host cannot manage the inherited session');
+  assert.equal(
+    (await dispatch(host, 'media.load', { mediaId: '3', quality: 'direct' })).status,
+    'forbidden',
+    'former host cannot manage the inherited session',
+  );
   assert.equal((await dispatch(a, 'media.load', { mediaId: '3', quality: 'direct' })).status, 'applied');
-  await watch.leave(room, a, aId); assert.equal(room.s.hostId, 'b');
-  await watch.leave(room, late, lateId); await watch.leave(room, b, bId); assert.equal(watch.rooms.has(id), false);
+  await watch.leave(room, a, aId);
+  assert.equal(room.s.hostId, 'b');
+  await watch.leave(room, late, lateId);
+  await watch.leave(room, b, bId);
+  assert.equal(watch.rooms.has(id), false);
 
   // Privacy removal releases initial playback gate when remaining host is ready, and media.load with resume position initializes offset
-  const privId = watch.create(host), privRoom = watch.rooms.get(privId), privHost = randomUUID(), privGuest = randomUUID();
+  const privId = watch.create(host),
+    privRoom = watch.rooms.get(privId),
+    privHost = randomUUID(),
+    privGuest = randomUUID();
   watch.snapshot(privRoom, host, privHost);
   watch.snapshot(privRoom, a, privGuest);
-  const resumeRes = await hub.dispatch(host, { roomId: privId, action: 'media.load', args: { mediaId: '2', quality: 'direct', position: 10, resume: true } });
+  const resumeRes = await hub.dispatch(host, {
+    roomId: privId,
+    action: 'media.load',
+    args: { mediaId: '2', quality: 'direct', position: 10, resume: true },
+  });
   assert.equal(resumeRes.status, 'applied');
   assert.equal(privRoom.position, 10);
   assert.equal(privRoom.s.state.paused, true);
@@ -90,14 +167,23 @@ test('initial readiness honors deliberate pause; episode navigation and host suc
   watch.close();
 });
 
-
 test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, and preserves private room security', async () => {
   const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
-  hub.access = { refresh: async id => id !== 'revoked', isMember: () => true, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
+  hub.access = {
+    refresh: async id => id !== 'revoked',
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
   const watch = new Watch(hub, { stop: async () => {} });
   const actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' });
-  const host = actor('host'), guest = actor('guest'), id = watch.create(host), room = watch.rooms.get(id);
-  const hostId = randomUUID(), guestId = randomUUID();
+  const host = actor('host'),
+    guest = actor('guest'),
+    id = watch.create(host),
+    room = watch.rooms.get(id);
+  const hostId = randomUUID(),
+    guestId = randomUUID();
   watch.snapshot(room, host, hostId);
   watch.snapshot(room, guest, guestId);
 
@@ -111,14 +197,17 @@ test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, 
 
   // 2. Succession skips expired or revoked viewers
   for (const uid of ['expired', 'revoked', 'eligible']) {
-    const vId = randomUUID(); watch.snapshot(room, actor(uid), vId, async () => uid !== 'expired');
+    const vId = randomUUID();
+    watch.snapshot(room, actor(uid), vId, async () => uid !== 'expired');
     room.viewers.get(vId).joinedAt += ['expired', 'revoked', 'eligible'].indexOf(uid);
   }
   await watch.leave(room, guest, guestId);
   assert.equal(room.s.hostId, 'eligible');
 
   // 3. Leaving a private room does not elect untrusted viewers
-  const privId = watch.create(host), privRoom = watch.rooms.get(privId), privHost = randomUUID();
+  const privId = watch.create(host),
+    privRoom = watch.rooms.get(privId),
+    privHost = randomUUID();
   watch.snapshot(privRoom, host, privHost);
   watch.snapshot(privRoom, actor('eligible'), randomUUID());
   privRoom.s.visibility = 'private';
@@ -127,8 +216,13 @@ test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, 
 
   // 4. Departure rotates epoch on handoff and logout
   for (const reason of ['left', 'logout']) {
-    const h = actor('host'), g = actor('guest'), r = watch.rooms.get(watch.create(h)), hid = randomUUID(), gid = randomUUID();
-    watch.snapshot(r, h, hid); watch.snapshot(r, g, gid);
+    const h = actor('host'),
+      g = actor('guest'),
+      r = watch.rooms.get(watch.create(h)),
+      hid = randomUUID(),
+      gid = randomUUID();
+    watch.snapshot(r, h, hid);
+    watch.snapshot(r, g, gid);
     const ep = r.s.epoch;
     await watch.leave(r, h, hid, reason);
     assert.equal(r.s.hostId, 'guest');
@@ -138,136 +232,253 @@ test('host departure or heartbeat timeout rotates epoch, skips revoked viewers, 
   watch.close();
 });
 
-
 test('a timed-out viewer can rejoin with personal tracks, a fresh stream and the same reporting occurrence', async () => {
-  const hub = new Hub({ ownerId:'host', guildId:'guild', channels:['commands'] }, []);
-  hub.access = { refresh:async()=>true, isMember:()=>true, voiceChannel:()=> 'call', validVoiceChannel:()=>true, options:()=>({available:true}) };
-  const watch = new Watch(hub,{stop:async()=>{}});
-  const actor = userId => ({userId,guildId:'guild',channelId:'commands',surface:'web',name:userId});
-  const host=actor('host'),guest=actor('guest'),room=watch.rooms.get(watch.create(host)),hostId=randomUUID(),guestId=randomUUID();
-  const reports=[];
-  watch.reporting.plexAuth={forUser:async()=>({principal:'personal',clientId:'fixture',request:async(resource,options)=>{
-    reports.push({state:new URL(resource,'http://fixture.invalid').searchParams.get('state'),id:options.headers['X-Plex-Session-Identifier']});
-  }})};
-  room.media={kind:'plex',id:'123',duration:120};
-  const report=async(viewer,position)=>{
-    viewer.media={kind:'plex',format:'file'};viewer.mediaVersion=room.mediaVersion;viewer.streamVersion ||= randomUUID();
-    const data={mediaVersion:room.mediaVersion,streamVersion:viewer.streamVersion,observationEpoch:viewer.observationEpoch,sequence:1,
-      sampleAt:1,observedAt:Date.now(),position,rate:1,frames:1,discontinuity:0,state:'playing'};
-    const accepted=watch.tracking.observe(room,viewer,guestId,data);
-    await watch.reporting.observe(room,viewer,guestId,data,accepted);
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  const watch = new Watch(hub, { stop: async () => {} });
+  const actor = userId => ({ userId, guildId: 'guild', channelId: 'commands', surface: 'web', name: userId });
+  const host = actor('host'),
+    guest = actor('guest'),
+    room = watch.rooms.get(watch.create(host)),
+    hostId = randomUUID(),
+    guestId = randomUUID();
+  const reports = [];
+  watch.reporting.plexAuth = {
+    forUser: async () => ({
+      principal: 'personal',
+      clientId: 'fixture',
+      request: async (resource, options) => {
+        reports.push({
+          state: new URL(resource, 'http://fixture.invalid').searchParams.get('state'),
+          id: options.headers['X-Plex-Session-Identifier'],
+        });
+      },
+    }),
+  };
+  room.media = { kind: 'plex', id: '123', duration: 120 };
+  const report = async (viewer, position) => {
+    viewer.media = { kind: 'plex', format: 'file' };
+    viewer.mediaVersion = room.mediaVersion;
+    viewer.streamVersion ||= randomUUID();
+    const data = {
+      mediaVersion: room.mediaVersion,
+      streamVersion: viewer.streamVersion,
+      observationEpoch: viewer.observationEpoch,
+      sequence: 1,
+      sampleAt: 1,
+      observedAt: Date.now(),
+      position,
+      rate: 1,
+      frames: 1,
+      discontinuity: 0,
+      state: 'playing',
+    };
+    const accepted = watch.tracking.observe(room, viewer, guestId, data);
+    await watch.reporting.observe(room, viewer, guestId, data, accepted);
     await watch.reporting.sessions.get(guestId)?.dispatched;
   };
-  watch.snapshot(room,host,hostId);watch.snapshot(room,guest,guestId);
-  const previous=room.viewers.get(guestId);
-  previous.trackChoice={audioId:'1042',subtitleId:'off',audioIntent:{language:'fr'}};
-  previous.quality='1080p';previous.subtitleOffset=2;previous.streamVersion=randomUUID();
-  previous.alive=async()=>false;previous.reportingAuthorized=async()=>true;
-  await report(previous,10);
-  const occurrence=reports[0].id;
-  previous.at=Date.now()-11000;
-  const oldEpoch=previous.observationEpoch;
+  watch.snapshot(room, host, hostId);
+  watch.snapshot(room, guest, guestId);
+  const previous = room.viewers.get(guestId);
+  previous.trackChoice = { audioId: '1042', subtitleId: 'off', audioIntent: { language: 'fr' } };
+  previous.quality = '1080p';
+  previous.subtitleOffset = 2;
+  previous.streamVersion = randomUUID();
+  previous.alive = async () => false;
+  previous.reportingAuthorized = async () => true;
+  await report(previous, 10);
+  const occurrence = reports[0].id;
+  previous.at = Date.now() - 11000;
+  const oldEpoch = previous.observationEpoch;
   watch.refresh(room);
-  assert.equal(room.viewers.has(guestId),false);
-  assert.throws(()=>watch.snapshot(room,actor('other'),guestId),/identity mismatch/);
-  const newTab=randomUUID();watch.snapshot(room,guest,newTab);
-  assert.equal(room.viewers.get(newTab).trackChoice,undefined,'a new tab does not inherit personal choices');
-  watch.snapshot(room,guest,guestId);
-  const restored=room.viewers.get(guestId);
-  assert.deepEqual(restored.trackChoice,previous.trackChoice);
-  assert.equal(restored.quality,'1080p');assert.equal(restored.subtitleOffset,2);
-  assert.notEqual(restored.observationEpoch,oldEpoch,'old playback observations cannot resume');
-  assert.equal(restored.streamVersion,undefined,'a new personal stream must be prepared');
-  await report(restored,20);
-  assert.equal(reports.at(-1).id,occurrence,'fresh decoded observations resume the same reporting identity');
-  assert.ok(reports.every(report=>report.state!=='stopped'));
-  restored.at=Date.now()-11000;watch.refresh(room);
-  room.mediaVersion=randomUUID();watch.refresh(room);
-  watch.snapshot(room,guest,guestId);
-  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'a changed title cannot reuse numeric track IDs');
-  room.viewers.get(guestId).trackChoice={audioId:'1042'};
-  room.viewers.get(guestId).at=Date.now()-11000;watch.refresh(room);
-  room.disconnectedViewers.get(guestId).expires=Date.now()-1;
-  watch.snapshot(room,guest,guestId);
-  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'expired reconnect state is ignored');
-  await report(room.viewers.get(guestId),30);
-  assert.notEqual(reports.at(-1).id,occurrence,'a new media occurrence cannot reuse reporting');
-  room.viewers.get(guestId).trackChoice={audioId:'1042'};
-  room.viewers.get(guestId).at=Date.now()-11000;watch.refresh(room);
-  await watch.leave(room,guest,guestId);
-  assert.equal(watch.reporting.sessions.has(guestId),false,'explicit leave ends suspended reporting');
-  watch.snapshot(room,guest,guestId);
-  assert.equal(room.viewers.get(guestId).trackChoice,undefined,'explicit leave does not restore personal choices');
+  assert.equal(room.viewers.has(guestId), false);
+  assert.throws(() => watch.snapshot(room, actor('other'), guestId), /identity mismatch/);
+  const newTab = randomUUID();
+  watch.snapshot(room, guest, newTab);
+  assert.equal(room.viewers.get(newTab).trackChoice, undefined, 'a new tab does not inherit personal choices');
+  watch.snapshot(room, guest, guestId);
+  const restored = room.viewers.get(guestId);
+  assert.deepEqual(restored.trackChoice, previous.trackChoice);
+  assert.equal(restored.quality, '1080p');
+  assert.equal(restored.subtitleOffset, 2);
+  assert.notEqual(restored.observationEpoch, oldEpoch, 'old playback observations cannot resume');
+  assert.equal(restored.streamVersion, undefined, 'a new personal stream must be prepared');
+  await report(restored, 20);
+  assert.equal(reports.at(-1).id, occurrence, 'fresh decoded observations resume the same reporting identity');
+  assert.ok(reports.every(report => report.state !== 'stopped'));
+  restored.at = Date.now() - 11000;
+  watch.refresh(room);
+  room.mediaVersion = randomUUID();
+  watch.refresh(room);
+  watch.snapshot(room, guest, guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'a changed title cannot reuse numeric track IDs');
+  room.viewers.get(guestId).trackChoice = { audioId: '1042' };
+  room.viewers.get(guestId).at = Date.now() - 11000;
+  watch.refresh(room);
+  room.disconnectedViewers.get(guestId).expires = Date.now() - 1;
+  watch.snapshot(room, guest, guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'expired reconnect state is ignored');
+  await report(room.viewers.get(guestId), 30);
+  assert.notEqual(reports.at(-1).id, occurrence, 'a new media occurrence cannot reuse reporting');
+  room.viewers.get(guestId).trackChoice = { audioId: '1042' };
+  room.viewers.get(guestId).at = Date.now() - 11000;
+  watch.refresh(room);
+  await watch.leave(room, guest, guestId);
+  assert.equal(watch.reporting.sessions.has(guestId), false, 'explicit leave ends suspended reporting');
+  watch.snapshot(room, guest, guestId);
+  assert.equal(room.viewers.get(guestId).trackChoice, undefined, 'explicit leave does not restore personal choices');
   await watch.close();
 });
 
-
 test('an empty timed-out room admits only its eligible host tab and revokes old command and playback state', async () => {
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  let member=true;
-  hub.access={refresh:async()=>member,isMember:()=>member,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
-  const stopped=[],watch=new Watch(hub,{stop:async media=>{if(media)stopped.push(media);}});
-  const host={userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'commands'},guest={...host,userId:'guest'};
-  const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
-  watch.snapshot(room,host,viewerId);
-  const old=room.viewers.get(viewerId),oldEpoch=room.s.epoch;
-  old.trackChoice={audioId:'12',subtitleId:'off'};old.quality='1080p';old.media={privateStream:true};old.streamVersion=randomUUID();
-  old.at=Date.now()-11000;
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  let member = true;
+  hub.access = {
+    refresh: async () => member,
+    isMember: () => member,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  const stopped = [],
+    watch = new Watch(hub, {
+      stop: async media => {
+        if (media) stopped.push(media);
+      },
+    });
+  const host = { userId: 'host', name: 'Host', surface: 'web', guildId: 'guild', channelId: 'commands' },
+    guest = { ...host, userId: 'guest' };
+  const id = watch.create(host),
+    room = watch.rooms.get(id),
+    viewerId = randomUUID();
+  watch.snapshot(room, host, viewerId);
+  const old = room.viewers.get(viewerId),
+    oldEpoch = room.s.epoch;
+  old.trackChoice = { audioId: '12', subtitleId: 'off' };
+  old.quality = '1080p';
+  old.media = { privateStream: true };
+  old.streamVersion = randomUUID();
+  old.at = Date.now() - 11000;
   watch.refresh(room);
-  assert.equal(watch.rooms.get(id),room);assert.equal(room.reconnecting,true);
-  assert.equal(hub.rooms.has(id),false,'dormant rooms cannot receive commands');
-  assert.equal((await hub.dispatch(host,{roomId:id,action:'media.pause'})).status,'forbidden');
-  assert.notEqual(room.s.epoch,oldEpoch);
-  assert.deepEqual(stopped,[old.media]);assert.equal(room.viewers.size,0,'old media grants have no matching viewer');
-  assert.equal(await watch.canView(room,guest),false);assert.deepEqual(await watch.list(guest,true),[]);
-  assert.throws(()=>watch.snapshot(room,guest,viewerId),/identity mismatch/);
-  assert.throws(()=>watch.snapshot(room,host,randomUUID()),/unavailable/);
-  member=false;assert.equal(await watch.canView(room,host),false);
-  assert.throws(()=>watch.snapshot(room,host,viewerId),/unavailable/);
-  member=true;assert.equal(await watch.canView(room,host),true);
-  watch.snapshot(room,host,viewerId);
-  const restored=room.viewers.get(viewerId);
-  assert.deepEqual(restored.trackChoice,old.trackChoice);assert.equal(restored.quality,'1080p');
-  assert.notEqual(restored.observationEpoch,old.observationEpoch);assert.equal(restored.media,undefined);assert.equal(restored.streamVersion,undefined);
-  assert.equal(hub.rooms.get(id),room.s);
+  assert.equal(watch.rooms.get(id), room);
+  assert.equal(room.reconnecting, true);
+  assert.equal(hub.rooms.has(id), false, 'dormant rooms cannot receive commands');
+  assert.equal((await hub.dispatch(host, { roomId: id, action: 'media.pause' })).status, 'forbidden');
+  assert.notEqual(room.s.epoch, oldEpoch);
+  assert.deepEqual(stopped, [old.media]);
+  assert.equal(room.viewers.size, 0, 'old media grants have no matching viewer');
+  assert.equal(await watch.canView(room, guest), false);
+  assert.deepEqual(await watch.list(guest, true), []);
+  assert.throws(() => watch.snapshot(room, guest, viewerId), /identity mismatch/);
+  assert.throws(() => watch.snapshot(room, host, randomUUID()), /unavailable/);
+  member = false;
+  assert.equal(await watch.canView(room, host), false);
+  assert.throws(() => watch.snapshot(room, host, viewerId), /unavailable/);
+  member = true;
+  assert.equal(await watch.canView(room, host), true);
+  watch.snapshot(room, host, viewerId);
+  const restored = room.viewers.get(viewerId);
+  assert.deepEqual(restored.trackChoice, old.trackChoice);
+  assert.equal(restored.quality, '1080p');
+  assert.notEqual(restored.observationEpoch, old.observationEpoch);
+  assert.equal(restored.media, undefined);
+  assert.equal(restored.streamVersion, undefined);
+  assert.equal(hub.rooms.get(id), room.s);
   watch.close();
 });
 
-
 test('watch quality and audio belong to an authenticated viewer; shared playback and picture still use permissions', async () => {
-  const hub = new Hub({ ownerId:'host', guildId:'guild', channels:['commands'] }, []);
-  hub.access = { refresh:async()=>true, isMember:()=>true, voiceChannel:()=>'call', validVoiceChannel:()=>true, options:()=>({available:true}) };
-  const stopped = [], plex = { stop:async media=>stopped.push(media), prepare:async(id, quality, compatible)=>({id,quality,compatible,kind:'plex',duration:60,format:'hls',resources:new Map()}) };
-  const watch = new Watch(hub, plex), host = {userId:'host',guildId:'guild',channelId:'commands',surface:'web'}, guest = {...host,userId:'guest'};
-  const id = watch.create(host), room = watch.rooms.get(id), a = randomUUID(), b = randomUUID();
-  watch.snapshot(room,host,a); watch.snapshot(room,guest,b);
-  room.media = {id:'12',kind:'plex',duration:60};
-  await watch.prepareViewer(room,host,a); await watch.prepareViewer(room,guest,b);
-  assert.notEqual(room.viewers.get(a).media,room.viewers.get(b).media,'each viewer has its own stream');
-  const version=room.mediaVersion, other=room.viewers.get(a).media, guestOld=room.viewers.get(b).media;
-  room.s.controls.playback=false;
-  const command=(actor,viewerId,action,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{roomId:id,action,args});
-  assert.equal((await command(guest,b,'media.pause')).status,'forbidden');
-  assert.equal((await command(guest,b,'media.volume.set',{percent:25})).status,'applied');
-  await command(guest,b,'media.mute');
-  assert.equal(watch.snapshot(room,guest,b).state.volume,25); assert.equal(watch.snapshot(room,guest,b).state.muted,true);
-  assert.equal(watch.snapshot(room,host,a).state.volume,30); assert.equal(room.s.state.muted,false);
-  assert.equal((await command(guest,b,'media.quality.set',{quality:'1080p',compatible:true})).status,'applied');
-  assert.equal(room.viewers.get(a).media,other); assert.equal(room.mediaVersion,version); assert.equal(room.viewers.get(b).media.quality,'1080p8');
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  const stopped = [],
+    plex = {
+      stop: async media => stopped.push(media),
+      prepare: async (id, quality, compatible) => ({
+        id,
+        quality,
+        compatible,
+        kind: 'plex',
+        duration: 60,
+        format: 'hls',
+        resources: new Map(),
+      }),
+    };
+  const watch = new Watch(hub, plex),
+    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    guest = { ...host, userId: 'guest' };
+  const id = watch.create(host),
+    room = watch.rooms.get(id),
+    a = randomUUID(),
+    b = randomUUID();
+  watch.snapshot(room, host, a);
+  watch.snapshot(room, guest, b);
+  room.media = { id: '12', kind: 'plex', duration: 60 };
+  await watch.prepareViewer(room, host, a);
+  await watch.prepareViewer(room, guest, b);
+  assert.notEqual(room.viewers.get(a).media, room.viewers.get(b).media, 'each viewer has its own stream');
+  const version = room.mediaVersion,
+    other = room.viewers.get(a).media,
+    guestOld = room.viewers.get(b).media;
+  room.s.controls.playback = false;
+  const command = (actor, viewerId, action, args) =>
+    hub.dispatch({ ...actor, watchViewerId: viewerId }, { roomId: id, action, args });
+  assert.equal((await command(guest, b, 'media.pause')).status, 'forbidden');
+  assert.equal((await command(guest, b, 'media.volume.set', { percent: 25 })).status, 'applied');
+  await command(guest, b, 'media.mute');
+  assert.equal(watch.snapshot(room, guest, b).state.volume, 25);
+  assert.equal(watch.snapshot(room, guest, b).state.muted, true);
+  assert.equal(watch.snapshot(room, host, a).state.volume, 30);
+  assert.equal(room.s.state.muted, false);
+  assert.equal(
+    (await command(guest, b, 'media.quality.set', { quality: '1080p', compatible: true })).status,
+    'applied',
+  );
+  assert.equal(room.viewers.get(a).media, other);
+  assert.equal(room.mediaVersion, version);
+  assert.equal(room.viewers.get(b).media.quality, '1080p8');
   assert.ok(stopped.includes(guestOld));
-  assert.equal((await command(guest,a,'media.mute')).status,'unsupported','cannot spoof another viewer');
-  assert.equal((await hub.dispatch(host,{roomId:id,action:'media.mute'})).status,'unsupported','unaddressed personal settings cannot mute the room');
-  assert.equal((await command(guest,b,'zoom.set',{value:1.2})).status,'applied');
-  assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'applied','personal quality stays independent of playback permissions');
+  assert.equal((await command(guest, a, 'media.mute')).status, 'unsupported', 'cannot spoof another viewer');
+  assert.equal(
+    (await hub.dispatch(host, { roomId: id, action: 'media.mute' })).status,
+    'unsupported',
+    'unaddressed personal settings cannot mute the room',
+  );
+  assert.equal((await command(guest, b, 'zoom.set', { value: 1.2 })).status, 'applied');
+  assert.equal(
+    (await command(guest, b, 'media.quality.set', { quality: '720p' })).status,
+    'applied',
+    'personal quality stays independent of playback permissions',
+  );
   room.s.visibility = 'private';
-  assert.equal((await command(guest,b,'media.quality.set',{quality:'720p'})).status,'forbidden','personal quality never bypasses privacy');
-  const personal = room.viewers.get(b); personal.compatible = true; personal.fallback = 'av1';
+  assert.equal(
+    (await command(guest, b, 'media.quality.set', { quality: '720p' })).status,
+    'forbidden',
+    'personal quality never bypasses privacy',
+  );
+  const personal = room.viewers.get(b);
+  personal.compatible = true;
+  personal.fallback = 'av1';
   watch.dropMedia(room);
-  assert.equal(personal.compatible,false,'new content gets a fresh compatibility decision');
-  assert.equal(personal.fallback,undefined); assert.equal(personal.quality,'720p4','personal quality survives new content');
+  assert.equal(personal.compatible, false, 'new content gets a fresh compatibility decision');
+  assert.equal(personal.fallback, undefined);
+  assert.equal(personal.quality, '720p4', 'personal quality survives new content');
 
   // dropMedia on room-reset resets per-viewer tracks and offsets
-  personal.compatible = true; personal.fallback = '720p4'; personal.subtitleOffset = 1.5;
+  personal.compatible = true;
+  personal.fallback = '720p4';
+  personal.subtitleOffset = 1.5;
   personal.trackChoice = { audioId: '12', subtitleId: '22' };
   watch.dropMedia(room, 'room-reset');
   assert.equal(personal.compatible, false);
@@ -279,498 +490,1050 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
   watch.close();
 });
 
-
-test('HLS recovery replaces only the authorized viewer stream and preserves personal tracks and room intent',async()=>{
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
-  const prepared=[],stopped=[];
-  const plex={prepare:async(id,quality,compatible,source,fallback,choices)=>{
-    const media={id,kind:'plex',format:'hls',duration:60,quality,selection:{audio:{id:choices.audioId},subtitle:{id:choices.subtitleId}}};
-    prepared.push({media,choices});return media;
-  },stop:async media=>stopped.push(media)};
-  const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'},guest={...host,userId:'guest'};
-  const id=watch.create(host),room=watch.rooms.get(id),a=randomUUID(),b=randomUUID();
-  watch.snapshot(room,host,a);watch.snapshot(room,guest,b);
-  room.media={id:'104',kind:'plex',duration:60};room.position=18;room.manualPaused=true;room.s.state.paused=true;
-  await watch.prepareViewer(room,host,a);await watch.prepareViewer(room,guest,b);
-  const viewer=room.viewers.get(b),other=room.viewers.get(a).media,old=viewer.media,version=room.mediaVersion,epoch=room.s.epoch;
-  viewer.trackChoice={audioId:'1042',subtitleId:'1044'};
-  const command=(actor,viewerId,args)=>hub.dispatch({...actor,watchViewerId:viewerId},{roomId:id,action:'media.stream.refresh',args});
-  const args={mediaVersion:version,streamVersion:viewer.streamVersion};
-  assert.equal((await command(guest,b,args)).status,'applied');
-  assert.notEqual(viewer.media,old);assert.equal(room.viewers.get(a).media,other);
-  assert.equal(prepared.at(-1).choices.audioId,'1042');assert.equal(prepared.at(-1).choices.subtitleId,'1044');
-  assert.equal(room.position,18);assert.equal(room.manualPaused,true);assert.equal(room.s.state.paused,true);
-  assert.equal(room.s.epoch,epoch);assert.equal(room.mediaVersion,version);
+test('HLS recovery replaces only the authorized viewer stream and preserves personal tracks and room intent', async () => {
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  const prepared = [],
+    stopped = [];
+  const plex = {
+    prepare: async (id, quality, compatible, source, fallback, choices) => {
+      const media = {
+        id,
+        kind: 'plex',
+        format: 'hls',
+        duration: 60,
+        quality,
+        selection: { audio: { id: choices.audioId }, subtitle: { id: choices.subtitleId } },
+      };
+      prepared.push({ media, choices });
+      return media;
+    },
+    stop: async media => stopped.push(media),
+  };
+  const watch = new Watch(hub, plex),
+    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    guest = { ...host, userId: 'guest' };
+  const id = watch.create(host),
+    room = watch.rooms.get(id),
+    a = randomUUID(),
+    b = randomUUID();
+  watch.snapshot(room, host, a);
+  watch.snapshot(room, guest, b);
+  room.media = { id: '104', kind: 'plex', duration: 60 };
+  room.position = 18;
+  room.manualPaused = true;
+  room.s.state.paused = true;
+  await watch.prepareViewer(room, host, a);
+  await watch.prepareViewer(room, guest, b);
+  const viewer = room.viewers.get(b),
+    other = room.viewers.get(a).media,
+    old = viewer.media,
+    version = room.mediaVersion,
+    epoch = room.s.epoch;
+  viewer.trackChoice = { audioId: '1042', subtitleId: '1044' };
+  const command = (actor, viewerId, args) =>
+    hub.dispatch({ ...actor, watchViewerId: viewerId }, { roomId: id, action: 'media.stream.refresh', args });
+  const args = { mediaVersion: version, streamVersion: viewer.streamVersion };
+  assert.equal((await command(guest, b, args)).status, 'applied');
+  assert.notEqual(viewer.media, old);
+  assert.equal(room.viewers.get(a).media, other);
+  assert.equal(prepared.at(-1).choices.audioId, '1042');
+  assert.equal(prepared.at(-1).choices.subtitleId, '1044');
+  assert.equal(room.position, 18);
+  assert.equal(room.manualPaused, true);
+  assert.equal(room.s.state.paused, true);
+  assert.equal(room.s.epoch, epoch);
+  assert.equal(room.mediaVersion, version);
   assert.ok(stopped.includes(old));
-  assert.equal((await command(guest,b,args)).status,'unavailable','stale stream cannot replace its successor');
-  assert.equal((await command(guest,a,{mediaVersion:version,streamVersion:room.viewers.get(a).streamVersion})).status,'unsupported','viewer identity is bound to the actor');
+  assert.equal((await command(guest, b, args)).status, 'unavailable', 'stale stream cannot replace its successor');
+  assert.equal(
+    (await command(guest, a, { mediaVersion: version, streamVersion: room.viewers.get(a).streamVersion })).status,
+    'unsupported',
+    'viewer identity is bound to the actor',
+  );
   let release;
-  plex.prepare=async()=>new Promise(resolve=>{release=()=>resolve({id:'104',kind:'plex',format:'hls',duration:60});});
-  const active=viewer.media,pending=command(guest,b,{mediaVersion:version,streamVersion:viewer.streamVersion});
-  for(let i=0;i<10&&!release;i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.ok(release,'refresh entered preparation');
-  room.s.visibility='private';
+  plex.prepare = async () =>
+    new Promise(resolve => {
+      release = () => resolve({ id: '104', kind: 'plex', format: 'hls', duration: 60 });
+    });
+  const active = viewer.media,
+    pending = command(guest, b, { mediaVersion: version, streamVersion: viewer.streamVersion });
+  for (let i = 0; i < 10 && !release; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(release, 'refresh entered preparation');
+  room.s.visibility = 'private';
   release();
-  assert.equal((await pending).status,'unavailable','revoked permission cancels an in-flight refresh');
-  assert.equal(viewer.media,active,'revocation keeps the old player attached until normal access cleanup');
-  assert.equal((await command(guest,b,{mediaVersion:version,streamVersion:viewer.streamVersion})).status,'forbidden');
+  assert.equal((await pending).status, 'unavailable', 'revoked permission cancels an in-flight refresh');
+  assert.equal(viewer.media, active, 'revocation keeps the old player attached until normal access cleanup');
+  assert.equal(
+    (await command(guest, b, { mediaVersion: version, streamVersion: viewer.streamVersion })).status,
+    'forbidden',
+  );
   watch.close();
 });
 
-
-test('real HTTPS watch endpoints reject impersonation, stale commands and revoked media grants', { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) }, async t => {
-  const cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
-  const config = { cert, key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')), publicUrl: 'https://localhost:6768',
-    ownerId: 'host', guildId: 'guild', channels: ['commands'], demo: true, clientId: '123456789012345678', clientSecret: 'fixture-secret' };
-  const app = createApp(config, { oauthFetch: async url => new Response(JSON.stringify(url.endsWith('/token') ? { access_token: 'discord-fixture' } : { id: 'demo-guest', username: 'Verified guest' })) }); let member = true;
-  app.hub.access = { refresh: async () => member, isMember: () => member, voiceChannel: () => 'call', validVoiceChannel: () => true, options: () => ({ available: true }) };
-  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); t.after(() => app.close());
-  const port = app.server.address().port; config.publicUrl = `https://localhost:${port}`;
-  const control = require('./helpers/control-client').controlClient(t, config, cert);
-  async function request(route, method = 'GET', data, headers = {}) {
-    if (control.handles(route)) return control.request(route,data,headers);
-    return new Promise((resolve, reject) => {
-      const req = https.request({ hostname: 'localhost', port, path: route, method, ca: cert, headers: { 'Content-Type': 'application/json', Origin: config.publicUrl, ...headers } }, res => {
-        const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => {
-          const raw = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, body: res.headers['content-type']?.includes('json') ? JSON.parse(raw.toString()) : raw });
-        });
-      }); req.on('error', reject); req.end(data && JSON.stringify(data));
+test(
+  'real HTTPS watch endpoints reject impersonation, stale commands and revoked media grants',
+  { skip: !fs.existsSync(path.join(__dirname, '../certs/server-cert.pem')) },
+  async t => {
+    const cert = fs.readFileSync(path.join(__dirname, '../certs/server-cert.pem'));
+    const config = {
+      cert,
+      key: fs.readFileSync(path.join(__dirname, '../certs/server-key.pem')),
+      publicUrl: 'https://localhost:6768',
+      ownerId: 'host',
+      guildId: 'guild',
+      channels: ['commands'],
+      demo: true,
+      clientId: '123456789012345678',
+      clientSecret: 'fixture-secret',
+    };
+    const app = createApp(config, {
+      oauthFetch: async url =>
+        new Response(
+          JSON.stringify(
+            url.endsWith('/token')
+              ? { access_token: 'discord-fixture' }
+              : { id: 'demo-guest', username: 'Verified guest' },
+          ),
+        ),
     });
-  }
-  assert.equal((await request('/api/watch/rooms')).status, 401);
-  for(const route of ['/watch/test','/watch-test.js','/watch-test.css','/watch/test/sample.mp4']) {
-    assert.equal((await request(route)).status,404,route+' is absent from the normal server');
-  }
-  for(const route of ['/__diagnostics/codec','/__diagnostics/codec.js','/__diagnostics/codec.css']) {
-    assert.equal((await request(route)).status,200,'Non-private tester shell is available');
-  }
-  assert.equal((await request('/__diagnostics/media/sample.mp4')).status,403,'Tester samples require active admin authorization');
-  const activityOrigin = `https://${config.clientId}.discordsays.com`;
-  assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' })).status, 403, 'web origin cannot impersonate an Activity login');
-  const activityLogin = (await request('/api/watch/activity-login', 'POST', { code: 'fixture', userId: 'host', owner: true }, { Origin: activityOrigin })).body;
-  assert.equal(activityLogin.owner, false, 'Activity identity comes from Discord, not caller JSON');
-  assert.equal(activityLogin.name, 'Verified guest');
-  const activityHeaders = { Origin: activityOrigin, Authorization: 'Bearer ' + activityLogin.token };
-  const created = await request('/api/watch/rooms', 'POST', {userId:'host'}, activityHeaders);
-  assert.equal(created.status, 201, 'verified member can create a room');
-  assert.equal(app.watch.rooms.get(created.body.id).s.hostId, 'demo-guest', 'creator comes from verified identity');
-  assert.equal((await request('/api/watch/library?room=' + created.body.id, 'GET', undefined, activityHeaders)).status, 200);
-  app.watch.remove(created.body.id);
-  for (const route of ['/watch', '/activity', '/auth/discord']) {
-    const redirected = await request(route + '?frame_id=fixture');
-    assert.equal(redirected.status, 302); assert.equal(redirected.headers.location, '/?frame_id=fixture');
-  }
-  assert.equal((await request('/?frame_id=fixture')).status, 200);
-  assert.equal((await request('/watch/test?frame_id=fixture&embedded=1','GET',undefined,{'Sec-Fetch-Dest':'iframe'})).status,404);
-  member = false;
-  assert.equal((await request('/api/watch/activity-login', 'POST', { code: 'fixture' }, { Origin: activityOrigin })).status, 403);
-  assert.equal((await request('/api/watch/me', 'GET', undefined, activityHeaders)).status, 401, 'existing Activity login is revoked for a removed member');
-  assert.equal((await request('/api/watch/rooms', 'POST', {}, activityHeaders)).status, 401);
-  member = true;
-  const hostLogin = (await request('/api/watch/demo-login', 'POST', { persona: 'host' })).body;
-  const guestLogin = (await request('/api/watch/demo-login', 'POST', { persona: 'guest' })).body;
-  const host = { Authorization: 'Bearer ' + hostLogin.token }, guest = { Authorization: 'Bearer ' + guestLogin.token };
-  assert.equal((await request('/api/watch/admin-mode','POST',{enabled:true,userId:'host'},guest)).status,403);
-  assert.equal(app.hub.adminMode,false);
-  const guestCreated = (await request('/api/watch/rooms', 'POST', { userId: 'host' }, guest)).body.id;
-  assert.equal(app.watch.rooms.get(guestCreated).s.hostId, 'demo-guest'); app.watch.remove(guestCreated);
-  assert.equal((await request('/api/watch/rooms', 'POST', {}, { ...host, Origin: 'https://evil.example' })).status, 401);
-  const id = (await request('/api/watch/rooms', 'POST', {}, host)).body.id, viewer = randomUUID();
-  const getState = () => request(`/api/watch/rooms/${id}?viewer=${viewer}&codecs=av1`, 'GET', undefined, host);
-  const command = async (action, args) => {
-    const state = (await getState()).body;
-    return request(`/api/watch/rooms/${id}/command`, 'POST', { epoch: state.epoch, expiresAt: Date.now() + 2500, command: { action, args } }, host);
-  };
-  assert.equal((await request('/api/watch/rooms', 'GET', undefined, guest)).body.rooms[0].id, id);
-  assert.equal((await command('media.load', { mediaId: 'demo', quality: 'direct' })).body.status, 'applied');
-  const observedState=(await getState()).body;
-  assert.ok(observedState.timing.serverSentAt>=observedState.timing.serverReceivedAt);
-  assert.ok(observedState.serverNow>=observedState.timing.serverReceivedAt && observedState.serverNow<=observedState.timing.serverSentAt);
-  assert.ok(Math.abs(observedState.timing.serverSentAt-observedState.timing.serverReceivedAt-observedState.timing.serverProcessingMs)<5);
-  assert.equal((await getState()).body.timing.clockEpoch,observedState.timing.clockEpoch);
-  assert.equal((await request('/playback-timing.js')).status,200,'timing module is served to the player');
-  const observation={viewerId:viewer,mediaVersion:observedState.mediaVersion,streamVersion:observedState.streamVersion,observationEpoch:observedState.observationEpoch,sequence:1,sampleAt:1000,observedAt:Date.now(),position:0,state:'paused',frames:0,rate:1,discontinuity:0,userId:'demo-guest',mediaId:'fake'};
-  const observe= (data,headers=host)=>request(`/api/watch/rooms/${id}/observe`,'POST',data,headers);
-  assert.equal((await observe(observation,guest)).status,403,'another account cannot report this viewer');
-  assert.equal((await observe(observation,{...host,Origin:'https://evil.example'})).status,401);
-  const acceptedObservation=await observe(observation);
-  assert.equal(acceptedObservation.status,200);assert.equal(acceptedObservation.body.credit.reason,'baseline');
-  const replayObservation=await observe(observation);
-  assert.equal(replayObservation.status,409,'report replay rejected');assert.equal(replayObservation.body.rejection,'sequence-replayed');
-  const originalObserve=app.watch.tracking.observe;
-  try {
-    app.watch.tracking.observe=()=>{throw new Error('secret database path and token');};
-    const failed=await observe({...observation,sequence:2,sampleAt:2000});
-    assert.equal(failed.status,503);assert.equal(failed.body.rejection,'storage-failure');assert.ok(!JSON.stringify(failed.body).includes('secret'));
-  } finally {app.watch.tracking.observe=originalObserve;}
-  const ownHistory=(await request('/api/watch/playback','GET',undefined,host)).body;
-  assert.equal(ownHistory.sessions[0].userId,'host');assert.equal(ownHistory.sessions[0].mediaId,'demo','server derives media');
-  assert.equal((await request('/api/watch/playback?userId=host','GET',undefined,guest)).body.sessions.length,0,'history is private to the authenticated account');
-  const guestViewer = randomUUID();
-  const guestState = (await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`, 'GET', undefined, guest)).body;
-  const media = await request(guestState.mediaUrl, 'GET', undefined, { Range: 'bytes=0-15' });
-  assert.equal(media.status, 206); assert.equal(media.body.length, 16); assert.match(media.headers['content-range'], /^bytes 0-15\//);
-  const stale = await request(`/api/watch/rooms/${id}/command`, 'POST', { epoch: randomUUID(), expiresAt: Date.now() + 2000, command: { action: 'media.play' } }, guest);
-  assert.equal(stale.status, 409);
-  member = false; assert.equal((await request(guestState.mediaUrl)).status, 403);
-  member = true; assert.equal((await request(guestState.mediaUrl)).status, 200, 'a public room remains accessible after membership returns');
-  const replacementLogin = (await request('/api/watch/demo-login','POST',{persona:'guest'})).body;
-  assert.ok(replacementLogin.expiresAt>Date.now());
-  const replacementGuest = {Authorization:'Bearer '+replacementLogin.token};
-  const replacementState = (await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`,'GET',undefined,replacementGuest)).body;
-  assert.equal(replacementState.streamVersion,guestState.streamVersion,'identity renewal retains the personal stream');
-  assert.equal(replacementState.mediaUrl,guestState.mediaUrl,'identity renewal retains the media grant');
+    let member = true;
+    app.hub.access = {
+      refresh: async () => member,
+      isMember: () => member,
+      voiceChannel: () => 'call',
+      validVoiceChannel: () => true,
+      options: () => ({ available: true }),
+    };
+    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    t.after(() => app.close());
+    const port = app.server.address().port;
+    config.publicUrl = `https://localhost:${port}`;
+    const control = require('./helpers/control-client').controlClient(t, config, cert);
+    async function request(route, method = 'GET', data, headers = {}) {
+      if (control.handles(route)) return control.request(route, data, headers);
+      return new Promise((resolve, reject) => {
+        const req = https.request(
+          {
+            hostname: 'localhost',
+            port,
+            path: route,
+            method,
+            ca: cert,
+            headers: { 'Content-Type': 'application/json', Origin: config.publicUrl, ...headers },
+          },
+          res => {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+              const raw = Buffer.concat(chunks);
+              resolve({
+                status: res.statusCode,
+                headers: res.headers,
+                body: res.headers['content-type']?.includes('json') ? JSON.parse(raw.toString()) : raw,
+              });
+            });
+          },
+        );
+        req.on('error', reject);
+        req.end(data && JSON.stringify(data));
+      });
+    }
+    assert.equal((await request('/api/watch/rooms')).status, 401);
+    for (const route of ['/watch/test', '/watch-test.js', '/watch-test.css', '/watch/test/sample.mp4']) {
+      assert.equal((await request(route)).status, 404, route + ' is absent from the normal server');
+    }
+    for (const route of ['/__diagnostics/codec', '/__diagnostics/codec.js', '/__diagnostics/codec.css']) {
+      assert.equal((await request(route)).status, 200, 'Non-private tester shell is available');
+    }
+    assert.equal(
+      (await request('/__diagnostics/media/sample.mp4')).status,
+      403,
+      'Tester samples require active admin authorization',
+    );
+    const activityOrigin = `https://${config.clientId}.discordsays.com`;
+    assert.equal(
+      (await request('/api/watch/activity-login', 'POST', { code: 'fixture' })).status,
+      403,
+      'web origin cannot impersonate an Activity login',
+    );
+    const activityLogin = (
+      await request(
+        '/api/watch/activity-login',
+        'POST',
+        { code: 'fixture', userId: 'host', owner: true },
+        { Origin: activityOrigin },
+      )
+    ).body;
+    assert.equal(activityLogin.owner, false, 'Activity identity comes from Discord, not caller JSON');
+    assert.equal(activityLogin.name, 'Verified guest');
+    const activityHeaders = { Origin: activityOrigin, Authorization: 'Bearer ' + activityLogin.token };
+    const created = await request('/api/watch/rooms', 'POST', { userId: 'host' }, activityHeaders);
+    assert.equal(created.status, 201, 'verified member can create a room');
+    assert.equal(app.watch.rooms.get(created.body.id).s.hostId, 'demo-guest', 'creator comes from verified identity');
+    assert.equal(
+      (await request('/api/watch/library?room=' + created.body.id, 'GET', undefined, activityHeaders)).status,
+      200,
+    );
+    app.watch.remove(created.body.id);
+    for (const route of ['/watch', '/activity', '/auth/discord']) {
+      const redirected = await request(route + '?frame_id=fixture');
+      assert.equal(redirected.status, 302);
+      assert.equal(redirected.headers.location, '/?frame_id=fixture');
+    }
+    assert.equal((await request('/?frame_id=fixture')).status, 200);
+    assert.equal(
+      (await request('/watch/test?frame_id=fixture&embedded=1', 'GET', undefined, { 'Sec-Fetch-Dest': 'iframe' }))
+        .status,
+      404,
+    );
+    member = false;
+    assert.equal(
+      (await request('/api/watch/activity-login', 'POST', { code: 'fixture' }, { Origin: activityOrigin })).status,
+      403,
+    );
+    assert.equal(
+      (await request('/api/watch/me', 'GET', undefined, activityHeaders)).status,
+      401,
+      'existing Activity login is revoked for a removed member',
+    );
+    assert.equal((await request('/api/watch/rooms', 'POST', {}, activityHeaders)).status, 401);
+    member = true;
+    const hostLogin = (await request('/api/watch/demo-login', 'POST', { persona: 'host' })).body;
+    const guestLogin = (await request('/api/watch/demo-login', 'POST', { persona: 'guest' })).body;
+    const host = { Authorization: 'Bearer ' + hostLogin.token },
+      guest = { Authorization: 'Bearer ' + guestLogin.token };
+    assert.equal(
+      (await request('/api/watch/admin-mode', 'POST', { enabled: true, userId: 'host' }, guest)).status,
+      403,
+    );
+    assert.equal(app.hub.adminMode, false);
+    const guestCreated = (await request('/api/watch/rooms', 'POST', { userId: 'host' }, guest)).body.id;
+    assert.equal(app.watch.rooms.get(guestCreated).s.hostId, 'demo-guest');
+    app.watch.remove(guestCreated);
+    assert.equal(
+      (await request('/api/watch/rooms', 'POST', {}, { ...host, Origin: 'https://evil.example' })).status,
+      401,
+    );
+    const id = (await request('/api/watch/rooms', 'POST', {}, host)).body.id,
+      viewer = randomUUID();
+    const getState = () => request(`/api/watch/rooms/${id}?viewer=${viewer}&codecs=av1`, 'GET', undefined, host);
+    const command = async (action, args) => {
+      const state = (await getState()).body;
+      return request(
+        `/api/watch/rooms/${id}/command`,
+        'POST',
+        { epoch: state.epoch, expiresAt: Date.now() + 2500, command: { action, args } },
+        host,
+      );
+    };
+    assert.equal((await request('/api/watch/rooms', 'GET', undefined, guest)).body.rooms[0].id, id);
+    assert.equal((await command('media.load', { mediaId: 'demo', quality: 'direct' })).body.status, 'applied');
+    const observedState = (await getState()).body;
+    assert.ok(observedState.timing.serverSentAt >= observedState.timing.serverReceivedAt);
+    assert.ok(
+      observedState.serverNow >= observedState.timing.serverReceivedAt &&
+        observedState.serverNow <= observedState.timing.serverSentAt,
+    );
+    assert.ok(
+      Math.abs(
+        observedState.timing.serverSentAt -
+          observedState.timing.serverReceivedAt -
+          observedState.timing.serverProcessingMs,
+      ) < 5,
+    );
+    assert.equal((await getState()).body.timing.clockEpoch, observedState.timing.clockEpoch);
+    assert.equal((await request('/playback-timing.js')).status, 200, 'timing module is served to the player');
+    const observation = {
+      viewerId: viewer,
+      mediaVersion: observedState.mediaVersion,
+      streamVersion: observedState.streamVersion,
+      observationEpoch: observedState.observationEpoch,
+      sequence: 1,
+      sampleAt: 1000,
+      observedAt: Date.now(),
+      position: 0,
+      state: 'paused',
+      frames: 0,
+      rate: 1,
+      discontinuity: 0,
+      userId: 'demo-guest',
+      mediaId: 'fake',
+    };
+    const observe = (data, headers = host) => request(`/api/watch/rooms/${id}/observe`, 'POST', data, headers);
+    assert.equal((await observe(observation, guest)).status, 403, 'another account cannot report this viewer');
+    assert.equal((await observe(observation, { ...host, Origin: 'https://evil.example' })).status, 401);
+    const acceptedObservation = await observe(observation);
+    assert.equal(acceptedObservation.status, 200);
+    assert.equal(acceptedObservation.body.credit.reason, 'baseline');
+    const replayObservation = await observe(observation);
+    assert.equal(replayObservation.status, 409, 'report replay rejected');
+    assert.equal(replayObservation.body.rejection, 'sequence-replayed');
+    const originalObserve = app.watch.tracking.observe;
+    try {
+      app.watch.tracking.observe = () => {
+        throw new Error('secret database path and token');
+      };
+      const failed = await observe({ ...observation, sequence: 2, sampleAt: 2000 });
+      assert.equal(failed.status, 503);
+      assert.equal(failed.body.rejection, 'storage-failure');
+      assert.ok(!JSON.stringify(failed.body).includes('secret'));
+    } finally {
+      app.watch.tracking.observe = originalObserve;
+    }
+    const ownHistory = (await request('/api/watch/playback', 'GET', undefined, host)).body;
+    assert.equal(ownHistory.sessions[0].userId, 'host');
+    assert.equal(ownHistory.sessions[0].mediaId, 'demo', 'server derives media');
+    assert.equal(
+      (await request('/api/watch/playback?userId=host', 'GET', undefined, guest)).body.sessions.length,
+      0,
+      'history is private to the authenticated account',
+    );
+    const guestViewer = randomUUID();
+    const guestState = (await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`, 'GET', undefined, guest)).body;
+    const media = await request(guestState.mediaUrl, 'GET', undefined, { Range: 'bytes=0-15' });
+    assert.equal(media.status, 206);
+    assert.equal(media.body.length, 16);
+    assert.match(media.headers['content-range'], /^bytes 0-15\//);
+    const stale = await request(
+      `/api/watch/rooms/${id}/command`,
+      'POST',
+      { epoch: randomUUID(), expiresAt: Date.now() + 2000, command: { action: 'media.play' } },
+      guest,
+    );
+    assert.equal(stale.status, 409);
+    member = false;
+    assert.equal((await request(guestState.mediaUrl)).status, 403);
+    member = true;
+    assert.equal(
+      (await request(guestState.mediaUrl)).status,
+      200,
+      'a public room remains accessible after membership returns',
+    );
+    const replacementLogin = (await request('/api/watch/demo-login', 'POST', { persona: 'guest' })).body;
+    assert.ok(replacementLogin.expiresAt > Date.now());
+    const replacementGuest = { Authorization: 'Bearer ' + replacementLogin.token };
+    const replacementState = (
+      await request(`/api/watch/rooms/${id}?viewer=${guestViewer}`, 'GET', undefined, replacementGuest)
+    ).body;
+    assert.equal(
+      replacementState.streamVersion,
+      guestState.streamVersion,
+      'identity renewal retains the personal stream',
+    );
+    assert.equal(replacementState.mediaUrl, guestState.mediaUrl, 'identity renewal retains the media grant');
 
-  // delivery=local validation, transcode bypass, readiness and observation tracking
-  const badDelivery = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}&delivery=ftp`, 'GET', undefined, guest);
-  assert.equal(badDelivery.status, 400, 'invalid delivery mode is rejected');
+    // delivery=local validation, transcode bypass, readiness and observation tracking
+    const badDelivery = await request(
+      `/api/watch/rooms/${id}?viewer=${randomUUID()}&delivery=ftp`,
+      'GET',
+      undefined,
+      guest,
+    );
+    assert.equal(badDelivery.status, 400, 'invalid delivery mode is rejected');
 
-  const localViewerId = randomUUID();
-  const localState = (await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=local`, 'GET', undefined, guest)).body;
-  assert.equal(localState.mediaUrl, undefined, 'delivery=local skips media grant allocation');
-  assert.equal(localState.format, 'local', 'local delivery returns local format');
-  assert.equal(localState.mediaId, 'demo');
-  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, true);
+    const localViewerId = randomUUID();
+    const localState = (
+      await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=local`, 'GET', undefined, guest)
+    ).body;
+    assert.equal(localState.mediaUrl, undefined, 'delivery=local skips media grant allocation');
+    assert.equal(localState.format, 'local', 'local delivery returns local format');
+    assert.equal(localState.mediaId, 'demo');
+    assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, true);
 
-  const localReady = await request(`/api/watch/rooms/${id}/ready`, 'POST', {
-    viewerId: localViewerId,
-    mediaVersion: localState.mediaVersion,
-    ready: true,
-    readinessVersion: localState.readinessVersion
-  }, guest);
-  assert.equal(localReady.status, 200, 'ready succeeds for delivery=local');
+    const localReady = await request(
+      `/api/watch/rooms/${id}/ready`,
+      'POST',
+      {
+        viewerId: localViewerId,
+        mediaVersion: localState.mediaVersion,
+        ready: true,
+        readinessVersion: localState.readinessVersion,
+      },
+      guest,
+    );
+    assert.equal(localReady.status, 200, 'ready succeeds for delivery=local');
 
-  const localObs = {
-    viewerId: localViewerId,
-    mediaVersion: localState.mediaVersion,
-    streamVersion: localState.streamVersion,
-    observationEpoch: localState.observationEpoch,
-    sequence: 1,
-    sampleAt: 1000,
-    observedAt: Date.now(),
-    position: 0,
-    state: 'paused',
-    frames: 0,
-    rate: 1,
-    discontinuity: 0
-  };
-  const localObserveRes = await request(`/api/watch/rooms/${id}/observe`, 'POST', localObs, guest);
-  assert.equal(localObserveRes.status, 200, 'observe succeeds for delivery=local');
-  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).tracking.record.deliveryMode, 'local-file');
+    const localObs = {
+      viewerId: localViewerId,
+      mediaVersion: localState.mediaVersion,
+      streamVersion: localState.streamVersion,
+      observationEpoch: localState.observationEpoch,
+      sequence: 1,
+      sampleAt: 1000,
+      observedAt: Date.now(),
+      position: 0,
+      state: 'paused',
+      frames: 0,
+      rate: 1,
+      discontinuity: 0,
+    };
+    const localObserveRes = await request(`/api/watch/rooms/${id}/observe`, 'POST', localObs, guest);
+    assert.equal(localObserveRes.status, 200, 'observe succeeds for delivery=local');
+    assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).tracking.record.deliveryMode, 'local-file');
 
-  // Switching from delivery=local back to delivery=auto
-  const autoSwitched = (await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=auto`, 'GET', undefined, guest)).body;
-  assert.ok(autoSwitched.mediaUrl, 'switching to auto allocates stream URL');
-  assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, false);
-  assert.equal((await request(guestState.mediaUrl)).status,200,'preserved media grant remains accessible');
-  assert.equal((await request(replacementState.mediaUrl)).status,200);
-  await command('room.visibility', {visibility:'private'}); assert.equal((await request(replacementState.mediaUrl)).status, 403);
-  const privateState = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}`, 'GET', undefined, guest); assert.equal(privateState.status, 403);
-  const placeholder=(await request('/api/watch/rooms','GET',undefined,activityHeaders)).body.rooms[0];
-  assert.equal(placeholder.locked,true);assert.equal(placeholder.id,id);assert.equal('members' in placeholder,false);
-  assert.deepEqual((await request('/api/watch/rooms?activity=true','GET',undefined,guest)).body.rooms,[],'website query cannot opt into private hints');
-  const other=(await request('/api/watch/rooms','POST',{},guest)).body.id;
-  let otherState=(await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`,'GET',undefined,guest)).body;
-  await request(`/api/watch/rooms/${other}/command`,'POST',{epoch:otherState.epoch,expiresAt:Date.now()+2000,command:{action:'room.visibility',args:{visibility:'private'}}},guest);
-  assert.equal((await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`,'GET',undefined,host)).status,403);
-  assert.equal((await request('/api/watch/admin-mode','POST',{enabled:true},host)).status,200);
-  assert.equal((await request('/api/watch/me','GET',undefined,host)).body.adminMode,true);
-  otherState=(await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`,'GET',undefined,host)).body;
-  assert.equal(otherState.canManage,true);assert.equal(otherState.isHost,false);
-  assert.equal((await request(`/api/watch/rooms/${other}/close`,'POST',{},host)).status,200);
-  await request('/api/watch/admin-mode','POST',{enabled:false},host);
-  // AV1 resources reuse the same private grant, identity and stream revision.
-  const room = app.watch.rooms.get(id), local = room.viewers.get(viewer);
-  room.mediaVersion = randomUUID(); room.position = 0; room.s.state.paused = true;
-  app.watch.plex.av1.ffmpeg = 'fixture-only';
-  const av1 = {kind:'plex',format:'av1',videoCodec:'av1',duration:180,av1Lease:app.watch.plex.av1.acquire({id:'123',duration:180},'direct')};
-  room.media = {...room.media,duration:180};
-  local.media = av1; local.mediaVersion = room.mediaVersion; local.streamVersion = randomUUID();
-  let chunks = 0;
-  app.watch.plex.av1.chunk = async () => { chunks++; return {video:Buffer.from('private fixture webm'),audio:Buffer.from('opus')}; };
-  config.transcoding={uburoom:true,formats:['av1'],fallback:{enabled:true,height:720,bitrate:2}};
-  room.media.kind='plex';
-  const fallbackMedia={...av1,quality:'720p2',selection:{},av1Lease:app.watch.plex.av1.acquire({id:'123',duration:180},'720p2')};
-  room.fallbackStream={media:fallbackMedia,reconcile(){},close(){app.watch.plex.av1.release(fallbackMedia.av1Lease);}};
-  const av1State = (await getState()).body, base = av1State.mediaUrl.replace(/\/start$/, '/chunk-video-');
-  assert.ok(av1State.fallbackStream,'fallback uses a second per-viewer grant');
-  const fallbackUrl=av1State.fallbackStream.mediaUrl;
-  assert.equal((await request(fallbackUrl)).status,200);
-  assert.equal((await request(fallbackUrl.replace(/\/start$/,'/chunk-video-100'))).status,403,'fallback cannot encode arbitrary positions');
-  assert.equal((await request(base + '0')).status, 200);
-  assert.equal((await request(base + '10')).status, 200, 'bounded ahead buffer is available while paused');
-  assert.equal((await request(base + '11')).status, 403, 'prefetch cannot exceed the shared ahead window');
-  assert.equal((await request(base + '100')).status, 403, 'AV1 cannot transcode an arbitrary offset');
-  assert.equal(chunks,2);
-  room.position = 120; room.s.state.duration = 180;
-  assert.equal((await request(base + '14')).status,403,'old rewind chunks are outside the authorized window');
-  assert.equal((await request(base + '15')).status,200,'recent rewind window remains available');
-  local.streamVersion = randomUUID();
-  assert.equal((await request(fallbackUrl)).status,403,'selection replacement revokes fallback grants too');
-  assert.equal((await request(base + '0')).status, 403, 'quality replacement invalidates AV1 grants');
-  const renewed = (await getState()).body;
-  app.watch.remove(id);
-  assert.equal((await request(renewed.fallbackStream.mediaUrl)).status,403,'room removal revokes fallback grants');
-  assert.equal((await request(renewed.mediaUrl)).status, 403, 'room removal revokes AV1 manifests');
-  const transferId=(await request('/api/watch/rooms','POST',{},host)).body.id;
-  const transferHostId=randomUUID(),transferGuestId=randomUUID();
-  const transferHostState=(await request(`/api/watch/rooms/${transferId}?viewer=${transferHostId}`,'GET',undefined,host)).body;
-  await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`,'GET',undefined,guest);
-  assert.equal((await request(`/api/watch/rooms/${transferId}/command`,'POST',{
-    epoch:transferHostState.epoch,expiresAt:Date.now()+2000,command:{action:'room.visibility',args:{visibility:'public'}}
-  },host)).body.status,'applied');
-  const oldEpoch=app.watch.rooms.get(transferId).s.epoch;
-  assert.equal((await request(`/api/watch/rooms/${transferId}/leave`,'POST',{viewerId:transferHostId},host)).status,200);
-  const successor=(await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`,'GET',undefined,guest)).body;
-  assert.equal(successor.isHost,true);
-  assert.notEqual(successor.epoch,oldEpoch);
-  assert.equal((await request(`/api/watch/rooms/${transferId}/command`,'POST',{
-    epoch:oldEpoch,expiresAt:Date.now()+2000,command:{action:'room.visibility',args:{visibility:'public'}}
-  },guest)).status,409,'the old host epoch cannot apply commands after transfer');
-  app.watch.remove(transferId);
-});
+    // Switching from delivery=local back to delivery=auto
+    const autoSwitched = (
+      await request(`/api/watch/rooms/${id}?viewer=${localViewerId}&delivery=auto`, 'GET', undefined, guest)
+    ).body;
+    assert.ok(autoSwitched.mediaUrl, 'switching to auto allocates stream URL');
+    assert.equal(app.watch.rooms.get(id).viewers.get(localViewerId).localDelivery, false);
+    assert.equal((await request(guestState.mediaUrl)).status, 200, 'preserved media grant remains accessible');
+    assert.equal((await request(replacementState.mediaUrl)).status, 200);
+    await command('room.visibility', { visibility: 'private' });
+    assert.equal((await request(replacementState.mediaUrl)).status, 403);
+    const privateState = await request(`/api/watch/rooms/${id}?viewer=${randomUUID()}`, 'GET', undefined, guest);
+    assert.equal(privateState.status, 403);
+    const placeholder = (await request('/api/watch/rooms', 'GET', undefined, activityHeaders)).body.rooms[0];
+    assert.equal(placeholder.locked, true);
+    assert.equal(placeholder.id, id);
+    assert.equal('members' in placeholder, false);
+    assert.deepEqual(
+      (await request('/api/watch/rooms?activity=true', 'GET', undefined, guest)).body.rooms,
+      [],
+      'website query cannot opt into private hints',
+    );
+    const other = (await request('/api/watch/rooms', 'POST', {}, guest)).body.id;
+    let otherState = (await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`, 'GET', undefined, guest)).body;
+    await request(
+      `/api/watch/rooms/${other}/command`,
+      'POST',
+      {
+        epoch: otherState.epoch,
+        expiresAt: Date.now() + 2000,
+        command: { action: 'room.visibility', args: { visibility: 'private' } },
+      },
+      guest,
+    );
+    assert.equal(
+      (await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`, 'GET', undefined, host)).status,
+      403,
+    );
+    assert.equal((await request('/api/watch/admin-mode', 'POST', { enabled: true }, host)).status, 200);
+    assert.equal((await request('/api/watch/me', 'GET', undefined, host)).body.adminMode, true);
+    otherState = (await request(`/api/watch/rooms/${other}?viewer=${randomUUID()}`, 'GET', undefined, host)).body;
+    assert.equal(otherState.canManage, true);
+    assert.equal(otherState.isHost, false);
+    assert.equal((await request(`/api/watch/rooms/${other}/close`, 'POST', {}, host)).status, 200);
+    await request('/api/watch/admin-mode', 'POST', { enabled: false }, host);
+    // AV1 resources reuse the same private grant, identity and stream revision.
+    const room = app.watch.rooms.get(id),
+      local = room.viewers.get(viewer);
+    room.mediaVersion = randomUUID();
+    room.position = 0;
+    room.s.state.paused = true;
+    app.watch.plex.av1.ffmpeg = 'fixture-only';
+    const av1 = {
+      kind: 'plex',
+      format: 'av1',
+      videoCodec: 'av1',
+      duration: 180,
+      av1Lease: app.watch.plex.av1.acquire({ id: '123', duration: 180 }, 'direct'),
+    };
+    room.media = { ...room.media, duration: 180 };
+    local.media = av1;
+    local.mediaVersion = room.mediaVersion;
+    local.streamVersion = randomUUID();
+    let chunks = 0;
+    app.watch.plex.av1.chunk = async () => {
+      chunks++;
+      return { video: Buffer.from('private fixture webm'), audio: Buffer.from('opus') };
+    };
+    config.transcoding = { uburoom: true, formats: ['av1'], fallback: { enabled: true, height: 720, bitrate: 2 } };
+    room.media.kind = 'plex';
+    const fallbackMedia = {
+      ...av1,
+      quality: '720p2',
+      selection: {},
+      av1Lease: app.watch.plex.av1.acquire({ id: '123', duration: 180 }, '720p2'),
+    };
+    room.fallbackStream = {
+      media: fallbackMedia,
+      reconcile() {},
+      close() {
+        app.watch.plex.av1.release(fallbackMedia.av1Lease);
+      },
+    };
+    const av1State = (await getState()).body,
+      base = av1State.mediaUrl.replace(/\/start$/, '/chunk-video-');
+    assert.ok(av1State.fallbackStream, 'fallback uses a second per-viewer grant');
+    const fallbackUrl = av1State.fallbackStream.mediaUrl;
+    assert.equal((await request(fallbackUrl)).status, 200);
+    assert.equal(
+      (await request(fallbackUrl.replace(/\/start$/, '/chunk-video-100'))).status,
+      403,
+      'fallback cannot encode arbitrary positions',
+    );
+    assert.equal((await request(base + '0')).status, 200);
+    assert.equal((await request(base + '10')).status, 200, 'bounded ahead buffer is available while paused');
+    assert.equal((await request(base + '11')).status, 403, 'prefetch cannot exceed the shared ahead window');
+    assert.equal((await request(base + '100')).status, 403, 'AV1 cannot transcode an arbitrary offset');
+    assert.equal(chunks, 2);
+    room.position = 120;
+    room.s.state.duration = 180;
+    assert.equal((await request(base + '14')).status, 403, 'old rewind chunks are outside the authorized window');
+    assert.equal((await request(base + '15')).status, 200, 'recent rewind window remains available');
+    local.streamVersion = randomUUID();
+    assert.equal((await request(fallbackUrl)).status, 403, 'selection replacement revokes fallback grants too');
+    assert.equal((await request(base + '0')).status, 403, 'quality replacement invalidates AV1 grants');
+    const renewed = (await getState()).body;
+    app.watch.remove(id);
+    assert.equal((await request(renewed.fallbackStream.mediaUrl)).status, 403, 'room removal revokes fallback grants');
+    assert.equal((await request(renewed.mediaUrl)).status, 403, 'room removal revokes AV1 manifests');
+    const transferId = (await request('/api/watch/rooms', 'POST', {}, host)).body.id;
+    const transferHostId = randomUUID(),
+      transferGuestId = randomUUID();
+    const transferHostState = (
+      await request(`/api/watch/rooms/${transferId}?viewer=${transferHostId}`, 'GET', undefined, host)
+    ).body;
+    await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`, 'GET', undefined, guest);
+    assert.equal(
+      (
+        await request(
+          `/api/watch/rooms/${transferId}/command`,
+          'POST',
+          {
+            epoch: transferHostState.epoch,
+            expiresAt: Date.now() + 2000,
+            command: { action: 'room.visibility', args: { visibility: 'public' } },
+          },
+          host,
+        )
+      ).body.status,
+      'applied',
+    );
+    const oldEpoch = app.watch.rooms.get(transferId).s.epoch;
+    assert.equal(
+      (await request(`/api/watch/rooms/${transferId}/leave`, 'POST', { viewerId: transferHostId }, host)).status,
+      200,
+    );
+    const successor = (
+      await request(`/api/watch/rooms/${transferId}?viewer=${transferGuestId}`, 'GET', undefined, guest)
+    ).body;
+    assert.equal(successor.isHost, true);
+    assert.notEqual(successor.epoch, oldEpoch);
+    assert.equal(
+      (
+        await request(
+          `/api/watch/rooms/${transferId}/command`,
+          'POST',
+          {
+            epoch: oldEpoch,
+            expiresAt: Date.now() + 2000,
+            command: { action: 'room.visibility', args: { visibility: 'public' } },
+          },
+          guest,
+        )
+      ).status,
+      409,
+      'the old host epoch cannot apply commands after transfer',
+    );
+    app.watch.remove(transferId);
+  },
+);
 test('Plex requests keep credentials server-side, restrict origins, prepare transcodes, and format episode metadata', async () => {
-  const requests = [], token = 'private-fixture-token';
+  const requests = [],
+    token = 'private-fixture-token';
   const plex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: token }, async (url, options) => {
     requests.push({ url, options });
-    if(url.pathname.endsWith('/decision')) return new Response(JSON.stringify({MediaContainer:{Metadata:[{Media:[{videoCodec:'h264',Part:[{Stream:[{streamType:1,codec:'h264'}]}]}]}]}}));
-    return new Response(JSON.stringify({ MediaContainer: { Metadata: [{ type: 'movie', title: 'Movie', duration: 60000,
-      Media: [{ Part: [{ key: '/library/parts/123/0/file.mp4' }] }] }] } }));
+    if (url.pathname.endsWith('/decision'))
+      return new Response(
+        JSON.stringify({
+          MediaContainer: {
+            Metadata: [{ Media: [{ videoCodec: 'h264', Part: [{ Stream: [{ streamType: 1, codec: 'h264' }] }] }] }],
+          },
+        }),
+      );
+    return new Response(
+      JSON.stringify({
+        MediaContainer: {
+          Metadata: [
+            {
+              type: 'movie',
+              title: 'Movie',
+              duration: 60000,
+              Media: [{ Part: [{ key: '/library/parts/123/0/file.mp4' }] }],
+            },
+          ],
+        },
+      }),
+    );
   });
   assert.throws(() => plex.url('https://attacker.example/video'));
-  const direct = await plex.prepare('12', 'direct'); assert.equal(new URL(direct.start).searchParams.has('X-Plex-Token'), false);
-  const transcode = await plex.prepare('12', '720p'); assert.equal(transcode.format, 'hls');
-  const url = new URL(transcode.start); assert.equal(url.searchParams.get('videoResolution'), '1280x720'); assert.equal(url.searchParams.get('directPlay'), '0');
+  const direct = await plex.prepare('12', 'direct');
+  assert.equal(new URL(direct.start).searchParams.has('X-Plex-Token'), false);
+  const transcode = await plex.prepare('12', '720p');
+  assert.equal(transcode.format, 'hls');
+  const url = new URL(transcode.start);
+  assert.equal(url.searchParams.get('videoResolution'), '1280x720');
+  assert.equal(url.searchParams.get('directPlay'), '0');
   const originalFallback = await plex.prepare('12', 'direct', true, direct);
-  assert.equal(originalFallback.format, 'hls'); assert.equal(originalFallback.quality, 'direct'); assert.equal(originalFallback.compatible, true);
-  assert.equal(new URL(originalFallback.start).searchParams.get('videoResolution'), '1920x1080', 'Original fallback caps resolution to the highest configured transcoding quality');
-  assert.equal(new URL(originalFallback.start).searchParams.get('maxVideoBitrate'), '20000', 'Original fallback caps bitrate to the highest configured transcoding quality');
+  assert.equal(originalFallback.format, 'hls');
+  assert.equal(originalFallback.quality, 'direct');
+  assert.equal(originalFallback.compatible, true);
+  assert.equal(
+    new URL(originalFallback.start).searchParams.get('videoResolution'),
+    '1920x1080',
+    'Original fallback caps resolution to the highest configured transcoding quality',
+  );
+  assert.equal(
+    new URL(originalFallback.start).searchParams.get('maxVideoBitrate'),
+    '20000',
+    'Original fallback caps bitrate to the highest configured transcoding quality',
+  );
   assert.notEqual(originalFallback.transcodeId, transcode.transcodeId);
   for (const request of requests.filter(x => x.url.pathname.endsWith('/decision'))) {
     assert.equal(request.options.headers['X-Plex-Client-Identifier'], request.url.searchParams.get('session'));
   }
-  for (const request of requests) { assert.equal(request.options.headers['X-Plex-Token'], token); assert.equal(request.options.redirect, 'manual'); assert.equal(String(request.url).includes(token), false); }
-  const refused = new Plex({plexUrl:'http://127.0.0.1:32400',plexToken:token}, async url => new Response(JSON.stringify({MediaContainer:{Metadata:url.pathname.endsWith('/decision')?[{Media:[{videoCodec:'hevc'}]}]:[direct.source]}})));
-  await assert.rejects(refused.prepare('12','720p',false,direct), /could not provide H.264/);
+  for (const request of requests) {
+    assert.equal(request.options.headers['X-Plex-Token'], token);
+    assert.equal(request.options.redirect, 'manual');
+    assert.equal(String(request.url).includes(token), false);
+  }
+  const refused = new Plex(
+    { plexUrl: 'http://127.0.0.1:32400', plexToken: token },
+    async url =>
+      new Response(
+        JSON.stringify({
+          MediaContainer: {
+            Metadata: url.pathname.endsWith('/decision') ? [{ Media: [{ videoCodec: 'hevc' }] }] : [direct.source],
+          },
+        }),
+      ),
+  );
+  await assert.rejects(refused.prepare('12', '720p', false, direct), /could not provide H.264/);
 
   // Episode metadata subtitle formatting and cross-season ordering
   const episodes = [
-    { ratingKey: '10', type: 'episode', grandparentRatingKey: '99', title: 'First', grandparentTitle: 'Show', parentIndex: 1, index: 1, year: 2025 },
-    { ratingKey: '11', type: 'episode', grandparentRatingKey: '99', title: 'Finale', grandparentTitle: 'Show', parentIndex: 1, index: 2, year: 2025 },
-    { ratingKey: '12', type: 'episode', grandparentRatingKey: '99', title: 'New season', grandparentTitle: 'Show', parentIndex: 2, index: 1, year: 2026 }
+    {
+      ratingKey: '10',
+      type: 'episode',
+      grandparentRatingKey: '99',
+      title: 'First',
+      grandparentTitle: 'Show',
+      parentIndex: 1,
+      index: 1,
+      year: 2025,
+    },
+    {
+      ratingKey: '11',
+      type: 'episode',
+      grandparentRatingKey: '99',
+      title: 'Finale',
+      grandparentTitle: 'Show',
+      parentIndex: 1,
+      index: 2,
+      year: 2025,
+    },
+    {
+      ratingKey: '12',
+      type: 'episode',
+      grandparentRatingKey: '99',
+      title: 'New season',
+      grandparentTitle: 'Show',
+      parentIndex: 2,
+      index: 1,
+      year: 2026,
+    },
   ];
-  const metaPlex = new Plex({ plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture' }, async () => new Response(JSON.stringify({ MediaContainer: { Metadata: episodes } })));
+  const metaPlex = new Plex(
+    { plexUrl: 'http://127.0.0.1:32400', plexToken: 'fixture' },
+    async () => new Response(JSON.stringify({ MediaContainer: { Metadata: episodes } })),
+  );
   assert.equal(metaPlex.items([episodes[2]])[0].subtitle, 'Show · Season 2 · Episode 1 · 2026');
   assert.deepEqual(await metaPlex.neighbors(episodes[1]), { previousId: '10', nextId: '12' });
   assert.equal(metaPlex.subtitle({ type: 'movie', year: 2024 }), '2024');
 });
 
 test('retained host rooms count toward the limit and expire on grace, media change, leave or close', async () => {
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands'],roomLimits:{maxOpen:4}},[]);
-  hub.access={refresh:async()=>true,isMember:()=>true};
-  const watch=new Watch(hub,{stop:async()=>{}}),host={userId:'host',name:'Host',surface:'web',guildId:'guild',channelId:'commands'};
-  const timedOut=()=>{
-    const room=watch.rooms.get(watch.create(host)),viewerId=randomUUID();watch.snapshot(room,host,viewerId);
-    room.viewers.get(viewerId).at=Date.now()-11000;watch.refresh(room);return {room,viewerId};
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'], roomLimits: { maxOpen: 4 } }, []);
+  hub.access = { refresh: async () => true, isMember: () => true };
+  const watch = new Watch(hub, { stop: async () => {} }),
+    host = { userId: 'host', name: 'Host', surface: 'web', guildId: 'guild', channelId: 'commands' };
+  const timedOut = () => {
+    const room = watch.rooms.get(watch.create(host)),
+      viewerId = randomUUID();
+    watch.snapshot(room, host, viewerId);
+    room.viewers.get(viewerId).at = Date.now() - 11000;
+    watch.refresh(room);
+    return { room, viewerId };
   };
-  const rooms=Array.from({length:4},timedOut);
-  assert.throws(()=>watch.create(host),/Close an existing/);
-  const [expired,changed,left,closed]=rooms;
-  const deadline=expired.room.disconnectedViewers.get(expired.viewerId).expires;
-  watch.refresh(expired.room,deadline-1);assert.equal(watch.rooms.has(expired.room.s.roomId),true);
-  watch.refresh(expired.room,deadline);assert.equal(watch.rooms.has(expired.room.s.roomId),false);
-  assert.throws(()=>watch.snapshot(expired.room,host,expired.viewerId),/unavailable/,'expired room cannot be resurrected');
-  changed.room.mediaVersion=randomUUID();watch.refresh(changed.room);assert.equal(watch.rooms.has(changed.room.s.roomId),false);
-  await watch.leave(left.room,host,left.viewerId);assert.equal(watch.rooms.has(left.room.s.roomId),false);
-  watch.remove(closed.room.s.roomId);assert.equal(watch.rooms.size,0);
+  const rooms = Array.from({ length: 4 }, timedOut);
+  assert.throws(() => watch.create(host), /Close an existing/);
+  const [expired, changed, left, closed] = rooms;
+  const deadline = expired.room.disconnectedViewers.get(expired.viewerId).expires;
+  watch.refresh(expired.room, deadline - 1);
+  assert.equal(watch.rooms.has(expired.room.s.roomId), true);
+  watch.refresh(expired.room, deadline);
+  assert.equal(watch.rooms.has(expired.room.s.roomId), false);
+  assert.throws(
+    () => watch.snapshot(expired.room, host, expired.viewerId),
+    /unavailable/,
+    'expired room cannot be resurrected',
+  );
+  changed.room.mediaVersion = randomUUID();
+  watch.refresh(changed.room);
+  assert.equal(watch.rooms.has(changed.room.s.roomId), false);
+  await watch.leave(left.room, host, left.viewerId);
+  assert.equal(watch.rooms.has(left.room.s.roomId), false);
+  watch.remove(closed.room.s.roomId);
+  assert.equal(watch.rooms.size, 0);
   watch.close();
 });
 
-test('viewer quality ceilings include fitting Original and survive lower outputs without raising or replacing the preference', async t=>{
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  hub.access={isMember:()=>true,refresh:async()=>true};
-  const catalog=new Plex({plexUrl:'http://fixture.invalid',plexToken:'fixture'});
-  const attempted=[];
-  const plex={qualities:media=>catalog.qualities(media),stop:async()=>{},prepare:async(id,quality)=>{attempted.push(quality);return {id,quality,kind:'plex',duration:60,format:'file',resources:new Map()};}};
-  const watch=new Watch(hub,plex);t.after(()=>watch.rooms.clear());
-  const actor={userId:'host',guildId:'guild',channelId:'commands',surface:'web'},id=watch.create(actor),room=watch.rooms.get(id),tab=randomUUID();
-  const source=(height,bitrate)=>({id:'1',kind:'plex',duration:60,source:{duration:60000,Media:[{height,width:height*16/9,bitrate,Part:[{key:'/library/parts/1/file.mp4'}]}]}});
-  watch.snapshot(room,actor,tab,undefined,'1080p8',{volume:0,muted:true});
-  assert.equal(watch.snapshot(room,actor,tab).state.volume,0);
-  assert.equal(watch.snapshot(room,actor,tab).state.muted,true);
-  const viewer=room.viewers.get(tab);
-  room.media=source(360,1000);await watch.prepareViewer(room,actor,tab);
-  assert.equal(viewer.quality,'direct');assert.equal(viewer.preferredQuality,'1080p8');
-  watch.dropMedia(room);room.mediaVersion=randomUUID();room.media=source(1080,16000);
-  await watch.prepareViewer(room,actor,tab);
-  assert.equal(viewer.quality,'1080p8');assert.equal(viewer.preferredQuality,'1080p8');
-  assert.equal((await watch.prepareQuality(room,viewer,plex,source(2160,3000),'720p4')).quality,'direct','Original qualifies by bitrate even above the selected resolution');
-  const below=await watch.prepareQuality(room,viewer,plex,room.media,'1080p6');
-  assert.equal(below.quality,'720p4');
-  attempted.length=0;
-  plex.prepare=async(id,quality)=>{attempted.push(quality);throw Object.assign(new Error('Capacity'),{conversionCapacity:true});};
-  await assert.rejects(watch.prepareQuality(room,viewer,plex,room.media,'720p4'),/Capacity/);
-  assert.deepEqual(attempted,['720p4','720p2'],'never fall upward or to an oversized Original');
-  attempted.length=0;
-  await assert.rejects(watch.prepareQuality(room,viewer,plex,room.media,'direct'),/Capacity/);
-  assert.deepEqual(attempted,['direct'],'Original never falls back to another quality');
+test('viewer quality ceilings include fitting Original and survive lower outputs without raising or replacing the preference', async t => {
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { isMember: () => true, refresh: async () => true };
+  const catalog = new Plex({ plexUrl: 'http://fixture.invalid', plexToken: 'fixture' });
+  const attempted = [];
+  const plex = {
+    qualities: media => catalog.qualities(media),
+    stop: async () => {},
+    prepare: async (id, quality) => {
+      attempted.push(quality);
+      return { id, quality, kind: 'plex', duration: 60, format: 'file', resources: new Map() };
+    },
+  };
+  const watch = new Watch(hub, plex);
+  t.after(() => watch.rooms.clear());
+  const actor = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' },
+    id = watch.create(actor),
+    room = watch.rooms.get(id),
+    tab = randomUUID();
+  const source = (height, bitrate) => ({
+    id: '1',
+    kind: 'plex',
+    duration: 60,
+    source: {
+      duration: 60000,
+      Media: [{ height, width: (height * 16) / 9, bitrate, Part: [{ key: '/library/parts/1/file.mp4' }] }],
+    },
+  });
+  watch.snapshot(room, actor, tab, undefined, '1080p8', { volume: 0, muted: true });
+  assert.equal(watch.snapshot(room, actor, tab).state.volume, 0);
+  assert.equal(watch.snapshot(room, actor, tab).state.muted, true);
+  const viewer = room.viewers.get(tab);
+  room.media = source(360, 1000);
+  await watch.prepareViewer(room, actor, tab);
+  assert.equal(viewer.quality, 'direct');
+  assert.equal(viewer.preferredQuality, '1080p8');
+  watch.dropMedia(room);
+  room.mediaVersion = randomUUID();
+  room.media = source(1080, 16000);
+  await watch.prepareViewer(room, actor, tab);
+  assert.equal(viewer.quality, '1080p8');
+  assert.equal(viewer.preferredQuality, '1080p8');
+  assert.equal(
+    (await watch.prepareQuality(room, viewer, plex, source(2160, 3000), '720p4')).quality,
+    'direct',
+    'Original qualifies by bitrate even above the selected resolution',
+  );
+  const below = await watch.prepareQuality(room, viewer, plex, room.media, '1080p6');
+  assert.equal(below.quality, '720p4');
+  attempted.length = 0;
+  plex.prepare = async (id, quality) => {
+    attempted.push(quality);
+    throw Object.assign(new Error('Capacity'), { conversionCapacity: true });
+  };
+  await assert.rejects(watch.prepareQuality(room, viewer, plex, room.media, '720p4'), /Capacity/);
+  assert.deepEqual(attempted, ['720p4', '720p2'], 'never fall upward or to an oversized Original');
+  attempted.length = 0;
+  await assert.rejects(watch.prepareQuality(room, viewer, plex, room.media, 'direct'), /Capacity/);
+  assert.deepEqual(attempted, ['direct'], 'Original never falls back to another quality');
 });
 
-test('slow personal quality preparation has a bounded completion budget and retains live authorization',async t=>{
-  let now=Date.now();t.mock.method(Date,'now',()=>now);
-  for(const outcome of ['success','expired','stale-input','epoch','left','media','logout','access']) {
-    const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-    hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
-    let finish,started,live=true,allowed=true;
-    const preparing=new Promise(resolve=>{started=resolve;}),stopped=[];
-    const replacement={kind:'plex',id:'12',duration:60,format:'hls',quality:'720p4'};
-    const plex={stop:async media=>stopped.push(media),prepare:async()=>{started();await new Promise(resolve=>{finish=resolve;});return replacement;}};
-    const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'};
-    const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
-    watch.snapshot(room,host,viewerId,async()=>live);
-    room.media={kind:'plex',id:'12',duration:60};
-    const viewer=room.viewers.get(viewerId),old={kind:'plex',duration:60};viewer.media=old;viewer.mediaVersion=room.mediaVersion;
-    const originalCanView=watch.canView.bind(watch);watch.canView=async(...args)=>allowed&&await originalCanView(...args);
-    const command=(action,args,expiresAt=now+2500)=>hub.dispatch({...host,watchViewerId:viewerId},{roomId:id,action,args,expiresAt});
-    const result=command('media.quality.set',{quality:'720p4'},outcome==='stale-input'?now-1:now+2500);
-    if(outcome==='stale-input') {
-      assert.equal((await result).status,'unavailable');assert.equal(viewer.media,old);watch.close();hub.close();continue;
+test('slow personal quality preparation has a bounded completion budget and retains live authorization', async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  for (const outcome of ['success', 'expired', 'stale-input', 'epoch', 'left', 'media', 'logout', 'access']) {
+    const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+    hub.access = {
+      refresh: async () => true,
+      isMember: () => true,
+      voiceChannel: () => 'call',
+      validVoiceChannel: () => true,
+      options: () => ({ available: true }),
+    };
+    let finish,
+      started,
+      live = true,
+      allowed = true;
+    const preparing = new Promise(resolve => {
+        started = resolve;
+      }),
+      stopped = [];
+    const replacement = { kind: 'plex', id: '12', duration: 60, format: 'hls', quality: '720p4' };
+    const plex = {
+      stop: async media => stopped.push(media),
+      prepare: async () => {
+        started();
+        await new Promise(resolve => {
+          finish = resolve;
+        });
+        return replacement;
+      },
+    };
+    const watch = new Watch(hub, plex),
+      host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+    const id = watch.create(host),
+      room = watch.rooms.get(id),
+      viewerId = randomUUID();
+    watch.snapshot(room, host, viewerId, async () => live);
+    room.media = { kind: 'plex', id: '12', duration: 60 };
+    const viewer = room.viewers.get(viewerId),
+      old = { kind: 'plex', duration: 60 };
+    viewer.media = old;
+    viewer.mediaVersion = room.mediaVersion;
+    const originalCanView = watch.canView.bind(watch);
+    watch.canView = async (...args) => allowed && (await originalCanView(...args));
+    const command = (action, args, expiresAt = now + 2500) =>
+      hub.dispatch({ ...host, watchViewerId: viewerId }, { roomId: id, action, args, expiresAt });
+    const result = command('media.quality.set', { quality: '720p4' }, outcome === 'stale-input' ? now - 1 : now + 2500);
+    if (outcome === 'stale-input') {
+      assert.equal((await result).status, 'unavailable');
+      assert.equal(viewer.media, old);
+      watch.close();
+      hub.close();
+      continue;
     }
-    await preparing;now+=4000;
+    await preparing;
+    now += 4000;
     // Polling and room controls stay independent of private Plex preparation.
-    watch.snapshot(room,host,viewerId,async()=>live);
-    assert.equal((await command('media.pause')).status,'applied');
-    assert.equal((await command('media.quality.set',{quality:'1080p'})).status,'unavailable','no concurrent replacement');
-    if(outcome==='expired')now+=26001;
-    if(outcome==='epoch')room.s.epoch=randomUUID();
-    if(outcome==='left')room.viewers.delete(viewerId);
-    if(outcome==='media')room.mediaVersion=randomUUID();
-    if(outcome==='logout')live=false;
-    if(outcome==='access')allowed=false;
-    finish();assert.equal((await result).status,outcome==='success'?'applied':'unavailable',outcome);
-    assert.equal(viewer.media,outcome==='success'?replacement:old,outcome);
-    assert.ok(stopped.includes(outcome==='success'?old:replacement),'discard unused stream');
-    assert.equal(viewer.updating,false);
-    watch.close();hub.close();
+    watch.snapshot(room, host, viewerId, async () => live);
+    assert.equal((await command('media.pause')).status, 'applied');
+    assert.equal(
+      (await command('media.quality.set', { quality: '1080p' })).status,
+      'unavailable',
+      'no concurrent replacement',
+    );
+    if (outcome === 'expired') now += 26001;
+    if (outcome === 'epoch') room.s.epoch = randomUUID();
+    if (outcome === 'left') room.viewers.delete(viewerId);
+    if (outcome === 'media') room.mediaVersion = randomUUID();
+    if (outcome === 'logout') live = false;
+    if (outcome === 'access') allowed = false;
+    finish();
+    assert.equal((await result).status, outcome === 'success' ? 'applied' : 'unavailable', outcome);
+    assert.equal(viewer.media, outcome === 'success' ? replacement : old, outcome);
+    assert.ok(stopped.includes(outcome === 'success' ? old : replacement), 'discard unused stream');
+    assert.equal(viewer.updating, false);
+    watch.close();
+    hub.close();
   }
 });
 
-test('superseded preparation retries for its waiting viewer instead of failing room state',async()=>{
-  const {currentSignal}=require('../server/operation');
-  const hub=new Hub({ownerId:'host',guildId:'guild',channels:['commands']},[]);
-  hub.access={refresh:async()=>true,isMember:()=>true,voiceChannel:()=> 'call',validVoiceChannel:()=>true,options:()=>({available:true})};
-  let calls=0,started;const preparing=new Promise(resolve=>{started=resolve;});
-  const replacement={kind:'plex',id:'12',duration:60,format:'hls',quality:'720p4'};
-  const plex={stop:async()=>{},prepare:async()=>{
-    if(++calls===1){started();await new Promise((_,reject)=>currentSignal().addEventListener('abort',()=>reject(new Error('Preparation cancelled')),{once:true}));}
-    return replacement;
-  }};
-  const watch=new Watch(hub,plex),host={userId:'host',guildId:'guild',channelId:'commands',surface:'web'};
-  const id=watch.create(host),room=watch.rooms.get(id),viewerId=randomUUID();
-  watch.snapshot(room,host,viewerId,async()=>true);room.media={kind:'plex',id:'12',duration:60};
-  const viewer=room.viewers.get(viewerId),pending=watch.prepareViewer(room,host,viewerId);
-  await preparing;room.mediaVersion=randomUUID();viewer.preparing.abort();
-  assert.equal(await pending,replacement,'someone else changing media is not this viewer losing the room');
-  assert.equal(calls,2);
+test('superseded preparation retries for its waiting viewer instead of failing room state', async () => {
+  const { currentSignal } = require('../server/operation');
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = {
+    refresh: async () => true,
+    isMember: () => true,
+    voiceChannel: () => 'call',
+    validVoiceChannel: () => true,
+    options: () => ({ available: true }),
+  };
+  let calls = 0,
+    started;
+  const preparing = new Promise(resolve => {
+    started = resolve;
+  });
+  const replacement = { kind: 'plex', id: '12', duration: 60, format: 'hls', quality: '720p4' };
+  const plex = {
+    stop: async () => {},
+    prepare: async () => {
+      if (++calls === 1) {
+        started();
+        await new Promise((_, reject) =>
+          currentSignal().addEventListener('abort', () => reject(new Error('Preparation cancelled')), { once: true }),
+        );
+      }
+      return replacement;
+    },
+  };
+  const watch = new Watch(hub, plex),
+    host = { userId: 'host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+  const id = watch.create(host),
+    room = watch.rooms.get(id),
+    viewerId = randomUUID();
+  watch.snapshot(room, host, viewerId, async () => true);
+  room.media = { kind: 'plex', id: '12', duration: 60 };
+  const viewer = room.viewers.get(viewerId),
+    pending = watch.prepareViewer(room, host, viewerId);
+  await preparing;
+  room.mediaVersion = randomUUID();
+  viewer.preparing.abort();
+  assert.equal(await pending, replacement, 'someone else changing media is not this viewer losing the room');
+  assert.equal(calls, 2);
   // The same shared preparation lifetime publishes authorized fallback metadata
   // before a slow/refused chosen output, including concurrent initial polls.
-  viewer.media=undefined;viewer.localCodecs=['av1'];viewer.preferredQuality='720p4';
-  const fallback={format:'av1',quality:'720p2',selection:{},duration:60};
-  room.fallbackStream={media:fallback,close(){},reconcile(){}};
-  let metadataCalls=0,chosenCalls=0,finish,chosenStarted;
-  const chosenPreparing=new Promise(resolve=>{chosenStarted=resolve;});
-  const gate=new Promise(resolve=>{finish=resolve;});
-  plex.prepare=async(_id,quality,_compatible,_source,_fallback,options)=>{
-    const media={...replacement,quality,tracks:{audio:[],subtitles:[]},selection:{},resources:new Map()};
-    if(options?.sourceOnly){metadataCalls++;return media;}
-    chosenCalls++;chosenStarted();await gate;throw Object.assign(new (require('../server/av1').PlaybackError)('Plex refused conversion'),{media});
+  viewer.media = undefined;
+  viewer.localCodecs = ['av1'];
+  viewer.preferredQuality = '720p4';
+  const fallback = { format: 'av1', quality: '720p2', selection: {}, duration: 60 };
+  room.fallbackStream = { media: fallback, close() {}, reconcile() {} };
+  let metadataCalls = 0,
+    chosenCalls = 0,
+    finish,
+    chosenStarted;
+  const chosenPreparing = new Promise(resolve => {
+    chosenStarted = resolve;
+  });
+  const gate = new Promise(resolve => {
+    finish = resolve;
+  });
+  plex.prepare = async (_id, quality, _compatible, _source, _fallback, options) => {
+    const media = {
+      ...replacement,
+      quality,
+      tracks: { audio: [], subtitles: [] },
+      selection: {},
+      resources: new Map(),
+    };
+    if (options?.sourceOnly) {
+      metadataCalls++;
+      return media;
+    }
+    chosenCalls++;
+    chosenStarted();
+    await gate;
+    throw Object.assign(new (require('../server/av1').PlaybackError)('Plex refused conversion'), { media });
   };
-  const [first,second]=await Promise.all([watch.prepareViewer(room,host,viewerId),watch.prepareViewer(room,host,viewerId)]);
-  assert.equal(first,second);assert.equal(first.bootstrapFallback,true,'both polls can start on fallback without waiting for the main output');
-  await chosenPreparing;assert.equal(metadataCalls,1);assert.equal(chosenCalls,1);
-  const job=viewer.preparing;finish();await job.promise;
-  assert.equal(viewer.media.playbackError,'Plex refused conversion');assert.equal(watch.fallbackFor(room,viewer),fallback,'Plex transcode refusal does not disable local fallback');
-  viewer.media.selection.subtitle={delivery:'burn'};assert.equal(watch.fallbackFor(room,viewer),undefined,'Burn-in cannot silently lose subtitles');
-  viewer.media.selection.subtitle=undefined;viewer.media.unavailable=true;assert.equal(watch.fallbackFor(room,viewer),undefined,'a real item denial cannot use fallback');
-  watch.close();hub.close();
+  const [first, second] = await Promise.all([
+    watch.prepareViewer(room, host, viewerId),
+    watch.prepareViewer(room, host, viewerId),
+  ]);
+  assert.equal(first, second);
+  assert.equal(first.bootstrapFallback, true, 'both polls can start on fallback without waiting for the main output');
+  await chosenPreparing;
+  assert.equal(metadataCalls, 1);
+  assert.equal(chosenCalls, 1);
+  const job = viewer.preparing;
+  finish();
+  await job.promise;
+  assert.equal(viewer.media.playbackError, 'Plex refused conversion');
+  assert.equal(watch.fallbackFor(room, viewer), fallback, 'Plex transcode refusal does not disable local fallback');
+  viewer.media.selection.subtitle = { delivery: 'burn' };
+  assert.equal(watch.fallbackFor(room, viewer), undefined, 'Burn-in cannot silently lose subtitles');
+  viewer.media.selection.subtitle = undefined;
+  viewer.media.unavailable = true;
+  assert.equal(watch.fallbackFor(room, viewer), undefined, 'a real item denial cannot use fallback');
+  watch.close();
+  hub.close();
 });
 
 test('shared seeks wait for fresh viewer buffers, reject superseded readiness, and handle play toggles during gates', async () => {
-  const hub = new Hub({ownerId:'host',guildId:'guild',channels:['commands']}, []);
-  hub.access = {isMember:()=>true, refresh:async()=>true};
-  const watch = new Watch(hub, {stop:async()=>{}}, {title:'fixture',duration:120,format:'file',kind:'demo'});
-  const host = {userId:'host',name:'Host',guildId:'guild',channelId:'commands',surface:'web'};
-  const room = watch.rooms.get(watch.create(host)), first = randomUUID(), second = randomUUID();
-  watch.snapshot(room,host,first); watch.snapshot(room,host,second);
-  const dispatch = (action,args) => hub.dispatch(host,{roomId:room.s.roomId,action,args});
-  const ready = viewer => watch.ready(room,host,viewer,room.mediaVersion,true,room.readinessVersion);
-  await dispatch('media.load',{mediaId:'demo',quality:'direct'});
+  const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { isMember: () => true, refresh: async () => true };
+  const watch = new Watch(
+    hub,
+    { stop: async () => {} },
+    { title: 'fixture', duration: 120, format: 'file', kind: 'demo' },
+  );
+  const host = { userId: 'host', name: 'Host', guildId: 'guild', channelId: 'commands', surface: 'web' };
+  const room = watch.rooms.get(watch.create(host)),
+    first = randomUUID(),
+    second = randomUUID();
+  watch.snapshot(room, host, first);
+  watch.snapshot(room, host, second);
+  const dispatch = (action, args) => hub.dispatch(host, { roomId: room.s.roomId, action, args });
+  const ready = viewer => watch.ready(room, host, viewer, room.mediaVersion, true, room.readinessVersion);
+  await dispatch('media.load', { mediaId: 'demo', quality: 'direct' });
 
   // media.toggle during initial startup gate
-  assert.equal(watch.snapshot(room,host,first).state.waitingForReady, true);
+  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, true);
   await dispatch('media.toggle');
   assert.equal(room.manualPaused, true, 'toggle deliberately pauses pending startup');
-  await ready(first); await ready(second);
+  await ready(first);
+  await ready(second);
   assert.equal(room.s.state.paused, true);
-  assert.equal(watch.snapshot(room,host,first).state.waitingForReady, false);
+  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, false);
   await dispatch('media.toggle');
   assert.equal(room.s.state.paused, false);
 
-  await dispatch('media.seek.absolute',{seconds:40});
-  assert.equal(room.s.state.paused,true); assert.equal(watch.position(room),40);
+  await dispatch('media.seek.absolute', { seconds: 40 });
+  assert.equal(room.s.state.paused, true);
+  assert.equal(watch.position(room), 40);
   const old = room.readinessVersion;
-  await ready(first); assert.equal(room.s.state.paused,true);
-  await dispatch('media.seek.relative',{seconds:10});
-  await assert.rejects(watch.ready(room,host,second,room.mediaVersion,true,old), /Invalid readiness/);
+  await ready(first);
+  assert.equal(room.s.state.paused, true);
+  await dispatch('media.seek.relative', { seconds: 10 });
+  await assert.rejects(watch.ready(room, host, second, room.mediaVersion, true, old), /Invalid readiness/);
 
   // media.toggle during seek gate
-  assert.equal(watch.snapshot(room,host,first).state.waitingForReady, true);
+  assert.equal(watch.snapshot(room, host, first).state.waitingForReady, true);
   await dispatch('media.toggle');
   assert.equal(room.manualPaused, true, 'toggle deliberately pauses pending seek');
 
-  await ready(second); assert.equal(room.s.state.paused,true);
-  await ready(first); assert.equal(room.s.state.paused,true, 'deliberate pause is retained');
+  await ready(second);
+  assert.equal(room.s.state.paused, true);
+  await ready(first);
+  assert.equal(room.s.state.paused, true, 'deliberate pause is retained');
   await dispatch('media.toggle');
-  assert.equal(room.s.state.paused,false);
-  assert.equal(room.position,50); assert.ok(room.startAt > Date.now());
+  assert.equal(room.s.state.paused, false);
+  assert.equal(room.position, 50);
+  assert.ok(room.startAt > Date.now());
 
-  await watch.ready(room,host,second,room.mediaVersion,false,room.readinessVersion);
-  assert.equal(room.s.state.paused,false,'ordinary buffering does not stop healthy viewers');
-  await dispatch('media.seek.start'); await dispatch('media.pause');
-  await ready(first); await ready(second);
-  assert.equal(room.s.state.paused,true,'explicit pause cancels automatic resume');
-  await dispatch('media.play'); assert.equal(room.s.state.paused,false);
-  await dispatch('media.seek.absolute',{seconds:60});
-  await ready(first); await watch.leave(room,host,second);
-  assert.equal(room.s.state.paused,false,'departed viewers do not hold the seek gate');
+  await watch.ready(room, host, second, room.mediaVersion, false, room.readinessVersion);
+  assert.equal(room.s.state.paused, false, 'ordinary buffering does not stop healthy viewers');
+  await dispatch('media.seek.start');
+  await dispatch('media.pause');
+  await ready(first);
+  await ready(second);
+  assert.equal(room.s.state.paused, true, 'explicit pause cancels automatic resume');
+  await dispatch('media.play');
+  assert.equal(room.s.state.paused, false);
+  await dispatch('media.seek.absolute', { seconds: 60 });
+  await ready(first);
+  await watch.leave(room, host, second);
+  assert.equal(room.s.state.paused, false, 'departed viewers do not hold the seek gate');
   watch.close();
 });
 
-test('a Plex outage keeps admitted viewers in the room, admits nobody new and never excuses a denial',async()=>{
-  const hub=new Hub({ownerId:'a',guildId:'guild',channels:['commands']},[]);
-  hub.access={refresh:async()=>true,isMember:()=>true,options:()=>({available:true})};
+test('a Plex outage keeps admitted viewers in the room, admits nobody new and never excuses a denial', async () => {
+  const hub = new Hub({ ownerId: 'a', guildId: 'guild', channels: ['commands'] }, []);
+  hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
   let failure;
-  const plex={stop:async()=>{},allows:async()=>{if(failure)throw failure;return true;}};
-  hub.plexFor=async()=>plex;
-  const watch=new Watch(hub,plex),actor=userId=>({userId,name:userId,guildId:'guild',channelId:'commands',surface:'web'}),a=actor('a'),b=actor('b');
-  const room=watch.rooms.get(watch.create(a)),viewerId=randomUUID();
-  room.media={id:'1',kind:'plex',title:'Movie',duration:60};
-  watch.snapshot(room,a,viewerId);
-  const viewer=room.viewers.get(viewerId);viewer.media={id:'1',kind:'plex'};
-  assert.equal(await watch.canView(room,b),true);
-  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false);
-  failure=Object.assign(new Error('Unavailable'),{status:503});
-  assert.equal(await watch.canView(room,a),true,'an admitted viewer stays through an outage');
-  assert.equal(await watch.canView(room,b),false,'an outage admits nobody new');
-  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false,'buffered viewers hear nothing');
-  viewer.syncQuality={status:'buffering'};
-  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,true,'one affected viewer warns the room');
-  failure=Object.assign(new Error('Revoked'),{status:403});
-  assert.equal(await watch.canView(room,a),false,'a confirmed denial is never treated as an outage');
-  failure=undefined;
-  assert.equal(await watch.canView(room,a),true);
-  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,true,'a viewer still recovering after Plex returns keeps the notice');
-  viewer.syncQuality={status:'playing'};
-  assert.equal(watch.snapshot(room,a,viewerId).providerNotice,false);
+  const plex = {
+    stop: async () => {},
+    allows: async () => {
+      if (failure) throw failure;
+      return true;
+    },
+  };
+  hub.plexFor = async () => plex;
+  const watch = new Watch(hub, plex),
+    actor = userId => ({ userId, name: userId, guildId: 'guild', channelId: 'commands', surface: 'web' }),
+    a = actor('a'),
+    b = actor('b');
+  const room = watch.rooms.get(watch.create(a)),
+    viewerId = randomUUID();
+  room.media = { id: '1', kind: 'plex', title: 'Movie', duration: 60 };
+  watch.snapshot(room, a, viewerId);
+  const viewer = room.viewers.get(viewerId);
+  viewer.media = { id: '1', kind: 'plex' };
+  assert.equal(await watch.canView(room, b), true);
+  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false);
+  failure = Object.assign(new Error('Unavailable'), { status: 503 });
+  assert.equal(await watch.canView(room, a), true, 'an admitted viewer stays through an outage');
+  assert.equal(await watch.canView(room, b), false, 'an outage admits nobody new');
+  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false, 'buffered viewers hear nothing');
+  viewer.syncQuality = { status: 'buffering' };
+  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, true, 'one affected viewer warns the room');
+  failure = Object.assign(new Error('Revoked'), { status: 403 });
+  assert.equal(await watch.canView(room, a), false, 'a confirmed denial is never treated as an outage');
+  failure = undefined;
+  assert.equal(await watch.canView(room, a), true);
+  assert.equal(
+    watch.snapshot(room, a, viewerId).providerNotice,
+    true,
+    'a viewer still recovering after Plex returns keeps the notice',
+  );
+  viewer.syncQuality = { status: 'playing' };
+  assert.equal(watch.snapshot(room, a, viewerId).providerNotice, false);
 });

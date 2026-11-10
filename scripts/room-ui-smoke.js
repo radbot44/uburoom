@@ -11,326 +11,592 @@ async function main() {
   const browsers = (process.argv.find(arg => arg.startsWith('--browsers='))?.slice(11) || 'chrome,firefox').split(',');
   for (const name of browsers) {
     const fixture = accountFixture();
-    const subjects = {host:'100000000000000001',guest:'100000000000000002',guest2:'100000000000000003'};
-    const config = {cert:fs.readFileSync('certs/server-cert.pem'),key:fs.readFileSync('certs/server-key.pem'),publicUrl:'https://localhost',
-      ownerId:subjects.host,guildId:'fixture',channels:['fixture'],demo:true,unifiedAccounts:true,demoSubjects:subjects,
-      plexUrl:'http://plex-fixture.invalid:32400',plexToken:'fixture-owner',
-      roomAdministrators:{discord:[subjects.guest2],plex:[],discordRoles:[]},roomLimits:{maxQueue:120}};
-    const show = {ratingKey:'100',type:'show',title:'Queue fixture show',childCount:2,leafCount:3};
-    const seasons = [0,1].map(index=>({ratingKey:String(110+index),type:'season',title:index?'Season 1':'Specials',index,parentRatingKey:'100',leafCount:index?2:1}));
-    const episodes = [0,1,2].map(index=>({ratingKey:String(120+index),type:'episode',title:index?'Episode '+index:'Special episode',index:index||1,parentIndex:index?1:0,
-      parentRatingKey:index?'111':'110',grandparentRatingKey:'100',grandparentTitle:show.title,duration:60000}));
-    const movies = [1,2].map(index=>({ratingKey:String(index),type:'movie',title:'Queue fixture movie '+index,duration:60000}));
-    const collection = {ratingKey:'200',type:'collection',title:'Queue fixture collection',childCount:2};
-    const plexFetch = async (input, options) => {
-      const url = new URL(input), p = url.pathname;
-      let rows;
-      if(p==='/library/sections')return new Response(JSON.stringify({MediaContainer:{Directory:[{key:'1',type:'movie',title:'Movies'},{key:'2',type:'show',title:'TV Shows'}]}}));
-      if(p==='/library/sections/1/all')rows=movies;
-      else if(p==='/library/sections/2/all')rows=[show];
-      else if(p.endsWith('/collections'))rows=[collection];
-      else if(p==='/library/collections/200/children')rows=movies;
-      else if(p==='/library/metadata/100/children')rows=seasons;
-      else if(p==='/library/metadata/100/allLeaves')rows=episodes;
-      else if(p==='/library/metadata/110/children')rows=episodes.slice(0,1);
-      else if(p==='/library/metadata/111/children')rows=episodes.slice(1);
-      else if(/^\/library\/metadata\/\d+(?:,\d+)*$/.test(p)){
-        const ids=new Set(p.split('/').pop().split(','));
-        rows=[show,...seasons,...episodes,...movies,collection].filter(item=>ids.has(item.ratingKey));
-        if(!rows.length)return fixture.fetch(input,options);
-      }
-      else return fixture.fetch(input,options);
-      const start=Number(url.searchParams.get('X-Plex-Container-Start')||0),size=Number(url.searchParams.get('X-Plex-Container-Size')||120);
-      return new Response(JSON.stringify({MediaContainer:{Metadata:rows.slice(start,start+size),totalSize:rows.length}}));
+    const subjects = { host: '100000000000000001', guest: '100000000000000002', guest2: '100000000000000003' };
+    const config = {
+      cert: fs.readFileSync('certs/server-cert.pem'),
+      key: fs.readFileSync('certs/server-key.pem'),
+      publicUrl: 'https://localhost',
+      ownerId: subjects.host,
+      guildId: 'fixture',
+      channels: ['fixture'],
+      demo: true,
+      unifiedAccounts: true,
+      demoSubjects: subjects,
+      plexUrl: 'http://plex-fixture.invalid:32400',
+      plexToken: 'fixture-owner',
+      roomAdministrators: { discord: [subjects.guest2], plex: [], discordRoles: [] },
+      roomLimits: { maxQueue: 120 },
     };
-    const app = createApp(config,{plexFetch,oauthFetch:fixture.discordFetch,plexDemo:fixture}); let browser, host, guest;
-    app.hub.access = {isMember:()=>true,refresh:async()=>true,voiceChannel:()=> 'fixture',validVoiceChannel:()=>true,options:()=>({available:true})};
-    await new Promise(resolve => app.server.listen(0,'127.0.0.1',resolve));
+    const show = { ratingKey: '100', type: 'show', title: 'Queue fixture show', childCount: 2, leafCount: 3 };
+    const seasons = [0, 1].map(index => ({
+      ratingKey: String(110 + index),
+      type: 'season',
+      title: index ? 'Season 1' : 'Specials',
+      index,
+      parentRatingKey: '100',
+      leafCount: index ? 2 : 1,
+    }));
+    const episodes = [0, 1, 2].map(index => ({
+      ratingKey: String(120 + index),
+      type: 'episode',
+      title: index ? 'Episode ' + index : 'Special episode',
+      index: index || 1,
+      parentIndex: index ? 1 : 0,
+      parentRatingKey: index ? '111' : '110',
+      grandparentRatingKey: '100',
+      grandparentTitle: show.title,
+      duration: 60000,
+    }));
+    const movies = [1, 2].map(index => ({
+      ratingKey: String(index),
+      type: 'movie',
+      title: 'Queue fixture movie ' + index,
+      duration: 60000,
+    }));
+    const collection = { ratingKey: '200', type: 'collection', title: 'Queue fixture collection', childCount: 2 };
+    const plexFetch = async (input, options) => {
+      const url = new URL(input),
+        p = url.pathname;
+      let rows;
+      if (p === '/library/sections')
+        return new Response(
+          JSON.stringify({
+            MediaContainer: {
+              Directory: [
+                { key: '1', type: 'movie', title: 'Movies' },
+                { key: '2', type: 'show', title: 'TV Shows' },
+              ],
+            },
+          }),
+        );
+      if (p === '/library/sections/1/all') rows = movies;
+      else if (p === '/library/sections/2/all') rows = [show];
+      else if (p.endsWith('/collections')) rows = [collection];
+      else if (p === '/library/collections/200/children') rows = movies;
+      else if (p === '/library/metadata/100/children') rows = seasons;
+      else if (p === '/library/metadata/100/allLeaves') rows = episodes;
+      else if (p === '/library/metadata/110/children') rows = episodes.slice(0, 1);
+      else if (p === '/library/metadata/111/children') rows = episodes.slice(1);
+      else if (/^\/library\/metadata\/\d+(?:,\d+)*$/.test(p)) {
+        const ids = new Set(p.split('/').pop().split(','));
+        rows = [show, ...seasons, ...episodes, ...movies, collection].filter(item => ids.has(item.ratingKey));
+        if (!rows.length) return fixture.fetch(input, options);
+      } else return fixture.fetch(input, options);
+      const start = Number(url.searchParams.get('X-Plex-Container-Start') || 0),
+        size = Number(url.searchParams.get('X-Plex-Container-Size') || 120);
+      return new Response(
+        JSON.stringify({ MediaContainer: { Metadata: rows.slice(start, start + size), totalSize: rows.length } }),
+      );
+    };
+    const app = createApp(config, { plexFetch, oauthFetch: fixture.discordFetch, plexDemo: fixture });
+    let browser, host, guest;
+    app.hub.access = {
+      isMember: () => true,
+      refresh: async () => true,
+      voiceChannel: () => 'fixture',
+      validVoiceChannel: () => true,
+      options: () => ({ available: true }),
+    };
+    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
     config.publicUrl = 'https://localhost:' + app.server.address().port;
     try {
       browser = await playbackBrowser(name);
       host = await browser.page(config.publicUrl + '/watch?demo=host');
       // Stay within the unchanged 40 messages/second production request budget.
-      const run = async expression => { await pause(100); await browser.activate(host); return browser.evaluate(host,expression); };
-      const until = (expression,label) => browser.until(host,expression,label);
-      const shot = label => browser.screenshot(host,path.resolve('artifacts/room-ui-' + name + '-' + label + '.png'));
-      await browser.viewport(host,1360,1000);
+      const run = async expression => {
+        await pause(100);
+        await browser.activate(host);
+        return browser.evaluate(host, expression);
+      };
+      const until = (expression, label) => browser.until(host, expression, label);
+      const shot = label => browser.screenshot(host, path.resolve('artifacts/room-ui-' + name + '-' + label + '.png'));
+      await browser.viewport(host, 1360, 1000);
       await browser.activate(host);
-      await until('me?.durableRooms && transport?.ready','Durable room login');
+      await until('me?.durableRooms && transport?.ready', 'Durable room login');
       await run('$("create").click()');
-      await until('$("room-dialog").open','Create chooser'); await shot('chooser');
-      await run('$("room-create-preset").value="play-pause";$("room-name").value="Friday room";$("room-create").click()');
-      await until('state?.roomName==="Friday room"','Named room');
+      await until('$("room-dialog").open', 'Create chooser');
+      await shot('chooser');
+      await run(
+        '$("room-create-preset").value="play-pause";$("room-name").value="Friday room";$("room-create").click()',
+      );
+      await until('state?.roomName==="Friday room"', 'Named room');
       const id = await run('selected');
       await run('roomUI.open(selected,"general")');
-      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Lifecycle settings');
-      assert.match(await run('$("room-lifetime-details").textContent'),/Created.*Last active/);
-      assert.equal(await run('$("room-keep-empty").checked'),false);
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden', 'Lifecycle settings');
+      assert.match(await run('$("room-lifetime-details").textContent'), /Created.*Last active/);
+      assert.equal(await run('$("room-keep-empty").checked'), false);
       await run('$("room-keep-empty").click()');
-      await until('$("room-settings-status").textContent==="Saved"','Keep room saved');
+      await until('$("room-settings-status").textContent==="Saved"', 'Keep room saved');
       await run('$("room-keep-empty").click()');
-      await until('$("room-confirm-dialog").open','Disposable room warning');
+      await until('$("room-confirm-dialog").open', 'Disposable room warning');
       await run('$("room-confirm-dialog").querySelector("button[value=cancel]").click()');
-      await until('$("room-keep-empty").checked','Keep room warning cancelled');
+      await until('$("room-keep-empty").checked', 'Keep room warning cancelled');
       await run('$("room-member-limit").value="12";$("room-member-limit-save").click()');
-      await until('$("room-capacity-details").textContent.includes("/ 12 people")','Room capacity saved');
+      await until('$("room-capacity-details").textContent.includes("/ 12 people")', 'Room capacity saved');
       await shot('lifecycle-desktop');
-      await browser.viewport(host,390,844); await shot('lifecycle-phone');
-      await browser.viewport(host,1360,1000);
+      await browser.viewport(host, 390, 844);
+      await shot('lifecycle-phone');
+      await browser.viewport(host, 1360, 1000);
       await run('$("room-settings-dismiss").click()');
 
-      assert.equal((await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})')).status,'applied');
-      await until('state?.mediaId==="demo"','Media load');
-      const hostViewerId = await run('viewerId'), hostPresence = app.watch.rooms.get(id).viewers.get(hostViewerId);
-      hostPresence.syncQuality={status:'playing',score:.94,lastKnownScore:.94,lastKnownLevel:'excellent',confidence:'confident',lastKnownAt:Date.now(),updatedAt:Date.now(),
-        mediaVersion:app.watch.rooms.get(id).mediaVersion,streamVersion:hostPresence.streamVersion};
+      assert.equal(
+        (await run('execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}})')).status,
+        'applied',
+      );
+      await until('state?.mediaId==="demo"', 'Media load');
+      const hostViewerId = await run('viewerId'),
+        hostPresence = app.watch.rooms.get(id).viewers.get(hostViewerId);
+      hostPresence.syncQuality = {
+        status: 'playing',
+        score: 0.94,
+        lastKnownScore: 0.94,
+        lastKnownLevel: 'excellent',
+        confidence: 'confident',
+        lastKnownAt: Date.now(),
+        updatedAt: Date.now(),
+        mediaVersion: app.watch.rooms.get(id).mediaVersion,
+        streamVersion: hostPresence.streamVersion,
+      };
       await run('refreshState()');
-      await until('document.querySelector("#room-participants [data-quality=excellent]")','Room sync indicator');
-      assert.equal(await run('document.querySelector("#room-participants [data-quality=excellent]").getAttribute("aria-label")'),'Sync quality: 94% (Excellent)');
-      assert.equal(await run('(()=>{const row=document.querySelector("#room-participants .room-person"),cells=[...row.children];return cells.length>=3 && cells[0].classList.contains("room-roster-role") && cells[1].classList.contains("room-roster-name") && cells[2].classList.contains("room-roster-sync-quality") && getComputedStyle(row).gridTemplateColumns.includes("24px 40px");})()'),true,'role, name, quality and kick grid columns stay aligned without placeholder nodes');
-      const qualityUi = await run('(()=>{const person=state.participants[0],original=person.syncQuality,oldTheme=document.documentElement.dataset.theme,expected=[[1,"excellent",4],[.75,"good",3],[.5,"fair",2],[.49,"poor",1]],result=[],probe=document.createElement("span");document.body.append(probe);for(const theme of ["dark","light"]){document.documentElement.dataset.theme=theme;for(const [score,level,paths] of expected){person.syncQuality={status:"known",confidence:"confident",score,level,sessions:[]};roomUI.render();const icon=document.querySelector("#room-participants .room-roster-sync-quality"),token={excellent:"--success",good:"--good",fair:"--warning",poor:"--danger"}[level];probe.style.color="var("+token+")";result.push(icon.dataset.quality===level&&icon.dataset.confidence==="confident"&&icon.querySelectorAll("svg path").length===paths&&getComputedStyle(icon).color===getComputedStyle(probe).color);}}person.syncQuality={status:"unknown",confidence:"reduced",score:.72,level:"fair",sessions:[{status:"stale",score:.72,level:"fair"}]};roomUI.render();const stale=document.querySelector("#room-participants .room-roster-sync-quality");probe.style.color="var(--muted)";const retained=stale.dataset.quality==="fair"&&stale.querySelectorAll("svg path").length===2&&getComputedStyle(stale).color===getComputedStyle(probe).color&&stale.getAttribute("aria-label")==="Sync quality: 72% (Fair)";person.syncQuality={status:"unknown",confidence:"provisional",sessions:[]};roomUI.render();const provisional=document.querySelector("#room-participants .room-roster-sync-quality"),fallback=provisional.getAttribute("aria-label")==="Sync quality: 100% (Excellent)"&&provisional.dataset.quality==="excellent"&&provisional.querySelectorAll("svg path").length===4&&getComputedStyle(provisional).color===getComputedStyle(probe).color;person.syncQuality={status:"known",confidence:"confident",score:.72,level:"fair",sessions:[{status:"playing",score:.96,level:"excellent"},{status:"playing",score:.72,level:"fair"},{status:"paused",score:.82,level:"good"}]};roomUI.render();const tooltip=document.querySelector("#room-participants .room-roster-sync-quality").getAttribute("aria-label"),multi=tooltip===["Sync quality: 96% (Excellent)","Sync quality: 72% (Fair)","Sync quality: 82% (Good)"].join(String.fromCharCode(10));probe.remove();if(oldTheme)document.documentElement.dataset.theme=oldTheme;else delete document.documentElement.dataset.theme;person.syncQuality=original;roomUI.render();return result.every(Boolean)&&retained&&fallback&&multi;})()');
-      assert.equal(qualityUi,true,'all four levels and semantic colors work in Light/Dark');
+      await until('document.querySelector("#room-participants [data-quality=excellent]")', 'Room sync indicator');
+      assert.equal(
+        await run('document.querySelector("#room-participants [data-quality=excellent]").getAttribute("aria-label")'),
+        'Sync quality: 94% (Excellent)',
+      );
+      assert.equal(
+        await run(
+          '(()=>{const row=document.querySelector("#room-participants .room-person"),cells=[...row.children];return cells.length>=3 && cells[0].classList.contains("room-roster-role") && cells[1].classList.contains("room-roster-name") && cells[2].classList.contains("room-roster-sync-quality") && getComputedStyle(row).gridTemplateColumns.includes("24px 40px");})()',
+        ),
+        true,
+        'role, name, quality and kick grid columns stay aligned without placeholder nodes',
+      );
+      const qualityUi = await run(
+        '(()=>{const person=state.participants[0],original=person.syncQuality,oldTheme=document.documentElement.dataset.theme,expected=[[1,"excellent",4],[.75,"good",3],[.5,"fair",2],[.49,"poor",1]],result=[],probe=document.createElement("span");document.body.append(probe);for(const theme of ["dark","light"]){document.documentElement.dataset.theme=theme;for(const [score,level,paths] of expected){person.syncQuality={status:"known",confidence:"confident",score,level,sessions:[]};roomUI.render();const icon=document.querySelector("#room-participants .room-roster-sync-quality"),token={excellent:"--success",good:"--good",fair:"--warning",poor:"--danger"}[level];probe.style.color="var("+token+")";result.push(icon.dataset.quality===level&&icon.dataset.confidence==="confident"&&icon.querySelectorAll("svg path").length===paths&&getComputedStyle(icon).color===getComputedStyle(probe).color);}}person.syncQuality={status:"unknown",confidence:"reduced",score:.72,level:"fair",sessions:[{status:"stale",score:.72,level:"fair"}]};roomUI.render();const stale=document.querySelector("#room-participants .room-roster-sync-quality");probe.style.color="var(--muted)";const retained=stale.dataset.quality==="fair"&&stale.querySelectorAll("svg path").length===2&&getComputedStyle(stale).color===getComputedStyle(probe).color&&stale.getAttribute("aria-label")==="Sync quality: 72% (Fair)";person.syncQuality={status:"unknown",confidence:"provisional",sessions:[]};roomUI.render();const provisional=document.querySelector("#room-participants .room-roster-sync-quality"),fallback=provisional.getAttribute("aria-label")==="Sync quality: 100% (Excellent)"&&provisional.dataset.quality==="excellent"&&provisional.querySelectorAll("svg path").length===4&&getComputedStyle(provisional).color===getComputedStyle(probe).color;person.syncQuality={status:"known",confidence:"confident",score:.72,level:"fair",sessions:[{status:"playing",score:.96,level:"excellent"},{status:"playing",score:.72,level:"fair"},{status:"paused",score:.82,level:"good"}]};roomUI.render();const tooltip=document.querySelector("#room-participants .room-roster-sync-quality").getAttribute("aria-label"),multi=tooltip===["Sync quality: 96% (Excellent)","Sync quality: 72% (Fair)","Sync quality: 82% (Good)"].join(String.fromCharCode(10));probe.remove();if(oldTheme)document.documentElement.dataset.theme=oldTheme;else delete document.documentElement.dataset.theme;person.syncQuality=original;roomUI.render();return result.every(Boolean)&&retained&&fallback&&multi;})()',
+      );
+      assert.equal(qualityUi, true, 'all four levels and semantic colors work in Light/Dark');
       await shot('sync-quality');
       await run('roomUI.open(selected,"people")');
-      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Room people settings');
-      assert.equal(await run('document.querySelectorAll("#room-current-people .room-roster-sync-quality").length'),0,'quality stays out of Room Settings participant lists');
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden', 'Room people settings');
+      assert.equal(
+        await run('document.querySelectorAll("#room-current-people .room-roster-sync-quality").length'),
+        0,
+        'quality stays out of Room Settings participant lists',
+      );
       await run('$("room-settings-dismiss").click()');
-      hostPresence.syncQuality=undefined;await run('refreshState()');
+      hostPresence.syncQuality = undefined;
+      await run('refreshState()');
       if (process.argv.includes('--sync-quality-only')) {
-        console.log(name + ': Room sync-quality ratings, retained grey confidence states, tooltip lines, alignment, themes and settings exclusion passed');
+        console.log(
+          name +
+            ': Room sync-quality ratings, retained grey confidence states, tooltip lines, alignment, themes and settings exclusion passed',
+        );
         continue;
       }
       await run('execute({action:"media.pause"})');
       await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
-      await until('state?.state.paused && Math.abs(state.state.position-17)<.1','Saved paused position');
-      await until('!$("queue-panel").hidden','Queue panel visible');
-      await until('$("queue-upcoming-view")?.textContent.includes("The queue is empty")','Empty queue hint');
-      assert.equal(await run('$("queue-scroll-next").querySelector(".queue-navigation-count").textContent===""'),true);
+      await until('state?.state.paused && Math.abs(state.state.position-17)<.1', 'Saved paused position');
+      await until('!$("queue-panel").hidden', 'Queue panel visible');
+      await until('$("queue-upcoming-view")?.textContent.includes("The queue is empty")', 'Empty queue hint');
+      assert.equal(await run('$("queue-scroll-next").querySelector(".queue-navigation-count").textContent===""'), true);
       await run('queueUI.add({mediaId:"demo",title:"First queued item",subtitle:"Ep 1",duration:60})');
-      await until('state?.queueSummary?.pendingCount===1 && $("queue-scroll-next").textContent.includes("1 queued")','First queue item added');
-      assert.equal(await run('document.querySelectorAll("#queue-upcoming-list .queue-entry").length'),1);
-      assert.equal(await run('!$("next").disabled'),true);
+      await until(
+        'state?.queueSummary?.pendingCount===1 && $("queue-scroll-next").textContent.includes("1 queued")',
+        'First queue item added',
+      );
+      assert.equal(await run('document.querySelectorAll("#queue-upcoming-list .queue-entry").length'), 1);
+      assert.equal(await run('!$("next").disabled'), true);
       await run('queueUI.add({mediaId:"demo",title:"Second queued item",subtitle:"Ep 2",duration:60})');
-      await until('state?.queueSummary?.pendingCount===2 && $("queue-scroll-next").textContent.includes("2 queued")','Second queue item added');
-      assert.equal(await run('document.querySelectorAll("#queue-upcoming-list .queue-entry").length'),2);
+      await until(
+        'state?.queueSummary?.pendingCount===2 && $("queue-scroll-next").textContent.includes("2 queued")',
+        'Second queue item added',
+      );
+      assert.equal(await run('document.querySelectorAll("#queue-upcoming-list .queue-entry").length'), 2);
       await shot('queue');
       await run('document.querySelectorAll(".queue-action-down")[0].click()');
-      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry-title")[0]?.textContent.includes("Second queued item")','Queue reordered');
+      await until(
+        'document.querySelectorAll("#queue-upcoming-list .queue-entry-title")[0]?.textContent.includes("Second queued item")',
+        'Queue reordered',
+      );
       await run('document.querySelectorAll(".queue-action-remove")[1].click()');
-      await until('state?.queueSummary?.pendingCount===1 && $("queue-scroll-next").textContent.includes("1 queued")','Queue item removed');
+      await until(
+        'state?.queueSummary?.pendingCount===1 && $("queue-scroll-next").textContent.includes("1 queued")',
+        'Queue item removed',
+      );
       await run('$("next").click()');
-      await until('state?.queueSummary?.pendingCount===0 && state?.queueSummary?.historyCount>=1','Transport next plays queued item');
-      await until('$("queue-scroll-next").querySelector(".queue-navigation-count").textContent===""','Queue tab shows empty count');
+      await until(
+        'state?.queueSummary?.pendingCount===0 && state?.queueSummary?.historyCount>=1',
+        'Transport next plays queued item',
+      );
+      await until(
+        '$("queue-scroll-next").querySelector(".queue-navigation-count").textContent===""',
+        'Queue tab shows empty count',
+      );
       await run('$("queue-scroll-previous").click()');
-      await until('document.querySelectorAll("#queue-history-list .queue-history-entry").length>=1','History tab visible');
+      await until(
+        'document.querySelectorAll("#queue-history-list .queue-history-entry").length>=1',
+        'History tab visible',
+      );
       await shot('history');
       await run('document.querySelector(".queue-item-resume").click()');
-      await until('state?.mediaId==="demo"','History resume loaded demo');
+      await until('state?.mediaId==="demo"', 'History resume loaded demo');
       await run('execute({action:"media.pause"})');
       await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
-      await until('state?.state.paused && Math.abs(state.state.position-17)<.1','Saved position restored to 17');
+      await until('state?.state.paused && Math.abs(state.state.position-17)<.1', 'Saved position restored to 17');
       await run('$("queue-scroll-previous").click()');
-      await until('!$("queue-clear-history").disabled','Clear history button enabled');
+      await until('!$("queue-clear-history").disabled', 'Clear history button enabled');
       await run('$("queue-clear-history").click()');
-      await until('$("room-confirm-dialog").open','Clear history confirmation');
+      await until('$("room-confirm-dialog").open', 'Clear history confirmation');
       await run('$("room-confirm-yes").click()');
-      await until('$("queue-history-view")?.textContent.includes("No playback history yet")','History cleared');
+      await until('$("queue-history-view")?.textContent.includes("No playback history yet")', 'History cleared');
       await run('$("queue-scroll-next").click()');
-      await until('$("queue-autoplay").checked','Autoplay default on');
+      await until('$("queue-autoplay").checked', 'Autoplay default on');
       await run('$("queue-autoplay").click()');
-      await until('state?.autoplay?.enabled===false && !$("queue-autoplay").checked','Autoplay off');
+      await until('state?.autoplay?.enabled===false && !$("queue-autoplay").checked', 'Autoplay off');
       await run('$("queue-autoplay").click()');
-      await until('state?.autoplay?.enabled===true','Autoplay on');
+      await until('state?.autoplay?.enabled===true', 'Autoplay on');
       await run('document.querySelector(".library-home-card[data-section=\\"2\\"][data-tab=library]").click()');
-      await until('document.querySelector(".library-title")?.textContent==="Queue fixture show"','Show library');
+      await until('document.querySelector(".library-title")?.textContent==="Queue fixture show"', 'Show library');
       await run('document.querySelector(".library-open").click()');
-      await until('document.querySelector(".library-detail-actions [data-queue]")?.textContent.includes("Add show")','Bulk show action');
-      assert.equal(await run('$("library-content").scrollWidth <= $("library-content").clientWidth + 1'),true,'Show details fit the library');
+      await until(
+        'document.querySelector(".library-detail-actions [data-queue]")?.textContent.includes("Add show")',
+        'Bulk show action',
+      );
+      assert.equal(
+        await run('$("library-content").scrollWidth <= $("library-content").clientWidth + 1'),
+        true,
+        'Show details fit the library',
+      );
       await shot('bulk-source');
       await run('document.querySelector(".library-detail-actions [data-queue]").click()');
-      await until('$("queue-bulk-dialog").open','Bulk options');
-      assert.equal(await run('$("queue-bulk-filter").options[1].textContent'),'Unfinished by this room');
+      await until('$("queue-bulk-dialog").open', 'Bulk options');
+      assert.equal(await run('$("queue-bulk-filter").options[1].textContent'), 'Unfinished by this room');
       await shot('bulk');
       await run('$("queue-bulk-submit").click()');
-      await until('!$("queue-bulk-dialog").open && state?.queueSummary?.pendingCount===2','Bulk excludes Specials');
+      await until('!$("queue-bulk-dialog").open && state?.queueSummary?.pendingCount===2', 'Bulk excludes Specials');
       await run('document.querySelector(".library-tile[data-item=\\"110\\"] .library-open").click()');
-      await until('document.querySelector(".library-detail-actions [data-queue]")?.textContent.includes("Add season")','Bulk season action');
+      await until(
+        'document.querySelector(".library-detail-actions [data-queue]")?.textContent.includes("Add season")',
+        'Bulk season action',
+      );
       await run('document.querySelector(".library-detail-actions [data-queue]").click()');
-      await until('$("queue-bulk-dialog").open','Season options');
-      await run('$("queue-bulk-filter").value="unfinished";$("queue-bulk-specials").checked=true;$("queue-bulk-submit").click()');
-      await until('!$("queue-bulk-dialog").open && state?.queueSummary?.pendingCount===3','Unfinished season includes Specials');
-      await run('[...document.querySelectorAll(".library-crumb")].find(item=>item.textContent==="Queue fixture show").click()');
-      await until('!!document.querySelector(".library-detail-actions [data-auto-queue]")','Show random source restored');
-      const bulkIds = await run('[...document.querySelectorAll("#queue-upcoming-list .queue-entry")].map(item=>item.dataset.entryId).sort().join()');
+      await until('$("queue-bulk-dialog").open', 'Season options');
+      await run(
+        '$("queue-bulk-filter").value="unfinished";$("queue-bulk-specials").checked=true;$("queue-bulk-submit").click()',
+      );
+      await until(
+        '!$("queue-bulk-dialog").open && state?.queueSummary?.pendingCount===3',
+        'Unfinished season includes Specials',
+      );
+      await run(
+        '[...document.querySelectorAll(".library-crumb")].find(item=>item.textContent==="Queue fixture show").click()',
+      );
+      await until(
+        '!!document.querySelector(".library-detail-actions [data-auto-queue]")',
+        'Show random source restored',
+      );
+      const bulkIds = await run(
+        '[...document.querySelectorAll("#queue-upcoming-list .queue-entry")].map(item=>item.dataset.entryId).sort().join()',
+      );
       const currentBeforeShuffle = await run('state.queueSummary.current.id');
       await run('$("queue-shuffle").click()');
-      await until('!$("queue-shuffle").disabled','Shuffle completes');
-      assert.equal(await run('[...document.querySelectorAll("#queue-upcoming-list .queue-entry")].map(item=>item.dataset.entryId).sort().join()'),bulkIds);
-      assert.equal(await run('state.queueSummary.current.id'),currentBeforeShuffle);
+      await until('!$("queue-shuffle").disabled', 'Shuffle completes');
+      assert.equal(
+        await run(
+          '[...document.querySelectorAll("#queue-upcoming-list .queue-entry")].map(item=>item.dataset.entryId).sort().join()',
+        ),
+        bulkIds,
+      );
+      assert.equal(await run('state.queueSummary.current.id'), currentBeforeShuffle);
       await run('document.querySelector(".library-detail-actions [data-auto-queue]").click()');
-      await until('$("room-settings-dialog").open && $("queue-auto-mode").value==="random"','Random show source');
+      await until('$("room-settings-dialog").open && $("queue-auto-mode").value==="random"', 'Random show source');
       await run('$("queue-auto-save").click()');
-      await until('state?.queueSummary?.autoQueue?.mode==="random"','Random configuration saved');
-      assert.equal(await run('state.queueSummary.autoQueue.scope.type'),'show');
+      await until('state?.queueSummary?.autoQueue?.mode==="random"', 'Random configuration saved');
+      assert.equal(await run('state.queueSummary.autoQueue.scope.type'), 'show');
       await run('$("room-settings-dialog").close();$("queue-auto-toggle").click()');
-      await until('state.queueSummary.autoQueue.mode==="off" && !$("queue-auto-toggle").checked','Quick Auto-queue off');
+      await until(
+        'state.queueSummary.autoQueue.mode==="off" && !$("queue-auto-toggle").checked',
+        'Quick Auto-queue off',
+      );
       await run('$("queue-auto-toggle").click()');
-      await until('state.queueSummary.autoQueue.mode==="random" && $("queue-auto-toggle").checked','Quick Auto-queue restores source');
-      await browser.viewport(host,390,844);
+      await until(
+        'state.queueSummary.autoQueue.mode==="random" && $("queue-auto-toggle").checked',
+        'Quick Auto-queue restores source',
+      );
+      await browser.viewport(host, 390, 844);
       await run('selectSection("queue");$("queue-auto-open").click()');
-      await until('$("room-settings-dialog").open','Phone auto-queue dialog');
+      await until('$("room-settings-dialog").open', 'Phone auto-queue dialog');
       await shot('phone-auto');
-      assert.equal(await run('$("queue-auto-dialog").scrollWidth <= $("queue-auto-dialog").clientWidth'),true);
+      assert.equal(await run('$("queue-auto-dialog").scrollWidth <= $("queue-auto-dialog").clientWidth'), true);
       await run('$("queue-auto-mode").value="off";$("queue-auto-save").click()');
-      await until('state?.queueSummary?.autoQueue?.mode==="off"','Auto-queue disabled');
-      await browser.viewport(host,1360,1000);
-      await run('$("library-home").click();document.querySelector(".library-home-card[data-section=\\"1\\"][data-tab=library]").click()');
-      await until('!!document.querySelector(".library-scope-actions [data-auto-queue]")','Movie library random source');
+      await until('state?.queueSummary?.autoQueue?.mode==="off"', 'Auto-queue disabled');
+      await browser.viewport(host, 1360, 1000);
+      await run(
+        '$("library-home").click();document.querySelector(".library-home-card[data-section=\\"1\\"][data-tab=library]").click()',
+      );
+      await until(
+        '!!document.querySelector(".library-scope-actions [data-auto-queue]")',
+        'Movie library random source',
+      );
       await run('document.querySelector(".library-scope-actions [data-auto-queue]").click()');
-      await until('$("room-settings-dialog").open && $("queue-auto-source").textContent.includes("Movies")','Movie random source selected');
-      await run('$("room-settings-dialog").close();$("library-home").click();document.querySelector(".library-home-card[data-section=\\"1\\"][data-tab=collections]").click()');
-      await until('document.querySelector(".library-title")?.textContent==="Queue fixture collection"','Collection catalog');
+      await until(
+        '$("room-settings-dialog").open && $("queue-auto-source").textContent.includes("Movies")',
+        'Movie random source selected',
+      );
+      await run(
+        '$("room-settings-dialog").close();$("library-home").click();document.querySelector(".library-home-card[data-section=\\"1\\"][data-tab=collections]").click()',
+      );
+      await until(
+        'document.querySelector(".library-title")?.textContent==="Queue fixture collection"',
+        'Collection catalog',
+      );
       await run('document.querySelector(".library-open").click()');
-      await until('!!document.querySelector(".library-detail-actions [data-auto-queue]")','Collection random source');
+      await until('!!document.querySelector(".library-detail-actions [data-auto-queue]")', 'Collection random source');
       await run('document.querySelector(".library-detail-actions [data-auto-queue]").click()');
-      await until('$("room-settings-dialog").open && $("queue-auto-source").textContent.includes("Queue fixture collection")','Collection random source selected');
+      await until(
+        '$("room-settings-dialog").open && $("queue-auto-source").textContent.includes("Queue fixture collection")',
+        'Collection random source selected',
+      );
       await run('$("room-settings-dialog").close()');
-      await run('$("queue-clear-queue").click()'); await until('$("room-confirm-dialog").open','Bulk cleanup confirmation');
-      await run('$("room-confirm-yes").click()'); await until('state?.queueSummary?.pendingCount===0','Bulk queue cleared');
+      await run('$("queue-clear-queue").click()');
+      await until('$("room-confirm-dialog").open', 'Bulk cleanup confirmation');
+      await run('$("room-confirm-yes").click()');
+      await until('state?.queueSummary?.pendingCount===0', 'Bulk queue cleared');
       await run('queueUI.add({mediaId:"demo",title:"Autoplay successor",duration:60})');
       const endingEntry = await run('state.queueSummary.current.id');
       await run('execute({action:"media.seek.absolute",args:{seconds:54}})');
       await run('execute({action:"media.play"})');
-      await until('!video.paused && video.currentTime>=54','Final seconds play normally');
-      await until('!!state?.autoplay?.countdown && !$("ending-stage").hidden','Natural end starts countdown');
-      assert.equal(await run('!state.media'),true);
-      assert.equal(await run('state.queueSummary.current'),null);
-      await run('window.scrollTo(0,0)'); await shot('countdown');
-      await browser.viewport(host,390,844); await run('window.scrollTo(0,0)'); await shot('phone-countdown');
-      assert.match(await run('$("ending-kicker").textContent'),/^Up next in \d+s$/);
-      assert.equal(await run('(()=>{const a=$("ending-stage").getBoundingClientRect(),b=$("stage").getBoundingClientRect();return a.left>=b.left && a.right<=b.right && a.top>=b.top && a.bottom<=b.bottom;})()'),true);
-      await browser.viewport(host,1360,1000);
+      await until('!video.paused && video.currentTime>=54', 'Final seconds play normally');
+      await until('!!state?.autoplay?.countdown && !$("ending-stage").hidden', 'Natural end starts countdown');
+      assert.equal(await run('!state.media'), true);
+      assert.equal(await run('state.queueSummary.current'), null);
+      await run('window.scrollTo(0,0)');
+      await shot('countdown');
+      await browser.viewport(host, 390, 844);
+      await run('window.scrollTo(0,0)');
+      await shot('phone-countdown');
+      assert.match(await run('$("ending-kicker").textContent'), /^Up next in \d+s$/);
+      assert.equal(
+        await run(
+          '(()=>{const a=$("ending-stage").getBoundingClientRect(),b=$("stage").getBoundingClientRect();return a.left>=b.left && a.right<=b.right && a.top>=b.top && a.bottom<=b.bottom;})()',
+        ),
+        true,
+      );
+      await browser.viewport(host, 1360, 1000);
       await run('$("ending-cancel").click()');
-      await until('!state?.autoplay?.countdown && state?.ending?.state==="upNext"','Countdown cancelled');
-      assert.equal(await run('state.queueSummary.current'),null);
-      assert.equal(await run('state.queueSummary.pendingCount'),1);
+      await until('!state?.autoplay?.countdown && state?.ending?.state==="upNext"', 'Countdown cancelled');
+      assert.equal(await run('state.queueSummary.current'), null);
+      assert.equal(await run('state.queueSummary.pendingCount'), 1);
       await run('$("ending-play").click()');
-      await until('state?.queueSummary?.current?.id!=="' + endingEntry + '" && !video.paused','Next video started');
+      await until('state?.queueSummary?.current?.id!=="' + endingEntry + '" && !video.paused', 'Next video started');
       await run('queueUI.add({mediaId:"demo",title:"Final item",duration:60})');
       await run('execute({action:"media.seek.absolute",args:{seconds:54}})');
-      await until('!video.paused && video.currentTime>=54','Final seconds play normally');
-      await until('!!state?.autoplay?.countdown','Second verified ending');
-      await run('$("theater").click();window.scrollTo(0,0)'); await shot('theater-countdown');
-      await until('state?.queueSummary?.pendingCount===0','Countdown advances once');
-      assert.equal(await run('state.queueSummary.historyCount'),2);
-      const completed = app.watch.roomState.queue.history(id).items.find(item=>item.id===endingEntry);
-      assert.equal(completed.outcome,'completed'); assert.equal(completed.position,60);
+      await until('!video.paused && video.currentTime>=54', 'Final seconds play normally');
+      await until('!!state?.autoplay?.countdown', 'Second verified ending');
+      await run('$("theater").click();window.scrollTo(0,0)');
+      await shot('theater-countdown');
+      await until('state?.queueSummary?.pendingCount===0', 'Countdown advances once');
+      assert.equal(await run('state.queueSummary.historyCount'), 2);
+      const completed = app.watch.roomState.queue.history(id).items.find(item => item.id === endingEntry);
+      assert.equal(completed.outcome, 'completed');
+      assert.equal(completed.position, 60);
       await run('$("theater").click();execute({action:"media.pause"})');
       await run('execute({action:"media.seek.absolute",args:{seconds:17}})');
-      await until('state?.state.paused && Math.abs(state.state.position-17)<.1','Autoplay fixture restored paused');
+      await until('state?.state.paused && Math.abs(state.state.position-17)<.1', 'Autoplay fixture restored paused');
       guest = await browser.page(config.publicUrl + '/watch?demo=guest');
-      await browser.until(guest,'transport?.ready && !!me','Guest login');
-      await browser.evaluate(guest,'document.querySelector("#rooms button").click()');
-      await browser.until(guest,'state?.roomRole==="viewer"','Viewer joins');
-      assert.equal(await browser.evaluate(guest,'$("timeline").disabled && !$("player-play").disabled'),true);
-      assert.equal(await browser.evaluate(guest,'!state.capabilities.addQueue && !state.capabilities.editQueue'),true);
-      assert.equal(await browser.evaluate(guest,'$("next").disabled'),true);
-      assert.equal(await browser.evaluate(guest,'$("queue-autoplay").disabled && !$("queue-auto-open").disabled'),true);
-      assert.match(await browser.evaluate(guest,'execute({action:"media.seek.absolute",args:{seconds:2}}).then(()=>"unexpected success",error=>error.message)'),/permissions/);
-      await until('state?.viewers===2','Both viewers');
+      await browser.until(guest, 'transport?.ready && !!me', 'Guest login');
+      await browser.evaluate(guest, 'document.querySelector("#rooms button").click()');
+      await browser.until(guest, 'state?.roomRole==="viewer"', 'Viewer joins');
+      assert.equal(await browser.evaluate(guest, '$("timeline").disabled && !$("player-play").disabled'), true);
+      assert.equal(
+        await browser.evaluate(guest, '!state.capabilities.addQueue && !state.capabilities.editQueue'),
+        true,
+      );
+      assert.equal(await browser.evaluate(guest, '$("next").disabled'), true);
+      assert.equal(
+        await browser.evaluate(guest, '$("queue-autoplay").disabled && !$("queue-auto-open").disabled'),
+        true,
+      );
+      assert.match(
+        await browser.evaluate(
+          guest,
+          'execute({action:"media.seek.absolute",args:{seconds:2}}).then(()=>"unexpected success",error=>error.message)',
+        ),
+        /permissions/,
+      );
+      await until('state?.viewers===2', 'Both viewers');
       await run('$("room-settings-dialog").close();roomUI.open(selected,"manage")');
-      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Room settings');
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden', 'Room settings');
       await shot('settings');
-      await run('$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true;document.querySelector("#room-permissions button[data-role=viewer][data-permission=seek]").click()');
-      await browser.until(guest,'!$("timeline").disabled','Viewer seek grant');
-      await until('$("room-settings-status").textContent==="Saved"','Settings save completes');
-      await run('$("room-settings-section").value="people";$("room-settings-section").dispatchEvent(new Event("change"));document.querySelector("#room-current-people button").click()');
-      await browser.until(guest,'state?.roomRole==="host"','Assigned host');
-      assert.equal(await browser.evaluate(guest,'!state.capabilities.managePermissions && [...document.querySelectorAll("[data-quick-permission]")].every(input=>input.disabled)'),true);
-      await until('$("room-current-people").textContent.includes("Demo guest") && !$("room-transfer").disabled','Host controls');
-      await run('$("room-settings-visibility").value="private";$("room-settings-visibility").dispatchEvent(new Event("change"))');
-      await until('state?.visibility==="private" && !$("room-transfer").disabled','Private cohost room');
-      assert.equal(await browser.evaluate(guest,'state?.roomRole'), 'host');
-      await browser.viewport(host,390,844); await shot('phone-settings');
-      assert.equal(await run('$("room-settings-dialog").scrollWidth <= $("room-settings-dialog").clientWidth'),true);
-      await browser.viewport(host,1360,1000);
+      await run(
+        '$("room-settings-section").value="permissions";$("room-settings-section").dispatchEvent(new Event("change"));$("room-permission-custom").open=true;document.querySelector("#room-permissions button[data-role=viewer][data-permission=seek]").click()',
+      );
+      await browser.until(guest, '!$("timeline").disabled', 'Viewer seek grant');
+      await until('$("room-settings-status").textContent==="Saved"', 'Settings save completes');
+      await run(
+        '$("room-settings-section").value="people";$("room-settings-section").dispatchEvent(new Event("change"));document.querySelector("#room-current-people button").click()',
+      );
+      await browser.until(guest, 'state?.roomRole==="host"', 'Assigned host');
+      assert.equal(
+        await browser.evaluate(
+          guest,
+          '!state.capabilities.managePermissions && [...document.querySelectorAll("[data-quick-permission]")].every(input=>input.disabled)',
+        ),
+        true,
+      );
+      await until(
+        '$("room-current-people").textContent.includes("Demo guest") && !$("room-transfer").disabled',
+        'Host controls',
+      );
+      await run(
+        '$("room-settings-visibility").value="private";$("room-settings-visibility").dispatchEvent(new Event("change"))',
+      );
+      await until('state?.visibility==="private" && !$("room-transfer").disabled', 'Private cohost room');
+      assert.equal(await browser.evaluate(guest, 'state?.roomRole'), 'host');
+      await browser.viewport(host, 390, 844);
+      await shot('phone-settings');
+      assert.equal(await run('$("room-settings-dialog").scrollWidth <= $("room-settings-dialog").clientWidth'), true);
+      await browser.viewport(host, 1360, 1000);
       await run('$("room-transfer").click()');
-      await until('$("room-confirm-dialog").open','Transfer confirmation');
+      await until('$("room-confirm-dialog").open', 'Transfer confirmation');
       await run('$("room-confirm-yes").click()');
-      await until('state?.roomRole==="host" && !!$("room-current-people").querySelector("[aria-label=Host]")','Creator transferred');
-      await browser.until(guest,'state?.roomRole==="creator"','New creator');
+      await until(
+        'state?.roomRole==="host" && !!$("room-current-people").querySelector("[aria-label=Host]")',
+        'Creator transferred',
+      );
+      await browser.until(guest, 'state?.roomRole==="creator"', 'New creator');
       const admin = await browser.page(config.publicUrl + '/watch?demo=guest2');
-      await browser.until(admin,'me?.adminEligible && transport?.ready','Configured administrator');
-      assert.equal(await browser.evaluate(admin,'me.adminMode'),false);
-      assert.equal(await browser.evaluate(admin,'document.querySelectorAll("#rooms button").length'),0);
-      await browser.evaluate(admin,'$("admin-mode").click()');
-      await browser.until(admin,'me?.adminMode && document.querySelectorAll("#rooms button").length===1','Admin mode private visibility');
-      await browser.evaluate(admin,'document.querySelector("#rooms button").click()');
-      await browser.until(admin,'state?.adminMode && state?.durable','Admin joins private room');
-      await browser.evaluate(admin,'$("admin-mode").click()');
-      await browser.until(admin,'!me?.adminMode && !selected','Admin mode off removes private access');
+      await browser.until(admin, 'me?.adminEligible && transport?.ready', 'Configured administrator');
+      assert.equal(await browser.evaluate(admin, 'me.adminMode'), false);
+      assert.equal(await browser.evaluate(admin, 'document.querySelectorAll("#rooms button").length'), 0);
+      await browser.evaluate(admin, '$("admin-mode").click()');
+      await browser.until(
+        admin,
+        'me?.adminMode && document.querySelectorAll("#rooms button").length===1',
+        'Admin mode private visibility',
+      );
+      await browser.evaluate(admin, 'document.querySelector("#rooms button").click()');
+      await browser.until(admin, 'state?.adminMode && state?.durable', 'Admin joins private room');
+      await browser.evaluate(admin, '$("admin-mode").click()');
+      await browser.until(admin, '!me?.adminMode && !selected', 'Admin mode off removes private access');
       await run('$("room-settings-dismiss").click();roomUI.open(selected,"manage")');
-      await until('!$("room-settings-content").hidden && !$("room-settings-close-live").disabled','Host close rights');
+      await until('!$("room-settings-content").hidden && !$("room-settings-close-live").disabled', 'Host close rights');
       await run('$("room-settings-close-live").click()');
-      await until('$("room-confirm-dialog").open','Close confirmation');
+      await until('$("room-confirm-dialog").open', 'Close confirmation');
       await run('$("room-confirm-yes").click()');
-      await until('!selected && !$("room-settings-dialog").open','Room closes for everyone');
-      assert.equal(app.watch.rooms.size,0);
+      await until('!selected && !$("room-settings-dialog").open', 'Room closes for everyone');
+      assert.equal(app.watch.rooms.size, 0);
       await run('$("reopen").click()');
-      await until('document.querySelectorAll("#saved-rooms .saved-room").length===1','Saved room picker');
+      await until('document.querySelectorAll("#saved-rooms .saved-room").length===1', 'Saved room picker');
       await shot('saved');
       await run('document.querySelector("#saved-rooms .room-actions button").click()');
-      await until('state?.mediaId==="demo" && !$("room-dialog").open','Restored media');
-      assert.equal(await run('selected'),id);
-      assert.equal(await run('state.state.paused && Math.abs(state.state.position-17)<.1 && !state.enabled'),true);
-      assert.equal(await run('state.roomRole'),'host');
+      await until('state?.mediaId==="demo" && !$("room-dialog").open', 'Restored media');
+      assert.equal(await run('selected'), id);
+      assert.equal(await run('state.state.paused && Math.abs(state.state.position-17)<.1 && !state.enabled'), true);
+      assert.equal(await run('state.roomRole'), 'host');
       await shot('restored');
       await run('$("theater").click();roomUI.open(selected,"manage")');
-      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden','Theater settings'); await shot('theater');
-      await run('$("room-settings-close-live").click()'); await until('$("room-confirm-dialog").open','Second close confirmation');
-      await run('$("room-confirm-yes").click()'); await until('!selected','Second close');
+      await until('$("room-settings-dialog").open && !$("room-settings-content").hidden', 'Theater settings');
+      await shot('theater');
+      await run('$("room-settings-close-live").click()');
+      await until('$("room-confirm-dialog").open', 'Second close confirmation');
+      await run('$("room-confirm-yes").click()');
+      await until('!selected', 'Second close');
       await browser.activate(guest);
-      await browser.evaluate(guest,'$("reopen").click()');
-      await browser.until(guest,'document.querySelectorAll("#saved-rooms .room-actions button").length===2','Creator saved room');
-      await browser.evaluate(guest,'document.querySelectorAll("#saved-rooms .room-actions button")[1].click()');
-      await browser.until(guest,'$("room-settings-dialog").open && !$("room-settings-delete").disabled','Creator delete');
-      await browser.evaluate(guest,'$("room-settings-delete").click()');
-      await browser.until(guest,'$("room-confirm-dialog").open','Delete confirmation');
-      await browser.evaluate(guest,'$("room-confirm-yes").click()');
-      await browser.until(guest,'!$("room-settings-dialog").open','Room deleted');
-      assert.equal(app.watch.roomState.store.list(app.registry.identity('discord',subjects.guest).userId).total,0);
-      await run('$("create").click();$("room-create-preset").value="queue";$("room-name").value="Full permissions";$("room-create").click()');
-      await until('state?.roomName==="Full permissions"','Full-permission creation');
-      assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.editQueue,true);
-      assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.deleteRoom,false);
+      await browser.evaluate(guest, '$("reopen").click()');
+      await browser.until(
+        guest,
+        'document.querySelectorAll("#saved-rooms .room-actions button").length===2',
+        'Creator saved room',
+      );
+      await browser.evaluate(guest, 'document.querySelectorAll("#saved-rooms .room-actions button")[1].click()');
+      await browser.until(
+        guest,
+        '$("room-settings-dialog").open && !$("room-settings-delete").disabled',
+        'Creator delete',
+      );
+      await browser.evaluate(guest, '$("room-settings-delete").click()');
+      await browser.until(guest, '$("room-confirm-dialog").open', 'Delete confirmation');
+      await browser.evaluate(guest, '$("room-confirm-yes").click()');
+      await browser.until(guest, '!$("room-settings-dialog").open', 'Room deleted');
+      assert.equal(app.watch.roomState.store.list(app.registry.identity('discord', subjects.guest).userId).total, 0);
+      await run(
+        '$("create").click();$("room-create-preset").value="queue";$("room-name").value="Full permissions";$("room-create").click()',
+      );
+      await until('state?.roomName==="Full permissions"', 'Full-permission creation');
+      assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.editQueue, true);
+      assert.equal([...app.watch.rooms.values()][0].s.permissions.viewer.deleteRoom, false);
       const largeRoom = app.watch.rooms.get(await run('selected'));
-      await app.watch.roomState.queue.addBulk(largeRoom.s.roomId,largeRoom.saved.creatorId,Array.from({length:110},(_,i)=>({serverId:'fixture-machine',mediaId:String(1000+i),type:'episode',title:'Paged episode '+i,duration:60})));
+      await app.watch.roomState.queue.addBulk(
+        largeRoom.s.roomId,
+        largeRoom.saved.creatorId,
+        Array.from({ length: 110 }, (_, i) => ({
+          serverId: 'fixture-machine',
+          mediaId: String(1000 + i),
+          type: 'episode',
+          title: 'Paged episode ' + i,
+          duration: 60,
+        })),
+      );
       await run('queueUI.fetchData(true)');
-      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===100','First upcoming page');
-      await run('[...document.querySelectorAll("#queue-panel button")].find(button=>button.textContent==="Load more upcoming").click()');
-      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===110','Additional upcoming page');
+      await until('document.querySelectorAll("#queue-upcoming-list .queue-entry").length===100', 'First upcoming page');
+      await run(
+        '[...document.querySelectorAll("#queue-panel button")].find(button=>button.textContent==="Load more upcoming").click()',
+      );
+      await until(
+        'document.querySelectorAll("#queue-upcoming-list .queue-entry").length===110',
+        'Additional upcoming page',
+      );
       await run('$("create").click()');
-      await until('$("room-dialog").open','Suggested room chooser');
+      await until('$("room-dialog").open', 'Suggested room chooser');
       const suggestion = await run('$("room-name").placeholder');
       assert.match(suggestion, /^Room [A-Z][a-z]{5}$/);
       assert.equal(await run('$("room-name").value'), '');
       await shot('suggested-name');
       await run('$("room-name").value="   ";$("room-create").click()');
-      await until('state?.roomName===' + JSON.stringify(suggestion),'Suggested name saved');
-      assert.equal(app.watch.rooms.get(await run('selected')).s.name,suggestion);
-      console.log(name + ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed');
+      await until('state?.roomName===' + JSON.stringify(suggestion), 'Suggested name saved');
+      assert.equal(app.watch.rooms.get(await run('selected')).s.name, suggestion);
+      console.log(
+        name +
+          ': named create, queue add/reorder/remove/next/history/clear, bulk show/Specials, shuffle, random configuration, autoplay toggle, real natural end/countdown/cancel/advance, viewer policy, host/creator transfer, private cohosts, Admin mode, close/reopen paused at 17s, delete, queue preset without deletion and rendered desktop/phone/theater passed',
+      );
     } catch (error) {
-      console.error([...app.watch.rooms.values()].map(room=>({name:room.s.name,creator:room.saved?.creatorId,hosts:room.saved?.hosts,revision:room.saved?.revision,viewers:room.viewers.size})));
+      console.error(
+        [...app.watch.rooms.values()].map(room => ({
+          name: room.s.name,
+          creator: room.saved?.creatorId,
+          hosts: room.saved?.hosts,
+          revision: room.saved?.revision,
+          viewers: room.viewers.size,
+        })),
+      );
       if (browser && host) {
-        console.error('host:', await browser.evaluate(host,'({url:location.pathname,identity:typeof me!=="undefined"?!!me:false,durable:typeof me!=="undefined"?me?.durableRooms:false,ready:typeof transport!=="undefined"?transport?.ready:false,error:document.getElementById("error")?.textContent,auth:document.getElementById("auth-title")?.textContent,queueNotice:document.querySelector(".queue-notice")?.textContent,autoDialog:$("queue-auto-dialog")?.textContent,queueTitles:[...document.querySelectorAll("#queue-upcoming-list .queue-entry-title")].map(e=>e.textContent),summary:typeof state!=="undefined"?state?.queueSummary:null,nextDisabled:$("next")?.disabled,hasNext:state?.hasNext,pending:typeof pending!=="undefined"?pending:null})'));
-        await browser.screenshot(host,path.resolve('artifacts/room-ui-' + name + '-failure.png'));
+        console.error(
+          'host:',
+          await browser.evaluate(
+            host,
+            '({url:location.pathname,identity:typeof me!=="undefined"?!!me:false,durable:typeof me!=="undefined"?me?.durableRooms:false,ready:typeof transport!=="undefined"?transport?.ready:false,error:document.getElementById("error")?.textContent,auth:document.getElementById("auth-title")?.textContent,queueNotice:document.querySelector(".queue-notice")?.textContent,autoDialog:$("queue-auto-dialog")?.textContent,queueTitles:[...document.querySelectorAll("#queue-upcoming-list .queue-entry-title")].map(e=>e.textContent),summary:typeof state!=="undefined"?state?.queueSummary:null,nextDisabled:$("next")?.disabled,hasNext:state?.hasNext,pending:typeof pending!=="undefined"?pending:null})',
+          ),
+        );
+        await browser.screenshot(host, path.resolve('artifacts/room-ui-' + name + '-failure.png'));
       }
       if (browser && guest) {
-        console.error('guest:', await browser.evaluate(guest,'({url:location.pathname,settingsOpen:$("room-settings-dialog")?.open,settingsStatus:$("room-settings-status")?.textContent,confirmOpen:$("room-confirm-dialog")?.open,error:$("error")?.textContent})'));
-        await browser.screenshot(guest,path.resolve('artifacts/room-ui-' + name + '-guest-failure.png'));
+        console.error(
+          'guest:',
+          await browser.evaluate(
+            guest,
+            '({url:location.pathname,settingsOpen:$("room-settings-dialog")?.open,settingsStatus:$("room-settings-status")?.textContent,confirmOpen:$("room-confirm-dialog")?.open,error:$("error")?.textContent})',
+          ),
+        );
+        await browser.screenshot(guest, path.resolve('artifacts/room-ui-' + name + '-guest-failure.png'));
       }
       throw error;
-    } finally { await browser?.close(); await app.close(); }
+    } finally {
+      await browser?.close();
+      await app.close();
+    }
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

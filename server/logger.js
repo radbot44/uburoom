@@ -11,7 +11,7 @@ const LEVELS = {
   error: 0,
   warn: 1,
   info: 2,
-  debug: 3
+  debug: 3,
 };
 
 const COLOR_CODES = {
@@ -22,14 +22,14 @@ const COLOR_CODES = {
   yellow: '\x1b[33m',
   green: '\x1b[32m',
   cyan: '\x1b[36m',
-  magenta: '\x1b[35m'
+  magenta: '\x1b[35m',
 };
 
 const LEVEL_COLORS = {
   error: COLOR_CODES.red,
   warn: COLOR_CODES.yellow,
   info: COLOR_CODES.green,
-  debug: COLOR_CODES.magenta
+  debug: COLOR_CODES.magenta,
 };
 
 /**
@@ -43,7 +43,7 @@ function redact(value, ancestors) {
     let result = value;
     result = result.replace(
       /((?:x-plex-token|token|password|entry_password|client_secret|bot_token)\s*[:=]\s*['"]?)([^'"&\s,;]+)(['"]?)/gi,
-      (match, p1, p2, p3) => p1 + '[REDACTED]' + (typeof p3 === 'string' ? p3 : '')
+      (match, p1, p2, p3) => p1 + '[REDACTED]' + (typeof p3 === 'string' ? p3 : ''),
     );
     result = result.replace(/(uburoom(?:_[a-z0-9_]+)?=)([^;,\s"']+)/gi, '$1[REDACTED]');
     result = result.replace(/(Bearer\s+)([a-zA-Z0-9_\-\.]+)/gi, '$1[REDACTED]');
@@ -123,8 +123,10 @@ function stripAnsi(str) {
 function formatTimestamp(date = new Date()) {
   const pad = (n, len = 2) => String(n).padStart(len, '0');
   const d = date;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+  );
 }
 
 class Logger {
@@ -139,7 +141,7 @@ class Logger {
   constructor(options = {}) {
     this.level = this._validLevel(options.level) ? options.level.toLowerCase() : 'info';
     this.requests = options.requests !== false;
-    this.isTTY = options.isTTY !== undefined ? options.isTTY : (process.stdout.isTTY && !process.env.NO_COLOR);
+    this.isTTY = options.isTTY !== undefined ? options.isTTY : process.stdout.isTTY && !process.env.NO_COLOR;
     this.fileStream = null;
     this.filePath = null;
     /** @type {Set<(level:string, tag:string, message:string) => void>} */
@@ -185,7 +187,7 @@ class Logger {
       fs.mkdirSync(path.dirname(resolved), { recursive: true });
       fs.closeSync(fs.openSync(resolved, 'a'));
       this.fileStream = fs.createWriteStream(resolved, { flags: 'a', encoding: 'utf8' });
-      this.fileStream.on('error', (err) => {
+      this.fileStream.on('error', err => {
         process.stderr.write(`[uburoom:logger] File stream error (${err.message}). Falling back to console only.\n`);
         this.fileStream = null;
       });
@@ -199,7 +201,7 @@ class Logger {
     if (!this.fileStream) return;
     const stream = this.fileStream;
     this.fileStream = null;
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       stream.end(resolve);
     });
   }
@@ -224,16 +226,23 @@ class Logger {
     // Sanitize parameters
     const sanitizedArgs = args.map(arg => redact(arg));
     const formattedMsg = util.format(...sanitizedArgs);
-    if (tapped) for (const listener of this.taps) { try { listener(level, tag, stripAnsi(formattedMsg)); } catch {} }
+    if (tapped)
+      for (const listener of this.taps) {
+        try {
+          listener(level, tag, stripAnsi(formattedMsg));
+        } catch {}
+      }
     if (!this.isLevelEnabled(level)) return;
 
     // Format console output
     let consoleMsg;
     if (this.isTTY) {
       const color = LEVEL_COLORS[level] || COLOR_CODES.reset;
-      consoleMsg = `${COLOR_CODES.dim}${time}${COLOR_CODES.reset} ${color}${levelUpper}${COLOR_CODES.reset} ` +
+      consoleMsg =
+        `${COLOR_CODES.dim}${time}${COLOR_CODES.reset} ${color}${levelUpper}${COLOR_CODES.reset} ` +
         (cleanTag ? `${COLOR_CODES.cyan}${cleanTag}${COLOR_CODES.reset} ` : '') +
-        formattedMsg + '\n';
+        formattedMsg +
+        '\n';
     } else {
       consoleMsg = `${time} ${levelUpper} ${cleanTag ? cleanTag + ' ' : ''}${formattedMsg}\n`;
     }
@@ -277,7 +286,7 @@ class Logger {
       warn: (...args) => this.warn(tag, ...args),
       info: (...args) => this.info(tag, ...args),
       debug: (...args) => this.debug(tag, ...args),
-      child: (subTag) => this.child(`${tag}:${subTag}`)
+      child: subTag => this.child(`${tag}:${subTag}`),
     };
   }
 }
@@ -290,5 +299,5 @@ module.exports = {
   redact,
   stripAnsi,
   formatTimestamp,
-  LEVELS
+  LEVELS,
 };

@@ -8,31 +8,61 @@ const policy = require('../web/playback-policy');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../web/watch.js'), 'utf8');
 
 function client() {
-  let mono = 1000, wall = 100000;
+  let mono = 1000,
+    wall = 100000;
   const sent = [];
   const clock = policy.observationClock?.();
   clock?.update('epoch', 100000, 1000, 1000);
   const ctx = {
-    observationPending: false, observationQueued: false, observing: true, selected: 'room',
+    observationPending: false,
+    observationQueued: false,
+    observing: true,
+    selected: 'room',
     state: { mediaUrl: 'url', streamVersion: 'stream', mediaVersion: 'media', observationEpoch: 'epoch' },
-    mediaSource: 'url', playbackError: '', autoplayBlocked: false, probing: false, playerWaiting: false,
-    viewerId: 'viewer', observationSequence: 0, observationBreak: 0, videoFrames: 30,
-    performance: { now: () => mono }, Date: { now: () => wall }, offset: 0,
-    observationClock: clock, uburoomPlayback: policy,
+    mediaSource: 'url',
+    playbackError: '',
+    autoplayBlocked: false,
+    probing: false,
+    playerWaiting: false,
+    viewerId: 'viewer',
+    observationSequence: 0,
+    observationBreak: 0,
+    videoFrames: 30,
+    performance: { now: () => mono },
+    Date: { now: () => wall },
+    offset: 0,
+    observationClock: clock,
+    uburoomPlayback: policy,
     video: {
-      currentTime: 0, playbackRate: 1, readyState: 4, requestVideoFrameCallback() {},
-      getVideoPlaybackQuality: () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 })
+      currentTime: 0,
+      playbackRate: 1,
+      readyState: 4,
+      requestVideoFrameCallback() {},
+      getVideoPlaybackQuality: () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 }),
     },
     diagnostics: { record() {} },
-    api: async (_, data) => { sent.push(data); return { credit: { reason: 'baseline', creditedSeconds: 0 } }; }
+    api: async (_, data) => {
+      sent.push(data);
+      return { credit: { reason: 'baseline', creditedSeconds: 0 } };
+    },
   };
-  vm.runInNewContext(source.slice(source.indexOf('async function reportObservation('), source.indexOf("for (const event of ['playing'", source.indexOf('async function reportObservation('))), ctx);
+  vm.runInNewContext(
+    source.slice(
+      source.indexOf('async function reportObservation('),
+      source.indexOf("for (const event of ['playing'", source.indexOf('async function reportObservation(')),
+    ),
+    ctx,
+  );
   return {
-    ctx, sent,
+    ctx,
+    sent,
     tick(ms = 1000, wallMs = ms) {
-      mono += ms; wall += wallMs; clock?.update('epoch', 100000 + mono - 1000, mono, mono);
-      ctx.video.currentTime += ms / 1000; ctx.videoFrames += 30;
-    }
+      mono += ms;
+      wall += wallMs;
+      clock?.update('epoch', 100000 + mono - 1000, mono, mono);
+      ctx.video.currentTime += ms / 1000;
+      ctx.videoFrames += 30;
+    },
   };
 }
 
@@ -45,7 +75,11 @@ test('observations keep monotonic duration through client wall steps and queue i
   assert.equal(f.sent[1].observedAt - f.sent[0].observedAt, 1000);
 
   let resolveFlight;
-  f.ctx.api = (_, data) => new Promise(r => { f.sent.push(data); resolveFlight = r; });
+  f.ctx.api = (_, data) =>
+    new Promise(r => {
+      f.sent.push(data);
+      resolveFlight = r;
+    });
   const first = f.ctx.reportObservation();
   assert.equal(f.ctx.observationPending, true);
   f.ctx.video.ended = true;
@@ -93,9 +127,16 @@ test('frame observation tracks advancing callbacks, freezes counters when callba
 });
 
 test('client clock steps in both directions retain exactly observed decoded credit', async () => {
-  const f = client(), tracking = new PlaybackTracking(undefined, () => f.sent.at(-1)?.sampleAt + 99000 || 100000);
+  const f = client(),
+    tracking = new PlaybackTracking(undefined, () => f.sent.at(-1)?.sampleAt + 99000 || 100000);
   const room = { s: { roomId: 'room' }, mediaVersion: 'media', media: { id: 'fixture', duration: 100 } };
-  const viewer = { userId: 'user', observationEpoch: 'epoch', streamVersion: 'stream', mediaVersion: 'media', media: { kind: 'demo' } };
+  const viewer = {
+    userId: 'user',
+    observationEpoch: 'epoch',
+    streamVersion: 'stream',
+    mediaVersion: 'media',
+    media: { kind: 'demo' },
+  };
   try {
     for (const wallStep of [0, 5745, -9000, 1000]) {
       if (f.sent.length) f.tick(1000, wallStep);
@@ -123,7 +164,8 @@ test('observation clock manages poll jitter, refuses stale evidence, isolates ep
 
   // Server clock steps rebase with a discontinuity and never backfill the boundary
   for (const step of [-4745, 4745]) {
-    const stepClock = policy.observationClock(), stepRev = stepClock.update('a', 100000, 0, 0);
+    const stepClock = policy.observationClock(),
+      stepRev = stepClock.update('a', 100000, 0, 0);
     assert.equal(stepClock.sample(1000), 101000);
     assert.ok(stepClock.update('a', 101000 + step, 1000, 1000) > stepRev);
     assert.equal(stepClock.sample(1000), 101000 + step);

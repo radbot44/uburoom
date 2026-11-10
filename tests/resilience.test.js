@@ -1,68 +1,143 @@
 'use strict';
-const test = require('node:test'), assert = require('node:assert/strict');
+const test = require('node:test'),
+  assert = require('node:assert/strict');
 const { CircuitBreaker, resilientFetch } = require('../server/resilience');
 const { Plex } = require('../server/plex');
 const { run } = require('../server/av1');
 const { runOperation, currentSignal, SharedTask } = require('../server/operation');
 
 test('work armed by a finished operation outlives that operation and its cancellation', async () => {
-  const lifetime = new AbortController(); let timer;
-  const fired = new Promise(resolve => { timer = resolve; });
-  await runOperation(lifetime.signal, async () => { setTimeout(() => timer(currentSignal()), 20); assert.ok(currentSignal()); });
+  const lifetime = new AbortController();
+  let timer;
+  const fired = new Promise(resolve => {
+    timer = resolve;
+  });
+  await runOperation(lifetime.signal, async () => {
+    setTimeout(() => timer(currentSignal()), 20);
+    assert.ok(currentSignal());
+  });
   lifetime.abort();
   assert.equal(await fired, undefined, 'a later autoplay timer must not inherit an expired request');
   const cancelled = new AbortController();
-  const running = runOperation(cancelled.signal, async () => { await new Promise(resolve => setTimeout(resolve, 10)); return currentSignal().aborted; });
+  const running = runOperation(cancelled.signal, async () => {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return currentSignal().aborted;
+  });
   cancelled.abort();
   assert.equal(await running, true, 'running work still observes cancellation');
 });
 
 test('shared work survives a gap between consumers but not their lasting absence', async t => {
-  const keepAlive = setInterval(() => {}, 1000); t.after(() => clearInterval(keepAlive));
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
   const gone = () => new AbortController();
   let finish;
-  const task = new SharedTask(signal => new Promise((resolve, reject) => { finish = resolve; signal.addEventListener('abort', () => reject(signal.reason), { once: true }); }), { idleMs: 40 });
-  const first = gone(), waiting = assert.rejects(task.join(first.signal));
-  await new Promise(resolve => setTimeout(resolve, 5)); first.abort(); await waiting;
-  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(task.signal.aborted, false, 'a timed-out poller does not restart slow preparation');
-  const second = task.join(); finish('ready'); assert.equal(await second, 'ready');
-  const idle = new SharedTask(signal => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })), { idleMs: 10 });
-  const leaving = gone(), left = assert.rejects(idle.join(leaving.signal));
-  await new Promise(resolve => setTimeout(resolve, 5)); leaving.abort(); await left;
-  await assert.rejects(idle.promise); assert.equal(idle.signal.aborted, true);
+  const task = new SharedTask(
+    signal =>
+      new Promise((resolve, reject) => {
+        finish = resolve;
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    { idleMs: 40 },
+  );
+  const first = gone(),
+    waiting = assert.rejects(task.join(first.signal));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  first.abort();
+  await waiting;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(task.signal.aborted, false, 'a timed-out poller does not restart slow preparation');
+  const second = task.join();
+  finish('ready');
+  assert.equal(await second, 'ready');
+  const idle = new SharedTask(
+    signal => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
+    { idleMs: 10 },
+  );
+  const leaving = gone(),
+    left = assert.rejects(idle.join(leaving.signal));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  leaving.abort();
+  await left;
+  await assert.rejects(idle.promise);
+  assert.equal(idle.signal.aborted, true);
 });
 
 test('circuit breaker bounds failures, respects rate limits and allows exactly one recovery probe', async () => {
-  let now = 0, calls = 0; const circuit = new CircuitBreaker({ threshold: 2, cooldown: 100, now: () => now });
-  const failed = () => circuit.run(async () => { calls++; throw Object.assign(new Error('Unavailable'), { status: 503 }); });
-  await assert.rejects(failed()); await assert.rejects(failed()); await assert.rejects(failed()); assert.equal(calls, 2);
-  now = 101; let finish; const probe = circuit.run(() => new Promise(resolve => { finish = resolve; }));
-  await assert.rejects(circuit.run(() => { throw new Error('Must not run'); })); finish('ok'); assert.equal(await probe, 'ok');
+  let now = 0,
+    calls = 0;
+  const circuit = new CircuitBreaker({ threshold: 2, cooldown: 100, now: () => now });
+  const failed = () =>
+    circuit.run(async () => {
+      calls++;
+      throw Object.assign(new Error('Unavailable'), { status: 503 });
+    });
+  await assert.rejects(failed());
+  await assert.rejects(failed());
+  await assert.rejects(failed());
+  assert.equal(calls, 2);
+  now = 101;
+  let finish;
+  const probe = circuit.run(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  await assert.rejects(
+    circuit.run(() => {
+      throw new Error('Must not run');
+    }),
+  );
+  finish('ok');
+  assert.equal(await probe, 'ok');
   assert.equal(await circuit.run(async () => 42), 42);
-  for (let i = 0; i < 6; i++) await assert.rejects(circuit.run(() => { throw Object.assign(new Error('Denied'), { status: 403 }); }));
+  for (let i = 0; i < 6; i++)
+    await assert.rejects(
+      circuit.run(() => {
+        throw Object.assign(new Error('Denied'), { status: 403 });
+      }),
+    );
   assert.equal(await circuit.run(async () => true), true, 'user access denials do not trip an integration breaker');
 });
 
 test('Plex circuits isolate principals and bound 429 retries without exposing upstream bodies', async () => {
   let calls = 0;
   const plex = new Plex({ plexUrl: 'https://plex.invalid', plexToken: 'owner' }, async (url, options) => {
-    calls++; return options.headers['X-Plex-Token'] === 'bad' ? new Response('secret', { status: 429, headers: { 'Retry-After': '60' } }) : new Response('{}');
+    calls++;
+    return options.headers['X-Plex-Token'] === 'bad'
+      ? new Response('secret', { status: 429, headers: { 'Retry-After': '60' } })
+      : new Response('{}');
   });
   try {
-    const bad = plex.scope('bad', 'bad'), good = plex.scope('good', 'good');
+    const bad = plex.scope('bad', 'bad'),
+      good = plex.scope('good', 'good');
     await assert.rejects(bad.request('/'), error => error.status === 429 && !error.message.includes('secret'));
-    await assert.rejects(bad.request('/'), error => error.status === 503); assert.equal(calls, 1);
-    assert.equal((await good.request('/')).status, 200); assert.equal(calls, 2);
-  } finally { await plex.close(); }
+    await assert.rejects(bad.request('/'), error => error.status === 503);
+    assert.equal(calls, 1);
+    assert.equal((await good.request('/')).status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    await plex.close();
+  }
 });
 
 test('integration requests retain a hard deadline with a caller signal', async () => {
-  const request = resilientFetch(async (url, { signal }) => new Promise((resolve, reject) => {
-    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-  }), { timeoutMs: 15 });
+  const request = resilientFetch(
+    async (url, { signal }) =>
+      new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    { timeoutMs: 15 },
+  );
   const timer = setTimeout(() => {}, 1000);
-  try { await assert.rejects(request('https://fixture.invalid', { signal: new AbortController().signal }), { name: 'TimeoutError' }); }
-  finally { clearTimeout(timer); }
+  try {
+    await assert.rejects(request('https://fixture.invalid', { signal: new AbortController().signal }), {
+      name: 'TimeoutError',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 test('streaming responses manage continuous bodies, idle stalls, backpressure, caller abort, and resource cleanup', async () => {
@@ -76,7 +151,7 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
           controller.enqueue(new Uint8Array([i]));
         }
         controller.close();
-      }
+      },
     });
     return new Response(stream);
   };
@@ -96,8 +171,10 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
     const stream = new ReadableStream({
       async start(controller) {
         controller.enqueue(new Uint8Array([1]));
-        await new Promise(r => { signal.addEventListener('abort', r, { once: true }); });
-      }
+        await new Promise(r => {
+          signal.addEventListener('abort', r, { once: true });
+        });
+      },
     });
     return new Response(stream);
   };
@@ -115,7 +192,7 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
         controller.enqueue(new Uint8Array([10]));
         controller.enqueue(new Uint8Array([20]));
         controller.close();
-      }
+      },
     });
     return new Response(stream);
   };
@@ -135,10 +212,20 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
   const abortCtrl = new AbortController();
   const cancelFetcher = async (url, { signal }) => {
     const stream = new ReadableStream({
-      start(controller) { controller.enqueue(new Uint8Array([42])); },
-      cancel() { upstreamCancelled = true; }
+      start(controller) {
+        controller.enqueue(new Uint8Array([42]));
+      },
+      cancel() {
+        upstreamCancelled = true;
+      },
     });
-    signal.addEventListener('abort', () => { upstreamCancelled = true; }, { once: true });
+    signal.addEventListener(
+      'abort',
+      () => {
+        upstreamCancelled = true;
+      },
+      { once: true },
+    );
     return new Response(stream);
   };
   const cancelReq = resilientFetch(cancelFetcher, { timeoutMs: 50, idleTimeoutMs: 50 });
@@ -150,13 +237,17 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
   assert.equal(upstreamCancelled, true, 'caller abort promptly cancels streaming body');
 
   const callerAbort = new AbortController();
-  const callerAbortedFetcher = async (url, { signal }) => new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error('Underlying abort'));
-    signal.addEventListener('abort', () => reject(new Error('Underlying abort')), { once: true });
-  });
+  const callerAbortedFetcher = async (url, { signal }) =>
+    new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(new Error('Underlying abort'));
+      signal.addEventListener('abort', () => reject(new Error('Underlying abort')), { once: true });
+    });
   const abortReq = resilientFetch(callerAbortedFetcher, { timeoutMs: 1000 });
   callerAbort.abort();
-  await assert.rejects(abortReq('https://stream.invalid', { streaming: true, signal: callerAbort.signal }), err => err.callerAborted === true);
+  await assert.rejects(
+    abortReq('https://stream.invalid', { streaming: true, signal: callerAbort.signal }),
+    err => err.callerAborted === true,
+  );
   const okReq = resilientFetch(async () => new Response('ok'));
   assert.equal(await okReq('https://ok.invalid').then(r => r.text()), 'ok');
 
@@ -169,7 +260,10 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
     return origRemove(type, ...args);
   };
   const upstreamStream = new ReadableStream({
-    start(controller) { controller.enqueue(new Uint8Array([1])); controller.close(); }
+    start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+      controller.close();
+    },
   });
   const cleanFetcher = async () => new Response(upstreamStream);
   const cleanReq = resilientFetch(cleanFetcher);
@@ -183,19 +277,71 @@ test('streaming responses manage continuous bodies, idle stalls, backpressure, c
   assert.equal(upstreamStream.locked, false, 'upstream reader lock released');
 
   const headReq = resilientFetch(async () => new Response(null));
-  const headRes = await headReq('https://stream.invalid', { streaming: true, method: 'HEAD', signal: cleanupAbort.signal });
+  const headRes = await headReq('https://stream.invalid', {
+    streaming: true,
+    method: 'HEAD',
+    signal: cleanupAbort.signal,
+  });
   assert.equal(headRes.status, 200);
 });
 
 test('tool runner drains stderr, bounds output and kills timed-out or over-budget processes', async () => {
   const binary = process.execPath;
-  assert.equal((await run(binary, ['-e', 'process.stderr.write("x".repeat(200000));process.stdout.write("ok")'], undefined, 2000)).toString(), 'ok');
-  await assert.rejects(run(binary, ['-e', 'process.stdout.write("x".repeat(200000))'], undefined, 2000, 1024), /output exceeded/);
-  await assert.rejects(run(binary, ['-e', 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], undefined, 100), /timed out/);
-  await assert.rejects(run(binary, ['-e', 'setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, { memory: async () => 2048, memoryLimit: 1024, memoryInterval: 10 }), /memory limit/);
-  await assert.rejects(run(binary, ['-e', 'setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, { memory: async () => { throw new Error('Unavailable'); }, memoryInterval: 10 }), /monitoring unavailable/);
-  const completed = await run(binary, ['-e', 'process.stdout.write("complete");setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, { outputComplete: bytes => bytes.toString() === 'complete' });
-  assert.equal(completed.toString(), 'complete', 'validated output completion waits for child close without waiting for a future sparse packet');
-  await assert.rejects(run(binary, ['-e', 'process.stdout.write("invalid");setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, { outputComplete: () => { throw new Error('Invalid subtitle packets'); } }), /Invalid subtitle packets/);
-  assert.ok(await require('../server/process-memory').processMemory(process.pid) > 0, 'native process inspection reports actual memory');
+  assert.equal(
+    (
+      await run(binary, ['-e', 'process.stderr.write("x".repeat(200000));process.stdout.write("ok")'], undefined, 2000)
+    ).toString(),
+    'ok',
+  );
+  await assert.rejects(
+    run(binary, ['-e', 'process.stdout.write("x".repeat(200000))'], undefined, 2000, 1024),
+    /output exceeded/,
+  );
+  await assert.rejects(
+    run(binary, ['-e', 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], undefined, 100),
+    /timed out/,
+  );
+  await assert.rejects(
+    run(binary, ['-e', 'setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, {
+      memory: async () => 2048,
+      memoryLimit: 1024,
+      memoryInterval: 10,
+    }),
+    /memory limit/,
+  );
+  await assert.rejects(
+    run(binary, ['-e', 'setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, {
+      memory: async () => {
+        throw new Error('Unavailable');
+      },
+      memoryInterval: 10,
+    }),
+    /monitoring unavailable/,
+  );
+  const completed = await run(
+    binary,
+    ['-e', 'process.stdout.write("complete");setInterval(()=>{},1000)'],
+    undefined,
+    2000,
+    1024,
+    undefined,
+    { outputComplete: bytes => bytes.toString() === 'complete' },
+  );
+  assert.equal(
+    completed.toString(),
+    'complete',
+    'validated output completion waits for child close without waiting for a future sparse packet',
+  );
+  await assert.rejects(
+    run(binary, ['-e', 'process.stdout.write("invalid");setInterval(()=>{},1000)'], undefined, 2000, 1024, undefined, {
+      outputComplete: () => {
+        throw new Error('Invalid subtitle packets');
+      },
+    }),
+    /Invalid subtitle packets/,
+  );
+  assert.ok(
+    (await require('../server/process-memory').processMemory(process.pid)) > 0,
+    'native process inspection reports actual memory',
+  );
 });

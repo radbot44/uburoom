@@ -16,7 +16,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(10000),
       });
       if (claimRes.status === 401) {
         $('native-message').textContent = 'You must be signed in to authorize a companion client.';
@@ -36,12 +36,13 @@
 
       if (claimData.verification) {
         const v = claimData.verification;
-        $('native-code').textContent = v.length === 6 ? (v.slice(0, 3) + ' ' + v.slice(3)) : v;
+        $('native-code').textContent = v.length === 6 ? v.slice(0, 3) + ' ' + v.slice(3) : v;
         $('native-code').hidden = false;
         $('native-hint').hidden = false;
       }
 
-      $('native-message').textContent = 'Authorize Plezy to connect to uburoom as ' + (claimData.name || 'your account') + '?';
+      $('native-message').textContent =
+        'Authorize Plezy to connect to uburoom as ' + (claimData.name || 'your account') + '?';
       const approveBtn = $('native-approve');
       approveBtn.hidden = false;
       approveBtn.addEventListener('click', async () => {
@@ -53,7 +54,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: claimData.id, csrf: claimData.csrf }),
-            signal: AbortSignal.timeout(10000)
+            signal: AbortSignal.timeout(10000),
           });
           const approveData = await approveRes.json();
           if (!approveRes.ok) {

@@ -28,7 +28,7 @@ function sanitizeText(text) {
   s = s.replace(/(?:[a-zA-Z]:)?\/(?:Users|home)\/[^/\s"':]+/gi, '[home]');
 
   // Strip sensitive local paths, keeping benchmark artifact references
-  s = s.replace(/[a-zA-Z]:\/[^/\s"':]+\/[^/\s"':]+/g, (m) => {
+  s = s.replace(/[a-zA-Z]:\/[^/\s"':]+\/[^/\s"':]+/g, m => {
     if (m.includes('artifacts/') || m.includes('outputs/') || m.includes('screenshots/')) {
       const idx = m.indexOf('artifacts/');
       if (idx >= 0) return m.slice(idx);
@@ -95,11 +95,15 @@ function sanitizeForExport(benchmarkData) {
  */
 function generateJsonReport(benchmarkData, outputPath) {
   const cleanData = sanitizeForExport(benchmarkData);
-  const jsonContent = JSON.stringify({
-    schemaVersion: SCHEMA_VERSION,
-    generatedAt: new Date().toISOString(),
-    ...cleanData
-  }, null, 2);
+  const jsonContent = JSON.stringify(
+    {
+      schemaVersion: SCHEMA_VERSION,
+      generatedAt: new Date().toISOString(),
+      ...cleanData,
+    },
+    null,
+    2,
+  );
 
   fs.writeFileSync(outputPath, jsonContent, 'utf8');
 }
@@ -156,7 +160,7 @@ function generateCsvReport(benchmarkData, outputPath) {
     'Thermal_Climb_C',
     'Throttling',
     'FallbackEvents',
-    'Errors'
+    'Errors',
   ];
 
   const rows = (cleanData.results || []).map(r => {
@@ -169,7 +173,13 @@ function generateCsvReport(benchmarkData, outputPath) {
       .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
       .join('; ');
 
-    const qStatus = qm.status ? qm.status.toUpperCase() : (r.qualityMetrics === null ? '' : (cleanData.selectedMetrics?.length ? 'SKIPPED' : ''));
+    const qStatus = qm.status
+      ? qm.status.toUpperCase()
+      : r.qualityMetrics === null
+        ? ''
+        : cleanData.selectedMetrics?.length
+          ? 'SKIPPED'
+          : '';
     const qReason = qm.reason || (qm.validation?.errors?.length ? qm.validation.errors.join('; ') : '');
 
     const errorsList = [];
@@ -178,37 +188,51 @@ function generateCsvReport(benchmarkData, outputPath) {
     if (qm.status === 'failed' && qm.reason) errorsList.push(`Quality: ${qm.reason}`);
     const err = errorsList.join('; ');
 
-    const frameCov = val.videoPacketCount && val.expectedFrames
-      ? Math.round((val.videoPacketCount / val.expectedFrames) * 100)
-      : '';
+    const frameCov =
+      val.videoPacketCount && val.expectedFrames ? Math.round((val.videoPacketCount / val.expectedFrames) * 100) : '';
 
-    const avStart = val.videoStartPts !== undefined && val.audioStartPts !== undefined
-      ? Math.round(Math.abs(val.videoStartPts - val.audioStartPts) * 1000) / 1000
-      : '';
+    const avStart =
+      val.videoStartPts !== undefined && val.audioStartPts !== undefined
+        ? Math.round(Math.abs(val.videoStartPts - val.audioStartPts) * 1000) / 1000
+        : '';
 
-    const avEnd = val.videoEndPts !== undefined && val.audioEndPts !== undefined
-      ? Math.round(Math.abs(val.videoEndPts - val.audioEndPts) * 1000) / 1000
-      : '';
+    const avEnd =
+      val.videoEndPts !== undefined && val.audioEndPts !== undefined
+        ? Math.round(Math.abs(val.videoEndPts - val.audioEndPts) * 1000) / 1000
+        : '';
 
-    const isPdh = cleanData.telemetry?.provider === 'windows-pdh' || cleanData.telemetry?.provider === 'pdh' || r.telemetry?.provider === 'windows-pdh';
+    const isPdh =
+      cleanData.telemetry?.provider === 'windows-pdh' ||
+      cleanData.telemetry?.provider === 'pdh' ||
+      r.telemetry?.provider === 'windows-pdh';
     const tempUnavailable = cleanData.telemetry?.unavailableFields?.includes('temperatureC') || isPdh;
     const powerUnavailable = cleanData.telemetry?.unavailableFields?.includes('powerWatts') || isPdh;
 
-    const hostCpu = telem.hostCpuUtilization?.mean !== undefined && telem.hostCpuUtilization?.mean !== null
-      ? telem.hostCpuUtilization.mean
-      : '';
+    const hostCpu =
+      telem.hostCpuUtilization?.mean !== undefined && telem.hostCpuUtilization?.mean !== null
+        ? telem.hostCpuUtilization.mean
+        : '';
 
-    const gpuTemp = telem.temperatureC?.mean !== undefined && telem.temperatureC?.mean !== null
-      ? telem.temperatureC.mean
-      : (tempUnavailable ? 'N/A' : '');
+    const gpuTemp =
+      telem.temperatureC?.mean !== undefined && telem.temperatureC?.mean !== null
+        ? telem.temperatureC.mean
+        : tempUnavailable
+          ? 'N/A'
+          : '';
 
-    const gpuPower = telem.powerWatts?.mean !== undefined && telem.powerWatts?.mean !== null
-      ? telem.powerWatts.mean
-      : (powerUnavailable ? 'N/A' : '');
+    const gpuPower =
+      telem.powerWatts?.mean !== undefined && telem.powerWatts?.mean !== null
+        ? telem.powerWatts.mean
+        : powerUnavailable
+          ? 'N/A'
+          : '';
 
-    const thermalClimb = typeof r.telemetry?.encoding?.thermalClimbC === 'number'
-      ? r.telemetry.encoding.thermalClimbC
-      : (tempUnavailable ? 'N/A' : '');
+    const thermalClimb =
+      typeof r.telemetry?.encoding?.thermalClimbC === 'number'
+        ? r.telemetry.encoding.thermalClimbC
+        : tempUnavailable
+          ? 'N/A'
+          : '';
 
     return [
       r.runIndex || 1,
@@ -231,7 +255,7 @@ function generateCsvReport(benchmarkData, outputPath) {
       perf.speedMultiplier || '',
       perf.totalElapsedSpeedMultiplier || '',
       perf.effectiveFps || '',
-      perf.successfulEncodeTimeSec !== undefined ? perf.successfulEncodeTimeSec : (perf.totalEncodingTimeSec || ''),
+      perf.successfulEncodeTimeSec !== undefined ? perf.successfulEncodeTimeSec : perf.totalEncodingTimeSec || '',
       perf.totalEncodingTimeSec || '',
       perf.firstChunkDurationSec !== null && perf.firstChunkDurationSec !== undefined ? perf.firstChunkDurationSec : '',
       perf.firstChunkStartupSec !== null && perf.firstChunkStartupSec !== undefined ? perf.firstChunkStartupSec : '',
@@ -249,17 +273,27 @@ function generateCsvReport(benchmarkData, outputPath) {
       qm.ssim?.mean || '',
       qm.psnr?.mean || '',
       qm.cambi?.mean || '',
-      telem.gpuUtilization?.mean !== undefined && telem.gpuUtilization?.mean !== null ? telem.gpuUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('gpuUtilization') ? 'N/A' : ''),
-      telem.encoderUtilization?.mean !== undefined && telem.encoderUtilization?.mean !== null ? telem.encoderUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('encoderUtilization') ? 'N/A' : ''),
+      telem.gpuUtilization?.mean !== undefined && telem.gpuUtilization?.mean !== null
+        ? telem.gpuUtilization.mean
+        : cleanData.telemetry?.unavailableFields?.includes('gpuUtilization')
+          ? 'N/A'
+          : '',
+      telem.encoderUtilization?.mean !== undefined && telem.encoderUtilization?.mean !== null
+        ? telem.encoderUtilization.mean
+        : cleanData.telemetry?.unavailableFields?.includes('encoderUtilization')
+          ? 'N/A'
+          : '',
       hostCpu,
       gpuTemp,
       gpuPower,
       thermalClimb,
       cleanData.telemetry?.throttlingSupported === false || r.telemetry?.encoding?.throttlingSupported === false
         ? 'N/A'
-        : (r.telemetry?.encoding?.throttlingDetected ? (r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Active') : 'None'),
+        : r.telemetry?.encoding?.throttlingDetected
+          ? r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Active'
+          : 'None',
       fallbacks ? `"${fallbacks.replace(/"/g, '""')}"` : 'None',
-      err ? `"${err.replace(/"/g, '""')}"` : ''
+      err ? `"${err.replace(/"/g, '""')}"` : '',
     ].join(',');
   });
 
@@ -372,14 +406,17 @@ function buildQualityPerformanceSvg(results) {
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
 
-  const maxBitrate = Math.max(12000, ...scored.map(r => r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || 8000));
+  const maxBitrate = Math.max(
+    12000,
+    ...scored.map(r => r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || 8000),
+  );
   const minVmaf = Math.max(0, Math.floor(Math.min(...scored.map(r => r.qualityMetrics.vmaf.min || 70)) / 10) * 10);
   const maxVmaf = 100;
 
   const codecColors = {
     av1: '#FF9954',
     vp9: '#38BDF8',
-    vp8: '#A78BFA'
+    vp8: '#A78BFA',
   };
 
   let pointsSvg = '';
@@ -435,11 +472,13 @@ function buildTimelineSvg(timeline, worstIntervals = []) {
   const minScore = Math.max(0, Math.floor(Math.min(...valid.map(f => f.vmaf)) / 10) * 10);
   const maxScore = 100;
 
-  const points = valid.map(f => {
-    const x = padL + (f.timestampSec / maxTime) * plotW;
-    const y = padT + plotH - ((f.vmaf - minScore) / (maxScore - minScore)) * plotH;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  const points = valid
+    .map(f => {
+      const x = padL + (f.timestampSec / maxTime) * plotW;
+      const y = padT + plotH - ((f.vmaf - minScore) / (maxScore - minScore)) * plotH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
 
   // Highlight worst intervals
   let intervalSvg = '';
@@ -908,7 +947,9 @@ function generateHtmlReport(benchmarkData, outputPath) {
   </section>
 
   <!-- Hardware Telemetry Section -->
-  ${cleanData.telemetry ? `
+  ${
+    cleanData.telemetry
+      ? `
   <section class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
       <h2>Hardware Telemetry &amp; Resource Utilization</h2>
@@ -935,22 +976,30 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
       <div>
         <div class="stat-label">Hardware Throttling</div>
-        <div class="stat-val" style="font-size:14px;color:${cleanData.telemetry.encoding?.throttlingSupported === false ? 'var(--muted)' : (cleanData.telemetry.encoding?.throttlingDetected ? 'var(--error)' : 'var(--success)')};">
-          ${cleanData.telemetry.encoding?.throttlingSupported === false ? 'N/A (Unsupported)' : (cleanData.telemetry.encoding?.throttlingDetected ? escapeHtml(cleanData.telemetry.encoding.activeThrottleReasons?.join(', ') || 'Active') : 'None')}
+        <div class="stat-val" style="font-size:14px;color:${cleanData.telemetry.encoding?.throttlingSupported === false ? 'var(--muted)' : cleanData.telemetry.encoding?.throttlingDetected ? 'var(--error)' : 'var(--success)'};">
+          ${cleanData.telemetry.encoding?.throttlingSupported === false ? 'N/A (Unsupported)' : cleanData.telemetry.encoding?.throttlingDetected ? escapeHtml(cleanData.telemetry.encoding.activeThrottleReasons?.join(', ') || 'Active') : 'None'}
         </div>
       </div>
     </div>
-    ${cleanData.telemetry.timeline?.length ? `
+    ${
+      cleanData.telemetry.timeline?.length
+        ? `
       <div style="margin-top:16px;">
         <div class="stat-label" style="margin-bottom:8px;">Real-Time Telemetry Timeline (Encoding Phase Isolated)</div>
         ${buildTelemetryTimelineSvg(cleanData.telemetry.timeline)}
       </div>
-    ` : ''}
+    `
+        : ''
+    }
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Stability & Soak Performance Section -->
-  ${cleanData.stability ? `
+  ${
+    cleanData.stability
+      ? `
   <section class="card" style="border-color: rgba(68,199,138,0.4); background: rgba(68,199,138,0.02);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
       <h2>Stability &amp; Soak Benchmark Trends</h2>
@@ -981,10 +1030,16 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <div style="margin-top:6px;color:var(--muted);font-size:12px;">${escapeHtml(cleanData.stability.notice)}</div>
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Historical Comparisons & Regression Tracking Section -->
-  ${cleanData.historyComparison && (cleanData.historyComparison.matchedComparisons?.length || cleanData.historyComparison.partiallyMatchedComparisons?.length) ? `
+  ${
+    cleanData.historyComparison &&
+    (cleanData.historyComparison.matchedComparisons?.length ||
+      cleanData.historyComparison.partiallyMatchedComparisons?.length)
+      ? `
   <section class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
       <h2>Historical Comparisons &amp; Regression Tracking</h2>
@@ -1004,12 +1059,30 @@ function generateHtmlReport(benchmarkData, outputPath) {
           </tr>
         </thead>
         <tbody>
-          ${(cleanData.historyComparison.matchedComparisons || []).map(m => {
-            const badgeClass = m.classification === 'regression' ? 'pill error' : (m.classification === 'improvement' ? 'pill success' : (m.classification === 'cross_hardware_comparison' ? 'pill highlight' : 'pill'));
-            const displayClassification = m.classification === 'cross_hardware_comparison' ? 'CROSS HARDWARE' : m.classification.toUpperCase();
-            const deltaColor = m.classification === 'cross_hardware_comparison' ? 'var(--text)' : (m.speedDeltaPercent > 0 ? 'var(--success)' : m.speedDeltaPercent < 0 ? 'var(--error)' : 'var(--muted)');
-            const noticeRow = m.notice ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${escapeHtml(m.notice)}</div>` : '';
-            return `
+          ${(cleanData.historyComparison.matchedComparisons || [])
+            .map(m => {
+              const badgeClass =
+                m.classification === 'regression'
+                  ? 'pill error'
+                  : m.classification === 'improvement'
+                    ? 'pill success'
+                    : m.classification === 'cross_hardware_comparison'
+                      ? 'pill highlight'
+                      : 'pill';
+              const displayClassification =
+                m.classification === 'cross_hardware_comparison' ? 'CROSS HARDWARE' : m.classification.toUpperCase();
+              const deltaColor =
+                m.classification === 'cross_hardware_comparison'
+                  ? 'var(--text)'
+                  : m.speedDeltaPercent > 0
+                    ? 'var(--success)'
+                    : m.speedDeltaPercent < 0
+                      ? 'var(--error)'
+                      : 'var(--muted)';
+              const noticeRow = m.notice
+                ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${escapeHtml(m.notice)}</div>`
+                : '';
+              return `
               <tr>
                 <td><strong>${escapeHtml(m.codec.toUpperCase())} (${escapeHtml(m.encoder)})</strong> ${escapeHtml(m.qualityLabel)}${noticeRow}</td>
                 <td>${m.speedBase.toFixed(2)}x</td>
@@ -1020,20 +1093,29 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 <td><span class="${badgeClass}">${escapeHtml(displayClassification)}</span></td>
               </tr>
             `;
-          }).join('')}
+            })
+            .join('')}
         </tbody>
       </table>
     </div>
-    ${cleanData.historyComparison.partiallyMatchedComparisons?.length ? `
+    ${
+      cleanData.historyComparison.partiallyMatchedComparisons?.length
+        ? `
       <div style="margin-top:14px;font-size:12px;color:var(--muted);">
         <strong>Note on Partially Matched Runs:</strong> ${cleanData.historyComparison.partiallyMatchedComparisons.length} configuration(s) were tested under differing conditions (${cleanData.historyComparison.partiallyMatchedComparisons.map(p => p.differingConditions.join(', ')).join('; ')}). These are strictly marked non-comparable and are not evaluated as performance regressions.
       </div>
-    ` : ''}
+    `
+        : ''
+    }
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Evidence-Based Configuration Advice Section -->
-  ${cleanData.recommendations ? `
+  ${
+    cleanData.recommendations
+      ? `
   <section class="card" style="border-color: rgba(255,153,84,0.5); background: rgba(255,153,84,0.02);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
       <h2>Evidence-Based Configuration Advice</h2>
@@ -1043,9 +1125,13 @@ function generateHtmlReport(benchmarkData, outputPath) {
       <strong>Operator Notice:</strong> ${escapeHtml(cleanData.recommendations.operatorNotice)}
     </div>
 
-    ${cleanData.recommendations.recommendations?.length ? `
+    ${
+      cleanData.recommendations.recommendations?.length
+        ? `
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;margin-bottom:16px;">
-        ${cleanData.recommendations.recommendations.map(rec => `
+        ${cleanData.recommendations.recommendations
+          .map(
+            rec => `
           <div style="background:#14171F;padding:16px;border-radius:8px;border:1px solid var(--card-border);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
               <strong style="color:var(--primary);font-size:14px;">${escapeHtml(rec.setting)}</strong>
@@ -1060,13 +1146,19 @@ function generateHtmlReport(benchmarkData, outputPath) {
             <div style="font-size:12px;color:var(--muted);margin-bottom:6px;"><strong>Expected Benefit:</strong> ${escapeHtml(rec.expectedBenefit)}</div>
             <div style="font-size:11px;color:var(--muted);"><strong>Evidence:</strong> ${escapeHtml(rec.supportingEvidence)}</div>
           </div>
-        `).join('')}
+        `,
+          )
+          .join('')}
       </div>
-    ` : `
+    `
+        : `
       <div style="padding:14px;color:var(--muted);font-size:13px;">No configuration changes recommended based on current benchmark observations. Current settings match verified hardware capabilities.</div>
-    `}
+    `
+    }
 
-    ${cleanData.recommendations.yamlSnippet ? `
+    ${
+      cleanData.recommendations.yamlSnippet
+        ? `
       <div style="margin-top:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <div class="stat-label">Proposed config.yaml Snippet</div>
@@ -1074,21 +1166,31 @@ function generateHtmlReport(benchmarkData, outputPath) {
         </div>
         <pre id="yaml-snippet-block" style="background:#0F1218;padding:14px;border-radius:8px;border:1px solid var(--card-border);font-family:monospace;font-size:13px;color:#44C78A;overflow-x:auto;">${escapeHtml(cleanData.recommendations.yamlSnippet)}</pre>
       </div>
-    ` : ''}
+    `
+        : ''
+    }
 
-    ${cleanData.recommendations.insufficientEvidence?.length ? `
+    ${
+      cleanData.recommendations.insufficientEvidence?.length
+        ? `
       <div style="margin-top:14px;padding:12px;background:#14171F;border-radius:6px;font-size:12px;color:var(--muted);">
         <strong>Settings with Insufficient Evidence:</strong>
         <ul style="margin:4px 0 0 16px;">
           ${cleanData.recommendations.insufficientEvidence.map(ie => `<li><strong>${escapeHtml(ie.setting)}:</strong> ${escapeHtml(ie.reason)} <em>(Required: ${escapeHtml(ie.neededTests)})</em></li>`).join('')}
         </ul>
       </div>
-    ` : ''}
+    `
+        : ''
+    }
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Sustainable Capacity Summary (if tested) -->
-  ${concurrencySummary ? `
+  ${
+    concurrencySummary
+      ? `
   <section class="card" style="border-color: rgba(255,153,84,0.4); background: rgba(255,153,84,0.03);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
       <h2>Sustainable Transcoding Capacity</h2>
@@ -1115,16 +1217,22 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Quality vs Performance Section (if quality metrics present) -->
-  ${scoredRuns.length > 0 ? `
+  ${
+    scoredRuns.length > 0
+      ? `
   <section class="card">
     <h2>Objective Video Quality vs. Bitrate Tradeoffs</h2>
     <p style="margin-bottom:16px;">Compares measured VMAF score against actual bitrate. Evaluated against the untouched master source (not the viewing proxy).</p>
     ${buildQualityPerformanceSvg(scoredRuns)}
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Throughput Chart -->
   <section class="card">
@@ -1145,14 +1253,18 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
 
-    ${failedQualityRuns.length > 0 ? `
+    ${
+      failedQualityRuns.length > 0
+        ? `
     <div style="padding:12px 16px;background:var(--error-bg);border:1px solid rgba(255,113,151,0.3);border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.5;">
       <strong style="color:var(--error);">Objective Quality Analysis Failure:</strong> ${failedQualityRuns.length} configuration(s) failed objective quality analysis.
       <ul style="margin:6px 0 0 18px;color:var(--text);">
         ${failedQualityRuns.map(f => `<li><strong>${escapeHtml(f.codec.toUpperCase())} (${escapeHtml(f.actualEncoder)}) @ ${escapeHtml(f.quality?.label || f.quality?.id)}:</strong> ${escapeHtml(f.qualityMetrics?.reason || 'Quality analysis failed')}</li>`).join('')}
       </ul>
     </div>
-    ` : ''}
+    `
+        : ''
+    }
 
     <div style="overflow-x:auto;">
       <table id="results-table">
@@ -1166,65 +1278,78 @@ function generateHtmlReport(benchmarkData, outputPath) {
             <th onclick="sortTable(${hasMultipleRuns ? 5 : 4})">Bitrate</th>
             <th onclick="sortTable(${hasMultipleRuns ? 6 : 5})">Speed</th>
             <th onclick="sortTable(${hasMultipleRuns ? 7 : 6})">FPS</th>
-            ${qualityAttempted ? `<th>Quality</th><th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : (scoredRuns.length > 0 ? `<th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : '')}
-            <th onclick="sortTable(${hasMultipleRuns ? (qualityAttempted ? 12 : 8) : (qualityAttempted ? 11 : 7)})">1st Chunk</th>
+            ${qualityAttempted ? `<th>Quality</th><th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : scoredRuns.length > 0 ? `<th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : ''}
+            <th onclick="sortTable(${hasMultipleRuns ? (qualityAttempted ? 12 : 8) : qualityAttempted ? 11 : 7})">1st Chunk</th>
             <th>Encode</th>
             <th>Playable Output</th>
           </tr>
         </thead>
         <tbody>
-          ${results.map(r => {
-            const perf = r.performance || {};
-            const q = r.quality || {};
-            const qm = r.qualityMetrics || {};
-            const speed = perf.speedMultiplier || 0;
-            const speedClass = speed >= 1.2 ? 'success' : speed >= 1.0 ? 'warn' : 'error';
-            const statusClass = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'warn';
+          ${results
+            .map(r => {
+              const perf = r.performance || {};
+              const q = r.quality || {};
+              const qm = r.qualityMetrics || {};
+              const speed = perf.speedMultiplier || 0;
+              const speedClass = speed >= 1.2 ? 'success' : speed >= 1.0 ? 'warn' : 'error';
+              const statusClass = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'warn';
 
-            const allFallbacks = r.fallbackEvents || (r.fallback ? [r.fallback] : []);
-            const fallbackSummary = allFallbacks.map(f => `${f.type || 'step'}: ${f.from}->${f.to} (${f.reason || ''})`).join('\n');
-            const encoderText = allFallbacks.length > 0
-              ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(fallbackSummary)}">Fallback (${allFallbacks.length})</span>`
-              : `${r.actualEncoder || '-'} (${r.requestedEncoder})`;
+              const allFallbacks = r.fallbackEvents || (r.fallback ? [r.fallback] : []);
+              const fallbackSummary = allFallbacks
+                .map(f => `${f.type || 'step'}: ${f.from}->${f.to} (${f.reason || ''})`)
+                .join('\n');
+              const encoderText =
+                allFallbacks.length > 0
+                  ? `${r.actualEncoder} <span class="pill warn" title="${escapeHtml(fallbackSummary)}">Fallback (${allFallbacks.length})</span>`
+                  : `${r.actualEncoder || '-'} (${r.requestedEncoder})`;
 
-            const outLink = r.output?.assembledFile
-              ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play</a>`
-              : '<span style="color:var(--muted)">None</span>';
+              const outLink = r.output?.assembledFile
+                ? `<a class="file-link" href="${escapeHtml(r.output.assembledFile)}" target="_blank">Play</a>`
+                : '<span style="color:var(--muted)">None</span>';
 
-            const errTooltip = r.error ? `title="${escapeHtml(r.error)}"` : '';
+              const errTooltip = r.error ? `title="${escapeHtml(r.error)}"` : '';
 
-            const firstChunkText = perf.firstChunkDurationSec
-              ? (perf.firstChunkStartupSec && perf.firstChunkStartupSec > perf.firstChunkDurationSec
-                ? `<span title="Startup latency: ${perf.firstChunkStartupSec}s (chunk: ${perf.firstChunkDurationSec.toFixed(2)}s)">${perf.firstChunkDurationSec.toFixed(2)}s</span>`
-                : `${perf.firstChunkDurationSec.toFixed(2)}s`)
-              : '-';
+              const firstChunkText = perf.firstChunkDurationSec
+                ? perf.firstChunkStartupSec && perf.firstChunkStartupSec > perf.firstChunkDurationSec
+                  ? `<span title="Startup latency: ${perf.firstChunkStartupSec}s (chunk: ${perf.firstChunkDurationSec.toFixed(2)}s)">${perf.firstChunkDurationSec.toFixed(2)}s</span>`
+                  : `${perf.firstChunkDurationSec.toFixed(2)}s`
+                : '-';
 
-            let qualityBadge = '<span style="color:var(--muted)">-</span>';
-            if (r.qualityMetrics) {
-              if (qm.status === 'pass') {
-                qualityBadge = '<span class="pill success" title="Quality verified">PASS</span>';
-              } else if (qm.status === 'unverified') {
-                qualityBadge = `<span class="pill warn" title="${escapeHtml(qm.reason || 'Temporal alignment unverified')}">UNVERIFIED</span>`;
-              } else if (qm.status === 'failed') {
-                qualityBadge = `<span class="pill error" title="${escapeHtml(qm.reason || 'Quality analysis failed')}">FAILED</span>`;
-              } else if (qm.status === 'skipped') {
-                qualityBadge = `<span class="pill muted" title="${escapeHtml(qm.reason || 'Skipped')}">SKIPPED</span>`;
+              let qualityBadge = '<span style="color:var(--muted)">-</span>';
+              if (r.qualityMetrics) {
+                if (qm.status === 'pass') {
+                  qualityBadge = '<span class="pill success" title="Quality verified">PASS</span>';
+                } else if (qm.status === 'unverified') {
+                  qualityBadge = `<span class="pill warn" title="${escapeHtml(qm.reason || 'Temporal alignment unverified')}">UNVERIFIED</span>`;
+                } else if (qm.status === 'failed') {
+                  qualityBadge = `<span class="pill error" title="${escapeHtml(qm.reason || 'Quality analysis failed')}">FAILED</span>`;
+                } else if (qm.status === 'skipped') {
+                  qualityBadge = `<span class="pill muted" title="${escapeHtml(qm.reason || 'Skipped')}">SKIPPED</span>`;
+                }
               }
-            }
 
-            const vmafText = qm.status === 'failed'
-              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
-              : (qm.vmaf?.mean ? `<strong>${qm.vmaf.mean.toFixed(1)}</strong> <span style="font-size:11px;color:var(--muted);">(${qm.vmaf.p1?.toFixed(1) || '-'})</span>` : '-');
+              const vmafText =
+                qm.status === 'failed'
+                  ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+                  : qm.vmaf?.mean
+                    ? `<strong>${qm.vmaf.mean.toFixed(1)}</strong> <span style="font-size:11px;color:var(--muted);">(${qm.vmaf.p1?.toFixed(1) || '-'})</span>`
+                    : '-';
 
-            const ssimText = qm.status === 'failed'
-              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
-              : (qm.ssim?.mean ? `${qm.ssim.mean.toFixed(3)}` : '-');
+              const ssimText =
+                qm.status === 'failed'
+                  ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+                  : qm.ssim?.mean
+                    ? `${qm.ssim.mean.toFixed(3)}`
+                    : '-';
 
-            const psnrText = qm.status === 'failed'
-              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
-              : (qm.psnr?.mean ? `${qm.psnr.mean.toFixed(1)} dB` : '-');
+              const psnrText =
+                qm.status === 'failed'
+                  ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+                  : qm.psnr?.mean
+                    ? `${qm.psnr.mean.toFixed(1)} dB`
+                    : '-';
 
-            return `
+              return `
               <tr data-codec="${escapeHtml(r.codec)}">
                 ${hasMultipleRuns ? `<td><strong>#${r.runIndex || 1}</strong></td>` : ''}
                 <td><strong>${escapeHtml(r.codec.toUpperCase())}</strong> <span style="color:var(--muted);font-size:11px;">(${escapeHtml(r.mode)})</span></td>
@@ -1234,24 +1359,29 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 <td>${escapeHtml(perf.actualBitrateKbps || q.targetBitrateKbps || '-')} kbps</td>
                 <td><span class="pill ${speedClass}"><strong>${speed.toFixed(2)}x</strong></span></td>
                 <td>${escapeHtml(perf.effectiveFps || '-')}</td>
-                ${qualityAttempted ? `<td>${qualityBadge}</td><td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : (scoredRuns.length > 0 ? `<td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : '')}
+                ${qualityAttempted ? `<td>${qualityBadge}</td><td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : scoredRuns.length > 0 ? `<td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : ''}
                 <td>${firstChunkText}</td>
                 <td><span class="pill ${statusClass}" ${errTooltip}>${escapeHtml(r.status.toUpperCase())}</span></td>
                 <td>${outLink}</td>
               </tr>
             `;
-          }).join('')}
+            })
+            .join('')}
         </tbody>
       </table>
     </div>
   </section>
 
   <!-- Chunk Latency Breakdown -->
-  ${chunkedRuns.length ? `
+  ${
+    chunkedRuns.length
+      ? `
   <section>
     <h2>Chunk Completion Breakdown (6-Second Playback Windows)</h2>
     <div style="display:flex;gap:16px;flex-direction:column;">
-      ${chunkedRuns.map(cr => `
+      ${chunkedRuns
+        .map(
+          cr => `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3>${escapeHtml(cr.codec.toUpperCase())} ${escapeHtml(cr.actualEncoder)} &bull; ${escapeHtml(cr.quality?.label)} &bull; Mean: ${cr.performance?.meanChunkSec}s &bull; P95: ${cr.performance?.p95ChunkSec}s</h3>
@@ -1261,17 +1391,26 @@ function generateHtmlReport(benchmarkData, outputPath) {
           </div>
           ${buildChunkLatencySvg(cr.output.chunks, 6)}
         </div>
-      `).join('')}
+      `,
+        )
+        .join('')}
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Quality Timeline & Worst-Moment Inspection -->
-  ${scoredRuns.some(r => r.qualityMetrics?.timeline?.length > 0) ? `
+  ${
+    scoredRuns.some(r => r.qualityMetrics?.timeline?.length > 0)
+      ? `
   <section class="card">
     <h2>Quality Score Timeline &amp; Worst-Moment Inspector</h2>
     <p style="margin-bottom:16px;">Frame-level VMAF timeline across the sample duration. Dips indicate potential scene complexity or compression artifacts.</p>
-    ${scoredRuns.filter(r => r.qualityMetrics?.timeline?.length > 0).map(r => `
+    ${scoredRuns
+      .filter(r => r.qualityMetrics?.timeline?.length > 0)
+      .map(
+        r => `
       <div style="margin-bottom:20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <h3>${escapeHtml(r.codec.toUpperCase())} (${escapeHtml(r.actualEncoder)}) ${escapeHtml(r.quality?.label || r.quality?.id)} &bull; Mean VMAF: ${r.qualityMetrics.vmaf.mean}</h3>
@@ -1279,21 +1418,31 @@ function generateHtmlReport(benchmarkData, outputPath) {
         </div>
         ${buildTimelineSvg(r.qualityMetrics.timeline, r.qualityMetrics.worstIntervals)}
       </div>
-    `).join('')}
+    `,
+      )
+      .join('')}
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Synchronized Side-by-Side Video Inspection Workspace -->
-  ${referenceVideoRel && passResults.length > 0 ? `
+  ${
+    referenceVideoRel && passResults.length > 0
+      ? `
   <section>
     <h2>Synchronized Playback Inspection &amp; Wipe Comparison</h2>
     <div class="player-workspace">
       <div class="selector-bar">
         <label for="target-selector" style="font-weight:600;font-size:13px;color:var(--text);">Select Encoded Output:</label>
         <select id="target-selector" class="custom-select" onchange="switchTargetVideo(this.value)">
-          ${passResults.map(r => `
+          ${passResults
+            .map(
+              r => `
             <option value="${escapeHtml(r.output.assembledFile)}" data-label="${escapeHtml(r.configId)}">${escapeHtml(r.codec.toUpperCase())} ${escapeHtml(r.actualEncoder)} (${escapeHtml(r.quality?.label || r.quality?.id)}) [${escapeHtml(r.mode)}]${r.runIndex ? ` (Run ${r.runIndex})` : ''}</option>
-          `).join('')}
+          `,
+            )
+            .join('')}
         </select>
         <div style="margin-left:auto;display:flex;gap:8px;">
           <button class="player-btn" onclick="togglePlayerView('side-by-side')" id="btn-view-side">Side-by-Side</button>
@@ -1335,10 +1484,14 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Blind A/B Subjective Testing Workspace -->
-  ${passResults.length >= 2 ? `
+  ${
+    passResults.length >= 2
+      ? `
   <section class="card" id="blind-ab-section">
     <h2>Blind A/B Subjective Quality Comparison</h2>
     <p style="margin-bottom:8px;">Compare two encoded outputs without knowing which encoder, codec, or bitrate produced them. Rate visual quality, vote your preference, and reveal identities after voting.</p>
@@ -1348,21 +1501,23 @@ function generateHtmlReport(benchmarkData, outputPath) {
 
     <!-- Embedded Candidate Data -->
     <script id="blind-candidates-json" type="application/json">
-      ${JSON.stringify(passResults.map((r, i) => ({
-        index: i,
-        src: r.output.assembledFile,
-        configId: r.configId,
-        label: `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]`,
-        codec: r.codec,
-        encoder: r.actualEncoder,
-        quality: r.quality?.label || r.quality?.id,
-        resolution: `${r.quality?.width || '-'}x${r.quality?.height || '-'}`,
-        bitrateKbps: r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || null,
-        vmaf: r.qualityMetrics?.vmaf?.mean || null,
-        ssim: r.qualityMetrics?.ssim?.mean || null,
-        psnr: r.qualityMetrics?.psnr?.mean || null,
-        cambi: r.qualityMetrics?.cambi?.mean || null
-      })))}
+      ${JSON.stringify(
+        passResults.map((r, i) => ({
+          index: i,
+          src: r.output.assembledFile,
+          configId: r.configId,
+          label: `${r.codec.toUpperCase()} ${r.actualEncoder} (${r.quality?.label || r.quality?.id}) [${r.mode}]`,
+          codec: r.codec,
+          encoder: r.actualEncoder,
+          quality: r.quality?.label || r.quality?.id,
+          resolution: `${r.quality?.width || '-'}x${r.quality?.height || '-'}`,
+          bitrateKbps: r.performance?.actualBitrateKbps || r.quality?.targetBitrateKbps || null,
+          vmaf: r.qualityMetrics?.vmaf?.mean || null,
+          ssim: r.qualityMetrics?.ssim?.mean || null,
+          psnr: r.qualityMetrics?.psnr?.mean || null,
+          cambi: r.qualityMetrics?.cambi?.mean || null,
+        })),
+      )}
     </script>
 
     <div class="blind-box">
@@ -1470,14 +1625,20 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
   <!-- Screenshots Contact Sheet -->
-  ${cleanData.screenshots && cleanData.screenshots.length > 0 ? `
+  ${
+    cleanData.screenshots && cleanData.screenshots.length > 0
+      ? `
   <section class="card">
     <h2>Screenshot Contact Sheet (Matching Timestamps)</h2>
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;margin-top:16px;">
-      ${cleanData.screenshots.map(s => `
+      ${cleanData.screenshots
+        .map(
+          s => `
         <div style="background:#000;border:1px solid var(--card-border);border-radius:8px;overflow:hidden;">
           <div style="padding:6px 10px;background:rgba(20,23,31,0.9);font-size:11px;font-weight:600;color:var(--text);border-bottom:1px solid var(--card-border);">
             ${escapeHtml(s.label)} (${s.timestampSeconds}s)
@@ -1486,10 +1647,14 @@ function generateHtmlReport(benchmarkData, outputPath) {
             <img src="${escapeHtml(s.relativePath)}" alt="${escapeHtml(s.label)}" style="width:100%;height:auto;display:block;" loading="lazy">
           </a>
         </div>
-      `).join('')}
+      `,
+        )
+        .join('')}
     </div>
   </section>
-  ` : ''}
+  `
+      : ''
+  }
 
 </div>
 
@@ -1960,5 +2125,5 @@ module.exports = {
   buildChunkLatencySvg,
   buildQualityPerformanceSvg,
   buildTimelineSvg,
-  buildTelemetryTimelineSvg
+  buildTelemetryTimelineSvg,
 };

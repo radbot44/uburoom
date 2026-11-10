@@ -9,7 +9,7 @@ const MATRIX = [
   { codec: 'av1', encoder: 'software', ffmpegEncoder: 'libsvtav1', type: 'software' },
   { codec: 'vp9', encoder: 'qsv', ffmpegEncoder: 'vp9_qsv', type: 'hardware' },
   { codec: 'vp9', encoder: 'software', ffmpegEncoder: 'libvpx-vp9', type: 'software' },
-  { codec: 'vp8', encoder: 'software', ffmpegEncoder: 'libvpx', type: 'software' }
+  { codec: 'vp8', encoder: 'software', ffmpegEncoder: 'libvpx', type: 'software' },
 ];
 
 /**
@@ -36,7 +36,7 @@ async function probeAllEncoders(ffmpegPath, signal) {
         available: true,
         bytes: bytes.length,
         durationMs: Math.round(durationMs),
-        error: null
+        error: null,
       });
     } catch (err) {
       const durationMs = Number(process.hrtime.bigint() - startHr) / 1e6;
@@ -52,7 +52,7 @@ async function probeAllEncoders(ffmpegPath, signal) {
         bytes: 0,
         durationMs: Math.round(durationMs),
         exitCode: lastCode,
-        error: failureReason
+        error: failureReason,
       });
     }
   }
@@ -69,9 +69,10 @@ function probeHwaccels(ffmpegPath) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
-      timeout: 4000
+      timeout: 4000,
     });
-    return raw.split(/\r?\n/)
+    return raw
+      .split(/\r?\n/)
       .map(s => s.trim())
       .filter(s => s && !s.startsWith('Hardware acceleration methods:') && !s.startsWith('==='));
   } catch {
@@ -110,7 +111,7 @@ function resolveEncoderForCodec(codec, configuredEncoder, cpuFallback = true, pr
         requestedEncoder: configuredEncoder,
         actualEncoder: enc,
         isFallback: enc !== configuredEncoder && configuredEncoder !== 'auto' && configuredEncoder !== 'hardware',
-        fallbackReason: null
+        fallbackReason: null,
       };
     }
   }
@@ -124,7 +125,7 @@ function resolveEncoderForCodec(codec, configuredEncoder, cpuFallback = true, pr
       isFallback: configuredEncoder !== 'software',
       fallbackReason: preferredOrder.length
         ? `Hardware encoder (${failedEncoders}) unavailable on this system; fell back to CPU software encoder.`
-        : null
+        : null,
     };
   }
 
@@ -133,7 +134,7 @@ function resolveEncoderForCodec(codec, configuredEncoder, cpuFallback = true, pr
     requestedEncoder: configuredEncoder,
     actualEncoder: null,
     isFallback: false,
-    fallbackReason: `No working encoder found for ${codec.toUpperCase()} (preferred: ${preferredOrder.join(', ') || 'none'}, CPU fallback: ${cpuFallback}).`
+    fallbackReason: `No working encoder found for ${codec.toUpperCase()} (preferred: ${preferredOrder.join(', ') || 'none'}, CPU fallback: ${cpuFallback}).`,
   };
 }
 
@@ -141,5 +142,5 @@ module.exports = {
   MATRIX,
   probeAllEncoders,
   probeHwaccels,
-  resolveEncoderForCodec
+  resolveEncoderForCodec,
 };

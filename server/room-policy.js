@@ -18,7 +18,7 @@ const {
   admitted,
   allowed,
   commandCapability,
-  canKickParticipant
+  canKickParticipant,
 } = SyncPolicy;
 
 function identifiers(value, pattern, setting) {
@@ -33,10 +33,10 @@ function configuration(rooms) {
   return {
     roomPermissions: policy({
       host: permissionList(rooms.host_permissions, DEFAULTS.host),
-      viewer: permissionList(rooms.viewer_permissions, DEFAULTS.viewer)
+      viewer: permissionList(rooms.viewer_permissions, DEFAULTS.viewer),
     }),
     roomAdministrators: members(rooms, 'admin'),
-    trustedMembers: members(rooms, 'trusted')
+    trustedMembers: members(rooms, 'trusted'),
   };
 }
 
@@ -44,17 +44,31 @@ function members(rooms, prefix) {
   return {
     discord: identifiers(rooms[prefix + '_discord_ids'], /^\d{17,20}$/, 'rooms.' + prefix + '_discord_ids'),
     plex: identifiers(rooms[prefix + '_plex_ids'], /^\d{1,20}$/, 'rooms.' + prefix + '_plex_ids'),
-    discordRoles: identifiers(rooms[prefix + '_discord_role_ids'], /^\d{17,20}$/, 'rooms.' + prefix + '_discord_role_ids')
+    discordRoles: identifiers(
+      rooms[prefix + '_discord_role_ids'],
+      /^\d{17,20}$/,
+      'rooms.' + prefix + '_discord_role_ids',
+    ),
   };
 }
 
 // True when a verified identity on the account is listed, directly or through a
 // current Discord guild role.
 function listed(identities, list, access) {
-  if (identities.some(identity => identity.provider === 'discord' && list.discord.includes(identity.subject) ||
-      identity.provider === 'plex' && list.plex.includes(identity.subject))) return true;
-  return identities.some(identity => identity.provider === 'discord' &&
-    access?.isMember(identity.subject) === true && list.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true));
+  if (
+    identities.some(
+      identity =>
+        (identity.provider === 'discord' && list.discord.includes(identity.subject)) ||
+        (identity.provider === 'plex' && list.plex.includes(identity.subject)),
+    )
+  )
+    return true;
+  return identities.some(
+    identity =>
+      identity.provider === 'discord' &&
+      access?.isMember(identity.subject) === true &&
+      list.discordRoles.some(id => access.hasRole?.(identity.subject, id) === true),
+  );
 }
 
 const NONE = Object.freeze({ discord: [], plex: [], discordRoles: [] });
@@ -106,5 +120,5 @@ module.exports = {
   administrator,
   serverTier,
   tierAtLeast,
-  TIERS
+  TIERS,
 };

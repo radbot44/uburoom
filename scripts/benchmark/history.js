@@ -79,7 +79,11 @@ function deriveSourceFingerprint(source) {
   const fps = source.video?.fps || 0;
   const codec = source.video?.codec || 'unknown';
   const size = source.fileSizeBytes || source.sizeBytes || 0;
-  const hash = crypto.createHash('sha256').update(`${baseName}:${res}:${fps}:${codec}:${size}`).digest('hex').slice(0, 16);
+  const hash = crypto
+    .createHash('sha256')
+    .update(`${baseName}:${res}:${fps}:${codec}:${size}`)
+    .digest('hex')
+    .slice(0, 16);
   return `unverified:${hash}`;
 }
 
@@ -107,7 +111,7 @@ function loadHistoryIndex(historyDir) {
     return {
       schemaVersion: HISTORY_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
-      runs: []
+      runs: [],
     };
   }
 
@@ -120,7 +124,7 @@ function loadHistoryIndex(historyDir) {
     return {
       schemaVersion: HISTORY_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
-      runs: []
+      runs: [],
     };
   }
 }
@@ -155,7 +159,9 @@ function withHistoryLock(historyDir, fn) {
         try {
           const stat = fs.statSync(lockPath);
           if (Date.now() - stat.mtimeMs > 15000) {
-            try { fs.unlinkSync(lockPath); } catch {}
+            try {
+              fs.unlinkSync(lockPath);
+            } catch {}
           }
         } catch {}
         const sleepMs = 15 + Math.floor(Math.random() * 25);
@@ -173,8 +179,12 @@ function withHistoryLock(historyDir, fn) {
   try {
     return fn();
   } finally {
-    try { fs.closeSync(fd); } catch {}
-    try { fs.unlinkSync(lockPath); } catch {}
+    try {
+      fs.closeSync(fd);
+    } catch {}
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {}
   }
 }
 
@@ -190,15 +200,19 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
   const sanitizedEnvironment = {
     gpu: benchmarkPayload.environment?.gpu || 'Unknown GPU',
     cpu: benchmarkPayload.environment?.cpu || 'Unknown CPU',
-    ffmpeg: benchmarkPayload.environment?.ffmpeg ? sanitizeText(benchmarkPayload.environment.ffmpeg.split('\n')[0]) : 'Unknown FFmpeg',
+    ffmpeg: benchmarkPayload.environment?.ffmpeg
+      ? sanitizeText(benchmarkPayload.environment.ffmpeg.split('\n')[0])
+      : 'Unknown FFmpeg',
     os: `${benchmarkPayload.environment?.platform || process.platform} (${benchmarkPayload.environment?.arch || process.arch})`,
-    configProfile: benchmarkPayload.configProfile || 'default'
+    configProfile: benchmarkPayload.configProfile || 'default',
   };
 
   const sourceFingerprint = benchmarkPayload.sourceFingerprint || deriveSourceFingerprint(benchmarkPayload.source);
   const sourceFileName = benchmarkPayload.source?.fileName
     ? path.basename(benchmarkPayload.source.fileName)
-    : (benchmarkPayload.source?.filePath ? path.basename(benchmarkPayload.source.filePath) : 'unknown');
+    : benchmarkPayload.source?.filePath
+      ? path.basename(benchmarkPayload.source.filePath)
+      : 'unknown';
 
   const compactResults = (benchmarkPayload.results || []).map(r => ({
     configId: r.configId,
@@ -221,22 +235,27 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
     firstChunkLatencySeconds: r.performance?.firstChunkDurationSec ?? r.measurements?.firstChunkLatencySeconds ?? null,
     p95ChunkLatencySeconds: r.performance?.p95ChunkSec ?? r.measurements?.p95ChunkLatencySeconds ?? null,
     deadlinesMissed: r.performance?.deadlineMisses ?? r.measurements?.deadlinesMissed ?? 0,
-    qualityMetrics: r.qualityMetrics ? {
-      status: r.qualityMetrics.status,
-      vmaf: r.qualityMetrics.vmaf?.mean || null,
-      ssim: r.qualityMetrics.ssim?.mean || null,
-      psnr: r.qualityMetrics.psnr?.mean || null,
-      cambi: r.qualityMetrics.cambi?.mean || null
-    } : null,
-    telemetry: r.telemetry ? {
-      avgGpuUtilization: r.telemetry.encoding?.metrics?.gpuUtilization?.mean ?? null,
-      avgEncoderUtilization: r.telemetry.encoding?.metrics?.encoderUtilization?.mean ?? null,
-      avgTemperatureC: r.telemetry.encoding?.metrics?.temperatureC?.mean ?? null,
-      avgPowerWatts: r.telemetry.encoding?.metrics?.powerWatts?.mean ?? null,
-      thermalClimbC: r.telemetry.encoding?.thermalClimbC ?? 0,
-      throttlingDetected: r.telemetry.encoding?.throttlingDetected !== undefined ? r.telemetry.encoding.throttlingDetected : null,
-      activeThrottleReasons: r.telemetry.encoding?.activeThrottleReasons || []
-    } : null
+    qualityMetrics: r.qualityMetrics
+      ? {
+          status: r.qualityMetrics.status,
+          vmaf: r.qualityMetrics.vmaf?.mean || null,
+          ssim: r.qualityMetrics.ssim?.mean || null,
+          psnr: r.qualityMetrics.psnr?.mean || null,
+          cambi: r.qualityMetrics.cambi?.mean || null,
+        }
+      : null,
+    telemetry: r.telemetry
+      ? {
+          avgGpuUtilization: r.telemetry.encoding?.metrics?.gpuUtilization?.mean ?? null,
+          avgEncoderUtilization: r.telemetry.encoding?.metrics?.encoderUtilization?.mean ?? null,
+          avgTemperatureC: r.telemetry.encoding?.metrics?.temperatureC?.mean ?? null,
+          avgPowerWatts: r.telemetry.encoding?.metrics?.powerWatts?.mean ?? null,
+          thermalClimbC: r.telemetry.encoding?.thermalClimbC ?? 0,
+          throttlingDetected:
+            r.telemetry.encoding?.throttlingDetected !== undefined ? r.telemetry.encoding.throttlingDetected : null,
+          activeThrottleReasons: r.telemetry.encoding?.activeThrottleReasons || [],
+        }
+      : null,
   }));
 
   const record = {
@@ -253,7 +272,7 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
     resultsCount: compactResults.length,
     passedCount: compactResults.filter(r => r.status === 'pass').length,
     failedCount: compactResults.filter(r => r.status === 'fail').length,
-    results: compactResults
+    results: compactResults,
   };
 
   const recordFilePath = path.join(historyDir, `${runId}.json`);
@@ -271,7 +290,7 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
       passedCount: record.passedCount,
       failedCount: record.failedCount,
       gpu: sanitizedEnvironment.gpu,
-      recordFile: `${runId}.json`
+      recordFile: `${runId}.json`,
     });
     saveHistoryIndex(historyDir, index);
   });
@@ -297,7 +316,9 @@ function importHistoricalReport(resultsJsonPath, historyDir) {
  */
 function deleteRunFromHistory(runId, historyDir) {
   if (!runId || typeof runId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(runId)) {
-    throw new Error(`Invalid runId format: "${runId}". Run IDs must contain only alphanumeric characters, underscores, and hyphens.`);
+    throw new Error(
+      `Invalid runId format: "${runId}". Run IDs must contain only alphanumeric characters, underscores, and hyphens.`,
+    );
   }
 
   const resolvedDir = path.resolve(historyDir);
@@ -324,7 +345,10 @@ function deleteRunFromHistory(runId, historyDir) {
  */
 function extractGpuDeviceName(gpuString) {
   if (!gpuString || typeof gpuString !== 'string') return '';
-  return gpuString.replace(/\s*\([^)]*driver[^)]*\)/i, '').trim().toLowerCase();
+  return gpuString
+    .replace(/\s*\([^)]*driver[^)]*\)/i, '')
+    .trim()
+    .toLowerCase();
 }
 
 /**
@@ -375,17 +399,20 @@ function compareRuns(baseRun, targetRun) {
       targetCpu: targetRun.environment?.cpu || 'Unknown CPU',
       ffmpegMatch: baseRun.tools?.ffmpegVersion === targetRun.tools?.ffmpegVersion,
       baseFfmpeg: baseRun.tools?.ffmpegVersion || baseRun.environment?.ffmpeg,
-      targetFfmpeg: targetRun.tools?.ffmpegVersion || targetRun.environment?.ffmpeg
+      targetFfmpeg: targetRun.tools?.ffmpegVersion || targetRun.environment?.ffmpeg,
     },
     matchedComparisons: [],
     crossHardwareComparisons: [],
     partiallyMatchedComparisons: [],
-    incomparableItems: []
+    incomparableItems: [],
   };
 
-  const isVerifiedFingerprint = Boolean(baseFingerprint && baseFingerprint.startsWith('v1:') && targetFingerprint && targetFingerprint.startsWith('v1:'));
+  const isVerifiedFingerprint = Boolean(
+    baseFingerprint && baseFingerprint.startsWith('v1:') && targetFingerprint && targetFingerprint.startsWith('v1:'),
+  );
   const isSameSource = isVerifiedFingerprint && baseFingerprint === targetFingerprint;
-  const isSameDuration = baseRun.sampleDuration === targetRun.sampleDuration && baseRun.startOffset === targetRun.startOffset;
+  const isSameDuration =
+    baseRun.sampleDuration === targetRun.sampleDuration && baseRun.startOffset === targetRun.startOffset;
 
   for (const targetRes of targetRun.results || []) {
     const targetQualityId = targetRes.qualityId || targetRes.quality?.id;
@@ -400,24 +427,30 @@ function compareRuns(baseRun, targetRun) {
     if (candidateMatches.length === 0) {
       comparison.incomparableItems.push({
         targetConfigId: targetRes.configId,
-        reason: 'Configuration not tested in baseline run.'
+        reason: 'Configuration not tested in baseline run.',
       });
       continue;
     }
 
-    const exactMatch = candidateMatches.find(b =>
-      b.requestedEncoder === targetRes.requestedEncoder &&
-      (b.actualEncoder || b.requestedEncoder) === (targetRes.actualEncoder || targetRes.requestedEncoder) &&
-      (b.mode === targetRes.mode || (b.mode === 'chunked' && targetRes.mode === 'chunks') || (b.mode === 'chunks' && targetRes.mode === 'chunked')) &&
-      (b.concurrency || 1) === (targetRes.concurrency || 1) &&
-      (b.hardwareDecode ?? true) === (targetRes.hardwareDecode ?? true)
+    const exactMatch = candidateMatches.find(
+      b =>
+        b.requestedEncoder === targetRes.requestedEncoder &&
+        (b.actualEncoder || b.requestedEncoder) === (targetRes.actualEncoder || targetRes.requestedEncoder) &&
+        (b.mode === targetRes.mode ||
+          (b.mode === 'chunked' && targetRes.mode === 'chunks') ||
+          (b.mode === 'chunks' && targetRes.mode === 'chunked')) &&
+        (b.concurrency || 1) === (targetRes.concurrency || 1) &&
+        (b.hardwareDecode ?? true) === (targetRes.hardwareDecode ?? true),
     );
 
     const speedTarget = targetRes.speedRatio ?? targetRes.performance?.speedMultiplier ?? 0;
     const p95Target = targetRes.p95ChunkLatencySeconds ?? targetRes.performance?.p95ChunkSec ?? 0;
-    const vmafTarget = targetRes.qualityMetrics?.vmaf?.mean ?? (typeof targetRes.qualityMetrics?.vmaf === 'number' ? targetRes.qualityMetrics.vmaf : null);
+    const vmafTarget =
+      targetRes.qualityMetrics?.vmaf?.mean ??
+      (typeof targetRes.qualityMetrics?.vmaf === 'number' ? targetRes.qualityMetrics.vmaf : null);
     const targetDeadlines = targetRes.deadlinesMissed ?? targetRes.performance?.deadlineMisses ?? 0;
-    const qualityLabel = targetRes.qualityLabel || targetRes.quality?.label || targetRes.quality?.id || targetRes.configId;
+    const qualityLabel =
+      targetRes.qualityLabel || targetRes.quality?.label || targetRes.quality?.id || targetRes.configId;
 
     if (exactMatch && isSameSource && isSameDuration) {
       const speedBase = exactMatch.speedRatio ?? exactMatch.performance?.speedMultiplier ?? 0;
@@ -426,8 +459,11 @@ function compareRuns(baseRun, targetRun) {
       const p95Base = exactMatch.p95ChunkLatencySeconds ?? exactMatch.performance?.p95ChunkSec ?? 0;
       const p95DeltaPercent = p95Base > 0 ? Math.round(((p95Target - p95Base) / p95Base) * 1000) / 10 : 0;
 
-      const vmafBase = exactMatch.qualityMetrics?.vmaf?.mean ?? (typeof exactMatch.qualityMetrics?.vmaf === 'number' ? exactMatch.qualityMetrics.vmaf : null);
-      const vmafDelta = (vmafBase !== null && vmafTarget !== null) ? Math.round((vmafTarget - vmafBase) * 100) / 100 : null;
+      const vmafBase =
+        exactMatch.qualityMetrics?.vmaf?.mean ??
+        (typeof exactMatch.qualityMetrics?.vmaf === 'number' ? exactMatch.qualityMetrics.vmaf : null);
+      const vmafDelta =
+        vmafBase !== null && vmafTarget !== null ? Math.round((vmafTarget - vmafBase) * 100) / 100 : null;
 
       // Handle Failed Trials
       const isBaseFailed = exactMatch.status && exactMatch.status !== 'pass';
@@ -442,7 +478,7 @@ function compareRuns(baseRun, targetRun) {
           speedBase,
           speedTarget,
           speedDeltaPercent: 0,
-          notice: `One or both trials failed validation (base: ${exactMatch.status}, target: ${targetRes.status}). Not evaluated for regression.`
+          notice: `One or both trials failed validation (base: ${exactMatch.status}, target: ${targetRes.status}). Not evaluated for regression.`,
         });
         continue;
       }
@@ -465,7 +501,7 @@ function compareRuns(baseRun, targetRun) {
           vmafBase,
           vmafTarget,
           vmafDelta,
-          notice: `Cross-hardware comparison (${baseGpu} vs ${targetGpu}). Differences reflect distinct hardware capabilities, not a software performance regression.`
+          notice: `Cross-hardware comparison (${baseGpu} vs ${targetGpu}). Differences reflect distinct hardware capabilities, not a software performance regression.`,
         };
         comparison.matchedComparisons.push(crossItem);
         comparison.crossHardwareComparisons.push(crossItem);
@@ -496,7 +532,7 @@ function compareRuns(baseRun, targetRun) {
         vmafTarget,
         vmafDelta,
         deadlinesMissedBase: exactMatch.deadlinesMissed ?? exactMatch.performance?.deadlineMisses ?? 0,
-        deadlinesMissedTarget: targetDeadlines
+        deadlinesMissedTarget: targetDeadlines,
       });
     } else {
       // Partially matched comparison
@@ -505,19 +541,28 @@ function compareRuns(baseRun, targetRun) {
       const reasons = [];
       if (!isSameSource) {
         if (!isVerifiedFingerprint) {
-          reasons.push('Source media lacks verified content fingerprint (v1:<hash>). Cannot evaluate for performance regression.');
+          reasons.push(
+            'Source media lacks verified content fingerprint (v1:<hash>). Cannot evaluate for performance regression.',
+          );
         } else {
           reasons.push('Different source media content');
         }
       }
       if (!isSameDuration) reasons.push('Different sample interval');
-      if (partial.requestedEncoder !== targetRes.requestedEncoder) reasons.push(`Different requested encoder (${partial.requestedEncoder} vs ${targetRes.requestedEncoder})`);
-      if ((partial.actualEncoder || partial.requestedEncoder) !== (targetRes.actualEncoder || targetRes.requestedEncoder)) {
-        reasons.push(`Different actual encoder backend (${partial.actualEncoder || partial.requestedEncoder} vs ${targetRes.actualEncoder || targetRes.requestedEncoder})`);
+      if (partial.requestedEncoder !== targetRes.requestedEncoder)
+        reasons.push(`Different requested encoder (${partial.requestedEncoder} vs ${targetRes.requestedEncoder})`);
+      if (
+        (partial.actualEncoder || partial.requestedEncoder) !== (targetRes.actualEncoder || targetRes.requestedEncoder)
+      ) {
+        reasons.push(
+          `Different actual encoder backend (${partial.actualEncoder || partial.requestedEncoder} vs ${targetRes.actualEncoder || targetRes.requestedEncoder})`,
+        );
       }
       if (partial.mode !== targetRes.mode) reasons.push(`Different mode (${partial.mode} vs ${targetRes.mode})`);
-      if ((partial.concurrency || 1) !== (targetRes.concurrency || 1)) reasons.push(`Different concurrency (${partial.concurrency || 1} vs ${targetRes.concurrency || 1})`);
-      if ((partial.hardwareDecode ?? true) !== (targetRes.hardwareDecode ?? true)) reasons.push('Different hardware decode setting');
+      if ((partial.concurrency || 1) !== (targetRes.concurrency || 1))
+        reasons.push(`Different concurrency (${partial.concurrency || 1} vs ${targetRes.concurrency || 1})`);
+      if ((partial.hardwareDecode ?? true) !== (targetRes.hardwareDecode ?? true))
+        reasons.push('Different hardware decode setting');
 
       comparison.partiallyMatchedComparisons.push({
         targetConfigId: targetRes.configId,
@@ -525,7 +570,7 @@ function compareRuns(baseRun, targetRun) {
         differingConditions: reasons,
         speedBase,
         speedTarget,
-        notice: 'Not directly comparable as a performance regression because test conditions differ.'
+        notice: 'Not directly comparable as a performance regression because test conditions differ.',
       });
     }
   }
@@ -543,5 +588,5 @@ module.exports = {
   saveRunToHistory,
   importHistoricalReport,
   deleteRunFromHistory,
-  compareRuns
+  compareRuns,
 };

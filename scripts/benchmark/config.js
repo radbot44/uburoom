@@ -37,7 +37,12 @@ function loadBenchmarkConfig(configFilePath) {
   const content = fs.readFileSync(configFilePath, 'utf8');
   let parsed;
   try {
-    const doc = YAML.parseDocument(content, { prettyErrors: false, uniqueKeys: true, version: '1.2', stringKeys: true });
+    const doc = YAML.parseDocument(content, {
+      prettyErrors: false,
+      uniqueKeys: true,
+      version: '1.2',
+      stringKeys: true,
+    });
     const problem = doc.errors[0] || doc.warnings[0];
     if (problem) throw new Error('Invalid YAML syntax (' + problem.code + ')');
     parsed = doc.toJS({ maxAliasCount: 0 });
@@ -89,7 +94,7 @@ function loadBenchmarkConfig(configFilePath) {
     profileName: isExample ? 'config.example.yaml (Default Template)' : path.basename(configFilePath),
     tools: {
       ffmpeg: resolveTool(rawTools.ffmpeg),
-      ffprobe: resolveTool(rawTools.ffprobe)
+      ffprobe: resolveTool(rawTools.ffprobe),
     },
     transcoding: {
       outputs,
@@ -99,8 +104,8 @@ function loadBenchmarkConfig(configFilePath) {
       cpuFallback,
       hardwareDecode,
       maxJobs,
-      qualities
-    }
+      qualities,
+    },
   };
 }
 
@@ -128,7 +133,7 @@ function resolveTestMatrix(config, options = {}) {
     return {
       targetCodecs: [],
       targetQualities: [],
-      configurations: []
+      configurations: [],
     };
   }
 
@@ -137,7 +142,7 @@ function resolveTestMatrix(config, options = {}) {
   const CODEC_ENCODERS = {
     av1: ['nvenc', 'qsv', 'software'],
     vp9: ['qsv', 'software'],
-    vp8: ['software']
+    vp8: ['software'],
   };
 
   // 3. Resolve Qualities
@@ -145,10 +150,11 @@ function resolveTestMatrix(config, options = {}) {
   if (options.qualities && options.qualities.length) {
     const selected = [];
     for (const qArg of options.qualities) {
-      const match = targetQualities.find(q =>
-        q.id.toLowerCase() === qArg.toLowerCase() ||
-        `${q.height}p`.toLowerCase() === qArg.toLowerCase() ||
-        `${q.height}` === qArg
+      const match = targetQualities.find(
+        q =>
+          q.id.toLowerCase() === qArg.toLowerCase() ||
+          `${q.height}p`.toLowerCase() === qArg.toLowerCase() ||
+          `${q.height}` === qArg,
       );
       if (match && !selected.some(s => s.id === match.id)) {
         selected.push(match);
@@ -201,8 +207,8 @@ function resolveTestMatrix(config, options = {}) {
           requestedEncoder: encoder,
           allowFallback: !options.allEncoders && (options.encoders ? false : config.transcoding.cpuFallback),
           quality,
-          resolution: `${quality.width || (Math.round(quality.height * 16 / 9 / 2) * 2)}x${quality.height}`,
-          targetBitrateKbps: quality.bitrate
+          resolution: `${quality.width || Math.round((quality.height * 16) / 9 / 2) * 2}x${quality.height}`,
+          targetBitrateKbps: quality.bitrate,
         });
       }
     }
@@ -211,7 +217,7 @@ function resolveTestMatrix(config, options = {}) {
   return {
     targetCodecs,
     targetQualities,
-    configurations
+    configurations,
   };
 }
 
@@ -222,12 +228,16 @@ function resolveTestMatrix(config, options = {}) {
 function inspectActiveUburoomProcess() {
   try {
     if (process.platform === 'win32') {
-      const output = cp.execFileSync('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        'Get-Process node -ErrorAction SilentlyContinue | Select-Object -Property Id, ProcessName | ConvertTo-Json'
-      ], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      const output = cp.execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-Process node -ErrorAction SilentlyContinue | Select-Object -Property Id, ProcessName | ConvertTo-Json',
+        ],
+        { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
+      );
 
       if (output && output.trim()) {
         let list;
@@ -241,7 +251,7 @@ function inspectActiveUburoomProcess() {
         if (foreignNodes.length > 0) {
           return {
             detected: true,
-            message: `Found ${foreignNodes.length} active Node.js process(es) (e.g. PID ${foreignNodes[0].Id}). If uburoom is running, benchmarking may impact playback for active viewers.`
+            message: `Found ${foreignNodes.length} active Node.js process(es) (e.g. PID ${foreignNodes[0].Id}). If uburoom is running, benchmarking may impact playback for active viewers.`,
           };
         }
       }
@@ -249,13 +259,17 @@ function inspectActiveUburoomProcess() {
       const output = cp.execFileSync('pgrep', ['-f', 'server/index.js'], {
         encoding: 'utf8',
         timeout: 3000,
-        stdio: ['ignore', 'pipe', 'ignore']
+        stdio: ['ignore', 'pipe', 'ignore'],
       });
-      const pids = output.trim().split(/\s+/).map(Number).filter(p => p && p !== process.pid);
+      const pids = output
+        .trim()
+        .split(/\s+/)
+        .map(Number)
+        .filter(p => p && p !== process.pid);
       if (pids.length > 0) {
         return {
           detected: true,
-          message: `Detected active uburoom process (PID ${pids.join(', ')}). Benchmarking may impact live playback performance.`
+          message: `Detected active uburoom process (PID ${pids.join(', ')}). Benchmarking may impact live playback performance.`,
         };
       }
     }
@@ -277,7 +291,12 @@ function resolveUniqueOutputDir(requestedPath, cwd = process.cwd()) {
     const target = path.resolve(resolvedCwd, requestedPath);
     // Safety check: ensure target is not project root or critical source directory
     const rel = path.relative(resolvedCwd, target);
-    if (!rel || rel === '.' || rel.startsWith('..') || ['server', 'web', 'shared', '.git', 'node_modules'].includes(rel.split(path.sep)[0])) {
+    if (
+      !rel ||
+      rel === '.' ||
+      rel.startsWith('..') ||
+      ['server', 'web', 'shared', '.git', 'node_modules'].includes(rel.split(path.sep)[0])
+    ) {
       throw new Error(`Output directory cannot point to project root or source directories: ${requestedPath}`);
     }
 
@@ -333,5 +352,5 @@ module.exports = {
   loadBenchmarkConfig,
   resolveTestMatrix,
   inspectActiveUburoomProcess,
-  resolveUniqueOutputDir
+  resolveUniqueOutputDir,
 };

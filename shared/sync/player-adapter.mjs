@@ -35,14 +35,16 @@ import { bufferedAhead as computeBufferedAhead } from './timing.mjs';
 export function createVideoElementAdapter(video, helpers = {}) {
   const aheadFn = helpers.bufferedAhead || computeBufferedAhead;
   return {
-    readyState: () => video ? video.readyState : 0,
-    currentTime: () => video ? video.currentTime : 0,
-    seek(seconds) { if (video) video.currentTime = seconds; },
-    duration: () => video ? video.duration : NaN,
-    paused: () => video ? video.paused : true,
-    ended: () => video ? Boolean(video.ended) : false,
-    seeking: () => video ? Boolean(video.seeking) : false,
-    playbackRate: () => video ? video.playbackRate : 1,
+    readyState: () => (video ? video.readyState : 0),
+    currentTime: () => (video ? video.currentTime : 0),
+    seek(seconds) {
+      if (video) video.currentTime = seconds;
+    },
+    duration: () => (video ? video.duration : NaN),
+    paused: () => (video ? video.paused : true),
+    ended: () => (video ? Boolean(video.ended) : false),
+    seeking: () => (video ? Boolean(video.seeking) : false),
+    playbackRate: () => (video ? video.playbackRate : 1),
     setPlaybackRate(rate) {
       if (video && video.playbackRate !== rate) video.playbackRate = rate;
     },
@@ -51,17 +53,19 @@ export function createVideoElementAdapter(video, helpers = {}) {
       if (Number.isFinite(volumeUnit)) video.volume = volumeUnit;
       if (typeof muted === 'boolean') video.muted = muted;
     },
-    play: () => video ? video.play() : Promise.resolve(),
-    pause() { if (video) video.pause(); },
-    bufferedAhead: position => video ? aheadFn(video.buffered, position) : 0,
-    isBufferedAt(position, toleranceSeconds = .05) {
+    play: () => (video ? video.play() : Promise.resolve()),
+    pause() {
+      if (video) video.pause();
+    },
+    bufferedAhead: position => (video ? aheadFn(video.buffered, position) : 0),
+    isBufferedAt(position, toleranceSeconds = 0.05) {
       const buffered = video?.buffered;
       if (!buffered || !Number.isFinite(buffered.length)) return false;
       for (let i = 0; i < buffered.length; i++) {
         if (position >= buffered.start(i) - toleranceSeconds && position < buffered.end(i)) return true;
       }
       return false;
-    }
+    },
   };
 }
 
@@ -72,6 +76,7 @@ export function createVideoElementAdapter(video, helpers = {}) {
  */
 export function normalizePlayerAdapter(host) {
   if (host?.player) return host.player;
-  if (host && ('video' in host)) return createVideoElementAdapter(host.video, { bufferedAhead: host.playback?.bufferedAhead });
+  if (host && 'video' in host)
+    return createVideoElementAdapter(host.video, { bufferedAhead: host.playback?.bufferedAhead });
   throw new Error('Synchronization requires a player adapter or video element');
 }

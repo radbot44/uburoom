@@ -2,10 +2,16 @@
 (function (global) {
   'use strict';
   function create(host, { stage, icons = global.uburoomIcons, schedule = setTimeout, cancel = clearTimeout } = {}) {
-    const doc = host.ownerDocument, entries = new Map();
-    const view = doc.defaultView, controls = stage?.querySelector('.transport');
+    const doc = host.ownerDocument,
+      entries = new Map();
+    const view = doc.defaultView,
+      controls = stage?.querySelector('.transport');
     const reducedMotion = view.matchMedia('(prefers-reduced-motion: reduce)');
-    let layoutFrame, animateLayout = false, movement, positioned = false, enabled = true;
+    let layoutFrame,
+      animateLayout = false,
+      movement,
+      positioned = false,
+      enabled = true;
     function place() {
       layoutFrame = undefined;
       const animate = animateLayout;
@@ -19,8 +25,10 @@
       movement?.cancel();
       if (reparented) parent.append(host);
       const viewport = view.visualViewport;
-      const top = viewport?.offsetTop || 0, left = viewport?.offsetLeft || 0;
-      const height = viewport?.height || view.innerHeight, width = viewport?.width || view.innerWidth;
+      const top = viewport?.offsetTop || 0,
+        left = viewport?.offsetLeft || 0;
+      const height = viewport?.height || view.innerHeight,
+        width = viewport?.width || view.innerWidth;
       const rect = stage.getBoundingClientRect();
       const inset = parseFloat(view.getComputedStyle(host).getPropertyValue('--toast-inset'));
       host.style.maxWidth = Math.max(0, Math.min(rect.width, width) - inset * 2) + 'px';
@@ -29,7 +37,8 @@
       if (controls && view.getComputedStyle(controls).pointerEvents !== 'none') {
         for (const element of controls.querySelectorAll('[data-media-controls]')) {
           const controlRect = element.getBoundingClientRect();
-          if (controlRect.height && view.getComputedStyle(element).visibility !== 'hidden') bottom = Math.min(bottom, controlRect.top - inset);
+          if (controlRect.height && view.getComputedStyle(element).visibility !== 'hidden')
+            bottom = Math.min(bottom, controlRect.top - inset);
         }
       }
       // Clamp after control avoidance: staying visible always wins.
@@ -40,10 +49,10 @@
       host.style.top = y - (origin?.top || 0) + 'px';
       host.style.left = x - (origin?.left || 0) + 'px';
       if (animate && previous && !reducedMotion.matches && previous.top >= top && previous.bottom <= top + height) {
-        movement = host.animate([
-          { transform: `translate(${previous.left - x}px, ${previous.top - y}px)` },
-          { transform: 'translate(0, 0)' }
-        ], { duration: 180, easing: 'ease-out' });
+        movement = host.animate(
+          [{ transform: `translate(${previous.left - x}px, ${previous.top - y}px)` }, { transform: 'translate(0, 0)' }],
+          { duration: 180, easing: 'ease-out' },
+        );
       }
       positioned = true;
     }
@@ -55,7 +64,8 @@
     }
     if (stage) {
       doc.body.append(host);
-      const anchor = () => requestLayout(false), move = () => requestLayout();
+      const anchor = () => requestLayout(false),
+        move = () => requestLayout();
       view.addEventListener('scroll', anchor, { capture: true, passive: true });
       view.addEventListener('resize', anchor);
       view.visualViewport?.addEventListener('resize', anchor);
@@ -65,7 +75,8 @@
       const sizes = new view.ResizeObserver(move);
       for (const element of [host, stage, controls]) if (element) sizes.observe(element);
       const attributes = new view.MutationObserver(move);
-      for (const element of [stage, doc.body, controls]) if (element) attributes.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
+      for (const element of [stage, doc.body, controls])
+        if (element) attributes.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     }
     function dismiss(id, deliberate = false) {
       const entry = entries.get(id);
@@ -74,9 +85,13 @@
       entry.exiting = true;
       // Optional lifetime bookkeeping; deliberate-dismiss semantics for all
       // existing callers remain unchanged.
-      try { entry.onClose?.(); } catch {}
+      try {
+        entry.onClose?.();
+      } catch {}
       if (deliberate && entry.onDismiss) {
-        try { entry.onDismiss(true); } catch {}
+        try {
+          entry.onDismiss(true);
+        } catch {}
       }
       const remove = () => {
         entry.root.remove();
@@ -89,12 +104,33 @@
       entry.motion?.cancel();
       if (reducedMotion.matches) remove();
       else {
-        const motion = entry.root.animate([from, { opacity: 0, transform: 'translateY(6px)' }], { duration: 180, easing: 'ease-in', fill: 'forwards' });
+        const motion = entry.root.animate([from, { opacity: 0, transform: 'translateY(6px)' }], {
+          duration: 180,
+          easing: 'ease-in',
+          fill: 'forwards',
+        });
         entry.motion = motion;
-        motion.onfinish = () => { if (entry.motion === motion) remove(); };
+        motion.onfinish = () => {
+          if (entry.motion === motion) remove();
+        };
       }
     }
-    function show(id, { type = 'normal', title, hint = '', symbol, seekSeconds, loading = false, duration = 0, persistent = false, action, onDismiss, onClose } = {}) {
+    function show(
+      id,
+      {
+        type = 'normal',
+        title,
+        hint = '',
+        symbol,
+        seekSeconds,
+        loading = false,
+        duration = 0,
+        persistent = false,
+        action,
+        onDismiss,
+        onClose,
+      } = {},
+    ) {
       if (!enabled && type !== 'error') return;
       // A stable ID updates an existing notification rather than duplicating it.
       let entry = entries.get(id);
@@ -109,7 +145,10 @@
         if (!hasAction) {
           root.type = 'button';
           root.title = 'Dismiss notification';
-          root.addEventListener('click', event => { event.stopPropagation(); dismiss(id, true); });
+          root.addEventListener('click', event => {
+            event.stopPropagation();
+            dismiss(id, true);
+          });
         } else {
           root.setAttribute('role', 'status');
         }
@@ -151,21 +190,39 @@
         }
 
         root.append(artwork, message);
-        entry = { root, artwork, heading, detail, actionButton, dismissButton,
-          actionCallback: action?.run, onDismiss, timer: undefined, motion: undefined, exiting: false };
+        entry = {
+          root,
+          artwork,
+          heading,
+          detail,
+          actionButton,
+          dismissButton,
+          actionCallback: action?.run,
+          onDismiss,
+          timer: undefined,
+          motion: undefined,
+          exiting: false,
+        };
         entries.set(id, entry);
         host.append(root);
-        if (!reducedMotion.matches) entry.motion = root.animate([
-          { opacity: 0, transform: 'translateY(6px)' },
-          { opacity: 1, transform: 'translateY(0)' }
-        ], { duration: 180, easing: 'ease-out' });
+        if (!reducedMotion.matches)
+          entry.motion = root.animate(
+            [
+              { opacity: 0, transform: 'translateY(6px)' },
+              { opacity: 1, transform: 'translateY(0)' },
+            ],
+            { duration: 180, easing: 'ease-out' },
+          );
       } else if (entry.exiting) {
         const current = view.getComputedStyle(entry.root);
         const from = { opacity: current.opacity, transform: current.transform };
         entry.motion?.cancel();
-        entry.motion = reducedMotion.matches ? undefined : entry.root.animate([
-          from, { opacity: 1, transform: 'translateY(0)' }
-        ], { duration: 180, easing: 'ease-out' });
+        entry.motion = reducedMotion.matches
+          ? undefined
+          : entry.root.animate([from, { opacity: 1, transform: 'translateY(0)' }], {
+              duration: 180,
+              easing: 'ease-out',
+            });
         entry.exiting = false;
       }
       cancel(entry.timer);
@@ -198,7 +255,15 @@
       enabled = !!value;
       if (!enabled) for (const [id, entry] of entries) if (entry.type !== 'error') dismiss(id);
     }
-    return { show, dismiss, clear, setEnabled, get enabled() { return enabled; } };
+    return {
+      show,
+      dismiss,
+      clear,
+      setEnabled,
+      get enabled() {
+        return enabled;
+      },
+    };
   }
   const api = { create };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

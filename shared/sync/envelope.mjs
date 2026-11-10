@@ -41,7 +41,7 @@ const COORDINATION_KEYS = Object.freeze([
   'isHost',
   'adminMode',
   'controls',
-  'timing'
+  'timing',
 ]);
 
 /**
@@ -61,18 +61,16 @@ const COORDINATION_KEYS = Object.freeze([
  *   maxTtlMs?:number
  * }} context
  */
-export function validateCommandEnvelope(input, {
-  expectedEpoch,
-  currentRevision,
-  now = Date.now(),
-  maxTtlMs = COMMAND_TTL_MS
-}) {
+export function validateCommandEnvelope(
+  input,
+  { expectedEpoch, currentRevision, now = Date.now(), maxTtlMs = COMMAND_TTL_MS },
+) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return {
       ok: false,
       status: 400,
       reason: 'invalid-envelope',
-      error: 'Invalid command data'
+      error: 'Invalid command data',
     };
   }
   if (input.expectedRevision !== undefined) {
@@ -81,7 +79,7 @@ export function validateCommandEnvelope(input, {
         ok: false,
         status: 400,
         reason: 'invalid-revision',
-        error: 'Invalid expected revision'
+        error: 'Invalid expected revision',
       };
     }
   }
@@ -90,7 +88,7 @@ export function validateCommandEnvelope(input, {
       ok: false,
       status: 409,
       reason: 'epoch-mismatch',
-      error: 'Room changed or command expired; retry manually'
+      error: 'Room changed or command expired; retry manually',
     };
   }
   if (!Number.isFinite(input.expiresAt) || input.expiresAt <= now || input.expiresAt > now + maxTtlMs) {
@@ -98,15 +96,19 @@ export function validateCommandEnvelope(input, {
       ok: false,
       status: 409,
       reason: Number.isFinite(input.expiresAt) && input.expiresAt <= now ? 'expired' : 'invalid-ttl',
-      error: 'Room changed or command expired; retry manually'
+      error: 'Room changed or command expired; retry manually',
     };
   }
-  if (input.expectedRevision !== undefined && currentRevision !== undefined && input.expectedRevision !== currentRevision) {
+  if (
+    input.expectedRevision !== undefined &&
+    currentRevision !== undefined &&
+    input.expectedRevision !== currentRevision
+  ) {
     return {
       ok: false,
       status: 409,
       reason: 'revision-mismatch',
-      error: 'Room revision changed; refresh and retry'
+      error: 'Room revision changed; refresh and retry',
     };
   }
   const coordination = {
@@ -116,12 +118,12 @@ export function validateCommandEnvelope(input, {
     ...(input.senderId !== undefined ? { senderId: input.senderId } : {}),
     epoch: input.epoch,
     expiresAt: input.expiresAt,
-    ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {})
+    ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
   };
   return {
     ok: true,
     coordination,
-    payload: input.command !== undefined ? input.command : input.contentPayload
+    payload: input.command !== undefined ? input.command : input.contentPayload,
   };
 }
 
@@ -133,12 +135,9 @@ export function resolveCommandDeadlines({
   acceptedAt = Date.now(),
   expiresAt,
   commandTtlMs = COMMAND_TTL_MS,
-  extendedTtlMs
+  extendedTtlMs,
 } = {}) {
-  const admissionDeadline = Math.min(
-    acceptedAt + commandTtlMs,
-    Number.isFinite(expiresAt) ? expiresAt : Infinity
-  );
+  const admissionDeadline = Math.min(acceptedAt + commandTtlMs, Number.isFinite(expiresAt) ? expiresAt : Infinity);
   if (acceptedAt >= admissionDeadline) {
     return { admitted: false, admissionDeadline, executionDeadline: admissionDeadline };
   }
@@ -169,7 +168,7 @@ export function splitRoomSnapshot(snapshot) {
         duration: Number.isFinite(duration) ? duration : 0,
         ...(seekable !== undefined ? { seekable: Boolean(seekable) } : {}),
         ...(volume !== undefined ? { volume } : {}),
-        ...(muted !== undefined ? { muted } : {})
+        ...(muted !== undefined ? { muted } : {}),
       };
       if (Object.keys(restState).length > 0) {
         content.playerState = restState;
@@ -194,12 +193,10 @@ export function composeRoomSnapshot({ coordination, content = {} }) {
   }
   const { timeline, ...coordFields } = coordination;
   const { playerState, ...contentFields } = content || {};
-  const mergedState = timeline || playerState
-    ? { ...(playerState || {}), ...(timeline || {}) }
-    : undefined;
+  const mergedState = timeline || playerState ? { ...(playerState || {}), ...(timeline || {}) } : undefined;
   return {
     ...contentFields,
     ...coordFields,
-    ...(mergedState !== undefined ? { state: mergedState } : {})
+    ...(mergedState !== undefined ? { state: mergedState } : {}),
   };
 }

@@ -8,7 +8,7 @@ const {
   loadBenchmarkConfig,
   resolveTestMatrix,
   inspectActiveUburoomProcess,
-  resolveUniqueOutputDir
+  resolveUniqueOutputDir,
 } = require('./benchmark/config');
 const { resolveTools, collectEnvironmentInfo } = require('./benchmark/tools');
 const { probeAllEncoders, probeHwaccels } = require('./benchmark/prober');
@@ -16,25 +16,12 @@ const {
   inspectSourceVideo,
   generateSyntheticSource,
   extractReferenceSample,
-  deriveOutputSpec
+  deriveOutputSpec,
 } = require('./benchmark/source');
-const {
-  runChunkedBenchmark,
-  runContinuousBenchmark,
-  extractScreenshot
-} = require('./benchmark/runner');
-const {
-  detectQualityCapabilities,
-  runQualityAnalysis
-} = require('./benchmark/quality');
-const {
-  runConcurrentTier,
-  runCapacityScan
-} = require('./benchmark/concurrency');
-const {
-  detectTelemetryProvider,
-  TelemetryCollector
-} = require('./benchmark/telemetry');
+const { runChunkedBenchmark, runContinuousBenchmark, extractScreenshot } = require('./benchmark/runner');
+const { detectQualityCapabilities, runQualityAnalysis } = require('./benchmark/quality');
+const { runConcurrentTier, runCapacityScan } = require('./benchmark/concurrency');
+const { detectTelemetryProvider, TelemetryCollector } = require('./benchmark/telemetry');
 const { runStabilityBenchmark } = require('./benchmark/stability');
 const {
   resolveHistoryDir,
@@ -43,16 +30,10 @@ const {
   compareRuns,
   importHistoricalReport,
   deleteRunFromHistory,
-  deriveSourceFingerprint
+  deriveSourceFingerprint,
 } = require('./benchmark/history');
-const {
-  generateConfigurationRecommendations
-} = require('./benchmark/recommendations');
-const {
-  generateJsonReport,
-  generateCsvReport,
-  generateHtmlReport
-} = require('./benchmark/reporter');
+const { generateConfigurationRecommendations } = require('./benchmark/recommendations');
+const { generateJsonReport, generateCsvReport, generateHtmlReport } = require('./benchmark/reporter');
 
 function parseArgs(args) {
   const options = {
@@ -88,7 +69,7 @@ function parseArgs(args) {
     historyDir: null,
     compareWith: null,
     recommendations: true,
-    help: false
+    help: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -120,17 +101,38 @@ function parseArgs(args) {
     } else if (arg === '--all-codecs') {
       options.allCodecs = true;
     } else if (arg === '--qualities' || arg === '-q') {
-      options.qualities = args[++i].split(',').map(s => s.trim()).filter(Boolean);
+      options.qualities = args[++i]
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg.startsWith('--qualities=')) {
-      options.qualities = arg.slice(12).split(',').map(s => s.trim()).filter(Boolean);
+      options.qualities = arg
+        .slice(12)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg === '--encoders' || arg === '-e') {
-      options.encoders = args[++i].split(',').map(s => s.trim()).filter(Boolean);
+      options.encoders = args[++i]
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg.startsWith('--encoders=')) {
-      options.encoders = arg.slice(11).split(',').map(s => s.trim()).filter(Boolean);
+      options.encoders = arg
+        .slice(11)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg === '--codecs') {
-      options.codecs = args[++i].split(',').map(s => s.trim()).filter(Boolean);
+      options.codecs = args[++i]
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg.startsWith('--codecs=')) {
-      options.codecs = arg.slice(9).split(',').map(s => s.trim()).filter(Boolean);
+      options.codecs = arg
+        .slice(9)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     } else if (arg === '--output' || arg === '-o') {
       options.output = args[++i];
     } else if (arg.startsWith('--output=')) {
@@ -157,12 +159,19 @@ function parseArgs(args) {
       const next = args[i + 1];
       if (next && !next.startsWith('-')) {
         i++;
-        options.qualityMetrics = next.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        options.qualityMetrics = next
+          .split(',')
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean);
       } else {
         options.qualityMetrics = ['vmaf', 'ssim', 'psnr', 'cambi'];
       }
     } else if (arg.startsWith('--quality-metrics=')) {
-      options.qualityMetrics = arg.slice(18).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      options.qualityMetrics = arg
+        .slice(18)
+        .split(',')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
     } else if (arg === '--no-quality-metrics') {
       options.qualityMetrics = false;
     } else if (arg === '--warmup') {
@@ -340,21 +349,31 @@ async function main() {
     throw new Error(`Invalid --concurrency "${options.concurrency}": must be a positive integer >= 1.`);
   }
   if (options.concurrency > ABSOLUTE_MAX_CONCURRENCY) {
-    throw new Error(`Requested --concurrency (${options.concurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`);
+    throw new Error(
+      `Requested --concurrency (${options.concurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`,
+    );
   }
   if (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1) {
     throw new Error(`Invalid --max-concurrency "${options.maxConcurrency}": must be a positive integer >= 1.`);
   }
   if (options.maxConcurrency > ABSOLUTE_MAX_CONCURRENCY) {
-    throw new Error(`Requested --max-concurrency (${options.maxConcurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`);
+    throw new Error(
+      `Requested --max-concurrency (${options.maxConcurrency}) exceeds the safe operational ceiling (${ABSOLUTE_MAX_CONCURRENCY}).`,
+    );
   }
   if (!['chunks', 'continuous', 'both'].includes(options.mode)) {
     throw new Error(`Invalid --mode "${options.mode}": must be one of "chunks", "continuous", or "both".`);
   }
 
   if (options.stabilityDuration !== undefined) {
-    if (!Number.isFinite(options.stabilityDuration) || options.stabilityDuration < 6 || options.stabilityDuration > 3600) {
-      throw new Error(`Invalid --stability-duration "${options.stabilityDuration}": must be a positive number of seconds between 6 and 3600.`);
+    if (
+      !Number.isFinite(options.stabilityDuration) ||
+      options.stabilityDuration < 6 ||
+      options.stabilityDuration > 3600
+    ) {
+      throw new Error(
+        `Invalid --stability-duration "${options.stabilityDuration}": must be a positive number of seconds between 6 and 3600.`,
+      );
     }
   }
 
@@ -375,13 +394,17 @@ async function main() {
       console.warn(`[WARNING] Heavy concurrent load testing requested while uburoom may be running.`);
       console.warn(`          Concurrent transcoding may contend for GPU/CPU resources with live viewers.\n`);
       if (!options.forceConcurrentWithServer) {
-        throw new Error(`Concurrent load requested while uburoom is running on this machine. Pass --force-concurrent-with-server to acknowledge and proceed.`);
+        throw new Error(
+          `Concurrent load requested while uburoom is running on this machine. Pass --force-concurrent-with-server to acknowledge and proceed.`,
+        );
       }
     }
   }
 
   if (options.capacityScan && !options.allowLoadTest) {
-    throw new Error(`Automatic capacity scanning executes progressive multi-process load. Pass --allow-load-test to acknowledge and proceed.`);
+    throw new Error(
+      `Automatic capacity scanning executes progressive multi-process load. Pass --allow-load-test to acknowledge and proceed.`,
+    );
   }
 
   // Abort controller for clean child process termination
@@ -401,7 +424,7 @@ async function main() {
   // 3. Resolve Tools & Environment
   const tools = resolveTools(benchmarkConfig.tools, {
     ffmpeg: options.ffmpeg,
-    ffprobe: options.ffprobe
+    ffprobe: options.ffprobe,
   });
   console.log(`FFmpeg:  ${tools.ffmpegVersion}`);
   console.log(`FFprobe: ${tools.ffprobeVersion}`);
@@ -419,8 +442,12 @@ async function main() {
 
   console.log(`\nDiscovered Encoders:`);
   for (const item of probedEncoders) {
-    const status = item.available ? `[AVAILABLE]    (${item.durationMs}ms)` : `[UNAVAILABLE]  (${item.error || 'unknown error'})`;
-    console.log(`  ${item.codec.toUpperCase().padEnd(5)} / ${item.encoder.padEnd(9)} (${item.ffmpegEncoder.padEnd(11)}): ${status}`);
+    const status = item.available
+      ? `[AVAILABLE]    (${item.durationMs}ms)`
+      : `[UNAVAILABLE]  (${item.error || 'unknown error'})`;
+    console.log(
+      `  ${item.codec.toUpperCase().padEnd(5)} / ${item.encoder.padEnd(9)} (${item.ffmpegEncoder.padEnd(11)}): ${status}`,
+    );
   }
   console.log(`Hardware decode accelerators: ${probedHwaccels.join(', ') || 'none'}`);
   console.log(`Quality analysis metrics:     ${qualityCapabilities.availableMetrics.join(', ') || 'none'}`);
@@ -431,7 +458,9 @@ async function main() {
   if (options.telemetry) {
     telemetryProvider = detectTelemetryProvider({ ffmpegPath: tools.ffmpeg });
   }
-  console.log(`Hardware telemetry:           ${telemetryProvider ? `${telemetryProvider.displayName} (${telemetryProvider.provider})` : 'Disabled'}`);
+  console.log(
+    `Hardware telemetry:           ${telemetryProvider ? `${telemetryProvider.displayName} (${telemetryProvider.provider})` : 'Disabled'}`,
+  );
 
   if (options.probeOnly) {
     console.log(`\n--probe-only completed successfully.`);
@@ -444,7 +473,7 @@ async function main() {
     allEncoders: options.allEncoders,
     codecs: options.codecs,
     encoders: options.encoders,
-    qualities: options.qualities
+    qualities: options.qualities,
   });
 
   const runModes = options.mode === 'both' ? ['chunks', 'continuous'] : [options.mode];
@@ -453,8 +482,12 @@ async function main() {
   console.log(`  Codecs:         ${testMatrix.targetCodecs.join(', ') || 'None'}`);
   console.log(`  Qualities:      ${testMatrix.targetQualities.map(q => q.label || q.id).join(', ') || 'None'}`);
   console.log(`  Modes:          ${runModes.join(', ')}`);
-  console.log(`  Concurrency:    ${options.capacityScan ? `Capacity Scan (1 to ${options.maxConcurrency})` : options.concurrency}`);
-  console.log(`  Quality Metrics:${options.qualityMetrics ? (Array.isArray(options.qualityMetrics) ? options.qualityMetrics.join(', ') : 'Enabled (vmaf, ssim, psnr, cambi)') : 'Disabled'}`);
+  console.log(
+    `  Concurrency:    ${options.capacityScan ? `Capacity Scan (1 to ${options.maxConcurrency})` : options.concurrency}`,
+  );
+  console.log(
+    `  Quality Metrics:${options.qualityMetrics ? (Array.isArray(options.qualityMetrics) ? options.qualityMetrics.join(', ') : 'Enabled (vmaf, ssim, psnr, cambi)') : 'Disabled'}`,
+  );
   console.log(`  Configurations: ${testMatrix.configurations.length * runModes.length}`);
 
   if (!testMatrix.configurations.length) {
@@ -494,7 +527,7 @@ async function main() {
     }
   } else {
     console.log('\nNo local input file specified (or --synthetic requested). Generating synthetic test source...');
-    const stabilityTarget = options.stability ? (options.stabilityDuration || 120) : 0;
+    const stabilityTarget = options.stability ? options.stabilityDuration || 120 : 0;
     const requiredSec = Math.max(60, options.start + Math.max(options.duration, stabilityTarget) + 5);
     sourceFilePath = generateSyntheticSource(tools.ffmpeg, outputDir, requiredSec);
     isSynthetic = true;
@@ -504,15 +537,21 @@ async function main() {
   sourceInfo.isSynthetic = isSynthetic;
   console.log(`\nSource Media Properties:`);
   console.log(`  File:       ${sourceInfo.fileName} (${(sourceInfo.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB)`);
-  console.log(`  Resolution: ${sourceInfo.video.resolution} @ ${sourceInfo.video.fps} fps (${sourceInfo.video.codec}) [${sourceInfo.video.isVfr ? 'VFR' : 'CFR'}]`);
+  console.log(
+    `  Resolution: ${sourceInfo.video.resolution} @ ${sourceInfo.video.fps} fps (${sourceInfo.video.codec}) [${sourceInfo.video.isVfr ? 'VFR' : 'CFR'}]`,
+  );
   console.log(`  Color/HDR:  ${sourceInfo.hdr.label}`);
-  console.log(`  Audio:      ${sourceInfo.audio.available ? `${sourceInfo.audio.count} stream(s)` : 'None (video-only)'}`);
+  console.log(
+    `  Audio:      ${sourceInfo.audio.available ? `${sourceInfo.audio.count} stream(s)` : 'None (video-only)'}`,
+  );
 
   // Clamp duration to source length if necessary
   let sampleDuration = options.duration;
   const startOffset = Math.max(0, options.start);
   if (startOffset >= sourceInfo.durationSeconds) {
-    throw new Error(`Start offset (${startOffset}s) exceeds source duration (${sourceInfo.durationSeconds.toFixed(1)}s).`);
+    throw new Error(
+      `Start offset (${startOffset}s) exceeds source duration (${sourceInfo.durationSeconds.toFixed(1)}s).`,
+    );
   }
   if (startOffset + sampleDuration > sourceInfo.durationSeconds) {
     sampleDuration = Math.max(1, sourceInfo.durationSeconds - startOffset);
@@ -538,7 +577,7 @@ async function main() {
     screenshots.push({
       label: `Source Reference Frame (${sourceInfo.fileName})`,
       timestampSeconds: Math.round(screenshotTimestamp * 10) / 10,
-      relativePath: path.relative(outputDir, refScreenshotPath).replace(/\\/g, '/')
+      relativePath: path.relative(outputDir, refScreenshotPath).replace(/\\/g, '/'),
     });
   }
 
@@ -546,7 +585,7 @@ async function main() {
   if (options.telemetry && telemetryProvider) {
     telemetryCollector = new TelemetryCollector({
       providerInfo: telemetryProvider,
-      intervalMs: options.telemetryInterval
+      intervalMs: options.telemetryInterval,
     });
     telemetryCollector.start();
     telemetryCollector.setPhase('idle_baseline');
@@ -565,7 +604,7 @@ async function main() {
         hardwareDecode: benchmarkConfig.transcoding.hardwareDecode,
         cpuFallback: benchmarkConfig.transcoding.cpuFallback,
         outputDir,
-        probedEncoders
+        probedEncoders,
       });
       console.log('[WARMUP] Warm-up complete.\n');
     } catch (warmupErr) {
@@ -583,7 +622,9 @@ async function main() {
     const primaryConfig = testMatrix.configurations[0];
     console.log(`\n===========================================================`);
     console.log(`   Executing Sustainable Capacity Scan`);
-    console.log(`   Target: ${primaryConfig.codec.toUpperCase()} (${primaryConfig.requestedEncoder}) @ ${primaryConfig.quality.label || primaryConfig.quality.id}`);
+    console.log(
+      `   Target: ${primaryConfig.codec.toUpperCase()} (${primaryConfig.requestedEncoder}) @ ${primaryConfig.quality.label || primaryConfig.quality.id}`,
+    );
     console.log(`   Scanning concurrency 1 to ${options.maxConcurrency}...`);
     console.log(`===========================================================\n`);
 
@@ -609,11 +650,13 @@ async function main() {
       },
       onTierComplete: tier => {
         const passText = tier.isSustainable ? 'PASS' : 'FAIL';
-        console.log(`[${passText}] ${tier.passedWorkers}/${tier.concurrency} passed | Throughput: ${tier.aggregateThroughputMultiplier}x | Slowest: ${tier.minWorkerSpeed}x | Deadlines missed: ${tier.totalDeadlineMisses}`);
+        console.log(
+          `[${passText}] ${tier.passedWorkers}/${tier.concurrency} passed | Throughput: ${tier.aggregateThroughputMultiplier}x | Slowest: ${tier.minWorkerSpeed}x | Deadlines missed: ${tier.totalDeadlineMisses}`,
+        );
         if (!tier.isSustainable && tier.failureReason) {
           console.log(`   -> Stopping rule triggered: ${tier.failureReason}`);
         }
-      }
+      },
     });
 
     concurrencySummary = scanResult;
@@ -623,12 +666,17 @@ async function main() {
       const tierConfigId = `${primaryConfig.id}-${options.mode === 'continuous' ? 'continuous' : 'chunks'}-c${tier.concurrency}`;
       const summary = telemetryCollector ? telemetryCollector.getSummary(tierConfigId) : null;
       for (const w of tier.workers) {
-        w.telemetry = summary ? {
-          ...summary,
-          isSharedGpu: tier.concurrency > 1,
-          concurrency: tier.concurrency,
-          notice: tier.concurrency > 1 ? `Aggregate host GPU telemetry during concurrent execution of ${tier.concurrency} stream(s); not isolated to single worker.` : undefined
-        } : null;
+        w.telemetry = summary
+          ? {
+              ...summary,
+              isSharedGpu: tier.concurrency > 1,
+              concurrency: tier.concurrency,
+              notice:
+                tier.concurrency > 1
+                  ? `Aggregate host GPU telemetry during concurrent execution of ${tier.concurrency} stream(s); not isolated to single worker.`
+                  : undefined,
+            }
+          : null;
         benchmarkResults.push(w);
       }
     }
@@ -636,7 +684,9 @@ async function main() {
     console.log(`\nCapacity Scan Complete!`);
     console.log(`Highest Sustainable Concurrency: ${scanResult.highestSustainableConcurrency} simultaneous stream(s)`);
     if (scanResult.firstFailingConcurrency) {
-      console.log(`First Failing Concurrency:       ${scanResult.firstFailingConcurrency} simultaneous stream(s) (${scanResult.stoppingReason})`);
+      console.log(
+        `First Failing Concurrency:       ${scanResult.firstFailingConcurrency} simultaneous stream(s) (${scanResult.stoppingReason})`,
+      );
     }
   } else if (options.concurrency > 1) {
     // Stage 2: Fixed N-Worker Concurrency Run
@@ -650,8 +700,16 @@ async function main() {
         for (const mode of runModes) {
           const runTag = options.runs > 1 ? ` [Run ${run}/${options.runs}]` : '';
           const currentConfigId = `${testConfig.id}-${mode}-c${options.concurrency}${options.runs > 1 ? `-r${run}` : ''}`;
-          telemetryCollector?.setPhase('encoding', { configId: currentConfigId, runIndex: run, mode, concurrency: options.concurrency, isSharedGpu: true });
-          console.log(`Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]${runTag}...`);
+          telemetryCollector?.setPhase('encoding', {
+            configId: currentConfigId,
+            runIndex: run,
+            mode,
+            concurrency: options.concurrency,
+            isSharedGpu: true,
+          });
+          console.log(
+            `Launching ${options.concurrency} concurrent workers for ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) @ ${testConfig.quality.label || testConfig.quality.id} [${mode}]${runTag}...`,
+          );
           const tierResult = await runConcurrentTier({
             concurrency: options.concurrency,
             runIndex: run,
@@ -665,19 +723,23 @@ async function main() {
             probedEncoders,
             outputDir,
             signal: abortController.signal,
-            mode
+            mode,
           });
 
-          console.log(`   -> ${tierResult.passedWorkers}/${options.concurrency} passed | Aggregate throughput: ${tierResult.aggregateThroughputMultiplier}x | Slowest: ${tierResult.minWorkerSpeed}x | Deadlines missed: ${tierResult.totalDeadlineMisses}`);
+          console.log(
+            `   -> ${tierResult.passedWorkers}/${options.concurrency} passed | Aggregate throughput: ${tierResult.aggregateThroughputMultiplier}x | Slowest: ${tierResult.minWorkerSpeed}x | Deadlines missed: ${tierResult.totalDeadlineMisses}`,
+          );
 
           for (const w of tierResult.workers) {
             const summary = telemetryCollector ? telemetryCollector.getSummary(currentConfigId) : null;
-            w.telemetry = summary ? {
-              ...summary,
-              isSharedGpu: true,
-              concurrency: options.concurrency,
-              notice: `Aggregate host GPU telemetry during concurrent execution of ${options.concurrency} stream(s); not isolated to single worker.`
-            } : null;
+            w.telemetry = summary
+              ? {
+                  ...summary,
+                  isSharedGpu: true,
+                  concurrency: options.concurrency,
+                  notice: `Aggregate host GPU telemetry during concurrent execution of ${options.concurrency} stream(s); not isolated to single worker.`,
+                }
+              : null;
             benchmarkResults.push(w);
           }
           concurrencyTrials.push(tierResult);
@@ -692,8 +754,11 @@ async function main() {
       highestSustainableConcurrency: concurrencyTrials.every(t => t.isSustainable) ? options.concurrency : 0,
       totalTrials: concurrencyTrials.length,
       passedTrials: concurrencyTrials.filter(t => t.isSustainable).length,
-      stoppingReason: concurrencyTrials.every(t => t.isSustainable) ? null : concurrencyTrials.find(t => !t.isSustainable)?.failureReason,
-      estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation. Long-term production capacity requires extended thermal and memory soak testing.'
+      stoppingReason: concurrencyTrials.every(t => t.isSustainable)
+        ? null
+        : concurrencyTrials.find(t => !t.isSustainable)?.failureReason,
+      estimateNotice:
+        'Short-run capacity estimate based on chunk deadline preservation. Long-term production capacity requires extended thermal and memory soak testing.',
     };
   } else {
     // Stage 1: Standard Single-Stream Execution
@@ -706,9 +771,13 @@ async function main() {
 
     for (let run = 1; run <= options.runs; run++) {
       for (const testConfig of testMatrix.configurations) {
-        const probeCheck = probedEncoders.find(p => p.codec === testConfig.codec && p.encoder === testConfig.requestedEncoder);
+        const probeCheck = probedEncoders.find(
+          p => p.codec === testConfig.codec && p.encoder === testConfig.requestedEncoder,
+        );
         if (probeCheck && !probeCheck.available && (!testConfig.allowFallback || options.allEncoders)) {
-          console.log(`[SKIP] ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) is unavailable on this machine.`);
+          console.log(
+            `[SKIP] ${testConfig.codec.toUpperCase()} (${testConfig.requestedEncoder}) is unavailable on this machine.`,
+          );
           benchmarkResults.push({
             runIndex: run,
             configId: `${testConfig.id}${options.runs > 1 ? `-r${run}` : ''}`,
@@ -718,7 +787,7 @@ async function main() {
             requestedEncoder: testConfig.requestedEncoder,
             actualEncoder: null,
             quality: testConfig.quality,
-            error: `Encoder ${testConfig.requestedEncoder} is unavailable on this machine.`
+            error: `Encoder ${testConfig.requestedEncoder} is unavailable on this machine.`,
           });
           continue;
         }
@@ -745,8 +814,10 @@ async function main() {
                 probedEncoders,
                 onProgress: prog => {
                   const pct = Math.round(((prog.chunkIndex + 1) / prog.totalChunks) * 100);
-                  process.stdout.write(`   Chunk ${prog.chunkIndex + 1}/${prog.totalChunks} (${pct}%): ${prog.encodeDurationSec.toFixed(2)}s (${prog.realTimeSpeed.toFixed(2)}x)${prog.deadlineMissed ? ' [MISSED DEADLINE]' : ''}\r`);
-                }
+                  process.stdout.write(
+                    `   Chunk ${prog.chunkIndex + 1}/${prog.totalChunks} (${pct}%): ${prog.encodeDurationSec.toFixed(2)}s (${prog.realTimeSpeed.toFixed(2)}x)${prog.deadlineMissed ? ' [MISSED DEADLINE]' : ''}\r`,
+                  );
+                },
               });
               process.stdout.write('\n');
             } else {
@@ -757,7 +828,7 @@ async function main() {
                 hardwareDecode: benchmarkConfig.transcoding.hardwareDecode,
                 cpuFallback: benchmarkConfig.transcoding.cpuFallback,
                 outputDir,
-                probedEncoders
+                probedEncoders,
               });
             }
 
@@ -765,15 +836,23 @@ async function main() {
 
             const perf = result.performance;
             if (result.status === 'pass') {
-              const retryNote = perf.totalEncodingTimeSec > perf.successfulEncodeTimeSec
-                ? ` (Total elapsed: ${perf.totalEncodingTimeSec}s, ${perf.totalElapsedSpeedMultiplier}x)`
-                : '';
-              const startupNote = perf.firstChunkStartupSec !== null && perf.firstChunkStartupSec > perf.firstChunkDurationSec
-                ? ` | 1st chunk startup: ${perf.firstChunkStartupSec}s`
-                : (perf.firstChunkDurationSec ? ` | 1st chunk: ${perf.firstChunkDurationSec}s` : '');
-              console.log(`   -> PASS in ${perf.successfulEncodeTimeSec}s | Speed: ${perf.speedMultiplier}x${retryNote} | FPS: ${perf.effectiveFps}${startupNote} | Deadlines missed: ${perf.deadlineMisses}`);
+              const retryNote =
+                perf.totalEncodingTimeSec > perf.successfulEncodeTimeSec
+                  ? ` (Total elapsed: ${perf.totalEncodingTimeSec}s, ${perf.totalElapsedSpeedMultiplier}x)`
+                  : '';
+              const startupNote =
+                perf.firstChunkStartupSec !== null && perf.firstChunkStartupSec > perf.firstChunkDurationSec
+                  ? ` | 1st chunk startup: ${perf.firstChunkStartupSec}s`
+                  : perf.firstChunkDurationSec
+                    ? ` | 1st chunk: ${perf.firstChunkDurationSec}s`
+                    : '';
+              console.log(
+                `   -> PASS in ${perf.successfulEncodeTimeSec}s | Speed: ${perf.speedMultiplier}x${retryNote} | FPS: ${perf.effectiveFps}${startupNote} | Deadlines missed: ${perf.deadlineMisses}`,
+              );
             } else {
-              const failReason = result.error || (result.validation?.errors?.length ? result.validation.errors.join('; ') : 'Validation failed');
+              const failReason =
+                result.error ||
+                (result.validation?.errors?.length ? result.validation.errors.join('; ') : 'Validation failed');
               console.log(`   -> FAIL: ${failReason}`);
             }
 
@@ -795,7 +874,7 @@ async function main() {
               requestedEncoder: testConfig.requestedEncoder,
               actualEncoder: null,
               quality: testConfig.quality,
-              error: err.message
+              error: err.message,
             });
           }
         }
@@ -810,7 +889,9 @@ async function main() {
     const primaryConfig = testMatrix.configurations[0];
     console.log(`\n===========================================================`);
     console.log(`   Executing Bounded Stability / Soak Test (${options.stabilityDuration}s target)`);
-    console.log(`   Target: ${primaryConfig.codec.toUpperCase()} (${primaryConfig.requestedEncoder}) @ ${primaryConfig.quality.label || primaryConfig.quality.id}`);
+    console.log(
+      `   Target: ${primaryConfig.codec.toUpperCase()} (${primaryConfig.requestedEncoder}) @ ${primaryConfig.quality.label || primaryConfig.quality.id}`,
+    );
     console.log(`===========================================================\n`);
 
     const stabRes = await runStabilityBenchmark({
@@ -826,13 +907,19 @@ async function main() {
       telemetryCollector,
       signal: abortController.signal,
       onProgress: p => {
-        process.stdout.write(`   Chunk ${p.chunkIndex + 1} (${p.elapsedSec.toFixed(1)}s/${options.stabilityDuration}s): latency ${p.chunkLatencySec.toFixed(2)}s | speed ${p.realTimeSpeed.toFixed(2)}x\r`);
-      }
+        process.stdout.write(
+          `   Chunk ${p.chunkIndex + 1} (${p.elapsedSec.toFixed(1)}s/${options.stabilityDuration}s): latency ${p.chunkLatencySec.toFixed(2)}s | speed ${p.realTimeSpeed.toFixed(2)}x\r`,
+        );
+      },
     });
     process.stdout.write('\n');
     stabilitySummary = stabRes.stability;
-    console.log(`[STABILITY] Completed ${stabilitySummary.chunksCompleted} chunks in ${stabilitySummary.testedDurationSeconds}s`);
-    console.log(`[STABILITY] Trend: ${stabilitySummary.throughputChangePercent > 0 ? '+' : ''}${stabilitySummary.throughputChangePercent}% throughput change | P95 latency change: ${stabilitySummary.latencyChangePercent > 0 ? '+' : ''}${stabilitySummary.latencyChangePercent}%`);
+    console.log(
+      `[STABILITY] Completed ${stabilitySummary.chunksCompleted} chunks in ${stabilitySummary.testedDurationSeconds}s`,
+    );
+    console.log(
+      `[STABILITY] Trend: ${stabilitySummary.throughputChangePercent > 0 ? '+' : ''}${stabilitySummary.throughputChangePercent}% throughput change | P95 latency change: ${stabilitySummary.latencyChangePercent > 0 ? '+' : ''}${stabilitySummary.latencyChangePercent}%`,
+    );
     console.log(`[STABILITY] Assessment: ${stabilitySummary.degradationSummary}\n`);
   }
 
@@ -843,7 +930,11 @@ async function main() {
       if (fs.existsSync(targetVideoPath)) {
         const rIndex = result.runIndex || 1;
         const workerTag = result.workerId ? `-worker-${result.workerId}` : '';
-        const tierTag = result.tierIndex ? `-tier-${result.tierIndex}` : (result.concurrency && result.concurrency > 1 ? `-c${result.concurrency}` : '');
+        const tierTag = result.tierIndex
+          ? `-tier-${result.tierIndex}`
+          : result.concurrency && result.concurrency > 1
+            ? `-c${result.concurrency}`
+            : '';
         const shotFilename = `run-${rIndex}${tierTag}${workerTag}-${result.configId}-frame.jpg`;
         const shotPath = path.join(screenshotsDir, shotFilename);
         if (!fs.existsSync(shotPath)) {
@@ -852,7 +943,7 @@ async function main() {
             screenshots.push({
               label: `${result.codec.toUpperCase()} (${result.actualEncoder}) ${result.quality?.label || result.quality?.id}${tierTag ? ` [${tierTag.slice(1)}]` : ''}${workerTag ? ` [${workerTag.slice(1)}]` : ''}${rIndex > 1 ? ` (Run ${rIndex})` : ''}`,
               timestampSeconds: Math.round(shotTimestamp * 10) / 10,
-              relativePath: path.relative(outputDir, shotPath).replace(/\\/g, '/')
+              relativePath: path.relative(outputDir, shotPath).replace(/\\/g, '/'),
             });
           }
         }
@@ -878,7 +969,9 @@ async function main() {
       if (!fs.existsSync(assembledFullPath)) continue;
 
       const qOutputDir = path.dirname(assembledFullPath);
-      process.stdout.write(`Analyzing ${r.codec.toUpperCase()} (${r.actualEncoder}) @ ${r.quality?.label || r.quality?.id}... `);
+      process.stdout.write(
+        `Analyzing ${r.codec.toUpperCase()} (${r.actualEncoder}) @ ${r.quality?.label || r.quality?.id}... `,
+      );
 
       const qResult = await runQualityAnalysis(tools.ffmpeg, {
         ffprobePath: tools.ffprobe,
@@ -891,12 +984,14 @@ async function main() {
         outputDir: qOutputDir,
         capabilities: qualityCapabilities,
         selectedMetrics: selectedMetricsList,
-        signal: abortController.signal
+        signal: abortController.signal,
       });
 
       r.qualityMetrics = qResult;
 
-      const vmafStr = qResult.vmaf?.mean ? `VMAF ${qResult.vmaf.mean} (p1: ${qResult.vmaf.p1}, min: ${qResult.vmaf.min})` : '';
+      const vmafStr = qResult.vmaf?.mean
+        ? `VMAF ${qResult.vmaf.mean} (p1: ${qResult.vmaf.p1}, min: ${qResult.vmaf.min})`
+        : '';
       const ssimStr = qResult.ssim?.mean ? `SSIM ${qResult.ssim.mean}` : '';
       const psnrStr = qResult.psnr?.mean ? `PSNR ${qResult.psnr.mean} dB` : '';
       const cambiStr = qResult.cambi?.mean ? `CAMBI ${qResult.cambi.mean}` : '';
@@ -910,7 +1005,9 @@ async function main() {
       } else if (qResult.status === 'unverified') {
         console.log(`[UNVERIFIED] ${parts.join(' | ')} (${qResult.reason || 'Temporal alignment unverified'})`);
       } else {
-        console.log(`[${qResult.status ? qResult.status.toUpperCase() : 'SKIPPED'}] ${qResult.reason || 'Not evaluated'}`);
+        console.log(
+          `[${qResult.status ? qResult.status.toUpperCase() : 'SKIPPED'}] ${qResult.reason || 'Not evaluated'}`,
+        );
       }
     }
   }
@@ -923,7 +1020,9 @@ async function main() {
   const passedCount = benchmarkResults.filter(r => r.status === 'pass').length;
   const failedCount = benchmarkResults.filter(r => r.status === 'fail').length;
   const skippedCount = benchmarkResults.filter(r => r.status === 'skipped').length;
-  console.log(`\nBenchmark Summary: ${benchmarkResults.length} total | ${passedCount} passed | ${failedCount} failed | ${skippedCount} skipped\n`);
+  console.log(
+    `\nBenchmark Summary: ${benchmarkResults.length} total | ${passedCount} passed | ${failedCount} failed | ${skippedCount} skipped\n`,
+  );
 
   // 10. Historical Comparison & Recommendations (Stage 3)
   let historyComparison = null;
@@ -959,12 +1058,14 @@ async function main() {
         sampleDuration,
         startOffset,
         environment: envInfo,
-        tools
+        tools,
       });
       console.log(`\nHistorical Comparison against ${options.compareWith}:`);
       console.log(`  Matched configurations:  ${historyComparison.matchedComparisons.length}`);
       if (historyComparison.partiallyMatchedComparisons.length) {
-        console.log(`  Partially matched:       ${historyComparison.partiallyMatchedComparisons.length} (differing conditions)`);
+        console.log(
+          `  Partially matched:       ${historyComparison.partiallyMatchedComparisons.length} (differing conditions)`,
+        );
       }
     } else {
       console.warn(`[WARN] Baseline comparison target not found: ${options.compareWith}`);
@@ -973,16 +1074,19 @@ async function main() {
 
   let recommendations = null;
   if (options.recommendations) {
-    recommendations = generateConfigurationRecommendations({
-      benchmarkVersion: 'Stage 3',
-      source: sourceInfo,
-      sampleDuration,
-      runs: options.runs,
-      results: benchmarkResults,
-      concurrencySummary,
-      stabilitySummary,
-      telemetrySummary
-    }, benchmarkConfig);
+    recommendations = generateConfigurationRecommendations(
+      {
+        benchmarkVersion: 'Stage 3',
+        source: sourceInfo,
+        sampleDuration,
+        runs: options.runs,
+        results: benchmarkResults,
+        concurrencySummary,
+        stabilitySummary,
+        telemetrySummary,
+      },
+      benchmarkConfig,
+    );
 
     if (recommendations.recommendations?.length > 0) {
       console.log(`\nConservative Configuration Advice:`);
@@ -1016,13 +1120,13 @@ async function main() {
       telemetry: options.telemetry,
       stability: options.stability,
       stabilityDuration: options.stabilityDuration,
-      saveHistory: options.saveHistory
+      saveHistory: options.saveHistory,
     },
     tools: {
       ffmpeg: tools.ffmpeg,
       ffprobe: tools.ffprobe,
       ffmpegVersion: tools.ffmpegVersion,
-      ffprobeVersion: tools.ffprobeVersion
+      ffprobeVersion: tools.ffprobeVersion,
     },
     environment: envInfo,
     transcodingSettings: benchmarkConfig.transcoding,
@@ -1036,7 +1140,7 @@ async function main() {
       video: sourceInfo.video,
       hdr: sourceInfo.hdr,
       referenceVideoRelative: refProxy?.relativePath || null,
-      referenceNotice: refProxy?.notice || null
+      referenceNotice: refProxy?.notice || null,
     },
     probedEncoders,
     concurrencySummary,
@@ -1045,7 +1149,7 @@ async function main() {
     historyComparison,
     recommendations,
     screenshots,
-    results: benchmarkResults
+    results: benchmarkResults,
   };
 
   const jsonPath = path.join(outputDir, 'results.json');
@@ -1062,10 +1166,14 @@ async function main() {
 
   if (options.saveHistory) {
     const saveRec = saveRunToHistory(benchmarkPayload, historyDir);
-    console.log(`[OK] Saved run to benchmark history (${saveRec.runId}): ${path.join(historyDir, `${saveRec.runId}.json`)}`);
+    console.log(
+      `[OK] Saved run to benchmark history (${saveRec.runId}): ${path.join(historyDir, `${saveRec.runId}.json`)}`,
+    );
   }
 
-  console.log(`\nBenchmark run complete! View the interactive report by opening:\n  file:///${htmlPath.replace(/\\/g, '/')}\n`);
+  console.log(
+    `\nBenchmark run complete! View the interactive report by opening:\n  file:///${htmlPath.replace(/\\/g, '/')}\n`,
+  );
 }
 
 if (require.main === module) {

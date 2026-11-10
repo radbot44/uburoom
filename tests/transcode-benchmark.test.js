@@ -11,7 +11,7 @@ const {
   loadBenchmarkConfig,
   resolveTestMatrix,
   inspectActiveUburoomProcess,
-  resolveUniqueOutputDir
+  resolveUniqueOutputDir,
 } = require('../scripts/benchmark/config');
 const { resolveEncoderForCodec } = require('../scripts/benchmark/prober');
 const { deriveOutputSpec, extractReferenceSample } = require('../scripts/benchmark/source');
@@ -22,24 +22,21 @@ const {
   buildQualityFilterChain,
   validateTemporalAlignment,
   runQualityAnalysis,
-  parseFinalDecodedFrames
+  parseFinalDecodedFrames,
 } = require('../scripts/benchmark/quality');
 const { spawnSafe, resolveTools } = require('../scripts/benchmark/tools');
-const {
-  runConcurrentTier,
-  runCapacityScan
-} = require('../scripts/benchmark/concurrency');
+const { runConcurrentTier, runCapacityScan } = require('../scripts/benchmark/concurrency');
 const {
   sanitizeText,
   generateJsonReport,
   generateCsvReport,
-  generateHtmlReport
+  generateHtmlReport,
 } = require('../scripts/benchmark/reporter');
 const {
   TelemetryCollector,
   detectTelemetryProvider,
   parseMetricNumber,
-  decodeNvidiaThrottleReasons
+  decodeNvidiaThrottleReasons,
 } = require('../scripts/benchmark/telemetry');
 const {
   computeFileContentFingerprint,
@@ -48,15 +45,10 @@ const {
   loadHistoryIndex,
   importHistoricalReport,
   deleteRunFromHistory,
-  compareRuns
+  compareRuns,
 } = require('../scripts/benchmark/history');
-const {
-  calculateP95,
-  runStabilityBenchmark
-} = require('../scripts/benchmark/stability');
-const {
-  generateConfigurationRecommendations
-} = require('../scripts/benchmark/recommendations');
+const { calculateP95, runStabilityBenchmark } = require('../scripts/benchmark/stability');
+const { generateConfigurationRecommendations } = require('../scripts/benchmark/recommendations');
 
 test('benchmark configuration loader discovers fallback and sanitizes secrets', () => {
   const configFile = resolveConfigFile();
@@ -83,7 +75,7 @@ test('test matrix resolution respects codecs, encoders, qualities and ignores di
   const matrix = resolveTestMatrix(config, {
     allCodecs: true,
     allEncoders: true,
-    qualities: ['1080p8', '720p4']
+    qualities: ['1080p8', '720p4'],
   });
 
   assert.deepEqual(matrix.targetCodecs, ['av1', 'vp9', 'vp8']);
@@ -166,7 +158,7 @@ test('resolveUniqueOutputDir atomically claims unique directories under concurre
     const target = path.join(tmpDir, 'concurrent-target');
     // Launch 10 simultaneous allocations for the exact same target directory
     const allocations = await Promise.all(
-      Array.from({ length: 10 }, () => Promise.resolve().then(() => resolveUniqueOutputDir(target, tmpDir)))
+      Array.from({ length: 10 }, () => Promise.resolve().then(() => resolveUniqueOutputDir(target, tmpDir))),
     );
 
     const allocatedDirs = allocations.map(a => a.dir);
@@ -201,7 +193,7 @@ test('prober encoder resolution correctly handles auto, fallback, and software V
     { codec: 'av1', encoder: 'software', available: true },
     { codec: 'vp9', encoder: 'qsv', available: false },
     { codec: 'vp9', encoder: 'software', available: true },
-    { codec: 'vp8', encoder: 'software', available: true }
+    { codec: 'vp8', encoder: 'software', available: true },
   ];
 
   // Auto AV1 should pick QSV when available
@@ -212,7 +204,7 @@ test('prober encoder resolution correctly handles auto, fallback, and software V
   const hardwareOnlyNoHw = [
     { codec: 'av1', encoder: 'qsv', available: false },
     { codec: 'av1', encoder: 'nvenc', available: false },
-    { codec: 'av1', encoder: 'software', available: true }
+    { codec: 'av1', encoder: 'software', available: true },
   ];
   const av1HwFallback = resolveEncoderForCodec('av1', 'hardware', hardwareOnlyNoHw, true);
   assert.equal(av1HwFallback.actualEncoder, 'software');
@@ -228,7 +220,7 @@ test('--all-encoders mode disables CPU fallback to record unavailable encoders a
   const matrix = resolveTestMatrix(config, {
     allEncoders: true,
     codecs: ['av1'],
-    qualities: ['1080p8']
+    qualities: ['1080p8'],
   });
 
   const nvencConfig = matrix.configurations.find(c => c.requestedEncoder === 'nvenc');
@@ -250,11 +242,11 @@ test('outputSpec enforces strict no-upscaling rule', () => {
       width: 1280,
       height: 720,
       fps: 30,
-      codec: 'h264'
+      codec: 'h264',
     },
     audio: { available: true },
     hdr: { hdr: false },
-    rawInfo: { streams: [{ codec_type: 'video', width: 1280, height: 720 }] }
+    rawInfo: { streams: [{ codec_type: 'video', width: 1280, height: 720 }] },
   };
 
   const spec1080p = deriveOutputSpec(smallSource, '1080p8');
@@ -279,7 +271,7 @@ test('quality metric calculations compute correct mean, harmonic mean, median, p
   const timeline = [];
   for (let f = 0; f < 180; f++) {
     // Dip quality between frames 60 and 90
-    const score = (f >= 60 && f <= 90) ? 40 : 95;
+    const score = f >= 60 && f <= 90 ? 40 : 95;
     timeline.push({ frameNum: f, timestampSec: f / 30, vmaf: score });
   }
 
@@ -293,12 +285,12 @@ test('quality metric calculations compute correct mean, harmonic mean, median, p
 test('buildQualityFilterChain constructs correct VMAF scaling, time alignment, and rejects Dolby Vision P5', () => {
   const standardSource = {
     video: { width: 1920, height: 1080, fps: 30 },
-    hdr: { hdr: false }
+    hdr: { hdr: false },
   };
   const target720p = { width: 1280, height: 720 };
   const mockCaps = {
     libvmaf: true,
-    vmafFeatures: { cambi: true, psnr: true, float_ssim: true }
+    vmafFeatures: { cambi: true, psnr: true, float_ssim: true },
   };
 
   const chain = buildQualityFilterChain(standardSource, target720p, mockCaps, 'log.json', ['vmaf', 'cambi']);
@@ -312,7 +304,7 @@ test('buildQualityFilterChain constructs correct VMAF scaling, time alignment, a
   // Dolby Vision Profile 5 source must fail gracefully without Vulkan libplacebo
   const doviSource = {
     video: { width: 3840, height: 2160, fps: 24 },
-    hdr: { hdr: true, doviP5: true }
+    hdr: { hdr: true, doviP5: true },
   };
   const doviChain = buildQualityFilterChain(doviSource, target720p, mockCaps, 'log.json');
   assert.equal(doviChain.supported, false);
@@ -341,7 +333,7 @@ test('buildQualityFilterChain supports independent CAMBI selection and accurate 
     libvmaf: true,
     vmafFeatures: { cambi: true, psnr: true, float_ssim: true },
     ssim: true,
-    psnr: true
+    psnr: true,
   };
   const cambiOnly = buildQualityFilterChain(source, target, capsWithCambi, 'quality-metrics.json', ['cambi']);
   assert.ok(cambiOnly.supported);
@@ -355,7 +347,7 @@ test('buildQualityFilterChain supports independent CAMBI selection and accurate 
     libvmaf: true,
     vmafFeatures: { cambi: false },
     ssim: true,
-    psnr: true
+    psnr: true,
   };
   const unsuppCambi = buildQualityFilterChain(source, target, capsNoCambi, 'quality-metrics.json', ['cambi']);
   assert.equal(unsuppCambi.supported, false);
@@ -367,15 +359,28 @@ test('spawnSafe promptly terminates running subprocess on abort signal', async (
   const startTime = Date.now();
 
   // Launch a real FFmpeg child process that would run for 30 seconds if not cancelled
-  const promise = spawnSafe('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30',
-    '-t', '30',
-    '-f', 'null', '-'
-  ], {
-    signal: controller.signal,
-    timeout: 30000
-  });
+  const promise = spawnSafe(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=320x240:rate=30',
+      '-t',
+      '30',
+      '-f',
+      'null',
+      '-',
+    ],
+    {
+      signal: controller.signal,
+      timeout: 30000,
+    },
+  );
 
   // Trigger abort after a brief delay so the process is genuinely running
   setTimeout(() => controller.abort(), 60);
@@ -399,47 +404,70 @@ test('validateTemporalAlignment detects start presentation delays and duration m
     // Generate a reference 2-second video at 30 fps
     const refFile = path.join(tmpDir, 'ref.mp4');
     const cp = require('child_process');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
-      '-t', '2',
-      '-c:v', 'libx264', '-preset', 'ultrafast',
-      refFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '2',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        refFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Generate matching encode (start PTS ~ 0, duration 2s)
     const matchingFile = path.join(tmpDir, 'matching.webm');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', refFile,
-      '-c:v', 'libvpx',
-      matchingFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-y', '-i', refFile, '-c:v', 'libvpx', matchingFile],
+      { windowsHide: true },
+    );
 
     // Validate matching
     const resMatching = validateTemporalAlignment('ffprobe', refFile, matchingFile, {
       startOffset: 0,
       sampleDuration: 2,
-      fps: 30
+      fps: 30,
     });
     assert.equal(resMatching.status, 'verified');
     assert.ok(resMatching.encodedFirstPts <= 0.08);
 
     // Generate deliberately time-delayed encode (start PTS = 1.0s)
     const delayedFile = path.join(tmpDir, 'delayed.webm');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', refFile,
-      '-vf', 'setpts=PTS-STARTPTS+1.0/TB',
-      '-c:v', 'libvpx',
-      delayedFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        refFile,
+        '-vf',
+        'setpts=PTS-STARTPTS+1.0/TB',
+        '-c:v',
+        'libvpx',
+        delayedFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Validate delayed
     const resDelayed = validateTemporalAlignment('ffprobe', refFile, delayedFile, {
       startOffset: 0,
       sampleDuration: 2,
-      fps: 30
+      fps: 30,
     });
     assert.equal(resDelayed.status, 'misaligned');
     assert.match(resDelayed.reason, /presentation start delay/i);
@@ -462,8 +490,8 @@ test('runCapacityScan exercises real progression, stopping on sub-real-time spee
       performance: {
         speedMultiplier: speed,
         deadlineMisses: 0,
-        chunkP95DurationSec: 2.5
-      }
+        chunkP95DurationSec: 2.5,
+      },
     };
   };
 
@@ -472,7 +500,7 @@ test('runCapacityScan exercises real progression, stopping on sub-real-time spee
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
     minRealtimeMargin: 1.05,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.highestSustainableConcurrency, 2, 'Should sustain tier 2');
@@ -489,7 +517,7 @@ test('runCapacityScan stops immediately when a worker fails transcode', async ()
     return {
       status: 'pass',
       actualEncoder: config.requestedEncoder,
-      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.5 }
+      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.5 },
     };
   };
 
@@ -497,7 +525,7 @@ test('runCapacityScan stops immediately when a worker fails transcode', async ()
     maxConcurrency: 4,
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.highestSustainableConcurrency, 1);
@@ -508,11 +536,11 @@ test('runCapacityScan stops immediately when a worker fails transcode', async ()
 
 test('runCapacityScan stops immediately when a worker misses a 6s chunk deadline', async () => {
   const mockWorker = async (tools, source, config, opts) => {
-    const misses = (opts.concurrency === 2 && opts.workerId === 1) ? 1 : 0;
+    const misses = opts.concurrency === 2 && opts.workerId === 1 ? 1 : 0;
     return {
       status: 'pass',
       actualEncoder: config.requestedEncoder,
-      performance: { speedMultiplier: 1.2, deadlineMisses: misses, chunkP95DurationSec: 4.0 }
+      performance: { speedMultiplier: 1.2, deadlineMisses: misses, chunkP95DurationSec: 4.0 },
     };
   };
 
@@ -520,7 +548,7 @@ test('runCapacityScan stops immediately when a worker misses a 6s chunk deadline
     maxConcurrency: 4,
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.highestSustainableConcurrency, 1);
@@ -535,7 +563,7 @@ test('runCapacityScan stops immediately when P95 chunk latency exceeds threshold
     return {
       status: 'pass',
       actualEncoder: config.requestedEncoder,
-      performance: { speedMultiplier: 1.2, deadlineMisses: 0, chunkP95DurationSec: p95 }
+      performance: { speedMultiplier: 1.2, deadlineMisses: 0, chunkP95DurationSec: p95 },
     };
   };
 
@@ -544,7 +572,7 @@ test('runCapacityScan stops immediately when P95 chunk latency exceeds threshold
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
     maxChunkP95ThresholdSec: 5.1,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.highestSustainableConcurrency, 1);
@@ -559,7 +587,7 @@ test('runCapacityScan stops when hardware encoder falls back to software', async
       status: 'pass',
       actualEncoder: 'software',
       fallback: { from: 'nvenc', to: 'software' },
-      performance: { speedMultiplier: 1.5, deadlineMisses: 0, chunkP95DurationSec: 3.0 }
+      performance: { speedMultiplier: 1.5, deadlineMisses: 0, chunkP95DurationSec: 3.0 },
     };
   };
 
@@ -567,7 +595,7 @@ test('runCapacityScan stops when hardware encoder falls back to software', async
     maxConcurrency: 3,
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.highestSustainableConcurrency, 0);
@@ -584,7 +612,7 @@ test('runCapacityScan terminates early when AbortSignal is triggered', async () 
     return {
       status: 'pass',
       actualEncoder: config.requestedEncoder,
-      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.0 }
+      performance: { speedMultiplier: 2.0, deadlineMisses: 0, chunkP95DurationSec: 2.0 },
     };
   };
 
@@ -593,7 +621,7 @@ test('runCapacityScan terminates early when AbortSignal is triggered', async () 
     testConfig: { codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
     sampleDuration: 60,
     signal: controller.signal,
-    workerRunner: mockWorker
+    workerRunner: mockWorker,
   });
 
   assert.equal(scanResult.testedTiers.length, 1);
@@ -606,7 +634,14 @@ test('repeated concurrent trials produce completely isolated artifact directorie
     const writtenFiles = [];
     const mockWorker = async (tools, source, config, opts) => {
       // Simulate writing chunk files to the resolved output directory
-      const workerDir = path.join(opts.outputDir, 'outputs', `concurrency-${opts.concurrency}`, `run-${opts.runIndex}`, `worker-${opts.workerId}`, config.id);
+      const workerDir = path.join(
+        opts.outputDir,
+        'outputs',
+        `concurrency-${opts.concurrency}`,
+        `run-${opts.runIndex}`,
+        `worker-${opts.workerId}`,
+        config.id,
+      );
       fs.mkdirSync(workerDir, { recursive: true });
       const testFile = path.join(workerDir, 'assembled.webm');
       fs.writeFileSync(testFile, `Trial data run=${opts.runIndex} worker=${opts.workerId}`, 'utf8');
@@ -617,7 +652,7 @@ test('repeated concurrent trials produce completely isolated artifact directorie
         workerId: opts.workerId,
         concurrency: opts.concurrency,
         output: { assembledFile: path.relative(opts.outputDir, testFile) },
-        performance: { speedMultiplier: 2.0, deadlineMisses: 0 }
+        performance: { speedMultiplier: 2.0, deadlineMisses: 0 },
       };
     };
 
@@ -627,7 +662,7 @@ test('repeated concurrent trials produce completely isolated artifact directorie
       runIndex: 1,
       outputDir: tmpDir,
       testConfig: { id: 'test-config', codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
-      workerRunner: mockWorker
+      workerRunner: mockWorker,
     });
 
     // Run trial 2
@@ -636,7 +671,7 @@ test('repeated concurrent trials produce completely isolated artifact directorie
       runIndex: 2,
       outputDir: tmpDir,
       testConfig: { id: 'test-config', codec: 'av1', requestedEncoder: 'nvenc', quality: { id: '1080p8' } },
-      workerRunner: mockWorker
+      workerRunner: mockWorker,
     });
 
     assert.equal(writtenFiles.length, 4, 'Must write 4 distinct files across 2 trials');
@@ -669,7 +704,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
       options: { mode: 'chunks', runs: 2, concurrency: 1, qualityMetrics: true },
       tools: {
         ffmpeg: 'C:\\Users\\alice\\AppData\\Local\\ffmpeg.exe',
-        ffprobe: 'C:\\Users\\alice\\AppData\\Local\\ffprobe.exe'
+        ffprobe: 'C:\\Users\\alice\\AppData\\Local\\ffprobe.exe',
       },
       environment: {
         platform: 'win32',
@@ -677,7 +712,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
         cpu: { model: 'Intel i9', cores: 24 },
         memoryTotalMB: 64000,
         memoryFreeMB: 32000,
-        gpu: 'NVIDIA RTX 4090'
+        gpu: 'NVIDIA RTX 4090',
       },
       source: {
         fileName: 'reference.mkv',
@@ -685,19 +720,17 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
         durationSeconds: 120,
         video: { resolution: '1920x1080', fps: 30, codec: 'h264', isVfr: false },
         hdr: { label: 'SDR' },
-        referenceVideoRelative: 'reference-proxy.mp4'
+        referenceVideoRelative: 'reference-proxy.mp4',
       },
       probedEncoders: [],
-      screenshots: [
-        { label: 'Reference Frame', timestampSeconds: 30, relativePath: 'screenshots/source.jpg' }
-      ],
+      screenshots: [{ label: 'Reference Frame', timestampSeconds: 30, relativePath: 'screenshots/source.jpg' }],
       concurrencySummary: {
         isCapacityScan: true,
         highestSustainableConcurrency: 4,
         firstFailingConcurrency: 5,
         maxTestedConcurrency: 5,
         stoppingReason: 'Worker 5 dropped below real-time (0.92x)',
-        estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation.'
+        estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation.',
       },
       results: [
         {
@@ -728,7 +761,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
             deadlineMisses: 0,
             totalBytes: 50000000,
             actualBitrateKbps: 6667,
-            processingType: 'production-like'
+            processingType: 'production-like',
           },
           validation: {
             valid: true,
@@ -741,25 +774,35 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
             audioEndPts: 60.02,
             audioDecodedDuration: 60.02,
             audioPacketCount: 3001,
-            errors: []
+            errors: [],
           },
           qualityMetrics: {
             available: true,
             status: 'pass',
-            vmaf: { mean: 94.5, harmonicMean: 94.2, median: 94.7, min: 86.2, p1: 88.0, p5: 90.1, p10: 91.5, max: 98.1, stdDev: 2.1 },
+            vmaf: {
+              mean: 94.5,
+              harmonicMean: 94.2,
+              median: 94.7,
+              min: 86.2,
+              p1: 88.0,
+              p5: 90.1,
+              p10: 91.5,
+              max: 98.1,
+              stdDev: 2.1,
+            },
             ssim: { mean: 0.985, min: 0.965, max: 0.995 },
             psnr: { mean: 42.5, min: 38.0, max: 48.0 },
             cambi: { mean: 0.045, p95: 0.082 },
             worstIntervals: [{ startSec: 12.0, endSec: 14.0, averageScore: 88.5, minScore: 86.2 }],
             timeline: [
               { frameNum: 0, timestampSec: 0.0, vmaf: 95.0, ssim: 0.98, psnr: 43.0, cambi: 0.04 },
-              { frameNum: 30, timestampSec: 1.0, vmaf: 94.0, ssim: 0.98, psnr: 42.5, cambi: 0.05 }
-            ]
+              { frameNum: 30, timestampSec: 1.0, vmaf: 94.0, ssim: 0.98, psnr: 42.5, cambi: 0.05 },
+            ],
           },
           output: {
             assembledFile: 'outputs/run-1/av1-nvenc-1080p8-chunked/assembled.webm',
-            chunks: []
-          }
+            chunks: [],
+          },
         },
         {
           runIndex: 2,
@@ -789,7 +832,7 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
             deadlineMisses: 0,
             totalBytes: 52000000,
             actualBitrateKbps: 6933,
-            processingType: 'production-like'
+            processingType: 'production-like',
           },
           validation: {
             valid: true,
@@ -802,27 +845,37 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
             audioEndPts: 60.02,
             audioDecodedDuration: 60.02,
             audioPacketCount: 3001,
-            errors: []
+            errors: [],
           },
           qualityMetrics: {
             available: true,
             status: 'pass',
-            vmaf: { mean: 91.2, harmonicMean: 90.8, median: 91.5, min: 82.0, p1: 83.5, p5: 86.0, p10: 87.5, max: 96.0, stdDev: 3.2 },
-            ssim: { mean: 0.972, min: 0.950, max: 0.988 },
+            vmaf: {
+              mean: 91.2,
+              harmonicMean: 90.8,
+              median: 91.5,
+              min: 82.0,
+              p1: 83.5,
+              p5: 86.0,
+              p10: 87.5,
+              max: 96.0,
+              stdDev: 3.2,
+            },
+            ssim: { mean: 0.972, min: 0.95, max: 0.988 },
             psnr: { mean: 39.8, min: 35.0, max: 44.0 },
             cambi: { mean: 0.062, p95: 0.095 },
             worstIntervals: [{ startSec: 10.0, endSec: 12.0, averageScore: 83.0, minScore: 82.0 }],
             timeline: [
               { frameNum: 0, timestampSec: 0.0, vmaf: 92.0, ssim: 0.97, psnr: 40.0, cambi: 0.06 },
-              { frameNum: 30, timestampSec: 1.0, vmaf: 91.0, ssim: 0.97, psnr: 39.5, cambi: 0.06 }
-            ]
+              { frameNum: 30, timestampSec: 1.0, vmaf: 91.0, ssim: 0.97, psnr: 39.5, cambi: 0.06 },
+            ],
           },
           output: {
             assembledFile: 'outputs/run-2/vp9-software-1080p8-chunked/assembled.webm',
-            chunks: []
-          }
-        }
-      ]
+            chunks: [],
+          },
+        },
+      ],
     };
 
     const jsonPath = path.join(tmpDir, 'results.json');
@@ -862,8 +915,14 @@ test('reports generate valid Stage 2 JSON, CSV, and HTML offline files with qual
     assert.match(html, /Quality Score Timeline/);
 
     // Verify offline requirement: no CDN or external URLs
-    assert.ok(!html.includes('src="http://') && !html.includes('src="https://'), 'Must not load external media or scripts');
-    assert.ok(!html.includes('href="http://') && !html.includes('href="https://'), 'Must not load external stylesheets');
+    assert.ok(
+      !html.includes('src="http://') && !html.includes('src="https://'),
+      'Must not load external media or scripts',
+    );
+    assert.ok(
+      !html.includes('href="http://') && !html.includes('href="https://'),
+      'Must not load external stylesheets',
+    );
     assert.ok(!html.includes('alice'), 'Username must not appear in HTML');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -879,7 +938,7 @@ test('buildQualityFilterChain handles partial metric availability cleanly withou
     libvmaf: true,
     vmafFeatures: { cambi: false, psnr: true, float_ssim: true },
     ssim: true,
-    psnr: true
+    psnr: true,
   };
   const chain1 = buildQualityFilterChain(source, target, capsNoCambi, 'test.json', ['vmaf', 'ssim', 'psnr', 'cambi']);
   assert.ok(chain1.supported, 'Should remain supported for VMAF/SSIM/PSNR');
@@ -893,7 +952,7 @@ test('buildQualityFilterChain handles partial metric availability cleanly withou
   const capsNoVmaf = {
     libvmaf: false,
     ssim: true,
-    psnr: true
+    psnr: true,
   };
   const chain2 = buildQualityFilterChain(source, target, capsNoVmaf, 'test.json', ['vmaf', 'ssim', 'psnr', 'cambi']);
   assert.ok(chain2.supported, 'Should remain supported for standalone SSIM/PSNR');
@@ -924,30 +983,54 @@ test('validateTemporalAlignment rejects deliberately content-shifted encode desp
     const cp = require('child_process');
     // Encode segment A: from startOffset 0.0s for 0.8s
     const fileA = path.join(tmpDir, 'encode-a.webm');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-ss', '0.0', '-t', '0.8',
-      '-i', cameraSample,
-      '-c:v', 'libvpx',
-      fileA
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-ss',
+        '0.0',
+        '-t',
+        '0.8',
+        '-i',
+        cameraSample,
+        '-c:v',
+        'libvpx',
+        fileA,
+      ],
+      { windowsHide: true },
+    );
 
     // Encode segment B: from startOffset 1.0s for 0.8s (content shifted by 1 second)
     const fileB = path.join(tmpDir, 'encode-b.webm');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-ss', '1.0', '-t', '0.8',
-      '-i', cameraSample,
-      '-c:v', 'libvpx',
-      fileB
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-ss',
+        '1.0',
+        '-t',
+        '0.8',
+        '-i',
+        cameraSample,
+        '-c:v',
+        'libvpx',
+        fileB,
+      ],
+      { windowsHide: true },
+    );
 
     // 1. Matching validation: segment A compared against source at startOffset 0.0
     const resMatching = validateTemporalAlignment('ffprobe', cameraSample, fileA, {
       startOffset: 0.0,
       sampleDuration: 0.8,
       fps: 24,
-      ffmpegPath: 'ffmpeg'
+      ffmpegPath: 'ffmpeg',
     });
     assert.equal(resMatching.status, 'verified', 'Matching segment must be verified');
 
@@ -957,7 +1040,7 @@ test('validateTemporalAlignment rejects deliberately content-shifted encode desp
       startOffset: 0.0,
       sampleDuration: 0.8,
       fps: 24,
-      ffmpegPath: 'ffmpeg'
+      ffmpegPath: 'ffmpeg',
     });
     assert.equal(resShifted.status, 'misaligned', 'Content-shifted encode must be flagged misaligned');
     assert.match(resShifted.reason, /Content correspondence check failed/i);
@@ -979,19 +1062,31 @@ test('validateTemporalAlignment verifies exact source interval with B-frames and
     const cp = require('child_process');
     // Start at non-keyframe offset 0.5s in 24fps video with B-frames for 1.0s
     const matchingFile = path.join(tmpDir, 'nonkey-encode.webm');
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-ss', '0.5', '-t', '1.0',
-      '-i', cameraSample,
-      '-c:v', 'libvpx',
-      matchingFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-ss',
+        '0.5',
+        '-t',
+        '1.0',
+        '-i',
+        cameraSample,
+        '-c:v',
+        'libvpx',
+        matchingFile,
+      ],
+      { windowsHide: true },
+    );
 
     const res = validateTemporalAlignment('ffprobe', cameraSample, matchingFile, {
       startOffset: 0.5,
       sampleDuration: 1.0,
       fps: 24,
-      ffmpegPath: 'ffmpeg'
+      ffmpegPath: 'ffmpeg',
     });
 
     assert.equal(res.status, 'verified', 'Non-keyframe start offset on B-frame clip must be verified');
@@ -1013,7 +1108,7 @@ test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding met
     temperatureC: 42,
     powerWatts: 30,
     throttling: false,
-    throttleReasons: []
+    throttleReasons: [],
   });
 
   // Switch to warmup
@@ -1024,7 +1119,7 @@ test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding met
     temperatureC: 46,
     powerWatts: 60,
     throttling: false,
-    throttleReasons: []
+    throttleReasons: [],
   });
 
   // Switch to encoding (measurements must isolate to this phase)
@@ -1035,7 +1130,7 @@ test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding met
     temperatureC: 50,
     powerWatts: 120,
     throttling: false,
-    throttleReasons: []
+    throttleReasons: [],
   });
   collector.recordSample({
     gpuUtilization: 85,
@@ -1043,7 +1138,7 @@ test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding met
     temperatureC: 56,
     powerWatts: 140,
     throttling: true,
-    throttleReasons: ['thermal_slowdown']
+    throttleReasons: ['thermal_slowdown'],
   });
 
   // Switch to quality analysis (should NOT distort encoding phase thermal climb or utilization)
@@ -1054,7 +1149,7 @@ test('TelemetryCollector tracks lifecycle phases, strictly isolates encoding met
     temperatureC: 68, // higher temp during CPU quality analysis
     powerWatts: 50,
     throttling: false,
-    throttleReasons: []
+    throttleReasons: [],
   });
 
   const summary = collector.getSummary();
@@ -1088,11 +1183,14 @@ test('history management derives fingerprints, saves runs, updates index, and sa
     const mockSource = {
       fileName: 'test-source.mkv',
       durationSeconds: 120,
-      video: { resolution: '1920x1080', fps: 24, codec: 'hevc' }
+      video: { resolution: '1920x1080', fps: 24, codec: 'hevc' },
     };
     const fingerprint = deriveSourceFingerprint(mockSource);
     assert.ok(fingerprint, 'Fingerprint must be generated');
-    assert.ok(fingerprint.startsWith('unverified:') || fingerprint.startsWith('v1:'), 'Fingerprint must follow versioned scheme');
+    assert.ok(
+      fingerprint.startsWith('unverified:') || fingerprint.startsWith('v1:'),
+      'Fingerprint must follow versioned scheme',
+    );
     assert.equal(fingerprint, deriveSourceFingerprint(mockSource), 'Fingerprint must be deterministic');
 
     const mockPayload = {
@@ -1118,10 +1216,10 @@ test('history management derives fingerprints, saves runs, updates index, and sa
             totalEncodingTimeSec: 24.5,
             firstChunkDurationSec: 2.1,
             p95ChunkSec: 2.3,
-            deadlineMisses: 0
-          }
-        }
-      ]
+            deadlineMisses: 0,
+          },
+        },
+      ],
     };
 
     // 1. Save run to history
@@ -1166,7 +1264,7 @@ test('compareRuns produces matched regression/improvement classifications and fl
         concurrency: 1,
         speedRatio: 2.0,
         p95ChunkLatencySeconds: 2.5,
-        qualityMetrics: { vmaf: 92.0 }
+        qualityMetrics: { vmaf: 92.0 },
       },
       {
         configId: 'vp9-720p-nvenc',
@@ -1177,9 +1275,9 @@ test('compareRuns produces matched regression/improvement classifications and fl
         concurrency: 1,
         speedRatio: 3.0,
         p95ChunkLatencySeconds: 1.8,
-        qualityMetrics: { vmaf: 88.0 }
-      }
-    ]
+        qualityMetrics: { vmaf: 88.0 },
+      },
+    ],
   };
 
   const currentRun = {
@@ -1200,7 +1298,7 @@ test('compareRuns produces matched regression/improvement classifications and fl
         concurrency: 1,
         speedRatio: 1.6,
         p95ChunkLatencySeconds: 3.1,
-        qualityMetrics: { vmaf: 91.5 }
+        qualityMetrics: { vmaf: 91.5 },
       },
       // 2. Matched improvement: 3.0x -> 3.6x (+20%)
       {
@@ -1212,7 +1310,7 @@ test('compareRuns produces matched regression/improvement classifications and fl
         concurrency: 1,
         speedRatio: 3.6,
         p95ChunkLatencySeconds: 1.5,
-        qualityMetrics: { vmaf: 88.5 }
+        qualityMetrics: { vmaf: 88.5 },
       },
       // 3. Different concurrency -> partially matched
       {
@@ -1223,9 +1321,9 @@ test('compareRuns produces matched regression/improvement classifications and fl
         mode: 'chunks',
         concurrency: 4,
         speedRatio: 5.2,
-        p95ChunkLatencySeconds: 3.2
-      }
-    ]
+        p95ChunkLatencySeconds: 3.2,
+      },
+    ],
   };
 
   const comp = compareRuns(baselineRun, currentRun);
@@ -1253,8 +1351,8 @@ test('generateConfigurationRecommendations produces conservative advice adhering
       maxJobs: 2,
       outputs: ['plex'],
       hardwareDecode: true,
-      cpuFallback: true
-    }
+      cpuFallback: true,
+    },
   };
 
   const benchmarkPayload = {
@@ -1272,7 +1370,7 @@ test('generateConfigurationRecommendations produces conservative advice adhering
         quality: { id: '1080p8', label: '1080p 8Mbps' },
         performance: { speedMultiplier: 2.2, effectiveFps: 66.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.0 } },
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 2,
@@ -1283,14 +1381,14 @@ test('generateConfigurationRecommendations produces conservative advice adhering
         quality: { id: '1080p8', label: '1080p 8Mbps' },
         performance: { speedMultiplier: 2.4, effectiveFps: 72.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.5 } },
-        fallbackEvents: []
-      }
+        fallbackEvents: [],
+      },
     ],
     concurrencySummary: {
       highestSustainableConcurrency: 4,
       totalTrials: 4,
-      passedTrials: 4
-    }
+      passedTrials: 4,
+    },
   };
 
   const advice = generateConfigurationRecommendations(benchmarkPayload, currentConfig);
@@ -1392,7 +1490,11 @@ test('computeFileContentFingerprint generates deterministic v1 fingerprints base
 
     assert.ok(fpA.startsWith('v1:'), 'Must use canonical v1: prefix');
     assert.equal(fpA.length, 35, 'v1: + 32-character hex hash');
-    assert.equal(fpA, fpB, 'Files with identical content must yield identical fingerprints regardless of filename or path');
+    assert.equal(
+      fpA,
+      fpB,
+      'Files with identical content must yield identical fingerprints regardless of filename or path',
+    );
     assert.notEqual(fpA, fpC, 'Files with different content must yield different fingerprints');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1415,9 +1517,9 @@ test('compareRuns classifies cross-hardware comparisons and ignores false regres
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 3.5,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const targetRun = {
@@ -1435,16 +1537,19 @@ test('compareRuns classifies cross-hardware comparisons and ignores false regres
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 1.1,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const comp = compareRuns(baselineRun, targetRun);
   assert.equal(comp.isCrossHardware, true);
   assert.equal(comp.matchedComparisons.length, 1);
   assert.equal(comp.matchedComparisons[0].classification, 'cross_hardware_comparison');
-  assert.ok(!comp.matchedComparisons.some(m => m.classification === 'regression'), 'Cross-hardware run must NEVER be classified as a regression');
+  assert.ok(
+    !comp.matchedComparisons.some(m => m.classification === 'regression'),
+    'Cross-hardware run must NEVER be classified as a regression',
+  );
 });
 
 test('deleteRunFromHistory strictly rejects path traversal attempts', () => {
@@ -1473,9 +1578,9 @@ test('generateConfigurationRecommendations caps synthetic runs and short duratio
         status: 'pass',
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
   const synthAdvice = generateConfigurationRecommendations(synthPayload);
   assert.equal(synthAdvice.recommendations[0]?.confidence, 'preliminary');
@@ -1496,25 +1601,31 @@ test('generateConfigurationRecommendations caps synthetic runs and short duratio
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'failed' },
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
   const failAdvice = generateConfigurationRecommendations(qualityFailPayload);
-  assert.ok(!failAdvice.recommendations.some(r => r.setting === 'transcoding.encoder'), 'Must withhold encoder recommendation if visual quality failed');
+  assert.ok(
+    !failAdvice.recommendations.some(r => r.setting === 'transcoding.encoder'),
+    'Must withhold encoder recommendation if visual quality failed',
+  );
   assert.ok(failAdvice.warningsAndUncertainties.some(w => w.includes('quality validation failed')));
 
   // Case C: Insufficient concurrency scan evidence suggests --allow-load-test
   const noScanAdvice = generateConfigurationRecommendations({ results: [] });
   const maxJobEvidence = noScanAdvice.insufficientEvidence.find(e => e.setting === 'transcoding.max_jobs');
   assert.ok(maxJobEvidence);
-  assert.ok(maxJobEvidence.neededTests.includes('--allow-load-test'), 'Must recommend --allow-load-test, not obsolete flag');
+  assert.ok(
+    maxJobEvidence.neededTests.includes('--allow-load-test'),
+    'Must recommend --allow-load-test, not obsolete flag',
+  );
 });
 
 test('runStabilityBenchmark verifies source duration and rejects inputs shorter than test interval', async () => {
   await assert.rejects(
     () => runStabilityBenchmark(null, { durationSeconds: 20 }, null, { duration: 60, startOffset: 0 }),
-    /shorter than requested stability test interval/i
+    /shorter than requested stability test interval/i,
   );
 });
 
@@ -1535,7 +1646,7 @@ test('buildQualityFilterChain builds secondary standalone pass when libvmaf lack
     libvmaf: true,
     ssim: true,
     psnr: true,
-    vmafFeatures: { cambi: false, psnr: false, float_ssim: false }
+    vmafFeatures: { cambi: false, psnr: false, float_ssim: false },
   };
 
   const chain = buildQualityFilterChain(source, targetQuality, capabilities, 'metrics.json', ['vmaf', 'ssim', 'psnr']);
@@ -1550,11 +1661,12 @@ test('buildQualityFilterChain builds secondary standalone pass when libvmaf lack
 test('runStabilityBenchmark validates duration bounds (< 6s, > 3600s rejected)', async () => {
   await assert.rejects(
     () => runStabilityBenchmark(null, { durationSeconds: 100 }, { id: 'cfg' }, { duration: 5, outputDir: os.tmpdir() }),
-    /Invalid stability test duration/i
+    /Invalid stability test duration/i,
   );
   await assert.rejects(
-    () => runStabilityBenchmark(null, { durationSeconds: 4000 }, { id: 'cfg' }, { duration: 3601, outputDir: os.tmpdir() }),
-    /Invalid stability test duration/i
+    () =>
+      runStabilityBenchmark(null, { durationSeconds: 4000 }, { id: 'cfg' }, { duration: 3601, outputDir: os.tmpdir() }),
+    /Invalid stability test duration/i,
   );
 });
 
@@ -1566,7 +1678,7 @@ test('TelemetryCollector handles providerInfo and string fallback correctly', ()
     throttlingSupported: false,
     device: 'Windows GPU (PDH)',
     supportedFields: ['memory_used', 'clock'],
-    unavailableFields: ['throttling', 'temperature']
+    unavailableFields: ['throttling', 'temperature'],
   };
   const collector1 = new TelemetryCollector({ providerInfo });
   assert.equal(collector1.providerInfo.deviceAttribution, 'unverified');
@@ -1629,12 +1741,16 @@ test('TelemetryCollector getSummary() strictly distinguishes true, false, and un
 
   // 4. Unknown state (empty config samples): zero matching samples for requested config
   const sumEmpty = colFalse.getSummary('cfg-nonexistent');
-  assert.equal(sumEmpty.encoding.throttlingDetected, null, 'Empty config samples must result in null throttlingDetected');
+  assert.equal(
+    sumEmpty.encoding.throttlingDetected,
+    null,
+    'Empty config samples must result in null throttlingDetected',
+  );
 
   // 5. Unsupported provider (e.g. PDH on Windows without GPU throttle sensor)
   const colUnsupported = new TelemetryCollector({
     provider: 'pdh',
-    providerInfo: { provider: 'pdh', throttlingSupported: false }
+    providerInfo: { provider: 'pdh', throttlingSupported: false },
   });
   colUnsupported.setPhase('encoding', { configId: 'cfg-1' });
   colUnsupported.recordSample({ hostCpuUtilization: 30 });
@@ -1649,7 +1765,9 @@ test('saveRunToHistory serializes concurrent updates across multiple child proce
   const historyModulePath = path.resolve(__dirname, '../scripts/benchmark/history.js');
 
   try {
-    fs.writeFileSync(workerScript, `
+    fs.writeFileSync(
+      workerScript,
+      `
       const { saveRunToHistory } = require(${JSON.stringify(historyModulePath)});
       const historyDir = process.argv[2];
       const workerId = process.argv[3];
@@ -1664,24 +1782,30 @@ test('saveRunToHistory serializes concurrent updates across multiple child proce
         ]
       };
       saveRunToHistory(payload, historyDir);
-    `, 'utf8');
+    `,
+      'utf8',
+    );
 
     const workerCount = 5;
     const workers = [];
 
     for (let i = 0; i < workerCount; i++) {
-      workers.push(new Promise((resolve, reject) => {
-        const proc = cp.spawn(process.execPath, [workerScript, tmpDir, String(i)], {
-          stdio: ['ignore', 'ignore', 'pipe']
-        });
-        let stderr = '';
-        proc.stderr.on('data', d => { stderr += d.toString(); });
-        proc.on('error', reject);
-        proc.on('close', code => {
-          if (code === 0) resolve();
-          else reject(new Error(`Worker ${i} failed with code ${code}: ${stderr}`));
-        });
-      }));
+      workers.push(
+        new Promise((resolve, reject) => {
+          const proc = cp.spawn(process.execPath, [workerScript, tmpDir, String(i)], {
+            stdio: ['ignore', 'ignore', 'pipe'],
+          });
+          let stderr = '';
+          proc.stderr.on('data', d => {
+            stderr += d.toString();
+          });
+          proc.on('error', reject);
+          proc.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(`Worker ${i} failed with code ${code}: ${stderr}`));
+          });
+        }),
+      );
     }
 
     await Promise.all(workers);
@@ -1735,9 +1859,9 @@ test('compareRuns distinguishes GPU driver updates on same hardware from cross-h
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 3.0,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const targetRun = {
@@ -1756,9 +1880,9 @@ test('compareRuns distinguishes GPU driver updates on same hardware from cross-h
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 3.2,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const comp = compareRuns(baseRun, targetRun);
@@ -1788,9 +1912,9 @@ test('compareRuns rejects synthetic or unverified source media from matched regr
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 3.0,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const targetRun = {
@@ -1809,16 +1933,18 @@ test('compareRuns rejects synthetic or unverified source media from matched regr
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 1.5,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const comp = compareRuns(baseRun, targetRun);
   // Synthetic media lacks verified v1: content hash, so cannot evaluate performance regression
   assert.equal(comp.matchedComparisons.length, 0, 'Synthetic media must not be evaluated as matched regression');
   assert.equal(comp.partiallyMatchedComparisons.length, 1);
-  assert.ok(comp.partiallyMatchedComparisons[0].differingConditions.some(c => c.includes('verified content fingerprint')));
+  assert.ok(
+    comp.partiallyMatchedComparisons[0].differingConditions.some(c => c.includes('verified content fingerprint')),
+  );
 });
 
 test('compareRuns rejects mismatched actual encoder backends from matched regression evaluation', () => {
@@ -1838,9 +1964,9 @@ test('compareRuns rejects mismatched actual encoder backends from matched regres
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 3.0,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const targetRun = {
@@ -1859,9 +1985,9 @@ test('compareRuns rejects mismatched actual encoder backends from matched regres
         mode: 'chunks',
         concurrency: 1,
         speedRatio: 0.5,
-        status: 'pass'
-      }
-    ]
+        status: 'pass',
+      },
+    ],
   };
 
   const comp = compareRuns(baseRun, targetRun);
@@ -1888,7 +2014,7 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.2 } },
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 2,
@@ -1899,9 +2025,9 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.9, effectiveFps: 87.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.5 } },
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
   const highAdvice = generateConfigurationRecommendations(highPayload);
   assert.equal(highAdvice.recommendations[0]?.confidence, 'high');
@@ -1911,11 +2037,15 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
     ...highPayload,
     results: highPayload.results.map(r => ({
       ...r,
-      qualityMetrics: null
-    }))
+      qualityMetrics: null,
+    })),
   };
   const mediumAdvice = generateConfigurationRecommendations(noQualityPayload);
-  assert.equal(mediumAdvice.recommendations[0]?.confidence, 'medium', 'Unverified visual quality must cap confidence at medium');
+  assert.equal(
+    mediumAdvice.recommendations[0]?.confidence,
+    'medium',
+    'Unverified visual quality must cap confidence at medium',
+  );
 
   // Case 3: Same conditions but with 1 missed deadline -> capped at MEDIUM confidence
   const deadlineMissPayload = {
@@ -1925,9 +2055,9 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
       {
         ...highPayload.results[1],
         performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 1 },
-        deadlinesMissed: 1
-      }
-    ]
+        deadlinesMissed: 1,
+      },
+    ],
   };
   const deadlineAdvice = generateConfigurationRecommendations(deadlineMissPayload);
   assert.equal(deadlineAdvice.recommendations[0]?.confidence, 'medium', 'Missed deadline must prevent high confidence');
@@ -1948,7 +2078,7 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 3.5, effectiveFps: 105.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 98.0 } },
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 2,
@@ -1959,12 +2089,16 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 3.5, effectiveFps: 105.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 98.0 } },
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
   const multiSynthAdvice = generateConfigurationRecommendations(multiSynthPayload);
-  assert.equal(multiSynthAdvice.recommendations[0]?.confidence, 'preliminary', 'Synthetic media must always be capped at preliminary');
+  assert.equal(
+    multiSynthAdvice.recommendations[0]?.confidence,
+    'preliminary',
+    'Synthetic media must always be capped at preliminary',
+  );
 
   // Regression Test 1: Declared runs: 2 but only 1 actual result -> capped at preliminary
   const singleResultPayload = {
@@ -1972,11 +2106,17 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
     runs: 2,
     sampleDuration: 60,
     source: { isSynthetic: false, fileName: 'reference.mkv' },
-    results: [highPayload.results[0]] // only 1 measured trial
+    results: [highPayload.results[0]], // only 1 measured trial
   };
   const singleAdvice = generateConfigurationRecommendations(singleResultPayload);
-  assert.equal(singleAdvice.recommendations[0]?.confidence, 'preliminary', 'Single measured result despite runs: 2 must cap confidence at preliminary');
-  assert.ok(singleAdvice.recommendations[0]?.confidenceReasons.some(r => r.includes('requires at least 2 independent runs')));
+  assert.equal(
+    singleAdvice.recommendations[0]?.confidence,
+    'preliminary',
+    'Single measured result despite runs: 2 must cap confidence at preliminary',
+  );
+  assert.ok(
+    singleAdvice.recommendations[0]?.confidenceReasons.some(r => r.includes('requires at least 2 independent runs')),
+  );
 
   // Regression Test 2: Mixed successes and failures for the same configuration -> not high confidence
   const mixedPayload = {
@@ -1989,12 +2129,16 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
       {
         ...highPayload.results[1],
         status: 'fail',
-        error: 'Encoder crash'
-      }
-    ]
+        error: 'Encoder crash',
+      },
+    ],
   };
   const mixedAdvice = generateConfigurationRecommendations(mixedPayload);
-  assert.notEqual(mixedAdvice.recommendations[0]?.confidence, 'high', 'Mixed pass and fail trials must disqualify high confidence');
+  assert.notEqual(
+    mixedAdvice.recommendations[0]?.confidence,
+    'high',
+    'Mixed pass and fail trials must disqualify high confidence',
+  );
 
   // Regression Test 3: Quality PASS on unrelated software encoder cannot qualify NVENC recommendation
   const unrelatedQualityPayload = {
@@ -2012,7 +2156,7 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 0 },
         qualityMetrics: null, // No quality check on NVENC!
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 2,
@@ -2023,7 +2167,7 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.9, effectiveFps: 87.0, deadlineMisses: 0 },
         qualityMetrics: null, // No quality check on NVENC!
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 1,
@@ -2034,15 +2178,17 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 0.8, effectiveFps: 24.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 95.0 } }, // Pass on SOFTWARE, not NVENC!
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
   const unrelatedAdvice = generateConfigurationRecommendations(unrelatedQualityPayload);
   const nvencRec = unrelatedAdvice.recommendations.find(r => r.recommendedValue === 'nvenc');
   assert.ok(nvencRec);
   assert.equal(nvencRec.confidence, 'medium', 'Quality pass on software cannot qualify nvenc for high confidence');
-  assert.ok(nvencRec.confidenceReasons.some(r => r.includes('visual quality was not verified with objective quality metrics')));
+  assert.ok(
+    nvencRec.confidenceReasons.some(r => r.includes('visual quality was not verified with objective quality metrics')),
+  );
 });
 
 test('runStabilityBenchmark stops on internal failure threshold with external signal present without launching further chunks', async () => {
@@ -2066,7 +2212,7 @@ test('runStabilityBenchmark stops on internal failure threshold with external si
           encodeDurationSec: 10,
           realTimeSpeed: 0.6,
           deadlineMissed: true,
-          fallbackOccurred: false
+          fallbackOccurred: false,
         });
       }
       return { status: 'pass' };
@@ -2075,13 +2221,13 @@ test('runStabilityBenchmark stops on internal failure threshold with external si
     const source = {
       filePath: 'C:/media/test.mkv',
       durationSeconds: 120,
-      video: { width: 1920, height: 1080, fps: 30, codec: 'h264' }
+      video: { width: 1920, height: 1080, fps: 30, codec: 'h264' },
     };
     const config = {
       id: 'test-stability-cfg',
       codec: 'av1',
       requestedEncoder: 'nvenc',
-      quality: { id: '1080p8', label: '1080p 8Mbps' }
+      quality: { id: '1080p8', label: '1080p 8Mbps' },
     };
 
     const result = await runStabilityBenchmark(
@@ -2094,8 +2240,8 @@ test('runStabilityBenchmark stops on internal failure threshold with external si
         maxConsecutiveFailures: 2,
         outputDir: tmpDir,
         signal: externalAbort.signal,
-        chunkedRunner: mockChunkedRunner
-      }
+        chunkedRunner: mockChunkedRunner,
+      },
     );
 
     // 1. External signal was NOT aborted by caller
@@ -2114,7 +2260,7 @@ test('runStabilityBenchmark stops on internal failure threshold with external si
     assert.ok(result.stability.earlyStopReason);
     assert.ok(
       result.stability.earlyStopReason.includes('consecutive severe chunk performance failures'),
-      `Expected early stop reason to mention consecutive failures, got: ${result.stability.earlyStopReason}`
+      `Expected early stop reason to mention consecutive failures, got: ${result.stability.earlyStopReason}`,
     );
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2127,7 +2273,7 @@ test('parseFinalDecodedFrames reads final decoded frame count rather than interm
     'frame=  150 fps=49.8 q=-0.0 size=N/A time=00:00:06.25 bitrate=N/A speed=12.2x',
     'frame=  720 fps=60.1 q=-0.0 size=N/A time=00:00:30.00 bitrate=N/A speed=15.0x',
     'frame= 1440 fps=65.2 q=-0.0 Lsize=N/A time=00:01:00.00 bitrate=N/A speed=16.3x',
-    'video:64KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown'
+    'video:64KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown',
   ].join('\r\n');
 
   const finalFrames = parseFinalDecodedFrames(multiProgressStderr);
@@ -2145,28 +2291,41 @@ test('validateTemporalAlignment reports unverified rather than misaligned when s
     const matchingFile = path.join(tmpDir, 'matching.webm');
 
     // Generate 2-second reference video (60 frames at 30 fps)
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
-      '-t', '2',
-      '-c:v', 'libx264', '-preset', 'ultrafast',
-      refFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '2',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        refFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Generate matching encode (2 seconds, 60 frames)
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', refFile,
-      '-c:v', 'libvpx',
-      matchingFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-y', '-i', refFile, '-c:v', 'libvpx', matchingFile],
+      { windowsHide: true },
+    );
 
     // Validate with an impossibly short probeTimeoutMs (1ms) to force probe timeout
     const resTimeout = validateTemporalAlignment('ffprobe', refFile, matchingFile, {
       startOffset: 0,
       sampleDuration: 2,
       fps: 30,
-      probeTimeoutMs: 1
+      probeTimeoutMs: 1,
     });
 
     // An incomplete probe must be reported as unverified, NOT misaligned
@@ -2187,28 +2346,54 @@ test('validateTemporalAlignment enforces real source/encoded frame divergence wh
     const divergentFile = path.join(tmpDir, 'divergent.webm');
 
     // Generate 2-second reference video (60 frames at 30 fps)
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
-      '-t', '2',
-      '-c:v', 'libx264', '-preset', 'ultrafast',
-      refFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '2',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        refFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Generate 4-second divergent encode (120 frames at 30 fps)
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
-      '-t', '4',
-      '-c:v', 'libvpx',
-      divergentFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '4',
+        '-c:v',
+        'libvpx',
+        divergentFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Validate 2-second requested window against 4-second encode (real duration & frame divergence)
     const resDivergent = validateTemporalAlignment('ffprobe', refFile, divergentFile, {
       startOffset: 0,
       sampleDuration: 2,
-      fps: 30
+      fps: 30,
     });
 
     assert.equal(resDivergent.status, 'misaligned', 'Real frame and duration divergence must fail as misaligned');
@@ -2225,27 +2410,40 @@ test('runQualityAnalysis promotes unverified temporal alignment to pass when qua
     const encodedFile = path.join(tmpDir, 'enc.webm');
 
     // Generate 2-second reference video (60 frames at 30 fps)
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
-      '-t', '2',
-      '-c:v', 'libx264', '-preset', 'ultrafast',
-      refFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '2',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        refFile,
+      ],
+      { windowsHide: true },
+    );
 
     // Encode matching 2-second webm
-    cp.execFileSync('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', refFile,
-      '-c:v', 'libvpx',
-      encodedFile
-    ], { windowsHide: true });
+    cp.execFileSync(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-y', '-i', refFile, '-c:v', 'libvpx', encodedFile],
+      { windowsHide: true },
+    );
 
     const source = {
       filePath: refFile,
       fileName: 'ref.mp4',
       durationSeconds: 2,
-      video: { width: 320, height: 240, fps: 30 }
+      video: { width: 320, height: 240, fps: 30 },
     };
     const targetQuality = { id: 'test', width: 320, height: 240 };
     const capabilities = detectQualityCapabilities('ffmpeg');
@@ -2261,12 +2459,15 @@ test('runQualityAnalysis promotes unverified temporal alignment to pass when qua
       targetQuality,
       outputDir: tmpDir,
       capabilities,
-      selectedMetrics: ['ssim', 'psnr']
+      selectedMetrics: ['ssim', 'psnr'],
     });
 
     assert.equal(result.status, 'pass');
     assert.ok(result.ssim?.mean > 0.9, `SSIM mean should be high (> 0.9), got: ${result.ssim?.mean}`);
-    assert.ok(result.normalization.coveragePercent >= 95, `Coverage must be >= 95%, got: ${result.normalization.coveragePercent}%`);
+    assert.ok(
+      result.normalization.coveragePercent >= 95,
+      `Coverage must be >= 95%, got: ${result.normalization.coveragePercent}%`,
+    );
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -2287,12 +2488,12 @@ test('generateCsvReport and generateHtmlReport correctly present unavailable Win
         encoding: {
           metrics: {
             encoderUtilization: { mean: 65.5 },
-            hostCpuUtilization: { mean: 18.2 }
+            hostCpuUtilization: { mean: 18.2 },
           },
           thermalClimbC: null,
           throttlingSupported: false,
-          throttlingDetected: null
-        }
+          throttlingDetected: null,
+        },
       },
       results: [
         {
@@ -2307,21 +2508,21 @@ test('generateCsvReport and generateHtmlReport correctly present unavailable Win
           performance: { speedMultiplier: 2.1, effectiveFps: 63.0 },
           qualityMetrics: {
             status: 'failed',
-            reason: 'Temporal alignment probe failed'
+            reason: 'Temporal alignment probe failed',
           },
           telemetry: {
             encoding: {
               metrics: {
                 encoderUtilization: { mean: 65.5 },
-                hostCpuUtilization: { mean: 18.2 }
+                hostCpuUtilization: { mean: 18.2 },
               },
               thermalClimbC: null,
               throttlingSupported: false,
-              throttlingDetected: null
-            }
-          }
-        }
-      ]
+              throttlingDetected: null,
+            },
+          },
+        },
+      ],
     };
 
     const csvPath = path.join(tmpDir, 'report.csv');
@@ -2341,8 +2542,14 @@ test('generateCsvReport and generateHtmlReport correctly present unavailable Win
 
     // Data row: Status is PASS, Quality_Status is FAILED, Temp & Thermal Climb are N/A (never 0)
     const row = csvLines[1];
-    assert.ok(row.includes(',pass,FAILED,"Temporal alignment probe failed",'), 'CSV must separate encode pass from quality failed');
-    assert.ok(row.includes(',65.5,18.2,N/A,N/A,N/A,'), 'CSV must report N/A for temperature and thermal climb on Windows PDH, not 0');
+    assert.ok(
+      row.includes(',pass,FAILED,"Temporal alignment probe failed",'),
+      'CSV must separate encode pass from quality failed',
+    );
+    assert.ok(
+      row.includes(',65.5,18.2,N/A,N/A,N/A,'),
+      'CSV must report N/A for temperature and thermal climb on Windows PDH, not 0',
+    );
 
     const html = fs.readFileSync(htmlPath, 'utf8');
     // HTML must display both GPU Encoder Util and Host CPU Util
@@ -2352,7 +2559,11 @@ test('generateCsvReport and generateHtmlReport correctly present unavailable Win
     assert.ok(html.includes('18.2%'));
     // HTML must display N/A for GPU Core Temp and Thermal Climb, never 0°C or +0°C
     assert.ok(html.includes('N/A (Unsupported)'));
-    assert.ok(html.includes('<div class="stat-label">Thermal Climb (ΔT)</div>\n        <div class="stat-val" style="color:var(--text);">\n          N/A'));
+    assert.ok(
+      html.includes(
+        '<div class="stat-label">Thermal Climb (ΔT)</div>\n        <div class="stat-val" style="color:var(--text);">\n          N/A',
+      ),
+    );
     // HTML must display Quality Status failure and failure banner
     assert.ok(html.includes('Objective Quality Analysis Failure'));
     assert.ok(html.includes('FAILED'));
@@ -2378,7 +2589,7 @@ test('generateConfigurationRecommendations withholds AV1 output recommendation w
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'failed', reason: 'Temporal misalignment' },
-        fallbackEvents: []
+        fallbackEvents: [],
       },
       {
         runIndex: 2,
@@ -2389,13 +2600,17 @@ test('generateConfigurationRecommendations withholds AV1 output recommendation w
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.6, effectiveFps: 78.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'failed', reason: 'Temporal misalignment' },
-        fallbackEvents: []
-      }
-    ]
+        fallbackEvents: [],
+      },
+    ],
   };
 
   const advice = generateConfigurationRecommendations(payload, { transcoding: { outputs: ['plex'] } });
   const outRec = advice.recommendations.find(r => r.setting === 'transcoding.outputs');
   assert.equal(outRec, undefined, 'AV1 output recommendation must be withheld when AV1 quality analysis failed');
-  assert.ok(advice.warningsAndUncertainties.some(w => w.includes('AV1 encoding achieved real-time throughput, but objective quality analysis failed')));
+  assert.ok(
+    advice.warningsAndUncertainties.some(w =>
+      w.includes('AV1 encoding achieved real-time throughput, but objective quality analysis failed'),
+    ),
+  );
 });

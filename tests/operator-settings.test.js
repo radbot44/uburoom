@@ -11,7 +11,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
       requirePlex: true,
       requirePlexInActivity: true,
       publicWeb: false,
-      extraSecret: 'hidden'
+      extraSecret: 'hidden',
     },
     singleRoom: true,
     roomLimits: {
@@ -24,7 +24,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
       recoverySeconds: 15,
       maxQueue: 200,
       maxHistory: 50,
-      internalSecretLimit: 999
+      internalSecretLimit: 999,
     },
     roomPermissions: {
       host: {
@@ -40,7 +40,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
         continueWithoutHost: true,
         addHosts: true,
         kickParticipants: true,
-        unlistedPermission: true
+        unlistedPermission: true,
       },
       viewer: {
         playPause: false,
@@ -54,13 +54,13 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
         deleteRoom: false,
         continueWithoutHost: false,
         addHosts: false,
-        kickParticipants: false
-      }
+        kickParticipants: false,
+      },
     },
     directory: {
       discord: true,
       plex: true,
-      secretDirKey: 'private'
+      secretDirKey: 'private',
     },
     transcoding: {
       policy: 'auto',
@@ -74,11 +74,11 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
       qualities: [
         { id: 'direct', height: 1080, bitrate: 10000 },
         { id: '1080p', height: 1080, bitrate: 8000 },
-        { id: '720p', height: 720, bitrate: 4000 }
-      ]
+        { id: '720p', height: 720, bitrate: 4000 },
+      ],
     },
     plexToken: 'secret-token-123',
-    botToken: 'bot-secret-456'
+    botToken: 'bot-secret-456',
   };
 
   const result = runningSettings(mockConfig);
@@ -89,7 +89,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     plex: false,
     requirePlex: true,
     requirePlexInActivity: true,
-    publicWeb: false
+    publicWeb: false,
   });
   assert.equal(result.settings.rooms.singleRoom, true);
   assert.deepEqual(result.settings.rooms.limits, {
@@ -101,7 +101,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     maxPeople: 100,
     recoverySeconds: 15,
     maxQueue: 200,
-    maxHistory: 50
+    maxHistory: 50,
   });
   assert.deepEqual(result.settings.rooms.hostPermissions, {
     playPause: true,
@@ -115,7 +115,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     deleteRoom: true,
     continueWithoutHost: true,
     addHosts: true,
-    kickParticipants: true
+    kickParticipants: true,
   });
   assert.deepEqual(result.settings.rooms.viewerPermissions, {
     playPause: false,
@@ -129,11 +129,11 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
     deleteRoom: false,
     continueWithoutHost: false,
     addHosts: false,
-    kickParticipants: false
+    kickParticipants: false,
   });
   assert.deepEqual(result.settings.directory, {
     discord: true,
-    plex: true
+    plex: true,
   });
   assert.equal(result.settings.transcoding.policy, 'auto');
   assert.equal(result.settings.transcoding.plex, true);
@@ -145,7 +145,7 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
   assert.equal(result.settings.transcoding.allowOriginal, true);
   assert.deepEqual(result.settings.transcoding.qualities, [
     { height: 1080, mbps: 8 },
-    { height: 720, mbps: 4 }
+    { height: 720, mbps: 4 },
   ]);
 
   const formats = ['webm', 'mp4'];
@@ -154,15 +154,15 @@ test('runningSettings extracts and maps complete configuration correctly', () =>
       formats,
       qualities: [
         { id: '1080p', height: 1080, bitrate: 6000 },
-        { id: '480p', height: 480, bitrate: 1500 }
-      ]
-    }
+        { id: '480p', height: 480, bitrate: 1500 },
+      ],
+    },
   };
   const noDirectResult = runningSettings(configWithoutDirect);
   assert.equal(noDirectResult.settings.transcoding.allowOriginal, false);
   assert.deepEqual(noDirectResult.settings.transcoding.qualities, [
     { height: 1080, mbps: 6 },
-    { height: 480, mbps: 1.5 }
+    { height: 480, mbps: 1.5 },
   ]);
   assert.deepEqual(noDirectResult.settings.transcoding.formats, ['webm', 'mp4']);
   assert.notEqual(noDirectResult.settings.transcoding.formats, formats);
@@ -178,17 +178,17 @@ test('runningSettings strictly enforces allowlist and excludes sensitive/unliste
     roomLimits: { maxSaved: 5, secretLimitKey: 'DO_NOT_LEAK' },
     roomPermissions: {
       host: { playPause: true, secretHostPerm: 'DO_NOT_LEAK' },
-      viewer: { playPause: false, secretViewerPerm: 'DO_NOT_LEAK' }
+      viewer: { playPause: false, secretViewerPerm: 'DO_NOT_LEAK' },
     },
     directory: { discord: false, secretDirectoryKey: 'DO_NOT_LEAK' },
     transcoding: {
       encoder: 'auto',
-      secretTranscodeKey: 'DO_NOT_LEAK'
+      secretTranscodeKey: 'DO_NOT_LEAK',
     },
     plexToken: 'SUPER_SECRET_PLEX_TOKEN',
     botToken: 'SUPER_SECRET_BOT_TOKEN',
     credentialKeyFile: '/path/to/key',
-    dbPassword: 'secretpassword'
+    dbPassword: 'secretpassword',
   };
 
   const result = runningSettings(sensitiveConfig);

@@ -1,191 +1,357 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict');
-const quality=require('../web/sync-quality');
+const test = require('node:test'),
+  assert = require('node:assert/strict');
+const quality = require('../web/sync-quality');
 
-const clean={measuredSeconds:60,outOfSync250Seconds:0,outOfSync500Seconds:0,automaticCorrectionCount:0,
-  automaticCorrectionMagnitudeMs:0,rateAdjustedSeconds:0,rateAdjustmentSeconds:0,bufferingSeconds:0};
-function ready(tracker,from=0,to=12000,context='room:viewer:media:stream') {
-  for(let at=from;at<=to;at+=1000)tracker.sample({at,errorMs:20,playbackRate:1,eligible:true,context,clockRevision:1});
+const clean = {
+  measuredSeconds: 60,
+  outOfSync250Seconds: 0,
+  outOfSync500Seconds: 0,
+  automaticCorrectionCount: 0,
+  automaticCorrectionMagnitudeMs: 0,
+  rateAdjustedSeconds: 0,
+  rateAdjustmentSeconds: 0,
+  bufferingSeconds: 0,
+};
+function ready(tracker, from = 0, to = 12000, context = 'room:viewer:media:stream') {
+  for (let at = from; at <= to; at += 1000)
+    tracker.sample({ at, errorMs: 20, playbackRate: 1, eligible: true, context, clockRevision: 1 });
   return context;
 }
-function refresh(tracker,at,overrides={}) {
-  return tracker.refresh({at,rttSampleCount:10,clockValid:true,clockAgeMs:0,clockUncertaintyMs:20,playbackStatus:'playing',...overrides});
+function refresh(tracker, at, overrides = {}) {
+  return tracker.refresh({
+    at,
+    rttSampleCount: 10,
+    clockValid: true,
+    clockAgeMs: 0,
+    clockUncertaintyMs: 20,
+    playbackStatus: 'playing',
+    ...overrides,
+  });
 }
 
-test('scoring rewards clean playback and penalizes drift, seeks, and speed correction while ignoring jitter',()=>{
-  assert.equal(quality.calculate(clean),1);
-  assert.equal(quality.calculate({...clean,networkRttMs:1000,networkJitterMs:900}),1,'mobile network latency/range is diagnostic only');
-  const tracker=quality.create();ready(tracker);
-  const first=refresh(tracker,12000);
-  for(let at=13000;at<=17000;at+=1000)tracker.sample({at,errorMs:20,playbackRate:1,eligible:true,context:'room:viewer:media:stream',clockRevision:1});
-  const jitterSpike=refresh(tracker,17000,{rttSampleCount:16});
-  assert.equal(first.status,'playing');assert.equal(first.score,1);
-  assert.equal(jitterSpike.score,first.score,'network timing variation is not a direct score input');
-  assert.equal(quality.calculate({...clean,bufferingSeconds:undefined}),undefined,'missing measurements remain unavailable');
-  assert.equal(quality.calculate({...clean,bufferingSeconds:-1}),undefined);
-  const drifting={...clean,measuredSeconds:60,outOfSync250Seconds:60,outOfSync500Seconds:60};
-  const score=quality.calculate(drifting);
-  assert.ok(score<.1,'continuous drift beyond 500 ms scores poorly without correction events');
-  assert.ok(quality.calculate({...clean,outOfSync250Seconds:30})<1,'time beyond 250 ms is represented');
-  const corrected=quality.calculate({...clean,automaticCorrectionCount:8,automaticCorrectionMagnitudeMs:12000,
-    rateAdjustedSeconds:20,rateAdjustmentSeconds:.8});
-  assert.ok(corrected<.5,'frequent large seeks and sustained playback-rate correction affect quality');
-  assert.ok(corrected>0);
+test('scoring rewards clean playback and penalizes drift, seeks, and speed correction while ignoring jitter', () => {
+  assert.equal(quality.calculate(clean), 1);
+  assert.equal(
+    quality.calculate({ ...clean, networkRttMs: 1000, networkJitterMs: 900 }),
+    1,
+    'mobile network latency/range is diagnostic only',
+  );
+  const tracker = quality.create();
+  ready(tracker);
+  const first = refresh(tracker, 12000);
+  for (let at = 13000; at <= 17000; at += 1000)
+    tracker.sample({
+      at,
+      errorMs: 20,
+      playbackRate: 1,
+      eligible: true,
+      context: 'room:viewer:media:stream',
+      clockRevision: 1,
+    });
+  const jitterSpike = refresh(tracker, 17000, { rttSampleCount: 16 });
+  assert.equal(first.status, 'playing');
+  assert.equal(first.score, 1);
+  assert.equal(jitterSpike.score, first.score, 'network timing variation is not a direct score input');
+  assert.equal(
+    quality.calculate({ ...clean, bufferingSeconds: undefined }),
+    undefined,
+    'missing measurements remain unavailable',
+  );
+  assert.equal(quality.calculate({ ...clean, bufferingSeconds: -1 }), undefined);
+  const drifting = { ...clean, measuredSeconds: 60, outOfSync250Seconds: 60, outOfSync500Seconds: 60 };
+  const score = quality.calculate(drifting);
+  assert.ok(score < 0.1, 'continuous drift beyond 500 ms scores poorly without correction events');
+  assert.ok(quality.calculate({ ...clean, outOfSync250Seconds: 30 }) < 1, 'time beyond 250 ms is represented');
+  const corrected = quality.calculate({
+    ...clean,
+    automaticCorrectionCount: 8,
+    automaticCorrectionMagnitudeMs: 12000,
+    rateAdjustedSeconds: 20,
+    rateAdjustmentSeconds: 0.8,
+  });
+  assert.ok(corrected < 0.5, 'frequent large seeks and sustained playback-rate correction affect quality');
+  assert.ok(corrected > 0);
 });
 
-test('actual rebuffering lowers the score while healthy prebuffered playback does not',()=>{
-  assert.equal(quality.calculate(clean),1);
-  const stalled=quality.calculate({...clean,bufferingSeconds:15});
-  assert.ok(stalled<.6&&stalled>.4,'a genuine 15-second stall causes a prompt rating drop');
-  const decide=quality.fallbackDecision;
-  assert.equal(decide({bufferAhead:12}),'idle');
-  assert.equal(decide({bufferAhead:6}),'prefetch');
-  assert.equal(decide({bufferAhead:1}),'switch');
-  assert.equal(decide({bufferAhead:12,stallSeconds:1.5}),'switch');
-  assert.equal(decide({bufferAhead:0,stallSeconds:10,interrupted:true}),'idle','seeks and pauses cannot switch');
-  assert.equal(decide({onFallback:true,readyAhead:19}),'probe');
-  assert.equal(decide({onFallback:true,readyAhead:20}),'return');
-  assert.equal(decide({onFallback:true,readyAhead:20,lastReturn:0,now:59999}),'probe');
-  assert.equal(decide({onFallback:true,readyAhead:20,lastReturn:0,now:60000}),'return');
-  assert.notEqual(decide({onFallback:true,readyAhead:20,failedReturns:2}),'return');
-  const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-  let at=0,prepares=0,ready=0,swaps=0,closed=0;
-  const context={uburoomSyncQuality:quality,performance:{now:()=>at}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/watch-fallback.js'),'utf8'),context);
-  const controller=context.uburoomFallback.create({supported:()=>true,notify(){},record(){},swap(){swaps++;},
-    prepare(){prepares++;return {cache:{},ahead:()=>ready,close(){closed++;}};}});
-  const source={id:'room',mediaVersion:'video',streamVersion:'stream',mediaUrl:'/chosen/start',state:{duration:300}};
-  controller.receive(source);controller.tick({bufferAhead:12,target:10});assert.equal(prepares,0,'healthy playback never fetches fallback');
-  const fallback={...source,fallbackStream:{mediaUrl:'/fallback/start',format:'av1',quality:'720p2'}};
-  controller.receive(fallback);assert.equal(controller.active,false,'a newly advertised fallback does not interrupt healthy playback');
-  controller.receive(fallback,true);assert.equal(controller.active,true,'reconnects adopt fallback');
-  controller.tick({bufferAhead:12,target:10});assert.equal(prepares,1);
-  ready=20;controller.tick({bufferAhead:12,target:10});assert.equal(controller.active,false);assert.equal(swaps,1);
-  ready=2;controller.tick({bufferAhead:1,target:10});assert.equal(controller.active,true);
-  at=60000;ready=20;controller.tick({bufferAhead:12,target:10});assert.equal(controller.active,false);
-  ready=2;controller.tick({bufferAhead:1,target:10});assert.equal(controller.active,true);
-  const before=prepares;at=120000;ready=30;controller.tick({bufferAhead:12,target:10});
-  assert.equal(controller.active,true);assert.equal(prepares,before,'two failed returns pin fallback and stop probes');
-  controller.reset();assert.ok(closed>=3,'all preparation is released');
+test('actual rebuffering lowers the score while healthy prebuffered playback does not', () => {
+  assert.equal(quality.calculate(clean), 1);
+  const stalled = quality.calculate({ ...clean, bufferingSeconds: 15 });
+  assert.ok(stalled < 0.6 && stalled > 0.4, 'a genuine 15-second stall causes a prompt rating drop');
+  const decide = quality.fallbackDecision;
+  assert.equal(decide({ bufferAhead: 12 }), 'idle');
+  assert.equal(decide({ bufferAhead: 6 }), 'prefetch');
+  assert.equal(decide({ bufferAhead: 1 }), 'switch');
+  assert.equal(decide({ bufferAhead: 12, stallSeconds: 1.5 }), 'switch');
+  assert.equal(
+    decide({ bufferAhead: 0, stallSeconds: 10, interrupted: true }),
+    'idle',
+    'seeks and pauses cannot switch',
+  );
+  assert.equal(decide({ onFallback: true, readyAhead: 19 }), 'probe');
+  assert.equal(decide({ onFallback: true, readyAhead: 20 }), 'return');
+  assert.equal(decide({ onFallback: true, readyAhead: 20, lastReturn: 0, now: 59999 }), 'probe');
+  assert.equal(decide({ onFallback: true, readyAhead: 20, lastReturn: 0, now: 60000 }), 'return');
+  assert.notEqual(decide({ onFallback: true, readyAhead: 20, failedReturns: 2 }), 'return');
+  const fs = require('node:fs'),
+    vm = require('node:vm'),
+    path = require('node:path');
+  let at = 0,
+    prepares = 0,
+    ready = 0,
+    swaps = 0,
+    closed = 0;
+  const context = { uburoomSyncQuality: quality, performance: { now: () => at } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/watch-fallback.js'), 'utf8'), context);
+  const controller = context.uburoomFallback.create({
+    supported: () => true,
+    notify() {},
+    record() {},
+    swap() {
+      swaps++;
+    },
+    prepare() {
+      prepares++;
+      return {
+        cache: {},
+        ahead: () => ready,
+        close() {
+          closed++;
+        },
+      };
+    },
+  });
+  const source = {
+    id: 'room',
+    mediaVersion: 'video',
+    streamVersion: 'stream',
+    mediaUrl: '/chosen/start',
+    state: { duration: 300 },
+  };
+  controller.receive(source);
+  controller.tick({ bufferAhead: 12, target: 10 });
+  assert.equal(prepares, 0, 'healthy playback never fetches fallback');
+  const fallback = { ...source, fallbackStream: { mediaUrl: '/fallback/start', format: 'av1', quality: '720p2' } };
+  controller.receive(fallback);
+  assert.equal(controller.active, false, 'a newly advertised fallback does not interrupt healthy playback');
+  controller.receive(fallback, true);
+  assert.equal(controller.active, true, 'reconnects adopt fallback');
+  controller.tick({ bufferAhead: 12, target: 10 });
+  assert.equal(prepares, 1);
+  ready = 20;
+  controller.tick({ bufferAhead: 12, target: 10 });
+  assert.equal(controller.active, false);
+  assert.equal(swaps, 1);
+  ready = 2;
+  controller.tick({ bufferAhead: 1, target: 10 });
+  assert.equal(controller.active, true);
+  at = 60000;
+  ready = 20;
+  controller.tick({ bufferAhead: 12, target: 10 });
+  assert.equal(controller.active, false);
+  ready = 2;
+  controller.tick({ bufferAhead: 1, target: 10 });
+  assert.equal(controller.active, true);
+  const before = prepares;
+  at = 120000;
+  ready = 30;
+  controller.tick({ bufferAhead: 12, target: 10 });
+  assert.equal(controller.active, true);
+  assert.equal(prepares, before, 'two failed returns pin fallback and stop probes');
+  controller.reset();
+  assert.ok(closed >= 3, 'all preparation is released');
 });
 
-test('viewers start at provisional 100% and the first valid interval begins refining the score',()=>{
-  let at=0;const tracker=quality.create({now:()=>at}),context='room:viewer:media:stream';
-  const initial=refresh(tracker,0,{clockValid:false});
-  assert.equal(initial.score,1);assert.equal(initial.level,'excellent');assert.equal(initial.confidence,'provisional');
-  at=0;tracker.sample({at,errorMs:800,eligible:true,context,clockRevision:1});
-  at=1000;tracker.sample({at,errorMs:800,eligible:true,context,clockRevision:1});
-  const first=refresh(tracker,1000,{rttSampleCount:1});
-  assert.equal(first.status,'playing');assert.equal(first.updated,true);assert.ok(first.score<.5,'first valid interval can lower the provisional estimate');
-  assert.equal(first.confidence,'confident','the first usable interval qualifies playback without five RTT exchanges');
-  assert.equal(refresh(tracker,2000,{clockValid:false}).score,first.score,'clock interruptions retain the estimate');
-  assert.equal(refresh(tracker,2000,{clockValid:false}).confidence,'confident','brief clock loss retains recent evidence');
-  assert.equal(refresh(tracker,2000,{clockUncertaintyMs:900}).score,first.score,'uncertain clocks do not erase the score');
+test('viewers start at provisional 100% and the first valid interval begins refining the score', () => {
+  let at = 0;
+  const tracker = quality.create({ now: () => at }),
+    context = 'room:viewer:media:stream';
+  const initial = refresh(tracker, 0, { clockValid: false });
+  assert.equal(initial.score, 1);
+  assert.equal(initial.level, 'excellent');
+  assert.equal(initial.confidence, 'provisional');
+  at = 0;
+  tracker.sample({ at, errorMs: 800, eligible: true, context, clockRevision: 1 });
+  at = 1000;
+  tracker.sample({ at, errorMs: 800, eligible: true, context, clockRevision: 1 });
+  const first = refresh(tracker, 1000, { rttSampleCount: 1 });
+  assert.equal(first.status, 'playing');
+  assert.equal(first.updated, true);
+  assert.ok(first.score < 0.5, 'first valid interval can lower the provisional estimate');
+  assert.equal(
+    first.confidence,
+    'confident',
+    'the first usable interval qualifies playback without five RTT exchanges',
+  );
+  assert.equal(
+    refresh(tracker, 2000, { clockValid: false }).score,
+    first.score,
+    'clock interruptions retain the estimate',
+  );
+  assert.equal(
+    refresh(tracker, 2000, { clockValid: false }).confidence,
+    'confident',
+    'brief clock loss retains recent evidence',
+  );
+  assert.equal(
+    refresh(tracker, 2000, { clockUncertaintyMs: 900 }).score,
+    first.score,
+    'uncertain clocks do not erase the score',
+  );
 });
 
-test('sampling is capped near one observation per second and scores refresh every five seconds',()=>{
-  const tracker=quality.create(),context='room:viewer:media:stream';
-  for(let at=0;at<=10000;at+=1000)tracker.sample({at,errorMs:10,eligible:true,context,clockRevision:1});
-  assert.equal(tracker.sample({at:10010,errorMs:5000,eligible:true,context,clockRevision:1}),false);
-  const first=refresh(tracker,10000);assert.equal(first.updated,true);
-  const held=refresh(tracker,12000);assert.equal(held.updated,false);assert.equal(held.score,first.score);
-  for(let at=11000;at<=15000;at+=1000)tracker.sample({at,errorMs:900,eligible:true,context,clockRevision:1});
-  const due=refresh(tracker,15000);assert.equal(due.updated,true);assert.ok(due.rawScore<first.rawScore);
+test('sampling is capped near one observation per second and scores refresh every five seconds', () => {
+  const tracker = quality.create(),
+    context = 'room:viewer:media:stream';
+  for (let at = 0; at <= 10000; at += 1000)
+    tracker.sample({ at, errorMs: 10, eligible: true, context, clockRevision: 1 });
+  assert.equal(tracker.sample({ at: 10010, errorMs: 5000, eligible: true, context, clockRevision: 1 }), false);
+  const first = refresh(tracker, 10000);
+  assert.equal(first.updated, true);
+  const held = refresh(tracker, 12000);
+  assert.equal(held.updated, false);
+  assert.equal(held.score, first.score);
+  for (let at = 11000; at <= 15000; at += 1000)
+    tracker.sample({ at, errorMs: 900, eligible: true, context, clockRevision: 1 });
+  const due = refresh(tracker, 15000);
+  assert.equal(due.updated, true);
+  assert.ok(due.rawScore < first.rawScore);
 });
 
-test('pause, seek, temporary clock loss and clock revision preserve the latest score and reduce confidence',()=>{
-  const tracker=quality.create(),context='room:viewer:media:stream';ready(tracker,0,12000,context);
-  const first=refresh(tracker,12000),level=first.lastLevel;
-  const paused=refresh(tracker,13000,{playbackStatus:'paused'});
-  assert.equal(paused.status,'paused');assert.equal(paused.score,first.score);assert.equal(paused.lastLevel,level);assert.equal(paused.confidence,'confident');
-  const seeking=refresh(tracker,13500,{playbackStatus:'seeking'});
-  assert.equal(seeking.status,'seeking');assert.equal(seeking.score,first.score);assert.equal(seeking.confidence,'confident');
+test('pause, seek, temporary clock loss and clock revision preserve the latest score and reduce confidence', () => {
+  const tracker = quality.create(),
+    context = 'room:viewer:media:stream';
+  ready(tracker, 0, 12000, context);
+  const first = refresh(tracker, 12000),
+    level = first.lastLevel;
+  const paused = refresh(tracker, 13000, { playbackStatus: 'paused' });
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.score, first.score);
+  assert.equal(paused.lastLevel, level);
+  assert.equal(paused.confidence, 'confident');
+  const seeking = refresh(tracker, 13500, { playbackStatus: 'seeking' });
+  assert.equal(seeking.status, 'seeking');
+  assert.equal(seeking.score, first.score);
+  assert.equal(seeking.confidence, 'confident');
   tracker.breakSample(14000);
-  const stale=refresh(tracker,14000,{clockValid:false});
-  assert.equal(stale.status,'playing');assert.equal(stale.score,first.score);assert.equal(stale.confidence,'confident');
-  tracker.sample({at:15000,errorMs:1,eligible:true,context,clockRevision:2});
-  const resumed=refresh(tracker,15000);
-  assert.equal(resumed.status,'playing');assert.equal(resumed.lastLevel,level);
-  assert.equal(resumed.score,first.score);assert.equal(resumed.confidence,'confident');assert.equal(resumed.metrics.measuredSeconds,0,'clock resets invalidate the old evidence window');
+  const stale = refresh(tracker, 14000, { clockValid: false });
+  assert.equal(stale.status, 'playing');
+  assert.equal(stale.score, first.score);
+  assert.equal(stale.confidence, 'confident');
+  tracker.sample({ at: 15000, errorMs: 1, eligible: true, context, clockRevision: 2 });
+  const resumed = refresh(tracker, 15000);
+  assert.equal(resumed.status, 'playing');
+  assert.equal(resumed.lastLevel, level);
+  assert.equal(resumed.score, first.score);
+  assert.equal(resumed.confidence, 'confident');
+  assert.equal(resumed.metrics.measuredSeconds, 0, 'clock resets invalidate the old evidence window');
 });
 
-test('position fallback is usable measured evidence while diagnostics keep its precision distinction',()=>{
-  const tracker=quality.create(),context='room:viewer:media:stream';
-  tracker.sample({at:1250,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
-  tracker.sample({at:2250,errorMs:20,eligible:true,source:'position',context,clockRevision:1});
-  const result=refresh(tracker,2250,{rttSampleCount:10});
-  assert.equal(result.updated,true);assert.equal(result.score,1);assert.equal(result.confidence,'confident');
-  assert.equal(result.reason,'position-timing-estimate');assert.equal(result.metrics.positionMeasuredSeconds,1);
-  assert.equal(result.metrics.presentationMeasuredSeconds,0);
+test('position fallback is usable measured evidence while diagnostics keep its precision distinction', () => {
+  const tracker = quality.create(),
+    context = 'room:viewer:media:stream';
+  tracker.sample({ at: 1250, errorMs: 20, eligible: true, source: 'position', context, clockRevision: 1 });
+  tracker.sample({ at: 2250, errorMs: 20, eligible: true, source: 'position', context, clockRevision: 1 });
+  const result = refresh(tracker, 2250, { rttSampleCount: 10 });
+  assert.equal(result.updated, true);
+  assert.equal(result.score, 1);
+  assert.equal(result.confidence, 'confident');
+  assert.equal(result.reason, 'position-timing-estimate');
+  assert.equal(result.metrics.positionMeasuredSeconds, 1);
+  assert.equal(result.metrics.presentationMeasuredSeconds, 0);
 });
 
-test('recovery is gradual after a real playback problem while routine pauses do not degrade the estimate',()=>{
-  const tracker=quality.create(),context='room:viewer:media:stream';
-  for(let at=0;at<=10000;at+=1000)tracker.sample({at,errorMs:20,eligible:true,context,clockRevision:1});
-  const clean=refresh(tracker,10000);assert.equal(clean.score,1);
-  const paused=refresh(tracker,11000,{playbackStatus:'paused'});assert.equal(paused.score,1);
-  for(let at=11000;at<=15000;at+=1000)tracker.sample({at,errorMs:900,eligible:true,context,clockRevision:1});
-  const degraded=refresh(tracker,15000);assert.ok(degraded.score<clean.score);
-  for(let at=16000;at<=20000;at+=1000)tracker.sample({at,errorMs:20,eligible:true,context,clockRevision:1});
-  const recovering=refresh(tracker,20000);assert.ok(recovering.score>degraded.score&&recovering.score<1);
+test('recovery is gradual after a real playback problem while routine pauses do not degrade the estimate', () => {
+  const tracker = quality.create(),
+    context = 'room:viewer:media:stream';
+  for (let at = 0; at <= 10000; at += 1000)
+    tracker.sample({ at, errorMs: 20, eligible: true, context, clockRevision: 1 });
+  const clean = refresh(tracker, 10000);
+  assert.equal(clean.score, 1);
+  const paused = refresh(tracker, 11000, { playbackStatus: 'paused' });
+  assert.equal(paused.score, 1);
+  for (let at = 11000; at <= 15000; at += 1000)
+    tracker.sample({ at, errorMs: 900, eligible: true, context, clockRevision: 1 });
+  const degraded = refresh(tracker, 15000);
+  assert.ok(degraded.score < clean.score);
+  for (let at = 16000; at <= 20000; at += 1000)
+    tracker.sample({ at, errorMs: 20, eligible: true, context, clockRevision: 1 });
+  const recovering = refresh(tracker, 20000);
+  assert.ok(recovering.score > degraded.score && recovering.score < 1);
 });
 
-test('the 60-second metric window expires and active buffering records exact duration',()=>{
-  const tracker=quality.create(),context='room:viewer:media:stream';ready(tracker,0,19000,context);
-  assert.equal(tracker.startBuffer({at:19500,eligible:true}),true);
-  assert.equal(tracker.endBuffer({at:29500}),true);
-  tracker.sample({at:30000,errorMs:20,eligible:true,context,clockRevision:1});
-  const afterBuffer=refresh(tracker,30000);
-  assert.equal(afterBuffer.metrics.bufferingSeconds,10);
-  assert.ok(afterBuffer.score<1);
-  const old=tracker.metricsAt(95000);
-  assert.equal(old.measuredSeconds,0);assert.equal(old.bufferingSeconds,0);assert.equal(old.sampleCount,0);
+test('the 60-second metric window expires and active buffering records exact duration', () => {
+  const tracker = quality.create(),
+    context = 'room:viewer:media:stream';
+  ready(tracker, 0, 19000, context);
+  assert.equal(tracker.startBuffer({ at: 19500, eligible: true }), true);
+  assert.equal(tracker.endBuffer({ at: 29500 }), true);
+  tracker.sample({ at: 30000, errorMs: 20, eligible: true, context, clockRevision: 1 });
+  const afterBuffer = refresh(tracker, 30000);
+  assert.equal(afterBuffer.metrics.bufferingSeconds, 10);
+  assert.ok(afterBuffer.score < 1);
+  const old = tracker.metricsAt(95000);
+  assert.equal(old.measuredSeconds, 0);
+  assert.equal(old.bufferingSeconds, 0);
+  assert.equal(old.sampleCount, 0);
 });
 
-test('four quality bands use the existing inclusive boundaries with hysteresis',()=>{
-  assert.equal(quality.level(1),'excellent');assert.equal(quality.level(.90),'excellent');
-  assert.equal(quality.level(.8999),'good');assert.equal(quality.level(.75),'good');
-  assert.equal(quality.level(.7499),'fair');assert.equal(quality.level(.50),'fair');
-  assert.equal(quality.level(.4999),'poor');assert.equal(quality.level(undefined),undefined);
-  assert.equal(quality.level(.88,'excellent'),'excellent');assert.equal(quality.level(.86,'excellent'),'good');
-  assert.equal(quality.level(.77,'fair'),'fair');assert.equal(quality.level(.78,'fair'),'good');
+test('four quality bands use the existing inclusive boundaries with hysteresis', () => {
+  assert.equal(quality.level(1), 'excellent');
+  assert.equal(quality.level(0.9), 'excellent');
+  assert.equal(quality.level(0.8999), 'good');
+  assert.equal(quality.level(0.75), 'good');
+  assert.equal(quality.level(0.7499), 'fair');
+  assert.equal(quality.level(0.5), 'fair');
+  assert.equal(quality.level(0.4999), 'poor');
+  assert.equal(quality.level(undefined), undefined);
+  assert.equal(quality.level(0.88, 'excellent'), 'excellent');
+  assert.equal(quality.level(0.86, 'excellent'), 'good');
+  assert.equal(quality.level(0.77, 'fair'), 'fair');
+  assert.equal(quality.level(0.78, 'fair'), 'good');
 });
 
-test('clock loss and prolonged pauses decay confidence to reduced without losing score, and resume promptly re-qualifies',()=>{
-  const tracker=quality.create(),context='android';
-  tracker.sample({at:0,errorMs:45,source:'position',eligible:true,context,clockRevision:1});
-  tracker.sample({at:1000,errorMs:65,source:'position',eligible:true,context,clockRevision:1});
-  assert.equal(refresh(tracker,1000,{rttSampleCount:1,clockAgeMs:4300,clockUncertaintyMs:900}).confidence,'confident');
+test('clock loss and prolonged pauses decay confidence to reduced without losing score, and resume promptly re-qualifies', () => {
+  const tracker = quality.create(),
+    context = 'android';
+  tracker.sample({ at: 0, errorMs: 45, source: 'position', eligible: true, context, clockRevision: 1 });
+  tracker.sample({ at: 1000, errorMs: 65, source: 'position', eligible: true, context, clockRevision: 1 });
+  assert.equal(
+    refresh(tracker, 1000, { rttSampleCount: 1, clockAgeMs: 4300, clockUncertaintyMs: 900 }).confidence,
+    'confident',
+  );
   tracker.breakSample(2000);
-  assert.equal(refresh(tracker,9500,{clockValid:false}).confidence,'confident');
-  assert.equal(refresh(tracker,9500,{clockValid:false}).metrics.measurementFreshnessMs,8500);
-  assert.equal(refresh(tracker,15000,{clockValid:false}).confidence,'reduced');
-  assert.equal(refresh(tracker,15000,{clockValid:false}).score,1);
-  tracker.sample({at:16000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
-  tracker.sample({at:17000,errorMs:70,source:'position',eligible:true,context,clockRevision:1});
-  assert.equal(refresh(tracker,17000,{rttSampleCount:1}).confidence,'confident');
+  assert.equal(refresh(tracker, 9500, { clockValid: false }).confidence, 'confident');
+  assert.equal(refresh(tracker, 9500, { clockValid: false }).metrics.measurementFreshnessMs, 8500);
+  assert.equal(refresh(tracker, 15000, { clockValid: false }).confidence, 'reduced');
+  assert.equal(refresh(tracker, 15000, { clockValid: false }).score, 1);
+  tracker.sample({ at: 16000, errorMs: 70, source: 'position', eligible: true, context, clockRevision: 1 });
+  tracker.sample({ at: 17000, errorMs: 70, source: 'position', eligible: true, context, clockRevision: 1 });
+  assert.equal(refresh(tracker, 17000, { rttSampleCount: 1 }).confidence, 'confident');
 
-  const pauseTracker=quality.create(),pContext='paused';
-  pauseTracker.sample({at:0,errorMs:10,eligible:true,context:pContext,clockRevision:1});
-  pauseTracker.sample({at:1000,errorMs:10,eligible:true,context:pContext,clockRevision:1});
-  refresh(pauseTracker,1000);
-  assert.equal(refresh(pauseTracker,50000,{playbackStatus:'paused',clockValid:false}).confidence,'confident');
-  assert.equal(refresh(pauseTracker,122000,{playbackStatus:'paused',clockValid:false}).confidence,'reduced');
-  pauseTracker.sample({at:123000,errorMs:15,eligible:true,context:pContext,clockRevision:1});
-  pauseTracker.sample({at:124000,errorMs:15,eligible:true,context:pContext,clockRevision:1});
-  assert.equal(refresh(pauseTracker,124000).confidence,'confident');
+  const pauseTracker = quality.create(),
+    pContext = 'paused';
+  pauseTracker.sample({ at: 0, errorMs: 10, eligible: true, context: pContext, clockRevision: 1 });
+  pauseTracker.sample({ at: 1000, errorMs: 10, eligible: true, context: pContext, clockRevision: 1 });
+  refresh(pauseTracker, 1000);
+  assert.equal(refresh(pauseTracker, 50000, { playbackStatus: 'paused', clockValid: false }).confidence, 'confident');
+  assert.equal(refresh(pauseTracker, 122000, { playbackStatus: 'paused', clockValid: false }).confidence, 'reduced');
+  pauseTracker.sample({ at: 123000, errorMs: 15, eligible: true, context: pContext, clockRevision: 1 });
+  pauseTracker.sample({ at: 124000, errorMs: 15, eligible: true, context: pContext, clockRevision: 1 });
+  assert.equal(refresh(pauseTracker, 124000).confidence, 'confident');
 });
 
-test('five-minute-old paused measurements are omitted from reports without waiting',()=>{
-  const tracker=quality.create(),context='paused-age';
-  tracker.sample({at:0,errorMs:20,eligible:true,context,clockRevision:1});
-  tracker.sample({at:1000,errorMs:20,eligible:true,context,clockRevision:1});
-  refresh(tracker,1000);
-  const paused=refresh(tracker,301201,{playbackStatus:'paused'});
-  assert.equal(paused.metrics.measurementFreshnessMs,300201);
-  assert.equal(quality.reportableMeasurementFreshnessMs(paused.metrics.measurementFreshnessMs),undefined);
-  assert.equal(quality.reportableMeasurementFreshnessMs(300000),300000);
-  assert.equal(quality.reportableMeasurementFreshnessMs(299999),299999);
-  assert.equal(quality.reportableMeasurementFreshnessMs(-1),undefined);
-  assert.equal(quality.reportableMeasurementFreshnessMs(NaN),undefined);
+test('five-minute-old paused measurements are omitted from reports without waiting', () => {
+  const tracker = quality.create(),
+    context = 'paused-age';
+  tracker.sample({ at: 0, errorMs: 20, eligible: true, context, clockRevision: 1 });
+  tracker.sample({ at: 1000, errorMs: 20, eligible: true, context, clockRevision: 1 });
+  refresh(tracker, 1000);
+  const paused = refresh(tracker, 301201, { playbackStatus: 'paused' });
+  assert.equal(paused.metrics.measurementFreshnessMs, 300201);
+  assert.equal(quality.reportableMeasurementFreshnessMs(paused.metrics.measurementFreshnessMs), undefined);
+  assert.equal(quality.reportableMeasurementFreshnessMs(300000), 300000);
+  assert.equal(quality.reportableMeasurementFreshnessMs(299999), 299999);
+  assert.equal(quality.reportableMeasurementFreshnessMs(-1), undefined);
+  assert.equal(quality.reportableMeasurementFreshnessMs(NaN), undefined);
 });

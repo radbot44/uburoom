@@ -24,22 +24,42 @@ function syncRoomUrl(id, slug) {
     return;
   }
   const currentSlug = slug || (state?.id === id ? state.slug : undefined) || knownRooms.find(r => r.id === id)?.slug;
-  const target = id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
+  const target =
+    id && currentSlug ? '/room/' + encodeURIComponent(currentSlug) : id ? '/room/' + encodeURIComponent(id) : '/';
   if (location.pathname !== target || location.search) {
     history.replaceState(null, '', target + location.hash);
   }
 }
-let token, me, config, selected, state, receivedAt, offset = 0, pending = false, creating = false, transport;
-let stateTransportSequence=0;
-let reconnecting=false;
-let disconnectGraceTimer, disconnectExtended = false;
+let token,
+  me,
+  config,
+  selected,
+  state,
+  receivedAt,
+  offset = 0,
+  pending = false,
+  creating = false,
+  transport;
+let stateTransportSequence = 0;
+let reconnecting = false;
+let disconnectGraceTimer,
+  disconnectExtended = false;
 const DISCONNECT_GRACE_MS = 8000;
-let switchingRoom=false, knownRooms=[];
-let directRoomEntry=false, directRoomFailed=false;
-let pageBootstrap=JSON.parse($('watch-bootstrap')?.textContent||'null');
-if(pageBootstrap?.config)config=pageBootstrap.config;
-if(pageBootstrap?.me?.status===200)me=pageBootstrap.me.value;
-directRoomEntry = Boolean(!activity && (pageBootstrap?.targetRoom?.id || /^\/room\/[a-z0-9-]+$/i.test(location.pathname) || new URLSearchParams(location.search).has('room')) || pageBootstrap?.me?.value?.guestRoomId || pageBootstrap?.config?.singleRoom);
+let switchingRoom = false,
+  knownRooms = [];
+let directRoomEntry = false,
+  directRoomFailed = false;
+let pageBootstrap = JSON.parse($('watch-bootstrap')?.textContent || 'null');
+if (pageBootstrap?.config) config = pageBootstrap.config;
+if (pageBootstrap?.me?.status === 200) me = pageBootstrap.me.value;
+directRoomEntry = Boolean(
+  (!activity &&
+    (pageBootstrap?.targetRoom?.id ||
+      /^\/room\/[a-z0-9-]+$/i.test(location.pathname) ||
+      new URLSearchParams(location.search).has('room'))) ||
+  pageBootstrap?.me?.value?.guestRoomId ||
+  pageBootstrap?.config?.singleRoom,
+);
 let hlsLoading, discordSdkLoading;
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -52,115 +72,255 @@ function loadScript(src) {
 }
 function ensureHls() {
   if (typeof Hls !== 'undefined') return Promise.resolve();
-  return hlsLoading ||= loadScript('/vendor/hls.js').catch(error => { hlsLoading = undefined; throw error; });
+  return (hlsLoading ||= loadScript('/vendor/hls.js').catch(error => {
+    hlsLoading = undefined;
+    throw error;
+  }));
 }
 function ensureDiscordSdk() {
   if (typeof uburoomDiscord !== 'undefined') return Promise.resolve();
-  return discordSdkLoading ||= loadScript('/vendor/discord-sdk.js').catch(error => { discordSdkLoading = undefined; throw error; });
+  return (discordSdkLoading ||= loadScript('/vendor/discord-sdk.js').catch(error => {
+    discordSdkLoading = undefined;
+    throw error;
+  }));
 }
-let identityExpiresAt = 0, identityRenewAt = 0, identityRetryAt = 0, identityRenewal, identityGeneration = 0, identityTimer;
-let hls, mediaVersion, mediaSource, lastFeedback, seekDragging = false, sdk;
-let seekPendingValue = undefined, seekPendingUntil = 0, seekPendingRevision = undefined;
-let playbackError = '', autoplayBlocked = false, probing = false, readyVersion, readyPending = false, readyQueued = false, readinessSent, browseRoom, preferredQuality = '720p4';
-let volumeWanted, volumeDraft, volumeTimer, lastVolumeAt = 0, volumeDragging = false, volumePending = false;
-const playerPreferenceKey='uburoom.player';
-let playerPreferences={volume:30,muted:false,quality:'720p4',subtitleColor:'#ffffff',subtitleBg:'shadow',subtitleSize:'medium',subtitlePosition:'video',subtitleBrightness:100,plexReporting:true,plexWatchState:false,audioMode:'normal'};
+let identityExpiresAt = 0,
+  identityRenewAt = 0,
+  identityRetryAt = 0,
+  identityRenewal,
+  identityGeneration = 0,
+  identityTimer;
+let hls,
+  mediaVersion,
+  mediaSource,
+  lastFeedback,
+  seekDragging = false,
+  sdk;
+let seekPendingValue = undefined,
+  seekPendingUntil = 0,
+  seekPendingRevision = undefined;
+let playbackError = '',
+  autoplayBlocked = false,
+  probing = false,
+  readyVersion,
+  readyPending = false,
+  readyQueued = false,
+  readinessSent,
+  browseRoom,
+  preferredQuality = '720p4';
+let volumeWanted,
+  volumeDraft,
+  volumeTimer,
+  lastVolumeAt = 0,
+  volumeDragging = false,
+  volumePending = false;
+const playerPreferenceKey = 'uburoom.player';
+let playerPreferences = {
+  volume: 30,
+  muted: false,
+  quality: '720p4',
+  subtitleColor: '#ffffff',
+  subtitleBg: 'shadow',
+  subtitleSize: 'medium',
+  subtitlePosition: 'video',
+  subtitleBrightness: 100,
+  plexReporting: true,
+  plexWatchState: false,
+  audioMode: 'normal',
+};
 try {
-  const saved=JSON.parse(localStorage.getItem(playerPreferenceKey)||'null');
-  if(saved && typeof saved==='object') {
-    if(Number.isFinite(saved.volume) && saved.volume>=0 && saved.volume<=100)playerPreferences.volume=saved.volume;
-    if(typeof saved.muted==='boolean')playerPreferences.muted=saved.muted;
-    if(typeof saved.plexReporting==='boolean')playerPreferences.plexReporting=saved.plexReporting;
-    if(typeof saved.plexWatchState==='boolean')playerPreferences.plexWatchState=saved.plexWatchState;
-    if(['normal','dialogue','night'].includes(saved.audioMode))playerPreferences.audioMode=saved.audioMode;
-    if(uburoom.validQuality(saved.quality))playerPreferences.quality=uburoom.qualityId(saved.quality);
-    if(['auto','burn'].includes(saved.subtitleMode))playerPreferences.subtitleMode=saved.subtitleMode;
-    if(['auto','off'].includes(saved.subtitles?.choice))playerPreferences.subtitles={choice:saved.subtitles.choice};
-    else if(saved.subtitles?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.subtitles.language || ''))playerPreferences.subtitles={choice:'language',language:saved.subtitles.language};
-    if(saved.audio?.choice==='auto')playerPreferences.audio={choice:'auto'};
-    else if(saved.audio?.choice==='language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.audio.language || ''))playerPreferences.audio={choice:'language',language:saved.audio.language};
-    if(typeof saved.subtitleColor==='string' && /^#[0-9a-f]{6}$/i.test(saved.subtitleColor))playerPreferences.subtitleColor=saved.subtitleColor.toLowerCase();
-    if(['off','background','shadow'].includes(saved.subtitleBg))playerPreferences.subtitleBg=saved.subtitleBg;
-    if(['small','medium','large'].includes(saved.subtitleSize))playerPreferences.subtitleSize=saved.subtitleSize;
-    if(['video','player'].includes(saved.subtitlePosition))playerPreferences.subtitlePosition=saved.subtitlePosition;
-    if(Number.isFinite(saved.subtitleBrightness) && saved.subtitleBrightness>=20 && saved.subtitleBrightness<=100)playerPreferences.subtitleBrightness=saved.subtitleBrightness;
+  const saved = JSON.parse(localStorage.getItem(playerPreferenceKey) || 'null');
+  if (saved && typeof saved === 'object') {
+    if (Number.isFinite(saved.volume) && saved.volume >= 0 && saved.volume <= 100)
+      playerPreferences.volume = saved.volume;
+    if (typeof saved.muted === 'boolean') playerPreferences.muted = saved.muted;
+    if (typeof saved.plexReporting === 'boolean') playerPreferences.plexReporting = saved.plexReporting;
+    if (typeof saved.plexWatchState === 'boolean') playerPreferences.plexWatchState = saved.plexWatchState;
+    if (['normal', 'dialogue', 'night'].includes(saved.audioMode)) playerPreferences.audioMode = saved.audioMode;
+    if (uburoom.validQuality(saved.quality)) playerPreferences.quality = uburoom.qualityId(saved.quality);
+    if (['auto', 'burn'].includes(saved.subtitleMode)) playerPreferences.subtitleMode = saved.subtitleMode;
+    if (['auto', 'off'].includes(saved.subtitles?.choice))
+      playerPreferences.subtitles = { choice: saved.subtitles.choice };
+    else if (
+      saved.subtitles?.choice === 'language' &&
+      /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.subtitles.language || '')
+    )
+      playerPreferences.subtitles = { choice: 'language', language: saved.subtitles.language };
+    if (saved.audio?.choice === 'auto') playerPreferences.audio = { choice: 'auto' };
+    else if (saved.audio?.choice === 'language' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(saved.audio.language || ''))
+      playerPreferences.audio = { choice: 'language', language: saved.audio.language };
+    if (typeof saved.subtitleColor === 'string' && /^#[0-9a-f]{6}$/i.test(saved.subtitleColor))
+      playerPreferences.subtitleColor = saved.subtitleColor.toLowerCase();
+    if (['off', 'background', 'shadow'].includes(saved.subtitleBg)) playerPreferences.subtitleBg = saved.subtitleBg;
+    if (['small', 'medium', 'large'].includes(saved.subtitleSize)) playerPreferences.subtitleSize = saved.subtitleSize;
+    if (['video', 'player'].includes(saved.subtitlePosition))
+      playerPreferences.subtitlePosition = saved.subtitlePosition;
+    if (Number.isFinite(saved.subtitleBrightness) && saved.subtitleBrightness >= 20 && saved.subtitleBrightness <= 100)
+      playerPreferences.subtitleBrightness = saved.subtitleBrightness;
   }
 } catch {}
-preferredQuality=playerPreferences.quality;
+preferredQuality = playerPreferences.quality;
 let restoredPlayerSubtitles;
 function rememberPlayerSubtitles(args) {
-  if(args.subtitleMode)savePlayerPreferences({subtitleMode:args.subtitleMode});
+  if (args.subtitleMode) savePlayerPreferences({ subtitleMode: args.subtitleMode });
   // The audio language is remembered the same way, so a new visit starts with it.
-  if(args.audioId==='auto')savePlayerPreferences({audio:{choice:'auto'}});
-  else if(args.audioId!==undefined) {
-    const track=state?.tracks?.audio.find(row=>row.id===args.audioId);
-    if(track?.language && !['und','unknown'].includes(track.language))savePlayerPreferences({audio:{choice:'language',language:track.language}});
+  if (args.audioId === 'auto') savePlayerPreferences({ audio: { choice: 'auto' } });
+  else if (args.audioId !== undefined) {
+    const track = state?.tracks?.audio.find(row => row.id === args.audioId);
+    if (track?.language && !['und', 'unknown'].includes(track.language))
+      savePlayerPreferences({ audio: { choice: 'language', language: track.language } });
   }
-  if(args.subtitleId===undefined)return;
-  if(['auto','off'].includes(args.subtitleId))savePlayerPreferences({subtitles:{choice:args.subtitleId}});
+  if (args.subtitleId === undefined) return;
+  if (['auto', 'off'].includes(args.subtitleId)) savePlayerPreferences({ subtitles: { choice: args.subtitleId } });
   else {
-    const track=state?.tracks?.subtitles.find(row=>row.id===args.subtitleId);
-    if(track?.language && !['und','unknown'].includes(track.language))savePlayerPreferences({subtitles:{choice:'language',language:track.language}});
+    const track = state?.tracks?.subtitles.find(row => row.id === args.subtitleId);
+    if (track?.language && !['und', 'unknown'].includes(track.language))
+      savePlayerPreferences({ subtitles: { choice: 'language', language: track.language } });
   }
 }
 async function restorePlayerSubtitles(next) {
-  const key=next.id+':'+next.mediaVersion;
-  if(restoredPlayerSubtitles===key || !next.tracks || !next.mediaUrl || pending || qualityPending || !playbackClock.read().valid)return;
-  const saved=playerPreferences.subtitles, tracks=next.tracks, args={};
-  const matches=tracks.subtitles.filter(row=>row.available && row.language===saved?.language);
-  const match=matches.find(row=>row.id===tracks.subtitleId) || matches[0];
-  const choice=saved?.choice==='language'?match?.id:saved?.choice;
-  if(choice && choice!==tracks.subtitleChoice && !(choice !== 'off' && choice !== 'auto' && choice === tracks.subtitleId))args.subtitleId=choice;
-  const mode=playerPreferences.subtitleMode;
-  if(['auto','burn'].includes(mode) && mode!==tracks.subtitleMode)args.subtitleMode=mode;
-  restoredPlayerSubtitles=key;
-  if(!Object.keys(args).length)return;
-  try {await execute({action:'media.tracks.set',args:{mediaVersion:next.mediaVersion,streamVersion:next.streamVersion,...args}});}
-  catch(error){fail(error.message);}
+  const key = next.id + ':' + next.mediaVersion;
+  if (
+    restoredPlayerSubtitles === key ||
+    !next.tracks ||
+    !next.mediaUrl ||
+    pending ||
+    qualityPending ||
+    !playbackClock.read().valid
+  )
+    return;
+  const saved = playerPreferences.subtitles,
+    tracks = next.tracks,
+    args = {};
+  const matches = tracks.subtitles.filter(row => row.available && row.language === saved?.language);
+  const match = matches.find(row => row.id === tracks.subtitleId) || matches[0];
+  const choice = saved?.choice === 'language' ? match?.id : saved?.choice;
+  if (
+    choice &&
+    choice !== tracks.subtitleChoice &&
+    !(choice !== 'off' && choice !== 'auto' && choice === tracks.subtitleId)
+  )
+    args.subtitleId = choice;
+  const mode = playerPreferences.subtitleMode;
+  if (['auto', 'burn'].includes(mode) && mode !== tracks.subtitleMode) args.subtitleMode = mode;
+  restoredPlayerSubtitles = key;
+  if (!Object.keys(args).length) return;
+  try {
+    await execute({
+      action: 'media.tracks.set',
+      args: { mediaVersion: next.mediaVersion, streamVersion: next.streamVersion, ...args },
+    });
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 function savePlayerPreferences(change) {
-  Object.assign(playerPreferences,change);
-  try {localStorage.setItem(playerPreferenceKey,JSON.stringify(playerPreferences));} catch {}
+  Object.assign(playerPreferences, change);
+  try {
+    localStorage.setItem(playerPreferenceKey, JSON.stringify(playerPreferences));
+  } catch {}
 }
 function viewerPreferences() {
-  return {viewer:viewerId,quality:preferredQuality,volume:String(playerPreferences.volume),muted:String(playerPreferences.muted),
-    plexReporting:String(playerPreferences.plexReporting),plexWatchState:String(playerPreferences.plexWatchState),
+  return {
+    viewer: viewerId,
+    quality: preferredQuality,
+    volume: String(playerPreferences.volume),
+    muted: String(playerPreferences.muted),
+    plexReporting: String(playerPreferences.plexReporting),
+    plexWatchState: String(playerPreferences.plexWatchState),
     // The saved subtitle choice goes with the join, so the first stream already has it.
-    ...(playerPreferences.subtitles?{subtitlePreference:playerPreferences.subtitles.choice==='language'?'language:'+playerPreferences.subtitles.language:playerPreferences.subtitles.choice}:{}),
-    ...(playerPreferences.subtitleMode?{subtitleMode:playerPreferences.subtitleMode}:{}),
-    ...(playerPreferences.audio?.choice==='language'?{audioPreference:'language:'+playerPreferences.audio.language}:{}),
-    ...(globalThis.uburoomSubtitleRenderers?.supported()?{subtitles:'browser'}:{}),
-    codecs:Object.keys(uburoomPlayback.LOCAL_CODECS).filter(codec=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[codec])).join(',')};
+    ...(playerPreferences.subtitles
+      ? {
+          subtitlePreference:
+            playerPreferences.subtitles.choice === 'language'
+              ? 'language:' + playerPreferences.subtitles.language
+              : playerPreferences.subtitles.choice,
+        }
+      : {}),
+    ...(playerPreferences.subtitleMode ? { subtitleMode: playerPreferences.subtitleMode } : {}),
+    ...(playerPreferences.audio?.choice === 'language'
+      ? { audioPreference: 'language:' + playerPreferences.audio.language }
+      : {}),
+    ...(globalThis.uburoomSubtitleRenderers?.supported() ? { subtitles: 'browser' } : {}),
+    codecs: Object.keys(uburoomPlayback.LOCAL_CODECS)
+      .filter(
+        codec => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[codec]),
+      )
+      .join(','),
+  };
 }
 
-let theater = document.body.classList.contains('theater'), immersive = false, layoutMode, fallbackPending = false, fallbackRetryTimer, frameStartedAt, videoFrames = 0, frameCallback;
+let theater = document.body.classList.contains('theater'),
+  immersive = false,
+  layoutMode,
+  fallbackPending = false,
+  fallbackRetryTimer,
+  frameStartedAt,
+  videoFrames = 0,
+  frameCallback;
 const supportsDocPiP = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
-const supportsVideoPiP = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function';
+const supportsVideoPiP =
+  typeof document !== 'undefined' &&
+  'pictureInPictureEnabled' in document &&
+  typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function';
 const supportsPiP = supportsDocPiP || supportsVideoPiP;
 let pipWindow = null;
-let hlsRecoveryTimer, hlsRecoveryCount = 0, hlsRecoveryAt = 0, hlsNetworkRetries = 0, hlsNetworkFailure, hlsNetworkInterrupted = false;
-let hlsRefreshPending = false, hlsRefreshVersion, hlsRefreshTimes = [];
-let providerNoticeTimer, providerNoticeShown = false;
-let av1, localFallbackVersion, localFallbackAttempts = new Set(), fallbackDetail;
+let hlsRecoveryTimer,
+  hlsRecoveryCount = 0,
+  hlsRecoveryAt = 0,
+  hlsNetworkRetries = 0,
+  hlsNetworkFailure,
+  hlsNetworkInterrupted = false;
+let hlsRefreshPending = false,
+  hlsRefreshVersion,
+  hlsRefreshTimes = [];
+let providerNoticeTimer,
+  providerNoticeShown = false;
+let av1,
+  localFallbackVersion,
+  localFallbackAttempts = new Set(),
+  fallbackDetail;
 let directProbe, directStartupTimer, directStallTimer, directRecovery;
-let observationPending = false, observationQueued = false, observationSequence = 0, observationBreak = 0, observing = false, playerWaiting = false;
-const observationClock=uburoomPlayback.observationClock();
-const playbackClock=uburoomTiming.clock(), presentationTiming=uburoomTiming.presentation();
-const syncQuality=uburoomSyncQuality.create();
-let syncQualityContext, syncQualityClockRevision, syncQualityBuffering=false, publishedSyncQualityStatus='unknown',
-  publishedSyncQualityConfidence, publishedSyncQualityReason, lastSyncQualityPublishAt=0, syncQualitySettleUntil=0,lastQualityDiagnosticAt=0;
+let observationPending = false,
+  observationQueued = false,
+  observationSequence = 0,
+  observationBreak = 0,
+  observing = false,
+  playerWaiting = false;
+const observationClock = uburoomPlayback.observationClock();
+const playbackClock = uburoomTiming.clock(),
+  presentationTiming = uburoomTiming.presentation();
+const syncQuality = uburoomSyncQuality.create();
+let syncQualityContext,
+  syncQualityClockRevision,
+  syncQualityBuffering = false,
+  publishedSyncQualityStatus = 'unknown',
+  publishedSyncQualityConfidence,
+  publishedSyncQualityReason,
+  lastSyncQualityPublishAt = 0,
+  syncQualitySettleUntil = 0,
+  lastQualityDiagnosticAt = 0;
 let sync;
-let syncCorrectionMode='speed', syncPreferenceKey, syncPreferenceStored=true;
-let qualityPending=false;
-let observationClockRevision=0;
-let lastPresentationBreak=performance.now(), stateRequestSequence=0;
-const bufferingViewers = new Map(), suppressedBuffering = new Set();
+let syncCorrectionMode = 'speed',
+  syncPreferenceKey,
+  syncPreferenceStored = true;
+let qualityPending = false;
+let observationClockRevision = 0;
+let lastPresentationBreak = performance.now(),
+  stateRequestSequence = 0;
+const bufferingViewers = new Map(),
+  suppressedBuffering = new Set();
 let voluntarilyPausedFor = null;
 let browserHandoff, browserHandoffTimer, browserVerification;
-let trackNotice='', trackNoticeError=false, trackActionError='', trackContext, playerUI, subtitleErrorNotice;
+let trackNotice = '',
+  trackNoticeError = false,
+  trackActionError = '',
+  trackContext,
+  playerUI,
+  subtitleErrorNotice;
 const video = $('video');
-let subtitleLayout=()=>{};
+let subtitleLayout = () => {};
 function applySubtitleAppearance() {
   const color = playerPreferences.subtitleColor || '#ffffff';
   const bg = playerPreferences.subtitleBg || 'shadow';
@@ -183,7 +343,11 @@ function applySubtitleAppearance() {
     preset.value = match ? match.value : 'custom';
   }
   if (bgSelect && bgSelect.value !== bg) bgSelect.value = bg;
-  for (const [id,value] of [['subtitle-size',playerPreferences.subtitleSize],['subtitle-position',playerPreferences.subtitlePosition]]) if ($(id).value !== value) $(id).value = value;
+  for (const [id, value] of [
+    ['subtitle-size', playerPreferences.subtitleSize],
+    ['subtitle-position', playerPreferences.subtitlePosition],
+  ])
+    if ($(id).value !== value) $(id).value = value;
   if (brightnessInput && document.activeElement !== brightnessInput) brightnessInput.value = brightness;
   if (brightnessValue) brightnessValue.textContent = brightness + '%';
 }
@@ -192,7 +356,7 @@ let audioContext, audioSourceNode, speechFilterNode, compressorNode, makeupGainN
 const audioModeHints = {
   normal: 'Original dynamic range and audio balance.',
   dialogue: 'Boosts speech clarity and vocal frequencies.',
-  night: 'Compresses loud peaks and lifts quiet audio for night listening.'
+  night: 'Compresses loud peaks and lifts quiet audio for night listening.',
 };
 function initAudioGraph() {
   if (audioSourceNode) return true;
@@ -236,7 +400,7 @@ function resumeAudioContext() {
   }
 }
 function applyAudioMode(mode) {
-  const targetMode = ['normal', 'dialogue', 'night'].includes(mode) ? mode : (playerPreferences.audioMode || 'normal');
+  const targetMode = ['normal', 'dialogue', 'night'].includes(mode) ? mode : playerPreferences.audioMode || 'normal';
   const select = $('audio-mode');
   const hint = $('audio-mode-hint');
   if (select && select.value !== targetMode) select.value = targetMode;
@@ -256,7 +420,7 @@ function applyAudioMode(mode) {
     compressorNode.knee.setValueAtTime(12, now);
     compressorNode.ratio.setValueAtTime(4.0, now);
     compressorNode.attack.setValueAtTime(0.005, now);
-    compressorNode.release.setValueAtTime(0.20, now);
+    compressorNode.release.setValueAtTime(0.2, now);
     makeupGainNode.gain.setValueAtTime(1.1, now);
   } else if (targetMode === 'night') {
     speechFilterNode.gain.setValueAtTime(0, now);
@@ -270,338 +434,783 @@ function applyAudioMode(mode) {
 }
 // What hosts see on this viewer's health card; the shared sync core validates it.
 function viewerHealth() {
-  const errorCode=video.error?.code,round=value=>Math.round(value*10)/10;
-  const error=hlsNetworkFailure||errorCode===2?'network':errorCode===3?'decode':errorCode===4?'media':playbackError?'other':undefined;
-  return {...(playbackHealth||{}),...viewerClient,reconnects:Math.min(10000,Math.max(0,(transport?.connectionAttempt||1)-1)),
-    ...(state?.mediaUrl?{bufferAhead:round(Math.min(3600,uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)))}:{}),
-    ...(/^[a-z0-9.]{1,24}$/i.test(state?.quality||'')?{quality:state.fallbackActive?state.fallbackStream.quality:state.quality}:{}),
-    ...(['hls','file','av1','vp9','vp8'].includes(state?.format)?{format:state.format}:{}),
-    ...(Number.isFinite(lastSyncErrorMs)?{offsetMs:Math.round(Math.max(-86400000,Math.min(86400000,lastSyncErrorMs)))}:{}),
-    ...(error?{error}:{})};
+  const errorCode = video.error?.code,
+    round = value => Math.round(value * 10) / 10;
+  const error =
+    hlsNetworkFailure || errorCode === 2
+      ? 'network'
+      : errorCode === 3
+        ? 'decode'
+        : errorCode === 4
+          ? 'media'
+          : playbackError
+            ? 'other'
+            : undefined;
+  return {
+    ...(playbackHealth || {}),
+    ...viewerClient,
+    reconnects: Math.min(10000, Math.max(0, (transport?.connectionAttempt || 1) - 1)),
+    ...(state?.mediaUrl
+      ? { bufferAhead: round(Math.min(3600, uburoomPlayback.bufferedAhead(video.buffered, video.currentTime))) }
+      : {}),
+    ...(/^[a-z0-9.]{1,24}$/i.test(state?.quality || '')
+      ? { quality: state.fallbackActive ? state.fallbackStream.quality : state.quality }
+      : {}),
+    ...(['hls', 'file', 'av1', 'vp9', 'vp8'].includes(state?.format) ? { format: state.format } : {}),
+    ...(Number.isFinite(lastSyncErrorMs)
+      ? { offsetMs: Math.round(Math.max(-86400000, Math.min(86400000, lastSyncErrorMs))) }
+      : {}),
+    ...(error ? { error } : {}),
+  };
 }
-function sendSyncQuality(status,score,confidence,reason,measurementFreshnessMs) {
+function sendSyncQuality(status, score, confidence, reason, measurementFreshnessMs) {
   if (!selected || !state?.mediaVersion || !state?.streamVersion) return false;
-  const freshness=uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
-  const value={roomId:selected,viewerId,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,status,
-    score:Number.isFinite(score)?Math.max(0,Math.min(1,score)):1,
-    confidence:['confident','reduced','provisional'].includes(confidence)?confidence:'reduced',
-    ...(freshness===undefined?{}:{measurementFreshnessMs:freshness}),...(reason?{reason}:{}),health:viewerHealth()};
-  const sent=transport?.syncQuality(value) || false;
-  if(sent){publishedSyncQualityStatus=status;publishedSyncQualityConfidence=value.confidence;publishedSyncQualityReason=reason;lastSyncQualityPublishAt=Date.now();}
+  const freshness = uburoomSyncQuality.reportableMeasurementFreshnessMs(measurementFreshnessMs);
+  const value = {
+    roomId: selected,
+    viewerId,
+    mediaVersion: state.mediaVersion,
+    streamVersion: state.streamVersion,
+    status,
+    score: Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 1,
+    confidence: ['confident', 'reduced', 'provisional'].includes(confidence) ? confidence : 'reduced',
+    ...(freshness === undefined ? {} : { measurementFreshnessMs: freshness }),
+    ...(reason ? { reason } : {}),
+    health: viewerHealth(),
+  };
+  const sent = transport?.syncQuality(value) || false;
+  if (sent) {
+    publishedSyncQualityStatus = status;
+    publishedSyncQualityConfidence = value.confidence;
+    publishedSyncQualityReason = reason;
+    lastSyncQualityPublishAt = Date.now();
+  }
   return sent;
 }
 function resetSyncQuality() {
-  seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;
-  const wasActive=publishedSyncQualityStatus==='playing'||publishedSyncQualityStatus==='buffering';
-  syncQuality.reset(undefined,{preserveLast:true});syncQualityContext=syncQualityClockRevision=undefined;syncQualityBuffering=false;
+  seekPendingValue = undefined;
+  seekPendingUntil = 0;
+  seekPendingRevision = undefined;
+  const wasActive = publishedSyncQualityStatus === 'playing' || publishedSyncQualityStatus === 'buffering';
+  syncQuality.reset(undefined, { preserveLast: true });
+  syncQualityContext = syncQualityClockRevision = undefined;
+  syncQualityBuffering = false;
   presentationTiming.interrupt?.('stream');
-  syncQualitySettleUntil=performance.now()+2000;
-  if(wasActive)sendSyncQuality('stale',syncQuality.refresh({playbackStatus:'starting'}).score,'reduced','stream-changed');
+  syncQualitySettleUntil = performance.now() + 2000;
+  if (wasActive)
+    sendSyncQuality('stale', syncQuality.refresh({ playbackStatus: 'starting' }).score, 'reduced', 'stream-changed');
 }
 function syncQualityClockUsable(timing) {
-  return !!(timing?.valid && Number.isFinite(timing.clockAgeMs) && timing.clockAgeMs<=uburoomSyncQuality.MAX_CLOCK_AGE_MS &&
-    Number.isFinite(timing.clockUncertaintyMs) && timing.clockUncertaintyMs<=uburoomSyncQuality.MAX_CLOCK_UNCERTAINTY_MS);
-}
-function syncQualityEligible(timing,{allowWaiting=false,forBuffer=false}={}) {
-  const shared=state?.state;
-  return !!(selected && state?.id===selected && state.mediaUrl && state.streamVersion && state.mediaVersion && mediaSource===state.mediaUrl &&
-    shared && !shared.paused && !state.waitingForReady && !video.paused && !video.seeking && (!playerWaiting || allowWaiting) &&
-    !probing && !playbackError && !video.error && !autoplayBlocked && readyVersion===state.mediaVersion && (forBuffer || video.readyState >= 3) &&
-    document.visibilityState==='visible' && syncQualityClockUsable(timing)&&
-    !(Number.isFinite(state.startAt) && timing.serverTime<state.startAt));
-}
-function syncQualityBufferEligible(timing,at=performance.now()) {
-  return !!(state?.mediaUrl&&state.state&&!state.state.paused&&!state.waitingForReady&&!video.paused&&!video.ended&&!video.seeking&&
-    !probing&&!playbackError&&!video.error&&!autoplayBlocked&&readyVersion===state.mediaVersion&&document.visibilityState==='visible'&&
-    at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending&&
-    (!Number.isFinite(state.startAt)||timing?.valid&&timing.serverTime>=state.startAt));
-}
-function sampleSyncQuality(timing,at) {
-  const context=selected+':'+viewerId+':'+state?.mediaVersion+':'+state?.streamVersion;
-  if(syncQualityContext!==context) {
-    syncQuality.reset(context,{preserveLast:true});syncQualityContext=context;syncQualityClockRevision=timing.clockRevision;
-    syncQualitySettleUntil=at+2000;
-  } else if(syncQualityClockRevision!==timing.clockRevision) {
-    syncQuality.breakSample(at);syncQualityClockRevision=timing.clockRevision;syncQualitySettleUntil=at+2000;
-  }
-  const eligible=syncQualityEligible(timing)&&at-lastPresentationBreak>=2000&&at>=syncQualitySettleUntil&&!sync?.timelinePending;
-  const presentationSample=presentationTiming.read?.(at,{context:sync?.contextKey(),clockRevision:timing.clockRevision});
-  const presentationInterrupted=Boolean(
-    presentationSample?.interrupted ||
-    (presentationSample?.reason && !['fresh','stale'].includes(presentationSample.reason))
+  return !!(
+    timing?.valid &&
+    Number.isFinite(timing.clockAgeMs) &&
+    timing.clockAgeMs <= uburoomSyncQuality.MAX_CLOCK_AGE_MS &&
+    Number.isFinite(timing.clockUncertaintyMs) &&
+    timing.clockUncertaintyMs <= uburoomSyncQuality.MAX_CLOCK_UNCERTAINTY_MS
   );
-  const presentationFresh=!presentationInterrupted &&
-    Number.isFinite(presentationSample?.errorMs) &&
-    presentationSample.ageMs!==undefined &&
-    presentationSample.ageMs<=2500;
-  let errorMs,source='position';
-  if(presentationFresh){errorMs=presentationSample.errorMs;source='presentation';}
-  else if(eligible) {
-    const target=uburoomTiming.target(state,timing.serverTime);
-    if(Number.isFinite(target))errorMs=(video.currentTime-target)*1000;
+}
+function syncQualityEligible(timing, { allowWaiting = false, forBuffer = false } = {}) {
+  const shared = state?.state;
+  return !!(
+    selected &&
+    state?.id === selected &&
+    state.mediaUrl &&
+    state.streamVersion &&
+    state.mediaVersion &&
+    mediaSource === state.mediaUrl &&
+    shared &&
+    !shared.paused &&
+    !state.waitingForReady &&
+    !video.paused &&
+    !video.seeking &&
+    (!playerWaiting || allowWaiting) &&
+    !probing &&
+    !playbackError &&
+    !video.error &&
+    !autoplayBlocked &&
+    readyVersion === state.mediaVersion &&
+    (forBuffer || video.readyState >= 3) &&
+    document.visibilityState === 'visible' &&
+    syncQualityClockUsable(timing) &&
+    !(Number.isFinite(state.startAt) && timing.serverTime < state.startAt)
+  );
+}
+function syncQualityBufferEligible(timing, at = performance.now()) {
+  return !!(
+    state?.mediaUrl &&
+    state.state &&
+    !state.state.paused &&
+    !state.waitingForReady &&
+    !video.paused &&
+    !video.ended &&
+    !video.seeking &&
+    !probing &&
+    !playbackError &&
+    !video.error &&
+    !autoplayBlocked &&
+    readyVersion === state.mediaVersion &&
+    document.visibilityState === 'visible' &&
+    at - lastPresentationBreak >= 2000 &&
+    at >= syncQualitySettleUntil &&
+    !sync?.timelinePending &&
+    (!Number.isFinite(state.startAt) || (timing?.valid && timing.serverTime >= state.startAt))
+  );
+}
+function sampleSyncQuality(timing, at) {
+  const context = selected + ':' + viewerId + ':' + state?.mediaVersion + ':' + state?.streamVersion;
+  if (syncQualityContext !== context) {
+    syncQuality.reset(context, { preserveLast: true });
+    syncQualityContext = context;
+    syncQualityClockRevision = timing.clockRevision;
+    syncQualitySettleUntil = at + 2000;
+  } else if (syncQualityClockRevision !== timing.clockRevision) {
+    syncQuality.breakSample(at);
+    syncQualityClockRevision = timing.clockRevision;
+    syncQualitySettleUntil = at + 2000;
   }
-  if(Number.isFinite(errorMs))lastSyncErrorMs=errorMs;
-  syncQuality.sample({at,errorMs,playbackRate:video.playbackRate,eligible,source,context,clockRevision:timing.clockRevision});
+  const eligible =
+    syncQualityEligible(timing) &&
+    at - lastPresentationBreak >= 2000 &&
+    at >= syncQualitySettleUntil &&
+    !sync?.timelinePending;
+  const presentationSample = presentationTiming.read?.(at, {
+    context: sync?.contextKey(),
+    clockRevision: timing.clockRevision,
+  });
+  const presentationInterrupted = Boolean(
+    presentationSample?.interrupted ||
+    (presentationSample?.reason && !['fresh', 'stale'].includes(presentationSample.reason)),
+  );
+  const presentationFresh =
+    !presentationInterrupted &&
+    Number.isFinite(presentationSample?.errorMs) &&
+    presentationSample.ageMs !== undefined &&
+    presentationSample.ageMs <= 2500;
+  let errorMs,
+    source = 'position';
+  if (presentationFresh) {
+    errorMs = presentationSample.errorMs;
+    source = 'presentation';
+  } else if (eligible) {
+    const target = uburoomTiming.target(state, timing.serverTime);
+    if (Number.isFinite(target)) errorMs = (video.currentTime - target) * 1000;
+  }
+  if (Number.isFinite(errorMs)) lastSyncErrorMs = errorMs;
+  syncQuality.sample({
+    at,
+    errorMs,
+    playbackRate: video.playbackRate,
+    eligible,
+    source,
+    context,
+    clockRevision: timing.clockRevision,
+  });
 }
 function refreshSyncQuality() {
-  const timing=playbackClock.read(),at=performance.now();
-  const clockReliable=syncQualityClockUsable(timing);
-  if(!clockReliable)syncQuality.breakSample(at);
-  const isBuffering=playerWaiting||!video.paused&&video.readyState<3;
-  const shouldCountBuffer=isBuffering&&syncQualityBufferEligible(timing,at);
-  if(shouldCountBuffer&&!syncQualityBuffering)syncQualityBuffering=syncQuality.startBuffer({at,eligible:true});
-  else if(!shouldCountBuffer&&syncQualityBuffering){syncQuality.endBuffer({at});syncQualityBuffering=false;}
-  const playbackStatus=playbackError||video.error?'error':!state?.mediaUrl||state.waitingForReady||probing||readyVersion!==state?.mediaVersion?'starting':
-    state.state.paused||video.paused||video.ended?'paused':video.seeking?'seeking':isBuffering?'buffering':'playing';
-  sampleSyncQuality(timing,at);
-  const result=syncQuality.refresh({at,
-    clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,clockUncertaintyMs:timing.clockUncertaintyMs,playbackStatus});
-  const changed=result.status!==publishedSyncQualityStatus||result.confidence!==publishedSyncQualityConfidence||result.reason!==publishedSyncQualityReason;
-  if(result.updated||changed||Date.now()-lastQualityDiagnosticAt>=10000) {
-    diagnostics.record('sync-quality',{qualityStatus:result.status,qualityConfidence:result.confidence,qualityReason:result.reason,rawQualityScore:result.rawScore,
-      smoothedQualityScore:result.lastScore,lastKnownQualityLevel:result.lastLevel,qualityMeasurementFreshnessMs:result.metrics?.measurementFreshnessMs,
-      qualityMeasurementSource:result.metrics?.latestSource,qualitySampleCount:result.metrics?.sampleCount,
-      measuredPlaybackSeconds:result.metrics?.measuredSeconds,outOfSync250Seconds:result.metrics?.outOfSync250Seconds,
-      outOfSync500Seconds:result.metrics?.outOfSync500Seconds,automaticCorrectionCount:result.metrics?.automaticCorrectionCount,
-      automaticCorrectionMagnitudeMs:result.metrics?.automaticCorrectionMagnitudeMs,correctionDutyCycle:result.metrics?.correctionDutyCycle,
-      rateAdjustedSeconds:result.metrics?.rateAdjustedSeconds,rateAdjustmentSeconds:result.metrics?.rateAdjustmentSeconds,
-      presentationMeasuredSeconds:result.metrics?.presentationMeasuredSeconds,positionMeasuredSeconds:result.metrics?.positionMeasuredSeconds,
-      bufferingSeconds:result.metrics?.bufferingSeconds,clockValid:timing.valid,clockAgeMs:timing.clockAgeMs,
-      clockUncertaintyMs:timing.clockUncertaintyMs});
-    lastQualityDiagnosticAt=Date.now();
+  const timing = playbackClock.read(),
+    at = performance.now();
+  const clockReliable = syncQualityClockUsable(timing);
+  if (!clockReliable) syncQuality.breakSample(at);
+  const isBuffering = playerWaiting || (!video.paused && video.readyState < 3);
+  const shouldCountBuffer = isBuffering && syncQualityBufferEligible(timing, at);
+  if (shouldCountBuffer && !syncQualityBuffering)
+    syncQualityBuffering = syncQuality.startBuffer({ at, eligible: true });
+  else if (!shouldCountBuffer && syncQualityBuffering) {
+    syncQuality.endBuffer({ at });
+    syncQualityBuffering = false;
   }
-  if(result.updated||changed||Date.now()-lastSyncQualityPublishAt>=5000)
-    sendSyncQuality(result.status,result.score,result.confidence,result.reason,result.metrics?.measurementFreshnessMs);
+  const playbackStatus =
+    playbackError || video.error
+      ? 'error'
+      : !state?.mediaUrl || state.waitingForReady || probing || readyVersion !== state?.mediaVersion
+        ? 'starting'
+        : state.state.paused || video.paused || video.ended
+          ? 'paused'
+          : video.seeking
+            ? 'seeking'
+            : isBuffering
+              ? 'buffering'
+              : 'playing';
+  sampleSyncQuality(timing, at);
+  const result = syncQuality.refresh({
+    at,
+    clockValid: timing.valid,
+    clockAgeMs: timing.clockAgeMs,
+    clockUncertaintyMs: timing.clockUncertaintyMs,
+    playbackStatus,
+  });
+  const changed =
+    result.status !== publishedSyncQualityStatus ||
+    result.confidence !== publishedSyncQualityConfidence ||
+    result.reason !== publishedSyncQualityReason;
+  if (result.updated || changed || Date.now() - lastQualityDiagnosticAt >= 10000) {
+    diagnostics.record('sync-quality', {
+      qualityStatus: result.status,
+      qualityConfidence: result.confidence,
+      qualityReason: result.reason,
+      rawQualityScore: result.rawScore,
+      smoothedQualityScore: result.lastScore,
+      lastKnownQualityLevel: result.lastLevel,
+      qualityMeasurementFreshnessMs: result.metrics?.measurementFreshnessMs,
+      qualityMeasurementSource: result.metrics?.latestSource,
+      qualitySampleCount: result.metrics?.sampleCount,
+      measuredPlaybackSeconds: result.metrics?.measuredSeconds,
+      outOfSync250Seconds: result.metrics?.outOfSync250Seconds,
+      outOfSync500Seconds: result.metrics?.outOfSync500Seconds,
+      automaticCorrectionCount: result.metrics?.automaticCorrectionCount,
+      automaticCorrectionMagnitudeMs: result.metrics?.automaticCorrectionMagnitudeMs,
+      correctionDutyCycle: result.metrics?.correctionDutyCycle,
+      rateAdjustedSeconds: result.metrics?.rateAdjustedSeconds,
+      rateAdjustmentSeconds: result.metrics?.rateAdjustmentSeconds,
+      presentationMeasuredSeconds: result.metrics?.presentationMeasuredSeconds,
+      positionMeasuredSeconds: result.metrics?.positionMeasuredSeconds,
+      bufferingSeconds: result.metrics?.bufferingSeconds,
+      clockValid: timing.valid,
+      clockAgeMs: timing.clockAgeMs,
+      clockUncertaintyMs: timing.clockUncertaintyMs,
+    });
+    lastQualityDiagnosticAt = Date.now();
+  }
+  if (result.updated || changed || Date.now() - lastSyncQualityPublishAt >= 5000)
+    sendSyncQuality(
+      result.status,
+      result.score,
+      result.confidence,
+      result.reason,
+      result.metrics?.measurementFreshnessMs,
+    );
 }
-const syncReady=import('./watch-sync.mjs').then(({createSync})=>{
-  sync=createSync({video,timing:uburoomTiming,playback:uburoomPlayback,clock:playbackClock,presentation:presentationTiming,
-    read:()=>({state,selected,mediaSource,receivedAt,probing,playbackError,playerWaiting,hlsNetworkFailure,
-      autoplayBlocked,readyVersion,syncCorrectionMode}),
-    expected,decodedFrames,unlockLocal,reportReadiness,render:renderTransport,checkFrames:checkVideoFrames,sample:diagnosticSample,
-    correction:event=>syncQuality.recordCorrection({at:performance.now(),magnitudeMs:event.magnitudeMs,kind:event.kind}),
-    correctionEligible:()=>performance.now()-lastPresentationBreak>=2000&&performance.now()>=syncQualitySettleUntil&&!sync?.timelinePending,
-    error:message=>{playbackError=message;fail(message);},
-    playing:(version,blocked)=>{if(version!==undefined)readyVersion=version;autoplayBlocked=blocked;},
-    visibility:()=>document.visibilityState,online:()=>navigator.onLine,
-    repeat:(callback,delay)=>setInterval(callback,delay),cancelRepeat:timer=>clearInterval(timer)});
+const syncReady = import('./watch-sync.mjs').then(({ createSync }) => {
+  sync = createSync({
+    video,
+    timing: uburoomTiming,
+    playback: uburoomPlayback,
+    clock: playbackClock,
+    presentation: presentationTiming,
+    read: () => ({
+      state,
+      selected,
+      mediaSource,
+      receivedAt,
+      probing,
+      playbackError,
+      playerWaiting,
+      hlsNetworkFailure,
+      autoplayBlocked,
+      readyVersion,
+      syncCorrectionMode,
+    }),
+    expected,
+    decodedFrames,
+    unlockLocal,
+    reportReadiness,
+    render: renderTransport,
+    checkFrames: checkVideoFrames,
+    sample: diagnosticSample,
+    correction: event =>
+      syncQuality.recordCorrection({ at: performance.now(), magnitudeMs: event.magnitudeMs, kind: event.kind }),
+    correctionEligible: () =>
+      performance.now() - lastPresentationBreak >= 2000 &&
+      performance.now() >= syncQualitySettleUntil &&
+      !sync?.timelinePending,
+    error: message => {
+      playbackError = message;
+      fail(message);
+    },
+    playing: (version, blocked) => {
+      if (version !== undefined) readyVersion = version;
+      autoplayBlocked = blocked;
+    },
+    visibility: () => document.visibilityState,
+    online: () => navigator.onLine,
+    repeat: (callback, delay) => setInterval(callback, delay),
+    cancelRepeat: timer => clearInterval(timer),
+  });
 });
-const soakMode=params.get('soak')==='1', diagnostics = uburoomDiagnostics.create({soak:soakMode});
+const soakMode = params.get('soak') === '1',
+  diagnostics = uburoomDiagnostics.create({ soak: soakMode });
 // Player helpers in other files report timings here; the recorder drops anything it does not allow.
-globalThis.uburoomTrace=(event,fields)=>diagnostics.record(event,fields);
-for(const event of ['error','unhandledrejection'])window.addEventListener(event,()=>diagnostics.record('page-error'));
+globalThis.uburoomTrace = (event, fields) => diagnostics.record(event, fields);
+for (const event of ['error', 'unhandledrejection'])
+  window.addEventListener(event, () => diagnostics.record('page-error'));
 let soak;
-$('soak-start').hidden=!soakMode;
-$('soak-status').hidden=!soakMode;
-$('soak-start').onclick=()=>{
-  if(soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||video.paused||video.readyState<3)return;
-  soak={room:selected,media:state.mediaVersion,startedAt:performance.now(),finishing:false,done:false};
-  diagnosticSample('soak-start');$('soak-status').textContent='Two-hour soak recording locally. Keep this tab open.';
+$('soak-start').hidden = !soakMode;
+$('soak-status').hidden = !soakMode;
+$('soak-start').onclick = () => {
+  if (
+    soak ||
+    !state?.mediaUrl ||
+    state.visibility !== 'private' ||
+    state.viewers !== 1 ||
+    pending ||
+    video.paused ||
+    video.readyState < 3
+  )
+    return;
+  soak = { room: selected, media: state.mediaVersion, startedAt: performance.now(), finishing: false, done: false };
+  diagnosticSample('soak-start');
+  $('soak-status').textContent = 'Two-hour soak recording locally. Keep this tab open.';
 };
 async function finishSoak(reason) {
-  if(!soak||soak.finishing||soak.done)return;
-  soak.finishing=true;let cleanup=false;
-  const same=()=>selected===soak.room&&state?.mediaVersion===soak.media&&state.visibility==='private'&&state.viewers===1&&state.canManage;
+  if (!soak || soak.finishing || soak.done) return;
+  soak.finishing = true;
+  let cleanup = false;
+  const same = () =>
+    selected === soak.room &&
+    state?.mediaVersion === soak.media &&
+    state.visibility === 'private' &&
+    state.viewers === 1 &&
+    state.canManage;
   try {
-    if(reason==='complete'&&same()&&!pending){
-      await execute({action:'media.pause'});
-      if(same()&&!pending){const id=selected;pending=true;try{await api('/api/watch/rooms/'+id+'/leave',{viewerId});
-        if(selected===id){selected=undefined;browseRoom=undefined;unavailable('','leave');await refreshRooms();cleanup=true;}}
-        finally{pending=false;renderTransport();}}
+    if (reason === 'complete' && same() && !pending) {
+      await execute({ action: 'media.pause' });
+      if (same() && !pending) {
+        const id = selected;
+        pending = true;
+        try {
+          await api('/api/watch/rooms/' + id + '/leave', { viewerId });
+          if (selected === id) {
+            selected = undefined;
+            browseRoom = undefined;
+            unavailable('', 'leave');
+            await refreshRooms();
+            cleanup = true;
+          }
+        } finally {
+          pending = false;
+          renderTransport();
+        }
+      }
     }
-  } catch { /* Export even if the current authorized room cannot be cleaned up. */ }
-  finally {
-    soak.done=true;diagnosticSample('soak-end',{reason,cleanup,elapsedMs:performance.now()-soak.startedAt});
+  } catch {
+    /* Export even if the current authorized room cannot be cleaned up. */
+  } finally {
+    soak.done = true;
+    diagnosticSample('soak-end', { reason, cleanup, elapsedMs: performance.now() - soak.startedAt });
     saveDiagnostics('uburoom-playback-soak.json');
-    $('soak-status').textContent=reason==='complete'?'Soak complete. Diagnostic download requested'+(cleanup?'; test room closed.':'; check playback cleanup.'):'Soak stopped because the room changed. Diagnostic download requested.';
+    $('soak-status').textContent =
+      reason === 'complete'
+        ? 'Soak complete. Diagnostic download requested' +
+          (cleanup ? '; test room closed.' : '; check playback cleanup.')
+        : 'Soak stopped because the room changed. Diagnostic download requested.';
   }
 }
-const controlProbe=params.get('playbackProbe')==='1'?uburoomDiagnostics.controlProbe():undefined;
-let probeRunning=false;
-$('probe-control').hidden=!controlProbe;
-$('probe-control').onclick=()=>{
-  if(!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||!controlProbe?.start(selected))return;
-  probeRunning=true;diagnosticSample('probe-start',{delayMs:6000});
+const controlProbe = params.get('playbackProbe') === '1' ? uburoomDiagnostics.controlProbe() : undefined;
+let probeRunning = false;
+$('probe-control').hidden = !controlProbe;
+$('probe-control').onclick = () => {
+  if (
+    !state?.mediaUrl ||
+    state.visibility !== 'private' ||
+    state.viewers !== 1 ||
+    pending ||
+    !controlProbe?.start(selected)
+  )
+    return;
+  probeRunning = true;
+  diagnosticSample('probe-start', { delayMs: 6000 });
   transport?.interrupt(6000);
 };
-function diagnosticSample(event='sample',fields={}) {
+function diagnosticSample(event = 'sample', fields = {}) {
   // Diagnostics must never interrupt playback, even during MediaSource teardown.
   try {
-    const quality=video.getVideoPlaybackQuality?.(), tracks=state?.tracks, rect=video.getBoundingClientRect(), timing=playbackClock.read();
-    const sharedTarget=uburoomTiming.target(state,timing.serverTime);
-    const control=sync?.control;
-    diagnostics.record(event,{position:video.currentTime,target:expected(),ready:video.readyState,network:video.networkState,
-      ...timing,clockValid:timing.valid,sharedTarget,arrivalTarget:arrivalExpected(),timelineRevision:state?.revision,
-      positionErrorMs:sharedTarget===undefined?undefined:(video.currentTime-sharedTarget)*1000,
-      paused:video.paused,seeking:video.seeking,waiting:playerWaiting,rate:video.playbackRate,syncMode:syncCorrectionMode,
-      ranges:Array.from({length:Math.min(video.buffered.length,8)},(_,i)=>[video.buffered.start(i),video.buffered.end(i)]),
-      bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),frames:quality?.totalVideoFrames,dropped:quality?.droppedVideoFrames,
-      decoded:quality?quality.totalVideoFrames-quality.droppedVideoFrames:videoFrames,
-      jsHeapUsed:performance.memory?.usedJSHeapSize,jsHeapTotal:performance.memory?.totalJSHeapSize,jsHeapLimit:performance.memory?.jsHeapSizeLimit,
-      callbackFrames:videoFrames,width:video.videoWidth,height:video.videoHeight,mediaError:video.error?.code,
-      online:navigator.onLine,visibility:document.visibilityState,inViewport:rect.width>0&&rect.height>0&&rect.bottom>0&&rect.top<innerHeight&&rect.right>0&&rect.left<innerWidth,
-      viewportFraction:rect.width>0&&rect.height>0?Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top))/(rect.width*rect.height):0,
-      format:state?.format,
-      audio:tracks?.audio.findIndex(row=>row.id===tracks.audioId),subtitle:tracks?.subtitles.findIndex(row=>row.id===tracks.subtitleId),
-      delivery:tracks?.subtitles.find(row=>row.id===tracks.subtitleId)?.delivery || 'off',
-      controlSource:control?.source,
-      controlErrorMs:Number.isFinite(control?.error)?Math.round(control.error*1000):undefined,
-      presentationAgeMs:Number.isFinite(control?.presentationAgeMs)?control.presentationAgeMs:(presentationTiming.read?.(performance.now())?.ageMs),
-      presentationDivergenceMs:control?.divergenceMs,
-      presentationReason:control?.reason,...fields});
-  } catch { /* A missing diagnostic sample must not change player behavior. */ }
+    const quality = video.getVideoPlaybackQuality?.(),
+      tracks = state?.tracks,
+      rect = video.getBoundingClientRect(),
+      timing = playbackClock.read();
+    const sharedTarget = uburoomTiming.target(state, timing.serverTime);
+    const control = sync?.control;
+    diagnostics.record(event, {
+      position: video.currentTime,
+      target: expected(),
+      ready: video.readyState,
+      network: video.networkState,
+      ...timing,
+      clockValid: timing.valid,
+      sharedTarget,
+      arrivalTarget: arrivalExpected(),
+      timelineRevision: state?.revision,
+      positionErrorMs: sharedTarget === undefined ? undefined : (video.currentTime - sharedTarget) * 1000,
+      paused: video.paused,
+      seeking: video.seeking,
+      waiting: playerWaiting,
+      rate: video.playbackRate,
+      syncMode: syncCorrectionMode,
+      ranges: Array.from({ length: Math.min(video.buffered.length, 8) }, (_, i) => [
+        video.buffered.start(i),
+        video.buffered.end(i),
+      ]),
+      bufferAhead: uburoomPlayback.bufferedAhead(video.buffered, video.currentTime),
+      frames: quality?.totalVideoFrames,
+      dropped: quality?.droppedVideoFrames,
+      decoded: quality ? quality.totalVideoFrames - quality.droppedVideoFrames : videoFrames,
+      jsHeapUsed: performance.memory?.usedJSHeapSize,
+      jsHeapTotal: performance.memory?.totalJSHeapSize,
+      jsHeapLimit: performance.memory?.jsHeapSizeLimit,
+      callbackFrames: videoFrames,
+      width: video.videoWidth,
+      height: video.videoHeight,
+      mediaError: video.error?.code,
+      online: navigator.onLine,
+      visibility: document.visibilityState,
+      inViewport:
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.top < innerHeight &&
+        rect.right > 0 &&
+        rect.left < innerWidth,
+      viewportFraction:
+        rect.width > 0 && rect.height > 0
+          ? (Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left)) *
+              Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top))) /
+            (rect.width * rect.height)
+          : 0,
+      format: state?.format,
+      audio: tracks?.audio.findIndex(row => row.id === tracks.audioId),
+      subtitle: tracks?.subtitles.findIndex(row => row.id === tracks.subtitleId),
+      delivery: tracks?.subtitles.find(row => row.id === tracks.subtitleId)?.delivery || 'off',
+      controlSource: control?.source,
+      controlErrorMs: Number.isFinite(control?.error) ? Math.round(control.error * 1000) : undefined,
+      presentationAgeMs: Number.isFinite(control?.presentationAgeMs)
+        ? control.presentationAgeMs
+        : presentationTiming.read?.(performance.now())?.ageMs,
+      presentationDivergenceMs: control?.divergenceMs,
+      presentationReason: control?.reason,
+      ...fields,
+    });
+  } catch {
+    /* A missing diagnostic sample must not change player behavior. */
+  }
 }
-for(const event of ['playing','pause','waiting','stalled','seeking','seeked','ended','error','emptied','loadstart','loadedmetadata','canplay','abort','ratechange'])
-  video.addEventListener(event,()=>{
-    if(event==='playing')resumeAudioContext();
-    if(event==='waiting'&&disconnectExtended)fullPlayerClear();
-    if(['pause','seeking','emptied'].includes(event))choppyDetector.interrupt();
-    if(event==='waiting')choppyDetector.buffering();
+for (const event of [
+  'playing',
+  'pause',
+  'waiting',
+  'stalled',
+  'seeking',
+  'seeked',
+  'ended',
+  'error',
+  'emptied',
+  'loadstart',
+  'loadedmetadata',
+  'canplay',
+  'abort',
+  'ratechange',
+])
+  video.addEventListener(event, () => {
+    if (event === 'playing') resumeAudioContext();
+    if (event === 'waiting' && disconnectExtended) fullPlayerClear();
+    if (['pause', 'seeking', 'emptied'].includes(event)) choppyDetector.interrupt();
+    if (event === 'waiting') choppyDetector.buffering();
     // Decoding has resumed after refill. Permit one alignment to the current
     // room target even when a long outage left that target outside this buffer.
     sync?.event(event);
-    if(['playing','pause','waiting','seeking','emptied'].includes(event))lastPresentationBreak=performance.now();
+    if (['playing', 'pause', 'waiting', 'seeking', 'emptied'].includes(event))
+      lastPresentationBreak = performance.now();
     diagnosticSample(event);
   });
-for(const event of ['online','offline','pagehide'])window.addEventListener(event,()=>{sync?.event(event);diagnosticSample(event);});
-document.addEventListener('visibilitychange',()=>{choppyDetector.interrupt();sync?.event('visibilitychange');diagnosticSample('visibilitychange');});
-setInterval(()=>{
-  if(probeRunning&&!controlProbe.active()){probeRunning=false;diagnosticSample('probe-end');}
-  $('probe-control').disabled=!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||!!controlProbe?.active();
-  $('soak-start').disabled=!!soak||!state?.mediaUrl||state.visibility!=='private'||state.viewers!==1||pending||video.paused||video.readyState<3;
-  if(selected || state || mediaSource)diagnosticSample();
-  if(soak&&!soak.finishing&&!soak.done){
-    if(selected!==soak.room||state&&state.mediaVersion!==soak.media)void finishSoak('source-changed');
-    else if(performance.now()-soak.startedAt>=7200000)void finishSoak('complete');
+for (const event of ['online', 'offline', 'pagehide'])
+  window.addEventListener(event, () => {
+    sync?.event(event);
+    diagnosticSample(event);
+  });
+document.addEventListener('visibilitychange', () => {
+  choppyDetector.interrupt();
+  sync?.event('visibilitychange');
+  diagnosticSample('visibilitychange');
+});
+setInterval(() => {
+  if (probeRunning && !controlProbe.active()) {
+    probeRunning = false;
+    diagnosticSample('probe-end');
   }
-},1000);
-function saveDiagnostics(filename='uburoom-playback-diagnostics.json') {
+  $('probe-control').disabled =
+    !state?.mediaUrl || state.visibility !== 'private' || state.viewers !== 1 || pending || !!controlProbe?.active();
+  $('soak-start').disabled =
+    !!soak ||
+    !state?.mediaUrl ||
+    state.visibility !== 'private' ||
+    state.viewers !== 1 ||
+    pending ||
+    video.paused ||
+    video.readyState < 3;
+  if (selected || state || mediaSource) diagnosticSample();
+  if (soak && !soak.finishing && !soak.done) {
+    if (selected !== soak.room || (state && state.mediaVersion !== soak.media)) void finishSoak('source-changed');
+    else if (performance.now() - soak.startedAt >= 7200000) void finishSoak('complete');
+  }
+}, 1000);
+function saveDiagnostics(filename = 'uburoom-playback-diagnostics.json') {
   diagnosticSample();
-  const url=URL.createObjectURL(new Blob([JSON.stringify(diagnostics.snapshot(),null,2)+'\n'],{type:'application/json'}));
-  const link=document.createElement('a');link.href=url;link.download=filename;link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(diagnostics.snapshot(), null, 2) + '\n'], { type: 'application/json' }),
+  );
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 // A short paste for bug reports: the last few minutes of player events, with one
 // sample every five seconds and no frame rows. Links are removed from error text.
-function diagnosticReport(minutes=5) {
+function diagnosticReport(minutes = 5) {
   diagnosticSample();
-  const snapshot=diagnostics.snapshot(),entries=diagnostics.entries({since:Date.now()-minutes*60000}),quiet=text=>String(text||'').replace(/\bhttps?:\/\/\S+/g,'[link]').slice(0,200)||undefined;
-  const tracks=state?.tracks,quality=video.getVideoPlaybackQuality?.();
-  return {report:'uburoom diagnostics',schema:1,minutes,createdAt:new Date().toISOString(),
-    browser:navigator.userAgent,screen:[screen.width,screen.height,devicePixelRatio],window:[innerWidth,innerHeight],
-    fullscreen:!!document.fullscreenElement,visibility:document.visibilityState,online:navigator.onLine,
-    player:{format:state?.format,quality:state?.quality,preferredQuality,subtitles:tracks?.subtitleDelivery||(tracks?.subtitleId?'text':'off'),
-      paused:video.paused,readyState:video.readyState,position:+video.currentTime.toFixed(2),target:+(expected()||0).toFixed(2),
-      bufferedAhead:+uburoomPlayback.bufferedAhead(video.buffered,video.currentTime).toFixed(2),size:[video.videoWidth,video.videoHeight],
-      frames:quality&&{total:quality.totalVideoFrames,dropped:quality.droppedVideoFrames},chunkSeconds:av1?.chunkTime&&+av1.chunkTime.toFixed(2),
-      held:!!heldStream,error:quiet(playbackError)},
-    connection:{attempt:transport?.connectionAttempt,id:transport?.connectionId},
-    discarded:{events:snapshot.discardedEvents,samples:snapshot.discardedSamples},entries};
+  const snapshot = diagnostics.snapshot(),
+    entries = diagnostics.entries({ since: Date.now() - minutes * 60000 }),
+    quiet = text =>
+      String(text || '')
+        .replace(/\bhttps?:\/\/\S+/g, '[link]')
+        .slice(0, 200) || undefined;
+  const tracks = state?.tracks,
+    quality = video.getVideoPlaybackQuality?.();
+  return {
+    report: 'uburoom diagnostics',
+    schema: 1,
+    minutes,
+    createdAt: new Date().toISOString(),
+    browser: navigator.userAgent,
+    screen: [screen.width, screen.height, devicePixelRatio],
+    window: [innerWidth, innerHeight],
+    fullscreen: !!document.fullscreenElement,
+    visibility: document.visibilityState,
+    online: navigator.onLine,
+    player: {
+      format: state?.format,
+      quality: state?.quality,
+      preferredQuality,
+      subtitles: tracks?.subtitleDelivery || (tracks?.subtitleId ? 'text' : 'off'),
+      paused: video.paused,
+      readyState: video.readyState,
+      position: +video.currentTime.toFixed(2),
+      target: +(expected() || 0).toFixed(2),
+      bufferedAhead: +uburoomPlayback.bufferedAhead(video.buffered, video.currentTime).toFixed(2),
+      size: [video.videoWidth, video.videoHeight],
+      frames: quality && { total: quality.totalVideoFrames, dropped: quality.droppedVideoFrames },
+      chunkSeconds: av1?.chunkTime && +av1.chunkTime.toFixed(2),
+      held: !!heldStream,
+      error: quiet(playbackError),
+    },
+    connection: { attempt: transport?.connectionAttempt, id: transport?.connectionId },
+    discarded: { events: snapshot.discardedEvents, samples: snapshot.discardedSamples },
+    entries,
+  };
 }
 // When the server keeps diagnostics, the player sends its rows in the background so
 // nobody has to copy a report. Each page load is its own stream; the server drops rows
 // it already has, so a retry or an overlapping final upload never duplicates them.
-const diagnosticUpload={stream:crypto.randomUUID(),after:0,busy:false};
-async function uploadDiagnostics(final=false) {
-  if(!config?.keepDiagnostics || !selected || diagnosticUpload.busy && !final)return;
-  const rows=diagnostics.entries({after:diagnosticUpload.after}).slice(0,final?120:2000);
-  if(!rows.length)return;
-  diagnosticUpload.busy=true;
+const diagnosticUpload = { stream: crypto.randomUUID(), after: 0, busy: false };
+async function uploadDiagnostics(final = false) {
+  if (!config?.keepDiagnostics || !selected || (diagnosticUpload.busy && !final)) return;
+  const rows = diagnostics.entries({ after: diagnosticUpload.after }).slice(0, final ? 120 : 2000);
+  if (!rows.length) return;
+  diagnosticUpload.busy = true;
   try {
-    await api('/api/watch/diagnostics',{roomId:selected,viewerId,stream:diagnosticUpload.stream,rows},{keepalive:final,timeoutMs:20000});
-    diagnosticUpload.after=Math.max(diagnosticUpload.after,rows.at(-1).sequence);
-  } catch {} finally {diagnosticUpload.busy=false;}
+    await api(
+      '/api/watch/diagnostics',
+      { roomId: selected, viewerId, stream: diagnosticUpload.stream, rows },
+      { keepalive: final, timeoutMs: 20000 },
+    );
+    diagnosticUpload.after = Math.max(diagnosticUpload.after, rows.at(-1).sequence);
+  } catch {
+  } finally {
+    diagnosticUpload.busy = false;
+  }
 }
-setInterval(()=>void uploadDiagnostics(),30000);
-window.addEventListener('pagehide',()=>void uploadDiagnostics(true));
-$('copy-diagnostics').prepend(uburoomIcons.icon(document,'copy'));
-$('copy-diagnostics').addEventListener('click',async()=>{
+setInterval(() => void uploadDiagnostics(), 30000);
+window.addEventListener('pagehide', () => void uploadDiagnostics(true));
+$('copy-diagnostics').prepend(uburoomIcons.icon(document, 'copy'));
+$('copy-diagnostics').addEventListener('click', async () => {
   const btn = $('copy-diagnostics');
-  const text=JSON.stringify(diagnosticReport());
+  const text = JSON.stringify(diagnosticReport());
   try {
     await navigator.clipboard.writeText(text);
     if (globalThis.uburoomPopover) uburoomPopover.show(btn, { text: 'Report copied', state: 'success' });
-    else toasts.show('diagnostic-report',{title:'Report copied',hint:'Paste it in a message to the host.',symbol:'check',duration:4000});
+    else
+      toasts.show('diagnostic-report', {
+        title: 'Report copied',
+        hint: 'Paste it in a message to the host.',
+        symbol: 'check',
+        duration: 4000,
+      });
   } catch {
-    const url=URL.createObjectURL(new Blob([text+'\n'],{type:'application/json'})),link=document.createElement('a');
-    link.href=url;link.download='uburoom-diagnostic-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    if (globalThis.uburoomPopover) uburoomPopover.show(btn, { text: 'Saved report as file', state: 'normal', symbol: 'copy' });
-    else toasts.show('diagnostic-report',{type:'error',title:"Couldn't copy",hint:'Saved the report as a file instead.',symbol:'copy',duration:6000});
+    const url = URL.createObjectURL(new Blob([text + '\n'], { type: 'application/json' })),
+      link = document.createElement('a');
+    link.href = url;
+    link.download = 'uburoom-diagnostic-report.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (globalThis.uburoomPopover)
+      uburoomPopover.show(btn, { text: 'Saved report as file', state: 'normal', symbol: 'copy' });
+    else
+      toasts.show('diagnostic-report', {
+        type: 'error',
+        title: "Couldn't copy",
+        hint: 'Saved the report as a file instead.',
+        symbol: 'copy',
+        duration: 6000,
+      });
   }
 });
 // The server checks each video for hosts. They read it in Player settings and get one
 // toast per video when it finds a problem or warning. Viewers never request it.
-const videoCheck={media:undefined,report:undefined,toasted:undefined,timer:undefined};
-const VIDEO_CHECK_ICONS={problem:'alert-triangle',warning:'alert-triangle',info:'info-circle',ok:'check'};
-async function loadVideoCheck(refresh=false) {
+const videoCheck = { media: undefined, report: undefined, toasted: undefined, timer: undefined };
+const VIDEO_CHECK_ICONS = { problem: 'alert-triangle', warning: 'alert-triangle', info: 'info-circle', ok: 'check' };
+async function loadVideoCheck(refresh = false) {
   clearTimeout(videoCheck.timer);
-  const room=selected,media=state?.mediaVersion;
-  if(!state?.canManage || !state.mediaId || !room)return renderVideoCheck();
+  const room = selected,
+    media = state?.mediaVersion;
+  if (!state?.canManage || !state.mediaId || !room) return renderVideoCheck();
   let report;
-  try { report=await api('/api/watch/rooms/'+room+'/check'+(refresh?'?refresh=1':'')); } catch { return; }
-  if(selected!==room || state?.mediaVersion!==media)return;
-  videoCheck.report=report; renderVideoCheck();
-  if(report.checking)videoCheck.timer=setTimeout(()=>void loadVideoCheck(),5000);
-  else if(['problem','warning'].includes(report.level) && videoCheck.toasted!==media) {
-    videoCheck.toasted=media;
-    toasts.show('video-check',{type:report.level==='problem'?'error':'normal',symbol:'alert-triangle',duration:15000,
-      title:report.level==='problem'?'Video check found a problem':'Video check found a warning',hint:report.items[0]?.title||'',
-      action:{label:'View',run:()=>{playerUI.openDialog();$('video-check').scrollIntoView({block:'center'});}}});
+  try {
+    report = await api('/api/watch/rooms/' + room + '/check' + (refresh ? '?refresh=1' : ''));
+  } catch {
+    return;
+  }
+  if (selected !== room || state?.mediaVersion !== media) return;
+  videoCheck.report = report;
+  renderVideoCheck();
+  if (report.checking) videoCheck.timer = setTimeout(() => void loadVideoCheck(), 5000);
+  else if (['problem', 'warning'].includes(report.level) && videoCheck.toasted !== media) {
+    videoCheck.toasted = media;
+    toasts.show('video-check', {
+      type: report.level === 'problem' ? 'error' : 'normal',
+      symbol: 'alert-triangle',
+      duration: 15000,
+      title: report.level === 'problem' ? 'Video check found a problem' : 'Video check found a warning',
+      hint: report.items[0]?.title || '',
+      action: {
+        label: 'View',
+        run: () => {
+          playerUI.openDialog();
+          $('video-check').scrollIntoView({ block: 'center' });
+        },
+      },
+    });
   }
 }
 function renderVideoCheck() {
-  const report=state?.canManage && state.mediaVersion===videoCheck.media ? videoCheck.report : undefined;
-  $('video-check').hidden=!report;
-  if(!report)return;
-  const list=$('video-check-items');list.replaceChildren();
-  for(const item of report.items) {
-    const row=document.createElement('li');row.dataset.level=item.level;
-    const icon=uburoomIcons.icon(document,VIDEO_CHECK_ICONS[item.level]||'info-circle');icon.setAttribute('aria-hidden','true');
-    const text=document.createElement('div'),title=document.createElement('p');title.className='video-check-title';title.textContent=item.title;text.append(title);
-    if(item.detail){const detail=document.createElement('p');detail.className='hint';detail.textContent=item.detail;text.append(detail);}
-    row.append(icon,text);list.append(row);
+  const report = state?.canManage && state.mediaVersion === videoCheck.media ? videoCheck.report : undefined;
+  $('video-check').hidden = !report;
+  if (!report) return;
+  const list = $('video-check-items');
+  list.replaceChildren();
+  for (const item of report.items) {
+    const row = document.createElement('li');
+    row.dataset.level = item.level;
+    const icon = uburoomIcons.icon(document, VIDEO_CHECK_ICONS[item.level] || 'info-circle');
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('div'),
+      title = document.createElement('p');
+    title.className = 'video-check-title';
+    title.textContent = item.title;
+    text.append(title);
+    if (item.detail) {
+      const detail = document.createElement('p');
+      detail.className = 'hint';
+      detail.textContent = item.detail;
+      text.append(detail);
+    }
+    row.append(icon, text);
+    list.append(row);
   }
-  $('video-check-refresh').disabled=!!report.checking;
+  $('video-check-refresh').disabled = !!report.checking;
 }
-$('video-check-refresh').prepend(uburoomIcons.icon(document,'refresh'));
-$('video-check-refresh').addEventListener('click',()=>{videoCheck.toasted=state?.mediaVersion;void loadVideoCheck(true);});
-let subtitleLoadingTimer, subtitleLoadingActive = false;
+$('video-check-refresh').prepend(uburoomIcons.icon(document, 'refresh'));
+$('video-check-refresh').addEventListener('click', () => {
+  videoCheck.toasted = state?.mediaVersion;
+  void loadVideoCheck(true);
+});
+let subtitleLoadingTimer,
+  subtitleLoadingActive = false;
 function setSubtitleLoading(loading) {
   const cc = $('captions-toggle');
   if (!loading) {
     subtitleLoadingActive = false;
-    clearTimeout(subtitleLoadingTimer); subtitleLoadingTimer = undefined;
-    if (cc) { cc.dataset.loading = 'false'; cc.removeAttribute('aria-busy'); }
+    clearTimeout(subtitleLoadingTimer);
+    subtitleLoadingTimer = undefined;
+    if (cc) {
+      cc.dataset.loading = 'false';
+      cc.removeAttribute('aria-busy');
+    }
     return;
   }
   if (subtitleLoadingActive) return;
   subtitleLoadingActive = true;
   subtitleLoadingTimer = setTimeout(() => {
     subtitleLoadingTimer = undefined;
-    if (subtitleLoadingActive && cc) { cc.dataset.loading = 'true'; cc.setAttribute('aria-busy', 'true'); }
+    if (subtitleLoadingActive && cc) {
+      cc.dataset.loading = 'true';
+      cc.setAttribute('aria-busy', 'true');
+    }
   }, 250);
 }
 let lastBurnFallbackKey = '';
-const captions = new uburoomSubtitles(video, value => {
-  trackNotice = value.message; trackNoticeError = value.error;
-  setSubtitleLoading(!!value.loading);
-  renderTracks();
-  if (value.error && value.burnFallback && state?.tracks?.subtitleId && (state.tracks.subtitleMode || 'auto') === 'auto') {
-    const key = `${state.mediaVersion}:${state.tracks.subtitleId}`;
-    if (lastBurnFallbackKey !== key) {
-      lastBurnFallbackKey = key;
-      void changeTrack({ subtitleMode: 'burn' }, { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion });
+const captions = new uburoomSubtitles(
+  video,
+  value => {
+    trackNotice = value.message;
+    trackNoticeError = value.error;
+    setSubtitleLoading(!!value.loading);
+    renderTracks();
+    if (
+      value.error &&
+      value.burnFallback &&
+      state?.tracks?.subtitleId &&
+      (state.tracks.subtitleMode || 'auto') === 'auto'
+    ) {
+      const key = `${state.mediaVersion}:${state.tracks.subtitleId}`;
+      if (lastBurnFallbackKey !== key) {
+        lastBurnFallbackKey = key;
+        void changeTrack(
+          { subtitleMode: 'burn' },
+          { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion },
+        );
+      }
     }
-  }
-}, mediaTime => (sync.timelinePending || video.readyState < 1) ? expected() : (Number.isFinite(mediaTime) ? mediaTime : video.currentTime));
-subtitleLayout=()=>captions.appearance({position:playerPreferences.subtitlePosition,size:playerPreferences.subtitleSize});
+  },
+  mediaTime =>
+    sync.timelinePending || video.readyState < 1
+      ? expected()
+      : Number.isFinite(mediaTime)
+        ? mediaTime
+        : video.currentTime,
+);
+subtitleLayout = () =>
+  captions.appearance({ position: playerPreferences.subtitlePosition, size: playerPreferences.subtitleSize });
 subtitleLayout();
-const subtitleMode=$('subtitle-mode');
+const subtitleMode = $('subtitle-mode');
 video.volume = playerPreferences.volume / 100;
 video.muted = playerPreferences.muted;
-function glyph(id, symbol) { $(id)?.replaceChildren(uburoomIcons.icon(document, symbol)); }
-for (const pair of [['refresh','refresh'],['room-symbol','armchair-2'],['roomies-symbol','oomark'],['fullscreen','fullscreen'],
-  ['join-playback','play'],['player-play','play'],['previous','start'],['seek-back','back'],['seek-forward','forward'],['next','end'],['player-mute','volume'],
-  ['theater','theater'],['pip','pip'],['tracks-open','settings'],['tracks-close','close'],['drawer-symbol','drawer'],['media-symbol','video'],['drawer-close','close'],['admin-mode','admin'],['browser-symbol','open'],['options-chevron','chevron'],['skip-marker-icon','player-track-next'],]) glyph(...pair);
+function glyph(id, symbol) {
+  $(id)?.replaceChildren(uburoomIcons.icon(document, symbol));
+}
+for (const pair of [
+  ['refresh', 'refresh'],
+  ['room-symbol', 'armchair-2'],
+  ['roomies-symbol', 'oomark'],
+  ['fullscreen', 'fullscreen'],
+  ['join-playback', 'play'],
+  ['player-play', 'play'],
+  ['previous', 'start'],
+  ['seek-back', 'back'],
+  ['seek-forward', 'forward'],
+  ['next', 'end'],
+  ['player-mute', 'volume'],
+  ['theater', 'theater'],
+  ['pip', 'pip'],
+  ['tracks-open', 'settings'],
+  ['tracks-close', 'close'],
+  ['drawer-symbol', 'drawer'],
+  ['media-symbol', 'video'],
+  ['drawer-close', 'close'],
+  ['admin-mode', 'admin'],
+  ['browser-symbol', 'open'],
+  ['options-chevron', 'chevron'],
+  ['skip-marker-icon', 'player-track-next'],
+])
+  glyph(...pair);
 const toasts = uburoomToasts.create($('watch-toasts'), { stage: $('stage') });
 function renderNotifications() {
   const button = $('notifications-toggle');
@@ -609,37 +1218,103 @@ function renderNotifications() {
   button.title = toasts.enabled ? 'Hide notifications' : 'Show notifications';
   button.replaceChildren(uburoomIcons.icon(document, toasts.enabled ? 'bell' : 'bell-off'));
 }
-$('notifications-toggle').onclick = () => { toasts.setEnabled(!toasts.enabled); renderNotifications(); };
+$('notifications-toggle').onclick = () => {
+  toasts.setEnabled(!toasts.enabled);
+  renderNotifications();
+};
 renderNotifications();
-const roomEvents=uburoomEvents.mount({request:api});
-const roomEntry=()=>{const {viewer,...preferences}=viewerPreferences();return {viewerId:viewer,...preferences};};
-const lobbyEvents=uburoomLobbyEvents.mount({request:api,schedule:options=>roomEvents.open(options),
-  join:async id=>{await selectRoom(id);if(!state||selected!==id)throw new Error('Room unavailable');returnToVideo();},
-  changed:()=>{renderScheduleButton();resolveWait();renderWaiting();},
-  reopen:async id=>{const opened=await api('/api/watch/rooms/'+id+'/reopen',roomEntry(),{timeoutMs:35000});await selectRoom(opened.id,opened.state);if(!state)throw new Error('Room unavailable');returnToVideo();}});
+const roomEvents = uburoomEvents.mount({ request: api });
+const roomEntry = () => {
+  const { viewer, ...preferences } = viewerPreferences();
+  return { viewerId: viewer, ...preferences };
+};
+const lobbyEvents = uburoomLobbyEvents.mount({
+  request: api,
+  schedule: options => roomEvents.open(options),
+  join: async id => {
+    await selectRoom(id);
+    if (!state || selected !== id) throw new Error('Room unavailable');
+    returnToVideo();
+  },
+  changed: () => {
+    renderScheduleButton();
+    resolveWait();
+    renderWaiting();
+  },
+  reopen: async id => {
+    const opened = await api('/api/watch/rooms/' + id + '/reopen', roomEntry(), { timeoutMs: 35000 });
+    await selectRoom(opened.id, opened.state);
+    if (!state) throw new Error('Room unavailable');
+    returnToVideo();
+  },
+});
 // The room header calendar button needs both hosting and the server's scheduling tier.
-function renderScheduleButton(){$('room-schedule').hidden=!state?.durable||!state.canManage||!lobbyEvents.canSchedule();}
-const roomShare=uburoomShare.mount({request:api,share:shareInvite,openLink:async url=>{
-  if(activity&&sdk){const result=await sdk.commands.openExternalLink({url});if(!result.opened)throw new Error('Discord could not open the post.');}
-  else window.open(url,'_blank','noopener,noreferrer');
-}});
-const roomUI = uburoomRoomUI.mount({ request:api,getState:()=>state,getMe:()=>me,execute,share:(invite,name,id)=>roomShare.open(id||selected),
-  join:async (id,next)=>{await selectRoom(id,next);if(!state)throw new Error('Room unavailable');returnToVideo();},entry:roomEntry,
-  changed:async()=>{await refreshRooms();if(selected)await refreshState();},showChooser:section=>chooseRoom(undefined,section),fail,
-  createDraft:options=>createRoom(options),draftChanged:options=>{ $('room-name').value = roomNameDraft = options.name; $('room-create-visibility').value = roomVisibilityDraft = options.visibility; const preset = uburoomRoomUI.presetName(options.permissions); $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset; } });
+function renderScheduleButton() {
+  $('room-schedule').hidden = !state?.durable || !state.canManage || !lobbyEvents.canSchedule();
+}
+const roomShare = uburoomShare.mount({
+  request: api,
+  share: shareInvite,
+  openLink: async url => {
+    if (activity && sdk) {
+      const result = await sdk.commands.openExternalLink({ url });
+      if (!result.opened) throw new Error('Discord could not open the post.');
+    } else window.open(url, '_blank', 'noopener,noreferrer');
+  },
+});
+const roomUI = uburoomRoomUI.mount({
+  request: api,
+  getState: () => state,
+  getMe: () => me,
+  execute,
+  share: (invite, name, id) => roomShare.open(id || selected),
+  join: async (id, next) => {
+    await selectRoom(id, next);
+    if (!state) throw new Error('Room unavailable');
+    returnToVideo();
+  },
+  entry: roomEntry,
+  changed: async () => {
+    await refreshRooms();
+    if (selected) await refreshState();
+  },
+  showChooser: section => chooseRoom(undefined, section),
+  fail,
+  createDraft: options => createRoom(options),
+  draftChanged: options => {
+    $('room-name').value = roomNameDraft = options.name;
+    $('room-create-visibility').value = roomVisibilityDraft = options.visibility;
+    const preset = uburoomRoomUI.presetName(options.permissions);
+    $('room-create-preset').value = roomPresetDraft = preset === 'custom' ? '' : preset;
+  },
+});
 async function fetchArtwork(path, signal) {
-  const response = await fetch(path, { signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]), headers: token ? { Authorization: 'Bearer ' + token } : {} });
+  const response = await fetch(path, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]),
+    headers: token ? { Authorization: 'Bearer ' + token } : {},
+  });
   if (!response.ok) throw new Error('Artwork unavailable');
   return response.blob();
 }
 const queueUI = uburoomQueueUI.mount($('queue-content'), {
-  request:api,getState:()=>state,getMe:()=>me,fail,execute,getSettingsState:()=>roomUI.playbackContext(),saveSettings:change=>roomUI.savePlayback(change),
-  openSettings:()=>roomUI.open(state.id,'playback'),
+  request: api,
+  getState: () => state,
+  getMe: () => me,
+  fail,
+  execute,
+  getSettingsState: () => roomUI.playbackContext(),
+  saveSettings: change => roomUI.savePlayback(change),
+  openSettings: () => roomUI.open(state.id, 'playback'),
   browseMedia,
-  serverTime:()=>playbackClock.read().serverTime ?? Date.now() + offset,
-  openLibraryItem: item => { selectSection('media'); return library?.openItem(item); },
+  serverTime: () => playbackClock.read().serverTime ?? Date.now() + offset,
+  openLibraryItem: item => {
+    selectSection('media');
+    return library?.openItem(item);
+  },
   artwork: fetchArtwork,
-  changed:async()=>{if(selected)await refreshState();}
+  changed: async () => {
+    if (selected) await refreshState();
+  },
 });
 
 let endingTicker = null;
@@ -750,13 +1425,14 @@ function initEndingStage() {
   playBtn.onclick = () => {
     if (!state?.ending) return;
     const ending = state.ending;
-    const p = ending.state === 'countdown' || ending.state === 'upNext'
-      ? execute({ action: 'media.next' })
-      : ending.state === 'offer' && ending.next
-      ? execute({ action: 'queue.offer.start', args: { mediaId: ending.next.mediaId, showId: ending.next.showId } })
-      : ending.state === 'finished' && ending.completed
-      ? execute({ action: 'queue.history.replay', args: { entryId: ending.completed.entryId, resume: false } })
-      : Promise.resolve();
+    const p =
+      ending.state === 'countdown' || ending.state === 'upNext'
+        ? execute({ action: 'media.next' })
+        : ending.state === 'offer' && ending.next
+          ? execute({ action: 'queue.offer.start', args: { mediaId: ending.next.mediaId, showId: ending.next.showId } })
+          : ending.state === 'finished' && ending.completed
+            ? execute({ action: 'queue.history.replay', args: { entryId: ending.completed.entryId, resume: false } })
+            : Promise.resolve();
     p.catch(error => fail(error.message));
   };
 
@@ -764,7 +1440,7 @@ function initEndingStage() {
     if (!state?.ending?.next) return;
     execute({
       action: 'queue.offer.start',
-      args: { mediaId: state.ending.next.mediaId, showId: state.ending.next.showId }
+      args: { mediaId: state.ending.next.mediaId, showId: state.ending.next.showId },
     }).catch(error => fail(error.message));
   };
 
@@ -776,7 +1452,7 @@ function initEndingStage() {
     if (!state?.ending?.completed) return;
     execute({
       action: 'queue.history.replay',
-      args: { entryId: state.ending.completed.entryId, resume: false }
+      args: { entryId: state.ending.completed.entryId, resume: false },
     }).catch(error => fail(error.message));
   };
 }
@@ -794,7 +1470,7 @@ function renderEnding(next) {
   const artItem = ending.next || ending.completed;
   const artMediaId = artItem?.mediaId;
   const artType = artItem?.type || 'movie';
-  const artKey = artMediaId && /^\d{1,20}$/.test(String(artMediaId)) ? (artMediaId + ':' + artType) : '';
+  const artKey = artMediaId && /^\d{1,20}$/.test(String(artMediaId)) ? artMediaId + ':' + artType : '';
   const backdrop = $('ending-backdrop');
   if (backdrop && backdrop.dataset.artKey !== artKey) {
     backdrop.dataset.artKey = artKey;
@@ -808,19 +1484,21 @@ function renderEnding(next) {
       const controller = new AbortController();
       endingArtController = controller;
       const params = new URLSearchParams({ item: String(artMediaId), kind: 'poster', type: artType });
-      fetchArtwork('/api/watch/library/art?' + params, controller.signal).then(blob => {
-        if (controller.signal.aborted) return;
-        const url = URL.createObjectURL(blob);
-        endingArtUrls.set(artKey, url);
-        while (endingArtUrls.size > 24) {
-          const first = endingArtUrls.keys().next().value;
-          URL.revokeObjectURL(endingArtUrls.get(first));
-          endingArtUrls.delete(first);
-        }
-        if (backdrop.dataset.artKey === artKey) {
-          backdrop.style.backgroundImage = 'url(' + url + ')';
-        }
-      }).catch(() => {});
+      fetchArtwork('/api/watch/library/art?' + params, controller.signal)
+        .then(blob => {
+          if (controller.signal.aborted) return;
+          const url = URL.createObjectURL(blob);
+          endingArtUrls.set(artKey, url);
+          while (endingArtUrls.size > 24) {
+            const first = endingArtUrls.keys().next().value;
+            URL.revokeObjectURL(endingArtUrls.get(first));
+            endingArtUrls.delete(first);
+          }
+          if (backdrop.dataset.artKey === artKey) {
+            backdrop.style.backgroundImage = 'url(' + url + ')';
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -842,16 +1520,19 @@ function renderEnding(next) {
     playBtn.hidden = false;
     playBtn.classList.toggle('is-secondary', isSecondary);
     const hasCaps = !!next.capabilities;
-    const canPlay = !hasCaps || ((ending.state === 'offer')
-      ? (!!next.capabilities.addQueue && !!next.capabilities.playPause)
-      : (!!next.capabilities.playPause || !!next.capabilities.chooseMedia));
+    const canPlay =
+      !hasCaps ||
+      (ending.state === 'offer'
+        ? !!next.capabilities.addQueue && !!next.capabilities.playPause
+        : !!next.capabilities.playPause || !!next.capabilities.chooseMedia);
     playBtn.disabled = !canPlay || pending;
     const status = $('ending-status');
     if (status) {
       if (!canPlay) {
-        status.textContent = ending.state === 'offer'
-          ? 'Starting continuation requires permission to add to queue and play.'
-          : 'Playing next requires playback permission.';
+        status.textContent =
+          ending.state === 'offer'
+            ? 'Starting continuation requires permission to add to queue and play.'
+            : 'Playing next requires playback permission.';
       } else if (ending.error) {
         status.textContent = ending.error;
       } else {
@@ -911,7 +1592,7 @@ function renderEnding(next) {
         endingTicker = null;
         return;
       }
-      const now = (playbackClock.read().serverTime ?? (Date.now() + offset));
+      const now = playbackClock.read().serverTime ?? Date.now() + offset;
       const remaining = Math.max(0, state.ending.countdown.endsAt - now);
       const fraction = Math.max(0, Math.min(1, remaining / (state.ending.countdown.durationMs || 10000)));
       const seconds = Math.max(0, Math.ceil(remaining / 1000));
@@ -935,38 +1616,56 @@ function renderEnding(next) {
   }
 }
 
-playerUI=uburoomPlayerUI.mount({getState:()=>state,execute,fail,changeTrack,captions,
-  beforeSettings:()=>{renderMediaInformation(state);renderVideoCheck();trackContext=state?{mediaVersion:state.mediaVersion,streamVersion:state.streamVersion}:undefined;trackActionError='';renderTracks();},
-  afterSettings:()=>{trackContext=undefined;}});
+playerUI = uburoomPlayerUI.mount({
+  getState: () => state,
+  execute,
+  fail,
+  changeTrack,
+  captions,
+  beforeSettings: () => {
+    renderMediaInformation(state);
+    renderVideoCheck();
+    trackContext = state ? { mediaVersion: state.mediaVersion, streamVersion: state.streamVersion } : undefined;
+    trackActionError = '';
+    renderTracks();
+  },
+  afterSettings: () => {
+    trackContext = undefined;
+  },
+});
 const library = uburoomLibrary.mount($('library-content'), {
-  request:(path,signal) => api(path,undefined,{signal}),
+  request: (path, signal) => api(path, undefined, { signal }),
   artwork: fetchArtwork,
   initialLibrary: pageBootstrap?.library?.status === 200 ? pageBootstrap.library.value : undefined,
-  load:(item, options) => selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options),
+  load: (item, options) => (selected ? loadLibraryItem(item, options) : chooseRoom(item, 'active', options)),
   addToQueue: async (item, trigger) => {
     if (!selected || !state?.durable) return;
     await queueUI.add(item, trigger);
   },
   addBulkToQueue: (item, trigger) => queueUI.bulk(item, trigger),
   autoQueue: source => queueUI.openAuto(source),
-  isAdmin:() => !!me?.adminMode,
-  openCodecTester:() => {
+  isAdmin: () => !!me?.adminMode,
+  openCodecTester: () => {
     if (!me?.adminMode) return;
     $('codec-test-frame').src = '/__diagnostics/codec';
     uburoomDialogs.open($('codec-test-dialog'));
   },
-  close:returnToVideo, getPlayer:() => state
+  close: returnToVideo,
+  getPlayer: () => state,
 });
 initEndingStage();
 // The nested same-origin tester uses current Activity authorization without
 // copying its bearer token into a URL, iframe or exported diagnostics.
 globalThis.uburoomCodecSample = async (path, options = {}) => {
-  if (!me?.adminMode || !/^\/__diagnostics\/media\/[a-z0-9.-]+$/.test(path)) throw new Error('Turn on Admin mode to use the codec tester.');
-  return fetch(path,{...options,headers:token?{Authorization:'Bearer '+token}:{}});
+  if (!me?.adminMode || !/^\/__diagnostics\/media\/[a-z0-9.-]+$/.test(path))
+    throw new Error('Turn on Admin mode to use the codec tester.');
+  return fetch(path, { ...options, headers: token ? { Authorization: 'Bearer ' + token } : {} });
 };
 globalThis.uburoomCloseCodecTester = () => uburoomDialogs.close($('codec-test-dialog'));
 $('codec-test-close').onclick = globalThis.uburoomCloseCodecTester;
-$('codec-test-dialog').addEventListener('close',() => {$('codec-test-frame').src = 'about:blank';});
+$('codec-test-dialog').addEventListener('close', () => {
+  $('codec-test-frame').src = 'about:blank';
+});
 // Errors go to the menu's error line. In fullscreen they never take over the screen:
 // they show as a toast with a way to the fix (the menu by default). The Discord
 // Activity has no fullscreen of its own, so it still opens the menu.
@@ -976,40 +1675,99 @@ function fail(message, action) {
   // The error line clears whenever a command starts; a toast stays its full time so it can be read.
   if (!message || !changed) return;
   if (document.fullscreenElement === $('stage')) {
-    toasts.show('player-error', { type: 'error', title: message, symbol: 'alert-triangle', duration: 12000,
-      action: action || { label: 'Open menu', run: () => toggleDrawer(true) } });
+    toasts.show('player-error', {
+      type: 'error',
+      title: message,
+      symbol: 'alert-triangle',
+      duration: 12000,
+      action: action || { label: 'Open menu', run: () => toggleDrawer(true) },
+    });
   } else if (immersive && !document.body.classList.contains('activity-pip')) toggleDrawer(true);
 }
 async function api(path, data, options = {}) {
-  const started=performance.now(); let response,decoded=false,rejection;
+  const started = performance.now();
+  let response,
+    decoded = false,
+    rejection;
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
-  if (data !== undefined) { headers['Content-Type'] = 'application/json'; if (me?.csrf) headers['X-CSRF-Token'] = me.csrf; }
-  try {
-  if(controlProbe?.rejects(path,selected))throw new TypeError('Controlled room-poll interruption');
-  if(transport?.ready && /^\/api\/watch\/(rooms|events|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) && !path.startsWith('/api/watch/library/art')) {
-    try {return await transport.request(path,data,options);} catch(error){rejection=error.rejection;if(error.status)response={status:error.status,ok:false};throw error;}
+  if (data !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    if (me?.csrf) headers['X-CSRF-Token'] = me.csrf;
   }
-  response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', headers, keepalive: !!options.keepalive,
-    body: data === undefined ? undefined : JSON.stringify(data), signal: options.signal ? AbortSignal.any([options.signal,AbortSignal.timeout(options.timeoutMs || 12000)]) : AbortSignal.timeout(options.timeoutMs || 12000), keepalive: !!options.keepalive });
-  const value = await response.json(); decoded=true; if (!response.ok) {rejection=value.rejection;throw Object.assign(new Error(value.error || 'Request failed'),{status:response.status,response:value});} return value;
-  } catch(error) {
-    diagnostics.record('request-failed',{request:uburoomDiagnostics.requestKind(path),elapsedMs:performance.now()-started,status:response?.status,
-      rejection:uburoomDiagnostics.requestKind(path)==='observe'?rejection:undefined,
-      failure:response && !response.ok?'http':response && !decoded?'decode':error.name==='TimeoutError'?'timeout':error.name==='AbortError'?'abort':error instanceof TypeError?'network':'other'});
+  try {
+    if (controlProbe?.rejects(path, selected)) throw new TypeError('Controlled room-poll interruption');
+    if (
+      transport?.ready &&
+      /^\/api\/watch\/(rooms|events|me|profile|admin-mode|playback|library)(?:[/?]|$)/.test(path) &&
+      !path.startsWith('/api/watch/library/art')
+    ) {
+      try {
+        return await transport.request(path, data, options);
+      } catch (error) {
+        rejection = error.rejection;
+        if (error.status) response = { status: error.status, ok: false };
+        throw error;
+      }
+    }
+    response = await fetch(path, {
+      method: data === undefined ? 'GET' : 'POST',
+      headers,
+      keepalive: !!options.keepalive,
+      body: data === undefined ? undefined : JSON.stringify(data),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs || 12000)])
+        : AbortSignal.timeout(options.timeoutMs || 12000),
+      keepalive: !!options.keepalive,
+    });
+    const value = await response.json();
+    decoded = true;
+    if (!response.ok) {
+      rejection = value.rejection;
+      throw Object.assign(new Error(value.error || 'Request failed'), { status: response.status, response: value });
+    }
+    return value;
+  } catch (error) {
+    diagnostics.record('request-failed', {
+      request: uburoomDiagnostics.requestKind(path),
+      elapsedMs: performance.now() - started,
+      status: response?.status,
+      rejection: uburoomDiagnostics.requestKind(path) === 'observe' ? rejection : undefined,
+      failure:
+        response && !response.ok
+          ? 'http'
+          : response && !decoded
+            ? 'decode'
+            : error.name === 'TimeoutError'
+              ? 'timeout'
+              : error.name === 'AbortError'
+                ? 'abort'
+                : error instanceof TypeError
+                  ? 'network'
+                  : 'other',
+    });
     throw error;
   }
 }
 function acceptIdentity(auth) {
-  token = auth.token; identityExpiresAt = auth.expiresAt;
+  token = auth.token;
+  identityExpiresAt = auth.expiresAt;
   identityRenewAt = identityExpiresAt - Math.min(60000, Math.floor((identityExpiresAt - Date.now()) / 5));
-  identityRetryAt = 0; identityGeneration++;
-  diagnostics.record('identity-renewed',{identity:identityGeneration});
+  identityRetryAt = 0;
+  identityGeneration++;
+  diagnostics.record('identity-renewed', { identity: identityGeneration });
   transport?.reauthenticate();
 }
 async function activityIdentity() {
-  const { code } = await sdk.commands.authorize({ client_id:config.clientId,response_type:'code',state:crypto.randomUUID(),prompt:'none',scope:['identify'] });
-  const auth = await api('/api/watch/activity-login', {code});
-  if (!await sdk.commands.authenticate({access_token:auth.accessToken})) throw new Error('Discord Activity authentication failed');
+  const { code } = await sdk.commands.authorize({
+    client_id: config.clientId,
+    response_type: 'code',
+    state: crypto.randomUUID(),
+    prompt: 'none',
+    scope: ['identify'],
+  });
+  const auth = await api('/api/watch/activity-login', { code });
+  if (!(await sdk.commands.authenticate({ access_token: auth.accessToken })))
+    throw new Error('Discord Activity authentication failed');
   return auth;
 }
 async function renewIdentity() {
@@ -1020,51 +1778,79 @@ async function renewIdentity() {
     return;
   }
   identityRenewal = (async () => {
-    const auth = config.demo && ['host','guest','guest2'].includes(params.get('demo'))
-      ? await api('/api/watch/demo-login', {persona:params.get('demo'),activity})
-      : await activityIdentity();
+    const auth =
+      config.demo && ['host', 'guest', 'guest2'].includes(params.get('demo'))
+        ? await api('/api/watch/demo-login', { persona: params.get('demo'), activity })
+        : await activityIdentity();
     acceptIdentity(auth);
-  })().catch(error => {
-    diagnostics.record('identity-renew-failed');
-    identityRetryAt = Date.now() + 10000;
-    if (Date.now() >= identityExpiresAt) throw error;
-  }).finally(() => { identityRenewal = undefined; });
+  })()
+    .catch(error => {
+      diagnostics.record('identity-renew-failed');
+      identityRetryAt = Date.now() + 10000;
+      if (Date.now() >= identityExpiresAt) throw error;
+    })
+    .finally(() => {
+      identityRenewal = undefined;
+    });
   return identityRenewal;
 }
-function dropVolume() { clearTimeout(volumeTimer); volumeWanted = volumeDraft = undefined; volumeDragging = false; }
+function dropVolume() {
+  clearTimeout(volumeTimer);
+  volumeWanted = volumeDraft = undefined;
+  volumeDragging = false;
+}
 // Move the actual shells so their controls, state and listeners stay shared.
-const sections = [['room','Room','options-panel'],['queue','Queue','queue-panel'],['media','Media','library-panel']];
+const sections = [
+  ['room', 'Room', 'options-panel'],
+  ['queue', 'Queue', 'queue-panel'],
+  ['media', 'Media', 'library-panel'],
+];
 // Collapse the shared panels without rebuilding their live controls.
-const sectionToggles = sections.map(([key,, id]) => {
-  const panel = $(id), heading = panel.querySelector('h2');
+const sectionToggles = sections.map(([key, , id]) => {
+  const panel = $(id),
+    heading = panel.querySelector('h2');
   let button = heading.querySelector('.section-toggle');
   if (!button) {
-    button = document.createElement('button'); button.type = 'button';
-    button.className = 'section-toggle'; button.id = key + '-collapse';
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'section-toggle';
+    button.id = key + '-collapse';
     button.append(...heading.childNodes, uburoomIcons.icon(document, 'chevron'));
     heading.append(button);
   }
-  button.setAttribute('aria-controls', key === 'room' ? 'options-content' : key === 'media' ? 'library-content' : 'queue-body');
+  button.setAttribute(
+    'aria-controls',
+    key === 'room' ? 'options-content' : key === 'media' ? 'library-content' : 'queue-body',
+  );
   button.addEventListener('click', () => {
     if (document.body.classList.contains('mobile-player')) return;
-    panel.classList.toggle('section-collapsed'); updateSectionTabs();
+    panel.classList.toggle('section-collapsed');
+    updateSectionTabs();
   });
   return { panel, button };
 });
-let mobileSection = 'room', sectionChosen = false;
+let mobileSection = 'room',
+  sectionChosen = false;
 const sectionTabs = $('section-tabs') || document.createElement('nav');
 if (!sectionTabs.parentElement) {
-  sectionTabs.id = 'section-tabs'; sectionTabs.hidden = true;
-  sectionTabs.setAttribute('role', 'tablist'); sectionTabs.setAttribute('aria-label', 'Room sections');
+  sectionTabs.id = 'section-tabs';
+  sectionTabs.hidden = true;
+  sectionTabs.setAttribute('role', 'tablist');
+  sectionTabs.setAttribute('aria-label', 'Room sections');
   $('viewing-section').after(sectionTabs);
 }
 for (const [key, label, panel] of sections) {
   let tab = $('section-tab-' + key);
   if (!tab) {
     tab = document.createElement('button');
-    tab.id = 'section-tab-' + key; tab.type = 'button'; tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-controls', panel); tab.dataset.section = key;
-    tab.append(uburoomIcons.icon(document, key === 'room' ? 'armchair-2' : key === 'queue' ? 'player-track-next' : 'video'));
+    tab.id = 'section-tab-' + key;
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', panel);
+    tab.dataset.section = key;
+    tab.append(
+      uburoomIcons.icon(document, key === 'room' ? 'armchair-2' : key === 'queue' ? 'player-track-next' : 'video'),
+    );
     tab.append(document.createTextNode(label));
     sectionTabs.append(tab);
   }
@@ -1072,7 +1858,8 @@ for (const [key, label, panel] of sections) {
 }
 function selectSection(key, focus = false) {
   if (mobileSection === 'queue' && key !== 'queue') queueUI.rememberPosition();
-  mobileSection = key; sectionChosen = true;
+  mobileSection = key;
+  sectionChosen = true;
   updateSectionTabs();
   if (key === 'queue') queueUI.restorePosition();
   if (focus) $('section-tab-' + key).focus();
@@ -1086,26 +1873,61 @@ function updateSectionTabs() {
     button.disabled = mobile;
     button.setAttribute('aria-expanded', String(mobile || !panel.classList.contains('section-collapsed')));
   }
-  for (const [key,, id] of sections) {
-    const panel = $(id), tab = $('section-tab-' + key), active = key === mobileSection;
+  for (const [key, , id] of sections) {
+    const panel = $(id),
+      tab = $('section-tab-' + key),
+      active = key === mobileSection;
     tab.disabled = key === 'queue' && !!state && !state.durable;
-    tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
     panel.classList.toggle('section-tab-inactive', mobile && !active);
-    if (mobile) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', tab.id); }
-    else { panel.removeAttribute('role'); panel.removeAttribute('aria-labelledby'); }
+    if (mobile) {
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', tab.id);
+    } else {
+      panel.removeAttribute('role');
+      panel.removeAttribute('aria-labelledby');
+    }
   }
 }
 sectionTabs.addEventListener('keydown', event => {
   const tabs = [...sectionTabs.querySelectorAll('button:not(:disabled)')];
   const index = tabs.indexOf(document.activeElement);
-  const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length :
-    event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
-  if (next >= 0) { event.preventDefault(); selectSection(tabs[next].dataset.section, true); }
+  const next =
+    event.key === 'ArrowRight'
+      ? (index + 1) % tabs.length
+      : event.key === 'ArrowLeft'
+        ? (index + tabs.length - 1) % tabs.length
+        : event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? tabs.length - 1
+            : -1;
+  if (next >= 0) {
+    event.preventDefault();
+    selectSection(tabs[next].dataset.section, true);
+  }
 });
-const drawer = document.createElement('aside'); drawer.id = 'drawer'; drawer.hidden = true;
-drawer.setAttribute('aria-label', 'Menu'); document.body.append(drawer);
-const shells = ['account','section-tabs','options-panel','queue-panel','library-panel','status','error','diagnostic-actions','acceleration-help'].map(id => {
-  const element = $(id), marker = document.createComment(id); element.before(marker); return { element, marker };
+const drawer = document.createElement('aside');
+drawer.id = 'drawer';
+drawer.hidden = true;
+drawer.setAttribute('aria-label', 'Menu');
+document.body.append(drawer);
+const shells = [
+  'account',
+  'section-tabs',
+  'options-panel',
+  'queue-panel',
+  'library-panel',
+  'status',
+  'error',
+  'diagnostic-actions',
+  'acceleration-help',
+].map(id => {
+  const element = $(id),
+    marker = document.createComment(id);
+  element.before(marker);
+  return { element, marker };
 });
 function toggleDrawer(show = drawer.hidden) {
   $('library-panel').classList.remove('media-glow');
@@ -1114,13 +1936,14 @@ function toggleDrawer(show = drawer.hidden) {
   if (drawer.parentElement !== parent) parent.append(drawer);
   parent.append($('drawer-close'));
   $('drawer-close').hidden = !show;
-  drawer.hidden = !show; $('stage').classList.toggle('drawer-open', show);
+  drawer.hidden = !show;
+  $('stage').classList.toggle('drawer-open', show);
   $('drawer-open').setAttribute('aria-expanded', String(show));
 }
 function returnToVideo() {
   toggleDrawer(false);
-  window.scrollTo({top:0,behavior:'instant'});
-  $('stage').focus({preventScroll:true});
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  $('stage').focus({ preventScroll: true });
 }
 $('library-top').addEventListener('click', returnToVideo);
 function setTheater(enabled, remember = true) {
@@ -1128,21 +1951,35 @@ function setTheater(enabled, remember = true) {
   document.body.classList.toggle('theater', theater);
   $('theater').setAttribute('aria-pressed', String(theater));
   $('theater').title = $('theater').ariaLabel = theater ? 'Exit theater mode' : 'Theater mode';
-  if (remember && !activity) { try { localStorage.setItem('uburoom.watchMode', theater ? 'theater' : 'normal'); } catch {} }
+  if (remember && !activity) {
+    try {
+      localStorage.setItem('uburoom.watchMode', theater ? 'theater' : 'normal');
+    } catch {}
+  }
   updateViewingLayout();
 }
 function updateMobilePlayer() {
-  const mobile=innerWidth<=700||matchMedia('(pointer:coarse) and (max-height:700px)').matches||!!document.fullscreenElement&&document.body.classList.contains('mobile-player');
-  document.body.classList.toggle('mobile-player',mobile);
-  if(mobile&&theater&&!immersive&&!document.fullscreenElement)setTheater(false,false);
+  const mobile =
+    innerWidth <= 700 ||
+    matchMedia('(pointer:coarse) and (max-height:700px)').matches ||
+    (!!document.fullscreenElement && document.body.classList.contains('mobile-player'));
+  document.body.classList.toggle('mobile-player', mobile);
+  if (mobile && theater && !immersive && !document.fullscreenElement) setTheater(false, false);
   updateSectionTabs();
 }
 function updateViewingLayout() {
-  if (!immersive) document.documentElement.style.setProperty('--watch-header-height', ($('viewing-section').getBoundingClientRect().top + scrollY) + 'px');
+  if (!immersive)
+    document.documentElement.style.setProperty(
+      '--watch-header-height',
+      $('viewing-section').getBoundingClientRect().top + scrollY + 'px',
+    );
 }
 const viewingLayoutObserver = new ResizeObserver(updateViewingLayout);
-viewingLayoutObserver.observe($('account')); viewingLayoutObserver.observe($('viewing-section'));
-window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {passive:true});
+viewingLayoutObserver.observe($('account'));
+viewingLayoutObserver.observe($('viewing-section'));
+window.addEventListener('scroll', () => document.body.classList.toggle('page-scrolled', scrollY > 0), {
+  passive: true,
+});
 function updateFullscreenLayout() {
   immersive = activity || document.fullscreenElement === $('stage');
   const drawerOpen = !drawer.hidden;
@@ -1159,62 +1996,96 @@ function placeRoomBar() {
   const inRoom = Boolean(selected || (directRoomEntry && !directRoomFailed));
   const lobbyHidden = inRoom || !me;
   // The Upcoming list refreshes whenever the lobby comes back into view.
-  if ($('room-lobby').hidden && !lobbyHidden && transport?.ready && me?.durableRooms && !config?.singleRoom) void lobbyEvents.refresh();
+  if ($('room-lobby').hidden && !lobbyHidden && transport?.ready && me?.durableRooms && !config?.singleRoom)
+    void lobbyEvents.refresh();
   $('room-lobby').hidden = lobbyHidden;
 }
 function renderSyncPreference() {
-  $('sync-correction').value=syncCorrectionMode;
-  $('sync-correction-hint').textContent=(syncCorrectionMode==='jumps'
-    ? 'Keep normal speed; occasionally skip or repeat a moment to catch up.'
-    : 'Adjust playback speed to stay together, with jumps for larger gaps.')+
-    (syncPreferenceStored?' Only your player in this browser.':' This tab only; browser storage is unavailable.');
+  $('sync-correction').value = syncCorrectionMode;
+  $('sync-correction-hint').textContent =
+    (syncCorrectionMode === 'jumps'
+      ? 'Keep normal speed; occasionally skip or repeat a moment to catch up.'
+      : 'Adjust playback speed to stay together, with jumps for larger gaps.') +
+    (syncPreferenceStored ? ' Only your player in this browser.' : ' This tab only; browser storage is unavailable.');
 }
 function loadSyncPreference() {
-  const key='uburoom.syncCorrection.'+(me?.account?.id||'browser');
-  if(key===syncPreferenceKey)return;
-  syncPreferenceKey=key;syncCorrectionMode='speed';syncPreferenceStored=true;
-  try { if(localStorage.getItem(key)==='jumps')syncCorrectionMode='jumps'; } catch { syncPreferenceStored=false; }
-  sync?.resetCorrection(true);renderSyncPreference();
+  const key = 'uburoom.syncCorrection.' + (me?.account?.id || 'browser');
+  if (key === syncPreferenceKey) return;
+  syncPreferenceKey = key;
+  syncCorrectionMode = 'speed';
+  syncPreferenceStored = true;
+  try {
+    if (localStorage.getItem(key) === 'jumps') syncCorrectionMode = 'jumps';
+  } catch {
+    syncPreferenceStored = false;
+  }
+  sync?.resetCorrection(true);
+  renderSyncPreference();
 }
 function setSyncPreference(value) {
-  if(value!=='speed'&&value!=='jumps')return;
-  syncCorrectionMode=value;sync?.resetCorrection(true);
-  try { localStorage.setItem(syncPreferenceKey,value);syncPreferenceStored=true; } catch { syncPreferenceStored=false; }
-  renderSyncPreference();diagnosticSample('sync-mode');
+  if (value !== 'speed' && value !== 'jumps') return;
+  syncCorrectionMode = value;
+  sync?.resetCorrection(true);
+  try {
+    localStorage.setItem(syncPreferenceKey, value);
+    syncPreferenceStored = true;
+  } catch {
+    syncPreferenceStored = false;
+  }
+  renderSyncPreference();
+  diagnosticSample('sync-mode');
 }
-$('sync-correction').addEventListener('change',event=>setSyncPreference(event.target.value));
+$('sync-correction').addEventListener('change', event => setSyncPreference(event.target.value));
 function renderAccount() {
   loadSyncPreference();
   const identityName = me.name + (config.demo ? ' · local demo' : '');
   $('identity').textContent = identityName;
   $('identity').setAttribute('aria-label', identityName + ' · Account settings');
-  $('admin-mode').hidden = !(me.adminEligible ?? me.owner); $('admin-mode').setAttribute('aria-checked',String(!!me.adminMode));
+  $('admin-mode').hidden = !(me.adminEligible ?? me.owner);
+  $('admin-mode').setAttribute('aria-checked', String(!!me.adminMode));
   $('admin-mode').title = me.adminMode ? 'Admin mode on: turn off' : 'Admin mode off: turn on';
-  $('open-browser').hidden = !activity||config.access?.publicWeb===false;
-  if(typeof updateAccountButton==='function')updateAccountButton();
+  $('open-browser').hidden = !activity || config.access?.publicWeb === false;
+  if (typeof updateAccountButton === 'function') updateAccountButton();
   roomUI.render();
   library.refreshAdmin();
   if (!me.adminMode && $('codec-test-dialog').open) $('codec-test-dialog').close();
 }
 function stopBrowserHandoff(cancel = false) {
   clearTimeout(browserHandoffTimer);
-  const id = browserHandoff; browserHandoff = browserVerification = undefined;
+  const id = browserHandoff;
+  browserHandoff = browserVerification = undefined;
   $('open-browser').disabled = $('watch-website').disabled = false;
-  if (cancel && id) void api('/api/watch/handoff/action',{id,action:'cancel'},{keepalive:true}).catch(() => {});
+  if (cancel && id)
+    void api('/api/watch/handoff/action', { id, action: 'cancel' }, { keepalive: true }).catch(() => {});
 }
 async function pollBrowserHandoff() {
-  const id = browserHandoff; if (!id) return;
+  const id = browserHandoff;
+  if (!id) return;
   try {
-    const value = await api('/api/watch/handoff/status',{id}); if (browserHandoff !== id) return;
-    if (value.state === 'complete') { stopBrowserHandoff(); $('handoff-dialog').close('complete'); return; }
+    const value = await api('/api/watch/handoff/status', { id });
+    if (browserHandoff !== id) return;
+    if (value.state === 'complete') {
+      stopBrowserHandoff();
+      $('handoff-dialog').close('complete');
+      return;
+    }
     browserVerification = value.verification;
-    $('handoff-code').textContent = value.verification || ''; $('handoff-code').hidden = !value.verification;
+    $('handoff-code').textContent = value.verification || '';
+    $('handoff-code').hidden = !value.verification;
     $('approve-browser').disabled = value.state !== 'claimed';
-    $('handoff-status').textContent = value.state === 'waiting' ? 'Open uburoom in your browser, then check its code.' :
-      value.state === 'approved' ? 'Approved. Waiting for your browser…' : 'Check the code in your browser.';
-    browserHandoffTimer = setTimeout(pollBrowserHandoff,1000);
+    $('handoff-status').textContent =
+      value.state === 'waiting'
+        ? 'Open uburoom in your browser, then check its code.'
+        : value.state === 'approved'
+          ? 'Approved. Waiting for your browser…'
+          : 'Check the code in your browser.';
+    browserHandoffTimer = setTimeout(pollBrowserHandoff, 1000);
   } catch (error) {
-    if (browserHandoff === id) { stopBrowserHandoff(true); $('handoff-dialog').close('expired'); fail(error.message); }
+    if (browserHandoff === id) {
+      stopBrowserHandoff(true);
+      $('handoff-dialog').close('expired');
+      fail(error.message);
+    }
   }
 }
 async function openInBrowser(options) {
@@ -1222,63 +2093,108 @@ async function openInBrowser(options) {
   const opts = options && typeof options === 'object' && !('target' in options) ? options : {};
   $('open-browser').disabled = $('watch-website').disabled = true;
   // Only the isolated localhost demo uses window.open; live Discord always uses its SDK.
-  const demoWindow = config.demo ? window.open('about:blank','_blank') : undefined;
+  const demoWindow = config.demo ? window.open('about:blank', '_blank') : undefined;
   if (demoWindow) demoWindow.opener = null;
   try {
     if (config.demo && !demoWindow) throw new Error('Allow this localhost demo to open its browser tab, then retry.');
-    const value = await api('/api/watch/handoff',{...(selected ? {roomId:selected} : {}), ...(opts.account ? { account: true } : {}), ...(opts.connectPlex ? { connectPlex: true } : {})});
+    const value = await api('/api/watch/handoff', {
+      ...(selected ? { roomId: selected } : {}),
+      ...(opts.account ? { account: true } : {}),
+      ...(opts.connectPlex ? { connectPlex: true } : {}),
+    });
     browserHandoff = value.id;
     if (demoWindow) demoWindow.location.replace(value.url);
     else {
       if (!sdk) throw new Error('Discord browser opening is unavailable. Reopen the Activity.');
-      const result = await sdk.commands.openExternalLink({url:value.url});
+      const result = await sdk.commands.openExternalLink({ url: value.url });
       if (result.opened === false) throw new Error('Browser opening was cancelled. Try Open in Browser again.');
     }
-    $('handoff-code').hidden = true; $('approve-browser').disabled = true;
+    $('handoff-code').hidden = true;
+    $('approve-browser').disabled = true;
     $('handoff-status').textContent = 'Open uburoom in your browser, then check its code.';
-    uburoomDialogs.open($('handoff-dialog')); void pollBrowserHandoff();
-  } catch (error) { demoWindow?.close(); stopBrowserHandoff(true); fail(error.message); }
+    uburoomDialogs.open($('handoff-dialog'));
+    void pollBrowserHandoff();
+  } catch (error) {
+    demoWindow?.close();
+    stopBrowserHandoff(true);
+    fail(error.message);
+  }
 }
-$('open-browser').addEventListener('click',openInBrowser);
-$('watch-website').addEventListener('click',openInBrowser);
+$('open-browser').addEventListener('click', openInBrowser);
+$('watch-website').addEventListener('click', openInBrowser);
 $('handoff-dialog').addEventListener('close', () => stopBrowserHandoff(true));
-$('approve-browser').addEventListener('click',async () => {
-  const id = browserHandoff; if (!id || !browserVerification) return;
+$('approve-browser').addEventListener('click', async () => {
+  const id = browserHandoff;
+  if (!id || !browserVerification) return;
   const release = uburoomDialogs.hold($('handoff-dialog'));
   $('approve-browser').disabled = true;
-  try { await api('/api/watch/handoff/action',{id,action:'approve',verification:browserVerification}); }
-  catch (error) { if (browserHandoff === id) { stopBrowserHandoff(true); $('handoff-dialog').close('failed'); fail(error.message); } }
-  finally { release(); }
+  try {
+    await api('/api/watch/handoff/action', { id, action: 'approve', verification: browserVerification });
+  } catch (error) {
+    if (browserHandoff === id) {
+      stopBrowserHandoff(true);
+      $('handoff-dialog').close('failed');
+      fail(error.message);
+    }
+  } finally {
+    release();
+  }
 });
 $('admin-mode').addEventListener('click', async () => {
   $('admin-mode').disabled = true;
-  try { await api('/api/watch/admin-mode',{enabled:!me.adminMode}); me = await api('/api/watch/me'); renderAccount(); await refreshRooms(); await refreshState(); }
-  catch (error) {fail(error.message);} finally {$('admin-mode').disabled = false;}
+  try {
+    await api('/api/watch/admin-mode', { enabled: !me.adminMode });
+    me = await api('/api/watch/me');
+    renderAccount();
+    await refreshRooms();
+    await refreshState();
+  } catch (error) {
+    fail(error.message);
+  } finally {
+    $('admin-mode').disabled = false;
+  }
 });
 function updateActivityLayout(event) {
   if (event) layoutMode = event.layout_mode;
-  const pip = activity && (layoutMode === 1 || layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300);
+  const pip = activity && (layoutMode === 1 || (layoutMode === undefined && innerWidth <= 480 && innerHeight <= 300));
   document.body.classList.toggle('activity-pip', pip);
   if (pip) toggleDrawer(false);
-  if(pip&&$('account-dialog').open)$('account-dialog').close();
-  if(pip){playerUI?.reset();if($('tracks-dialog').open)$('tracks-dialog').close();}
+  if (pip && $('account-dialog').open) $('account-dialog').close();
+  if (pip) {
+    playerUI?.reset();
+    if ($('tracks-dialog').open) $('tracks-dialog').close();
+  }
 }
-document.body.classList.toggle('activity', activity); $('fullscreen').hidden = $('theater').hidden = activity;
+document.body.classList.toggle('activity', activity);
+$('fullscreen').hidden = $('theater').hidden = activity;
 $('pip').hidden = activity || !supportsPiP;
 if (activity) {
-  $('brand-link').href = '/' + location.search; $('brand-link').setAttribute('aria-label', 'uburoom watch');
+  $('brand-link').href = '/' + location.search;
+  $('brand-link').setAttribute('aria-label', 'uburoom watch');
   $('welcome').hidden = true;
 } else {
-  $('brand-link').href = '/'; $('brand-link').setAttribute('aria-label', 'uburoom watch');
+  $('brand-link').href = '/';
+  $('brand-link').setAttribute('aria-label', 'uburoom watch');
 }
-updateMobilePlayer(); setTheater(theater,false); updateFullscreenLayout(); updateActivityLayout();
-window.addEventListener('resize', () => { updateMobilePlayer(); updateActivityLayout(); renderTransport(); });
+updateMobilePlayer();
+setTheater(theater, false);
+updateFullscreenLayout();
+updateActivityLayout();
+window.addEventListener('resize', () => {
+  updateMobilePlayer();
+  updateActivityLayout();
+  renderTransport();
+});
 $('theater').addEventListener('click', async () => {
   if (activity) return;
   try {
-    if (document.fullscreenElement) { await document.exitFullscreen(); setTheater(true); }
-    else setTheater(!theater);
-  } catch (error) { fail(error.message); }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      setTheater(true);
+    } else setTheater(!theater);
+  } catch (error) {
+    fail(error.message);
+  }
 });
 
 async function togglePictureInPicture() {
@@ -1294,7 +2210,9 @@ async function togglePictureInPicture() {
   if (!state?.mediaUrl) return;
 
   if (supportsDocPiP) {
-    const stage = $('stage'), viewingSection = $('viewing-section'), placeholder = $('pip-placeholder');
+    const stage = $('stage'),
+      viewingSection = $('viewing-section'),
+      placeholder = $('pip-placeholder');
     const width = Math.min(Math.max(video.videoWidth || stage.clientWidth || 640, 320), 1920);
     const height = Math.min(Math.max(video.videoHeight || stage.clientHeight || 360, 180), 1080);
     const win = await window.documentPictureInPicture.requestWindow({
@@ -1326,7 +2244,8 @@ async function togglePictureInPicture() {
     }
     win.document.title = document.title || 'uburoom';
     win.document.documentElement.dataset.theme = document.documentElement.dataset.theme || 'dark';
-    win.document.body.className = 'pip-window ' + (document.body.classList.contains('theme-light') ? 'theme-light' : 'theme-dark');
+    win.document.body.className =
+      'pip-window ' + (document.body.classList.contains('theme-light') ? 'theme-light' : 'theme-dark');
     placeholder.hidden = false;
     win.document.body.append(stage);
     pipWindow = win;
@@ -1341,20 +2260,24 @@ async function togglePictureInPicture() {
         metaKey: event.metaKey,
         shiftKey: event.shiftKey,
         bubbles: true,
-        cancelable: true
+        cancelable: true,
       });
       document.dispatchEvent(clone);
     });
 
-    win.addEventListener('pagehide', () => {
-      if (pipWindow === win) {
-        pipWindow = null;
-        viewingSection.insertBefore(stage, placeholder);
-        placeholder.hidden = true;
-        renderTransport();
-        stage.focus({ preventScroll: true });
-      }
-    }, { once: true });
+    win.addEventListener(
+      'pagehide',
+      () => {
+        if (pipWindow === win) {
+          pipWindow = null;
+          viewingSection.insertBefore(stage, placeholder);
+          placeholder.hidden = true;
+          renderTransport();
+          stage.focus({ preventScroll: true });
+        }
+      },
+      { once: true },
+    );
   } else if (supportsVideoPiP) {
     await video.requestPictureInPicture();
     const hasSubtitles = !!state?.tracks?.subtitleId;
@@ -1370,101 +2293,195 @@ async function togglePictureInPicture() {
           run: () => {
             playerUI.openDialog();
             $('subtitle-mode')?.focus();
-          }
-        }
+          },
+        },
       });
     }
   }
 }
-$('pip').addEventListener('click', () => { togglePictureInPicture().catch(error => fail(error.message)); });
-$('pip-return').addEventListener('click', () => { togglePictureInPicture().catch(error => fail(error.message)); });
-video.addEventListener('enterpictureinpicture', () => { renderTransport(); });
-video.addEventListener('leavepictureinpicture', () => { renderTransport(); });
+$('pip').addEventListener('click', () => {
+  togglePictureInPicture().catch(error => fail(error.message));
+});
+$('pip-return').addEventListener('click', () => {
+  togglePictureInPicture().catch(error => fail(error.message));
+});
+video.addEventListener('enterpictureinpicture', () => {
+  renderTransport();
+});
+video.addEventListener('leavepictureinpicture', () => {
+  renderTransport();
+});
 $('drawer-open').addEventListener('click', () => {
   if (!immersive) return;
-  toggleDrawer(); if (!drawer.hidden) $('drawer-close').focus();
+  toggleDrawer();
+  if (!drawer.hidden) $('drawer-close').focus();
 });
-$('drawer-close').addEventListener('click', () => { toggleDrawer(false); $('drawer-open').focus(); });
+$('drawer-close').addEventListener('click', () => {
+  toggleDrawer(false);
+  $('drawer-open').focus();
+});
 async function compatibleFallback(reason, preferHLS = false) {
-  if(fallbackPlayback.active && fallbackPlayback.failed())return;
+  if (fallbackPlayback.active && fallbackPlayback.failed()) return;
   if (!state?.mediaUrl || state.mediaId === 'demo' || fallbackPending) return;
   // Plex would hand a file the browser already failed on the same H.264 again.
   const skipPlex = !preferHLS && state.format === 'file' && /^(h264|avc1)$/i.test(state.videoCodec || '');
   if (pending || qualityPending) {
     if (fallbackRetryTimer) return;
-    const id = selected, version = state.mediaVersion, stream = state.streamVersion;
+    const id = selected,
+      version = state.mediaVersion,
+      stream = state.streamVersion;
     fallbackRetryTimer = setTimeout(() => {
       fallbackRetryTimer = undefined;
-      if (selected === id && state?.mediaVersion === version && state?.streamVersion === stream) void compatibleFallback(reason,preferHLS);
+      if (selected === id && state?.mediaVersion === version && state?.streamVersion === stream)
+        void compatibleFallback(reason, preferHLS);
     }, 200);
     return;
   }
-  if (localFallbackVersion !== state.mediaVersion) {localFallbackVersion=state.mediaVersion;localFallbackAttempts=new Set();}
+  if (localFallbackVersion !== state.mediaVersion) {
+    localFallbackVersion = state.mediaVersion;
+    localFallbackAttempts = new Set();
+  }
   if (uburoomPlayback.localFormat(state.format)) localFallbackAttempts.add(state.format);
   if (state.format === 'hls') localFallbackAttempts.add('plex');
-  const localCandidates=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],localFallbackAttempts,
-    mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
-  const order=config.outputs || [...localCandidates,'plex'];
-  const candidates=order.filter(output=>output==='plex'?!skipPlex && !localFallbackAttempts.has('plex'):localCandidates.includes(output));
+  const localCandidates = uburoomPlayback.fallbackCodecs(
+    config.localFormats || ['av1'],
+    localFallbackAttempts,
+    mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
+  );
+  const order = config.outputs || [...localCandidates, 'plex'];
+  const candidates = order.filter(output =>
+    output === 'plex' ? !skipPlex && !localFallbackAttempts.has('plex') : localCandidates.includes(output),
+  );
   // H.264 or browser-supported HEVC with unplayable audio needs no new picture: Plex can copy the video and convert only the audio.
-  const canCopyVideo = /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(state.videoCodec || '') &&
-    !uburoomPlayback.needsVideoConversion(state,type => video.canPlayType(type));
-  if(preferHLS && order.includes('plex') && canCopyVideo && !localFallbackAttempts.has('audio') && !localFallbackAttempts.has('plex'))candidates.unshift('audio');
+  const canCopyVideo =
+    /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(state.videoCodec || '') &&
+    !uburoomPlayback.needsVideoConversion(state, type => video.canPlayType(type));
+  if (
+    preferHLS &&
+    order.includes('plex') &&
+    canCopyVideo &&
+    !localFallbackAttempts.has('audio') &&
+    !localFallbackAttempts.has('plex')
+  )
+    candidates.unshift('audio');
   if (!candidates.length) {
-    av1?.destroy();av1=undefined;video.pause();playbackError=reason+' No remaining compatible conversion is available. Check the server codec/encoder settings.';
-    $('acceleration-help').hidden=!activity;$('enable-acceleration').hidden=!sdk;fail(playbackError);return;
+    av1?.destroy();
+    av1 = undefined;
+    video.pause();
+    playbackError =
+      reason + ' No remaining compatible conversion is available. Check the server codec/encoder settings.';
+    $('acceleration-help').hidden = !activity;
+    $('enable-acceleration').hidden = !sdk;
+    fail(playbackError);
+    return;
   }
-  const id=selected,version=state.mediaVersion;
-  fallbackPending = true;diagnosticSample('fallback');av1?.destroy();av1=undefined;stopHls('fallback');
+  const id = selected,
+    version = state.mediaVersion;
+  fallbackPending = true;
+  diagnosticSample('fallback');
+  av1?.destroy();
+  av1 = undefined;
+  stopHls('fallback');
   try {
     for (const codec of candidates) {
-      if(selected!==id || state?.mediaVersion!==version)return;
+      if (selected !== id || state?.mediaVersion !== version) return;
       localFallbackAttempts.add(codec);
       try {
-        await execute({action:'media.quality.set',args:{quality:state.preferredQuality || preferredQuality || state.quality,...(codec==='audio'?{}:{compatible:true}),fallback:codec,reason:[reason,fallbackDetail].filter(Boolean).join(' ')}});
+        await execute({
+          action: 'media.quality.set',
+          args: {
+            quality: state.preferredQuality || preferredQuality || state.quality,
+            ...(codec === 'audio' ? {} : { compatible: true }),
+            fallback: codec,
+            reason: [reason, fallbackDetail].filter(Boolean).join(' '),
+          },
+        });
         return;
-      } catch(error) {
-        playbackError=reason+' '+(['plex','audio'].includes(codec)?'Plex':codec.toUpperCase())+' fallback failed: '+error.message;
+      } catch (error) {
+        playbackError =
+          reason +
+          ' ' +
+          (['plex', 'audio'].includes(codec) ? 'Plex' : codec.toUpperCase()) +
+          ' fallback failed: ' +
+          error.message;
       }
     }
     fail(playbackError);
-  } finally {fallbackPending=false;}
+  } finally {
+    fallbackPending = false;
+  }
 }
 async function proxyDirectFile() {
   if (!state?.directDelivery || directRecovery || !navigator.onLine) return;
-  const next = state, id = selected;
+  const next = state,
+    id = selected;
   const recovery = (async () => {
     try {
-      await api('/api/watch/rooms/' + id + '/delivery', { viewerId, mediaVersion:next.mediaVersion, streamVersion:next.streamVersion });
+      await api('/api/watch/rooms/' + id + '/delivery', {
+        viewerId,
+        mediaVersion: next.mediaVersion,
+        streamVersion: next.streamVersion,
+      });
       if (selected === id && state?.mediaVersion === next.mediaVersion) await refreshState();
     } catch {
-      if (selected === id && state?.streamVersion === next.streamVersion) fail('Video delivery could not recover. Try joining the room again.');
+      if (selected === id && state?.streamVersion === next.streamVersion)
+        fail('Video delivery could not recover. Try joining the room again.');
     }
   })();
   directRecovery = recovery;
-  try { await recovery; } finally { if (directRecovery === recovery) directRecovery = undefined; }
+  try {
+    await recovery;
+  } finally {
+    if (directRecovery === recovery) directRecovery = undefined;
+  }
 }
 async function attachDirectFile(next) {
-  const controller = directProbe = new AbortController();
-  const current = () => !controller.signal.aborted && selected === next.id && state?.streamVersion === next.streamVersion && mediaSource === next.mediaUrl;
+  const controller = (directProbe = new AbortController());
+  const current = () =>
+    !controller.signal.aborted &&
+    selected === next.id &&
+    state?.streamVersion === next.streamVersion &&
+    mediaSource === next.mediaUrl;
   try {
     // Prove CORS/range delivery before attaching native media. Do not follow a
     // redirect or send uburoom cookies/credentials to the Plex origin.
-    const response = await fetch(next.mediaUrl, { headers:{Range:'bytes=0-0'}, mode:'cors', credentials:'omit', redirect:'error',
-      referrerPolicy:'no-referrer', signal:AbortSignal.any([controller.signal,AbortSignal.timeout(8000)]) });
+    const response = await fetch(next.mediaUrl, {
+      headers: { Range: 'bytes=0-0' },
+      mode: 'cors',
+      credentials: 'omit',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+    });
     await response.body?.cancel();
     if (!current()) return;
-    if (!response.ok) { await proxyDirectFile(); return; }
-    video.crossOrigin = 'anonymous'; video.src = next.mediaUrl;
-    directStartupTimer = setTimeout(() => { if (current() && video.readyState < 2) void proxyDirectFile(); }, 10000);
-  } catch { if (current()) await proxyDirectFile(); }
+    if (!response.ok) {
+      await proxyDirectFile();
+      return;
+    }
+    video.crossOrigin = 'anonymous';
+    video.src = next.mediaUrl;
+    directStartupTimer = setTimeout(() => {
+      if (current() && video.readyState < 2) void proxyDirectFile();
+    }, 10000);
+  } catch {
+    if (current()) await proxyDirectFile();
+  }
 }
 video.addEventListener('waiting', () => {
   clearTimeout(directStallTimer);
   if (!state?.directDelivery) return;
-  const stream = state.streamVersion, position = video.currentTime;
+  const stream = state.streamVersion,
+    position = video.currentTime;
   directStallTimer = setTimeout(() => {
-    if (state?.directDelivery && state.streamVersion === stream && !video.paused && video.readyState < 3 && video.currentTime <= position + .1) void proxyDirectFile();
+    if (
+      state?.directDelivery &&
+      state.streamVersion === stream &&
+      !video.paused &&
+      video.readyState < 3 &&
+      video.currentTime <= position + 0.1
+    )
+      void proxyDirectFile();
   }, 8000);
 });
 window.addEventListener('online', () => {
@@ -1472,45 +2489,77 @@ window.addEventListener('online', () => {
 });
 function watchFrames() {
   if (!video.requestVideoFrameCallback) return;
-  frameCallback = video.requestVideoFrameCallback((now,metadata) => {
+  frameCallback = video.requestVideoFrameCallback((now, metadata) => {
     videoFrames++;
     try {
-      const timing=playbackClock.read(metadata.expectedDisplayTime);
-      const target=uburoomTiming.target(state,timing.serverTime);
-      const frame=presentationTiming.frame(now,metadata,{
+      const timing = playbackClock.read(metadata.expectedDisplayTime);
+      const target = uburoomTiming.target(state, timing.serverTime);
+      const frame = presentationTiming.frame(now, metadata, {
         target,
-        context:sync?.contextKey(),
-        clockRevision:timing.clockRevision
+        context: sync?.contextKey(),
+        clockRevision: timing.clockRevision,
       });
-      const presentationErrorMs=frame?.presentationErrorMs;
-      if(frame)diagnostics.record('frame',{...frame,...timing,clockValid:timing.valid,frameServerTime:timing.serverTime,
-        timelineRevision:state?.revision,sharedTarget:target,presentationErrorMs,
-        smoothedPresentationErrorMs:frame.smoothedPresentationErrorMs,
-        paused:video.paused,roomPaused:state?.state.paused,seeking:video.seeking,waiting:playerWaiting,ready:video.readyState,rate:video.playbackRate,syncMode:syncCorrectionMode,
-        settling:performance.now()-lastPresentationBreak<2000,
-        visibility:document.visibilityState,bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)});
-    } catch { /* Diagnostics cannot stop the decoded-frame evidence loop. */ }
+      const presentationErrorMs = frame?.presentationErrorMs;
+      if (frame)
+        diagnostics.record('frame', {
+          ...frame,
+          ...timing,
+          clockValid: timing.valid,
+          frameServerTime: timing.serverTime,
+          timelineRevision: state?.revision,
+          sharedTarget: target,
+          presentationErrorMs,
+          smoothedPresentationErrorMs: frame.smoothedPresentationErrorMs,
+          paused: video.paused,
+          roomPaused: state?.state.paused,
+          seeking: video.seeking,
+          waiting: playerWaiting,
+          ready: video.readyState,
+          rate: video.playbackRate,
+          syncMode: syncCorrectionMode,
+          settling: performance.now() - lastPresentationBreak < 2000,
+          visibility: document.visibilityState,
+          bufferAhead: uburoomPlayback.bufferedAhead(video.buffered, video.currentTime),
+        });
+    } catch {
+      /* Diagnostics cannot stop the decoded-frame evidence loop. */
+    }
     watchFrames();
   });
 }
-const playbackHealthTracker = uburoomPlayback.healthTracker(), viewerClient = uburoomPlayback.clientKind(navigator, !!activity);
+const playbackHealthTracker = uburoomPlayback.healthTracker(),
+  viewerClient = uburoomPlayback.clientKind(navigator, !!activity);
 let playbackHealth, lastSyncErrorMs;
-const choppyDetector = uburoomPlayback.choppinessDetector({ threshold: 0.10, windowMs: 10000, minFrames: 50 });
+const choppyDetector = uburoomPlayback.choppinessDetector({ threshold: 0.1, windowMs: 10000, minFrames: 50 });
 let choppyToastActive = false;
-let capabilityProbeVersion = 0, capabilityProbeKey;
+let capabilityProbeVersion = 0,
+  capabilityProbeKey;
 async function probePlaybackCapabilities(configuration, client = hls) {
   const key = JSON.stringify(configuration);
   if (key === capabilityProbeKey) return;
   capabilityProbeKey = key;
-  const version = ++capabilityProbeVersion, room = selected, media = state?.mediaVersion, stream = state?.streamVersion;
-  const result = await uburoomPlayback.decodingCapability(configuration,navigator.mediaCapabilities);
-  if (version !== capabilityProbeVersion || hls !== client || selected !== room || state?.mediaVersion !== media || state?.streamVersion !== stream) return;
-  diagnostics.record('decode-capability',{format:state?.format,...result});
+  const version = ++capabilityProbeVersion,
+    room = selected,
+    media = state?.mediaVersion,
+    stream = state?.streamVersion;
+  const result = await uburoomPlayback.decodingCapability(configuration, navigator.mediaCapabilities);
+  if (
+    version !== capabilityProbeVersion ||
+    hls !== client ||
+    selected !== room ||
+    state?.mediaVersion !== media ||
+    state?.streamVersion !== stream
+  )
+    return;
+  diagnostics.record('decode-capability', { format: state?.format, ...result });
 }
 function resetChoppyPlayback(preserve = false) {
-  toasts.dismiss('choppy', false); choppyToastActive = false;
-  if (preserve) choppyDetector.interrupt(); else choppyDetector.reset();
-  capabilityProbeVersion++; capabilityProbeKey = undefined;
+  toasts.dismiss('choppy', false);
+  choppyToastActive = false;
+  if (preserve) choppyDetector.interrupt();
+  else choppyDetector.reset();
+  capabilityProbeVersion++;
+  capabilityProbeKey = undefined;
 }
 function dropPlaybackQuality() {
   const choices = state?.qualities || uburoom.QUALITIES;
@@ -1548,32 +2597,43 @@ function checkChoppyPlayback() {
     seeking: video.seeking || seekDragging || sync?.timelinePending,
     waiting: playerWaiting || video.readyState < 3,
     visible: document.visibilityState === 'visible',
-    active: !pending && !qualityPending && video.currentTime > 1
+    active: !pending && !qualityPending && video.currentTime > 1,
   };
   const result = choppyDetector.update(performance.now(), quality, conditions);
   if (result.rearmed) diagnostics.record('playback-rearmed');
   if (result.warning) {
-    diagnosticSample('playback-degraded',{degradation:result.severeDropChoppy?'severe-drops':result.dropChoppy?'drops':'stalls',
-      dropRatio:result.ratio,deltaTotal:result.deltaTotal,deltaDropped:result.deltaDropped,severeRatio:result.severeRatio,
-      severeTotal:result.severeTotal,severeDropped:result.severeDropped,totalStallMs:result.totalStallMs,stallCount:result.stallCount,sampleGapMs:result.sampleGapMs});
+    diagnosticSample('playback-degraded', {
+      degradation: result.severeDropChoppy ? 'severe-drops' : result.dropChoppy ? 'drops' : 'stalls',
+      dropRatio: result.ratio,
+      deltaTotal: result.deltaTotal,
+      deltaDropped: result.deltaDropped,
+      severeRatio: result.severeRatio,
+      severeTotal: result.severeTotal,
+      severeDropped: result.severeDropped,
+      totalStallMs: result.totalStallMs,
+      stallCount: result.stallCount,
+      sampleGapMs: result.sampleGapMs,
+    });
     if (!choppyToastActive && !choppyDetector.isDismissed) {
       choppyToastActive = true;
       toasts.show('choppy', {
         title: 'Playback seems choppy',
         duration: 15000,
-        onClose: () => { choppyToastActive = false; },
+        onClose: () => {
+          choppyToastActive = false;
+        },
         action: {
           label: 'Lower quality',
           run: () => {
             dropPlaybackQuality();
-          }
+          },
         },
-        onDismiss: (deliberate) => {
+        onDismiss: deliberate => {
           choppyToastActive = false;
           if (deliberate) {
             choppyDetector.dismiss(true);
           }
-        }
+        },
       });
     }
   } else if (choppyToastActive && !result.choppy && !result.warming && !result.interrupted && !result.inCooldown) {
@@ -1586,59 +2646,117 @@ function decodedFrames() {
   return videoFrames || (quality ? quality.totalVideoFrames - quality.droppedVideoFrames : undefined);
 }
 function checkVideoFrames() {
-  const interrupted=!state?.mediaUrl || video.paused || !!state?.state?.paused || video.seeking || seekDragging || !!sync?.timelinePending ||
-    pending || qualityPending || !!heldStream || document.visibilityState!=='visible';
-  playbackHealth=playbackHealthTracker.update(performance.now(),video.getVideoPlaybackQuality?.(),{
-    stalled:!!state?.mediaUrl && (playerWaiting || !video.paused && video.readyState<3),
-    interrupted});
-  fallbackPlayback.tick({bufferAhead:uburoomPlayback.bufferedAhead(video.buffered,video.currentTime),
-    stallSeconds:playbackHealthTracker.currentStallSeconds(),interrupted:interrupted || autoplayBlocked,target:expected()});
+  const interrupted =
+    !state?.mediaUrl ||
+    video.paused ||
+    !!state?.state?.paused ||
+    video.seeking ||
+    seekDragging ||
+    !!sync?.timelinePending ||
+    pending ||
+    qualityPending ||
+    !!heldStream ||
+    document.visibilityState !== 'visible';
+  playbackHealth = playbackHealthTracker.update(performance.now(), video.getVideoPlaybackQuality?.(), {
+    stalled: !!state?.mediaUrl && (playerWaiting || (!video.paused && video.readyState < 3)),
+    interrupted,
+  });
+  fallbackPlayback.tick({
+    bufferAhead: uburoomPlayback.bufferedAhead(video.buffered, video.currentTime),
+    stallSeconds: playbackHealthTracker.currentStallSeconds(),
+    interrupted: interrupted || autoplayBlocked,
+    target: expected(),
+  });
   checkChoppyPlayback();
   // Hidden or minimized pages may stop producing frames while audio continues.
-  if (!state?.mediaUrl || video.paused || video.seeking || autoplayBlocked || playbackError || fallbackPending || document.visibilityState !== 'visible') { frameStartedAt = undefined; return; }
+  if (
+    !state?.mediaUrl ||
+    video.paused ||
+    video.seeking ||
+    autoplayBlocked ||
+    playbackError ||
+    fallbackPending ||
+    document.visibilityState !== 'visible'
+  ) {
+    frameStartedAt = undefined;
+    return;
+  }
   frameStartedAt ??= performance.now();
   const frames = decodedFrames();
-  if (performance.now() - frameStartedAt > 8000 && (frames === 0 || !video.videoWidth || !video.videoHeight) && video.currentTime > 1) void compatibleFallback('Audio is playing without decoded video.');
+  if (
+    performance.now() - frameStartedAt > 8000 &&
+    (frames === 0 || !video.videoWidth || !video.videoHeight) &&
+    video.currentTime > 1
+  )
+    void compatibleFallback('Audio is playing without decoded video.');
 }
 function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = false) {
-  if(reason!=='state-change')fallbackPlayback.reset();
-  directProbe?.abort(); directProbe = undefined;
+  if (reason !== 'state-change') fallbackPlayback.reset();
+  directProbe?.abort();
+  directProbe = undefined;
   directRecovery = undefined;
-  clearTimeout(fallbackRetryTimer); fallbackRetryTimer = undefined;
-  clearTimeout(directStartupTimer); clearTimeout(directStallTimer);
-  clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
-  disconnectExtended = false; hideDisconnectToast();
+  clearTimeout(fallbackRetryTimer);
+  fallbackRetryTimer = undefined;
+  clearTimeout(directStartupTimer);
+  clearTimeout(directStallTimer);
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer = undefined;
+  disconnectExtended = false;
+  hideDisconnectToast();
   resetChoppyPlayback(preserveChoppiness);
-  toasts.dismiss('participant'); lastFeedback = undefined;
-  if(reason!=='state-change')playerUI?.reset();
+  toasts.dismiss('participant');
+  lastFeedback = undefined;
+  if (reason !== 'state-change') playerUI?.reset();
   sync.reset();
   resetSyncQuality();
-  diagnosticSample('player-clear',{reason});
+  diagnosticSample('player-clear', { reason });
   if (pipWindow && reason !== 'state-change') {
-    try { pipWindow.close(); } catch {}
+    try {
+      pipWindow.close();
+    } catch {}
   }
   if (document.pictureInPictureElement && reason !== 'state-change') {
-    try { document.exitPictureInPicture().catch(() => {}); } catch {}
+    try {
+      document.exitPictureInPicture().catch(() => {});
+    } catch {}
   }
   if (reason !== 'state-change') {
     roomUI?.closeTelemetryCard?.();
     for (const id of bufferingViewers.keys()) toasts.dismiss('buffering-' + id);
-    bufferingViewers.clear(); suppressedBuffering.clear(); voluntarilyPausedFor = null;
+    bufferingViewers.clear();
+    suppressedBuffering.clear();
+    voluntarilyPausedFor = null;
   }
   if (!preserveSubtitles) {
-    captions.reset(); trackActionError='';
+    captions.reset();
+    trackActionError = '';
     setSubtitleLoading(false);
-    toasts.dismiss('subtitle-error'); subtitleErrorNotice=undefined;
+    toasts.dismiss('subtitle-error');
+    subtitleErrorNotice = undefined;
   }
-  observing = false; observationBreak++; playerWaiting = false;
-  av1?.destroy(); av1 = undefined;
-  clearTimeout(hlsRecoveryTimer); hlsRecoveryCount = 0; $('acceleration-help').hidden = true;
+  observing = false;
+  observationBreak++;
+  playerWaiting = false;
+  av1?.destroy();
+  av1 = undefined;
+  clearTimeout(hlsRecoveryTimer);
+  hlsRecoveryCount = 0;
+  $('acceleration-help').hidden = true;
   if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
-  frameCallback = undefined; frameStartedAt = undefined; videoFrames = 0;
+  frameCallback = undefined;
+  frameStartedAt = undefined;
+  videoFrames = 0;
   presentationTiming.reset();
-  dropVolume(); video.pause(); stopHls(reason);
-  video.removeAttribute('src'); video.removeAttribute('crossorigin'); video.load(); mediaVersion = mediaSource = readyVersion = readinessSent = undefined; readyQueued = false;
-  playbackError = ''; autoplayBlocked = false;
+  dropVolume();
+  video.pause();
+  stopHls(reason);
+  video.removeAttribute('src');
+  video.removeAttribute('crossorigin');
+  video.load();
+  mediaVersion = mediaSource = readyVersion = readinessSent = undefined;
+  readyQueued = false;
+  playbackError = '';
+  autoplayBlocked = false;
   $('join-playback').hidden = true;
   const isEnding = !!(state && !state.mediaUrl && state.ending);
   stage.classList.toggle('ending-active', isEnding);
@@ -1647,18 +2765,28 @@ function clearPlayer(reason, preserveSubtitles = false, preserveChoppiness = fal
   if (isEnding) renderEnding(state);
   $('ready-status').textContent = '';
 }
-function hlsClientConfig(next,cache) {
-  const config=uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling,!!next.directHls,cache);
-  if(next.directHls) {
+function hlsClientConfig(next, cache) {
+  const config = uburoomPlayback.hlsConfig(next.bitrate || next.bitrateCeiling, !!next.directHls, cache);
+  if (next.directHls) {
     // FetchLoader rejects redirects and adds only this viewer's temporary
     // credential to resources under the pinned Plex output session.
-    config.progressive=true;
-    config.fetchSetup=(context,init)=>{
+    config.progressive = true;
+    config.fetchSetup = (context, init) => {
       try {
-        const url=new URL(context.url,location.href);
-        const target=url.href===new URL(next.mediaUrl,location.href).href?url.href:uburoomPlayback.directHlsUrl(url.href,next.directHls);
-        return new Request(target,{...init,credentials:url.origin===location.origin?'same-origin':'omit',redirect:'error',referrerPolicy:'no-referrer'});
-      }catch{return Promise.reject(new Error('Direct Plex resource unavailable'));}
+        const url = new URL(context.url, location.href);
+        const target =
+          url.href === new URL(next.mediaUrl, location.href).href
+            ? url.href
+            : uburoomPlayback.directHlsUrl(url.href, next.directHls);
+        return new Request(target, {
+          ...init,
+          credentials: url.origin === location.origin ? 'same-origin' : 'omit',
+          redirect: 'error',
+          referrerPolicy: 'no-referrer',
+        });
+      } catch {
+        return Promise.reject(new Error('Direct Plex resource unavailable'));
+      }
     };
   }
   return config;
@@ -1666,149 +2794,264 @@ function hlsClientConfig(next,cache) {
 // A quality change keeps the current stream playing from its buffer while the new one
 // loads out of sight, and swaps only once it reaches the room's position. A new stream
 // that is too slow or fails falls back to the plain swap before the buffer runs out.
-const HOLD_LIMIT_MS=20000,HOLD_RESERVE=1.5;
-let heldStream,preparedStream,lastQualityRequest=0;
-const fallbackPlayback=uburoomFallback.create({
-  supported:format=>typeof MediaSource!=='undefined' && MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[format]),
-  prepare:(next,seconds)=>uburoomStreams.prepare(next,{target:expected,seconds,hlsConfig:hlsClientConfig}),
-  swap:(_,prepared)=>{preparedStream=prepared;lastQualityRequest=0;applyState(fallbackPlayback.display(),true);},
-  record:(event,fields)=>diagnostics.record(event,fields),
-  notify:(active,next)=>toasts.show('fallback-stream',{title:active?'Switched to fallback to keep playing.':'Returned to your selected quality.',
-    hint:active && next.tracks?.audioId!==next.fallbackStream?.defaultAudioId?'Using default audio.':'',symbol:active?'down':'up',duration:3000})
+const HOLD_LIMIT_MS = 20000,
+  HOLD_RESERVE = 1.5;
+let heldStream,
+  preparedStream,
+  lastQualityRequest = 0;
+const fallbackPlayback = uburoomFallback.create({
+  supported: format =>
+    typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(uburoomPlayback.LOCAL_CODECS[format]),
+  prepare: (next, seconds) => uburoomStreams.prepare(next, { target: expected, seconds, hlsConfig: hlsClientConfig }),
+  swap: (_, prepared) => {
+    preparedStream = prepared;
+    lastQualityRequest = 0;
+    applyState(fallbackPlayback.display(), true);
+  },
+  record: (event, fields) => diagnostics.record(event, fields),
+  notify: (active, next) =>
+    toasts.show('fallback-stream', {
+      title: active ? 'Switched to fallback to keep playing.' : 'Returned to your selected quality.',
+      hint: active && next.tracks?.audioId !== next.fallbackStream?.defaultAudioId ? 'Using default audio.' : '',
+      symbol: active ? 'down' : 'up',
+      duration: 3000,
+    }),
 });
 function canHoldStream(next) {
-  if(activity || document.body.classList.contains('mobile-player') || !(hls || av1) || !state?.mediaUrl || playbackError)return false;
-  if(Date.now()-lastQualityRequest>10000 || video.readyState<3 || uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)<=HOLD_RESERVE+1)return false;
-  return next.format==='hls' && typeof Hls!=='undefined' && Hls.isSupported() || uburoomPlayback.localFormat(next.format) || fileNeedsAudioStream(next);
+  if (
+    activity ||
+    document.body.classList.contains('mobile-player') ||
+    !(hls || av1) ||
+    !state?.mediaUrl ||
+    playbackError
+  )
+    return false;
+  if (
+    Date.now() - lastQualityRequest > 10000 ||
+    video.readyState < 3 ||
+    uburoomPlayback.bufferedAhead(video.buffered, video.currentTime) <= HOLD_RESERVE + 1
+  )
+    return false;
+  return (
+    (next.format === 'hls' && typeof Hls !== 'undefined' && Hls.isSupported()) ||
+    uburoomPlayback.localFormat(next.format) ||
+    fileNeedsAudioStream(next)
+  );
 }
-const fileNeedsAudioStream=next=>next.format==='file' && /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
-  !uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type)) && (config.outputs || ['plex']).includes('plex') &&
-  uburoomPlayback.needsAudioConversion(next,type => video.canPlayType(type));
+const fileNeedsAudioStream = next =>
+  next.format === 'file' &&
+  /^(h264|avc1|hevc|h265|hvc1|hev1)$/i.test(next.videoCodec || '') &&
+  !uburoomPlayback.needsVideoConversion(next, type => video.canPlayType(type)) &&
+  (config.outputs || ['plex']).includes('plex') &&
+  uburoomPlayback.needsAudioConversion(next, type => video.canPlayType(type));
 function holdStream(next) {
-  const hold=heldStream={next,started:performance.now()};
-  diagnostics.record('stream-hold',{format:next.format});
-  hls?.stopLoad(); av1?.hold();
-  const room=uburoomPlayback.bufferedAhead(video.buffered,video.currentTime)-HOLD_RESERVE;
-  hold.timer=setTimeout(()=>{if(heldStream===hold)releaseStream('timeout');},Math.min(HOLD_LIMIT_MS,room*1000/Math.max(video.playbackRate,1)));
+  const hold = (heldStream = { next, started: performance.now() });
+  diagnostics.record('stream-hold', { format: next.format });
+  hls?.stopLoad();
+  av1?.hold();
+  const room = uburoomPlayback.bufferedAhead(video.buffered, video.currentTime) - HOLD_RESERVE;
+  hold.timer = setTimeout(
+    () => {
+      if (heldStream === hold) releaseStream('timeout');
+    },
+    Math.min(HOLD_LIMIT_MS, (room * 1000) / Math.max(video.playbackRate, 1)),
+  );
   prepareHeldStream(hold);
 }
 function prepareHeldStream(hold) {
-  const next=hold.next;
-  clearInterval(hold.prepareTimer);hold.preparation?.close();hold.request?.abort();hold.cache=undefined;
-  if(fileNeedsAudioStream(next))return void requestAudioStream(hold);
+  const next = hold.next;
+  clearInterval(hold.prepareTimer);
+  hold.preparation?.close();
+  hold.request?.abort();
+  hold.cache = undefined;
+  if (fileNeedsAudioStream(next)) return void requestAudioStream(hold);
   try {
-    const preparation=hold.preparation=uburoomStreams.prepare(next,{target:expected,seconds:3,hlsConfig:hlsClientConfig});
-    hold.cache=preparation.cache;
-    hold.prepareTimer=setInterval(()=>{
-      if(heldStream!==hold)return;
-      if(preparation.failed)releaseStream('error');
-      else if(preparation.ahead()>=1)releaseStream();
-    },100);
-  } catch {releaseStream('error');}
+    const preparation = (hold.preparation = uburoomStreams.prepare(next, {
+      target: expected,
+      seconds: 3,
+      hlsConfig: hlsClientConfig,
+    }));
+    hold.cache = preparation.cache;
+    hold.prepareTimer = setInterval(() => {
+      if (heldStream !== hold) return;
+      if (preparation.failed) releaseStream('error');
+      else if (preparation.ahead() >= 1) releaseStream();
+    }, 100);
+  } catch {
+    releaseStream('error');
+  }
 }
 // Plex copies H.264 and converts only the audio, so skip the file the browser cannot play.
 async function requestAudioStream(hold) {
-  const started=Date.now();
-  while(qualityPending && heldStream===hold && Date.now()-started<3000)await new Promise(resolve=>setTimeout(resolve,30));
-  if(heldStream!==hold)return;
-  try { await execute({action:'media.quality.set',args:{quality:hold.next.preferredQuality || preferredQuality || hold.next.quality,fallback:'audio',reason:'The browser does not support the original codecs.'}}); }
-  catch { if(heldStream===hold)releaseStream('error'); }
+  const started = Date.now();
+  while (qualityPending && heldStream === hold && Date.now() - started < 3000)
+    await new Promise(resolve => setTimeout(resolve, 30));
+  if (heldStream !== hold) return;
+  try {
+    await execute({
+      action: 'media.quality.set',
+      args: {
+        quality: hold.next.preferredQuality || preferredQuality || hold.next.quality,
+        fallback: 'audio',
+        reason: 'The browser does not support the original codecs.',
+      },
+    });
+  } catch {
+    if (heldStream === hold) releaseStream('error');
+  }
 }
-function dropHeldStream(adopt=false) {
-  const hold=heldStream; heldStream=undefined;
-  if(!hold)return;
-  clearTimeout(hold.timer); hold.request?.abort();
-  clearInterval(hold.prepareTimer);hold.preparation?.close(adopt);
-  const client=hold.client; hold.client=undefined; client?.destroy();
+function dropHeldStream(adopt = false) {
+  const hold = heldStream;
+  heldStream = undefined;
+  if (!hold) return;
+  clearTimeout(hold.timer);
+  hold.request?.abort();
+  clearInterval(hold.prepareTimer);
+  hold.preparation?.close(adopt);
+  const client = hold.client;
+  hold.client = undefined;
+  client?.destroy();
   return hold;
 }
-function releaseStream(end='ready') {
-  const hold=dropHeldStream(true);
-  if(!hold)return;
-  lastQualityRequest=0;
-  diagnostics.record('stream-swap',{format:hold.next.format,holdEnd:end,prepared:!!hold.cache,elapsedMs:performance.now()-hold.started});
-  if(hold.cache){hold.cache.recording=false;preparedStream={url:hold.next.mediaUrl,cache:hold.cache};}
-  applyState(hold.next,true);
+function releaseStream(end = 'ready') {
+  const hold = dropHeldStream(true);
+  if (!hold) return;
+  lastQualityRequest = 0;
+  diagnostics.record('stream-swap', {
+    format: hold.next.format,
+    holdEnd: end,
+    prepared: !!hold.cache,
+    elapsedMs: performance.now() - hold.started,
+  });
+  if (hold.cache) {
+    hold.cache.recording = false;
+    preparedStream = { url: hold.next.mediaUrl, cache: hold.cache };
+  }
+  applyState(hold.next, true);
 }
 // The picture stays on the last frame through the gap the swap cannot avoid. The first
 // frame of a new stream is the anchor, so wait for the real one at the room's position.
-let frameHold,frameHoldTimer,frameHoldShown;
+let frameHold, frameHoldTimer, frameHoldShown;
 function holdLastFrame() {
-  if(video.readyState<2 || !video.videoWidth)return;
-  if(!frameHold) {frameHold=document.createElement('canvas');frameHold.id='frame-hold';frameHold.hidden=true;video.after(frameHold);}
-  frameHold.width=video.videoWidth;frameHold.height=video.videoHeight;frameHold.style.scale=video.style.scale;frameHold.style.translate=video.style.translate;
-  try {frameHold.getContext('2d').drawImage(video,0,0);} catch {return;}
-  frameHold.hidden=false;frameHoldShown=performance.now();
-  clearTimeout(frameHoldTimer);frameHoldTimer=setTimeout(releaseLastFrame,8000);
-  const shown=()=>{
-    if(frameHold.hidden)return;
-    if(sync.timelinePending || video.seeking || video.readyState<2)return void video.requestVideoFrameCallback(shown);
+  if (video.readyState < 2 || !video.videoWidth) return;
+  if (!frameHold) {
+    frameHold = document.createElement('canvas');
+    frameHold.id = 'frame-hold';
+    frameHold.hidden = true;
+    video.after(frameHold);
+  }
+  frameHold.width = video.videoWidth;
+  frameHold.height = video.videoHeight;
+  frameHold.style.scale = video.style.scale;
+  frameHold.style.translate = video.style.translate;
+  try {
+    frameHold.getContext('2d').drawImage(video, 0, 0);
+  } catch {
+    return;
+  }
+  frameHold.hidden = false;
+  frameHoldShown = performance.now();
+  clearTimeout(frameHoldTimer);
+  frameHoldTimer = setTimeout(releaseLastFrame, 8000);
+  const shown = () => {
+    if (frameHold.hidden) return;
+    if (sync.timelinePending || video.seeking || video.readyState < 2)
+      return void video.requestVideoFrameCallback(shown);
     releaseLastFrame();
   };
-  if(video.requestVideoFrameCallback)queueMicrotask(()=>video.requestVideoFrameCallback(shown));
-  else video.addEventListener('playing',releaseLastFrame,{once:true});
+  if (video.requestVideoFrameCallback) queueMicrotask(() => video.requestVideoFrameCallback(shown));
+  else video.addEventListener('playing', releaseLastFrame, { once: true });
 }
 function releaseLastFrame() {
   clearTimeout(frameHoldTimer);
-  if(frameHold && !frameHold.hidden)diagnostics.record('frame-hold-end',{elapsedMs:performance.now()-frameHoldShown});
-  if(frameHold)frameHold.hidden=true;
+  if (frameHold && !frameHold.hidden)
+    diagnostics.record('frame-hold-end', { elapsedMs: performance.now() - frameHoldShown });
+  if (frameHold) frameHold.hidden = true;
 }
 function stopHls(reason) {
-  if(hls)diagnosticSample('hls-stop',{reason});
+  if (hls) diagnosticSample('hls-stop', { reason });
   clearTimeout(hls?.refreshRetryTimer);
   clearTimeout(hlsRecoveryTimer);
-  hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
-  const client = hls; hls = undefined; client?.destroy();
+  hlsNetworkRetries = 0;
+  hlsNetworkFailure = undefined;
+  hlsNetworkInterrupted = false;
+  const client = hls;
+  hls = undefined;
+  client?.destroy();
 }
 function restartHlsForSeek(target) {
-  if(sync.timelinePending)return;
-  if (!hls || !hlsNetworkInterrupted || state?.mediaUrl !== mediaSource || uburoomPlayback.bufferedAhead(video.buffered,target) > .05) return;
+  if (sync.timelinePending) return;
+  if (
+    !hls ||
+    !hlsNetworkInterrupted ||
+    state?.mediaUrl !== mediaSource ||
+    uburoomPlayback.bufferedAhead(video.buffered, target) > 0.05
+  )
+    return;
   // A new authorized room seek supersedes the old segment's retry timer.
   // stopLoad keeps MediaSource and its cached ranges attached.
-  clearTimeout(hlsRecoveryTimer); hlsNetworkRetries = 0;
+  clearTimeout(hlsRecoveryTimer);
+  hlsNetworkRetries = 0;
   if (playbackError === hlsNetworkFailure) playbackError = '';
-  hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
-  hls.stopLoad(); hls.startLoad(target);
+  hlsNetworkFailure = undefined;
+  hlsNetworkInterrupted = false;
+  hls.stopLoad();
+  hls.startLoad(target);
 }
 async function refreshHlsSession(client) {
   if (hls !== client || state?.format !== 'hls' || state.mediaUrl !== mediaSource || hlsRefreshPending) return;
   // A dead Plex session costs nothing until its buffered media is needed, and
   // replacing it discards that media, so keep playing what is already here.
-  const buffered = uburoomPlayback.bufferedAhead(video.buffered,video.currentTime) >= 15;
+  const buffered = uburoomPlayback.bufferedAhead(video.buffered, video.currentTime) >= 15;
   if (pending || qualityPending || buffered) {
     if (client.refreshRetryTimer) return;
-    const room = selected, version = state.mediaVersion, stream = state.streamVersion;
-    client.refreshRetryTimer = setTimeout(() => {
-      client.refreshRetryTimer = undefined;
-      if (hls === client && selected === room && state?.mediaVersion === version && state?.streamVersion === stream) void refreshHlsSession(client);
-    }, buffered ? 2000 : 200);
+    const room = selected,
+      version = state.mediaVersion,
+      stream = state.streamVersion;
+    client.refreshRetryTimer = setTimeout(
+      () => {
+        client.refreshRetryTimer = undefined;
+        if (hls === client && selected === room && state?.mediaVersion === version && state?.streamVersion === stream)
+          void refreshHlsSession(client);
+      },
+      buffered ? 2000 : 200,
+    );
     return;
   }
-  if (hlsRefreshVersion !== state.mediaVersion) { hlsRefreshVersion = state.mediaVersion; hlsRefreshTimes = []; }
-  const now = Date.now(); hlsRefreshTimes = hlsRefreshTimes.filter(time => now-time < 60000);
+  if (hlsRefreshVersion !== state.mediaVersion) {
+    hlsRefreshVersion = state.mediaVersion;
+    hlsRefreshTimes = [];
+  }
+  const now = Date.now();
+  hlsRefreshTimes = hlsRefreshTimes.filter(time => now - time < 60000);
   if (hlsRefreshTimes.length >= 3) return;
-  hlsRefreshTimes.push(now); hlsRefreshPending = true;
+  hlsRefreshTimes.push(now);
+  hlsRefreshPending = true;
   diagnosticSample('stream-refresh');
-  const version = state.mediaVersion, streamVersion = state.streamVersion;
+  const version = state.mediaVersion,
+    streamVersion = state.streamVersion;
   try {
-    await execute({action:'media.stream.refresh',args:{mediaVersion:version,streamVersion}});
+    await execute({ action: 'media.stream.refresh', args: { mediaVersion: version, streamVersion } });
     diagnosticSample('stream-refresh-ok');
   } catch {
     diagnosticSample('stream-refresh-failed');
     if (state?.directHls && state?.streamVersion === streamVersion) void proxyDirectFile();
     // The old buffered media can still play. HLS's bounded network retry
     // reports an error if delivery does not return in time.
-  } finally { hlsRefreshPending = false; }
+  } finally {
+    hlsRefreshPending = false;
+  }
 }
 function handleHlsFragmentBuffered(client) {
   if (hls !== client || !state?.state || state.mediaUrl !== mediaSource) return;
-  if(sync.timelinePending) {
+  if (sync.timelinePending) {
     // Plex advertises estimated segment durations. Starting a fresh transmuxer
     // in the middle normalizes its first PTS against that estimate, moving the
     // actual pictures relative to currentTime. Anchor every private stream at
     // segment zero before seeking, keeping that origin for the stream lifetime.
-    const target=expected();sync.anchor(target);
-    if(target>.65) {
+    const target = expected();
+    sync.anchor(target);
+    if (target > 0.65) {
       client.startLoad(target);
     }
     client.resumeBuffering();
@@ -1816,12 +3059,15 @@ function handleHlsFragmentBuffered(client) {
   }
   // A buffered fragment from an obsolete seek does not establish that the
   // shared playback position can advance again.
-  const target = expected(), ahead = uburoomPlayback.bufferedAhead(video.buffered,target);
-  if (ahead <= .05 || ahead + .05 < Math.min(.5,Math.max(0,state.state.duration - target))) return;
+  const target = expected(),
+    ahead = uburoomPlayback.bufferedAhead(video.buffered, target);
+  if (ahead <= 0.05 || ahead + 0.05 < Math.min(0.5, Math.max(0, state.state.duration - target))) return;
   if (state.waitingForReady || state.readiness) void reportReadiness();
   clearTimeout(hlsRecoveryTimer);
   const resume = !!hlsNetworkFailure && playbackError === hlsNetworkFailure;
-  hlsNetworkRetries = 0; hlsNetworkFailure = undefined; hlsNetworkInterrupted = false;
+  hlsNetworkRetries = 0;
+  hlsNetworkFailure = undefined;
+  hlsNetworkInterrupted = false;
   if (resume) {
     diagnosticSample('buffer-recovered');
     playbackError = '';
@@ -1831,14 +3077,28 @@ function handleHlsFragmentBuffered(client) {
 }
 function handleHlsError(client, data) {
   if (hls !== client) return;
-  const detail = uburoomPlayback.hlsErrorDetail(data,Hls.ErrorDetails);
-  diagnosticSample('hls-error',{fatal:!!data.fatal,status:data.response?.code,
-    category:data.type===Hls.ErrorTypes.NETWORK_ERROR?'network':data.type===Hls.ErrorTypes.MEDIA_ERROR?'media':'other',
-    detail,hlsMaxBufferSize:client.config?.maxBufferSize,hlsMaxBufferLength:client.config?.maxBufferLength,
-    hlsMaxMaxBufferLength:client.config?.maxMaxBufferLength,hlsBackBufferLength:client.config?.backBufferLength});
-  if(state?.directHls && data.fatal && data.type===Hls.ErrorTypes.NETWORK_ERROR) {
+  const detail = uburoomPlayback.hlsErrorDetail(data, Hls.ErrorDetails);
+  diagnosticSample('hls-error', {
+    fatal: !!data.fatal,
+    status: data.response?.code,
+    category:
+      data.type === Hls.ErrorTypes.NETWORK_ERROR
+        ? 'network'
+        : data.type === Hls.ErrorTypes.MEDIA_ERROR
+          ? 'media'
+          : 'other',
+    detail,
+    hlsMaxBufferSize: client.config?.maxBufferSize,
+    hlsMaxBufferLength: client.config?.maxBufferLength,
+    hlsMaxMaxBufferLength: client.config?.maxMaxBufferLength,
+    hlsBackBufferLength: client.config?.backBufferLength,
+  });
+  if (state?.directHls && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     client.stopLoad();
-    if((detail==='fragment' || [404,410].includes(data.response?.code)) && (hlsRefreshVersion!==state.mediaVersion || !hlsRefreshTimes.length)) {
+    if (
+      (detail === 'fragment' || [404, 410].includes(data.response?.code)) &&
+      (hlsRefreshVersion !== state.mediaVersion || !hlsRefreshTimes.length)
+    ) {
       void refreshHlsSession(client);
     } else void proxyDirectFile();
     return;
@@ -1853,26 +3113,45 @@ function handleHlsError(client, data) {
     // Keep already buffered media attached while retrying the current stream.
     // Authorization and grant renewal still run through the normal room poll.
     clearTimeout(hlsRecoveryTimer);
-    if (hlsNetworkRetries >= 3) hlsNetworkFailure = 'The video stream could not load. Check the connection and try again.';
+    if (hlsNetworkRetries >= 3)
+      hlsNetworkFailure = 'The video stream could not load. Check the connection and try again.';
     // Three quick retries, then at most three low-frequency recovery attempts.
     // Keep the private stream, tracks and shared timeline; never replay commands.
     if (hlsNetworkRetries < 6) {
-      const attempt = hlsNetworkRetries++, delay = attempt < 3 ? 1000 * 2 ** attempt : 15000 * 2 ** (attempt-3);
-      diagnostics.record('retry-scheduled',{attempt:attempt+1,delayMs:delay});
-      const source = mediaSource, version = state?.mediaVersion, stream = state?.streamVersion, room = selected;
+      const attempt = hlsNetworkRetries++,
+        delay = attempt < 3 ? 1000 * 2 ** attempt : 15000 * 2 ** (attempt - 3);
+      diagnostics.record('retry-scheduled', { attempt: attempt + 1, delayMs: delay });
+      const source = mediaSource,
+        version = state?.mediaVersion,
+        stream = state?.streamVersion,
+        room = selected;
       const retry = () => {
-        if (hls !== client || !state?.state || selected !== room || mediaSource !== source || state.mediaUrl !== source ||
-          state.mediaVersion !== version || state.streamVersion !== stream) return;
+        if (
+          hls !== client ||
+          !state?.state ||
+          selected !== room ||
+          mediaSource !== source ||
+          state.mediaUrl !== source ||
+          state.mediaVersion !== version ||
+          state.streamVersion !== stream
+        )
+          return;
         // Wait for online state and a recent authorized poll before loading.
-        if (navigator.onLine === false || performance.now()-receivedAt > 3000) { diagnostics.record('retry-deferred',{attempt:attempt+1,delayMs:delay});hlsRecoveryTimer = setTimeout(retry,delay); return; }
-        const target = sync.timelinePending?0:expected();
+        if (navigator.onLine === false || performance.now() - receivedAt > 3000) {
+          diagnostics.record('retry-deferred', { attempt: attempt + 1, delayMs: delay });
+          hlsRecoveryTimer = setTimeout(retry, delay);
+          return;
+        }
+        const target = sync.timelinePending ? 0 : expected();
         if (!Number.isFinite(target) || target < 0 || target >= state.state.duration) return;
         // Once the delivery error pauses local playback, normal synchronization
         // is suspended. Retarget MSE too, or hls.js can refill the old position.
-        if (video.readyState >= 1 && Math.abs(video.currentTime-target) > .65) video.currentTime = target;
-        diagnosticSample('retry-start',{attempt:attempt+1});hlsRecoveryTimer = undefined; client.startLoad(target);
+        if (video.readyState >= 1 && Math.abs(video.currentTime - target) > 0.65) video.currentTime = target;
+        diagnosticSample('retry-start', { attempt: attempt + 1 });
+        hlsRecoveryTimer = undefined;
+        client.startLoad(target);
       };
-      hlsRecoveryTimer = setTimeout(retry,delay);
+      hlsRecoveryTimer = setTimeout(retry, delay);
     }
     return;
   }
@@ -1883,18 +3162,38 @@ function handleHlsError(client, data) {
   else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && spendHlsRecovery()) {
     // Retry the current authorized stream once. No shared command or timeline change.
     hlsRecoveryTimer = setTimeout(() => {
-      if (hls === client && state?.mediaUrl === mediaSource) { client.recoverMediaError(); client.startLoad(sync.timelinePending?0:expected()); }
+      if (hls === client && state?.mediaUrl === mediaSource) {
+        client.recoverMediaError();
+        client.startLoad(sync.timelinePending ? 0 : expected());
+      }
     }, 0);
     return;
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR || data.details === Hls.ErrorDetails.MEDIA_SOURCE_REQUIRES_RESET) {
-    fallbackDetail=[data.details,data.sourceBufferName,data.frag?.type,data.frag?'sn '+data.frag.sn:'',(data.error||data.err)?.message,'at '+video.currentTime+'/'+expected()].filter(Boolean).join(' ');
-    void compatibleFallback(['quota-exceeded','buffer-full','buffer-append'].includes(detail)?'The browser could not append video data.':'The browser media pipeline failed.'); return;
+    fallbackDetail = [
+      data.details,
+      data.sourceBufferName,
+      data.frag?.type,
+      data.frag ? 'sn ' + data.frag.sn : '',
+      (data.error || data.err)?.message,
+      'at ' + video.currentTime + '/' + expected(),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    void compatibleFallback(
+      ['quota-exceeded', 'buffer-full', 'buffer-append'].includes(detail)
+        ? 'The browser could not append video data.'
+        : 'The browser media pipeline failed.',
+    );
+    return;
   }
   stopHls('fatal');
-  playbackError = data.type === Hls.ErrorTypes.MEDIA_ERROR ?
-    'The browser could not decode the video stream (' + data.details + '). Try enabling hardware acceleration or use the website.' :
-    'The video stream could not load (' + data.details + '). Check the connection and try again.';
+  playbackError =
+    data.type === Hls.ErrorTypes.MEDIA_ERROR
+      ? 'The browser could not decode the video stream (' +
+        data.details +
+        '). Try enabling hardware acceleration or use the website.'
+      : 'The video stream could not load (' + data.details + '). Check the connection and try again.';
   fail(playbackError);
 }
 // One in-place recovery per quiet minute: failures this close together are one
@@ -1908,173 +3207,327 @@ function spendHlsRecovery() {
 // Waits as long as the host buffering notice, so a brief stream replacement stays quiet.
 function renderProviderNotice(active) {
   if (!active) {
-    clearTimeout(providerNoticeTimer);providerNoticeTimer=undefined;
-    if(providerNoticeShown)toasts.dismiss('provider-problem');
-    providerNoticeShown=false;return;
+    clearTimeout(providerNoticeTimer);
+    providerNoticeTimer = undefined;
+    if (providerNoticeShown) toasts.dismiss('provider-problem');
+    providerNoticeShown = false;
+    return;
   }
-  if(providerNoticeShown||providerNoticeTimer)return;
-  providerNoticeTimer=setTimeout(()=>{
-    providerNoticeTimer=undefined;providerNoticeShown=true;
-    toasts.show('provider-problem',{type:'error',title:'Plex connection problem',hint:'Playback should resume once Plex recovers.',symbol:'refresh',persistent:true});
-  },3000);
+  if (providerNoticeShown || providerNoticeTimer) return;
+  providerNoticeTimer = setTimeout(() => {
+    providerNoticeTimer = undefined;
+    providerNoticeShown = true;
+    toasts.show('provider-problem', {
+      type: 'error',
+      title: 'Plex connection problem',
+      hint: 'Playback should resume once Plex recovers.',
+      symbol: 'refresh',
+      persistent: true,
+    });
+  }, 3000);
 }
-function unavailable(message,reason='room-unavailable') {
+function unavailable(message, reason = 'room-unavailable') {
   renderProviderNotice(false);
   syncRoomUrl(null);
   unavailableToasts();
-  clearTimeout(disconnectGraceTimer); disconnectGraceTimer = undefined;
-  disconnectExtended = false; hideDisconnectToast();
-  reconnecting=false;
-  qualityPending=false;
-  playbackClock.reset();
-  if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-  clearPlayer(reason); state = undefined; 
-  browseRoom = undefined; renderBrowsing();
-  renderVisibility(); renderTransport(); document.title = 'uburoom watch'; fail(message);
-}
-function connectionLost(details={}) {
-  diagnostics.record('control-disconnected',{socketCloseCode:details.code,connectionId:details.connectionId,
-    connectionAttempt:details.connectionAttempt,connectionAgeMs:details.connectionAgeMs,closeInitiator:details.closeInitiator,
-    socketCloseClean:details.clean,socketWasReady:details.wasReady,visibility:document.visibilityState});
-  if(transport?.ready)transport.interrupt(1000);
-  if(reconnecting)return;
-  reconnecting=true;stateRequestSequence++;stateTransportSequence=0;
-  playbackClock.reset();resetSyncQuality();queueUI.rememberPosition();
-  
-  if(state)state={...state,enabled:false,reachable:false};
-  renderTransport();renderBrowsing();renderVisibility();
-  document.title=document.title.replace(/^🟢 /,'');
   clearTimeout(disconnectGraceTimer);
-  disconnectGraceTimer=setTimeout(()=>{
-    if(!reconnecting)return;
-    const buffered=uburoomPlayback.bufferedAhead(video.buffered,video.currentTime);
-    if(buffered>2){
-      disconnectExtended=true;
-      diagnostics.record('disconnect-extended',{bufferAhead:buffered});
+  disconnectGraceTimer = undefined;
+  disconnectExtended = false;
+  hideDisconnectToast();
+  reconnecting = false;
+  qualityPending = false;
+  playbackClock.reset();
+  if ($('tracks-dialog').open) $('tracks-dialog').close();
+  trackContext = undefined;
+  clearPlayer(reason);
+  state = undefined;
+  browseRoom = undefined;
+  renderBrowsing();
+  renderVisibility();
+  renderTransport();
+  document.title = 'uburoom watch';
+  fail(message);
+}
+function connectionLost(details = {}) {
+  diagnostics.record('control-disconnected', {
+    socketCloseCode: details.code,
+    connectionId: details.connectionId,
+    connectionAttempt: details.connectionAttempt,
+    connectionAgeMs: details.connectionAgeMs,
+    closeInitiator: details.closeInitiator,
+    socketCloseClean: details.clean,
+    socketWasReady: details.wasReady,
+    visibility: document.visibilityState,
+  });
+  if (transport?.ready) transport.interrupt(1000);
+  if (reconnecting) return;
+  reconnecting = true;
+  stateRequestSequence++;
+  stateTransportSequence = 0;
+  playbackClock.reset();
+  resetSyncQuality();
+  queueUI.rememberPosition();
+
+  if (state) state = { ...state, enabled: false, reachable: false };
+  renderTransport();
+  renderBrowsing();
+  renderVisibility();
+  document.title = document.title.replace(/^🟢 /, '');
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer = setTimeout(() => {
+    if (!reconnecting) return;
+    const buffered = uburoomPlayback.bufferedAhead(video.buffered, video.currentTime);
+    if (buffered > 2) {
+      disconnectExtended = true;
+      diagnostics.record('disconnect-extended', { bufferAhead: buffered });
       hls?.stopLoad();
       showDisconnectToast();
     } else {
-      diagnostics.record('disconnect-expired',{bufferAhead:buffered});
+      diagnostics.record('disconnect-expired', { bufferAhead: buffered });
       fullPlayerClear();
     }
-  },DISCONNECT_GRACE_MS);
+  }, DISCONNECT_GRACE_MS);
 }
 function showDisconnectToast() {
-  toasts.show('reconnect', { title: 'Disconnected from room', hint: 'Reconnecting…', symbol: 'refresh', loading: true });
+  toasts.show('reconnect', {
+    title: 'Disconnected from room',
+    hint: 'Reconnecting…',
+    symbol: 'refresh',
+    loading: true,
+  });
 }
 function hideDisconnectToast() {
   toasts.dismiss('reconnect');
 }
 function fullPlayerClear() {
-  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
-  disconnectExtended=false;hideDisconnectToast();
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer = undefined;
+  disconnectExtended = false;
+  hideDisconnectToast();
   clearPlayer('control-disconnected');
-  if(selected){$('empty-title').textContent='Reconnecting to your room…';$('empty-hint').textContent='Your library and queue position are kept.';}
+  if (selected) {
+    $('empty-title').textContent = 'Reconnecting to your room…';
+    $('empty-hint').textContent = 'Your library and queue position are kept.';
+  }
   fail('Disconnected. Reconnecting…');
 }
 async function unlockLocal() {
   if (!state?.mediaUrl || video.readyState < 2 || probing || playbackError || sync.timelinePending) return false;
-  const version = state.mediaVersion, source = mediaSource; probing = true; let playTimer;
+  const version = state.mediaVersion,
+    source = mediaSource;
+  probing = true;
+  let playTimer;
   try {
-    await Promise.race([video.play(), new Promise((resolve,reject) => { playTimer = setTimeout(() => {
-      if (state?.mediaVersion === version && mediaSource === source) video.pause();
-      reject(new DOMException('Playback is still buffering','AbortError'));
-    }, 8500); })]);
+    await Promise.race([
+      video.play(),
+      new Promise((resolve, reject) => {
+        playTimer = setTimeout(() => {
+          if (state?.mediaVersion === version && mediaSource === source) video.pause();
+          reject(new DOMException('Playback is still buffering', 'AbortError'));
+        }, 8500);
+      }),
+    ]);
     clearTimeout(playTimer);
     const until = performance.now() + 8500;
-    while ((decodedFrames() === 0 || !video.videoWidth) && performance.now() < until && state?.mediaVersion === version && mediaSource === source && !video.error) {
+    while (
+      (decodedFrames() === 0 || !video.videoWidth) &&
+      performance.now() < until &&
+      state?.mediaVersion === version &&
+      mediaSource === source &&
+      !video.error
+    ) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (state?.mediaVersion !== version || mediaSource !== source) return false;
-    if ((decodedFrames() === 0 || !video.videoWidth) && document.visibilityState === 'visible') { void compatibleFallback('No video frames were decoded.'); return false; }
-    readyVersion = version; autoplayBlocked = false;
+    if ((decodedFrames() === 0 || !video.videoWidth) && document.visibilityState === 'visible') {
+      void compatibleFallback('No video frames were decoded.');
+      return false;
+    }
+    readyVersion = version;
+    autoplayBlocked = false;
     if (state.state.paused) video.pause();
     return true;
   } catch (error) {
     if (state?.mediaVersion === version && error.name === 'NotAllowedError') autoplayBlocked = true;
     return false;
-  } finally { clearTimeout(playTimer); probing = false; renderTransport(); }
+  } finally {
+    clearTimeout(playTimer);
+    probing = false;
+    renderTransport();
+  }
 }
 async function execute(command) {
-  if(reconnecting||!transport?.ready)throw new Error('Reconnecting. Wait for the room connection.');
-  if(switchingRoom)throw new Error('Wait for the room to open.');
+  if (reconnecting || !transport?.ready) throw new Error('Reconnecting. Wait for the room connection.');
+  if (switchingRoom) throw new Error('Wait for the room to open.');
   if (!selected || !state || pending) throw new Error('Wait for an available viewing room');
-  const qualityChange=command.action==='media.quality.set', volumeChange=command.action==='media.volume.set';
-  if(volumeChange && volumePending)throw new Error('Wait for your volume update to finish.');
-  if(qualityPending && ['media.quality.set','media.tracks.set','media.stream.refresh','media.load','media.next','media.previous'].includes(command.action))throw new Error('Wait for your quality change to finish.');
-  if ((command.action === 'media.play' || command.action === 'media.toggle' && !state.waitingForReady) && state.state.paused &&
-      (autoplayBlocked || readyVersion !== state.mediaVersion) && expected() < state.state.duration - .1) await unlockLocal();
-  const id = selected, epoch = state.epoch, qualityRequest=qualityChange?{}:undefined;
-  if(qualityChange){qualityPending=qualityRequest;lastQualityRequest=Date.now();}else if(volumeChange)volumePending=true;else pending=true;
-  fail('');renderTransport();
-  if(command.action.startsWith('media.seek') || ['media.load','media.next','media.previous','queue.history.replay','queue.playNow'].includes(command.action))choppyDetector.interrupt();
-  diagnosticSample('command-start',{action:command.action});
+  const qualityChange = command.action === 'media.quality.set',
+    volumeChange = command.action === 'media.volume.set';
+  if (volumeChange && volumePending) throw new Error('Wait for your volume update to finish.');
+  if (
+    qualityPending &&
+    [
+      'media.quality.set',
+      'media.tracks.set',
+      'media.stream.refresh',
+      'media.load',
+      'media.next',
+      'media.previous',
+    ].includes(command.action)
+  )
+    throw new Error('Wait for your quality change to finish.');
+  if (
+    (command.action === 'media.play' || (command.action === 'media.toggle' && !state.waitingForReady)) &&
+    state.state.paused &&
+    (autoplayBlocked || readyVersion !== state.mediaVersion) &&
+    expected() < state.state.duration - 0.1
+  )
+    await unlockLocal();
+  const id = selected,
+    epoch = state.epoch,
+    qualityRequest = qualityChange ? {} : undefined;
+  if (qualityChange) {
+    qualityPending = qualityRequest;
+    lastQualityRequest = Date.now();
+  } else if (volumeChange) volumePending = true;
+  else pending = true;
+  fail('');
+  renderTransport();
+  if (
+    command.action.startsWith('media.seek') ||
+    ['media.load', 'media.next', 'media.previous', 'queue.history.replay', 'queue.playNow'].includes(command.action)
+  )
+    choppyDetector.interrupt();
+  diagnosticSample('command-start', { action: command.action });
   try {
-    const timing=playbackClock.read();
-    if(!timing.valid)throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
-    const preparing = qualityChange || ['media.load'].includes(command.action) || state?.durable && (
-      ['media.next','media.previous','queue.history.replay','queue.history.goBack','queue.playNow','queue.playEntry','queue.skipTo','queue.auto.playNow','queue.offer.start','queue.bulk','queue.auto','queue.auto.skip','queue.auto.pin'].includes(command.action) ||
-      !state?.mediaUrl && ['media.play','media.toggle','queue.add'].includes(command.action)
+    const timing = playbackClock.read();
+    if (!timing.valid) throw new Error('Playback timing is refreshing. Retry the control after the next room update.');
+    const preparing =
+      qualityChange ||
+      ['media.load'].includes(command.action) ||
+      (state?.durable &&
+        ([
+          'media.next',
+          'media.previous',
+          'queue.history.replay',
+          'queue.history.goBack',
+          'queue.playNow',
+          'queue.playEntry',
+          'queue.skipTo',
+          'queue.auto.playNow',
+          'queue.offer.start',
+          'queue.bulk',
+          'queue.auto',
+          'queue.auto.skip',
+          'queue.auto.pin',
+        ].includes(command.action) ||
+          (!state?.mediaUrl && ['media.play', 'media.toggle', 'queue.add'].includes(command.action))));
+    const result = await api(
+      '/api/watch/rooms/' + id + '/command',
+      { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },
+      preparing ? { timeoutMs: 35000 } : {},
     );
-    const result = await api('/api/watch/rooms/' + id + '/command', { viewerId, epoch, expiresAt: timing.serverTime + 2500, command },preparing?{timeoutMs:35000}:{});
     if (selected !== id) return { status: 'unavailable' };
     if (result.status !== 'applied') throw new Error(result.message);
-    diagnostics.record('command-ok',{action:command.action});
-    if(command.action==='media.volume.set')savePlayerPreferences({volume:command.args.percent,muted:false});
-    if(['media.mute','media.unmute'].includes(command.action))savePlayerPreferences({muted:command.action==='media.mute'});
-    if(command.action==='media.reporting.set') {
-      const change={};
-      if(typeof command.args?.activity==='boolean')change.plexReporting=command.args.activity;
-      if(typeof command.args?.watchState==='boolean')change.plexWatchState=command.args.watchState;
+    diagnostics.record('command-ok', { action: command.action });
+    if (command.action === 'media.volume.set') savePlayerPreferences({ volume: command.args.percent, muted: false });
+    if (['media.mute', 'media.unmute'].includes(command.action))
+      savePlayerPreferences({ muted: command.action === 'media.mute' });
+    if (command.action === 'media.reporting.set') {
+      const change = {};
+      if (typeof command.args?.activity === 'boolean') change.plexReporting = command.args.activity;
+      if (typeof command.args?.watchState === 'boolean') change.plexWatchState = command.args.watchState;
       savePlayerPreferences(change);
     }
-    await refreshState(); if (command.action === 'room.visibility') await refreshRooms(); return result;
-  } catch(error) {
-    diagnostics.record('command-failed',{action:command.action});
-    if(qualityChange&&selected===id)await refreshState();
+    await refreshState();
+    if (command.action === 'room.visibility') await refreshRooms();
+    return result;
+  } catch (error) {
+    diagnostics.record('command-failed', { action: command.action });
+    if (qualityChange && selected === id) await refreshState();
     throw error;
-  }
-  finally {
-    if(qualityChange){if(qualityPending===qualityRequest)qualityPending=false;}else if(volumeChange)volumePending=false;else pending=false;
-    if(qualityChange&&selected===id&&state?.mediaUrl)$('quality').value=uburoom.qualityId(state.quality);
-    renderLibrary(); renderVisibility(); renderTransport(); pumpVolume();
+  } finally {
+    if (qualityChange) {
+      if (qualityPending === qualityRequest) qualityPending = false;
+    } else if (volumeChange) volumePending = false;
+    else pending = false;
+    if (qualityChange && selected === id && state?.mediaUrl) $('quality').value = uburoom.qualityId(state.quality);
+    renderLibrary();
+    renderVisibility();
+    renderTransport();
+    pumpVolume();
   }
 }
 function renderMediaInformation(next) {
   if (!next) return;
-  const info=next.deliveryInfo;
-  const mediaWidth=video.videoWidth || info?.width,mediaHeight=video.videoHeight || info?.height;
-  $('media-information').textContent=info?[mediaWidth&&mediaHeight?mediaWidth+' x '+mediaHeight:null,info.videoCodec?.toUpperCase(),info.audioCodec?.toUpperCase(),info.bitrate?Number(info.bitrate/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'Choose a video to see media information.';
-  $('delivery-information').textContent=info?[info.format==='file'?'Original file':info.format==='hls'?'Plex streaming':uburoomPlayback.localFormat(info.format)?'uburoom conversion':info.format,next.mediaUrl?(next.directDelivery?'Direct from Plex':'Through uburoom'):null,info.encoder?'Encoder: '+info.encoder:null,info.cpuFallback?'Using CPU fallback':null,info.bitrateCeiling?'Requested limit: '+Number(info.bitrateCeiling/1000).toFixed(1)+' Mbps':null].filter(Boolean).join(' / '):'No playback delivery yet.';
+  const info = next.deliveryInfo;
+  const mediaWidth = video.videoWidth || info?.width,
+    mediaHeight = video.videoHeight || info?.height;
+  $('media-information').textContent = info
+    ? [
+        mediaWidth && mediaHeight ? mediaWidth + ' x ' + mediaHeight : null,
+        info.videoCodec?.toUpperCase(),
+        info.audioCodec?.toUpperCase(),
+        info.bitrate ? Number(info.bitrate / 1000).toFixed(1) + ' Mbps' : null,
+      ]
+        .filter(Boolean)
+        .join(' / ')
+    : 'Choose a video to see media information.';
+  $('delivery-information').textContent = info
+    ? [
+        info.format === 'file'
+          ? 'Original file'
+          : info.format === 'hls'
+            ? 'Plex streaming'
+            : uburoomPlayback.localFormat(info.format)
+              ? 'uburoom conversion'
+              : info.format,
+        next.mediaUrl ? (next.directDelivery ? 'Direct from Plex' : 'Through uburoom') : null,
+        info.encoder ? 'Encoder: ' + info.encoder : null,
+        info.cpuFallback ? 'Using CPU fallback' : null,
+        info.bitrateCeiling ? 'Requested limit: ' + Number(info.bitrateCeiling / 1000).toFixed(1) + ' Mbps' : null,
+      ]
+        .filter(Boolean)
+        .join(' / ')
+    : 'No playback delivery yet.';
 }
 function renderVisibility() {
-  $('empty-hint').hidden=!me;
+  $('empty-hint').hidden = !me;
   const inRoom = Boolean(state || (directRoomEntry && !directRoomFailed));
   document.body.classList.toggle('outside-room', !inRoom);
-  document.body.classList.toggle('idle-player', !state?.mediaId && (!pageBootstrap?.targetRoom?.media || directRoomFailed));
+  document.body.classList.toggle(
+    'idle-player',
+    !state?.mediaId && (!pageBootstrap?.targetRoom?.media || directRoomFailed),
+  );
   $('current-room').hidden = !inRoom;
   $('rooms').hidden = true;
   $('refresh').hidden = true;
   $('room-bar').hidden = !me && $('auth-overlay').hidden;
   $('switch-room').textContent = inRoom ? 'Switch room' : 'Choose room';
-  $('switch-room').hidden=!!config?.singleRoom;
-  $('create').hidden = inRoom||!!config?.singleRoom||!!me?.guestRoomId;
-  if(config?.singleRoom||me?.guestRoomId)for(const id of ['lobby-create','lobby-reopen','room-chooser-new'])$(id).hidden=true;
-  if(me?.guestRoomId)$('switch-room').hidden=true;
-  if ($('options-title')) $('options-title').textContent = state ? (state.roomName || 'Room') : (pageBootstrap?.targetRoom?.name || 'Room');
+  $('switch-room').hidden = !!config?.singleRoom;
+  $('create').hidden = inRoom || !!config?.singleRoom || !!me?.guestRoomId;
+  if (config?.singleRoom || me?.guestRoomId)
+    for (const id of ['lobby-create', 'lobby-reopen', 'room-chooser-new']) $(id).hidden = true;
+  if (me?.guestRoomId) $('switch-room').hidden = true;
+  if ($('options-title'))
+    $('options-title').textContent = state ? state.roomName || 'Room' : pageBootstrap?.targetRoom?.name || 'Room';
   if (state) {
-    if (!$('room-share').firstChild) uburoomControls.content($('room-share'),{icon:'share',label:'Share room',iconOnly:true});
-    $('room-share').setAttribute('aria-label','Share room');
+    if (!$('room-share').firstChild)
+      uburoomControls.content($('room-share'), { icon: 'share', label: 'Share room', iconOnly: true });
+    $('room-share').setAttribute('aria-label', 'Share room');
     $('room-share').hidden = !state.invite;
-    if (!$('room-schedule').firstChild) uburoomControls.content($('room-schedule'),{icon:'calendar-event',label:'Schedule event',iconOnly:true});
+    if (!$('room-schedule').firstChild)
+      uburoomControls.content($('room-schedule'), { icon: 'calendar-event', label: 'Schedule event', iconOnly: true });
     renderScheduleButton();
-    uburoomControls.content($('room-people-open'),{icon:'users',label:state.viewers + ' / ' + (state.maxMembers || 20)});
+    uburoomControls.content($('room-people-open'), {
+      icon: 'users',
+      label: state.viewers + ' / ' + (state.maxMembers || 20),
+    });
     $('room-people-open').classList.remove('watch-control-responsive');
-    $('room-people-open').setAttribute('aria-label','People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
+    $('room-people-open').setAttribute('aria-label', 'People: ' + state.viewers + ' / ' + (state.maxMembers || 20));
   }
   roomUI.render();
   queueUI.render(state?.queueSummary);
-  for(const id of ['options-panel','queue-panel','library-panel'])$(id).inert=!me;
+  for (const id of ['options-panel', 'queue-panel', 'library-panel']) $(id).inert = !me;
   $('options-panel').hidden = !me && $('auth-overlay').hidden;
   if ($('watch-settings')) {
     $('watch-settings').hidden = !state || !state.canManage;
@@ -2101,8 +3554,8 @@ function checkBufferingViewers() {
     activeIds.add(person.id);
 
     const sessions = person.syncQuality?.sessions || [];
-    const isBuffering = sessions.some(s => s.current && s.status === 'buffering') ||
-      (person.syncQuality?.status === 'buffering');
+    const isBuffering =
+      sessions.some(s => s.current && s.status === 'buffering') || person.syncQuality?.status === 'buffering';
 
     if (isBuffering && !isPaused) {
       if (!bufferingViewers.has(person.id)) {
@@ -2121,11 +3574,11 @@ function checkBufferingViewers() {
                 voluntarilyPausedFor = person.id;
                 toasts.dismiss('buffering-' + person.id);
                 execute({ action: 'media.pause' }).catch(err => fail(err.message));
-              }
+              },
             },
             onDismiss: () => {
               suppressedBuffering.add(person.id);
-            }
+            },
           });
         }
       }
@@ -2146,8 +3599,8 @@ function checkBufferingViewers() {
               label: 'Resume playback',
               run: () => {
                 execute({ action: 'media.play' }).catch(err => fail(err.message));
-              }
-            }
+              },
+            },
           });
         }
       }
@@ -2166,16 +3619,29 @@ function checkBufferingViewers() {
 setInterval(checkBufferingViewers, 1000);
 // Shares the room invite: Discord's share link inside an Activity (falling back to
 // its invite dialog), the device share sheet in a browser, else the clipboard.
-async function shareInvite(invite = state?.invite, roomName = state?.roomName || 'Room', {copy=false} = {}) {
+async function shareInvite(invite = state?.invite, roomName = state?.roomName || 'Room', { copy = false } = {}) {
   if (!invite) return;
   const message = 'Join me in ' + roomName + ' on uburoom';
   if (!copy && activity && sdk) {
-    try { await sdk.commands.shareLink({ message, custom_id:invite.code }); return; }
-    catch { try { await sdk.commands.openInviteDialog(); return; } catch { /* Fall back to copying below. */ } }
+    try {
+      await sdk.commands.shareLink({ message, custom_id: invite.code });
+      return;
+    } catch {
+      try {
+        await sdk.commands.openInviteDialog();
+        return;
+      } catch {
+        /* Fall back to copying below. */
+      }
+    }
   }
   if (!copy && !activity && navigator.share) {
-    try { await navigator.share({ title:roomName, text:message, url:invite.url }); return; }
-    catch (error) { if (error.name === 'AbortError') return; }
+    try {
+      await navigator.share({ title: roomName, text: message, url: invite.url });
+      return;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+    }
   }
   const anchor = $('room-share-copy') || $('room-share-url-input');
   try {
@@ -2183,28 +3649,50 @@ async function shareInvite(invite = state?.invite, roomName = state?.roomName ||
     if (globalThis.uburoomPopover && anchor && anchor.offsetParent !== null) {
       uburoomPopover.show(anchor, { text: 'Invite link copied', state: 'success' });
     } else {
-      toasts.show('room-invite',{title:'Invite link copied',hint:'Code: ' + invite.code,symbol:'check',duration:4000});
+      toasts.show('room-invite', {
+        title: 'Invite link copied',
+        hint: 'Code: ' + invite.code,
+        symbol: 'check',
+        duration: 4000,
+      });
     }
   } catch {
     if (globalThis.uburoomPopover && anchor && anchor.offsetParent !== null) {
       uburoomPopover.show(anchor, { text: "Couldn't copy invite", state: 'error' });
     } else {
-      toasts.show('room-invite',{type:'error',title:"Couldn't copy the invite",hint:invite.url,symbol:'copy',duration:12000});
+      toasts.show('room-invite', {
+        type: 'error',
+        title: "Couldn't copy the invite",
+        hint: invite.url,
+        symbol: 'copy',
+        duration: 12000,
+      });
     }
   }
 }
 $('room-share').addEventListener('click', () => void roomShare.open(selected));
-$('room-schedule').addEventListener('click', () => void roomEvents.open({roomId:selected,roomName:state?.roomName,duration:()=>state?.state?.duration,onChange:()=>lobbyEvents.refresh()}));
+$('room-schedule').addEventListener(
+  'click',
+  () =>
+    void roomEvents.open({
+      roomId: selected,
+      roomName: state?.roomName,
+      duration: () => state?.state?.duration,
+      onChange: () => lobbyEvents.refresh(),
+    }),
+);
 function renderTransport() {
-  const available = !reconnecting && !!state?.mediaUrl, playback = available && state.canPlayback;
-  for (const id of ['player-play','previous','seek-back','seek-forward']) $(id).disabled = !playback || pending;
+  const available = !reconnecting && !!state?.mediaUrl,
+    playback = available && state.canPlayback;
+  for (const id of ['player-play', 'previous', 'seek-back', 'seek-forward']) $(id).disabled = !playback || pending;
   $('timeline').disabled = !playback;
   if (state?.durable) {
-    for (const id of ['seek-back','seek-forward']) $(id).disabled = !available || !state.capabilities.seek || pending;
+    for (const id of ['seek-back', 'seek-forward']) $(id).disabled = !available || !state.capabilities.seek || pending;
     $('timeline').disabled = !available || !state.capabilities.seek;
     $('previous').disabled = !available || !state.capabilities.chooseMedia || pending;
   }
-  $('player-mute').disabled = !available || pending; $('player-volume').disabled = !available;
+  $('player-mute').disabled = !available || pending;
+  $('player-volume').disabled = !available;
   $('next').disabled = !playback || !state?.hasNext || pending;
   if (state?.durable) $('next').disabled = !available || !state.hasNext || !state.capabilities.chooseMedia || pending;
   $('quality').disabled = !available || state?.mediaId === 'demo' || pending || qualityPending;
@@ -2213,31 +3701,63 @@ function renderTransport() {
   $('pip').setAttribute('aria-pressed', inPiP ? 'true' : 'false');
   $('pip').title = inPiP ? 'Exit Picture-in-Picture' : 'Picture-in-Picture';
   $('pip').setAttribute('aria-label', $('pip').title);
-  const paused = !!state?.pauseAt || state?.state.paused !== false && !state?.waitingForReady;
-  $('stage').classList.toggle('paused', state?.state.paused !== false); $('stage').classList.toggle('blocked', autoplayBlocked);
-  glyph('player-play', paused ? 'play' : 'pause'); $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause'); $('player-play').title = paused ? 'Play' : 'Pause';
+  const paused = !!state?.pauseAt || (state?.state.paused !== false && !state?.waitingForReady);
+  $('stage').classList.toggle('paused', state?.state.paused !== false);
+  $('stage').classList.toggle('blocked', autoplayBlocked);
+  glyph('player-play', paused ? 'play' : 'pause');
+  $('player-play').setAttribute('aria-label', paused ? 'Play' : 'Pause');
+  $('player-play').title = paused ? 'Play' : 'Pause';
   const isMuted = !!state?.state?.muted;
-  renderVolumeIcon(); $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
+  renderVolumeIcon();
+  $('player-mute').setAttribute('aria-label', isMuted ? 'Unmute' : 'Mute');
   $('player-mute').title = isMuted ? 'Unmute' : 'Mute';
   $('player-mute').setAttribute('aria-pressed', isMuted ? 'true' : 'false');
-  const joinBlocked = !autoplayBlocked && (!playback || pending || !!state?.waitingForReady || !!state?.waitingForHost || !!state?.recovery);
+  const joinBlocked =
+    !autoplayBlocked &&
+    (!playback || pending || !!state?.waitingForReady || !!state?.waitingForHost || !!state?.recovery);
   $('join-playback').disabled = joinBlocked;
   $('join-playback').hidden = !state?.mediaUrl || !!state?.readiness?.timedOut || joinBlocked;
-  const centerLabel=autoplayBlocked?'Join playback':paused?'Play':'Pause';
-  glyph('join-playback',autoplayBlocked||paused?'play':'pause');
-  $('join-playback').setAttribute('aria-label',centerLabel); $('join-playback').title=centerLabel;
-  $('ready-status').textContent = state?.waitingForReady ? autoplayBlocked ? 'Press Play to join playback' : 'Waiting for viewers…' : autoplayBlocked ? 'Press Play to join playback' :
-    state?.startAt>state?.serverNow && (playbackClock.read().serverTime??state.serverNow)<state.startAt ? 'Starting together…' : '';
-  if (state?.readiness?.blockers.length) $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
-  if (state?.readiness?.timedOut) $('ready-status').textContent = (state.durable ? state.capabilities?.chooseMedia : state.canManage) ? 'Some viewers need more time. Choose how to continue.' : 'Waiting for the host to choose how to continue.';
+  const centerLabel = autoplayBlocked ? 'Join playback' : paused ? 'Play' : 'Pause';
+  glyph('join-playback', autoplayBlocked || paused ? 'play' : 'pause');
+  $('join-playback').setAttribute('aria-label', centerLabel);
+  $('join-playback').title = centerLabel;
+  $('ready-status').textContent = state?.waitingForReady
+    ? autoplayBlocked
+      ? 'Press Play to join playback'
+      : 'Waiting for viewers…'
+    : autoplayBlocked
+      ? 'Press Play to join playback'
+      : state?.startAt > state?.serverNow && (playbackClock.read().serverTime ?? state.serverNow) < state.startAt
+        ? 'Starting together…'
+        : '';
+  if (state?.readiness?.blockers.length)
+    $('ready-status').textContent = 'Waiting for ' + state.readiness.blockers.join(', ') + '…';
+  if (state?.readiness?.timedOut)
+    $('ready-status').textContent = (state.durable ? state.capabilities?.chooseMedia : state.canManage)
+      ? 'Some viewers need more time. Choose how to continue.'
+      : 'Waiting for the host to choose how to continue.';
   if (state?.waitingForHost) $('ready-status').textContent = 'Playback is paused until a room leader or host joins.';
   $('room-recovery').hidden = !state?.recovery;
-  if (state?.recovery) $('room-recovery-message').textContent = 'Waiting for ' + state.recovery.missing + ' people / ' + Math.max(0,Math.ceil((state.recovery.until - (Date.now() + offset))/1000)) + ' seconds remaining. Playback is paused.';
+  if (state?.recovery)
+    $('room-recovery-message').textContent =
+      'Waiting for ' +
+      state.recovery.missing +
+      ' people / ' +
+      Math.max(0, Math.ceil((state.recovery.until - (Date.now() + offset)) / 1000)) +
+      ' seconds remaining. Playback is paused.';
   $('room-recovery-start').hidden = !state?.canPlayback;
   $('room-recovery-start').disabled = pending || !state?.mediaUrl;
-  $('readiness-choice').hidden = !!state?.recovery || !state?.readiness?.timedOut || !!state.mediaError && !state.readiness.canStart || !(state.durable ? state.capabilities?.chooseMedia : state.canManage);
-  $('readiness-title').textContent = state?.readiness?.blockers.length ? 'Some viewers need more time' : 'Ready to continue?';
-  $('readiness-message').textContent = state?.readiness?.blockers.length ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.' : 'Everyone is ready. Playback stays paused until you choose.';
+  $('readiness-choice').hidden =
+    !!state?.recovery ||
+    !state?.readiness?.timedOut ||
+    (!!state.mediaError && !state.readiness.canStart) ||
+    !(state.durable ? state.capabilities?.chooseMedia : state.canManage);
+  $('readiness-title').textContent = state?.readiness?.blockers.length
+    ? 'Some viewers need more time'
+    : 'Ready to continue?';
+  $('readiness-message').textContent = state?.readiness?.blockers.length
+    ? 'Waiting for ' + state.readiness.blockers.join(', ') + '. Start with ready viewers, or wait.'
+    : 'Everyone is ready. Playback stays paused until you choose.';
   $('ready-start').disabled = pending || !state?.readiness?.canStart;
   $('ready-wait').disabled = $('ready-cancel').disabled = pending;
   if (state?.readiness?.timedOut) $('player-play').disabled = true;
@@ -2245,40 +3765,103 @@ function renderTransport() {
   renderTracks();
 }
 function renderTracks() {
-  const tracks=state?.tracks, available=!!tracks;
-  const render=(id,rows,choices,value)=>{
-    const options=[...choices,...(rows || []).map(row=>({id:row.id,label:[uburoomPlayerUI.trackLabel(row),row.title].filter(Boolean).join(' — '),disabled:!row.available}))];
-    const element=$(id), signature=JSON.stringify(options);
-    if(element.dataset.options!==signature){element.replaceChildren(...options.map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=row.label;option.disabled=!!row.disabled;return option;}));element.dataset.options=signature;}
-    const hasTracks=rows?.some(row=>row.available);
-    element.value=value || 'auto';
-    if(element.selectedIndex<0)element.value='auto';
-    element.disabled=!available || !hasTracks || pending || qualityPending;
-    element.title=hasTracks?'':id==='audio-track'?'No audio available':'No subtitles available';
+  const tracks = state?.tracks,
+    available = !!tracks;
+  const render = (id, rows, choices, value) => {
+    const options = [
+      ...choices,
+      ...(rows || []).map(row => ({
+        id: row.id,
+        label: [uburoomPlayerUI.trackLabel(row), row.title].filter(Boolean).join(' — '),
+        disabled: !row.available,
+      })),
+    ];
+    const element = $(id),
+      signature = JSON.stringify(options);
+    if (element.dataset.options !== signature) {
+      element.replaceChildren(
+        ...options.map(row => {
+          const option = document.createElement('option');
+          option.value = row.id;
+          option.textContent = row.label;
+          option.disabled = !!row.disabled;
+          return option;
+        }),
+      );
+      element.dataset.options = signature;
+    }
+    const hasTracks = rows?.some(row => row.available);
+    element.value = value || 'auto';
+    if (element.selectedIndex < 0) element.value = 'auto';
+    element.disabled = !available || !hasTracks || pending || qualityPending;
+    element.title = hasTracks ? '' : id === 'audio-track' ? 'No audio available' : 'No subtitles available';
   };
-  const audioAvailable=tracks?.audio.some(row=>row.available), subtitlesAvailable=tracks?.subtitles.some(row=>row.available);
-  render('audio-track',tracks?.audio,[{id:'auto',label:'Automatic'}],tracks?.audioChoice);
-  render('subtitle-track',tracks?.subtitles,[{id:'auto',label:'Automatic'},...(subtitlesAvailable?[{id:'off',label:'Off'}]:[])],tracks?.subtitleChoice);
-  const audio=tracks?.audio.find(row=>row.id===tracks.audioId), subtitle=tracks?.subtitles.find(row=>row.id===tracks.subtitleId), delivery=tracks?.subtitleDelivery || subtitle?.delivery,burned=delivery==='burn';
-  const autoBurned=burned && (tracks?.subtitleMode || 'auto')==='auto';
-  subtitleMode.querySelector('option[value="auto"]').textContent=autoBurned?'Automatic (burned in)':'Automatic';
-  subtitleMode.value=tracks?.subtitleMode || 'auto';subtitleMode.disabled=!available || pending || qualityPending || !subtitle;
-  $('audio-track-status').textContent=!audioAvailable?'No audio available':audio ? [uburoomPlayerUI.trackLabel(audio),state.format!=='file' && audio.channels!==2 && 'Stereo playback'].filter(Boolean).join(' · ') : '';
-  for (const [id,track] of [['audio-track-name',audio],['subtitle-track-name',subtitle]]) { $(id).textContent=track?.title || ''; $(id).hidden=!track?.title; }
-  if(!subtitlesAvailable){$('subtitle-track-name').textContent='No subtitles available';$('subtitle-track-name').hidden=false;}
-  if(document.activeElement!==$('subtitle-offset'))$('subtitle-offset').value=tracks?.subtitleOffset || 0;
-  $('subtitle-offset').disabled=!available || pending || !subtitle || burned;
-  $('subtitle-delay-hint').textContent=burned ? 'Timing is fixed for subtitles included in the video.' : subtitle ? 'Positive values show subtitles later.' : 'Select subtitles to adjust their timing.';
-  $('track-status').textContent=trackActionError || tracks?.subtitleError || trackNotice || (autoBurned ? 'These subtitles are burned into the video because they cannot be shown separately here.' : burned ? 'These subtitles are included in the video to preserve their appearance. The choice is saved for this title.' : '');
-  const error=!!trackActionError || !!tracks?.subtitleError || trackNoticeError;
-  $('track-status').classList.toggle('error',error);
-  const subtitleError=tracks?.subtitleError || (trackNoticeError ? trackNotice || 'subtitle-renderer-error' : undefined);
-  const notice=subtitleError ? JSON.stringify([state?.mediaVersion,tracks?.subtitleId,subtitleError]) : undefined;
-  if(notice && notice!==subtitleErrorNotice) {
-    toasts.show('subtitle-error', {type:'error',title:'Subtitles could not be shown.',hint:'Open Player settings for details.',symbol:'subtitles-off'});
+  const audioAvailable = tracks?.audio.some(row => row.available),
+    subtitlesAvailable = tracks?.subtitles.some(row => row.available);
+  render('audio-track', tracks?.audio, [{ id: 'auto', label: 'Automatic' }], tracks?.audioChoice);
+  render(
+    'subtitle-track',
+    tracks?.subtitles,
+    [{ id: 'auto', label: 'Automatic' }, ...(subtitlesAvailable ? [{ id: 'off', label: 'Off' }] : [])],
+    tracks?.subtitleChoice,
+  );
+  const audio = tracks?.audio.find(row => row.id === tracks.audioId),
+    subtitle = tracks?.subtitles.find(row => row.id === tracks.subtitleId),
+    delivery = tracks?.subtitleDelivery || subtitle?.delivery,
+    burned = delivery === 'burn';
+  const autoBurned = burned && (tracks?.subtitleMode || 'auto') === 'auto';
+  subtitleMode.querySelector('option[value="auto"]').textContent = autoBurned ? 'Automatic (burned in)' : 'Automatic';
+  subtitleMode.value = tracks?.subtitleMode || 'auto';
+  subtitleMode.disabled = !available || pending || qualityPending || !subtitle;
+  $('audio-track-status').textContent = !audioAvailable
+    ? 'No audio available'
+    : audio
+      ? [uburoomPlayerUI.trackLabel(audio), state.format !== 'file' && audio.channels !== 2 && 'Stereo playback']
+          .filter(Boolean)
+          .join(' · ')
+      : '';
+  for (const [id, track] of [
+    ['audio-track-name', audio],
+    ['subtitle-track-name', subtitle],
+  ]) {
+    $(id).textContent = track?.title || '';
+    $(id).hidden = !track?.title;
   }
-  subtitleErrorNotice=notice;
-  $('subtitle-retry').hidden=!trackNoticeError || !state?.subtitleUrl;
+  if (!subtitlesAvailable) {
+    $('subtitle-track-name').textContent = 'No subtitles available';
+    $('subtitle-track-name').hidden = false;
+  }
+  if (document.activeElement !== $('subtitle-offset')) $('subtitle-offset').value = tracks?.subtitleOffset || 0;
+  $('subtitle-offset').disabled = !available || pending || !subtitle || burned;
+  $('subtitle-delay-hint').textContent = burned
+    ? 'Timing is fixed for subtitles included in the video.'
+    : subtitle
+      ? 'Positive values show subtitles later.'
+      : 'Select subtitles to adjust their timing.';
+  $('track-status').textContent =
+    trackActionError ||
+    tracks?.subtitleError ||
+    trackNotice ||
+    (autoBurned
+      ? 'These subtitles are burned into the video because they cannot be shown separately here.'
+      : burned
+        ? 'These subtitles are included in the video to preserve their appearance. The choice is saved for this title.'
+        : '');
+  const error = !!trackActionError || !!tracks?.subtitleError || trackNoticeError;
+  $('track-status').classList.toggle('error', error);
+  const subtitleError =
+    tracks?.subtitleError || (trackNoticeError ? trackNotice || 'subtitle-renderer-error' : undefined);
+  const notice = subtitleError ? JSON.stringify([state?.mediaVersion, tracks?.subtitleId, subtitleError]) : undefined;
+  if (notice && notice !== subtitleErrorNotice) {
+    toasts.show('subtitle-error', {
+      type: 'error',
+      title: 'Subtitles could not be shown.',
+      hint: 'Open Player settings for details.',
+      symbol: 'subtitles-off',
+    });
+  }
+  subtitleErrorNotice = notice;
+  $('subtitle-retry').hidden = !trackNoticeError || !state?.subtitleUrl;
   const rep = $('plex-reporting-settings');
   if (rep) {
     rep.hidden = !state?.plexReporting?.eligible;
@@ -2291,26 +3874,48 @@ function renderTracks() {
   }
   playerUI?.render();
 }
-async function changeTrack(args,context=trackContext) {
-  if(!state || pending || qualityPending || !context || context.mediaVersion!==state.mediaVersion || context.streamVersion!==state.streamVersion)return;
-  trackActionError='';
-  try { const result=await execute({action:'media.tracks.set',args:{...context,...args}}); if(result.status==='applied')rememberPlayerSubtitles(args); }
-  catch(error){trackActionError=error.message;fail(error.message);}
-  finally{renderTracks();}
+async function changeTrack(args, context = trackContext) {
+  if (
+    !state ||
+    pending ||
+    qualityPending ||
+    !context ||
+    context.mediaVersion !== state.mediaVersion ||
+    context.streamVersion !== state.streamVersion
+  )
+    return;
+  trackActionError = '';
+  try {
+    const result = await execute({ action: 'media.tracks.set', args: { ...context, ...args } });
+    if (result.status === 'applied') rememberPlayerSubtitles(args);
+  } catch (error) {
+    trackActionError = error.message;
+    fail(error.message);
+  } finally {
+    renderTracks();
+  }
 }
-$('audio-track').addEventListener('change',()=>void changeTrack({audioId:$('audio-track').value}));
-$('subtitle-track').addEventListener('change',()=>void changeTrack({subtitleId:$('subtitle-track').value}));
-$('subtitle-offset').addEventListener('change',()=>{if($('subtitle-offset').reportValidity())void changeTrack({subtitleOffset:$('subtitle-offset').valueAsNumber});});
-$('subtitle-mode').addEventListener('change',()=>void changeTrack({subtitleMode:$('subtitle-mode').value}));
+$('audio-track').addEventListener('change', () => void changeTrack({ audioId: $('audio-track').value }));
+$('subtitle-track').addEventListener('change', () => void changeTrack({ subtitleId: $('subtitle-track').value }));
+$('subtitle-offset').addEventListener('change', () => {
+  if ($('subtitle-offset').reportValidity()) void changeTrack({ subtitleOffset: $('subtitle-offset').valueAsNumber });
+});
+$('subtitle-mode').addEventListener('change', () => void changeTrack({ subtitleMode: $('subtitle-mode').value }));
 $('plex-reporting-activity')?.addEventListener('change', () => {
-  execute({ action: 'media.reporting.set', args: { activity: $('plex-reporting-activity').checked } })
-    .catch(error => { fail(error.message); renderTracks(); });
+  execute({ action: 'media.reporting.set', args: { activity: $('plex-reporting-activity').checked } }).catch(error => {
+    fail(error.message);
+    renderTracks();
+  });
 });
 $('plex-reporting-watch-state')?.addEventListener('change', () => {
-  execute({ action: 'media.reporting.set', args: { watchState: $('plex-reporting-watch-state').checked } })
-    .catch(error => { fail(error.message); renderTracks(); });
+  execute({ action: 'media.reporting.set', args: { watchState: $('plex-reporting-watch-state').checked } }).catch(
+    error => {
+      fail(error.message);
+      renderTracks();
+    },
+  );
 });
-$('subtitle-retry').addEventListener('click',()=>captions.retry());
+$('subtitle-retry').addEventListener('click', () => captions.retry());
 $('subtitle-color-preset')?.addEventListener('change', () => {
   const val = $('subtitle-color-preset').value;
   if (val !== 'custom') {
@@ -2339,10 +3944,14 @@ $('subtitle-color-picker')?.addEventListener('change', () => {
   savePlayerPreferences({ subtitleColor: $('subtitle-color-picker').value.toLowerCase() });
   applySubtitleAppearance();
 });
-for (const [id,key] of [['subtitle-size','subtitleSize'],['subtitle-position','subtitlePosition']]) $(id).addEventListener('change', () => {
-  savePlayerPreferences({ [key]: $(id).value });
-  applySubtitleAppearance();
-});
+for (const [id, key] of [
+  ['subtitle-size', 'subtitleSize'],
+  ['subtitle-position', 'subtitlePosition'],
+])
+  $(id).addEventListener('change', () => {
+    savePlayerPreferences({ [key]: $(id).value });
+    applySubtitleAppearance();
+  });
 $('subtitle-bg')?.addEventListener('change', () => {
   savePlayerPreferences({ subtitleBg: $('subtitle-bg').value });
   applySubtitleAppearance();
@@ -2355,60 +3964,124 @@ function onSubtitleBrightnessChange() {
 $('subtitle-brightness')?.addEventListener('input', onSubtitleBrightnessChange);
 $('subtitle-brightness')?.addEventListener('change', onSubtitleBrightnessChange);
 function expected() {
-  const timing=playbackClock.read();
-  return uburoomTiming.target(state,timing.serverTime) ?? arrivalExpected();
+  const timing = playbackClock.read();
+  return uburoomTiming.target(state, timing.serverTime) ?? arrivalExpected();
 }
 function arrivalExpected() {
   if (!state) return 0;
-  return Math.min(state.state.duration || 0, state.state.position + (state.state.paused ? 0 : (performance.now() - receivedAt) / 1000));
+  return Math.min(
+    state.state.duration || 0,
+    state.state.position + (state.state.paused ? 0 : (performance.now() - receivedAt) / 1000),
+  );
 }
 async function reportObservation() {
-  if (!observing || !selected || !state?.mediaUrl || !state.streamVersion || mediaSource !== state.mediaUrl) { observationQueued = false; return; }
-  if (observationPending) { observationQueued = true; return; }
+  if (!observing || !selected || !state?.mediaUrl || !state.streamVersion || mediaSource !== state.mediaUrl) {
+    observationQueued = false;
+    return;
+  }
+  if (observationPending) {
+    observationQueued = true;
+    return;
+  }
   const id = selected;
-  const playerState = playbackError || video.error ? 'error' : autoplayBlocked ? 'blocked' : video.ended ? 'ended' : video.seeking ? 'seeking' :
-    probing ? 'buffering' : video.paused ? 'paused' : playerWaiting || video.readyState < 3 ? 'buffering' : 'playing';
-  const sampleAt=performance.now(), observedAt=observationClock.sample(sampleAt);
-  if(observedAt===undefined){diagnostics.record('observation-uncredited',{creditReason:'clock-unavailable'});return;}
-  const data = {viewerId,epoch:state.epoch,mediaVersion:state.mediaVersion,streamVersion:state.streamVersion,observationEpoch:state.observationEpoch,
-    sequence:++observationSequence,sampleAt,observedAt,position:video.currentTime,
-    rate:video.playbackRate,frames:uburoomPlayback.observationFrames(video,videoFrames),discontinuity:observationBreak,state:playerState};
+  const playerState =
+    playbackError || video.error
+      ? 'error'
+      : autoplayBlocked
+        ? 'blocked'
+        : video.ended
+          ? 'ended'
+          : video.seeking
+            ? 'seeking'
+            : probing
+              ? 'buffering'
+              : video.paused
+                ? 'paused'
+                : playerWaiting || video.readyState < 3
+                  ? 'buffering'
+                  : 'playing';
+  const sampleAt = performance.now(),
+    observedAt = observationClock.sample(sampleAt);
+  if (observedAt === undefined) {
+    diagnostics.record('observation-uncredited', { creditReason: 'clock-unavailable' });
+    return;
+  }
+  const data = {
+    viewerId,
+    epoch: state.epoch,
+    mediaVersion: state.mediaVersion,
+    streamVersion: state.streamVersion,
+    observationEpoch: state.observationEpoch,
+    sequence: ++observationSequence,
+    sampleAt,
+    observedAt,
+    position: video.currentTime,
+    rate: video.playbackRate,
+    frames: uburoomPlayback.observationFrames(video, videoFrames),
+    discontinuity: observationBreak,
+    state: playerState,
+  };
   observationPending = true;
   try {
-    const result=await api('/api/watch/rooms/' + id + '/observe',data);
-    if(result.credit && result.credit.reason!=='credited')diagnostics.record('observation-uncredited',{...result.credit,creditReason:result.credit.reason});
+    const result = await api('/api/watch/rooms/' + id + '/observe', data);
+    if (result.credit && result.credit.reason !== 'credited')
+      diagnostics.record('observation-uncredited', { ...result.credit, creditReason: result.credit.reason });
+  } catch {
+    /* Never replay an observation after reconnect. The next sample is fresh. */
+  } finally {
+    observationPending = false;
+    if (observationQueued) {
+      observationQueued = false;
+      void reportObservation();
+    }
   }
-  catch { /* Never replay an observation after reconnect. The next sample is fresh. */ }
-  finally { observationPending = false; if (observationQueued) { observationQueued = false; void reportObservation(); } }
 }
-for (const event of ['playing','pause','waiting','seeking','seeked','ended','error']) video.addEventListener(event, () => {
-  if (event === 'waiting') playerWaiting = true;
-  if (event === 'playing' || event === 'seeked') playerWaiting = false;
-  if(['pause','waiting','seeking','seeked','ended','error'].includes(event)) {
-    syncQuality.breakSample();
-  }
-  // Periodic samples include rate corrections; assigning playbackRate can
-  // emit ratechange even when the rate is unchanged.
-  if (event !== 'ended' && !(event === 'pause' && video.ended)) observationBreak++;
+for (const event of ['playing', 'pause', 'waiting', 'seeking', 'seeked', 'ended', 'error'])
+  video.addEventListener(event, () => {
+    if (event === 'waiting') playerWaiting = true;
+    if (event === 'playing' || event === 'seeked') playerWaiting = false;
+    if (['pause', 'waiting', 'seeking', 'seeked', 'ended', 'error'].includes(event)) {
+      syncQuality.breakSample();
+    }
+    // Periodic samples include rate corrections; assigning playbackRate can
+    // emit ratechange even when the rate is unchanged.
+    if (event !== 'ended' && !(event === 'pause' && video.ended)) observationBreak++;
+    void reportObservation();
+  });
+setInterval(() => {
   void reportObservation();
-});
-setInterval(() => { void reportObservation(); },1000);
-setInterval(refreshSyncQuality,1000);
+}, 1000);
+setInterval(refreshSyncQuality, 1000);
 async function reportReadiness() {
   if (!selected || !state?.mediaUrl) return;
-  if (readyPending) { readyQueued = true; return; }
-  const id = selected, version = state.mediaVersion, readinessVersion = state.readinessVersion;
+  if (readyPending) {
+    readyQueued = true;
+    return;
+  }
+  const id = selected,
+    version = state.mediaVersion,
+    readinessVersion = state.readinessVersion;
   const target = expected();
-  const bufferedReady = !state.state.paused || !video.seeking && Math.abs(video.currentTime-target) <= (target === 0 ? .25 : readinessVersion ? .15 : .65) &&
-    uburoomPlayback.readinessBuffered(video.buffered,target,state.state.duration);
-  const ready = bufferedReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
+  const bufferedReady =
+    !state.state.paused ||
+    (!video.seeking &&
+      Math.abs(video.currentTime - target) <= (target === 0 ? 0.25 : readinessVersion ? 0.15 : 0.65) &&
+      uburoomPlayback.readinessBuffered(video.buffered, target, state.state.duration));
+  const ready =
+    bufferedReady && video.readyState >= 3 && decodedFrames() > 0 && readyVersion === version && !playbackError;
   const key = id + ':' + version + ':' + readinessVersion + ':' + ready;
-  if (readinessSent === key || !state.readiness && !state.waitingForReady && !ready) return;
+  if (readinessSent === key || (!state.readiness && !state.waitingForReady && !ready)) return;
   readyPending = true;
-  try { await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version,
-    ready, readinessVersion }); readinessSent = key; } catch {} finally {
+  try {
+    await api('/api/watch/rooms/' + id + '/ready', { viewerId, mediaVersion: version, ready, readinessVersion });
+    readinessSent = key;
+  } catch {
+  } finally {
     readyPending = false;
-    if (readyQueued) { readyQueued = false; void reportReadiness(); }
+    if (readyQueued) {
+      readyQueued = false;
+      void reportReadiness();
+    }
   }
 }
 let unavailableNotices = new Set();
@@ -2417,121 +4090,223 @@ function unavailableToasts(items = []) {
   for (const id of unavailableNotices) if (!ids.has(id)) toasts.dismiss(id);
   for (const item of items) {
     const id = 'unavailable:' + item.id;
-    if (!unavailableNotices.has(id)) toasts.show(id,{type:'error',title:item.title + ' is unavailable.',symbol:'film',persistent:true});
+    if (!unavailableNotices.has(id))
+      toasts.show(id, { type: 'error', title: item.title + ' is unavailable.', symbol: 'film', persistent: true });
   }
   unavailableNotices = ids;
 }
-function applyState(next, local=false) {
-  if(!local) {
-    if(next.id!==selected||next.transportSequence<=stateTransportSequence)return;
-    stateTransportSequence=next.transportSequence;
-    next=fallbackPlayback.receive(next,reconnecting);
+function applyState(next, local = false) {
+  if (!local) {
+    if (next.id !== selected || next.transportSequence <= stateTransportSequence) return;
+    stateTransportSequence = next.transportSequence;
+    next = fallbackPlayback.receive(next, reconnecting);
   }
-  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
-  const wasExtended=disconnectExtended;disconnectExtended=false;hideDisconnectToast();
-  const resumed=reconnecting;reconnecting=false;
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer = undefined;
+  const wasExtended = disconnectExtended;
+  disconnectExtended = false;
+  hideDisconnectToast();
+  const resumed = reconnecting;
+  reconnecting = false;
   sync.transition(next);
   diagnostics.state(next);
   const mediaChanged = mediaVersion !== next.mediaVersion || !next.mediaUrl;
   // A new quality of the same converted stream keeps the player and buffer.
-  const burned=value=>value?.tracks?.subtitleDelivery==='burn'?value.tracks.subtitleId:undefined;
-  const seamless = !mediaChanged && !!av1 && mediaSource !== next.mediaUrl && uburoomPlayback.localFormat(next.format) && state?.format === next.format &&
-    !!state?.fallbackActive===!!next.fallbackActive &&
-    state.tracks?.audioId === next.tracks?.audioId && burned(state) === burned(next);
+  const burned = value => (value?.tracks?.subtitleDelivery === 'burn' ? value.tracks.subtitleId : undefined);
+  const seamless =
+    !mediaChanged &&
+    !!av1 &&
+    mediaSource !== next.mediaUrl &&
+    uburoomPlayback.localFormat(next.format) &&
+    state?.format === next.format &&
+    !!state?.fallbackActive === !!next.fallbackActive &&
+    state.tracks?.audioId === next.tracks?.audioId &&
+    burned(state) === burned(next);
   const changed = !seamless && (mediaChanged || mediaSource !== next.mediaUrl);
-  if(heldStream) {
-    const held=heldStream.next;
-    if(next.id===held.id && next.mediaVersion===held.mediaVersion && next.readinessVersion===held.readinessVersion && next.state?.paused===state?.state?.paused) {
-      const replaced=next.mediaUrl!==held.mediaUrl;
-      heldStream.next=next;
-      if(replaced)prepareHeldStream(heldStream);
+  if (heldStream) {
+    const held = heldStream.next;
+    if (
+      next.id === held.id &&
+      next.mediaVersion === held.mediaVersion &&
+      next.readinessVersion === held.readinessVersion &&
+      next.state?.paused === state?.state?.paused
+    ) {
+      const replaced = next.mediaUrl !== held.mediaUrl;
+      heldStream.next = next;
+      if (replaced) prepareHeldStream(heldStream);
       return;
     }
     // Someone seeked, paused or changed the video, so the new stream is needed now.
     dropHeldStream();
   }
-  if(!local && changed && !mediaChanged && canHoldStream(next))return void holdStream(next);
-  const qualityContextChanged = !!state && (state.mediaVersion !== next.mediaVersion || state.streamVersion !== next.streamVersion || state.id !== next.id || state.epoch !== next.epoch);
-  const preserveChoppiness = !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
-  if(qualityContextChanged && !changed){resetSyncQuality();choppyDetector.interrupt();capabilityProbeVersion++;capabilityProbeKey=undefined;}
-  if(seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)){seekPendingValue = undefined; seekPendingUntil = 0; seekPendingRevision = undefined;}
-  const previousTarget = state ? expected() : undefined,previousRevision=state?.revision,previousReadinessVersion=state?.readinessVersion;
-  if(trackContext && trackContext.mediaVersion!==next.mediaVersion){playerUI.reset();$('tracks-dialog').close();trackContext=undefined;}
-  if(next.canManage && next.mediaId && next.mediaVersion!==videoCheck.media){videoCheck.media=next.mediaVersion;videoCheck.report=undefined;queueMicrotask(()=>void loadVideoCheck());}
+  if (!local && changed && !mediaChanged && canHoldStream(next)) return void holdStream(next);
+  const qualityContextChanged =
+    !!state &&
+    (state.mediaVersion !== next.mediaVersion ||
+      state.streamVersion !== next.streamVersion ||
+      state.id !== next.id ||
+      state.epoch !== next.epoch);
+  const preserveChoppiness =
+    !!state && state.id === next.id && state.mediaVersion === next.mediaVersion && !!next.mediaUrl;
+  if (qualityContextChanged && !changed) {
+    resetSyncQuality();
+    choppyDetector.interrupt();
+    capabilityProbeVersion++;
+    capabilityProbeKey = undefined;
+  }
+  if (seekPendingValue !== undefined && (next.revision !== seekPendingRevision || changed || next.id !== selected)) {
+    seekPendingValue = undefined;
+    seekPendingUntil = 0;
+    seekPendingRevision = undefined;
+  }
+  const previousTarget = state ? expected() : undefined,
+    previousRevision = state?.revision,
+    previousReadinessVersion = state?.readinessVersion;
+  if (trackContext && trackContext.mediaVersion !== next.mediaVersion) {
+    playerUI.reset();
+    $('tracks-dialog').close();
+    trackContext = undefined;
+  }
+  if (next.canManage && next.mediaId && next.mediaVersion !== videoCheck.media) {
+    videoCheck.media = next.mediaVersion;
+    videoCheck.report = undefined;
+    queueMicrotask(() => void loadVideoCheck());
+  }
   if (state && state.epoch !== next.epoch) dropVolume();
-  state = next; receivedAt = performance.now();
+  state = next;
+  receivedAt = performance.now();
   if (selected) syncRoomUrl(selected, next.slug);
   unavailableToasts(next.unavailableMedia);
   renderProviderNotice(next.providerNotice);
-  if(playerUI.settingsOpen())trackContext={mediaVersion:next.mediaVersion,streamVersion:next.streamVersion};
-  if (seamless) { mediaSource = next.mediaUrl; av1.switchStream(next.mediaUrl); }
+  if (playerUI.settingsOpen()) trackContext = { mediaVersion: next.mediaVersion, streamVersion: next.streamVersion };
+  if (seamless) {
+    mediaSource = next.mediaUrl;
+    av1.switchStream(next.mediaUrl);
+  }
   if (changed) {
-    if(!mediaChanged)holdLastFrame();
-    clearPlayer('state-change', !mediaChanged, preserveChoppiness); mediaVersion = next.mediaVersion; mediaSource = next.mediaUrl;
+    if (!mediaChanged) holdLastFrame();
+    clearPlayer('state-change', !mediaChanged, preserveChoppiness);
+    mediaVersion = next.mediaVersion;
+    mediaSource = next.mediaUrl;
     if (next.mediaUrl) {
       stage.classList.remove('ending-active');
       $('ending-stage').hidden = true;
       $('empty-stage').hidden = true;
       watchFrames();
-      if ((next.format === 'file' && uburoomPlayback.needsCompatible(next,type => video.canPlayType(type))) ||
-          (next.format === 'hls' && uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type)))) {
-        const videoUnsupported = uburoomPlayback.needsVideoConversion(next,type => video.canPlayType(type));
-        const reason = next.hdrKind === 'dovi-p5' && videoUnsupported ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
-          : next.hdr && !uburoomPlayback.supportsHdrDisplay() ? 'HDR Original requires an HDR display; converting to SDR.'
-          : 'The browser does not support the original codecs.';
-        queueMicrotask(() => { if (state === next) void compatibleFallback(reason,!videoUnsupported); });
+      if (
+        (next.format === 'file' && uburoomPlayback.needsCompatible(next, type => video.canPlayType(type))) ||
+        (next.format === 'hls' && uburoomPlayback.needsVideoConversion(next, type => video.canPlayType(type)))
+      ) {
+        const videoUnsupported = uburoomPlayback.needsVideoConversion(next, type => video.canPlayType(type));
+        const reason =
+          next.hdrKind === 'dovi-p5' && videoUnsupported
+            ? 'Dolby Vision Profile 5 is not supported directly by this browser.'
+            : next.hdr && !uburoomPlayback.supportsHdrDisplay()
+              ? 'HDR Original requires an HDR display; converting to SDR.'
+              : 'The browser does not support the original codecs.';
+        queueMicrotask(() => {
+          if (state === next) void compatibleFallback(reason, !videoUnsupported);
+        });
       } else if (uburoomPlayback.localFormat(next.format)) {
         // With no other codec to try, giving up ends playback, so ride out a slow
         // or briefly unavailable source for about 40 seconds instead of 7.
-        const alternatives=uburoomPlayback.fallbackCodecs(config.localFormats || ['av1'],new Set([next.format]),mime=>typeof MediaSource!=='undefined'&&MediaSource.isTypeSupported(mime));
-        try { av1 = new uburoomAV1(video, next.mediaUrl, expected, message => { void compatibleFallback(message); }, alternatives.length ? 3 : 8,
-          {cache:preparedStream?.url===next.mediaUrl?preparedStream.cache:undefined});preparedStream=undefined; }
-        catch (error) { void compatibleFallback('Converted WebM transport unavailable: '+error.message); }
+        const alternatives = uburoomPlayback.fallbackCodecs(
+          config.localFormats || ['av1'],
+          new Set([next.format]),
+          mime => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
+        );
+        try {
+          av1 = new uburoomAV1(
+            video,
+            next.mediaUrl,
+            expected,
+            message => {
+              void compatibleFallback(message);
+            },
+            alternatives.length ? 3 : 8,
+            { cache: preparedStream?.url === next.mediaUrl ? preparedStream.cache : undefined },
+          );
+          preparedStream = undefined;
+        } catch (error) {
+          void compatibleFallback('Converted WebM transport unavailable: ' + error.message);
+        }
       } else if (next.format === 'hls' && typeof Hls === 'undefined') {
         mediaVersion = mediaSource = undefined;
-        void ensureHls().then(() => { if (state === next) applyState(next, true); }).catch(error => fail(error.message));
+        void ensureHls()
+          .then(() => {
+            if (state === next) applyState(next, true);
+          })
+          .catch(error => fail(error.message));
       } else if (next.format === 'hls' && Hls.isSupported()) {
-        sync.prepare({timeline:true});
-        const config=hlsClientConfig(next,preparedStream?.url===next.mediaUrl?preparedStream.cache:undefined);
-        preparedStream=undefined;
-        const client = hls = new Hls(config);
+        sync.prepare({ timeline: true });
+        const config = hlsClientConfig(next, preparedStream?.url === next.mediaUrl ? preparedStream.cache : undefined);
+        preparedStream = undefined;
+        const client = (hls = new Hls(config));
         client.on(Hls.Events.ERROR, (_, data) => handleHlsError(client, data));
         client.on(Hls.Events.LEVEL_LOADED, (_, data) => {
           if (hls !== client) return;
           const level = client.levels[data.level];
           // Only declared output metadata, never source dimensions or a guessed
           // profile/frame rate. Single media playlists commonly lack these.
-          void probePlaybackCapabilities({type:'media-source',video:{contentType:`video/mp4; codecs="${level?.videoCodec || ''}"`,
-            width:level?.width,height:level?.height,bitrate:level?.bitrate,framerate:level?.frameRate}},client);
+          void probePlaybackCapabilities(
+            {
+              type: 'media-source',
+              video: {
+                contentType: `video/mp4; codecs="${level?.videoCodec || ''}"`,
+                width: level?.width,
+                height: level?.height,
+                bitrate: level?.bitrate,
+                framerate: level?.frameRate,
+              },
+            },
+            client,
+          );
         });
         // Finish appending the anchor without requesting segment one before
         // the target seek; aborting that speculative load adds recovery noise.
-        client.on(Hls.Events.FRAG_LOADED,()=>{if(hls===client&&sync.timelinePending)client.pauseBuffering();});
+        client.on(Hls.Events.FRAG_LOADED, () => {
+          if (hls === client && sync.timelinePending) client.pauseBuffering();
+        });
         client.on(Hls.Events.FRAG_BUFFERED, () => handleHlsFragmentBuffered(client));
         client.on(Hls.Events.BUFFER_FLUSHING, (_, data) => {
-          if (hls === client) diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
+          if (hls === client)
+            diagnosticSample('hls-buffer-flushing', { target: data.startOffset, position: data.endOffset });
         });
-        client.loadSource(next.mediaUrl); client.attachMedia(video);
-        if(next.directHls)directStartupTimer=setTimeout(()=>{
-          if(hls===client && state?.streamVersion===next.streamVersion && video.readyState<2)void proxyDirectFile();
-        },12000);
-      } else if (next.directHls) queueMicrotask(()=>{if(state===next)void proxyDirectFile();});
+        client.loadSource(next.mediaUrl);
+        client.attachMedia(video);
+        if (next.directHls)
+          directStartupTimer = setTimeout(() => {
+            if (hls === client && state?.streamVersion === next.streamVersion && video.readyState < 2)
+              void proxyDirectFile();
+          }, 12000);
+      } else if (next.directHls)
+        queueMicrotask(() => {
+          if (state === next) void proxyDirectFile();
+        });
       else if (next.directDelivery) void attachDirectFile(next);
       else video.src = next.mediaUrl;
-      if (next.format === 'file') void probePlaybackCapabilities({type:'file'});
+      if (next.format === 'file') void probePlaybackCapabilities({ type: 'file' });
     }
   }
-  const nextTarget=expected();
-  if(!changed&&previousRevision!==undefined&&previousRevision!==next.revision&&previousTarget!==undefined&&nextTarget!==undefined&&Math.abs(nextTarget-previousTarget)>.05)
+  const nextTarget = expected();
+  if (
+    !changed &&
+    previousRevision !== undefined &&
+    previousRevision !== next.revision &&
+    previousTarget !== undefined &&
+    nextTarget !== undefined &&
+    Math.abs(nextTarget - previousTarget) > 0.05
+  )
     sync.suppressCorrectionTelemetry(5000);
-  const sharedSeekRequested = !changed && !sync.timelinePending && (
-    (next.readinessVersion !== undefined && next.readinessVersion !== previousReadinessVersion) ||
-    (previousTarget !== undefined && Math.abs(nextTarget - previousTarget) > 1.5)
-  );
+  const sharedSeekRequested =
+    !changed &&
+    !sync.timelinePending &&
+    ((next.readinessVersion !== undefined && next.readinessVersion !== previousReadinessVersion) ||
+      (previousTarget !== undefined && Math.abs(nextTarget - previousTarget) > 1.5));
   if (sharedSeekRequested) {
     choppyDetector.interrupt();
     sync.sharedSeek();
-    if (hls && uburoomPlayback.bufferedAhead(video.buffered, nextTarget) <= .05) {
+    if (hls && uburoomPlayback.bufferedAhead(video.buffered, nextTarget) <= 0.05) {
       hls.startLoad(nextTarget);
     } else if (sync.preparationUntil && hls) {
       hls.startLoad(expected());
@@ -2542,8 +4317,10 @@ function applyState(next, local=false) {
     hls.startLoad(expected());
   }
   captions.update(next);
-  queueMicrotask(()=>{if(state===next)void restorePlayerSubtitles(next);});
-  if(next.mediaError)playbackError=next.mediaError;
+  queueMicrotask(() => {
+    if (state === next) void restorePlayerSubtitles(next);
+  });
+  if (next.mediaError) playbackError = next.mediaError;
   const picture = next.state.picture;
   video.style.scale = picture.zoom * picture.stretchX + ' ' + picture.zoom * picture.stretchY;
   video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
@@ -2554,44 +4331,78 @@ function applyState(next, local=false) {
   $('empty-stage').hidden = !isIdle || isEnding;
   if (isEnding) renderEnding(next);
   else renderEnding({ ending: null });
-  $('title').textContent = isIdle ? (next.roomName || 'Room') : next.title; $('details').textContent = isIdle ? '' : next.subtitle;
+  $('title').textContent = isIdle ? next.roomName || 'Room' : next.title;
+  $('details').textContent = isIdle ? '' : next.subtitle;
   $('viewers').textContent = next.viewers + (next.viewers === 1 ? ' viewer' : ' viewers');
   $('viewers').title = (next.roomName ? next.roomName + ' · ' : '') + 'Live controller: ' + next.hostName;
-  $('empty-title').textContent = 'Choose something to watch…'; $('empty-hint').textContent = '...or he\'ll be watching you.';
+  $('empty-title').textContent = 'Choose something to watch…';
+  $('empty-hint').textContent = "...or he'll be watching you.";
   $('empty-browse').hidden = !isIdle || !next.canBrowse;
   $('close-room').hidden = !!config?.singleRoom;
-  $('timeline').max = next.state.duration || 60; $('duration').textContent = clock(next.state.duration);
+  $('timeline').max = next.state.duration || 60;
+  $('duration').textContent = clock(next.state.duration);
   const chaptersSelect = $('chapters');
   if (chaptersSelect) {
     const chapters = next.chapters || [];
     chaptersSelect.disabled = !chapters.length;
-    chaptersSelect.replaceChildren(...chapters.map(ch => {
-      const opt = document.createElement('option');
-      opt.value = String(ch.startTime);
-      opt.textContent = ch.title;
-      const end = ch.endTime || next.state.duration || ch.startTime;
-      opt.dataset.caption = clock(ch.startTime) + ' – ' + clock(end);
-      return opt;
-    }));
+    chaptersSelect.replaceChildren(
+      ...chapters.map(ch => {
+        const opt = document.createElement('option');
+        opt.value = String(ch.startTime);
+        opt.textContent = ch.title;
+        const end = ch.endTime || next.state.duration || ch.startTime;
+        opt.dataset.caption = clock(ch.startTime) + ' – ' + clock(end);
+        return opt;
+      }),
+    );
   }
-  $('quality-notice').textContent=next.qualityNotice || '';
+  $('quality-notice').textContent = next.qualityNotice || '';
   renderMediaInformation(next);
   const maximum = !next.fallbackActive && uburoomPlayback.convertedOriginal(next);
-  const maxMbps = maximum && next.deliveryInfo?.bitrateCeiling > 0 ? Math.round(next.deliveryInfo.bitrateCeiling / 1000) : null;
-  const choices = (next.qualities || uburoom.QUALITIES).map(q => maximum && q.id === 'direct' ? {...q,label:maxMbps ? 'Maximum · '+maxMbps+' Mbps' : q.label.replace(/^Original/,'Maximum')} : q);
-  $('quality-detail').textContent = next.fallbackActive ? 'Using fallback · '+next.fallbackStream.height+'p · '+next.fallbackStream.bitrate+' Mbps' : maximum ? 'Converted to '+(next.deliveryInfo.videoCodec || 'another format').toUpperCase()+' at the highest quality available.' : '';
+  const maxMbps =
+    maximum && next.deliveryInfo?.bitrateCeiling > 0 ? Math.round(next.deliveryInfo.bitrateCeiling / 1000) : null;
+  const choices = (next.qualities || uburoom.QUALITIES).map(q =>
+    maximum && q.id === 'direct'
+      ? { ...q, label: maxMbps ? 'Maximum · ' + maxMbps + ' Mbps' : q.label.replace(/^Original/, 'Maximum') }
+      : q,
+  );
+  $('quality-detail').textContent = next.fallbackActive
+    ? 'Using fallback · ' + next.fallbackStream.height + 'p · ' + next.fallbackStream.bitrate + ' Mbps'
+    : maximum
+      ? 'Converted to ' +
+        (next.deliveryInfo.videoCodec || 'another format').toUpperCase() +
+        ' at the highest quality available.'
+      : '';
   $('quality-detail').hidden = !maximum && !next.fallbackActive;
-  if (JSON.stringify([...$('quality').options].map(o => [o.value,o.textContent])) !== JSON.stringify(choices.map(q => [q.id,q.label]))) {
-    const previous=$('quality').value;
-    $('quality').replaceChildren(...choices.map(q => { const option = document.createElement('option'); option.value = q.id; option.textContent = q.label; return option; }));
-    if(choices.some(q=>q.id===previous))$('quality').value=previous;
+  if (
+    JSON.stringify([...$('quality').options].map(o => [o.value, o.textContent])) !==
+    JSON.stringify(choices.map(q => [q.id, q.label]))
+  ) {
+    const previous = $('quality').value;
+    $('quality').replaceChildren(
+      ...choices.map(q => {
+        const option = document.createElement('option');
+        option.value = q.id;
+        option.textContent = q.label;
+        return option;
+      }),
+    );
+    if (choices.some(q => q.id === previous)) $('quality').value = previous;
   }
-  if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality')) $('quality').value = uburoom.qualityId(next.quality);
+  if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality'))
+    $('quality').value = uburoom.qualityId(next.quality);
   renderBrowsing();
   const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
   document.title = (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
-  renderVisibility(); renderTransport();
-  if(resumed){queueUI.restorePosition();diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});}
+  renderVisibility();
+  renderTransport();
+  if (resumed) {
+    queueUI.restorePosition();
+    diagnostics.record('control-reconnected', {
+      connectionId: transport?.connectionId,
+      connectionAttempt: transport?.connectionAttempt,
+    });
+  }
   if (next.feedback && next.feedback.revision !== lastFeedback && Date.now() + offset - next.feedback.at < 3000) {
     lastFeedback = next.feedback.revision;
     const details = uburoomWatchFeedback.badgeDetails(next.feedback, next.state);
@@ -2599,7 +4410,9 @@ function applyState(next, local=false) {
       toasts.show('participant', {
         title: details.label + (details.value && details.value !== details.label ? ' ' + details.value : ''),
         hint: next.feedback.sender,
-        symbol: details.symbol, seekSeconds: details.seekSeconds, duration: 2500
+        symbol: details.symbol,
+        seekSeconds: details.seekSeconds,
+        duration: 2500,
       });
     }
   }
@@ -2608,18 +4421,43 @@ function applyState(next, local=false) {
 }
 async function refreshState() {
   if (!selected) return;
-  const id = selected, before = Date.now(), sent=performance.now(), exchange=playbackClock.begin(), sequence=++stateRequestSequence;
+  const id = selected,
+    before = Date.now(),
+    sent = performance.now(),
+    exchange = playbackClock.begin(),
+    sequence = ++stateRequestSequence;
   try {
-    const next = await api('/api/watch/rooms/' + id + '?'+new URLSearchParams(viewerPreferences())); if (id !== selected || sequence!==stateRequestSequence || next.transportSequence<=stateTransportSequence) return;
-    playbackClock.add(exchange,next.timing);
-    diagnostics.record('clock-sample',{...playbackClock.read(),requestRttMs:performance.now()-exchange.sent,serverProcessingMs:next.timing?.serverProcessingMs});
-    const revision=observationClock.update(next.observationEpoch,next.serverNow,sent,performance.now());
-    if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}
-    offset = next.serverNow - (before + Date.now()) / 2; applyState(next); fail(playbackError); void reportReadiness();
-  } catch (error) { if (id === selected && sequence===stateRequestSequence) {
-    if(!error.status||error.status>=500)connectionLost();
-    else {diagnostics.record('room-state-unavailable',{status:error.status,connectionId:transport?.connectionId,visibility:document.visibilityState});unavailable(error.message,'room-poll');}
-  } }
+    const next = await api('/api/watch/rooms/' + id + '?' + new URLSearchParams(viewerPreferences()));
+    if (id !== selected || sequence !== stateRequestSequence || next.transportSequence <= stateTransportSequence)
+      return;
+    playbackClock.add(exchange, next.timing);
+    diagnostics.record('clock-sample', {
+      ...playbackClock.read(),
+      requestRttMs: performance.now() - exchange.sent,
+      serverProcessingMs: next.timing?.serverProcessingMs,
+    });
+    const revision = observationClock.update(next.observationEpoch, next.serverNow, sent, performance.now());
+    if (revision !== observationClockRevision) {
+      observationBreak++;
+      observationClockRevision = revision;
+    }
+    offset = next.serverNow - (before + Date.now()) / 2;
+    applyState(next);
+    fail(playbackError);
+    void reportReadiness();
+  } catch (error) {
+    if (id === selected && sequence === stateRequestSequence) {
+      if (!error.status || error.status >= 500) connectionLost();
+      else {
+        diagnostics.record('room-state-unavailable', {
+          status: error.status,
+          connectionId: transport?.connectionId,
+          visibility: document.visibilityState,
+        });
+        unavailable(error.message, 'room-poll');
+      }
+    }
+  }
 }
 // Someone who arrives for a watch night before a host opens its room waits
 // here and joins as soon as the room opens. Hosts open it from the Upcoming card.
@@ -2627,161 +4465,307 @@ let waitingRoom;
 // target is the room's id or, from a /room/<slug> link, its slug. It is matched
 // against the Upcoming list, which loads once the control socket is ready.
 let waitTarget;
-function waitForHost(target){waitTarget=target;resolveWait();if(transport?.ready)void lobbyEvents.refresh();}
-function resolveWait(){
-  if(!waitTarget||selected)return;
-  const event=lobbyEvents.events().find(item=>item.roomId===waitTarget||item.roomSlug===waitTarget);
-  if(!event)return;
-  waitTarget=undefined;
-  if(event.canManage)return;
-  waitingRoom={id:event.roomId,event};renderWaiting();
+function waitForHost(target) {
+  waitTarget = target;
+  resolveWait();
+  if (transport?.ready) void lobbyEvents.refresh();
 }
-function renderWaiting(){
-  if(!waitingRoom||selected)return;
-  const {event}=waitingRoom;
-  if(Date.parse(event.end)<=Date.now()){waitingRoom=undefined;return;}
-  $('empty-title').textContent=event.title;
-  $('empty-hint').textContent=(Date.parse(event.start)<=Date.now()?'Starting now':'Starts '+uburoomLobbyEvents.startsLabel(event))+' · Waiting for host';
+function resolveWait() {
+  if (!waitTarget || selected) return;
+  const event = lobbyEvents.events().find(item => item.roomId === waitTarget || item.roomSlug === waitTarget);
+  if (!event) return;
+  waitTarget = undefined;
+  if (event.canManage) return;
+  waitingRoom = { id: event.roomId, event };
+  renderWaiting();
 }
-async function selectRoom(id,initial) {
-  if(waitingRoom&&waitingRoom.id!==id)waitingRoom=undefined;
-  waitTarget=undefined;
-  clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;
-  disconnectExtended=false;hideDisconnectToast();
+function renderWaiting() {
+  if (!waitingRoom || selected) return;
+  const { event } = waitingRoom;
+  if (Date.parse(event.end) <= Date.now()) {
+    waitingRoom = undefined;
+    return;
+  }
+  $('empty-title').textContent = event.title;
+  $('empty-hint').textContent =
+    (Date.parse(event.start) <= Date.now() ? 'Starting now' : 'Starts ' + uburoomLobbyEvents.startsLabel(event)) +
+    ' · Waiting for host';
+}
+async function selectRoom(id, initial) {
+  if (waitingRoom && waitingRoom.id !== id) waitingRoom = undefined;
+  waitTarget = undefined;
+  clearTimeout(disconnectGraceTimer);
+  disconnectGraceTimer = undefined;
+  disconnectExtended = false;
+  hideDisconnectToast();
   if (id === selected) return;
-  if(switchingRoom)throw new Error('Wait for the room to open.');
-  switchingRoom=true;
-  const previous=selected;
+  if (switchingRoom) throw new Error('Wait for the room to open.');
+  switchingRoom = true;
+  const previous = selected;
   try {
-    const exchange=playbackClock.begin();
-    const hlsReady=ensureHls().catch(()=>{});
+    const exchange = playbackClock.begin();
+    const hlsReady = ensureHls().catch(() => {});
     let next;
     try {
-      next=initial||await api('/api/watch/rooms/'+id+'?'+new URLSearchParams(viewerPreferences()));
-    } catch(error) {
+      next = initial || (await api('/api/watch/rooms/' + id + '?' + new URLSearchParams(viewerPreferences())));
+    } catch (error) {
       if (error?.status === 403) viewerId = crypto.randomUUID();
       throw error;
     }
-    if(next.format==='hls')await hlsReady;
-    if(next.id!==id)throw new Error('Room changed while opening. Try again.');
+    if (next.format === 'hls') await hlsReady;
+    if (next.id !== id) throw new Error('Room changed while opening. Try again.');
     syncRoomUrl(id, next.slug);
-    qualityPending=false;
-    stateTransportSequence=0;
+    qualityPending = false;
+    stateTransportSequence = 0;
     stateRequestSequence++;
-    if(!initial)playbackClock.add(exchange,next.timing);
-    const now=performance.now(),revision=observationClock.update(next.observationEpoch,playbackClock.read().serverTime??next.serverNow,now,now);
-    if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}
-    if($('tracks-dialog').open)$('tracks-dialog').close(); trackContext=undefined;
-    clearPlayer('room-select'); selected = id; state = undefined; lastFeedback = browseRoom = undefined;
-    applyState(next);placeRoomBar();fail(playbackError);void reportReadiness();
-    if(previous)void api('/api/watch/rooms/'+previous+'/leave',{viewerId}).catch(()=>{});
+    if (!initial) playbackClock.add(exchange, next.timing);
+    const now = performance.now(),
+      revision = observationClock.update(
+        next.observationEpoch,
+        playbackClock.read().serverTime ?? next.serverNow,
+        now,
+        now,
+      );
+    if (revision !== observationClockRevision) {
+      observationBreak++;
+      observationClockRevision = revision;
+    }
+    if ($('tracks-dialog').open) $('tracks-dialog').close();
+    trackContext = undefined;
+    clearPlayer('room-select');
+    selected = id;
+    state = undefined;
+    lastFeedback = browseRoom = undefined;
+    applyState(next);
+    placeRoomBar();
+    fail(playbackError);
+    void reportReadiness();
+    if (previous) void api('/api/watch/rooms/' + previous + '/leave', { viewerId }).catch(() => {});
     if (immersive) toggleDrawer(!!state?.canBrowse && !state?.mediaId);
-  } finally {switchingRoom=false;}
+  } finally {
+    switchingRoom = false;
+  }
 }
 function renderRooms(host, rooms, join = id => selectRoom(id)) {
   host.replaceChildren();
   if (!rooms.length) {
-    const empty = document.createElement('span'); empty.className = 'hint'; empty.textContent = 'No active rooms'; host.append(empty);
+    const empty = document.createElement('span');
+    empty.className = 'hint';
+    empty.textContent = 'No active rooms';
+    host.append(empty);
   }
   for (const room of rooms) {
-    const button = document.createElement('button'); button.type = 'button'; button.disabled = !!room.locked;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.disabled = !!room.locked;
     button.append(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
-    const name = document.createElement('span'); name.textContent = room.name || room.hostName; button.append(name,uburoomIcons.icon(document,'users'));
-    const count = document.createElement('span'); count.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers); button.append(count);
-    button.title = room.locked ? 'Private - No one can join' : room.members?.length ? room.members.join('\n') : 'No viewers yet';
-    button.setAttribute('aria-label', (room.name || room.hostName) + (room.visibility === 'private' ? ', private' : '') + ', ' + room.viewers + ' viewers');
-    button.setAttribute('aria-pressed', String(room.id === selected)); button.addEventListener('click', () => join(room.id).catch(error => fail(error.message))); host.append(button);
+    const name = document.createElement('span');
+    name.textContent = room.name || room.hostName;
+    button.append(name, uburoomIcons.icon(document, 'users'));
+    const count = document.createElement('span');
+    count.textContent = room.maxMembers ? room.viewers + ' / ' + room.maxMembers : String(room.viewers);
+    button.append(count);
+    button.title = room.locked
+      ? 'Private - No one can join'
+      : room.members?.length
+        ? room.members.join('\n')
+        : 'No viewers yet';
+    button.setAttribute(
+      'aria-label',
+      (room.name || room.hostName) +
+        (room.visibility === 'private' ? ', private' : '') +
+        ', ' +
+        room.viewers +
+        ' viewers',
+    );
+    button.setAttribute('aria-pressed', String(room.id === selected));
+    button.addEventListener('click', () => join(room.id).catch(error => fail(error.message)));
+    host.append(button);
   }
 }
 async function refreshRooms() {
-  try { const { rooms } = await api('/api/watch/rooms'); applyRooms(rooms); }
-  catch (error) { if (!state) $('lobby-error').textContent = error.message; throw error; }
+  try {
+    const { rooms } = await api('/api/watch/rooms');
+    applyRooms(rooms);
+  } catch (error) {
+    if (!state) $('lobby-error').textContent = error.message;
+    throw error;
+  }
 }
 function applyRooms(rooms) {
-  knownRooms=rooms;
+  knownRooms = rooms;
   if (selected) syncRoomUrl(selected);
-  $('lobby-error').textContent='';
-  renderRooms($('rooms'), rooms); renderRoomChoices(rooms,$('lobby-rooms'));
+  $('lobby-error').textContent = '';
+  renderRooms($('rooms'), rooms);
+  renderRoomChoices(rooms, $('lobby-rooms'));
   if ($('room-dialog').open && !creating) {
     renderRoomChoices(rooms);
   }
   if (!reconnecting && !switchingRoom && !rooms.some(room => room.id === selected && !room.locked)) {
     if (selected) {
-      const listed=rooms.find(room=>room.id===selected);
-      diagnostics.record('room-list-unavailable',{roomListState:listed?.locked?'locked':'missing',roomCount:rooms.length,
-        connectionId:transport?.connectionId,visibility:document.visibilityState});
-      selected = undefined; unavailable('Room ended or was made private.'); if (immersive) toggleDrawer(false);
+      const listed = rooms.find(room => room.id === selected);
+      diagnostics.record('room-list-unavailable', {
+        roomListState: listed?.locked ? 'locked' : 'missing',
+        roomCount: rooms.length,
+        connectionId: transport?.connectionId,
+        visibility: document.visibilityState,
+      });
+      selected = undefined;
+      unavailable('Room ended or was made private.');
+      if (immersive) toggleDrawer(false);
     }
   }
-  $('status').textContent = !config?.singleRoom&&!selected && rooms.length ? 'Choose an active room or create your own.' : '';
+  $('status').textContent =
+    !config?.singleRoom && !selected && rooms.length ? 'Choose an active room or create your own.' : '';
   $('create').textContent = 'New room';
   $('create').hidden = !!selected;
-  if(config?.singleRoom){
-    for(const id of ['create','lobby-create','lobby-reopen','room-chooser-new'])if($(id))$(id).hidden=true;
-    $('rooms').hidden=true;
-    if(!selected&&transport?.ready&&rooms[0]&&!rooms[0].locked&&!switchingRoom)void selectRoom(rooms[0].id).catch(error=>fail(error.message));
+  if (config?.singleRoom) {
+    for (const id of ['create', 'lobby-create', 'lobby-reopen', 'room-chooser-new']) if ($(id)) $(id).hidden = true;
+    $('rooms').hidden = true;
+    if (!selected && transport?.ready && rooms[0] && !rooms[0].locked && !switchingRoom)
+      void selectRoom(rooms[0].id).catch(error => fail(error.message));
   }
   if (!selected) {
     stage.classList.remove('ending-active');
     $('ending-stage').hidden = true;
     renderEnding({ ending: null });
-    $('viewers').textContent = ''; $('close-room').hidden = true; $('empty-browse').hidden = true;
-    $('title').textContent = 'Watch together'; $('details').textContent = ''; $('empty-title').textContent = 'Join or create a room'; $('empty-hint').textContent = 'Choose an active room or create your own.';
-    const opened=waitingRoom&&rooms.find(room=>room.id===waitingRoom.id&&!room.locked);
-    if(opened){waitingRoom=undefined;void selectRoom(opened.id).then(()=>{if(state)returnToVideo();}).catch(error=>fail(error.message));}
-    else renderWaiting(); }
+    $('viewers').textContent = '';
+    $('close-room').hidden = true;
+    $('empty-browse').hidden = true;
+    $('title').textContent = 'Watch together';
+    $('details').textContent = '';
+    $('empty-title').textContent = 'Join or create a room';
+    $('empty-hint').textContent = 'Choose an active room or create your own.';
+    const opened = waitingRoom && rooms.find(room => room.id === waitingRoom.id && !room.locked);
+    if (opened) {
+      waitingRoom = undefined;
+      void selectRoom(opened.id)
+        .then(() => {
+          if (state) returnToVideo();
+        })
+        .catch(error => fail(error.message));
+    } else renderWaiting();
+  }
   placeRoomBar();
-  renderBrowsing(); renderVisibility();
-  if(config?.singleRoom)$('close-room').hidden=true;
+  renderBrowsing();
+  renderVisibility();
+  if (config?.singleRoom) $('close-room').hidden = true;
 }
 function renderBrowsing() {
-  browseRoom = !selected && me ? 'lobby' : !transport?.ready && !reconnecting ? undefined : state?.canBrowse ? state.id : undefined;
+  browseRoom =
+    !selected && me
+      ? 'lobby'
+      : !transport?.ready && !reconnecting
+        ? undefined
+        : state?.canBrowse
+          ? state.id
+          : undefined;
   $('library-panel').hidden = !browseRoom && $('auth-overlay').hidden && (!me || !!state);
-  void library.setRoom(browseRoom); library.setBusy(pending||reconnecting);
+  void library.setRoom(browseRoom);
+  library.setBusy(pending || reconnecting);
 }
 function renderLibrary() {
-  library.setBusy(pending||reconnecting);
+  library.setBusy(pending || reconnecting);
 }
 function clock(value = 0) {
-  const seconds = Math.floor(value || 0), minutes = Math.floor(seconds / 60);
-  return (seconds >= 3600 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') : minutes) + ':' + String(seconds % 60).padStart(2,'0');
+  const seconds = Math.floor(value || 0),
+    minutes = Math.floor(seconds / 60);
+  return (
+    (seconds >= 3600 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') : minutes) +
+    ':' +
+    String(seconds % 60).padStart(2, '0')
+  );
 }
 function renderVolumeIcon() {
-  glyph('player-mute',uburoomIcons.volumeName(volumeDraft ?? state?.state?.volume ?? Number($('player-volume').value),!!state?.state?.muted));
+  glyph(
+    'player-mute',
+    uburoomIcons.volumeName(
+      volumeDraft ?? state?.state?.volume ?? Number($('player-volume').value),
+      !!state?.state?.muted,
+    ),
+  );
 }
 function pumpVolume() {
   clearTimeout(volumeTimer);
   if (volumeWanted === undefined || !selected || !state) return;
   const wait = Math.max(0, 500 - (Date.now() - lastVolumeAt));
-  if (pending || volumePending || wait) { volumeTimer = setTimeout(pumpVolume, Math.max(100, wait)); return; }
-  const percent = volumeWanted; volumeWanted = undefined; lastVolumeAt = Date.now();
-  execute({ action: 'media.volume.set', args: { percent } }).then(() => {
-    if (volumeWanted === undefined && volumeDraft === percent) volumeDraft = undefined; renderTransport();
-  }).catch(error => { dropVolume(); fail(error.message); });
+  if (pending || volumePending || wait) {
+    volumeTimer = setTimeout(pumpVolume, Math.max(100, wait));
+    return;
+  }
+  const percent = volumeWanted;
+  volumeWanted = undefined;
+  lastVolumeAt = Date.now();
+  execute({ action: 'media.volume.set', args: { percent } })
+    .then(() => {
+      if (volumeWanted === undefined && volumeDraft === percent) volumeDraft = undefined;
+      renderTransport();
+    })
+    .catch(error => {
+      dropVolume();
+      fail(error.message);
+    });
 }
-$('player-volume').addEventListener('pointerdown', () => { volumeDragging = true; });
-$('player-volume').addEventListener('input', () => { volumeWanted = volumeDraft = Number($('player-volume').value); savePlayerPreferences({volume:volumeDraft,muted:false}); renderVolumeIcon(); pumpVolume(); });
-$('player-volume').addEventListener('change', () => { volumeDragging = false; volumeWanted = volumeDraft = Number($('player-volume').value); savePlayerPreferences({volume:volumeDraft,muted:false}); renderVolumeIcon(); pumpVolume(); });
-$('player-volume').addEventListener('pointercancel', () => { volumeDragging = false; });
-for (const [id, command] of [['previous',{action:'media.previous'}],['seek-back',{action:'media.seek.relative',args:{seconds:-15}}],
-  ['seek-forward',{action:'media.seek.relative',args:{seconds:15}}],['next',{action:'media.next'}]]) $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
-for (const choice of ['start','wait','cancel']) $('ready-' + choice).addEventListener('click', () => {
-  void execute({action:'media.ready.' + choice,args:{readinessId:state?.readiness?.id}}).catch(error => fail(error.message));
+$('player-volume').addEventListener('pointerdown', () => {
+  volumeDragging = true;
 });
-$('player-play').addEventListener('click', () => execute({ action: state?.pauseAt || state?.state.paused && !state?.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message)));
-$('player-mute').addEventListener('click', () => execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)));
+$('player-volume').addEventListener('input', () => {
+  volumeWanted = volumeDraft = Number($('player-volume').value);
+  savePlayerPreferences({ volume: volumeDraft, muted: false });
+  renderVolumeIcon();
+  pumpVolume();
+});
+$('player-volume').addEventListener('change', () => {
+  volumeDragging = false;
+  volumeWanted = volumeDraft = Number($('player-volume').value);
+  savePlayerPreferences({ volume: volumeDraft, muted: false });
+  renderVolumeIcon();
+  pumpVolume();
+});
+$('player-volume').addEventListener('pointercancel', () => {
+  volumeDragging = false;
+});
+for (const [id, command] of [
+  ['previous', { action: 'media.previous' }],
+  ['seek-back', { action: 'media.seek.relative', args: { seconds: -15 } }],
+  ['seek-forward', { action: 'media.seek.relative', args: { seconds: 15 } }],
+  ['next', { action: 'media.next' }],
+])
+  $(id).addEventListener('click', () => execute(command).catch(error => fail(error.message)));
+for (const choice of ['start', 'wait', 'cancel'])
+  $('ready-' + choice).addEventListener('click', () => {
+    void execute({ action: 'media.ready.' + choice, args: { readinessId: state?.readiness?.id } }).catch(error =>
+      fail(error.message),
+    );
+  });
+$('player-play').addEventListener('click', () =>
+  execute({
+    action: state?.pauseAt || (state?.state.paused && !state?.waitingForReady) ? 'media.play' : 'media.pause',
+  }).catch(error => fail(error.message)),
+);
+$('player-mute').addEventListener('click', () =>
+  execute({ action: state?.state.muted ? 'media.unmute' : 'media.mute' }).catch(error => fail(error.message)),
+);
 $('join-playback').addEventListener('click', async () => {
-  if (autoplayBlocked) { await unlockLocal(); void reportReadiness(); if (state && !state.state.paused) void sync.synchronize(); }
-  else $('player-play').click();
+  if (autoplayBlocked) {
+    await unlockLocal();
+    void reportReadiness();
+    if (state && !state.state.paused) void sync.synchronize();
+  } else $('player-play').click();
 });
 $('quality').addEventListener('change', () => {
   preferredQuality = $('quality').value;
-  savePlayerPreferences({quality:preferredQuality});
+  savePlayerPreferences({ quality: preferredQuality });
   choppyDetector.triggerCooldown(10000, performance.now());
-  if (choppyToastActive) { toasts.dismiss('choppy', false); choppyToastActive = false; }
+  if (choppyToastActive) {
+    toasts.dismiss('choppy', false);
+    choppyToastActive = false;
+  }
   // Choosing a quality starts over, so a fallback from earlier cannot pin this viewer.
   localFallbackAttempts = new Set();
-  execute({ action: 'media.quality.set', args: { quality: preferredQuality, reset: true } }).catch(error => fail(error.message));
+  execute({ action: 'media.quality.set', args: { quality: preferredQuality, reset: true } }).catch(error =>
+    fail(error.message),
+  );
 });
 function updateTimelineTooltip(event) {
   const tooltip = $('timeline-tooltip');
@@ -2791,17 +4775,24 @@ function updateTimelineTooltip(event) {
   const hoverSec = fraction * state.state.duration;
   const chapters = state.chapters || [];
   const chapter = chapters.find(ch => hoverSec >= ch.startTime && hoverSec < ch.endTime);
-  tooltip.textContent = (chapter ? (chapter.title + ' · ') : '') + clock(hoverSec);
+  tooltip.textContent = (chapter ? chapter.title + ' · ' : '') + clock(hoverSec);
   tooltip.hidden = false;
   const row = $('timeline-row') || $('timeline').parentElement;
   const rowRect = row.getBoundingClientRect();
   const left = event.clientX - rowRect.left;
   tooltip.style.left = Math.max(24, Math.min(rowRect.width - 24, left)) + 'px';
 }
-$('timeline').addEventListener('pointerdown', event => { seekDragging = true; updateTimelineTooltip(event); });
+$('timeline').addEventListener('pointerdown', event => {
+  seekDragging = true;
+  updateTimelineTooltip(event);
+});
 $('timeline').addEventListener('pointermove', updateTimelineTooltip);
-$('timeline').addEventListener('pointerleave', () => { if (!seekDragging && $('timeline-tooltip')) $('timeline-tooltip').hidden = true; });
-$('timeline').addEventListener('input', () => { $('time').textContent = clock($('timeline').value); });
+$('timeline').addEventListener('pointerleave', () => {
+  if (!seekDragging && $('timeline-tooltip')) $('timeline-tooltip').hidden = true;
+});
+$('timeline').addEventListener('input', () => {
+  $('time').textContent = clock($('timeline').value);
+});
 $('timeline').addEventListener('change', () => {
   const seconds = Number($('timeline').value);
   seekDragging = false;
@@ -2816,7 +4807,10 @@ $('timeline').addEventListener('change', () => {
     fail(error.message);
   });
 });
-$('timeline').addEventListener('pointercancel', () => { seekDragging = false; if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true; });
+$('timeline').addEventListener('pointercancel', () => {
+  seekDragging = false;
+  if ($('timeline-tooltip')) $('timeline-tooltip').hidden = true;
+});
 $('chapters')?.addEventListener('change', () => {
   const seconds = Number($('chapters').value);
   if (Number.isFinite(seconds)) {
@@ -2830,7 +4824,9 @@ $('skip-marker')?.addEventListener('click', () => {
     execute({ action: 'media.seek.absolute', args: { seconds: seekTo } }).catch(error => fail(error.message));
   }
 });
-video.addEventListener('loadedmetadata', () => { void sync.synchronize(); });
+video.addEventListener('loadedmetadata', () => {
+  void sync.synchronize();
+});
 video.addEventListener('canplay', () => {
   void sync.synchronize();
   if (state?.waitingForReady || state?.readiness) void reportReadiness();
@@ -2841,29 +4837,62 @@ video.addEventListener('seeked', () => {
 });
 video.addEventListener('error', () => {
   if (!video.getAttribute('src') || !state?.mediaUrl || !video.error || playbackError) return;
-  const code = video.error?.code, message = video.error?.message || '';
-  if (state.directDelivery && code === 2) { void proxyDirectFile(); return; }
-  if ([3,4].includes(code) && state.format === 'file') {
-    void compatibleFallback('The original video could not be decoded.'); return;
+  const code = video.error?.code,
+    message = video.error?.message || '';
+  if (state.directDelivery && code === 2) {
+    void proxyDirectFile();
+    return;
   }
-  if ([3,4].includes(code) && /kUnsupportedConfig|DECODER_ERROR_NOT_SUPPORTED|decoder.*(?:not supported|initialization failed)/i.test(message)) {
-    void compatibleFallback('The video decoder is unsupported.'); return;
+  if ([3, 4].includes(code) && state.format === 'file') {
+    void compatibleFallback('The original video could not be decoded.');
+    return;
+  }
+  if (
+    [3, 4].includes(code) &&
+    /kUnsupportedConfig|DECODER_ERROR_NOT_SUPPORTED|decoder.*(?:not supported|initialization failed)/i.test(message)
+  ) {
+    void compatibleFallback('The video decoder is unsupported.');
+    return;
   }
   // HLS manages recoverable media errors through its bounded handler.
-  if (hls && [3,4].includes(code)) return;
-  if (uburoomPlayback.localFormat(state.format)) {void compatibleFallback('The converted video could not be decoded.');return;}
-  playbackError = 'Video could not play (media error ' + (code || 'unknown') + ').'; fail(playbackError);
+  if (hls && [3, 4].includes(code)) return;
+  if (uburoomPlayback.localFormat(state.format)) {
+    void compatibleFallback('The converted video could not be decoded.');
+    return;
+  }
+  playbackError = 'Video could not play (media error ' + (code || 'unknown') + ').';
+  fail(playbackError);
 });
 $('enable-acceleration').addEventListener('click', async () => {
   if (!sdk) return;
-  try { await sdk.commands.encourageHardwareAcceleration(); }
-  catch { fail('Enable hardware acceleration in Discord Settings → Advanced, then reopen the Activity.'); }
+  try {
+    await sdk.commands.encourageHardwareAcceleration();
+  } catch {
+    fail('Enable hardware acceleration in Discord Settings → Advanced, then reopen the Activity.');
+  }
 });
 document.addEventListener('keydown', event => {
-  if (event.defaultPrevented || document.body.classList.contains('activity-pip') || document.querySelector('dialog:modal')) return;
-  if (event.code === 'Escape' && !drawer.hidden) { toggleDrawer(false); $('drawer-open').focus(); return; }
+  if (
+    event.defaultPrevented ||
+    document.body.classList.contains('activity-pip') ||
+    document.querySelector('dialog:modal')
+  )
+    return;
+  if (event.code === 'Escape' && !drawer.hidden) {
+    toggleDrawer(false);
+    $('drawer-open').focus();
+    return;
+  }
   if (!drawer.hidden && drawer.contains(event.target)) return;
-  if (!state || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button,input,select,textarea,[contenteditable=true]')) return;
+  if (
+    !state ||
+    event.repeat ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.target.closest('button,input,select,textarea,[contenteditable=true]')
+  )
+    return;
   if (event.code === 'KeyF') {
     event.preventDefault();
     $('fullscreen')?.click();
@@ -2897,14 +4926,18 @@ document.addEventListener('keydown', event => {
     }
     if (state?.mediaUrl && !$('player-play')?.disabled) {
       event.preventDefault();
-      execute({ action: state.pauseAt || state.state.paused && !state.waitingForReady ? 'media.play' : 'media.pause' }).catch(error => fail(error.message));
+      execute({
+        action: state.pauseAt || (state.state.paused && !state.waitingForReady) ? 'media.play' : 'media.pause',
+      }).catch(error => fail(error.message));
       return;
     }
     return;
   }
   if (['ArrowLeft', 'ArrowRight'].includes(event.code) && state?.mediaUrl && !$('seek-back')?.disabled) {
     event.preventDefault();
-    execute({ action: 'media.seek.relative', args: { seconds: event.code === 'ArrowLeft' ? -15 : 15 } }).catch(error => fail(error.message));
+    execute({ action: 'media.seek.relative', args: { seconds: event.code === 'ArrowLeft' ? -15 : 15 } }).catch(error =>
+      fail(error.message),
+    );
     return;
   }
   if (event.code === 'KeyM' && state?.mediaUrl && !$('player-mute')?.disabled) {
@@ -2914,56 +4947,136 @@ document.addEventListener('keydown', event => {
   }
 });
 document.addEventListener('pointerdown', event => {
-  if (!drawer.hidden && !event.composedPath().some(node => ['drawer','drawer-open','drawer-close'].includes(node.id)) && !event.composedPath().some(node => node instanceof HTMLDialogElement || node.matches?.('.player-settings-menu, .viewer-telemetry-card'))) {
+  if (
+    !drawer.hidden &&
+    !event.composedPath().some(node => ['drawer', 'drawer-open', 'drawer-close'].includes(node.id)) &&
+    !event
+      .composedPath()
+      .some(
+        node => node instanceof HTMLDialogElement || node.matches?.('.player-settings-menu, .viewer-telemetry-card'),
+      )
+  ) {
     toggleDrawer(false);
-    $('stage').focus({preventScroll:true});
+    $('stage').focus({ preventScroll: true });
   }
 });
 $('fullscreen').addEventListener('click', () => {
   // iPhones allow fullscreen only on the video itself, never on the player around it.
-  if (!$('stage').requestFullscreen) return video.webkitEnterFullscreen ? video.webkitEnterFullscreen() : fail('This browser cannot go fullscreen.');
-  (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error => fail(error.message));
+  if (!$('stage').requestFullscreen)
+    return video.webkitEnterFullscreen ? video.webkitEnterFullscreen() : fail('This browser cannot go fullscreen.');
+  (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen()).catch(error =>
+    fail(error.message),
+  );
 });
 video.addEventListener('webkitbeginfullscreen', () => {
-  if (captions.nativeFullscreen(true)) toasts.show('native-fullscreen-subtitles', { title: 'Subtitles need burn-in here', hint: 'Choose Burn-in in Subtitle settings to see them in iPhone fullscreen.', symbol: 'subtitles' });
+  if (captions.nativeFullscreen(true))
+    toasts.show('native-fullscreen-subtitles', {
+      title: 'Subtitles need burn-in here',
+      hint: 'Choose Burn-in in Subtitle settings to see them in iPhone fullscreen.',
+      symbol: 'subtitles',
+    });
 });
-video.addEventListener('webkitendfullscreen', () => { captions.nativeFullscreen(false); });
-document.addEventListener('fullscreenchange', () => { updateMobilePlayer(); updateFullscreenLayout(); glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen'); $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; $('fullscreen').setAttribute('aria-label', $('fullscreen').title); });
+video.addEventListener('webkitendfullscreen', () => {
+  captions.nativeFullscreen(false);
+});
+document.addEventListener('fullscreenchange', () => {
+  updateMobilePlayer();
+  updateFullscreenLayout();
+  glyph('fullscreen', document.fullscreenElement ? 'fullscreenExit' : 'fullscreen');
+  $('fullscreen').title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  $('fullscreen').setAttribute('aria-label', $('fullscreen').title);
+});
 async function loadLibraryItem(item, options = {}) {
-  return execute({action:'media.load',args:{mediaId:item.id,quality:item.id === 'demo' ? 'direct' : preferredQuality,...options}});
+  return execute({
+    action: 'media.load',
+    args: { mediaId: item.id, quality: item.id === 'demo' ? 'direct' : preferredQuality, ...options },
+  });
 }
 let roomChoice, roomChoiceOptions;
 function renderRoomChoices(rooms, container = $('room-choices')) {
-  const key = JSON.stringify([selected,rooms.map(room => [room.id,room.name,room.hostName,room.title,room.viewers,room.maxMembers,room.recovering,room.locked])]);
+  const key = JSON.stringify([
+    selected,
+    rooms.map(room => [
+      room.id,
+      room.name,
+      room.hostName,
+      room.title,
+      room.viewers,
+      room.maxMembers,
+      room.recovering,
+      room.locked,
+    ]),
+  ]);
   if (container.dataset.roomList === key) return;
   container.dataset.roomList = key;
   const focusedRoom = container.contains(document.activeElement) ? document.activeElement.dataset.joinRoom : undefined;
   container.replaceChildren();
-  if (!rooms.length && container.id !== 'lobby-rooms') { const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = 'No active rooms. Create a new room or reopen one of yours.'; container.append(empty); }
+  if (!rooms.length && container.id !== 'lobby-rooms') {
+    const empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = 'No active rooms. Create a new room or reopen one of yours.';
+    container.append(empty);
+  }
   for (const room of rooms) {
-    const row = document.createElement('div'); row.className = 'saved-room';
-    const copy = document.createElement('div'), name = document.createElement('strong'), info = document.createElement('p');
+    const row = document.createElement('div');
+    row.className = 'saved-room';
+    const copy = document.createElement('div'),
+      name = document.createElement('strong'),
+      info = document.createElement('p');
     name.textContent = room.name || room.hostName;
     name.prepend(uburoomIcons.icon(document, room.visibility === 'private' ? 'lock' : 'website'));
     info.className = 'hint';
-    info.textContent = (room.recovering ? 'Recovering · ' : '') + (room.title || 'No video selected') + ' · ' + room.viewers + ' / ' + (room.maxMembers || 20) + ' people'; copy.append(name,info);
-    const actions = document.createElement('div'); actions.className = 'room-actions';
+    info.textContent =
+      (room.recovering ? 'Recovering · ' : '') +
+      (room.title || 'No video selected') +
+      ' · ' +
+      room.viewers +
+      ' / ' +
+      (room.maxMembers || 20) +
+      ' people';
+    copy.append(name, info);
+    const actions = document.createElement('div');
+    actions.className = 'room-actions';
     const currentRoom = container.id === 'room-choices' && room.id === selected;
-    const button = document.createElement('button'); button.className = 'quiet'; button.dataset.joinRoom = room.id; button.textContent = currentRoom ? 'Cancel' : 'Join';
-    if (!currentRoom) button.prepend(uburoomIcons.icon(document,'login')); button.disabled = !currentRoom && !!room.locked;
-    button.addEventListener('click',async () => {
-      if (currentRoom) { $('room-dialog').close('cancel'); return; }
+    const button = document.createElement('button');
+    button.className = 'quiet';
+    button.dataset.joinRoom = room.id;
+    button.textContent = currentRoom ? 'Cancel' : 'Join';
+    if (!currentRoom) button.prepend(uburoomIcons.icon(document, 'login'));
+    button.disabled = !currentRoom && !!room.locked;
+    button.addEventListener('click', async () => {
+      if (currentRoom) {
+        $('room-dialog').close('cancel');
+        return;
+      }
       if (creating) return;
-      creating = true; button.disabled = true; $('lobby-error').textContent = '';
-      try { await selectRoom(room.id); if (!state || selected !== room.id) throw new Error('Room unavailable. Choose another room.'); $('room-dialog').close('joined'); returnToVideo(); }
-      catch (error) { $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message; }
-      finally { creating = false; button.disabled = !!room.locked; }
-    }); actions.append(button); row.append(copy,actions); container.append(row);
+      creating = true;
+      button.disabled = true;
+      $('lobby-error').textContent = '';
+      try {
+        await selectRoom(room.id);
+        if (!state || selected !== room.id) throw new Error('Room unavailable. Choose another room.');
+        $('room-dialog').close('joined');
+        returnToVideo();
+      } catch (error) {
+        $(container.id === 'lobby-rooms' ? 'lobby-error' : 'room-dialog-error').textContent = error.message;
+      } finally {
+        creating = false;
+        button.disabled = !!room.locked;
+      }
+    });
+    actions.append(button);
+    row.append(copy, actions);
+    container.append(row);
   }
-  if (focusedRoom) [...container.querySelectorAll('button')].find(button => button.dataset.joinRoom === focusedRoom)?.focus({preventScroll:true});
+  if (focusedRoom)
+    [...container.querySelectorAll('button')]
+      .find(button => button.dataset.joinRoom === focusedRoom)
+      ?.focus({ preventScroll: true });
 }
 function syncButtonGroup(selectId, groupId) {
-  const select = $(selectId), group = $(groupId);
+  const select = $(selectId),
+    group = $(groupId);
   if (!select || !group) return;
   uburoomControls.bindSelect(select, group);
 }
@@ -2989,19 +5102,31 @@ for (const btn of $('room-settings-visibility-group')?.querySelectorAll('button'
   btn.prepend(uburoomIcons.icon(document, btn.dataset.value === 'private' ? 'lock' : 'website'));
 }
 const roomOptionHints = {
-  public:'Eligible viewers can find and join this room.', private:'Only the room leader and assigned hosts can join.',
-  'host-control':'Hosts control playback and the queue. Participants have no controls.',
-  'play-pause':'Participants can play and pause. Hosts control seeking, video choice and the queue.',
-  queue:'Participants can use all playback and queue controls. Room management stays with hosts.',
-  custom:'Custom permissions. Selecting this option does not change any permissions.'
+  public: 'Eligible viewers can find and join this room.',
+  private: 'Only the room leader and assigned hosts can join.',
+  'host-control': 'Hosts control playback and the queue. Participants have no controls.',
+  'play-pause': 'Participants can play and pause. Hosts control seeking, video choice and the queue.',
+  queue: 'Participants can use all playback and queue controls. Room management stays with hosts.',
+  custom: 'Custom permissions. Selecting this option does not change any permissions.',
 };
-for (const group of ['room-create-visibility-group','room-create-preset-group','room-settings-visibility-group','room-permission-preset-group']) {
+for (const group of [
+  'room-create-visibility-group',
+  'room-create-preset-group',
+  'room-settings-visibility-group',
+  'room-permission-preset-group',
+]) {
   for (const button of $(group).querySelectorAll('button')) button.title = roomOptionHints[button.dataset.value];
 }
 $('room-name').placeholder = uburoomUbumfa.roomName();
-let roomNameDraft = '', roomVisibilityDraft = 'public', roomPresetDraft = 'host-control';
-$('room-create-visibility').addEventListener('change',event => { roomVisibilityDraft = event.target.value; });
-$('room-name').addEventListener('input', event => { roomNameDraft = event.target.value; });
+let roomNameDraft = '',
+  roomVisibilityDraft = 'public',
+  roomPresetDraft = 'host-control';
+$('room-create-visibility').addEventListener('change', event => {
+  roomVisibilityDraft = event.target.value;
+});
+$('room-name').addEventListener('input', event => {
+  roomNameDraft = event.target.value;
+});
 function roomChooserSection(section) {
   $('room-create-form').hidden = section !== 'new';
   $('room-create-actions').hidden = section !== 'new';
@@ -3012,94 +5137,190 @@ function roomChooserSection(section) {
   $('room-chooser-new').hidden = section === 'new';
   $('room-create-back').hidden = section !== 'new' || !me?.durableRooms;
   $('room-dialog-title').textContent = section === 'new' ? 'New room' : 'Rooms';
-  for (const [id,value] of [['room-show-active','active'],['room-show-saved','saved']]) $(id).setAttribute('aria-pressed',String(section === value));
+  for (const [id, value] of [
+    ['room-show-active', 'active'],
+    ['room-show-saved', 'saved'],
+  ])
+    $(id).setAttribute('aria-pressed', String(section === value));
   $('room-show-saved').hidden = !me?.durableRooms;
-  $('room-dialog-hint').textContent = roomChoice ? 'Create a room to watch ' + roomChoice.title + '. Joining follows current playback; reopening restores the saved video.' : section === 'new' ? 'Choose a name and who can join.' : 'Choose an active room or restore one of your saved rooms.';
+  $('room-dialog-hint').textContent = roomChoice
+    ? 'Create a room to watch ' +
+      roomChoice.title +
+      '. Joining follows current playback; reopening restores the saved video.'
+    : section === 'new'
+      ? 'Choose a name and who can join.'
+      : 'Choose an active room or restore one of your saved rooms.';
 }
 let openedAsNew = false;
 async function chooseRoom(item, section = 'active', options = {}) {
   const dialog = $('room-dialog');
-  if (dialog.open || creating) return {status:'cancelled'};
-  roomUI.clearDraft(); roomChoice = item; roomChoiceOptions = options;
+  if (dialog.open || creating) return { status: 'cancelled' };
+  roomUI.clearDraft();
+  roomChoice = item;
+  roomChoiceOptions = options;
   openedAsNew = section === 'new';
-  $('room-dialog-error').textContent = ''; delete $('room-choices').dataset.roomList; $('room-choices').replaceChildren();
-  $('room-name').value = roomNameDraft; $('room-create-visibility').value = roomVisibilityDraft; $('room-create-preset').value = roomPresetDraft;
+  $('room-dialog-error').textContent = '';
+  delete $('room-choices').dataset.roomList;
+  $('room-choices').replaceChildren();
+  $('room-name').value = roomNameDraft;
+  $('room-create-visibility').value = roomVisibilityDraft;
+  $('room-create-preset').value = roomPresetDraft;
   roomChooserSection(section);
-  const closed = new Promise(resolve => dialog.addEventListener('close', () => {
-    roomChoice = undefined; roomChoiceOptions = undefined; resolve({status:dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied'});
-  }, {once:true}));
+  const closed = new Promise(resolve =>
+    dialog.addEventListener(
+      'close',
+      () => {
+        roomChoice = undefined;
+        roomChoiceOptions = undefined;
+        resolve({ status: dialog.returnValue === 'cancel' || !dialog.returnValue ? 'cancelled' : 'applied' });
+      },
+      { once: true },
+    ),
+  );
   uburoomDialogs.open(dialog);
   (section === 'new' ? $('room-name') : section === 'saved' ? $('room-show-saved') : $('room-show-active')).focus();
   void roomUI.loadSaved(0);
   renderRoomChoices(knownRooms);
   return closed;
 }
-uburoomDialogs.register($('room-dialog'), {busy:() => creating, dirty:() => !$('room-create-form').hidden && (!!$('room-name').value.trim() || roomVisibilityDraft !== 'public' || roomPresetDraft !== 'host-control')});
-$('room-dialog-footer').addEventListener('submit', event => { event.preventDefault(); if (!creating) void createRoom().catch(error => fail(error.message)); });
+uburoomDialogs.register($('room-dialog'), {
+  busy: () => creating,
+  dirty: () =>
+    !$('room-create-form').hidden &&
+    (!!$('room-name').value.trim() || roomVisibilityDraft !== 'public' || roomPresetDraft !== 'host-control'),
+});
+$('room-dialog-footer').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!creating) void createRoom().catch(error => fail(error.message));
+});
 async function createRoom(advanced = roomUI.draftOptions()) {
-  if (creating) return; creating = true;
+  if (creating) return;
+  creating = true;
   $('room-create').disabled = true;
   try {
     const customTyped = $('room-name').value.trim();
-    const room = await api('/api/watch/rooms', {...advanced,visibility:$('room-create-visibility').value,name:customTyped || $('room-name').placeholder,isCustom:Boolean(customTyped),...(me?.durableRooms && $('room-create-preset').value ? {permissionPreset:$('room-create-preset').value} : {})}); await selectRoom(room.id);
+    const room = await api('/api/watch/rooms', {
+      ...advanced,
+      visibility: $('room-create-visibility').value,
+      name: customTyped || $('room-name').placeholder,
+      isCustom: Boolean(customTyped),
+      ...(me?.durableRooms && $('room-create-preset').value ? { permissionPreset: $('room-create-preset').value } : {}),
+    });
+    await selectRoom(room.id);
     if (selected !== room.id || !state) throw new Error('Room unavailable. Try again.');
-    const item = roomChoice, opts = roomChoiceOptions;
-    roomNameDraft = ''; roomVisibilityDraft = 'public'; roomPresetDraft = 'host-control'; $('room-name').value = '';
+    const item = roomChoice,
+      opts = roomChoiceOptions;
+    roomNameDraft = '';
+    roomVisibilityDraft = 'public';
+    roomPresetDraft = 'host-control';
+    $('room-name').value = '';
     $('room-name').placeholder = uburoomUbumfa.roomName();
-    $('room-dialog').close('created'); roomUI.clearDraft(); renderLibrary();
+    $('room-dialog').close('created');
+    roomUI.clearDraft();
+    renderLibrary();
     if (item) {
       const result = await loadLibraryItem(item, opts);
       if (result?.status !== 'applied') throw new Error('Playback was not accepted; try again from the library.');
       returnToVideo();
     }
+  } catch (error) {
+    if ($('room-dialog').open) $('room-dialog-error').textContent = error.message;
+    else fail(error.message);
+    if (advanced && Object.keys(advanced).length) throw error;
+  } finally {
+    creating = false;
+    $('room-create').disabled = false;
   }
-  catch (error) { if ($('room-dialog').open) $('room-dialog-error').textContent = error.message; else fail(error.message); if (advanced && Object.keys(advanced).length) throw error; }
-  finally { creating = false; $('room-create').disabled = false; }
 }
-for (const id of ['create','lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined,'new'));
+for (const id of ['create', 'lobby-create']) $(id).addEventListener('click', () => void chooseRoom(undefined, 'new'));
 for (const id of ['switch-room']) $(id).addEventListener('click', () => void chooseRoom());
 $('room-dialog-close').addEventListener('click', () => uburoomDialogs.close($('room-dialog')));
-$('room-create-cancel').addEventListener('click', () => { if (roomChoice || openedAsNew) uburoomDialogs.close($('room-dialog'), 'cancel'); else roomChooserSection('active'); });
-$('room-create').addEventListener('click', () => void createRoom().catch(error=>fail(error.message)));
-$('room-create-settings').replaceChildren(uburoomIcons.icon(document,'settings'));
-$('room-create-settings').addEventListener('click',()=>roomUI.openDraft({name:$('room-name').value,visibility:$('room-create-visibility').value,permissionPreset:$('room-create-preset').value}));
-$('room-create-preset').addEventListener('change',()=>{ roomPresetDraft = $('room-create-preset').value; roomUI.updateDraftPreset(roomPresetDraft); });
-$('room-chooser-new').addEventListener('click',() => { roomChooserSection('new'); if (roomNameDraft) $('room-name').value = roomNameDraft; $('room-name').focus(); });
-$('room-create-back').addEventListener('click',() => { roomChooserSection('saved'); void roomUI.loadSaved(0); });
-$('room-show-active').addEventListener('click',() => roomChooserSection('active'));
-$('room-show-saved').addEventListener('click',() => roomChooserSection('saved'));
-$('room-chooser-refresh').addEventListener('click',() => { void roomUI.loadSaved(0); void refreshRooms().catch(error => $('room-dialog-error').textContent = error.message); });
+$('room-create-cancel').addEventListener('click', () => {
+  if (roomChoice || openedAsNew) uburoomDialogs.close($('room-dialog'), 'cancel');
+  else roomChooserSection('active');
+});
+$('room-create').addEventListener('click', () => void createRoom().catch(error => fail(error.message)));
+$('room-create-settings').replaceChildren(uburoomIcons.icon(document, 'settings'));
+$('room-create-settings').addEventListener('click', () =>
+  roomUI.openDraft({
+    name: $('room-name').value,
+    visibility: $('room-create-visibility').value,
+    permissionPreset: $('room-create-preset').value,
+  }),
+);
+$('room-create-preset').addEventListener('change', () => {
+  roomPresetDraft = $('room-create-preset').value;
+  roomUI.updateDraftPreset(roomPresetDraft);
+});
+$('room-chooser-new').addEventListener('click', () => {
+  roomChooserSection('new');
+  if (roomNameDraft) $('room-name').value = roomNameDraft;
+  $('room-name').focus();
+});
+$('room-create-back').addEventListener('click', () => {
+  roomChooserSection('saved');
+  void roomUI.loadSaved(0);
+});
+$('room-show-active').addEventListener('click', () => roomChooserSection('active'));
+$('room-show-saved').addEventListener('click', () => roomChooserSection('saved'));
+$('room-chooser-refresh').addEventListener('click', () => {
+  void roomUI.loadSaved(0);
+  void refreshRooms().catch(error => ($('room-dialog-error').textContent = error.message));
+});
 function browseMedia() {
   const panel = $('library-panel');
-  if (immersive) { toggleDrawer(true); selectSection('media'); }
-  else { selectSection('media'); library.reveal('smooth'); }
+  if (immersive) {
+    toggleDrawer(true);
+    selectSection('media');
+  } else {
+    selectSection('media');
+    library.reveal('smooth');
+  }
   panel.classList.remove('media-glow');
   void panel.offsetWidth;
   panel.classList.add('media-glow');
 }
-$('library-panel').addEventListener('animationend', event => { if (event.animationName === 'media-glow') $('library-panel').classList.remove('media-glow'); });
+$('library-panel').addEventListener('animationend', event => {
+  if (event.animationName === 'media-glow') $('library-panel').classList.remove('media-glow');
+});
 if (!$('empty-browse').querySelector('svg')) $('empty-browse').prepend(uburoomIcons.icon(document, 'media'));
 $('empty-browse').addEventListener('click', browseMedia);
 $('close-room').addEventListener('click', async () => {
   if (!selected || pending) return;
-  const id = selected; pending = true;
+  const id = selected;
+  pending = true;
   try {
     await api('/api/watch/rooms/' + id + '/leave', { viewerId });
-    selected = undefined; browseRoom = undefined; unavailable('','leave'); await refreshRooms();
-  } catch (error) { fail(error.message); } finally { pending = false; renderLibrary(); }
+    selected = undefined;
+    browseRoom = undefined;
+    unavailable('', 'leave');
+    await refreshRooms();
+  } catch (error) {
+    fail(error.message);
+  } finally {
+    pending = false;
+    renderLibrary();
+  }
 });
-$('admin-end-room').addEventListener('click',() => { if (state?.adminMode) void roomUI.open(state.id,'manage'); });
+$('admin-end-room').addEventListener('click', () => {
+  if (state?.adminMode) void roomUI.open(state.id, 'manage');
+});
 $('refresh').addEventListener('click', () => refreshRooms().catch(error => fail(error.message)));
 window.addEventListener('pagehide', event => {
   if (!event.persisted && viewerId) {
-    try { sessionStorage.setItem('uburoom.reconnectViewer', JSON.stringify({ id: viewerId, at: Date.now() })); } catch {}
+    try {
+      sessionStorage.setItem('uburoom.reconnectViewer', JSON.stringify({ id: viewerId, at: Date.now() }));
+    } catch {}
   }
   stopBrowserHandoff(true);
   transport?.close();
 });
-window.addEventListener('pageshow',event=>{if(event.persisted&&transport)void transport.connect().catch(error=>fail(error.message));});
+window.addEventListener('pageshow', event => {
+  if (event.persisted && transport) void transport.connect().catch(error => fail(error.message));
+});
 setInterval(() => {
-  const timeline = $('timeline'), duration = state?.state.duration || 0;
+  const timeline = $('timeline'),
+    duration = state?.state.duration || 0;
   let value;
   if (seekDragging) {
     value = Number(timeline.value);
@@ -3115,8 +5336,14 @@ setInterval(() => {
   } else {
     value = state ? expected() : 0;
   }
-  if (!seekDragging) { timeline.value = value; $('time').textContent = clock(value); }
-  timeline.style.setProperty('--timeline-fill',uburoomPlayback.timeline(video.buffered,duration,value,state?.chapters));
+  if (!seekDragging) {
+    timeline.value = value;
+    $('time').textContent = clock(value);
+  }
+  timeline.style.setProperty(
+    '--timeline-fill',
+    uburoomPlayback.timeline(video.buffered, duration, value, state?.chapters),
+  );
   const chapters = state?.chapters || [];
   const currentChapter = chapters.find(ch => value >= ch.startTime && value < ch.endTime);
   if ($('chapters') && !$('chapters').disabled && $('chapters').value !== String(currentChapter?.startTime ?? '')) {
@@ -3124,7 +5351,7 @@ setInterval(() => {
   }
   const canSeek = state?.capabilities ? state.capabilities.seek !== false : !!state?.canPlayback;
   const markers = state?.markers || [];
-  const activeMarker = canSeek && markers.find(m => value >= m.startTime && value < (m.endTime - 0.5));
+  const activeMarker = canSeek && markers.find(m => value >= m.startTime && value < m.endTime - 0.5);
   const skipBtn = $('skip-marker');
   if (skipBtn) {
     if (activeMarker) {
@@ -3137,150 +5364,276 @@ setInterval(() => {
       skipBtn.hidden = true;
     }
   }
-  const loaded = Math.floor(uburoomPlayback.bufferedAhead(video.buffered,video.currentTime));
-  timeline.setAttribute('aria-valuetext',clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead');
+  const loaded = Math.floor(uburoomPlayback.bufferedAhead(video.buffered, video.currentTime));
+  timeline.setAttribute(
+    'aria-valuetext',
+    clock(value) + ' of ' + clock(duration) + ', ' + loaded + ' seconds buffered ahead',
+  );
   timeline.title = loaded + ' seconds buffered ahead';
 }, 250);
 // Room invites: /join/<code> or a code typed on the sign-in screen. People the
 // server already admits go straight to the room; others may join as guests when
 // the room allows it.
-const INVITE_CODE=/^[a-z]{6}-[a-z]{6}$/;
-function inviteCode(text){const letters=String(text||'').toLowerCase().replace(/[^a-z]/g,'');return letters.length===12?letters.slice(0,6)+'-'+letters.slice(6):undefined;}
-function showInviteCodeBox(){
-  $('invite-code-form').hidden=false;
-  $('invite-code-form').onsubmit=event=>{
-    event.preventDefault();const code=inviteCode($('invite-code').value);
-    if(!code){$('entry-status').textContent='An invite code is two six-letter words, like ubumfa-ogdave.';return;}
-    location.assign('/join/'+code);
+const INVITE_CODE = /^[a-z]{6}-[a-z]{6}$/;
+function inviteCode(text) {
+  const letters = String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+  return letters.length === 12 ? letters.slice(0, 6) + '-' + letters.slice(6) : undefined;
+}
+function showInviteCodeBox() {
+  $('invite-code-form').hidden = false;
+  $('invite-code-form').onsubmit = event => {
+    event.preventDefault();
+    const code = inviteCode($('invite-code').value);
+    if (!code) {
+      $('entry-status').textContent = 'An invite code is two six-letter words, like ubumfa-ogdave.';
+      return;
+    }
+    location.assign('/join/' + code);
   };
 }
-async function inviteEntry(discordButton,code){
-  const show=(title,message)=>{
-    $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
-    $('empty-title').textContent=title;$('empty-hint').textContent='';$('entry-status').textContent=message;
-    $('entry-form').hidden=true;$('entry-recheck').hidden=true;$('entry-plex-activity').hidden=true;
+async function inviteEntry(discordButton, code) {
+  const show = (title, message) => {
+    $('auth-loading').hidden = true;
+    $('welcome').hidden = false;
+    document.body.classList.remove('auth-pending');
+    $('empty-title').textContent = title;
+    $('empty-hint').textContent = '';
+    $('entry-status').textContent = message;
+    $('entry-form').hidden = true;
+    $('entry-recheck').hidden = true;
+    $('entry-plex-activity').hidden = true;
   };
-  const signIn=visible=>{
-    for(const button of [discordButton,$('plex-login')])button.href=button.href.split('?')[0]+'?return='+encodeURIComponent('/join/'+code);
-    discordButton.hidden=!visible.discord;$('plex-login').hidden=!visible.plex;
+  const signIn = visible => {
+    for (const button of [discordButton, $('plex-login')])
+      button.href = button.href.split('?')[0] + '?return=' + encodeURIComponent('/join/' + code);
+    discordButton.hidden = !visible.discord;
+    $('plex-login').hidden = !visible.plex;
   };
-  const enter=room=>location.replace('/room/'+room.slug);
-  if(!code){signIn({});show('Invite code not recognized','An invite code is two six-letter words, like ubumfa-ogdave.');showInviteCodeBox();return;}
+  const enter = room => location.replace('/room/' + room.slug);
+  if (!code) {
+    signIn({});
+    show('Invite code not recognized', 'An invite code is two six-letter words, like ubumfa-ogdave.');
+    showInviteCodeBox();
+    return;
+  }
   let preview;
-  try{preview=await api('/api/watch/invite',{action:'preview',code});}
-  catch(error){signIn({});show('Invite unavailable',error.message);showInviteCodeBox();return;}
-  const providers={discord:preview.providers.discord&&config.access?.discord!==false,plex:preview.providers.plex&&config.unifiedAccounts&&config.plexConfigured};
-  if(preview.member||preview.signedIn&&preview.guestsAllowed){
-    show('Joining '+preview.room.name,(preview.signedIn?'Signed in as '+preview.name+'. ':'')+'Joining the room…');signIn({});
-    try{enter((await api('/api/watch/invite',{action:'join',code})).room);}catch(error){$('entry-status').textContent=error.message;}
+  try {
+    preview = await api('/api/watch/invite', { action: 'preview', code });
+  } catch (error) {
+    signIn({});
+    show('Invite unavailable', error.message);
+    showInviteCodeBox();
+    return;
+  }
+  const providers = {
+    discord: preview.providers.discord && config.access?.discord !== false,
+    plex: preview.providers.plex && config.unifiedAccounts && config.plexConfigured,
+  };
+  if (preview.member || (preview.signedIn && preview.guestsAllowed)) {
+    show(
+      'Joining ' + preview.room.name,
+      (preview.signedIn ? 'Signed in as ' + preview.name + '. ' : '') + 'Joining the room…',
+    );
+    signIn({});
+    try {
+      enter((await api('/api/watch/invite', { action: 'join', code })).room);
+    } catch (error) {
+      $('entry-status').textContent = error.message;
+    }
     return;
   }
   signIn(providers);
-  if(!preview.guestsAllowed){show('Join '+preview.room.name,'Sign in with an account that can join this server. This room isn’t taking guests right now.');return;}
-  if(preview.signInRequired){show('Join '+preview.room.name,'Sign in with Discord or Plex to join as a guest.');return;}
-  show('Join '+preview.room.name+' as a guest','Pick a name to show in the room.');
-  $('guest-join').hidden=false;$('guest-sign-in-label').hidden=!providers.discord&&!providers.plex;
-  const name=$('guest-name'),roll=$('guest-name-roll');
-  if(!roll.firstChild)uburoomControls.content(roll,{label:'New random name',icon:'arrows-shuffle',iconOnly:true});
-  const rollName=()=>{name.value=uburoomUbumfa.ubunym().fullName;};
-  if(!name.value)rollName();
-  roll.onclick=rollName;
-  $('guest-join').onsubmit=async event=>{
-    event.preventDefault();const button=$('guest-join-submit');button.disabled=true;
-    try{enter((await api('/api/watch/invite',{action:'join',code,name:name.value})).room);}
-    catch(error){$('entry-status').textContent=error.message;button.disabled=false;}
+  if (!preview.guestsAllowed) {
+    show(
+      'Join ' + preview.room.name,
+      'Sign in with an account that can join this server. This room isn’t taking guests right now.',
+    );
+    return;
+  }
+  if (preview.signInRequired) {
+    show('Join ' + preview.room.name, 'Sign in with Discord or Plex to join as a guest.');
+    return;
+  }
+  show('Join ' + preview.room.name + ' as a guest', 'Pick a name to show in the room.');
+  $('guest-join').hidden = false;
+  $('guest-sign-in-label').hidden = !providers.discord && !providers.plex;
+  const name = $('guest-name'),
+    roll = $('guest-name-roll');
+  if (!roll.firstChild)
+    uburoomControls.content(roll, { label: 'New random name', icon: 'arrows-shuffle', iconOnly: true });
+  const rollName = () => {
+    name.value = uburoomUbumfa.ubunym().fullName;
+  };
+  if (!name.value) rollName();
+  roll.onclick = rollName;
+  $('guest-join').onsubmit = async event => {
+    event.preventDefault();
+    const button = $('guest-join-submit');
+    button.disabled = true;
+    try {
+      enter((await api('/api/watch/invite', { action: 'join', code, name: name.value })).room);
+    } catch (error) {
+      $('entry-status').textContent = error.message;
+      button.disabled = false;
+    }
   };
 }
 // A guest only ever sees their own room.
-function guestRoomClosed(){
-  $('auth-loading').hidden=$('auth-overlay').hidden=true;document.body.classList.remove('auth-pending');
-  $('empty-title').textContent='This room isn’t open right now';$('empty-hint').textContent='You can join once a host opens it again.';
-  for(const id of ['lobby-create','lobby-reopen','room-chooser-new','create','reopen','switch-room','room-bar'])if($(id))$(id).hidden=true;
+function guestRoomClosed() {
+  $('auth-loading').hidden = $('auth-overlay').hidden = true;
+  document.body.classList.remove('auth-pending');
+  $('empty-title').textContent = 'This room isn’t open right now';
+  $('empty-hint').textContent = 'You can join once a host opens it again.';
+  for (const id of ['lobby-create', 'lobby-reopen', 'room-chooser-new', 'create', 'reopen', 'switch-room', 'room-bar'])
+    if ($(id)) $(id).hidden = true;
 }
 async function start() {
-  config = pageBootstrap?.config||await api('/api/watch/config');
-  if(config.keepDiagnostics)$('diagnostic-report-hint').textContent+=` This server also keeps player diagnostics for ${config.keepDiagnostics} ${config.keepDiagnostics===1?'day':'days'}.`;
-  if (config.watchVersion !== 19) throw new Error('The player and server versions differ. Reload after the server update.');
-  $('plex-login').hidden=!config.unifiedAccounts||!config.plexConfigured||config.access?.plex===false;
-  const discordButton=$('welcome').querySelector('.discord-button');
-  discordButton.hidden=config.access?.discord===false;
-  const joinPath=!activity&&/^\/join\/([^/]+)$/.exec(location.pathname);
-  if(joinPath){await inviteEntry(discordButton,inviteCode(decodeURIComponent(joinPath[1])));return;}
+  config = pageBootstrap?.config || (await api('/api/watch/config'));
+  if (config.keepDiagnostics)
+    $('diagnostic-report-hint').textContent +=
+      ` This server also keeps player diagnostics for ${config.keepDiagnostics} ${config.keepDiagnostics === 1 ? 'day' : 'days'}.`;
+  if (config.watchVersion !== 19)
+    throw new Error('The player and server versions differ. Reload after the server update.');
+  $('plex-login').hidden = !config.unifiedAccounts || !config.plexConfigured || config.access?.plex === false;
+  const discordButton = $('welcome').querySelector('.discord-button');
+  discordButton.hidden = config.access?.discord === false;
+  const joinPath = !activity && /^\/join\/([^/]+)$/.exec(location.pathname);
+  if (joinPath) {
+    await inviteEntry(discordButton, inviteCode(decodeURIComponent(joinPath[1])));
+    return;
+  }
   const roomPathMatch = !activity && /^\/room\/([a-z0-9-]+)$/i.exec(location.pathname);
-  const initialRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+  const initialRoom =
+    pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
   if (!activity && initialRoom) {
     const returnSlug = pageBootstrap?.targetRoom?.slug || (roomPathMatch ? roomPathMatch[1] : undefined);
     const returnTarget = encodeURIComponent(returnSlug ? '/room/' + returnSlug : '/room/' + initialRoom);
     if (discordButton) discordButton.href = '/auth/discord?return=' + returnTarget;
     if ($('plex-login')) $('plex-login').href = '/auth/plex?return=' + returnTarget;
   }
-  if (config.demo && ['host','guest','guest2'].includes(params.get('demo'))) {
-    if(config.accountDemo&&!activity)await api('/api/account/demo-login',{persona:params.get('demo')});
-    else acceptIdentity(await api('/api/watch/demo-login', { persona:params.get('demo'), activity }));
+  if (config.demo && ['host', 'guest', 'guest2'].includes(params.get('demo'))) {
+    if (config.accountDemo && !activity) await api('/api/account/demo-login', { persona: params.get('demo') });
+    else acceptIdentity(await api('/api/watch/demo-login', { persona: params.get('demo'), activity }));
   } else if (params.has('frame_id') && !token) {
     if (!config.clientId) throw new Error('Configure Discord OAuth on the server first');
     await ensureDiscordSdk();
-    sdk = new uburoomDiscord.DiscordSDK(config.clientId); await sdk.ready();
+    sdk = new uburoomDiscord.DiscordSDK(config.clientId);
+    await sdk.ready();
     acceptIdentity(await activityIdentity());
     await sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', updateActivityLayout);
   }
-  if(config.access){
-    let admission=pageBootstrap?.admission||await api('/api/watch/admission');
+  if (config.access) {
+    let admission = pageBootstrap?.admission || (await api('/api/watch/admission'));
     if (activity && token && !admission.identity) {
-      identityRenewAt = 0; identityRetryAt = 0; await renewIdentity(); admission = await api('/api/watch/admission');
+      identityRenewAt = 0;
+      identityRetryAt = 0;
+      await renewIdentity();
+      admission = await api('/api/watch/admission');
     }
-    if(config.access.anonymous&&!admission.identity&&!admission.passwordNeeded&&!admission.activityOnly){await api('/api/watch/entry',{});admission=await api('/api/watch/admission');pageBootstrap=undefined;}
-    if(!admission.admitted){
-      $('auth-loading').hidden=true;$('welcome').hidden=false;document.body.classList.remove('auth-pending');
-      $('empty-title').textContent=admission.activityOnly?'Discord Activity only':admission.passwordNeeded?'Enter uburoom':admission.plexRequired?'Connect Plex to join':'Sign in to join';
-      $('entry-form').hidden=!admission.passwordNeeded||admission.activityOnly;
-      $('entry-status').textContent=admission.activityOnly?'Open uburoom through Discord Activity. Browser playback is disabled.':
-        admission.passwordNeeded?'Enter this server’s password to continue.':
-        admission.plexRequired?'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.':
-        admission.identity?'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.':'Sign in to join this server.';
-      discordButton.hidden=config.access.discord===false||admission.passwordNeeded||admission.activityOnly;
-      $('plex-login').hidden=config.access.plex===false||admission.passwordNeeded||admission.activityOnly&&!admission.identity;
-      if(admission.identity){me={...admission.pendingIdentity,adminEligible:false};renderAccount();}
-      $('entry-plex-activity').hidden=!activity||!admission.identity||admission.passwordNeeded||!config.access.plex;
-      $('entry-recheck').hidden=!admission.identity;
-      if(!activity&&!admission.activityOnly)showInviteCodeBox();
-      if(admission.identity&&!activity&&params.get('account')==='1'&&typeof showAccount==='function')await showAccount();
+    if (config.access.anonymous && !admission.identity && !admission.passwordNeeded && !admission.activityOnly) {
+      await api('/api/watch/entry', {});
+      admission = await api('/api/watch/admission');
+      pageBootstrap = undefined;
+    }
+    if (!admission.admitted) {
+      $('auth-loading').hidden = true;
+      $('welcome').hidden = false;
+      document.body.classList.remove('auth-pending');
+      $('empty-title').textContent = admission.activityOnly
+        ? 'Discord Activity only'
+        : admission.passwordNeeded
+          ? 'Enter uburoom'
+          : admission.plexRequired
+            ? 'Connect Plex to join'
+            : 'Sign in to join';
+      $('entry-form').hidden = !admission.passwordNeeded || admission.activityOnly;
+      $('entry-status').textContent = admission.activityOnly
+        ? 'Open uburoom through Discord Activity. Browser playback is disabled.'
+        : admission.passwordNeeded
+          ? 'Enter this server’s password to continue.'
+          : admission.plexRequired
+            ? 'This server requires confirmed Plex access. Connect a Plex account with access to the configured server to continue.'
+            : admission.identity
+              ? 'Your account does not meet this server’s entry requirements. Check your Discord membership or Plex server access.'
+              : 'Sign in to join this server.';
+      discordButton.hidden = config.access.discord === false || admission.passwordNeeded || admission.activityOnly;
+      $('plex-login').hidden =
+        config.access.plex === false || admission.passwordNeeded || (admission.activityOnly && !admission.identity);
+      if (admission.identity) {
+        me = { ...admission.pendingIdentity, adminEligible: false };
+        renderAccount();
+      }
+      $('entry-plex-activity').hidden =
+        !activity || !admission.identity || admission.passwordNeeded || !config.access.plex;
+      $('entry-recheck').hidden = !admission.identity;
+      if (!activity && !admission.activityOnly) showInviteCodeBox();
+      if (admission.identity && !activity && params.get('account') === '1' && typeof showAccount === 'function')
+        await showAccount();
       return;
     }
-    $('entry-form').hidden=true;
+    $('entry-form').hidden = true;
   }
   try {
-    if(pageBootstrap?.me){if(pageBootstrap.me.status!==200)throw Object.assign(new Error(pageBootstrap.me.value.error),{status:pageBootstrap.me.status});me=pageBootstrap.me.value;}
-    else me = await api('/api/watch/me');
+    if (pageBootstrap?.me) {
+      if (pageBootstrap.me.status !== 200)
+        throw Object.assign(new Error(pageBootstrap.me.value.error), { status: pageBootstrap.me.status });
+      me = pageBootstrap.me.value;
+    } else me = await api('/api/watch/me');
   } catch (error) {
     if (activity || error.status !== 401) throw error;
-    $('auth-loading').hidden = true; $('welcome').hidden = false;
-    document.body.classList.remove('auth-pending');renderVisibility();return;
+    $('auth-loading').hidden = true;
+    $('welcome').hidden = false;
+    document.body.classList.remove('auth-pending');
+    renderVisibility();
+    return;
   }
-  renderAccount(); $('welcome').hidden = true;
-  if(pageBootstrap?.events?.status===200)lobbyEvents.hydrate(pageBootstrap.events.value);
-  let initialRooms=pageBootstrap?.rooms?.status===200?pageBootstrap.rooms.value.rooms:undefined;
-  let initialEvents=pageBootstrap?.events?.status===200;
-  directRoomEntry = !activity && !!initialRoom || !!me?.guestRoomId || !!config.singleRoom;
-  if(directRoomEntry)void ensureHls().catch(()=>{});
-  if(initialRooms){
-    if(directRoomEntry){knownRooms=initialRooms;renderRooms($('rooms'),initialRooms);renderRoomChoices(initialRooms,$('lobby-rooms'));}
-    else{applyRooms(initialRooms);$('auth-overlay').hidden=true;document.body.classList.remove('auth-pending');placeRoomBar();}
+  renderAccount();
+  $('welcome').hidden = true;
+  if (pageBootstrap?.events?.status === 200) lobbyEvents.hydrate(pageBootstrap.events.value);
+  let initialRooms = pageBootstrap?.rooms?.status === 200 ? pageBootstrap.rooms.value.rooms : undefined;
+  let initialEvents = pageBootstrap?.events?.status === 200;
+  directRoomEntry = (!activity && !!initialRoom) || !!me?.guestRoomId || !!config.singleRoom;
+  if (directRoomEntry) void ensureHls().catch(() => {});
+  if (initialRooms) {
+    if (directRoomEntry) {
+      knownRooms = initialRooms;
+      renderRooms($('rooms'), initialRooms);
+      renderRoomChoices(initialRooms, $('lobby-rooms'));
+    } else {
+      applyRooms(initialRooms);
+      $('auth-overlay').hidden = true;
+      document.body.classList.remove('auth-pending');
+      placeRoomBar();
+    }
   }
-  $('diagnostic-actions').hidden=!controlProbe&&!soakMode;
+  $('diagnostic-actions').hidden = !controlProbe && !soakMode;
   await syncReady;
   let bootstrap;
   async function enterDirectRoom() {
-    if(me?.guestRoomId){
-      try{await selectRoom(me.guestRoomId);}catch{directRoomFailed=true;guestRoomClosed();void waitForHost(me.guestRoomId);}
+    if (me?.guestRoomId) {
+      try {
+        await selectRoom(me.guestRoomId);
+      } catch {
+        directRoomFailed = true;
+        guestRoomClosed();
+        void waitForHost(me.guestRoomId);
+      }
       return;
     }
-    if(activity&&INVITE_CODE.test(sdk?.customId||'')){
-      try{await selectRoom((await api('/api/watch/invite',{action:'join',code:sdk.customId})).room.id);}
-      catch(error){directRoomFailed=true;fail(error.message);if(initialRooms)applyRooms(initialRooms);}
+    if (activity && INVITE_CODE.test(sdk?.customId || '')) {
+      try {
+        await selectRoom((await api('/api/watch/invite', { action: 'join', code: sdk.customId })).room.id);
+      } catch (error) {
+        directRoomFailed = true;
+        fail(error.message);
+        if (initialRooms) applyRooms(initialRooms);
+      }
       return;
     }
-    const requestedRoom = pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
+    const requestedRoom =
+      pageBootstrap?.targetRoom?.id || params.get('room') || (roomPathMatch ? roomPathMatch[1] : undefined);
     if (!activity && requestedRoom) {
       let targetId = requestedRoom;
       if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(targetId)) {
@@ -3294,85 +5647,181 @@ async function start() {
         directRoomFailed = true;
         syncRoomUrl(null);
         void waitForHost(pageBootstrap?.targetRoom?.id || requestedRoom);
-        if(!waitingRoom && initialRooms) applyRooms(initialRooms);
+        if (!waitingRoom && initialRooms) applyRooms(initialRooms);
       }
       return;
     }
-    if(config?.singleRoom && knownRooms[0] && !knownRooms[0].locked) {
-      try { await selectRoom(knownRooms[0].id); }
-      catch(error) { directRoomFailed = true; fail(error.message); if(initialRooms) applyRooms(initialRooms); }
+    if (config?.singleRoom && knownRooms[0] && !knownRooms[0].locked) {
+      try {
+        await selectRoom(knownRooms[0].id);
+      } catch (error) {
+        directRoomFailed = true;
+        fail(error.message);
+        if (initialRooms) applyRooms(initialRooms);
+      }
     }
   }
   transport?.close();
-  transport=new uburoomWatchTransport({
-    url:location.origin.replace(/^http/,'ws')+'/watch-socket',identity:()=>({token,csrf:me?.csrf}),
-    onReady:()=>bootstrap=(async()=>{
-      diagnostics.record('control-connected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt,visibility:document.visibilityState});
-      if(selected){
-        await refreshState();
-      }else if(directRoomEntry&&!directRoomFailed){
-        await enterDirectRoom();
-      }else{
-        if(initialRooms){applyRooms(initialRooms);initialRooms=undefined;}
-        else await refreshRooms();
+  transport = new uburoomWatchTransport({
+    url: location.origin.replace(/^http/, 'ws') + '/watch-socket',
+    identity: () => ({ token, csrf: me?.csrf }),
+    onReady: () =>
+      (bootstrap = (async () => {
+        diagnostics.record('control-connected', {
+          connectionId: transport?.connectionId,
+          connectionAttempt: transport?.connectionAttempt,
+          visibility: document.visibilityState,
+        });
+        if (selected) {
+          await refreshState();
+        } else if (directRoomEntry && !directRoomFailed) {
+          await enterDirectRoom();
+        } else {
+          if (initialRooms) {
+            applyRooms(initialRooms);
+            initialRooms = undefined;
+          } else await refreshRooms();
+        }
+        if (me?.durableRooms) {
+          if (initialEvents) initialEvents = false;
+          else void lobbyEvents.refresh();
+        }
+        if (!selected) {
+          if (reconnecting)
+            diagnostics.record('control-reconnected', {
+              connectionId: transport?.connectionId,
+              connectionAttempt: transport?.connectionAttempt,
+            });
+          clearTimeout(disconnectGraceTimer);
+          disconnectGraceTimer = undefined;
+          disconnectExtended = false;
+          hideDisconnectToast();
+          reconnecting = false;
+          fail('');
+        }
+        if (!directRoomEntry || selected || directRoomFailed) {
+          $('auth-loading').hidden = $('auth-overlay').hidden = true;
+          document.body.classList.remove('auth-pending');
+          renderBrowsing();
+          renderVisibility();
+          placeRoomBar();
+        }
+      })()),
+    onClose: details => {
+      connectionLost(details);
+      if (details.code === 4029) fail('Server full; try again when someone leaves');
+      if (token && details.code === 4003) {
+        identityRenewAt = 0;
+        identityRetryAt = 0;
+        void renewIdentity().catch(() => {});
       }
-      if(me?.durableRooms){if(initialEvents)initialEvents=false;else void lobbyEvents.refresh();}
-      if(!selected){if(reconnecting)diagnostics.record('control-reconnected',{connectionId:transport?.connectionId,connectionAttempt:transport?.connectionAttempt});clearTimeout(disconnectGraceTimer);disconnectGraceTimer=undefined;disconnectExtended=false;hideDisconnectToast();reconnecting=false;fail('');}
-      if(!directRoomEntry || selected || directRoomFailed){
-        $('auth-loading').hidden=$('auth-overlay').hidden=true;
-        document.body.classList.remove('auth-pending');
-        renderBrowsing();renderVisibility();placeRoomBar();
-      }
-    })(),
-    onClose:details=>{ connectionLost(details); if (details.code === 4029) fail('Server full; try again when someone leaves'); if (token && details.code === 4003) { identityRenewAt = 0; identityRetryAt = 0; void renewIdentity().catch(()=>{}); } },
-    beginClock:()=>({exchange:playbackClock.begin(),sent:performance.now(),before:Date.now()}),
-    onClock:(message,sample)=>{
-      playbackClock.add(sample.exchange,message.timing);
-      offset=message.serverNow-(sample.before+Date.now())/2;
-      if(state){const revision=observationClock.update(state.observationEpoch,message.serverNow,sample.sent,performance.now());
-        if(revision!==observationClockRevision){observationBreak++;observationClockRevision=revision;}}
     },
-    onMessage:message=>{
-      if(message.type==='room-kicked' && message.roomId===selected){
-        selected=undefined;viewerId=crypto.randomUUID();
-        // A removed guest has nowhere else to go; their sign-in ends with the room.
-        if(me?.guestRoomId){unavailable('You were removed from the room.','kicked');guestRoomClosed();$('empty-title').textContent='You were removed from the room';$('empty-hint').textContent='';transport?.close();clearInterval(identityTimer);}
-        else unavailable('You were removed from the room. You may rejoin.','kicked');
+    beginClock: () => ({ exchange: playbackClock.begin(), sent: performance.now(), before: Date.now() }),
+    onClock: (message, sample) => {
+      playbackClock.add(sample.exchange, message.timing);
+      offset = message.serverNow - (sample.before + Date.now()) / 2;
+      if (state) {
+        const revision = observationClock.update(
+          state.observationEpoch,
+          message.serverNow,
+          sample.sent,
+          performance.now(),
+        );
+        if (revision !== observationClockRevision) {
+          observationBreak++;
+          observationClockRevision = revision;
+        }
       }
-      else if(message.type==='identity'){me=message.value;renderAccount();}
-      else if(message.type==='rooms'&&message.status===200){if(JSON.stringify(message.value.rooms)!==JSON.stringify(knownRooms))applyRooms(message.value.rooms);}
-      else if(message.type==='state'&&message.path.split('?')[0]==='/api/watch/rooms/'+selected){
-        if(message.status===200){applyState(message.value);fail(playbackError);void reportReadiness();}
-        else if(message.status>=500)connectionLost();
-        else {diagnostics.record('room-state-unavailable',{status:message.status,connectionId:transport?.connectionId,visibility:document.visibilityState});unavailable(message.value?.error||'Room unavailable','room-poll');}
-      } else if(message.type==='unavailable'){
-        if(message.status===401||message.status===403)unavailable(message.value?.error||'Sign in again','identity-poll');
+    },
+    onMessage: message => {
+      if (message.type === 'room-kicked' && message.roomId === selected) {
+        selected = undefined;
+        viewerId = crypto.randomUUID();
+        // A removed guest has nowhere else to go; their sign-in ends with the room.
+        if (me?.guestRoomId) {
+          unavailable('You were removed from the room.', 'kicked');
+          guestRoomClosed();
+          $('empty-title').textContent = 'You were removed from the room';
+          $('empty-hint').textContent = '';
+          transport?.close();
+          clearInterval(identityTimer);
+        } else unavailable('You were removed from the room. You may rejoin.', 'kicked');
+      } else if (message.type === 'identity') {
+        me = message.value;
+        renderAccount();
+      } else if (message.type === 'rooms' && message.status === 200) {
+        if (JSON.stringify(message.value.rooms) !== JSON.stringify(knownRooms)) applyRooms(message.value.rooms);
+      } else if (message.type === 'state' && message.path.split('?')[0] === '/api/watch/rooms/' + selected) {
+        if (message.status === 200) {
+          applyState(message.value);
+          fail(playbackError);
+          void reportReadiness();
+        } else if (message.status >= 500) connectionLost();
+        else {
+          diagnostics.record('room-state-unavailable', {
+            status: message.status,
+            connectionId: transport?.connectionId,
+            visibility: document.visibilityState,
+          });
+          unavailable(message.value?.error || 'Room unavailable', 'room-poll');
+        }
+      } else if (message.type === 'unavailable') {
+        if (message.status === 401 || message.status === 403)
+          unavailable(message.value?.error || 'Sign in again', 'identity-poll');
         else connectionLost();
       }
-    }
+    },
   });
-  $('create').hidden = (directRoomEntry && !directRoomFailed) || !!config?.singleRoom || !!me?.guestRoomId; renderBrowsing(); renderVisibility(); renderTransport();
+  $('create').hidden = (directRoomEntry && !directRoomFailed) || !!config?.singleRoom || !!me?.guestRoomId;
+  renderBrowsing();
+  renderVisibility();
+  renderTransport();
   clearInterval(identityTimer);
   identityTimer = setInterval(async () => {
-    try { await renewIdentity(); }
-    catch (error) { unavailable('Disconnected. ' + error.message,'identity-poll'); }
+    try {
+      await renewIdentity();
+    } catch (error) {
+      unavailable('Disconnected. ' + error.message, 'identity-poll');
+    }
   }, 1000);
   await transport.connect();
   await bootstrap;
-  if(params.get('account')==='1'&&!activity){history.replaceState(history.state,'','/');if(typeof showAccount==='function')await showAccount();}
+  if (params.get('account') === '1' && !activity) {
+    history.replaceState(history.state, '', '/');
+    if (typeof showAccount === 'function') await showAccount();
+  }
   const idlePreload = typeof requestIdleCallback === 'function' ? requestIdleCallback : fn => setTimeout(fn, 250);
-  idlePreload(() => { void ensureHls().catch(() => {}); });
+  idlePreload(() => {
+    void ensureHls().catch(() => {});
+  });
 }
-$('entry-form').addEventListener('submit',async event=>{
-  event.preventDefault();const button=$('entry-submit');button.disabled=true;
-  try{await api('/api/watch/entry',{password:$('entry-password').value});$('entry-password').value='';pageBootstrap=undefined;await start();}
-  catch(error){$('entry-status').textContent=error.message;}finally{button.disabled=false;}
+$('entry-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('entry-submit');
+  button.disabled = true;
+  try {
+    await api('/api/watch/entry', { password: $('entry-password').value });
+    $('entry-password').value = '';
+    pageBootstrap = undefined;
+    await start();
+  } catch (error) {
+    $('entry-status').textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
-$('entry-recheck').addEventListener('click',()=>{pageBootstrap=undefined;void start().catch(error=>fail(error.message));});
-$('entry-plex-activity').addEventListener('click',()=>void openInBrowser({ connectPlex: true }));
-$('room-recovery-start').addEventListener('click',() => void execute({action:'media.play'}).catch(error=>fail(error.message)));
+$('entry-recheck').addEventListener('click', () => {
+  pageBootstrap = undefined;
+  void start().catch(error => fail(error.message));
+});
+$('entry-plex-activity').addEventListener('click', () => void openInBrowser({ connectPlex: true }));
+$('room-recovery-start').addEventListener(
+  'click',
+  () => void execute({ action: 'media.play' }).catch(error => fail(error.message)),
+);
 $('auth-retry').addEventListener('click', () => location.reload());
-renderVisibility();renderTransport();
+renderVisibility();
+renderTransport();
 start().catch(error => {
   if (!$('auth-loading').hidden) {
     $('auth-title').hidden = false;

@@ -41,7 +41,11 @@ class PlexReporting {
     if (!userId || this.config.plexReporting?.enabled === false) return false;
     if (!this.registry) return true;
     const identity = this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified);
-    const cred = identity && (this.registry.credential ? this.registry.credential(identity.subject) : this.registry.hasCredential?.(identity.subject));
+    const cred =
+      identity &&
+      (this.registry.credential
+        ? this.registry.credential(identity.subject)
+        : this.registry.hasCredential?.(identity.subject));
     return !!(cred && (typeof cred !== 'object' || cred.serverToken || cred.authType !== 'traditional'));
   }
 
@@ -59,7 +63,9 @@ class PlexReporting {
   }
 
   subject(userId) {
-    return this.registry ? this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified)?.subject : userId;
+    return this.registry
+      ? this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified)?.subject
+      : userId;
   }
 
   personal(scoped) {
@@ -67,15 +73,26 @@ class PlexReporting {
   }
 
   current(context) {
-    return !this.closed && (!context.room.viewers || context.room.viewers.get(context.viewerId) === context.viewer) &&
-      context.viewer.userId === context.userId && String(context.room.media?.id) === context.mediaId &&
-      context.room.mediaVersion === context.mediaVersion && context.viewer.streamVersion === context.streamVersion &&
-      context.viewer.observationEpoch === context.observationEpoch && context.viewer.plexReporting !== false;
+    return (
+      !this.closed &&
+      (!context.room.viewers || context.room.viewers.get(context.viewerId) === context.viewer) &&
+      context.viewer.userId === context.userId &&
+      String(context.room.media?.id) === context.mediaId &&
+      context.room.mediaVersion === context.mediaVersion &&
+      context.viewer.streamVersion === context.streamVersion &&
+      context.viewer.observationEpoch === context.observationEpoch &&
+      context.viewer.plexReporting !== false
+    );
   }
 
   occurrence(session, room, viewer) {
-    return session.room === room && session.userId === viewer.userId && session.mediaId === String(room.media?.id) &&
-      session.mediaVersion === room.mediaVersion && session.subject === this.subject(viewer.userId);
+    return (
+      session.room === room &&
+      session.userId === viewer.userId &&
+      session.mediaId === String(room.media?.id) &&
+      session.mediaVersion === room.mediaVersion &&
+      session.subject === this.subject(viewer.userId)
+    );
   }
 
   // Reconnect authority comes from the room's saved, same-tab grace record,
@@ -83,9 +100,17 @@ class PlexReporting {
   reconnect(room, viewer, saved) {
     const session = this.sessions.get(viewer.viewerId);
     if (!session) return;
-    if (!saved || saved.expires <= this.now() || saved.userId !== viewer.userId || saved.mediaVersion !== room.mediaVersion ||
-        !this.occurrence(session, room, viewer) || !session.suspendedUntil || session.suspendedUntil <= this.now()) {
-      void this.stop(session); return;
+    if (
+      !saved ||
+      saved.expires <= this.now() ||
+      saved.userId !== viewer.userId ||
+      saved.mediaVersion !== room.mediaVersion ||
+      !this.occurrence(session, room, viewer) ||
+      !session.suspendedUntil ||
+      session.suspendedUntil <= this.now()
+    ) {
+      void this.stop(session);
+      return;
     }
     session.viewer = viewer;
     session.generation++;
@@ -98,7 +123,13 @@ class PlexReporting {
     if (!this.occurrence(session, session.room, session.viewer)) return false;
     if (!session.room.viewers || session.room.viewers.get(session.viewerId) === session.viewer) return true;
     const saved = session.room.disconnectedViewers?.get(session.viewerId);
-    return !!(session.suspendedUntil && saved && saved.expires > this.now() && saved.userId === session.userId && saved.mediaVersion === session.mediaVersion);
+    return !!(
+      session.suspendedUntil &&
+      saved &&
+      saved.expires > this.now() &&
+      saved.userId === session.userId &&
+      saved.mediaVersion === session.mediaVersion
+    );
   }
 
   suspend(session, expires = session.suspendedUntil || this.now() + RECONNECT_GRACE_MS) {
@@ -114,8 +145,9 @@ class PlexReporting {
   refresh(room, now = this.now()) {
     for (const session of this.sessions.values()) {
       if (session.room !== room) continue;
-      if (!this.present(session) || session.suspendedUntil && session.suspendedUntil <= now) {
-        void this.stop(session); continue;
+      if (!this.present(session) || (session.suspendedUntil && session.suspendedUntil <= now)) {
+        void this.stop(session);
+        continue;
       }
       if (session.suspendedUntil && now - session.lastReportedAt >= 10000) {
         session.lastReportedAt = now;
@@ -165,12 +197,23 @@ class PlexReporting {
 
     // Occurrence identity survives transport replacement. Each accepted sample
     // still belongs to exactly one attachment, including across awaited setup.
-    const context = { room, viewer, viewerId, userId: viewer.userId, mediaId: String(room.media.id), mediaVersion: room.mediaVersion,
-      streamVersion: viewer.streamVersion, observationEpoch: viewer.observationEpoch };
+    const context = {
+      room,
+      viewer,
+      viewerId,
+      userId: viewer.userId,
+      mediaId: String(room.media.id),
+      mediaVersion: room.mediaVersion,
+      streamVersion: viewer.streamVersion,
+      observationEpoch: viewer.observationEpoch,
+    };
     let session = this.sessions.get(viewerId);
     if (session) {
-      if (!this.occurrence(session, room, viewer) || session.viewer !== viewer ||
-          session.suspendedUntil && session.suspendedUntil <= this.now()) {
+      if (
+        !this.occurrence(session, room, viewer) ||
+        session.viewer !== viewer ||
+        (session.suspendedUntil && session.suspendedUntil <= this.now())
+      ) {
         await this.stop(session);
         session = undefined;
       }
@@ -206,10 +249,18 @@ class PlexReporting {
           } catch {
             return;
           }
-          if (!this.personal(scoped) || !this.isEligible(viewer.userId) || this.subject(viewer.userId) !== subject ||
-              pending.cancelled || !this.current(context)) return;
+          if (
+            !this.personal(scoped) ||
+            !this.isEligible(viewer.userId) ||
+            this.subject(viewer.userId) !== subject ||
+            pending.cancelled ||
+            !this.current(context)
+          )
+            return;
           const baseClientId = scoped.clientId || 'uburoom-web-' + viewerId;
-          const hasActiveTab = [...this.sessions.values()].some(s => !s.stopped && s.userId === viewer.userId && s.viewerId !== viewerId && s.clientId === baseClientId);
+          const hasActiveTab = [...this.sessions.values()].some(
+            s => !s.stopped && s.userId === viewer.userId && s.viewerId !== viewerId && s.clientId === baseClientId,
+          );
           const clientId = hasActiveTab ? `${baseClientId}-${viewerId}` : baseClientId;
           const s = {
             sessionId: randomUUID(),
@@ -233,18 +284,24 @@ class PlexReporting {
             lastReportPositionMs: 0,
             lastReportedAt: 0,
             dispatched: Promise.resolve(),
-            stopped: false
+            stopped: false,
           };
           this.sessions.set(viewerId, s);
           return s;
-        })().finally(() => { if (this.creating.get(viewerId) === pending) this.creating.delete(viewerId); });
+        })().finally(() => {
+          if (this.creating.get(viewerId) === pending) this.creating.delete(viewerId);
+        });
         this.creating.set(viewerId, init);
       }
       session = await init.promise;
       if (!session || !this.current(context) || session.stopped || session.viewer !== viewer) return;
     }
 
-    if (session.suspendedUntil || session.streamVersion !== viewer.streamVersion || session.observationEpoch !== viewer.observationEpoch) {
+    if (
+      session.suspendedUntil ||
+      session.streamVersion !== viewer.streamVersion ||
+      session.observationEpoch !== viewer.observationEpoch
+    ) {
       session.generation++;
       session.desired = undefined;
       session.suspendedUntil = undefined;
@@ -284,51 +341,103 @@ class PlexReporting {
     session.desired = { ...desired, generation: session.generation };
     if (session.dispatching) return session.dispatched;
     session.dispatching = true;
-    session.dispatched = Promise.resolve().then(() => runOperation(undefined, async () => {
-      while (session.desired) {
-        const next = session.desired; session.desired = undefined;
-        let scoped;
-        try { scoped = await (this.plexAuth || this.hub?.plexAuth)?.forUser(session.userId); }
-        catch { continue; }
-        if (!this.personal(scoped) || !this.isEligible(session.userId) || session.subject !== this.subject(session.userId) || session.server !== scoped.base?.origin) {
-          this.discard(session); break;
-        }
-        const terminal = next.state === 'stopped';
-        if (!terminal && (session.stopped || next.generation !== session.generation)) continue;
-        if (!terminal && this.authorize) {
-          let allowed;
-          try { allowed = await this.authorize(session.room, session.viewer); }
-          catch { continue; }
-          if (session.stopped || next.generation !== session.generation) continue;
-          if (!allowed) { this.discard(session); break; }
-        }
-        if (!terminal && (session.stopped || next.generation !== session.generation || !session.consent.activity ||
-            session.viewer.plexReporting === false || !this.present(session) ||
-            (next.activityOnly ? !session.suspendedUntil || session.suspendedUntil <= this.now() :
-              session.viewer.streamVersion !== session.streamVersion || session.viewer.observationEpoch !== session.observationEpoch))) continue;
-        if (session.subject !== this.subject(session.userId) || session.server !== scoped.base?.origin || !this.isEligible(session.userId)) { this.discard(session); break; }
-        const identity = mediaIdentity(session.mediaId);
-        if (!identity?.ratingKey) continue;
-        const query = new URLSearchParams({ key: '/library/metadata/' + identity.ratingKey,
-          ratingKey: identity.ratingKey, identifier: 'com.plexapp.plugins.library',
-          state: next.state, time: String(next.position), continuing: '0' });
-        if (!next.activityOnly && session.consent.watchState && session.viewer.plexWatchState && this.config.plexReporting?.watchState !== false &&
-            Number.isFinite(session.duration) && session.duration > 0) query.set('duration', String(Math.round(session.duration * 1000)));
-        try {
-          await scoped.request('/:/timeline?' + query, { method: 'POST',
-            signal: AbortSignal.timeout(12000), headers: {
-              'X-Plex-Client-Identifier': session.clientId, 'X-Plex-Session-Identifier': session.sessionId
-            } });
-        } catch (error) {
-          if ([401, 403, 498].includes(error?.status)) {
-            this.discard(session);
+    session.dispatched = Promise.resolve()
+      .then(() =>
+        runOperation(undefined, async () => {
+          while (session.desired) {
+            const next = session.desired;
+            session.desired = undefined;
+            let scoped;
+            try {
+              scoped = await (this.plexAuth || this.hub?.plexAuth)?.forUser(session.userId);
+            } catch {
+              continue;
+            }
+            if (
+              !this.personal(scoped) ||
+              !this.isEligible(session.userId) ||
+              session.subject !== this.subject(session.userId) ||
+              session.server !== scoped.base?.origin
+            ) {
+              this.discard(session);
+              break;
+            }
+            const terminal = next.state === 'stopped';
+            if (!terminal && (session.stopped || next.generation !== session.generation)) continue;
+            if (!terminal && this.authorize) {
+              let allowed;
+              try {
+                allowed = await this.authorize(session.room, session.viewer);
+              } catch {
+                continue;
+              }
+              if (session.stopped || next.generation !== session.generation) continue;
+              if (!allowed) {
+                this.discard(session);
+                break;
+              }
+            }
+            if (
+              !terminal &&
+              (session.stopped ||
+                next.generation !== session.generation ||
+                !session.consent.activity ||
+                session.viewer.plexReporting === false ||
+                !this.present(session) ||
+                (next.activityOnly
+                  ? !session.suspendedUntil || session.suspendedUntil <= this.now()
+                  : session.viewer.streamVersion !== session.streamVersion ||
+                    session.viewer.observationEpoch !== session.observationEpoch))
+            )
+              continue;
+            if (
+              session.subject !== this.subject(session.userId) ||
+              session.server !== scoped.base?.origin ||
+              !this.isEligible(session.userId)
+            ) {
+              this.discard(session);
+              break;
+            }
+            const identity = mediaIdentity(session.mediaId);
+            if (!identity?.ratingKey) continue;
+            const query = new URLSearchParams({
+              key: '/library/metadata/' + identity.ratingKey,
+              ratingKey: identity.ratingKey,
+              identifier: 'com.plexapp.plugins.library',
+              state: next.state,
+              time: String(next.position),
+              continuing: '0',
+            });
+            if (
+              !next.activityOnly &&
+              session.consent.watchState &&
+              session.viewer.plexWatchState &&
+              this.config.plexReporting?.watchState !== false &&
+              Number.isFinite(session.duration) &&
+              session.duration > 0
+            )
+              query.set('duration', String(Math.round(session.duration * 1000)));
+            try {
+              await scoped.request('/:/timeline?' + query, {
+                method: 'POST',
+                signal: AbortSignal.timeout(12000),
+                headers: {
+                  'X-Plex-Client-Identifier': session.clientId,
+                  'X-Plex-Session-Identifier': session.sessionId,
+                },
+              });
+            } catch (error) {
+              if ([401, 403, 498].includes(error?.status)) {
+                this.discard(session);
+              }
+            }
           }
-        }
-      }
-    })).finally(() => {
-      session.dispatching = false;
-      if (session.desired) this.enqueue(session, session.desired);
-    });
+        }),
+      )
+      .finally(() => {
+        session.dispatching = false;
+        if (session.desired) this.enqueue(session, session.desired);
+      });
     return session.dispatched;
   }
 
@@ -358,7 +467,8 @@ class PlexReporting {
     if (RECOVERABLE.has(reason) && session) return this.suspend(session);
     if (reason === 'disconnected' && session) {
       const saved = session.room.disconnectedViewers?.get(session.viewerId);
-      if (saved?.userId === session.userId && saved.mediaVersion === session.mediaVersion && saved.expires > this.now()) return this.suspend(session, saved.expires);
+      if (saved?.userId === session.userId && saved.mediaVersion === session.mediaVersion && saved.expires > this.now())
+        return this.suspend(session, saved.expires);
     }
     const pending = this.creating.get(typeof viewer === 'string' ? viewer : viewer?.viewerId);
     if (pending && (typeof viewer === 'string' || pending.context.viewer === viewer)) pending.cancelled = true;
@@ -379,7 +489,9 @@ class PlexReporting {
     const retired = this.enqueue(session, { state: 'stopped', position: session.lastPositionMs || 0, activityOnly });
     this.retiring.add(retired);
     this.stopping.set(session.viewerId, retired);
-    try { await retired; } finally {
+    try {
+      await retired;
+    } finally {
       this.retiring.delete(retired);
       if (this.stopping.get(session.viewerId) === retired) this.stopping.delete(session.viewerId);
     }

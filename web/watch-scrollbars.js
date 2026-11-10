@@ -17,12 +17,12 @@
     autoHideDelay: 1000,
     autoHideSuspend: true,
     dragScroll: true,
-    clickScroll: 'instant'
+    clickScroll: 'instant',
   };
   let locked = isScrollLocked();
   const pageScrollbar = OverlayScrollbars(body, {
     overflow: { y: locked ? 'hidden' : 'scroll' },
-    scrollbars: theme
+    scrollbars: theme,
   });
   // Some browsers cannot hide native body scrollbars without changing window
   // scrolling semantics. OverlayScrollbars cancels in that case.
@@ -47,10 +47,13 @@
 
     // Reuse the original element as the scroll viewport: no DOM wrappers, no
     // change to scrollTop, scroll events, direct-child selectors or sticky UI.
-    const instance = OverlayScrollbars({ target: element, elements: { viewport: element } }, {
-      overflow: { x: 'hidden', y: 'scroll' },
-      scrollbars: theme
-    });
+    const instance = OverlayScrollbars(
+      { target: element, elements: { viewport: element } },
+      {
+        overflow: { x: 'hidden', y: 'scroll' },
+        scrollbars: theme,
+      },
+    );
     if (instance && !instance.state().destroyed) innerScrollbars.set(element, instance);
   }
 
@@ -64,8 +67,10 @@
 
     const settings = document.getElementById('room-settings-dialog');
     const settingsContent = document.getElementById('room-settings-content');
-    toggleInner(document.getElementById('room-settings-panels'),
-      useCustom && !!settings?.open && !!settingsContent && !settingsContent.hidden);
+    toggleInner(
+      document.getElementById('room-settings-panels'),
+      useCustom && !!settings?.open && !!settingsContent && !settingsContent.hidden,
+    );
 
     const emptyStage = document.getElementById('empty-stage');
     toggleInner(emptyStage, useCustom && !!emptyStage && !emptyStage.hidden);
@@ -97,23 +102,24 @@
 
   function startInnerScrollbars() {
     const drawer = document.getElementById('drawer');
-    if (drawer) new MutationObserver(syncInnerScrollbars)
-      .observe(drawer, { attributes: true, attributeFilter: ['hidden'] });
+    if (drawer)
+      new MutationObserver(syncInnerScrollbars).observe(drawer, { attributes: true, attributeFilter: ['hidden'] });
     const settings = document.getElementById('room-settings-dialog');
-    if (settings) new MutationObserver(syncInnerScrollbars)
-      .observe(settings, { attributes: true, attributeFilter: ['open'] });
+    if (settings)
+      new MutationObserver(syncInnerScrollbars).observe(settings, { attributes: true, attributeFilter: ['open'] });
     const settingsContent = document.getElementById('room-settings-content');
-    if (settingsContent) new MutationObserver(syncInnerScrollbars)
-      .observe(settingsContent, { attributes: true, attributeFilter: ['hidden'] });
+    if (settingsContent)
+      new MutationObserver(syncInnerScrollbars).observe(settingsContent, {
+        attributes: true,
+        attributeFilter: ['hidden'],
+      });
     const emptyStage = document.getElementById('empty-stage');
-    if (emptyStage) new MutationObserver(syncInnerScrollbars)
-      .observe(emptyStage, { attributes: true, attributeFilter: ['hidden'] });
+    if (emptyStage)
+      new MutationObserver(syncInnerScrollbars).observe(emptyStage, { attributes: true, attributeFilter: ['hidden'] });
     for (const dialog of document.querySelectorAll('dialog')) {
-      new MutationObserver(syncInnerScrollbars)
-        .observe(dialog, { attributes: true, attributeFilter: ['open'] });
+      new MutationObserver(syncInnerScrollbars).observe(dialog, { attributes: true, attributeFilter: ['open'] });
     }
-    for (const media of [finePointer, forcedColors])
-      media.addEventListener('change', syncInnerScrollbars);
+    for (const media of [finePointer, forcedColors]) media.addEventListener('change', syncInnerScrollbars);
     syncInnerScrollbars();
   }
 

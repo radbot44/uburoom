@@ -1,18 +1,36 @@
 'use strict';
-const test = require('node:test'), assert = require('node:assert/strict');
+const test = require('node:test'),
+  assert = require('node:assert/strict');
 const { syncQualityParticipants } = require('../server/watch');
 const { WatchRooms } = require('../server/watch-rooms');
 
 function measurement({
-  status = 'playing', score, lastKnownScore = score, lastKnownLevel,
+  status = 'playing',
+  score,
+  lastKnownScore = score,
+  lastKnownLevel,
   confidence = status === 'playing' || status === 'buffering' ? 'confident' : 'reduced',
-  measurementFreshnessMs = 0, updatedAt = 100000, lastKnownAt = updatedAt,
-  mediaVersion = 'media-current', streamVersion = 'stream-current', reason
+  measurementFreshnessMs = 0,
+  updatedAt = 100000,
+  lastKnownAt = updatedAt,
+  mediaVersion = 'media-current',
+  streamVersion = 'stream-current',
+  reason,
 } = {}) {
   return {
-    status, score, lastKnownScore,
-    lastKnownLevel: lastKnownLevel || (Number.isFinite(lastKnownScore) ? require('../web/sync-quality').level(lastKnownScore) : undefined),
-    confidence, measurementFreshnessMs, updatedAt, lastKnownAt, mediaVersion, streamVersion, reason
+    status,
+    score,
+    lastKnownScore,
+    lastKnownLevel:
+      lastKnownLevel ||
+      (Number.isFinite(lastKnownScore) ? require('../web/sync-quality').level(lastKnownScore) : undefined),
+    confidence,
+    measurementFreshnessMs,
+    updatedAt,
+    lastKnownAt,
+    mediaVersion,
+    streamVersion,
+    reason,
   };
 }
 function viewer(userId, quality, joinedAt = 0, readyState = 1, streamVersion = 'stream-current') {
@@ -26,20 +44,30 @@ test('participant aggregate selects worst active score, enforces precedence acro
   const room = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['chrome', viewer('account', measurement({ score: .96 }), 1)],
-      ['android', viewer('account', measurement({ score: .72 }), 2)],
-      ['paused', viewer('account', measurement({ status: 'paused', score: undefined, lastKnownScore: .60, lastKnownLevel: 'fair' }), 3)]
-    ])
+      ['chrome', viewer('account', measurement({ score: 0.96 }), 1)],
+      ['android', viewer('account', measurement({ score: 0.72 }), 2)],
+      [
+        'paused',
+        viewer(
+          'account',
+          measurement({ status: 'paused', score: undefined, lastKnownScore: 0.6, lastKnownLevel: 'fair' }),
+          3,
+        ),
+      ],
+    ]),
   };
   const people = [{ id: 'account' }];
   syncQualityParticipants(room, people, now);
   const aggregate = people[0].syncQuality;
   assert.equal(aggregate.status, 'known');
-  assert.equal(aggregate.score, .72);
+  assert.equal(aggregate.score, 0.72);
   assert.equal(aggregate.level, 'fair');
   assert.equal(aggregate.confidence, 'confident');
   assert.equal(aggregate.sessions.length, 3);
-  assert.deepEqual(aggregate.sessions.map(row => row.score), [.96, .72, .60]);
+  assert.deepEqual(
+    aggregate.sessions.map(row => row.score),
+    [0.96, 0.72, 0.6],
+  );
   assert.equal(aggregate.sessions[2].status, 'paused');
   assert.equal(aggregate.sessions[2].lastKnownLevel, 'fair');
   assert.equal(aggregate.sessions[2].confidence, 'reduced');
@@ -48,21 +76,42 @@ test('participant aggregate selects worst active score, enforces precedence acro
   const multiRoom = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['playing', viewer('account', measurement({ score: .91 }), 1)],
-      ['stale', viewer('account', measurement({ score: .2, lastKnownScore: .2, lastKnownLevel: 'poor', updatedAt: now - 16000 }), 2)],
-      ['disconnected', viewer('account', measurement({ score: .99, lastKnownScore: .99, lastKnownLevel: 'excellent' }), 3, 3)],
-      ['paused-only', viewer('paused-account', measurement({ status: 'paused', score: undefined, lastKnownScore: .78, lastKnownLevel: 'good' }), 4)]
-    ])
+      ['playing', viewer('account', measurement({ score: 0.91 }), 1)],
+      [
+        'stale',
+        viewer(
+          'account',
+          measurement({ score: 0.2, lastKnownScore: 0.2, lastKnownLevel: 'poor', updatedAt: now - 16000 }),
+          2,
+        ),
+      ],
+      [
+        'disconnected',
+        viewer('account', measurement({ score: 0.99, lastKnownScore: 0.99, lastKnownLevel: 'excellent' }), 3, 3),
+      ],
+      [
+        'paused-only',
+        viewer(
+          'paused-account',
+          measurement({ status: 'paused', score: undefined, lastKnownScore: 0.78, lastKnownLevel: 'good' }),
+          4,
+        ),
+      ],
+    ]),
   };
   const multiPeople = [{ id: 'account' }, { id: 'paused-account' }, { id: 'no-sessions' }];
   syncQualityParticipants(multiRoom, multiPeople, now);
-  assert.equal(multiPeople[0].syncQuality.score, .91, 'stale and disconnected devices cannot override an active score');
+  assert.equal(
+    multiPeople[0].syncQuality.score,
+    0.91,
+    'stale and disconnected devices cannot override an active score',
+  );
   assert.equal(multiPeople[0].syncQuality.confidence, 'confident');
   const rows = multiPeople[0].syncQuality.sessions;
   assert.equal(rows.find(row => row.status === 'stale').lastKnownLevel, 'poor');
   assert.equal(rows.find(row => row.status === 'disconnected').status, 'disconnected');
   assert.equal(multiPeople[1].syncQuality.status, 'unknown');
-  assert.equal(multiPeople[1].syncQuality.score, .78);
+  assert.equal(multiPeople[1].syncQuality.score, 0.78);
   assert.equal(multiPeople[1].syncQuality.confidence, 'reduced');
   assert.equal(multiPeople[1].syncQuality.lastKnownLevel, 'good');
   assert.equal(multiPeople[2].syncQuality.status, 'unknown');
@@ -74,30 +123,67 @@ test('participant aggregate selects worst active score, enforces precedence acro
   const graceRoom = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['old-stream', viewer('account', measurement({ score: .97, updatedAt: now - 20000, lastKnownAt: now - 20000, mediaVersion: 'old-media' }), 1)]
+      [
+        'old-stream',
+        viewer(
+          'account',
+          measurement({ score: 0.97, updatedAt: now - 20000, lastKnownAt: now - 20000, mediaVersion: 'old-media' }),
+          1,
+        ),
+      ],
     ]),
     disconnectedViewers: new Map([
-      ['lost-tab', {
-        userId: 'account', mediaVersion: 'media-current', streamVersion: 'stream-current', expires: now + 30000, joinedAt: 2,
-        syncQuality: measurement({ status: 'disconnected', score: undefined, lastKnownScore: .8, lastKnownLevel: 'good' })
-      }]
-    ])
+      [
+        'lost-tab',
+        {
+          userId: 'account',
+          mediaVersion: 'media-current',
+          streamVersion: 'stream-current',
+          expires: now + 30000,
+          joinedAt: 2,
+          syncQuality: measurement({
+            status: 'disconnected',
+            score: undefined,
+            lastKnownScore: 0.8,
+            lastKnownLevel: 'good',
+          }),
+        },
+      ],
+    ]),
   };
   const gracePeople = [{ id: 'account' }];
   syncQualityParticipants(graceRoom, gracePeople, now);
   assert.equal(gracePeople[0].syncQuality.status, 'unknown');
-  assert.equal(gracePeople[0].syncQuality.score, .8);
+  assert.equal(gracePeople[0].syncQuality.score, 0.8);
   assert.equal(gracePeople[0].syncQuality.confidence, 'reduced');
-  assert.ok(gracePeople[0].syncQuality.sessions.some(row => row.status === 'stale' && row.lastKnownLevel === 'excellent'));
-  assert.ok(gracePeople[0].syncQuality.sessions.some(row => row.status === 'disconnected' && row.lastKnownLevel === 'good'));
+  assert.ok(
+    gracePeople[0].syncQuality.sessions.some(row => row.status === 'stale' && row.lastKnownLevel === 'excellent'),
+  );
+  assert.ok(
+    gracePeople[0].syncQuality.sessions.some(row => row.status === 'disconnected' && row.lastKnownLevel === 'good'),
+  );
 
   // 4. Stale measurement freshness reduces confidence even when socket updates are fresh
   const freshSocketRoom = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['recent', viewer('recent', measurement({ score: .82, updatedAt: now, measurementFreshnessMs: 3000, lastKnownAt: now - 3000 }), 1)],
-      ['old', viewer('old', measurement({ score: .98, updatedAt: now, measurementFreshnessMs: 30000, lastKnownAt: now - 30000 }), 2)]
-    ])
+      [
+        'recent',
+        viewer(
+          'recent',
+          measurement({ score: 0.82, updatedAt: now, measurementFreshnessMs: 3000, lastKnownAt: now - 3000 }),
+          1,
+        ),
+      ],
+      [
+        'old',
+        viewer(
+          'old',
+          measurement({ score: 0.98, updatedAt: now, measurementFreshnessMs: 30000, lastKnownAt: now - 30000 }),
+          2,
+        ),
+      ],
+    ]),
   };
   const freshnessPeople = [{ id: 'recent' }, { id: 'old' }];
   syncQualityParticipants(freshSocketRoom, freshnessPeople, now);
@@ -108,67 +194,156 @@ test('participant aggregate selects worst active score, enforces precedence acro
   const priorityRoom = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['measured', viewer('person', measurement({ score: .84, confidence: 'confident' }), 1)],
-      ['unqualified', viewer('person', measurement({ score: .20, confidence: 'provisional' }), 2)]
-    ])
+      ['measured', viewer('person', measurement({ score: 0.84, confidence: 'confident' }), 1)],
+      ['unqualified', viewer('person', measurement({ score: 0.2, confidence: 'provisional' }), 2)],
+    ]),
   };
   const priorityPeople = [{ id: 'person' }];
   syncQualityParticipants(priorityRoom, priorityPeople, now);
-  assert.equal(priorityPeople[0].syncQuality.score, .84);
+  assert.equal(priorityPeople[0].syncQuality.score, 0.84);
   assert.equal(priorityPeople[0].syncQuality.confidence, 'confident');
 
   const connOverDiscRoom = {
     mediaVersion: 'media-current',
     viewers: new Map([
-      ['paused', viewer('person', measurement({ status: 'paused', score: .46, lastKnownScore: .46, confidence: 'confident', updatedAt: now }), 1)],
-      ['offline', viewer('person', measurement({ status: 'disconnected', score: undefined, lastKnownScore: .12, lastKnownAt: now }), 2, 3)]
-    ])
+      [
+        'paused',
+        viewer(
+          'person',
+          measurement({ status: 'paused', score: 0.46, lastKnownScore: 0.46, confidence: 'confident', updatedAt: now }),
+          1,
+        ),
+      ],
+      [
+        'offline',
+        viewer(
+          'person',
+          measurement({ status: 'disconnected', score: undefined, lastKnownScore: 0.12, lastKnownAt: now }),
+          2,
+          3,
+        ),
+      ],
+    ]),
   };
   const connPeople = [{ id: 'person' }];
   syncQualityParticipants(connOverDiscRoom, connPeople, now);
-  assert.equal(connPeople[0].syncQuality.score, .46, 'connected session has priority over newer remembered measurement');
+  assert.equal(
+    connPeople[0].syncQuality.score,
+    0.46,
+    'connected session has priority over newer remembered measurement',
+  );
   assert.equal(connPeople[0].syncQuality.sessions.length, 2);
 });
 
 test('Room participants include disconnected sessions during reconnect grace but exclude expired sessions', () => {
-  const now = Date.now(), room = {
-    viewers: new Map(), disconnectedViewers: new Map([
-      ['recent', { userId: 'offline', expires: now + 10000 }], ['expired', { userId: 'gone', expires: now - 1 }]
-    ])
-  };
+  const now = Date.now(),
+    room = {
+      viewers: new Map(),
+      disconnectedViewers: new Map([
+        ['recent', { userId: 'offline', expires: now + 10000 }],
+        ['expired', { userId: 'gone', expires: now - 1 }],
+      ]),
+    };
   const fake = {
     store: { get: () => ({ creatorId: 'owner', hosts: [], permissions: {} }) },
     watch: { rooms: new Map([['room', room]]) },
-    registry: { canonical: id => ({ name: id }) }
+    registry: { canonical: id => ({ name: id }) },
   };
   const people = WatchRooms.prototype.participants.call(fake, 'room');
-  assert.deepEqual(people.map(person => person.id), ['owner', 'offline']);
+  assert.deepEqual(
+    people.map(person => person.id),
+    ['owner', 'offline'],
+  );
   assert.equal(people[1].present, false);
 });
 
 test('automatic hard corrections are observed, while startup and intentional shared seeks are excluded', async () => {
   const { createSync } = await import('../web/watch-sync.mjs');
   async function scenario({ eligible = true, suppress = false } = {}) {
-    const corrections = [], state = { mediaUrl: 'fixture', mediaVersion: 'media', streamVersion: 'stream', startAt: 0, serverNow: 10000, state: { duration: 100, paused: false, volume: 50, muted: false }, format: 'hls' };
+    const corrections = [],
+      state = {
+        mediaUrl: 'fixture',
+        mediaVersion: 'media',
+        streamVersion: 'stream',
+        startAt: 0,
+        serverNow: 10000,
+        state: { duration: 100, paused: false, volume: 50, muted: false },
+        format: 'hls',
+      };
     const video = {
-      readyState: 4, paused: false, seeking: false, ended: false, currentTime: 0, playbackRate: 1, volume: 0, muted: false, duration: 100, buffered: { length: 0 },
-      pause() { this.paused = true; }, async play() { this.paused = false; }
+      readyState: 4,
+      paused: false,
+      seeking: false,
+      ended: false,
+      currentTime: 0,
+      playbackRate: 1,
+      volume: 0,
+      muted: false,
+      duration: 100,
+      buffered: { length: 0 },
+      pause() {
+        this.paused = true;
+      },
+      async play() {
+        this.paused = false;
+      },
     };
-    const idleCorrection = { reset() {}, interrupt() {}, update() { return false; }, committed() {} };
+    const idleCorrection = {
+      reset() {},
+      interrupt() {},
+      update() {
+        return false;
+      },
+      committed() {},
+    };
     const sync = createSync({
-      video, read: () => ({
-        state, selected: 'room', mediaSource: 'fixture', receivedAt: 0, probing: false, playbackError: '', playerWaiting: false,
-        autoplayBlocked: false, readyVersion: eligible ? 'media' : undefined, syncCorrectionMode: 'speed'
+      video,
+      read: () => ({
+        state,
+        selected: 'room',
+        mediaSource: 'fixture',
+        receivedAt: 0,
+        probing: false,
+        playbackError: '',
+        playerWaiting: false,
+        autoplayBlocked: false,
+        readyVersion: eligible ? 'media' : undefined,
+        syncCorrectionMode: 'speed',
       }),
-      timing: { correction: () => idleCorrection, jumpCorrection: () => idleCorrection, alarm: () => ({ cancel() {}, arm() {} }) },
-      playback: { bufferedAhead: () => 10 }, clock: { read: () => ({ valid: true, serverTime: 10000, clockUncertaintyMs: 5 }) }, presentation: { cadence: () => .04 },
-      expected: () => 10, decodedFrames: () => 1, unlockLocal: async () => {}, reportReadiness: async () => {}, render() {}, checkFrames() {}, sample() {}, error() {}, playing() {},
-      correction: event => corrections.push(event), correctionEligible: () => eligible, visibility: () => 'visible', online: () => true, repeat: () => 1, cancelRepeat() {}, now: () => 10000
+      timing: {
+        correction: () => idleCorrection,
+        jumpCorrection: () => idleCorrection,
+        alarm: () => ({ cancel() {}, arm() {} }),
+      },
+      playback: { bufferedAhead: () => 10 },
+      clock: { read: () => ({ valid: true, serverTime: 10000, clockUncertaintyMs: 5 }) },
+      presentation: { cadence: () => 0.04 },
+      expected: () => 10,
+      decodedFrames: () => 1,
+      unlockLocal: async () => {},
+      reportReadiness: async () => {},
+      render() {},
+      checkFrames() {},
+      sample() {},
+      error() {},
+      playing() {},
+      correction: event => corrections.push(event),
+      correctionEligible: () => eligible,
+      visibility: () => 'visible',
+      online: () => true,
+      repeat: () => 1,
+      cancelRepeat() {},
+      now: () => 10000,
     });
     if (suppress) sync.sharedSeek();
-    await sync.synchronize(); sync.close(); return { corrections, currentTime: video.currentTime };
+    await sync.synchronize();
+    sync.close();
+    return { corrections, currentTime: video.currentTime };
   }
-  const regular = await scenario(); assert.equal(regular.currentTime, 10); assert.equal(regular.corrections.length, 1); assert.equal(regular.corrections[0].magnitudeMs, 10000);
+  const regular = await scenario();
+  assert.equal(regular.currentTime, 10);
+  assert.equal(regular.corrections.length, 1);
+  assert.equal(regular.corrections[0].magnitudeMs, 10000);
   assert.equal((await scenario({ eligible: false })).corrections.length, 0, 'startup settling is not counted');
   assert.equal((await scenario({ suppress: true })).corrections.length, 0, 'intentional shared seek is not counted');
 });

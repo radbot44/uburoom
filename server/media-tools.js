@@ -5,7 +5,9 @@ const path = require('node:path');
 // Startup-only discovery. Resolve an absolute executable so subprocesses do not
 // depend on their working directory, shell aliases, or later PATH changes.
 function findOnPath(name, environment = process.env, platform = process.platform) {
-  const pathKey = Object.keys(environment).find(key => platform === 'win32' ? key.toUpperCase() === 'PATH' : key === 'PATH');
+  const pathKey = Object.keys(environment).find(key =>
+    platform === 'win32' ? key.toUpperCase() === 'PATH' : key === 'PATH',
+  );
   const executable = platform === 'win32' ? name + '.exe' : name;
   for (let directory of (environment[pathKey] || '').split(platform === 'win32' ? ';' : ':')) {
     directory = directory.trim().replace(/^"(.*)"$/, '$1');
@@ -16,7 +18,9 @@ function findOnPath(name, environment = process.env, platform = process.platform
       if (!fs.statSync(candidate).isFile()) continue;
       fs.accessSync(candidate, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
       return candidate;
-    } catch { /* Continue to the next PATH directory; missing tools stay optional. */ }
+    } catch {
+      /* Continue to the next PATH directory; missing tools stay optional. */
+    }
   }
 }
 

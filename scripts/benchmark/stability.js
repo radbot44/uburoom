@@ -61,19 +61,23 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     hardwareDecode = true,
     cpuFallback = true,
     probedEncoders = [],
-    chunkedRunner = null
+    chunkedRunner = null,
   } = opts;
 
   // 1. Validate duration bounds (6s to 3600s)
   if (!Number.isFinite(duration) || duration < 6 || duration > 3600) {
-    throw new Error(`Invalid stability test duration (${duration}): must be a positive number between 6 and 3600 seconds.`);
+    throw new Error(
+      `Invalid stability test duration (${duration}): must be a positive number between 6 and 3600 seconds.`,
+    );
   }
 
   // 2. Validate source media duration: fail fast if source is shorter than requested interval
   const sourceDuration = source?.durationSeconds ?? source?.duration ?? source?.format?.duration ?? null;
   if (sourceDuration !== null && typeof sourceDuration === 'number' && !isNaN(sourceDuration)) {
     if (sourceDuration < startOffset + duration) {
-      throw new Error(`Source duration (${sourceDuration}s) is shorter than requested stability test interval (${startOffset + duration}s). Provide a longer source media file.`);
+      throw new Error(
+        `Source duration (${sourceDuration}s) is shorter than requested stability test interval (${startOffset + duration}s). Provide a longer source media file.`,
+      );
     }
   }
 
@@ -124,7 +128,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
           speedRatio: prog.realTimeSpeed,
           fps: 0,
           missedDeadline: prog.deadlineMissed,
-          fallbackOccurred: isFallback
+          fallbackOccurred: isFallback,
         });
 
         opts.onProgress?.({
@@ -133,7 +137,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
           elapsedSec: (prog.chunkIndex + 1) * chunkDuration,
           chunkLatencySec: prog.encodeDurationSec,
           realTimeSpeed: prog.realTimeSpeed,
-          fallbackOccurred: isFallback
+          fallbackOccurred: isFallback,
         });
 
         // Safety check 1: disk consumption ceiling (4GB)
@@ -155,13 +159,14 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
         } else {
           consecutiveFailures = 0;
         }
-      }
+      },
     });
   } catch (err) {
     // If early stop was triggered or cancelled by signal, preserve all completed measurements without failing the test run
     if (earlyStopReason || linkedSignal.aborted) {
       if (!earlyStopReason) {
-        earlyStopReason = signal?.reason || internalAbort.signal.reason || 'Stability test cancelled by operator signal.';
+        earlyStopReason =
+          signal?.reason || internalAbort.signal.reason || 'Stability test cancelled by operator signal.';
       }
       benchmarkResult = {
         configId: config.id,
@@ -172,14 +177,16 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
         actualEncoder: config.requestedEncoder,
         quality: config.quality,
         performance: {
-          speedMultiplier: chunkResults.length ? Math.round((chunkResults.reduce((acc, c) => acc + c.speedRatio, 0) / chunkResults.length) * 100) / 100 : 0,
+          speedMultiplier: chunkResults.length
+            ? Math.round((chunkResults.reduce((acc, c) => acc + c.speedRatio, 0) / chunkResults.length) * 100) / 100
+            : 0,
           effectiveFps: 0,
           totalEncodingTimeSec: chunkResults.reduce((acc, c) => acc + c.encodeTimeSeconds, 0),
           successfulEncodeTimeSec: chunkResults.reduce((acc, c) => acc + c.encodeTimeSeconds, 0),
           firstChunkDurationSec: chunkResults[0]?.encodeTimeSeconds || null,
-          deadlineMisses: chunkResults.filter(c => c.missedDeadline).length
+          deadlineMisses: chunkResults.filter(c => c.missedDeadline).length,
         },
-        fallbackEvents: []
+        fallbackEvents: [],
       };
     } else {
       throw err;
@@ -211,13 +218,15 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
       throughputChangePercent = Math.round(((secondHalfSpeed - firstHalfSpeed) / firstHalfSpeed) * 1000) / 10;
     }
     if (p95LatencyFirstHalf > 0) {
-      p95LatencyChangePercent = Math.round(((p95LatencySecondHalf - p95LatencyFirstHalf) / p95LatencyFirstHalf) * 1000) / 10;
+      p95LatencyChangePercent =
+        Math.round(((p95LatencySecondHalf - p95LatencyFirstHalf) / p95LatencyFirstHalf) * 1000) / 10;
     }
   }
 
   // Telemetry correlation
   const telemetrySummary = telemetryCollector ? telemetryCollector.getSummary(config.id) : null;
-  const thermalClimb = typeof telemetrySummary?.encoding?.thermalClimbC === 'number' ? telemetrySummary.encoding.thermalClimbC : null;
+  const thermalClimb =
+    typeof telemetrySummary?.encoding?.thermalClimbC === 'number' ? telemetrySummary.encoding.thermalClimbC : null;
   const throttlingConfirmed = telemetrySummary?.encoding?.throttlingDetected || false;
   const activeThrottles = telemetrySummary?.encoding?.activeThrottleReasons || [];
 
@@ -236,7 +245,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
 
   const actualElapsedDurationSec = Number(process.hrtime.bigint() - stabilityStartTime) / 1e9;
   const isEarlyStopped = Boolean(earlyStopReason || linkedSignal.aborted);
-  const fallbacksObserved = fallbackCount > 0 || (benchmarkResult?.fallbackEvents?.length > 0);
+  const fallbacksObserved = fallbackCount > 0 || benchmarkResult?.fallbackEvents?.length > 0;
 
   return {
     ...benchmarkResult,
@@ -262,13 +271,14 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
       activeThrottles,
       degradationSummary,
       chunkTimeline: chunkResults,
-      notice: 'Stability benchmark measures short-to-medium duration thermal and throughput trends. Full 24/7 production capacity requires extended continuous soak testing under diverse multi-user concurrency.'
-    }
+      notice:
+        'Stability benchmark measures short-to-medium duration thermal and throughput trends. Full 24/7 production capacity requires extended continuous soak testing under diverse multi-user concurrency.',
+    },
   };
 }
 
 module.exports = {
   getDirectorySize,
   calculateP95,
-  runStabilityBenchmark
+  runStabilityBenchmark,
 };

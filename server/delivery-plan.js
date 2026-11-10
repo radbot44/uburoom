@@ -31,7 +31,15 @@ function planDelivery({ quality, compatible, fallback, burn, audioTracks, source
   if (localFormat(fallback)) return { route: 'local', codec: fallback, reason: 'local-fallback' };
   if (fallback === 'plex') return { route: 'plex-hls', reason: 'plex-fallback' };
   if (fallback === 'audio' && quality === 'direct' && !burn) return { route: 'plex-hls', reason: 'audio-conversion' };
-  const reason = burn ? 'burn-in' : compatible ? 'compatible' : quality !== 'direct' ? 'quality-limit' : audioTracks > 1 ? 'multiple-audio' : undefined;
+  const reason = burn
+    ? 'burn-in'
+    : compatible
+      ? 'compatible'
+      : quality !== 'direct'
+        ? 'quality-limit'
+        : audioTracks > 1
+          ? 'multiple-audio'
+          : undefined;
   if (!reason) return { route: 'file', reason: 'original' };
   // Choosing one audio track can keep the video untouched only through Plex.
   if (reason === 'multiple-audio' && outputs.includes('plex')) return { route: 'plex-hls', reason };

@@ -23,11 +23,11 @@ const { findOnPath } = require('../server/media-tools');
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const color = {
-  green: (t) => useColor ? `\x1b[32m${t}\x1b[0m` : t,
-  yellow: (t) => useColor ? `\x1b[33m${t}\x1b[0m` : t,
-  red: (t) => useColor ? `\x1b[31m${t}\x1b[0m` : t,
-  bold: (t) => useColor ? `\x1b[1m${t}\x1b[0m` : t,
-  dim: (t) => useColor ? `\x1b[2m${t}\x1b[0m` : t,
+  green: t => (useColor ? `\x1b[32m${t}\x1b[0m` : t),
+  yellow: t => (useColor ? `\x1b[33m${t}\x1b[0m` : t),
+  red: t => (useColor ? `\x1b[31m${t}\x1b[0m` : t),
+  bold: t => (useColor ? `\x1b[1m${t}\x1b[0m` : t),
+  dim: t => (useColor ? `\x1b[2m${t}\x1b[0m` : t),
 };
 
 function formatStatus(status) {
@@ -48,7 +48,7 @@ async function checkRuntime() {
       name: 'Node.js version',
       status: 'fail',
       message: `Node.js ${process.version} is unsupported. uburoom requires Node >= 20.0.0 (Node 22 LTS recommended).`,
-      remediation: 'Download and install Node.js 22 LTS from https://nodejs.org'
+      remediation: 'Download and install Node.js 22 LTS from https://nodejs.org',
     });
   } else if (major < 22 || (major === 22 && minor < 13)) {
     checks.push({
@@ -56,14 +56,14 @@ async function checkRuntime() {
       name: 'Node.js version',
       status: 'warn',
       message: `Node.js ${process.version} detected. Node >= 22.13.0 is recommended for native SQLite performance.`,
-      remediation: 'Upgrade to Node.js 22 LTS (>= 22.13.0) when possible.'
+      remediation: 'Upgrade to Node.js 22 LTS (>= 22.13.0) when possible.',
     });
   } else {
     checks.push({
       category: 'Runtime',
       name: 'Node.js version',
       status: 'pass',
-      message: `Node.js ${process.version} (${process.platform} ${process.arch})`
+      message: `Node.js ${process.version} (${process.platform} ${process.arch})`,
     });
   }
 
@@ -79,7 +79,7 @@ async function checkRuntime() {
         category: 'Runtime',
         name: 'SQLite engine',
         status: 'pass',
-        message: 'Built-in node:sqlite is operational'
+        message: 'Built-in node:sqlite is operational',
       });
     } else {
       throw new Error('SQLite test query returned unexpected result');
@@ -90,7 +90,7 @@ async function checkRuntime() {
       name: 'SQLite engine',
       status: 'fail',
       message: `Built-in node:sqlite failed to initialize: ${error.message}`,
-      remediation: 'Ensure you are running an official Node.js build with SQLite support enabled (Node.js 22+).'
+      remediation: 'Ensure you are running an official Node.js build with SQLite support enabled (Node.js 22+).',
     });
   }
 
@@ -110,7 +110,7 @@ function checkConfiguration(configFile) {
       name: 'Config file presence',
       status: 'fail',
       message: `Configuration file not found at: ${configFile}`,
-      remediation: 'Copy config.example.yaml to config.yaml and edit your server settings.'
+      remediation: 'Copy config.example.yaml to config.yaml and edit your server settings.',
     });
     return { checks, config: null };
   }
@@ -123,7 +123,7 @@ function checkConfiguration(configFile) {
         name: 'Config content',
         status: 'fail',
         message: `Configuration file is empty: ${configFile}`,
-        remediation: 'Copy settings from config.example.yaml into your config.yaml.'
+        remediation: 'Copy settings from config.example.yaml into your config.yaml.',
       });
       return { checks, config: null };
     }
@@ -133,7 +133,7 @@ function checkConfiguration(configFile) {
       name: 'Config readability',
       status: 'fail',
       message: `Cannot read configuration file (${err.code}): ${configFile}`,
-      remediation: 'Check file permissions on config.yaml.'
+      remediation: 'Check file permissions on config.yaml.',
     });
     return { checks, config: null };
   }
@@ -146,7 +146,7 @@ function checkConfiguration(configFile) {
       name: 'YAML syntax',
       status: 'fail',
       message: `YAML parsing failed: ${err.message}`,
-      remediation: 'Check config.yaml for syntax errors, improper indentation, or unescaped characters.'
+      remediation: 'Check config.yaml for syntax errors, improper indentation, or unescaped characters.',
     });
     return { checks, config: null };
   }
@@ -154,13 +154,13 @@ function checkConfiguration(configFile) {
   try {
     normalizedConfig = normalizeConfig(parsedConfig, {
       base: path.dirname(path.resolve(configFile)),
-      discoverTools: false
+      discoverTools: false,
     });
     checks.push({
       category: 'Configuration',
       name: 'Config schema & validation',
       status: 'pass',
-      message: `Valid YAML syntax and schema (${path.basename(configFile)})`
+      message: `Valid YAML syntax and schema (${path.basename(configFile)})`,
     });
   } catch (err) {
     checks.push({
@@ -168,7 +168,7 @@ function checkConfiguration(configFile) {
       name: 'Config schema & validation',
       status: 'fail',
       message: `Configuration validation error: ${err.message}`,
-      remediation: 'Compare your config.yaml settings against config.example.yaml.'
+      remediation: 'Compare your config.yaml settings against config.example.yaml.',
     });
     return { checks, config: null };
   }
@@ -181,14 +181,14 @@ function checkConfiguration(configFile) {
       name: 'Public URL protocol',
       status: 'warn',
       message: `server.public_url uses ${pub.split(':')[0]}:// (${pub}). HTTPS is strongly recommended for production, Discord Activities, and browser security.`,
-      remediation: 'Configure a valid HTTPS domain and TLS certificate.'
+      remediation: 'Configure a valid HTTPS domain and TLS certificate.',
     });
   } else {
     checks.push({
       category: 'Configuration',
       name: 'Public URL protocol',
       status: 'pass',
-      message: `HTTPS public origin: ${pub}`
+      message: `HTTPS public origin: ${pub}`,
     });
   }
 
@@ -199,23 +199,23 @@ async function checkPortAvailability(host, port) {
   /** @type {DoctorCheck[]} */
   const checks = [];
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     const probe = net.createServer();
-    probe.once('error', (err) => {
+    probe.once('error', err => {
       if (err.code === 'EADDRINUSE') {
         checks.push({
           category: 'Network',
           name: `Port ${port} availability`,
           status: 'fail',
           message: `Port ${port} on ${host} is already in use by another process.`,
-          remediation: `Stop the existing uburoom or conflicting process, or change server.port in config.yaml.`
+          remediation: `Stop the existing uburoom or conflicting process, or change server.port in config.yaml.`,
         });
       } else {
         checks.push({
           category: 'Network',
           name: `Port ${port} availability`,
           status: 'warn',
-          message: `Port probe returned unexpected error (${err.code}): ${err.message}`
+          message: `Port probe returned unexpected error (${err.code}): ${err.message}`,
         });
       }
       resolve();
@@ -226,7 +226,7 @@ async function checkPortAvailability(host, port) {
           category: 'Network',
           name: `Port ${port} availability`,
           status: 'pass',
-          message: `Port ${port} is available on ${host}`
+          message: `Port ${port} is available on ${host}`,
         });
         resolve();
       });
@@ -238,7 +238,7 @@ async function checkPortAvailability(host, port) {
         category: 'Network',
         name: `Port ${port} availability`,
         status: 'warn',
-        message: `Could not probe port ${port}: ${e.message}`
+        message: `Could not probe port ${port}: ${e.message}`,
       });
       resolve();
     }
@@ -262,14 +262,15 @@ function checkStorageAndKey(config) {
         name: 'Credential encryption key',
         status: 'fail',
         message: `Database exists at ${dbFile}, but credential key is missing at: ${keyFile}`,
-        remediation: 'Existing tokens and account secrets cannot be decrypted without the original 32-byte key. Restore your backup credentials.key.'
+        remediation:
+          'Existing tokens and account secrets cannot be decrypted without the original 32-byte key. Restore your backup credentials.key.',
       });
     } else {
       checks.push({
         category: 'Storage & Keys',
         name: 'Credential encryption key',
         status: 'warn',
-        message: `Credential key does not exist yet at: ${keyFile} (will be generated automatically on first server startup).`
+        message: `Credential key does not exist yet at: ${keyFile} (will be generated automatically on first server startup).`,
       });
     }
   } else {
@@ -281,14 +282,15 @@ function checkStorageAndKey(config) {
           name: 'Credential encryption key',
           status: 'fail',
           message: `Key file size is ${stats.size} bytes. Credential encryption requires an exact 32-byte (256-bit) AES key.`,
-          remediation: 'Ensure the key was generated with crypto.randomBytes(32). Never truncate or pad an existing database key.'
+          remediation:
+            'Ensure the key was generated with crypto.randomBytes(32). Never truncate or pad an existing database key.',
         });
       } else {
         checks.push({
           category: 'Storage & Keys',
           name: 'Credential encryption key',
           status: 'pass',
-          message: `Valid 32-byte credential key (${keyFile})`
+          message: `Valid 32-byte credential key (${keyFile})`,
         });
       }
     } catch (err) {
@@ -296,7 +298,7 @@ function checkStorageAndKey(config) {
         category: 'Storage & Keys',
         name: 'Credential encryption key',
         status: 'fail',
-        message: `Cannot access credential key file (${err.code}): ${keyFile}`
+        message: `Cannot access credential key file (${err.code}): ${keyFile}`,
       });
     }
   }
@@ -308,7 +310,7 @@ function checkStorageAndKey(config) {
         category: 'Storage & Keys',
         name: 'Data directory',
         status: 'pass',
-        message: `Data directory will be created at: ${dataDir}`
+        message: `Data directory will be created at: ${dataDir}`,
       });
     } else {
       fs.accessSync(dataDir, fs.constants.R_OK | fs.constants.W_OK);
@@ -316,7 +318,7 @@ function checkStorageAndKey(config) {
         category: 'Storage & Keys',
         name: 'Data directory',
         status: 'pass',
-        message: `Data directory is writable (${dataDir})`
+        message: `Data directory is writable (${dataDir})`,
       });
     }
   } catch (err) {
@@ -325,7 +327,7 @@ function checkStorageAndKey(config) {
       name: 'Data directory',
       status: 'fail',
       message: `Data directory at ${dataDir} is not writable (${err.code}).`,
-      remediation: 'Verify write permissions for the user account running uburoom.'
+      remediation: 'Verify write permissions for the user account running uburoom.',
     });
   }
 
@@ -341,12 +343,14 @@ function checkStorageAndKey(config) {
           category: 'Storage & Keys',
           name: 'SQLite database integrity',
           status: 'pass',
-          message: `SQLite database integrity verified (${path.basename(dbFile)})`
+          message: `SQLite database integrity verified (${path.basename(dbFile)})`,
         });
 
         // Read-only schema compatibility check
         const version = db.prepare('PRAGMA user_version').get()?.user_version;
-        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+        const tables = db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+          .all();
         let schemaValid = false;
         if (tables.length > 0 || version !== 0) {
           try {
@@ -359,7 +363,7 @@ function checkStorageAndKey(config) {
               category: 'Storage & Keys',
               name: 'Database schema compatibility',
               status: 'pass',
-              message: `Database schema verified (${userCount} active users, ${roomCount} rooms)`
+              message: `Database schema verified (${userCount} active users, ${roomCount} rooms)`,
             });
           } catch (schemaErr) {
             checks.push({
@@ -367,7 +371,7 @@ function checkStorageAndKey(config) {
               name: 'Database schema compatibility',
               status: 'fail',
               message: `Incompatible database schema: ${schemaErr.message}`,
-              remediation: 'Restore a matched database backup or run a migration script before starting.'
+              remediation: 'Restore a matched database backup or run a migration script before starting.',
             });
           }
         }
@@ -378,7 +382,7 @@ function checkStorageAndKey(config) {
             const keyStats = fs.statSync(keyFile);
             if (keyStats.size === 32) {
               const keyRaw = fs.readFileSync(keyFile);
-              const openEnvelope = (env) => {
+              const openEnvelope = env => {
                 if (!env?.encrypted) return;
                 const decipher = crypto.createDecipheriv('aes-256-gcm', keyRaw, Buffer.from(env.iv, 'base64'));
                 decipher.setAuthTag(Buffer.from(env.tag, 'base64'));
@@ -401,7 +405,7 @@ function checkStorageAndKey(config) {
                 category: 'Storage & Keys',
                 name: 'Credential key match',
                 status: 'pass',
-                message: 'Credential key authenticated encrypted database secrets'
+                message: 'Credential key authenticated encrypted database secrets',
               });
             }
           } catch (cryptoErr) {
@@ -410,7 +414,7 @@ function checkStorageAndKey(config) {
               name: 'Credential key match',
               status: 'fail',
               message: `Credential key failed to decrypt database secrets: ${cryptoErr.message}`,
-              remediation: 'Restore the exact 32-byte credential key that matches this database.'
+              remediation: 'Restore the exact 32-byte credential key that matches this database.',
             });
           }
         }
@@ -420,7 +424,7 @@ function checkStorageAndKey(config) {
           name: 'SQLite database integrity',
           status: 'fail',
           message: `SQLite database failed integrity check: ${JSON.stringify(result)}`,
-          remediation: 'Database appears corrupted. Check storage disk health or restore from a recent backup.'
+          remediation: 'Database appears corrupted. Check storage disk health or restore from a recent backup.',
         });
       }
     } catch (err) {
@@ -428,11 +432,13 @@ function checkStorageAndKey(config) {
         category: 'Storage & Keys',
         name: 'SQLite database integrity',
         status: 'warn',
-        message: `Could not verify database integrity: ${err.message}`
+        message: `Could not verify database integrity: ${err.message}`,
       });
     } finally {
       if (db) {
-        try { db.close(); } catch {}
+        try {
+          db.close();
+        } catch {}
       }
     }
   }
@@ -447,7 +453,7 @@ function checkStorageAndKey(config) {
           category: 'Storage & Keys',
           name: 'Log directory',
           status: 'pass',
-          message: `Log directory will be created at: ${logDir}`
+          message: `Log directory will be created at: ${logDir}`,
         });
       } else {
         fs.accessSync(logDir, fs.constants.R_OK | fs.constants.W_OK);
@@ -455,7 +461,7 @@ function checkStorageAndKey(config) {
           category: 'Storage & Keys',
           name: 'Log directory',
           status: 'pass',
-          message: `Log directory is writable (${logDir})`
+          message: `Log directory is writable (${logDir})`,
         });
       }
     } catch (err) {
@@ -464,7 +470,8 @@ function checkStorageAndKey(config) {
         name: 'Log directory',
         status: 'fail',
         message: `Log directory at ${logDir} is not writable (${err.code}).`,
-        remediation: 'Verify write permissions for the user account running uburoom or choose a different logging.file path.'
+        remediation:
+          'Verify write permissions for the user account running uburoom or choose a different logging.file path.',
       });
     }
   }
@@ -479,7 +486,7 @@ function checkStorageAndKey(config) {
         category: 'Storage & Keys',
         name: 'Diagnostics folder',
         status: 'pass',
-        message: `Playback diagnostics are kept ${keepDays} days, up to ${Math.round(maxBytes / 1048576)} MB, in ${directory}`
+        message: `Playback diagnostics are kept ${keepDays} days, up to ${Math.round(maxBytes / 1048576)} MB, in ${directory}`,
       });
     } catch (err) {
       checks.push({
@@ -487,7 +494,8 @@ function checkStorageAndKey(config) {
         name: 'Diagnostics folder',
         status: 'fail',
         message: `Diagnostics folder at ${directory} is not writable (${err.code}).`,
-        remediation: 'Give the account running uburoom write access to the data folder, or set diagnostics.enabled to false.'
+        remediation:
+          'Give the account running uburoom write access to the data folder, or set diagnostics.enabled to false.',
       });
     }
   }
@@ -507,7 +515,7 @@ function checkTlsCertificates(config) {
       category: 'TLS / Certificates',
       name: 'TLS configuration',
       status: 'pass',
-      message: 'Plain HTTP configured; TLS certificate verification skipped.'
+      message: 'Plain HTTP configured; TLS certificate verification skipped.',
     });
     return checks;
   }
@@ -521,7 +529,7 @@ function checkTlsCertificates(config) {
       message: `Certificate or key file missing (Cert: ${certPath}, Key: ${keyPath})`,
       remediation: isLocal
         ? 'Generate a local self-signed certificate with: node scripts/new-dev-cert.js'
-        : 'Provide a valid TLS certificate and private key matching your domain.'
+        : 'Provide a valid TLS certificate and private key matching your domain.',
     });
     return checks;
   }
@@ -542,7 +550,7 @@ function checkTlsCertificates(config) {
         name: 'Certificate validity dates',
         status: 'fail',
         message: `Certificate is not yet valid (valid from ${validFrom.toISOString()}).`,
-        remediation: 'Check server clock or re-issue certificate.'
+        remediation: 'Check server clock or re-issue certificate.',
       });
     } else if (daysUntilExpiry < 0) {
       checks.push({
@@ -550,7 +558,7 @@ function checkTlsCertificates(config) {
         name: 'Certificate validity dates',
         status: 'fail',
         message: `Certificate expired on ${validTo.toISOString().slice(0, 10)} (${Math.abs(daysUntilExpiry)} days ago).`,
-        remediation: 'Renew or re-issue your TLS certificate.'
+        remediation: 'Renew or re-issue your TLS certificate.',
       });
     } else if (daysUntilExpiry < 14) {
       checks.push({
@@ -558,14 +566,14 @@ function checkTlsCertificates(config) {
         name: 'Certificate validity dates',
         status: 'warn',
         message: `Certificate expires soon in ${daysUntilExpiry} days (valid until ${validTo.toISOString().slice(0, 10)}).`,
-        remediation: 'Plan certificate renewal.'
+        remediation: 'Plan certificate renewal.',
       });
     } else {
       checks.push({
         category: 'TLS / Certificates',
         name: 'Certificate validity dates',
         status: 'pass',
-        message: `Certificate is valid until ${validTo.toISOString().slice(0, 10)} (${daysUntilExpiry} days remaining)`
+        message: `Certificate is valid until ${validTo.toISOString().slice(0, 10)} (${daysUntilExpiry} days remaining)`,
       });
     }
 
@@ -578,14 +586,14 @@ function checkTlsCertificates(config) {
           name: 'Certificate & key match',
           status: 'fail',
           message: 'TLS private key does not match the certificate public key.',
-          remediation: 'Ensure server.tls_cert and server.tls_key are a matching certificate and private key pair.'
+          remediation: 'Ensure server.tls_cert and server.tls_key are a matching certificate and private key pair.',
         });
       } else {
         checks.push({
           category: 'TLS / Certificates',
           name: 'Certificate & key match',
           status: 'pass',
-          message: 'Certificate and private key match'
+          message: 'Certificate and private key match',
         });
       }
     } catch (keyErr) {
@@ -594,7 +602,7 @@ function checkTlsCertificates(config) {
         name: 'Certificate & key match',
         status: 'fail',
         message: `Failed to inspect private key: ${keyErr.message}`,
-        remediation: 'Ensure server.tls_key points to an unencrypted PEM private key.'
+        remediation: 'Ensure server.tls_key points to an unencrypted PEM private key.',
       });
     }
   } catch (err) {
@@ -602,7 +610,7 @@ function checkTlsCertificates(config) {
       category: 'TLS / Certificates',
       name: 'Certificate validation',
       status: 'fail',
-      message: `Failed to inspect TLS certificate: ${err.message}`
+      message: `Failed to inspect TLS certificate: ${err.message}`,
     });
   }
 
@@ -612,10 +620,16 @@ function checkTlsCertificates(config) {
 function checkMediaTools(config) {
   /** @type {DoctorCheck[]} */
   const checks = [];
-  const fallback=config.transcoding?.fallback;
-  if(fallback?.enabled) checks.push({category:'Media Tools',name:'Room fallback',status:config.transcoding.uburoom && config.transcoding.policy!=='disabled'?'pass':'fail',
-    message:`${fallback.height}p at ${fallback.bitrate} Mbps, 30 seconds ahead, sharing existing conversion job and encoded-byte limits.`,
-    remediation:'Fallback requires an enabled uburoom output and working FFmpeg/FFprobe; it never uses the Plex transcoder.'});
+  const fallback = config.transcoding?.fallback;
+  if (fallback?.enabled)
+    checks.push({
+      category: 'Media Tools',
+      name: 'Room fallback',
+      status: config.transcoding.uburoom && config.transcoding.policy !== 'disabled' ? 'pass' : 'fail',
+      message: `${fallback.height}p at ${fallback.bitrate} Mbps, 30 seconds ahead, sharing existing conversion job and encoded-byte limits.`,
+      remediation:
+        'Fallback requires an enabled uburoom output and working FFmpeg/FFprobe; it never uses the Plex transcoder.',
+    });
   const ffmpeg = config.ffmpegPath || findOnPath('ffmpeg');
   const ffprobe = config.ffprobePath || findOnPath('ffprobe');
 
@@ -626,36 +640,61 @@ function checkMediaTools(config) {
       name: 'FFmpeg binary',
       status: 'warn',
       message: 'FFmpeg was not found on PATH or in tools.ffmpeg.',
-      remediation: 'Install FFmpeg (https://ffmpeg.org) and add to PATH or configure tools.ffmpeg in config.yaml for video conversion, PGS subtitles, and AV1 streaming.'
+      remediation:
+        'Install FFmpeg (https://ffmpeg.org) and add to PATH or configure tools.ffmpeg in config.yaml for video conversion, PGS subtitles, and AV1 streaming.',
     });
   } else {
     try {
-      const verOutput = cp.execFileSync(ffmpeg, ['-version'], { timeout: 4000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      const verOutput = cp.execFileSync(ffmpeg, ['-version'], {
+        timeout: 4000,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
       const firstLine = verOutput.split(/\r?\n/)[0] || 'FFmpeg';
       checks.push({
         category: 'Media Tools',
         name: 'FFmpeg binary',
         status: 'pass',
-        message: `${firstLine} (${ffmpeg})`
+        message: `${firstLine} (${ffmpeg})`,
       });
 
       // Codecs / Encoders probe
       try {
-        const encodersOutput = cp.execFileSync(ffmpeg, ['-encoders'], { timeout: 4000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        const encodersOutput = cp.execFileSync(ffmpeg, ['-encoders'], {
+          timeout: 4000,
+          encoding: 'utf8',
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
         const hasH264 = /libx264|h264_qsv|h264_nvenc|h264_amf/.test(encodersOutput);
         const hasAac = /aac/.test(encodersOutput);
         const hasOpus = /libopus|opus/.test(encodersOutput);
         const hasQsv = /qsv/.test(encodersOutput);
         const hasNvenc = /nvenc/.test(encodersOutput);
         if (config.transcoding?.hardwareDecode !== false) {
-          const accels = cp.execFileSync(ffmpeg, ['-hide_banner', '-hwaccels'], { timeout: 4000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-          const found = ['cuda', 'd3d11va', 'vaapi', 'videotoolbox'].filter(name => new RegExp(`^${name}$`, 'm').test(accels.replace(/\r/g, '')));
+          const accels = cp.execFileSync(ffmpeg, ['-hide_banner', '-hwaccels'], {
+            timeout: 4000,
+            encoding: 'utf8',
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          const found = ['cuda', 'd3d11va', 'vaapi', 'videotoolbox'].filter(name =>
+            new RegExp(`^${name}$`, 'm').test(accels.replace(/\r/g, '')),
+          );
           checks.push({
             category: 'Media Tools',
             name: 'Hardware decode',
             status: found.length ? 'pass' : 'warn',
-            message: found.length ? `FFmpeg offers ${found.join(', ')}. uburoom uses the CPU when a source or device fails.` : 'FFmpeg offers no supported decode acceleration; conversion uses the CPU.',
-            ...(found.length ? {} : { remediation: 'Use an FFmpeg build with hardware acceleration, or set transcoding.hardware_decode to false.' })
+            message: found.length
+              ? `FFmpeg offers ${found.join(', ')}. uburoom uses the CPU when a source or device fails.`
+              : 'FFmpeg offers no supported decode acceleration; conversion uses the CPU.',
+            ...(found.length
+              ? {}
+              : {
+                  remediation:
+                    'Use an FFmpeg build with hardware acceleration, or set transcoding.hardware_decode to false.',
+                }),
           });
         }
 
@@ -666,7 +705,7 @@ function checkMediaTools(config) {
             category: 'Media Tools',
             name: 'Required encoders',
             status: 'pass',
-            message: `H.264, AAC, and Opus encoders available.${hw ? ` Hardware acceleration: ${hw}.` : ' (Software encoding available)'}`
+            message: `H.264, AAC, and Opus encoders available.${hw ? ` Hardware acceleration: ${hw}.` : ' (Software encoding available)'}`,
           });
         } else {
           checks.push({
@@ -674,7 +713,7 @@ function checkMediaTools(config) {
             name: 'Required encoders',
             status: 'warn',
             message: `Some encoders missing (H.264: ${hasH264}, AAC: ${hasAac}, Opus: ${hasOpus}).`,
-            remediation: 'Use a full FFmpeg build that includes libx264 and libopus.'
+            remediation: 'Use a full FFmpeg build that includes libx264 and libopus.',
           });
         }
       } catch {}
@@ -684,7 +723,7 @@ function checkMediaTools(config) {
         name: 'FFmpeg binary execution',
         status: 'fail',
         message: `FFmpeg failed to execute: ${err.message}`,
-        remediation: 'Check executable permissions for FFmpeg.'
+        remediation: 'Check executable permissions for FFmpeg.',
       });
     }
   }
@@ -696,24 +735,29 @@ function checkMediaTools(config) {
       name: 'FFprobe binary',
       status: 'warn',
       message: 'FFprobe was not found on PATH or in tools.ffprobe.',
-      remediation: 'Install FFprobe alongside FFmpeg to enable media stream inspection.'
+      remediation: 'Install FFprobe alongside FFmpeg to enable media stream inspection.',
     });
   } else {
     try {
-      const probeOutput = cp.execFileSync(ffprobe, ['-version'], { timeout: 4000, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      const probeOutput = cp.execFileSync(ffprobe, ['-version'], {
+        timeout: 4000,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
       const firstLine = probeOutput.split(/\r?\n/)[0] || 'FFprobe';
       checks.push({
         category: 'Media Tools',
         name: 'FFprobe binary',
         status: 'pass',
-        message: `${firstLine} (${ffprobe})`
+        message: `${firstLine} (${ffprobe})`,
       });
     } catch (err) {
       checks.push({
         category: 'Media Tools',
         name: 'FFprobe binary execution',
         status: 'warn',
-        message: `FFprobe failed to execute: ${err.message}`
+        message: `FFprobe failed to execute: ${err.message}`,
       });
     }
   }
@@ -727,23 +771,23 @@ async function checkProviderConnectivity(config) {
 
   // Plex reachability probe (non-destructive)
   if (config.plexUrl) {
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       let client = config.plexUrl.startsWith('https:') ? https : http;
       const targetUrl = new URL('/identity', config.plexUrl);
-      const req = client.get(targetUrl, { timeout: 3500 }, (res) => {
+      const req = client.get(targetUrl, { timeout: 3500 }, res => {
         if (res.statusCode >= 200 && res.statusCode < 500) {
           checks.push({
             category: 'Providers',
             name: 'Plex Media Server reachability',
             status: 'pass',
-            message: `Plex server reachable at ${config.plexUrl} (HTTP ${res.statusCode})`
+            message: `Plex server reachable at ${config.plexUrl} (HTTP ${res.statusCode})`,
           });
         } else {
           checks.push({
             category: 'Providers',
             name: 'Plex Media Server reachability',
             status: 'warn',
-            message: `Plex server returned HTTP ${res.statusCode} at ${config.plexUrl}`
+            message: `Plex server returned HTTP ${res.statusCode} at ${config.plexUrl}`,
           });
         }
         res.resume();
@@ -756,26 +800,32 @@ async function checkProviderConnectivity(config) {
           name: 'Plex Media Server reachability',
           status: 'warn',
           message: `Connection timed out reaching Plex server at ${config.plexUrl}`,
-          remediation: 'Verify Plex server URL and that PMS is running and accessible on the local network.'
+          remediation: 'Verify Plex server URL and that PMS is running and accessible on the local network.',
         });
         resolve();
       });
-      req.on('error', (err) => {
+      req.on('error', err => {
         checks.push({
           category: 'Providers',
           name: 'Plex Media Server reachability',
           status: 'warn',
           message: `Could not connect to Plex server at ${config.plexUrl}: ${err.message}`,
-          remediation: 'Verify plex.url in config.yaml and network routing.'
+          remediation: 'Verify plex.url in config.yaml and network routing.',
         });
         resolve();
       });
     });
   }
 
-  if (config.shareChannelId) checks.push({category:'Providers',name:'Discord room publishing',status:'warn',
-    message:'Explicit room publishing is configured; channel access is checked when Share opens or a post updates.',
-    remediation:'Give the bot View Channel, Send Messages, Embed Links and Read Message History in discord.share_channel_id; optional event scheduling also needs Create Events at server level.'});
+  if (config.shareChannelId)
+    checks.push({
+      category: 'Providers',
+      name: 'Discord room publishing',
+      status: 'warn',
+      message: 'Explicit room publishing is configured; channel access is checked when Share opens or a post updates.',
+      remediation:
+        'Give the bot View Channel, Send Messages, Embed Links and Read Message History in discord.share_channel_id; optional event scheduling also needs Create Events at server level.',
+    });
 
   // Discord bot config presence
   if (config.botToken) {
@@ -785,14 +835,14 @@ async function checkProviderConnectivity(config) {
         name: 'Discord bot token',
         status: 'warn',
         message: 'discord.bot_token appears too short or invalid.',
-        remediation: 'Check bot token generated in Discord Developer Portal.'
+        remediation: 'Check bot token generated in Discord Developer Portal.',
       });
     } else {
       checks.push({
         category: 'Providers',
         name: 'Discord bot token',
         status: 'pass',
-        message: 'Discord bot credentials configured'
+        message: 'Discord bot credentials configured',
       });
     }
   }
@@ -807,14 +857,30 @@ function checkGuestPasses(config) {
   if (!guests?.enabled) return checks;
   const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
   const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
-  checks.push({ category: 'Access', name: 'Guests', status: 'pass',
-    message: `Guests allowed (${guests.defaultAllow !== false ? 'on' : 'off'} by default in new rooms); hosts at ${guests.issuers} tier and above can change them, up to ${guests.maxPerRoom} per room for ${guests.sessionHours} hours each` });
-  if (guests.issuers === 'trusted' && !anyTrusted) checks.push({ category: 'Access', name: 'Guest issuers', status: 'warn',
-    message: 'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
-    remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.' });
-  if (!guests.requireSignIn && config.plexFallback?.enabled === false) checks.push({ category: 'Access', name: 'Guest playback', status: 'warn',
-    message: 'Guests who do not sign in have no Plex access and plex.fallback_enabled is false, so they can join but not watch Plex media.',
-    remediation: 'Enable plex.fallback_enabled or set guests.require_sign_in: true.' });
+  checks.push({
+    category: 'Access',
+    name: 'Guests',
+    status: 'pass',
+    message: `Guests allowed (${guests.defaultAllow !== false ? 'on' : 'off'} by default in new rooms); hosts at ${guests.issuers} tier and above can change them, up to ${guests.maxPerRoom} per room for ${guests.sessionHours} hours each`,
+  });
+  if (guests.issuers === 'trusted' && !anyTrusted)
+    checks.push({
+      category: 'Access',
+      name: 'Guest issuers',
+      status: 'warn',
+      message:
+        'guests.issuers is trusted but no trusted members are listed, so only admins and the operator can turn on guests.',
+      remediation: 'Add rooms.trusted_discord_ids, rooms.trusted_plex_ids or rooms.trusted_discord_role_ids.',
+    });
+  if (!guests.requireSignIn && config.plexFallback?.enabled === false)
+    checks.push({
+      category: 'Access',
+      name: 'Guest playback',
+      status: 'warn',
+      message:
+        'Guests who do not sign in have no Plex access and plex.fallback_enabled is false, so they can join but not watch Plex media.',
+      remediation: 'Enable plex.fallback_enabled or set guests.require_sign_in: true.',
+    });
   return checks;
 }
 
@@ -822,8 +888,18 @@ function checkEvents(config) {
   const minimum = config.events?.schedulers || 'trusted';
   const trusted = config.trustedMembers || { discord: [], plex: [], discordRoles: [] };
   const anyTrusted = trusted.discord.length + trusted.plex.length + trusted.discordRoles.length > 0;
-  const who = minimum === 'trusted' && !anyTrusted ? 'admins and the operator (no trusted members are listed)' : `${minimum} tier and above`;
-  return [{ category: 'Access', name: 'Event scheduling', status: 'pass', message: `Room hosts at ${who} can schedule watch nights` }];
+  const who =
+    minimum === 'trusted' && !anyTrusted
+      ? 'admins and the operator (no trusted members are listed)'
+      : `${minimum} tier and above`;
+  return [
+    {
+      category: 'Access',
+      name: 'Event scheduling',
+      status: 'pass',
+      message: `Room hosts at ${who} can schedule watch nights`,
+    },
+  ];
 }
 
 async function runDoctor(options = {}) {
@@ -871,7 +947,7 @@ async function runDoctor(options = {}) {
       warnings: warnCount,
       failures: failCount,
       summary: { passed: passCount, warnings: warnCount, failures: failCount },
-      checks: allChecks
+      checks: allChecks,
     };
     if (!options.silent) console.log(JSON.stringify(summary, null, 2));
     return summary;
@@ -910,12 +986,14 @@ async function runDoctor(options = {}) {
 }
 
 if (require.main === module) {
-  runDoctor().then((res) => {
-    if (!res.ok) process.exitCode = 1;
-  }).catch((err) => {
-    console.error('Doctor CLI error:', err);
-    process.exit(1);
-  });
+  runDoctor()
+    .then(res => {
+      if (!res.ok) process.exitCode = 1;
+    })
+    .catch(err => {
+      console.error('Doctor CLI error:', err);
+      process.exit(1);
+    });
 }
 
 module.exports = {
@@ -926,5 +1004,5 @@ module.exports = {
   checkStorageAndKey,
   checkTlsCertificates,
   checkMediaTools,
-  checkProviderConnectivity
+  checkProviderConnectivity,
 };

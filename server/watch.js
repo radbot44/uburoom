@@ -35,7 +35,7 @@ const {
   areInitialViewersReady,
   snapshotReadiness,
   applyReadinessDecision,
-  applyTimelineCommand
+  applyTimelineCommand,
 } = require('../shared/sync');
 
 function formatEntrySubtitle(entry) {
@@ -49,25 +49,43 @@ function formatEntrySubtitle(entry) {
 
 class Watch {
   constructor(hub, plex, demoMedia, registry, plexAuth) {
-    this.tracking = new PlaybackTracking(registry); this.hub = hub; this.plex = plex; this.demoMedia = demoMedia; this.rooms = new Map();
-    this.reporting = new PlexReporting({ config: hub?.config, hub, plexAuth, registry,
+    this.tracking = new PlaybackTracking(registry);
+    this.hub = hub;
+    this.plex = plex;
+    this.demoMedia = demoMedia;
+    this.rooms = new Map();
+    this.reporting = new PlexReporting({
+      config: hub?.config,
+      hub,
+      plexAuth,
+      registry,
       authorize: async (room, viewer) => {
         const authenticated = viewer.reportingAuthorized || viewer.alive;
-        return (!authenticated || await authenticated()) && await this.canView(room, viewer.actor);
-      } });
+        return (!authenticated || (await authenticated())) && (await this.canView(room, viewer.actor));
+      },
+    });
     this.roomState = registry ? new WatchRooms(this, registry) : undefined;
-    this.publications = registry ? new (require('./discord-publications').DiscordPublications)(this,registry) : undefined;
-    this.events = registry ? new (require('./room-events').RoomEvents)(this,registry) : undefined;
-    hub.publicationExecute = this.publications ? (id,actor,permitted)=>this.publications.command(this.rooms.get(id),'room.publish',actor,permitted) : undefined;
-    hub.savedPublicationExecute = this.publications ? (id,actor,permitted)=>this.publications.removeSaved(id,actor,permitted) : undefined;
-    hub.scheduledEventExecute = this.events ? (id,command,actor,permitted)=>this.events.command(id,command,actor,permitted) : undefined;
-    hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id,command,actor,permitted);
+    this.publications = registry
+      ? new (require('./discord-publications').DiscordPublications)(this, registry)
+      : undefined;
+    this.events = registry ? new (require('./room-events').RoomEvents)(this, registry) : undefined;
+    hub.publicationExecute = this.publications
+      ? (id, actor, permitted) => this.publications.command(this.rooms.get(id), 'room.publish', actor, permitted)
+      : undefined;
+    hub.savedPublicationExecute = this.publications
+      ? (id, actor, permitted) => this.publications.removeSaved(id, actor, permitted)
+      : undefined;
+    hub.scheduledEventExecute = this.events
+      ? (id, command, actor, permitted) => this.events.command(id, command, actor, permitted)
+      : undefined;
+    hub.savedQueueExecute = (id, command, actor, permitted) => this.queueCommand(id, command, actor, permitted);
     hub.watchIdle = id => !this.rooms.get(id)?.media && !this.roomState?.queue.current(id);
     this.autoplayDelayMs = 10000;
     /** @type {Set<MediaWork>} */
     this.mediaWork = new Set();
     this.mediaDrainMs = 35000;
-    this.providerDownSince = undefined; this.providerRecoveredAt = 0;
+    this.providerDownSince = undefined;
+    this.providerRecoveredAt = 0;
     this.mediaChecks = new MediaChecks({ plex, config: hub?.config || {}, sessions: () => this.plexSessions });
   }
   providerFailed(error) {
@@ -77,37 +95,96 @@ class Watch {
   }
   providerResponded() {
     if (this.providerDownSince === undefined) return;
-    this.providerDownSince = undefined; this.providerRecoveredAt = Date.now();
+    this.providerDownSince = undefined;
+    this.providerRecoveredAt = Date.now();
   }
   // A viewer already watching keeps their place while Plex cannot answer. Nobody
   // new is admitted, and the next answer from Plex applies any real denial.
   retainedThroughOutage(room, actor, error) {
     if (!this.providerFailed(error)) return false;
-    return [...room.viewers.values(),...room.disconnectedViewers.values()].some(viewer => viewer.userId === actor.userId);
+    return [...room.viewers.values(), ...room.disconnectedViewers.values()].some(
+      viewer => viewer.userId === actor.userId,
+    );
   }
   // Silent unless someone is actually affected, including while recovering after Plex returns.
   providerNotice(room) {
     if (this.providerDownSince === undefined && Date.now() - this.providerRecoveredAt >= 60000) return false;
     // A viewer retrying delivery reports seeking; a brief healthy seek stays below the client's delay.
-    return [...room.viewers.values()].some(viewer => ['buffering','seeking','starting','error'].includes(viewer.syncQuality?.status) || viewer.media?.playbackError || room.media && !viewer.media);
+    return [...room.viewers.values()].some(
+      viewer =>
+        ['buffering', 'seeking', 'starting', 'error'].includes(viewer.syncQuality?.status) ||
+        viewer.media?.playbackError ||
+        (room.media && !viewer.media),
+    );
   }
   create(actor, visibility = 'public', saved) {
     if (this.shuttingDown) throw new Error('Server is closing');
-    if (!['public','private'].includes(visibility)) throw new Error('Invalid room visibility');
-    if (actor.surface !== 'web' || !canWatch(this.hub.access,actor.userId,actor) || actor.guildId !== this.hub.config.guildId || (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))) throw new Error('Only authenticated eligible users can create a viewing room');
-    if (this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen && !this.roomState?.recoveries.has(saved?.id)) throw new Error('Close an existing viewing room first');
-    const socket = { readyState: 1 }, id = saved?.id || randomUUID();
-    const slug = saved?.slug || (saved?.name ? require('../web/ubumfa').slugify(saved.name) : require('../web/ubumfa').generateWord(6).toLowerCase());
-    const s = { roomId: id, epoch: randomUUID(), alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex', kind: 'watch',
-      ownerId: actor.userId, ownerName: actor.name, hostId: actor.userId, hostName: actor.name, socket, visibility, reachable: true, lastSeen: Date.now(),
-      slug, ubumfaWord: saved?.ubumfaWord || slug,
-      controls: { ...Engine.CONTROLS }, state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 30, seekable: false, profileSlots: [] } };
-    const room = { s, media: null, mediaVersion: randomUUID(), revision: 0, position: 0, changedAt: Date.now(), viewers: new Map(), disconnectedViewers: new Map(), profiles: {}, lastActivity: Date.now(),
-      initialGate: false, manualPaused: false, initialViewers: new Set(), hadViewers: false };
+    if (!['public', 'private'].includes(visibility)) throw new Error('Invalid room visibility');
+    if (
+      actor.surface !== 'web' ||
+      !canWatch(this.hub.access, actor.userId, actor) ||
+      actor.guildId !== this.hub.config.guildId ||
+      (this.hub.config.channels?.length && !this.hub.config.channels.includes(actor.channelId))
+    )
+      throw new Error('Only authenticated eligible users can create a viewing room');
+    if (
+      this.rooms.size >= require('./room-limits').limits(this.hub.config).maxOpen &&
+      !this.roomState?.recoveries.has(saved?.id)
+    )
+      throw new Error('Close an existing viewing room first');
+    const socket = { readyState: 1 },
+      id = saved?.id || randomUUID();
+    const slug =
+      saved?.slug ||
+      (saved?.name
+        ? require('../web/ubumfa').slugify(saved.name)
+        : require('../web/ubumfa').generateWord(6).toLowerCase());
+    const s = {
+      roomId: id,
+      epoch: randomUUID(),
+      alias: this.rooms.size ? 'plex.' + id.slice(0, 8) : 'plex',
+      kind: 'watch',
+      ownerId: actor.userId,
+      ownerName: actor.name,
+      hostId: actor.userId,
+      hostName: actor.name,
+      socket,
+      visibility,
+      reachable: true,
+      lastSeen: Date.now(),
+      slug,
+      ubumfaWord: saved?.ubumfaWord || slug,
+      controls: { ...Engine.CONTROLS },
+      state: {
+        picture: { ...Engine.DEFAULT },
+        paused: true,
+        muted: false,
+        volume: 30,
+        seekable: false,
+        profileSlots: [],
+      },
+    };
+    const room = {
+      s,
+      media: null,
+      mediaVersion: randomUUID(),
+      revision: 0,
+      position: 0,
+      changedAt: Date.now(),
+      viewers: new Map(),
+      disconnectedViewers: new Map(),
+      profiles: {},
+      lastActivity: Date.now(),
+      initialGate: false,
+      manualPaused: false,
+      initialViewers: new Set(),
+      hadViewers: false,
+    };
     s.execute = (command, actor, permitted) => this.execute(room, command, actor, permitted);
     s.viewers = room.viewers;
     if (saved) this.roomState.apply(room, saved);
-    this.rooms.set(id, room); this.hub.rooms.set(id, s);
+    this.rooms.set(id, room);
+    this.hub.rooms.set(id, s);
     this.hub?.config?.logger?.info('Room', `Room created "${s.alias || id}" (${id}) by ${actor.name || actor.userId}`);
     return id;
   }
@@ -129,16 +206,26 @@ class Watch {
   }
   dropMedia(room, reason = 'media-changed') {
     void this.reporting?.endRoom(room);
-    room.fallbackStream?.close(); room.fallbackStream=undefined;
-    this.cancelAutoplay(room); clearPlaybackEnd(room);
+    room.fallbackStream?.close();
+    room.fallbackStream = undefined;
+    this.cancelAutoplay(room);
+    clearPlaybackEnd(room);
     room.disconnectedViewers.clear();
     for (const viewer of room.viewers.values()) {
       viewer.preparing?.abort();
-      this.tracking.end(viewer, reason); void this.stopMedia(room, viewer.media); void this.reporting?.end(viewer, reason); viewer.media = undefined; viewer.ready = false;
+      this.tracking.end(viewer, reason);
+      void this.stopMedia(room, viewer.media);
+      void this.reporting?.end(viewer, reason);
+      viewer.media = undefined;
+      viewer.ready = false;
       if (reason === 'media-changed' || reason === 'room-reset') {
-        viewer.compatible = false; viewer.fallback = undefined;
-        viewer.subtitleOffset=0;
-        if (viewer.trackChoice) { viewer.trackChoice.audioId='auto'; if (viewer.trackChoice.subtitleId!=='off') viewer.trackChoice.subtitleId='auto'; }
+        viewer.compatible = false;
+        viewer.fallback = undefined;
+        viewer.subtitleOffset = 0;
+        if (viewer.trackChoice) {
+          viewer.trackChoice.audioId = 'auto';
+          if (viewer.trackChoice.subtitleId !== 'off') viewer.trackChoice.subtitleId = 'auto';
+        }
       }
     }
   }
@@ -152,14 +239,25 @@ class Watch {
    */
   startMediaWork(room, action, { kind = 'preload', signal } = {}) {
     const controller = new AbortController();
-    const work = { room, kind, controller, committing: false,
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]), promise: Promise.resolve() };
+    const work = {
+      room,
+      kind,
+      controller,
+      committing: false,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]),
+      promise: Promise.resolve(),
+    };
     this.mediaWork.add(work);
     try {
-      work.promise = Promise.resolve(runOperation(work.signal, () => {
-        work.signal.throwIfAborted(); return action(work);
-      }));
-    } catch (error) { work.promise = Promise.reject(error); }
+      work.promise = Promise.resolve(
+        runOperation(work.signal, () => {
+          work.signal.throwIfAborted();
+          return action(work);
+        }),
+      );
+    } catch (error) {
+      work.promise = Promise.reject(error);
+    }
     const done = () => this.mediaWork.delete(work);
     work.promise.then(done, done);
     return work;
@@ -177,7 +275,8 @@ class Watch {
       for (const work of pending) if (work.kind !== 'cleanup' && !work.committing) work.controller.abort();
       const results = await waitFor(Promise.allSettled(pending.map(work => work.promise)), deadline);
       for (const [index, result] of results.entries()) {
-        if (result.status === 'rejected' && (pending[index].kind === 'cleanup' || !pending[index].signal.aborted)) failure ||= result.reason;
+        if (result.status === 'rejected' && (pending[index].kind === 'cleanup' || !pending[index].signal.aborted))
+          failure ||= result.reason;
       }
     }
     if (failure) throw failure;
@@ -191,26 +290,44 @@ class Watch {
   preloadNext(room, countdown, next, actor) {
     this.dropPreload(room);
     if (this.shuttingDown || room.removing || !next?.mediaId || next.mediaId === 'demo') return;
-    const preload = room.preload = { countdown: countdown.id, mediaId: next.mediaId, startAt: Number(next.position) || 0, viewers: new Map() };
+    const preload = (room.preload = {
+      countdown: countdown.id,
+      mediaId: next.mediaId,
+      startAt: Number(next.position) || 0,
+      viewers: new Map(),
+    });
     preload.work = this.startMediaWork(room, async work => {
       const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
-      const source = await plex.prepare(next.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
-      if (preload.dropped || work.signal.aborted) { await this.stopMedia(room, source); return; }
+      const source = await plex.prepare(next.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
+      if (preload.dropped || work.signal.aborted) {
+        await this.stopMedia(room, source);
+        return;
+      }
       this.mediaChecks.start(source);
       preload.media = source;
-      const settings=this.hub.config.transcoding;
-      if(settings?.fallback?.enabled && settings.uburoom && source.tracks) {
-        preload.fallbackStream=new FallbackStream({av1:this.plex.av1,settings,source,shareKey:[room.s.roomId,'next',preload.countdown],
-          authorized:async()=>!preload.dropped && (!plex.allows || await plex.allows(source.id))});
-        preload.fallbackStream.reconcile(preload.startAt,true);
+      const settings = this.hub.config.transcoding;
+      if (settings?.fallback?.enabled && settings.uburoom && source.tracks) {
+        preload.fallbackStream = new FallbackStream({
+          av1: this.plex.av1,
+          settings,
+          source,
+          shareKey: [room.s.roomId, 'next', preload.countdown],
+          authorized: async () => !preload.dropped && (!plex.allows || (await plex.allows(source.id))),
+        });
+        preload.fallbackStream.reconcile(preload.startAt, true);
       }
       return source;
     });
     preload.source = preload.work.promise;
-    void preload.source.then(source => {
-      if (!source || preload.dropped) return;
-      for (const [viewerId, viewer] of room.viewers) if (!viewer.localDelivery) preload.viewers.set(viewerId, this.preloadViewer(room, preload, source, viewerId, viewer));
-    }, () => {});
+    void preload.source.then(
+      source => {
+        if (!source || preload.dropped) return;
+        for (const [viewerId, viewer] of room.viewers)
+          if (!viewer.localDelivery)
+            preload.viewers.set(viewerId, this.preloadViewer(room, preload, source, viewerId, viewer));
+      },
+      () => {},
+    );
   }
   /**
    * Start a viewer's first text subtitle window as soon as their stream exists, with the
@@ -219,40 +336,81 @@ class Watch {
    */
   warmSubtitles(media, seconds) {
     if (media?.selection?.subtitle?.delivery !== 'cues' || media.unavailable) return;
-    void SubtitleResources.window(media.plexContext || this.plex, media, { atMs: Math.max(0, seconds || 0) * 1000, beforeMs: 5000, afterMs: 15000 }).catch(() => {});
+    void SubtitleResources.window(media.plexContext || this.plex, media, {
+      atMs: Math.max(0, seconds || 0) * 1000,
+      beforeMs: 5000,
+      afterMs: 15000,
+    }).catch(() => {});
   }
   // What a viewer's stream depends on; a preload is adopted only if none of it changed.
   streamChoices(viewer) {
-    return JSON.stringify([viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, viewer.trackChoice, viewer.browserSubtitles, viewer.localCodecs]);
+    return JSON.stringify([
+      viewer.preferredQuality || viewer.quality,
+      viewer.compatible,
+      viewer.fallback,
+      viewer.trackChoice,
+      viewer.browserSubtitles,
+      viewer.localCodecs,
+    ]);
   }
   preloadViewer(room, preload, source, viewerId, viewer) {
-    const current = () => !this.shuttingDown && !room.removing && !preload.dropped && room.viewers.get(viewerId) === viewer;
-    return this.startMediaWork(room, async work => {
-      const plex = this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex, choices = this.streamChoices(viewer);
-      const authorized = async () => current() && (!viewer.alive || await viewer.alive()) && await this.canView(room, viewer.actor) && current();
-      if (!await authorized()) return;
-      const media = await this.prepareQuality(room, viewer, plex, source, viewer.preferredQuality || viewer.quality, viewer.compatible, viewer.fallback, authorized,
-        { shareKey: [room.s.roomId, 'next', preload.countdown] });
-      if (!current() || work.signal.aborted) { await this.stopMedia(room, media); return; }
-      this.warmSubtitles(media, preload.startAt);
-      return { media, choices, principal: plex.principal };
-    }, { signal: preload.work?.signal }).promise;
+    const current = () =>
+      !this.shuttingDown && !room.removing && !preload.dropped && room.viewers.get(viewerId) === viewer;
+    return this.startMediaWork(
+      room,
+      async work => {
+        const plex = this.hub.plexFor ? await this.hub.plexFor(viewer.actor) : this.plex,
+          choices = this.streamChoices(viewer);
+        const authorized = async () =>
+          current() &&
+          (!viewer.alive || (await viewer.alive())) &&
+          (await this.canView(room, viewer.actor)) &&
+          current();
+        if (!(await authorized())) return;
+        const media = await this.prepareQuality(
+          room,
+          viewer,
+          plex,
+          source,
+          viewer.preferredQuality || viewer.quality,
+          viewer.compatible,
+          viewer.fallback,
+          authorized,
+          { shareKey: [room.s.roomId, 'next', preload.countdown] },
+        );
+        if (!current() || work.signal.aborted) {
+          await this.stopMedia(room, media);
+          return;
+        }
+        this.warmSubtitles(media, preload.startAt);
+        return { media, choices, principal: plex.principal };
+      },
+      { signal: preload.work?.signal },
+    ).promise;
   }
   /** A viewer's preloaded stream for the room's current video, if it still fits them. */
   takePreload(room, viewerId, viewer, source, plex) {
-    const preload = room.adoptable, task = preload?.media && preload.media === source ? preload.viewers.get(viewerId) : undefined;
+    const preload = room.adoptable,
+      task = preload?.media && preload.media === source ? preload.viewers.get(viewerId) : undefined;
     if (!task) return;
     preload.viewers.delete(viewerId);
-    return task.then(result => {
-      if (result?.principal === plex.principal && result.choices === this.streamChoices(viewer)) { result.adopted = true; return result.media; }
-      if (result?.media) void this.stopMedia(room, result.media);
-    }, () => undefined);
+    return task.then(
+      result => {
+        if (result?.principal === plex.principal && result.choices === this.streamChoices(viewer)) {
+          result.adopted = true;
+          return result.media;
+        }
+        if (result?.media) void this.stopMedia(room, result.media);
+      },
+      () => undefined,
+    );
   }
   dropPreload(room, preload = room.preload) {
     if (!preload || preload.dropped) return;
     preload.dropped = true;
     preload.work?.controller.abort();
-    preload.fallbackStream?.close(); preload.fallbackStream=undefined;
+    preload.fallbackStream?.close();
+    preload.fallbackStream = undefined;
     if (room.preload === preload) room.preload = undefined;
     if (room.adoptable === preload) room.adoptable = undefined;
     clearTimeout(preload.expiry);
@@ -260,168 +418,368 @@ class Watch {
     preload.viewers.clear();
     // Register cleanup before yielding, even when all preparation promises have
     // already settled, so shutdown cannot miss their deferred continuations.
-    this.startMediaWork(room, async () => {
-      const results = await Promise.allSettled(viewers);
-      for (const result of results) if (result.status === 'fulfilled' && result.value?.media && !result.value.adopted) await this.plex.stop(result.value.media);
-      const source = await preload.source.catch(() => undefined);
-      if (!preload.sourceAdopted && source) await this.plex.stop(source);
-    }, {kind:'cleanup'});
+    this.startMediaWork(
+      room,
+      async () => {
+        const results = await Promise.allSettled(viewers);
+        for (const result of results)
+          if (result.status === 'fulfilled' && result.value?.media && !result.value.adopted)
+            await this.plex.stop(result.value.media);
+        const source = await preload.source.catch(() => undefined);
+        if (!preload.sourceAdopted && source) await this.plex.stop(source);
+      },
+      { kind: 'cleanup' },
+    );
   }
-  async prepareQuality(room,viewer,plex,source,requested,compatible,fallback,authorized,extraOptions) {
-    const opts = (typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function')
-      ? { ...authorized, ...extraOptions }
-      : { authorized, ...extraOptions };
+  async prepareQuality(room, viewer, plex, source, requested, compatible, fallback, authorized, extraOptions) {
+    const opts =
+      typeof authorized === 'object' && authorized !== null && typeof authorized !== 'function'
+        ? { ...authorized, ...extraOptions }
+        : { authorized, ...extraOptions };
     const authFn = opts.authorized;
-    if (source.unavailable) source = await plex.prepare(source.id,'direct',false,undefined,undefined,{sourceOnly:true});
-    const {candidates}=require('./quality-options');
-    const choices=this.plex.qualities?.(source) || Engine.QUALITIES;
-    if(!choices.length)throw new PlaybackError('No configured quality is available for this video. Ask the owner to offer a lower quality or Original.');
-    const options=candidates(choices,requested,source), quality=options[0]?.id;
-    if(!quality)throw new PlaybackError('No available quality is at or below your preferred setting. Your preference has been kept.');
-    const prepare=(value,sharedOnly=false)=>this.prepareOutput(room,viewer,plex,source,value,compatible,fallback,
-      {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,localCodecs:viewer.localCodecs,shareKey:[room.s.roomId,room.mediaVersion],shareWaitMs:8000,...opts,authorized:authFn,sharedOnly});
+    if (source.unavailable)
+      source = await plex.prepare(source.id, 'direct', false, undefined, undefined, { sourceOnly: true });
+    const { candidates } = require('./quality-options');
+    const choices = this.plex.qualities?.(source) || Engine.QUALITIES;
+    if (!choices.length)
+      throw new PlaybackError(
+        'No configured quality is available for this video. Ask the owner to offer a lower quality or Original.',
+      );
+    const options = candidates(choices, requested, source),
+      quality = options[0]?.id;
+    if (!quality)
+      throw new PlaybackError(
+        'No available quality is at or below your preferred setting. Your preference has been kept.',
+      );
+    const prepare = (value, sharedOnly = false) =>
+      this.prepareOutput(room, viewer, plex, source, value, compatible, fallback, {
+        ...viewer.trackChoice,
+        browserSubtitles: viewer.browserSubtitles,
+        localCodecs: viewer.localCodecs,
+        shareKey: [room.s.roomId, room.mediaVersion],
+        shareWaitMs: 8000,
+        ...opts,
+        authorized: authFn,
+        sharedOnly,
+      });
     let media;
-    try {media=await prepare(quality);}
-    catch(error) {
-      if(!error.conversionCapacity)throw error;
-      for(const option of options.slice(1)) {
-        try {media=await prepare(option.id,true);break;}
-        catch(next) {if(!next.conversionCapacity)throw next;}
+    try {
+      media = await prepare(quality);
+    } catch (error) {
+      if (!error.conversionCapacity) throw error;
+      for (const option of options.slice(1)) {
+        try {
+          media = await prepare(option.id, true);
+          break;
+        } catch (next) {
+          if (!next.conversionCapacity) throw next;
+        }
       }
-      if(!media)throw error;
+      if (!media) throw error;
     }
-    media.qualityNotice=media.quality!=='direct'&&media.quality!==Engine.qualityId(requested)?'Your requested quality is unavailable. Playing '+(choices.find(q=>q.id===media.quality)?.label || media.quality)+'. You can try your preferred quality again later.':'';
+    media.qualityNotice =
+      media.quality !== 'direct' && media.quality !== Engine.qualityId(requested)
+        ? 'Your requested quality is unavailable. Playing ' +
+          (choices.find(q => q.id === media.quality)?.label || media.quality) +
+          '. You can try your preferred quality again later.'
+        : '';
     return media;
   }
-  prepareOutput(room,viewer,plex,source,quality,compatible,fallback,choices) {
-    return plex.prepare(source.id,quality,compatible,source,fallback,{...choices,
-      directPlan:()=>this.delivery?.hlsPlan(plex,viewer,room,choices.authorized)});
+  prepareOutput(room, viewer, plex, source, quality, compatible, fallback, choices) {
+    return plex.prepare(source.id, quality, compatible, source, fallback, {
+      ...choices,
+      directPlan: () => this.delivery?.hlsPlan(plex, viewer, room, choices.authorized),
+    });
   }
   async prepareViewer(room, actor, viewerId) {
-    const viewer = room.viewers.get(viewerId), version = room.mediaVersion;
+    const viewer = room.viewers.get(viewerId),
+      version = room.mediaVersion;
     if (!viewer || viewer.userId !== actor.userId) return;
     let plex;
-    try {plex=this.hub.plexFor?await this.hub.plexFor(actor):this.plex;}
-    catch(error) {if(this.providerFailed(error))return viewer.media;throw error;}
-    if(room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer)return;
+    try {
+      plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
+    } catch (error) {
+      if (this.providerFailed(error)) return viewer.media;
+      throw error;
+    }
+    if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
     const queueRevision = room.saved ? this.roomState.queue.room(room.s.roomId).queueRevision : undefined;
     if (room.saved && room.queueEntriesRevision !== queueRevision) {
-      room.queueEntries = [this.roomState.queue.current(room.s.roomId),...this.roomState.queue.pending(room.s.roomId)].filter(Boolean);
+      room.queueEntries = [
+        this.roomState.queue.current(room.s.roomId),
+        ...this.roomState.queue.pending(room.s.roomId),
+      ].filter(Boolean);
       room.queueEntriesRevision = queueRevision;
     }
     const entries = room.saved ? [...(room.queueEntries || [])] : [];
-    if (room.media && !entries.some(item=>item.mediaId===room.media.id)) entries.unshift({id:room.media.id,mediaId:room.media.id,title:room.media.title});
+    if (room.media && !entries.some(item => item.mediaId === room.media.id))
+      entries.unshift({ id: room.media.id, mediaId: room.media.id, title: room.media.title });
     let availability;
     if (plex.availability) {
-      try {availability=await plex.availability(entries.map(item=>item.mediaId));if(entries.length)this.providerResponded();}
-      catch(error) {if(!this.providerFailed(error))throw error;}
+      try {
+        availability = await plex.availability(entries.map(item => item.mediaId));
+        if (entries.length) this.providerResponded();
+      } catch (error) {
+        if (!this.providerFailed(error)) throw error;
+      }
     }
     if (availability) {
-      if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
-      if (room.saved && this.roomState.queue.room(room.s.roomId).queueRevision!==queueRevision) return;
-      viewer.unavailableMedia = entries.filter(item=>availability.get(item.mediaId)===false).map(({id,mediaId,title})=>({id,mediaId,title}));
-      if (room.media && availability.get(room.media.id)===false) {
-        if (!viewer.media?.unavailable) { this.tracking.end(viewer,'media-unavailable'); void this.reporting?.end(viewer, 'media-unavailable'); await this.plex.stop(viewer.media); }
-        if (room.mediaVersion!==version || room.viewers.get(viewerId)!==viewer) return;
-        viewer.media = {id:room.media.id,title:room.media.title,duration:room.media.duration,kind:'plex',format:'unavailable',resources:new Map(),unavailable:true,playbackError:room.media.title+' is unavailable.'};
-        viewer.mediaVersion = version; viewer.ready = false; return viewer.media;
+      if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
+      if (room.saved && this.roomState.queue.room(room.s.roomId).queueRevision !== queueRevision) return;
+      viewer.unavailableMedia = entries
+        .filter(item => availability.get(item.mediaId) === false)
+        .map(({ id, mediaId, title }) => ({ id, mediaId, title }));
+      if (room.media && availability.get(room.media.id) === false) {
+        if (!viewer.media?.unavailable) {
+          this.tracking.end(viewer, 'media-unavailable');
+          void this.reporting?.end(viewer, 'media-unavailable');
+          await this.plex.stop(viewer.media);
+        }
+        if (room.mediaVersion !== version || room.viewers.get(viewerId) !== viewer) return;
+        viewer.media = {
+          id: room.media.id,
+          title: room.media.title,
+          duration: room.media.duration,
+          kind: 'plex',
+          format: 'unavailable',
+          resources: new Map(),
+          unavailable: true,
+          playbackError: room.media.title + ' is unavailable.',
+        };
+        viewer.mediaVersion = version;
+        viewer.ready = false;
+        return viewer.media;
       }
       if (viewer.media?.unavailable) viewer.media = undefined;
     }
     if (!room.media) return;
     if (viewer.localDelivery) {
-      if (viewer.media && viewer.mediaVersion === version && viewer.media.format === 'local' && (!viewer.media.principal || viewer.media.principal === plex.principal)) return viewer.media;
+      if (
+        viewer.media &&
+        viewer.mediaVersion === version &&
+        viewer.media.format === 'local' &&
+        (!viewer.media.principal || viewer.media.principal === plex.principal)
+      )
+        return viewer.media;
       this.tracking.end(viewer, 'stream-changed');
       void this.reporting?.end(viewer, 'stream-changed');
       if (viewer.media) void this.plex.stop(viewer.media);
       viewer.directDelivery = undefined;
-      viewer.media = { id: room.media.id, title: room.media.title, duration: room.media.duration, kind: room.media.kind, format: 'local', principal: plex.principal, resources: new Map(), chapters: room.media.chapters || [], markers: room.media.markers || [] };
-      viewer.mediaVersion = version; viewer.streamVersion = randomUUID(); viewer.ready = false;
+      viewer.media = {
+        id: room.media.id,
+        title: room.media.title,
+        duration: room.media.duration,
+        kind: room.media.kind,
+        format: 'local',
+        principal: plex.principal,
+        resources: new Map(),
+        chapters: room.media.chapters || [],
+        markers: room.media.markers || [],
+      };
+      viewer.mediaVersion = version;
+      viewer.streamVersion = randomUUID();
+      viewer.ready = false;
       return viewer.media;
     }
     if (!viewer.localDelivery && viewer.media?.format === 'local') viewer.media = undefined;
-    const background=!!this.fallbackFor(room,viewer) && (viewer.media?.bootstrapFallback || viewer.media?.playbackError);
-    if (viewer.media && viewer.mediaVersion === version && (!viewer.media.principal||viewer.media.principal===plex.principal) &&
-      (!background || Date.now()<(viewer.fallbackRetryAt || 0))) return viewer.media;
+    const background =
+      !!this.fallbackFor(room, viewer) && (viewer.media?.bootstrapFallback || viewer.media?.playbackError);
+    if (
+      viewer.media &&
+      viewer.mediaVersion === version &&
+      (!viewer.media.principal || viewer.media.principal === plex.principal) &&
+      (!background || Date.now() < (viewer.fallbackRetryAt || 0))
+    )
+      return viewer.media;
     // Collapse concurrent polls for this one viewer, never across viewers.
     if (viewer.preparing) {
-      if(background)return viewer.media;
-      await Promise.race([this.joinPreparation(viewer.preparing),viewer.preparing.bootstrap || viewer.preparing.promise]);
+      if (background) return viewer.media;
+      await Promise.race([
+        this.joinPreparation(viewer.preparing),
+        viewer.preparing.bootstrap || viewer.preparing.promise,
+      ]);
       return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
     }
-    if(background)viewer.fallbackRetryAt=Date.now()+60000;
+    if (background) viewer.fallbackRetryAt = Date.now() + 60000;
     let bootstrapReady;
-    const bootstrap=new Promise(resolve=>{bootstrapReady=resolve;});
-    const job = new SharedTask(async () => {
-      // Bootstrap and the chosen output share one preparation lifetime, so
-      // concurrent polls cannot create competing metadata or conversion work.
-      if(!viewer.media && this.fallbackFor(room,viewer)) {
-        await this.replaceViewer(room,actor,viewerId,async(authorized,source)=>{
-          const media=await plex.prepare(source.id,viewer.preferredQuality || viewer.quality,false,source,undefined,
-            {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,sourceOnly:true,authorized});
-          if(media.selection?.subtitle?.delivery==='burn') {await this.plex.stop(media);return this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized);}
-          media.bootstrapFallback=true;return media;
-        },{retainUnavailable:true});
-        if(viewer.media?.bootstrapFallback) {
-          viewer.fallbackRetryAt=Date.now()+60000;
-          void job.join(new AbortController().signal).catch(()=>{});bootstrapReady();
-        } else return;
-      }
-      await this.replaceViewer(room,actor,viewerId,async (authorized,source)=>source.kind==='demo'?source:
-        await this.takePreload(room,viewerId,viewer,source,plex) ||
-        this.prepareQuality(room,viewer,plex,source,viewer.preferredQuality || viewer.quality,viewer.compatible,viewer.fallback,authorized),{retainUnavailable:true});
-      if(viewer.media?.quality)viewer.quality=viewer.media.quality;
-      if(room.mediaVersion===version && room.s.state.paused)this.warmSubtitles(viewer.media,this.position(room));
-    }, { timeoutMs: 120000, idleMs: 15000 });
-    job.bootstrap=bootstrap;
-    job.promise.finally(() => { if (viewer.preparing === job) viewer.preparing = undefined; }).catch(() => {});
+    const bootstrap = new Promise(resolve => {
+      bootstrapReady = resolve;
+    });
+    const job = new SharedTask(
+      async () => {
+        // Bootstrap and the chosen output share one preparation lifetime, so
+        // concurrent polls cannot create competing metadata or conversion work.
+        if (!viewer.media && this.fallbackFor(room, viewer)) {
+          await this.replaceViewer(
+            room,
+            actor,
+            viewerId,
+            async (authorized, source) => {
+              const media = await plex.prepare(
+                source.id,
+                viewer.preferredQuality || viewer.quality,
+                false,
+                source,
+                undefined,
+                { ...viewer.trackChoice, browserSubtitles: viewer.browserSubtitles, sourceOnly: true, authorized },
+              );
+              if (media.selection?.subtitle?.delivery === 'burn') {
+                await this.plex.stop(media);
+                return this.prepareQuality(
+                  room,
+                  viewer,
+                  plex,
+                  source,
+                  viewer.preferredQuality || viewer.quality,
+                  viewer.compatible,
+                  viewer.fallback,
+                  authorized,
+                );
+              }
+              media.bootstrapFallback = true;
+              return media;
+            },
+            { retainUnavailable: true },
+          );
+          if (viewer.media?.bootstrapFallback) {
+            viewer.fallbackRetryAt = Date.now() + 60000;
+            void job.join(new AbortController().signal).catch(() => {});
+            bootstrapReady();
+          } else return;
+        }
+        await this.replaceViewer(
+          room,
+          actor,
+          viewerId,
+          async (authorized, source) =>
+            source.kind === 'demo'
+              ? source
+              : (await this.takePreload(room, viewerId, viewer, source, plex)) ||
+                this.prepareQuality(
+                  room,
+                  viewer,
+                  plex,
+                  source,
+                  viewer.preferredQuality || viewer.quality,
+                  viewer.compatible,
+                  viewer.fallback,
+                  authorized,
+                ),
+          { retainUnavailable: true },
+        );
+        if (viewer.media?.quality) viewer.quality = viewer.media.quality;
+        if (room.mediaVersion === version && room.s.state.paused) this.warmSubtitles(viewer.media, this.position(room));
+      },
+      { timeoutMs: 120000, idleMs: 15000 },
+    );
+    job.bootstrap = bootstrap;
+    job.promise
+      .finally(() => {
+        if (viewer.preparing === job) viewer.preparing = undefined;
+      })
+      .catch(() => {});
     viewer.preparing = job;
-    if(background){void job.join(new AbortController().signal).catch(()=>{});return viewer.media;}
-    await Promise.race([this.joinPreparation(job),bootstrap]);
+    if (background) {
+      void job.join(new AbortController().signal).catch(() => {});
+      return viewer.media;
+    }
+    await Promise.race([this.joinPreparation(job), bootstrap]);
     return room.mediaVersion !== version ? this.prepareViewer(room, actor, viewerId) : viewer.media;
   }
   // Superseded preparation is not a failed request. A 4xx here would tell this
   // viewer the room is gone merely because someone else changed the media.
   async joinPreparation(job) {
-    try { await job.join(); }
-    catch (error) {
+    try {
+      await job.join();
+    } catch (error) {
       currentSignal()?.throwIfAborted();
       if (!job.signal.aborted && !this.providerFailed(error)) throw error;
     }
   }
-  async replaceViewer(room,actor,viewerId,prepare,{permitted=()=>true,retainUnavailable=false,accept=()=>true}={}) {
-    const viewer=room.viewers.get(viewerId),version=room.mediaVersion,current=viewer?.media,stream=viewer?.streamVersion,source=room.media;
-    if(!viewer || viewer.userId!==actor.userId)return {status:'unavailable',message:'Room changed or command expired.'};
+  async replaceViewer(
+    room,
+    actor,
+    viewerId,
+    prepare,
+    { permitted = () => true, retainUnavailable = false, accept = () => true } = {},
+  ) {
+    const viewer = room.viewers.get(viewerId),
+      version = room.mediaVersion,
+      current = viewer?.media,
+      stream = viewer?.streamVersion,
+      source = room.media;
+    if (!viewer || viewer.userId !== actor.userId)
+      return { status: 'unavailable', message: 'Room changed or command expired.' };
     const signal = currentSignal();
-    const matches=()=>!signal?.aborted && room.mediaVersion===version && room.viewers.get(viewerId)===viewer && viewer.media===current && viewer.streamVersion===stream;
-    const authorized=async()=>matches() && permitted() && await this.canView(room,actor) && (!viewer.alive || await viewer.alive()) && matches() && permitted();
-    let media,adopted=false;
+    const matches = () =>
+      !signal?.aborted &&
+      room.mediaVersion === version &&
+      room.viewers.get(viewerId) === viewer &&
+      viewer.media === current &&
+      viewer.streamVersion === stream;
+    const authorized = async () =>
+      matches() &&
+      permitted() &&
+      (await this.canView(room, actor)) &&
+      (!viewer.alive || (await viewer.alive())) &&
+      matches() &&
+      permitted();
+    let media,
+      adopted = false;
     try {
-      if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
-      try {media=await prepare(authorized,source);}
-      catch(error) {
+      if (!(await authorized())) return { status: 'unavailable', message: 'Room changed or command expired.' };
+      try {
+        media = await prepare(authorized, source);
+      } catch (error) {
         if (retainUnavailable && error.code === 'MEDIA_UNAVAILABLE') {
-          media={id:source.id,title:source.title,duration:source.duration,kind:'plex',resources:new Map(),unavailable:true,format:'unavailable',playbackError:error.message};
+          media = {
+            id: source.id,
+            title: source.title,
+            duration: source.duration,
+            kind: 'plex',
+            resources: new Map(),
+            unavailable: true,
+            format: 'unavailable',
+            playbackError: error.message,
+          };
         } else {
-          if(!retainUnavailable || !(error instanceof PlaybackError) || !error.media)throw error;
+          if (!retainUnavailable || !(error instanceof PlaybackError) || !error.media) throw error;
           // Preserve the catalog so Off/another subtitle can recover a failed burn.
-          media=error.media;media.format='unavailable';media.playbackError=error.message;
+          media = error.media;
+          media.format = 'unavailable';
+          media.playbackError = error.message;
         }
       }
-      if(!await authorized())return {status:'unavailable',message:'Room changed or command expired.'};
-      if(!accept(media))throw new PlaybackError('Plex could not refresh this stream.');
-      this.tracking.end(viewer,'stream-changed');void this.reporting?.end(viewer, 'stream-changed');viewer.media=media;viewer.mediaVersion=version;viewer.streamVersion=randomUUID();viewer.directDelivery=undefined;adopted=true;
+      if (!(await authorized())) return { status: 'unavailable', message: 'Room changed or command expired.' };
+      if (!accept(media)) throw new PlaybackError('Plex could not refresh this stream.');
+      this.tracking.end(viewer, 'stream-changed');
+      void this.reporting?.end(viewer, 'stream-changed');
+      viewer.media = media;
+      viewer.mediaVersion = version;
+      viewer.streamVersion = randomUUID();
+      viewer.directDelivery = undefined;
+      adopted = true;
       if (media.unavailable) {
-        const entry=room.saved && this.roomState.queue.current(room.s.roomId);
-        viewer.unavailableMedia=[...(viewer.unavailableMedia || []).filter(item=>item.mediaId!==media.id),{id:entry?.id || media.id,mediaId:media.id,title:media.title}];
+        const entry = room.saved && this.roomState.queue.current(room.s.roomId);
+        viewer.unavailableMedia = [
+          ...(viewer.unavailableMedia || []).filter(item => item.mediaId !== media.id),
+          { id: entry?.id || media.id, mediaId: media.id, title: media.title },
+        ];
       }
       // A viewer with no stream can never report ready, so the room stops waiting for them
       // until they have one again.
-      if(room.initialGate){if(media.format==='unavailable')room.initialViewers.delete(viewerId);else room.initialViewers.add(viewerId);void this.maybeStart(room);}
-      if(current && current!==media){SubtitleResources.transfer(current,media);void this.plex.stop(current);}
-      return {status:'applied'};
+      if (room.initialGate) {
+        if (media.format === 'unavailable') room.initialViewers.delete(viewerId);
+        else room.initialViewers.add(viewerId);
+        void this.maybeStart(room);
+      }
+      if (current && current !== media) {
+        SubtitleResources.transfer(current, media);
+        void this.plex.stop(current);
+      }
+      return { status: 'applied' };
     } finally {
-      if(media && !adopted && media!==current && media!==room.media)await this.plex.stop(media);
+      if (media && !adopted && media !== current && media !== room.media) await this.plex.stop(media);
     }
   }
   refresh(room, now = Date.now()) {
@@ -432,88 +790,188 @@ class Watch {
     if (room.transitionCommit) return;
     this.settle(room, now);
     room.s.state.waitingForReady = room.initialGate && !room.manualPaused && !room.readinessTimedOut;
-    room.s.state.position = this.position(room, now); room.s.state.duration = room.media?.duration || 0;
-    let pruned = false, hostTimedOut = false, lastPresence = 0;
-    for (const [id, saved] of room.disconnectedViewers) if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion || room.saved && room.s.visibility === 'private' && !this.privateMember(room,saved.userId) && !this.hub.isAdmin({userId:saved.userId})) room.disconnectedViewers.delete(id);
+    room.s.state.position = this.position(room, now);
+    room.s.state.duration = room.media?.duration || 0;
+    let pruned = false,
+      hostTimedOut = false,
+      lastPresence = 0;
+    for (const [id, saved] of room.disconnectedViewers)
+      if (
+        saved.expires <= now ||
+        saved.mediaVersion !== room.mediaVersion ||
+        (room.saved &&
+          room.s.visibility === 'private' &&
+          !this.privateMember(room, saved.userId) &&
+          !this.hub.isAdmin({ userId: saved.userId }))
+      )
+        room.disconnectedViewers.delete(id);
     for (const viewer of room.viewers.values()) {
       const hadTracking = !!viewer.tracking;
       this.tracking.expire(viewer);
       if (hadTracking && !viewer.tracking) void this.reporting?.end(viewer, 'observation-timeout');
     }
-    for (const [id, viewer] of room.viewers) if (now - viewer.at > 10000 || room.s.visibility === 'private' && !(room.saved ? this.privateMember(room,viewer.userId) : isHost(room.s,viewer.actor)) && !this.hub.isAdmin(viewer.actor)) {
-      lastPresence = Math.max(lastPresence, viewer.at);
-      if (now - viewer.at > 10000 && (room.s.visibility !== 'private' || (room.saved ? this.privateMember(room,viewer.userId) : isHost(room.s,viewer.actor)) || this.hub.isAdmin(viewer.actor))) {
-        // Preserve only personal playback settings for the same tab's short
-        // reconnect. A fresh stream and observation epoch are always required.
-        room.disconnectedViewers.set(id, { userId:viewer.userId, mediaVersion:room.mediaVersion, streamVersion:viewer.streamVersion, expires:now+RECONNECT_GRACE_MS,
-          readinessBypassedVersion:viewer.readinessBypassedVersion,
-          trackChoice:viewer.trackChoice && {...viewer.trackChoice}, subtitleOffset:viewer.subtitleOffset,
-          quality:viewer.quality, preferredQuality:viewer.preferredQuality, compatible:viewer.compatible, fallback:viewer.fallback,
-          volume:viewer.volume, muted:viewer.muted, joinedAt:viewer.joinedAt,
-          plexReporting:viewer.plexReporting, plexWatchState:viewer.plexWatchState,
-          browserLoginHash:viewer.browserLoginHash,
-          directProxyVersion:viewer.directProxyVersion, browserSubtitles:viewer.browserSubtitles, localCodecs:viewer.localCodecs,
-          localDelivery:viewer.localDelivery,
-          syncQuality:viewer.syncQuality?{...viewer.syncQuality,status:'disconnected',confidence:viewer.syncQuality.confidence==='provisional'?'provisional':'reduced',updatedAt:now}:undefined });
-        if (room.disconnectedViewers.size > 128) room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+    for (const [id, viewer] of room.viewers)
+      if (
+        now - viewer.at > 10000 ||
+        (room.s.visibility === 'private' &&
+          !(room.saved ? this.privateMember(room, viewer.userId) : isHost(room.s, viewer.actor)) &&
+          !this.hub.isAdmin(viewer.actor))
+      ) {
+        lastPresence = Math.max(lastPresence, viewer.at);
+        if (
+          now - viewer.at > 10000 &&
+          (room.s.visibility !== 'private' ||
+            (room.saved ? this.privateMember(room, viewer.userId) : isHost(room.s, viewer.actor)) ||
+            this.hub.isAdmin(viewer.actor))
+        ) {
+          // Preserve only personal playback settings for the same tab's short
+          // reconnect. A fresh stream and observation epoch are always required.
+          room.disconnectedViewers.set(id, {
+            userId: viewer.userId,
+            mediaVersion: room.mediaVersion,
+            streamVersion: viewer.streamVersion,
+            expires: now + RECONNECT_GRACE_MS,
+            readinessBypassedVersion: viewer.readinessBypassedVersion,
+            trackChoice: viewer.trackChoice && { ...viewer.trackChoice },
+            subtitleOffset: viewer.subtitleOffset,
+            quality: viewer.quality,
+            preferredQuality: viewer.preferredQuality,
+            compatible: viewer.compatible,
+            fallback: viewer.fallback,
+            volume: viewer.volume,
+            muted: viewer.muted,
+            joinedAt: viewer.joinedAt,
+            plexReporting: viewer.plexReporting,
+            plexWatchState: viewer.plexWatchState,
+            browserLoginHash: viewer.browserLoginHash,
+            directProxyVersion: viewer.directProxyVersion,
+            browserSubtitles: viewer.browserSubtitles,
+            localCodecs: viewer.localCodecs,
+            localDelivery: viewer.localDelivery,
+            syncQuality: viewer.syncQuality
+              ? {
+                  ...viewer.syncQuality,
+                  status: 'disconnected',
+                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
+                  updatedAt: now,
+                }
+              : undefined,
+          });
+          if (room.disconnectedViewers.size > 128)
+            room.disconnectedViewers.delete(room.disconnectedViewers.keys().next().value);
+        }
+        if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
+        viewer.preparing?.abort();
+        this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected');
+        void this.plex.stop(viewer.media);
+        void this.reporting?.end(viewer, 'disconnected');
+        room.viewers.delete(id);
+        room.initialViewers.delete(id);
+        pruned = true;
       }
-      if (viewer.userId === room.s.hostId && now - viewer.at > 10000) hostTimedOut = true;
-      viewer.preparing?.abort();
-      this.tracking.end(viewer, room.s.visibility === 'private' ? 'privacy-revoked' : 'disconnected'); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, 'disconnected'); room.viewers.delete(id); room.initialViewers.delete(id); pruned = true;
-    }
     this.reporting?.refresh(room, now);
     if (hostTimedOut) this.invalidateControls(room);
     if (pruned) this.settle(room, now);
     this.reconcileFallback(room);
     if (room.viewers.size && now - (room.lastPing || 0) >= 15000) {
       room.lastPing = now;
-      for (const viewer of new Map([...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v])).values()) void this.plex.ping(viewer.media);
+      for (const viewer of new Map(
+        [...room.viewers.values()].filter(v => v.media?.transcodeId).map(v => [v.media.transcodeId, v]),
+      ).values())
+        void this.plex.ping(viewer.media);
     }
     if (!room.saved && room.media && !room.s.state.paused && room.s.state.position >= room.media.duration) {
-      room.position = room.media.duration; room.changedAt = now; room.s.state.paused = true; room.revision++;
+      room.position = room.media.duration;
+      room.changedAt = now;
+      room.s.state.paused = true;
+      room.revision++;
     }
     if (room.recovery && !room.viewers.size) return;
     if (room.hadViewers && !room.viewers.size) {
-      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      this.cancelAutoplay(room);
+      clearPlaybackEnd(room);
       const savedHost = room.disconnectedViewers.get(room.hostViewerId);
       if (room.saved ? room.disconnectedViewers.size : savedHost?.userId === room.s.hostId) {
-        if (room.saved && !room.reconnecting) { room.disconnectedWasPlaying = !room.s.state.paused || room.initialGate && !room.manualPaused; this.roomState.freeze(room, lastPresence || now); void this.roomState.save(room); }
+        if (room.saved && !room.reconnecting) {
+          room.disconnectedWasPlaying = !room.s.state.paused || (room.initialGate && !room.manualPaused);
+          this.roomState.freeze(room, lastPresence || now);
+          void this.roomState.save(room);
+        }
         // An empty room has no command target. Only its original host tab may
         // reactivate it during the bounded, same-media reconnect grace.
-        room.reconnecting = true; this.hub.rooms.delete(room.s.roomId); return;
+        room.reconnecting = true;
+        this.hub.rooms.delete(room.s.roomId);
+        return;
       }
       if (room.saved && !room.reconnecting) this.roomState.freeze(room, lastPresence || now);
-      this.remove(room.s.roomId); return;
+      this.remove(room.s.roomId);
+      return;
     }
-    if (room.hadViewers && !room.recovery && ![...room.viewers.values()].some(viewer => viewer.userId === room.s.hostId)) void this.transfer(room);
+    if (
+      room.hadViewers &&
+      !room.recovery &&
+      ![...room.viewers.values()].some(viewer => viewer.userId === room.s.hostId)
+    )
+      void this.transfer(room);
     else if (pruned) void this.maybeStart(room);
     if (!room.hadViewers && now - room.lastActivity > 30000) this.remove(room.s.roomId);
   }
   reconcileFallback(room) {
-    const settings=this.hub.config.transcoding;
-    if(!settings?.fallback?.enabled || !settings.uburoom || settings.policy==='disabled' || !room.media || !room.viewers.size || room.media.kind!=='plex') {
-      room.fallbackStream?.close();room.fallbackStream=undefined;return;
+    const settings = this.hub.config.transcoding;
+    if (
+      !settings?.fallback?.enabled ||
+      !settings.uburoom ||
+      settings.policy === 'disabled' ||
+      !room.media ||
+      !room.viewers.size ||
+      room.media.kind !== 'plex'
+    ) {
+      room.fallbackStream?.close();
+      room.fallbackStream = undefined;
+      return;
     }
-    if(!room.fallbackStream && room.media.tracks && this.plex.av1) {
-      const source=room.media,version=room.mediaVersion;
-      room.fallbackStream=new FallbackStream({av1:this.plex.av1,settings,source,shareKey:[room.s.roomId,version],
-        authorized:async()=>{
-          if(this.rooms.get(room.s.roomId)!==room || room.mediaVersion!==version)return false;
-          for(const viewer of room.viewers.values())if((!viewer.alive || await viewer.alive()) && await this.canView(room,viewer.actor))return true;
+    if (!room.fallbackStream && room.media.tracks && this.plex.av1) {
+      const source = room.media,
+        version = room.mediaVersion;
+      room.fallbackStream = new FallbackStream({
+        av1: this.plex.av1,
+        settings,
+        source,
+        shareKey: [room.s.roomId, version],
+        authorized: async () => {
+          if (this.rooms.get(room.s.roomId) !== room || room.mediaVersion !== version) return false;
+          for (const viewer of room.viewers.values())
+            if ((!viewer.alive || (await viewer.alive())) && (await this.canView(room, viewer.actor))) return true;
           return false;
-        },event:(event,fields)=>this.hub.config.logger?.info('Fallback',event,fields)});
+        },
+        event: (event, fields) => this.hub.config.logger?.info('Fallback', event, fields),
+      });
     }
-    const media=room.fallbackStream?.media;
+    const media = room.fallbackStream?.media;
     // Active fallback viewers retain their group even between chunk requests.
     // The existing health report distinguishes them from speculative warming.
-    if(media && [...room.viewers.values()].some(viewer=>viewer.syncQuality?.health?.format===media.format &&
-      viewer.syncQuality.health.quality===media.quality && Date.now()-viewer.syncQuality.updatedAt<15000))media.av1Lease.group.viewerDemandAt=Date.now();
-    room.fallbackStream?.reconcile(this.position(room),!room.s.state.paused);
+    if (
+      media &&
+      [...room.viewers.values()].some(
+        viewer =>
+          viewer.syncQuality?.health?.format === media.format &&
+          viewer.syncQuality.health.quality === media.quality &&
+          Date.now() - viewer.syncQuality.updatedAt < 15000,
+      )
+    )
+      media.av1Lease.group.viewerDemandAt = Date.now();
+    room.fallbackStream?.reconcile(this.position(room), !room.s.state.paused);
   }
-  fallbackFor(room,viewer) {
-    const media=room.fallbackStream?.media;
-    return media && !media.av1Lease?.released && !viewer.localDelivery && !viewer.media?.unavailable &&
-      viewer.media?.selection?.subtitle?.delivery!=='burn' && viewer.localCodecs?.includes(media.format)?media:undefined;
+  fallbackFor(room, viewer) {
+    const media = room.fallbackStream?.media;
+    return media &&
+      !media.av1Lease?.released &&
+      !viewer.localDelivery &&
+      !viewer.media?.unavailable &&
+      viewer.media?.selection?.subtitle?.delivery !== 'burn' &&
+      viewer.localCodecs?.includes(media.format)
+      ? media
+      : undefined;
   }
   privateMember(room, userId) {
     return RoomPolicy.admitted(room.saved, userId) || !!this.hub.guestMembers?.(room.s.roomId).has(userId);
@@ -521,39 +979,76 @@ class Watch {
   async canView(room, actor) {
     if (!room?.saved && room?.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) return false;
     if (!room || this.rooms.get(room.s.roomId) !== room) return false;
-    if (!canWatch(this.hub.access,actor.userId,actor)) {
-      try { if (!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(actor.userId,actor)) return false; }
-      catch (error) { if (!this.retainedThroughOutage(room,actor,error)) return false; }
+    if (!canWatch(this.hub.access, actor.userId, actor)) {
+      try {
+        if (!(await (this.hub.access?.refreshWatch || this.hub.access?.refresh)?.(actor.userId, actor))) return false;
+      } catch (error) {
+        if (!this.retainedThroughOutage(room, actor, error)) return false;
+      }
     }
-    if(room.media?.kind==='plex'&&this.hub.plexFor){
-      try {const allowed=await (await this.hub.plexFor(actor)).allows(room.media.id);this.providerResponded();if(!allowed)return false;}
-      catch (error) { if (!this.retainedThroughOutage(room,actor,error)) return false; }
+    if (room.media?.kind === 'plex' && this.hub.plexFor) {
+      try {
+        const allowed = await (await this.hub.plexFor(actor)).allows(room.media.id);
+        this.providerResponded();
+        if (!allowed) return false;
+      } catch (error) {
+        if (!this.retainedThroughOutage(room, actor, error)) return false;
+      }
     }
     return viewEligible(room.s, actor, this.hub.config, Date.now(), this.hub.access, this.hub.isAdmin(actor));
   }
   async list(actor, activity = false) {
     const rooms = [];
     for (const room of this.rooms.values()) {
-      this.refresh(room); if (!this.rooms.has(room.s.roomId)) continue;
+      this.refresh(room);
+      if (!this.rooms.has(room.s.roomId)) continue;
       if (!room.saved && room.reconnecting && (actor.surface !== 'web' || actor.userId !== room.s.hostId)) continue;
       const accessible = await this.canView(room, actor);
-      if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access))) continue;
+      if (!accessible && !(activity && room.s.visibility === 'private' && sameVoice(room.s, actor, this.hub.access)))
+        continue;
       const members = [...new Map([...room.viewers.values()].map(v => [v.userId, v.name])).values()];
-      rooms.push({maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,id:room.s.roomId, name:accessible ? room.s.name : undefined, slug:accessible ? (room.s.slug || room.saved?.slug) : undefined, hostName:room.s.hostName, visibility:room.s.visibility, viewers:members.length,
-        ...(accessible ? {title:room.media?.title || '',members,canManage:this.hub.canManage(room.s, actor)} : {locked:true})});
+      rooms.push({
+        maxMembers: room.saved
+          ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers, this.roomState.limits.maxMembers)
+          : undefined,
+        id: room.s.roomId,
+        name: accessible ? room.s.name : undefined,
+        slug: accessible ? room.s.slug || room.saved?.slug : undefined,
+        hostName: room.s.hostName,
+        visibility: room.s.visibility,
+        viewers: members.length,
+        ...(accessible
+          ? { title: room.media?.title || '', members, canManage: this.hub.canManage(room.s, actor) }
+          : { locked: true }),
+      });
     }
-    if (this.roomState) for (const [id,recovery] of this.roomState.recoveries) {
-      if (this.rooms.has(id) || recovery.until <= Date.now()) continue;
-      const record = this.roomState.store.get(id), now = Date.now();
-      const descriptor = {...record,kind:'watch',reachable:true,lastSeen:now,socket:{readyState:1}};
-      if (!viewEligible(descriptor,actor,this.hub.config,now,this.hub.access,this.hub.isAdmin(actor))) continue;
-      if (record.bookmark && this.hub.plexFor) {
-        try { if (!await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId)) continue; } catch { continue; }
+    if (this.roomState)
+      for (const [id, recovery] of this.roomState.recoveries) {
+        if (this.rooms.has(id) || recovery.until <= Date.now()) continue;
+        const record = this.roomState.store.get(id),
+          now = Date.now();
+        const descriptor = { ...record, kind: 'watch', reachable: true, lastSeen: now, socket: { readyState: 1 } };
+        if (!viewEligible(descriptor, actor, this.hub.config, now, this.hub.access, this.hub.isAdmin(actor))) continue;
+        if (record.bookmark && this.hub.plexFor) {
+          try {
+            if (!(await (await this.hub.plexFor(actor)).allows(record.bookmark.mediaId))) continue;
+          } catch {
+            continue;
+          }
+        }
+        rooms.push({
+          id,
+          name: record.name,
+          slug: record.slug,
+          visibility: record.visibility,
+          hostName: this.roomState.registry.canonical(record.creatorId)?.name,
+          title: record.bookmark?.title || '',
+          viewers: 0,
+          members: [],
+          recovering: true,
+          maxMembers: Math.min(record.maxMembers || this.roomState.limits.maxMembers, this.roomState.limits.maxMembers),
+        });
       }
-      rooms.push({id,name:record.name,slug:record.slug,visibility:record.visibility,hostName:this.roomState.registry.canonical(record.creatorId)?.name,
-        title:record.bookmark?.title || '',viewers:0,members:[],recovering:true,
-        maxMembers:Math.min(record.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers)});
-    }
     return rooms;
   }
   async transfer(room) {
@@ -562,39 +1057,78 @@ class Watch {
     room.transferring = true;
     const oldHost = room.s.hostId;
     try {
-      const candidates = [...room.viewers.entries()].filter(([, v]) => v.userId !== oldHost).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
+      const candidates = [...room.viewers.entries()]
+        .filter(([, v]) => v.userId !== oldHost)
+        .sort((a, b) => a[1].joinedAt - b[1].joinedAt);
       for (const [viewerId, candidate] of candidates) {
-        try { if (candidate.alive && !await candidate.alive()) continue; } catch { continue; }
+        try {
+          if (candidate.alive && !(await candidate.alive())) continue;
+        } catch {
+          continue;
+        }
         let member;
-        try { member = !!await (this.hub.access?.refreshWatch||this.hub.access?.refresh)?.(candidate.userId,candidate.actor);if(member&&room.media?.kind==='plex'&&this.hub.plexFor)member=await (await this.hub.plexFor(candidate.actor)).allows(room.media.id); } catch { member = false; }
+        try {
+          member = !!(await (this.hub.access?.refreshWatch || this.hub.access?.refresh)?.(
+            candidate.userId,
+            candidate.actor,
+          ));
+          if (member && room.media?.kind === 'plex' && this.hub.plexFor)
+            member = await (await this.hub.plexFor(candidate.actor)).allows(room.media.id);
+        } catch {
+          member = false;
+        }
         if (this.rooms.get(room.s.roomId) !== room || room.s.hostId !== oldHost) return;
         if ([...room.viewers.values()].some(v => v.userId === oldHost)) return;
-        if (!member || room.s.visibility !== 'public' || room.viewers.get(viewerId) !== candidate || Date.now() - candidate.at >= 10000) continue;
-        room.s.hostId = candidate.userId; room.s.hostName = candidate.name; room.hostViewerId = viewerId;
-        room.s.epoch = randomUUID(); room.revision++;
+        if (
+          !member ||
+          room.s.visibility !== 'public' ||
+          room.viewers.get(viewerId) !== candidate ||
+          Date.now() - candidate.at >= 10000
+        )
+          continue;
+        room.s.hostId = candidate.userId;
+        room.s.hostName = candidate.name;
+        room.hostViewerId = viewerId;
+        room.s.epoch = randomUUID();
+        room.revision++;
         await this.maybeStart(room);
         return;
       }
       this.remove(room.s.roomId);
-    } finally { room.transferring = false; }
+    } finally {
+      room.transferring = false;
+    }
   }
   async leave(room, actor, viewerId, reason = 'left') {
     if (room.transitionCommit) await room.transitionCommit.catch(() => {});
     if (room.disconnectedViewers.get(viewerId)?.userId === actor.userId) {
       void this.reporting?.endViewer(room, viewerId, reason);
       room.disconnectedViewers.delete(viewerId);
-      if (room.reconnecting && viewerId === room.hostViewerId) { this.remove(room.s.roomId); return; }
+      if (room.reconnecting && viewerId === room.hostViewerId) {
+        this.remove(room.s.roomId);
+        return;
+      }
     }
     if (room.viewers.get(viewerId)?.userId !== actor.userId) return;
     const hostLeft = actor.userId === room.s.hostId;
     const viewer = room.viewers.get(viewerId);
-    this.tracking.end(viewer, reason); void this.plex.stop(viewer.media); void this.reporting?.end(viewer, reason);
+    this.tracking.end(viewer, reason);
+    void this.plex.stop(viewer.media);
+    void this.reporting?.end(viewer, reason);
     viewer.preparing?.abort();
-    room.viewers.delete(viewerId); room.initialViewers.delete(viewerId); room.revision++;
-    this.hub?.config?.logger?.info('Room', `Viewer "${viewer?.name || viewerId}" left "${room.s.alias || room.s.roomId}" (remaining: ${room.viewers.size})`);
+    room.viewers.delete(viewerId);
+    room.initialViewers.delete(viewerId);
+    room.revision++;
+    this.hub?.config?.logger?.info(
+      'Room',
+      `Viewer "${viewer?.name || viewerId}" left "${room.s.alias || room.s.roomId}" (remaining: ${room.viewers.size})`,
+    );
     if (room.autoplayCountdown?.viewerId === viewerId || !room.viewers.size) this.cancelAutoplay(room);
     this.settle(room);
-    if (!room.viewers.size) { await this.remove(room.s.roomId); return; }
+    if (!room.viewers.size) {
+      await this.remove(room.s.roomId);
+      return;
+    }
     if (hostLeft) {
       if (reason === 'left') {
         // An intentional handoff retains room settings, but never old commands.
@@ -614,173 +1148,363 @@ class Watch {
     const host = [...room.viewers.values()].find(v => v.userId === room.s.hostId);
     if (!host) return;
     room.starting = true;
-    const version = room.mediaVersion, readinessVersion = room.readinessVersion;
+    const version = room.mediaVersion,
+      readinessVersion = room.readinessVersion;
     try {
-      if (host.alive && !await host.alive()) return;
+      if (host.alive && !(await host.alive())) return;
       this.settle(room);
-      if (room.mediaVersion !== version || room.readinessVersion !== readinessVersion || !areInitialViewersReady(room)) return;
+      if (room.mediaVersion !== version || room.readinessVersion !== readinessVersion || !areInitialViewersReady(room))
+        return;
       room.initialGate = false;
-      const result = await this.hub.dispatch({ ...host.actor, watchAutoplayVersion: version, watchReadinessVersion: readinessVersion }, { roomId: room.s.roomId, action: 'media.play' });
-      if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion) room.initialGate = true;
-    } finally { room.starting = false; }
+      const result = await this.hub.dispatch(
+        { ...host.actor, watchAutoplayVersion: version, watchReadinessVersion: readinessVersion },
+        { roomId: room.s.roomId, action: 'media.play' },
+      );
+      if (result.status !== 'applied' && room.mediaVersion === version && room.readinessVersion === readinessVersion)
+        room.initialGate = true;
+    } finally {
+      room.starting = false;
+    }
   }
   snapshot(room, actor, viewerId, alive, quality = '720p', preferences = {}) {
     if (this.shuttingDown || room.removing) throw new Error('Room unavailable');
-    if ((room.kickedViewers?.get(viewerId) || 0) > Date.now()) throw Object.assign(new Error('You were removed from this room. You may rejoin.'),{status:403});
+    if ((room.kickedViewers?.get(viewerId) || 0) > Date.now())
+      throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
     room.kickedViewers?.delete(viewerId);
-    const now = Date.now(); this.refresh(room, now); room.lastActivity = now;
+    const now = Date.now();
+    this.refresh(room, now);
+    room.lastActivity = now;
     if (this.rooms.get(room.s.roomId) !== room) throw new Error('Room unavailable');
     // Existing viewers can keep the room alive between host tabs.
-    if (room.saved) this.roomState.checkCapacity(room,actor.userId);
+    if (room.saved) this.roomState.checkCapacity(room, actor.userId);
     const oldViewer = room.viewers.get(viewerId);
     if (oldViewer && oldViewer.userId !== actor.userId) throw new Error('Viewer identity mismatch');
     const saved = !oldViewer && room.disconnectedViewers.get(viewerId);
     if (saved && saved.userId !== actor.userId) throw new Error('Viewer identity mismatch');
-    if (!room.saved && room.reconnecting && (!saved || viewerId !== room.hostViewerId || actor.surface !== 'web' || actor.userId !== room.s.hostId || !viewEligible(room.s,actor,this.hub.config,now,this.hub.access))) throw new Error('Room unavailable');
+    if (
+      !room.saved &&
+      room.reconnecting &&
+      (!saved ||
+        viewerId !== room.hostViewerId ||
+        actor.surface !== 'web' ||
+        actor.userId !== room.s.hostId ||
+        !viewEligible(room.s, actor, this.hub.config, now, this.hub.access))
+    )
+      throw new Error('Room unavailable');
     if (saved) room.disconnectedViewers.delete(viewerId);
-    if (room.reconnecting) { room.reconnecting = false; this.hub.rooms.set(room.s.roomId, room.s); }
+    if (room.reconnecting) {
+      room.reconnecting = false;
+      this.hub.rooms.set(room.s.roomId, room.s);
+    }
     const currentHost = room.viewers.get(room.hostViewerId);
     const hostPresent = currentHost && (isHost(room.s, currentHost.actor) || this.hub.isAdmin(currentHost.actor));
-    const controller = !room.saved ? isHost(room.s, actor) : actor.userId === room.s.hostId ||
-      (isHost(room.s, actor) || this.hub.isAdmin(actor)) && !hostPresent ||
-      !room.viewers.has(room.hostViewerId) && this.hub.canRoom(room.s, actor, 'continueWithoutHost');
+    const controller = !room.saved
+      ? isHost(room.s, actor)
+      : actor.userId === room.s.hostId ||
+        ((isHost(room.s, actor) || this.hub.isAdmin(actor)) && !hostPresent) ||
+        (!room.viewers.has(room.hostViewerId) && this.hub.canRoom(room.s, actor, 'continueWithoutHost'));
     if (controller && !oldViewer && room.hostViewerId && room.hostViewerId !== viewerId) {
-      room.s.epoch = randomUUID(); room.revision++;
+      room.s.epoch = randomUUID();
+      room.revision++;
     }
-    if (controller && !oldViewer) { room.hostViewerId = viewerId; room.s.hostId = actor.userId; room.s.hostName = actor.name; room.waitingForHost = false; }
+    if (controller && !oldViewer) {
+      room.hostViewerId = viewerId;
+      room.s.hostId = actor.userId;
+      room.s.hostName = actor.name;
+      room.waitingForHost = false;
+    }
     room.hadViewers = true;
-    const viewer = oldViewer || { observationEpoch: randomUUID(), quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
+    const viewer = oldViewer || {
+      observationEpoch: randomUUID(),
+      quality: saved?.quality || (Engine.validQuality(quality) ? quality : '720p4'),
       readinessBypassedVersion: saved?.mediaVersion === room.mediaVersion ? saved?.readinessBypassedVersion : undefined,
-      preferredQuality:saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
-      volume:saved?.volume ?? preferences.volume ?? 30, muted:saved?.muted ?? preferences.muted ?? false,
-      plexReporting:saved?.plexReporting ?? preferences.plexReporting ?? true,
-      plexWatchState:saved?.plexWatchState ?? preferences.plexWatchState ?? false,
-      trackChoice:saved?.trackChoice ?? preferences.trackChoice, subtitleOffset:saved?.subtitleOffset, compatible:saved?.compatible, fallback:saved?.fallback,
-      directProxyVersion:saved?.directProxyVersion, browserSubtitles:saved?.browserSubtitles, localCodecs:saved?.localCodecs,
-      syncQuality:saved?.syncQuality, localDelivery:saved?.localDelivery ?? false,
-      joinedAt: Math.min(now, saved?.joinedAt ?? now, ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt)) };
-    Object.assign(viewer, { at: now, userId: actor.userId, viewerId, name: Engine.senderName(actor.name), actor: { ...actor }, ...(alive ? { alive } : {}) });
+      preferredQuality: saved?.preferredQuality || (Engine.validQuality(quality) ? Engine.qualityId(quality) : '720p4'),
+      volume: saved?.volume ?? preferences.volume ?? 30,
+      muted: saved?.muted ?? preferences.muted ?? false,
+      plexReporting: saved?.plexReporting ?? preferences.plexReporting ?? true,
+      plexWatchState: saved?.plexWatchState ?? preferences.plexWatchState ?? false,
+      trackChoice: saved?.trackChoice ?? preferences.trackChoice,
+      subtitleOffset: saved?.subtitleOffset,
+      compatible: saved?.compatible,
+      fallback: saved?.fallback,
+      directProxyVersion: saved?.directProxyVersion,
+      browserSubtitles: saved?.browserSubtitles,
+      localCodecs: saved?.localCodecs,
+      syncQuality: saved?.syncQuality,
+      localDelivery: saved?.localDelivery ?? false,
+      joinedAt: Math.min(
+        now,
+        saved?.joinedAt ?? now,
+        ...[...room.viewers.values()].filter(v => v.userId === actor.userId).map(v => v.joinedAt),
+      ),
+    };
+    Object.assign(viewer, {
+      at: now,
+      userId: actor.userId,
+      viewerId,
+      name: Engine.senderName(actor.name),
+      actor: { ...actor },
+      ...(alive ? { alive } : {}),
+    });
     room.viewers.set(viewerId, viewer);
     if (saved) this.reporting?.reconnect(room, viewer, saved);
-    if (!oldViewer) this.hub?.config?.logger?.info('Room', `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`);
-    if (room.saved && !oldViewer) { this.roomState.store.touch(room.s.roomId); void this.roomState.save(room).catch(() => {}); }
+    if (!oldViewer)
+      this.hub?.config?.logger?.info(
+        'Room',
+        `Viewer "${viewer.name || actor.userId}" joined "${room.s.alias || room.s.roomId}" (viewers: ${room.viewers.size})`,
+      );
+    if (room.saved && !oldViewer) {
+      this.roomState.store.touch(room.s.roomId);
+      void this.roomState.save(room).catch(() => {});
+    }
     if (!oldViewer) promoteGroupReadinessLead(room, now);
     if (room.initialGate && !oldViewer) room.initialViewers.add(viewerId);
     const owner = this.hub.canManage(room.s, actor);
-    room.transportSequence=(room.transportSequence||0)+1;
-    const participants = room.saved ? syncQualityParticipants(room,this.roomState.participants(room.s.roomId),now) : undefined;
+    room.transportSequence = (room.transportSequence || 0) + 1;
+    const participants = room.saved
+      ? syncQualityParticipants(room, this.roomState.participants(room.s.roomId), now)
+      : undefined;
     // Health details (buffer, stalls, device) are for the people who run the room.
-    if (participants && !owner) for (const person of participants) for (const session of person.syncQuality?.sessions || []) delete session.health;
+    if (participants && !owner)
+      for (const person of participants)
+        for (const session of person.syncQuality?.sessions || []) delete session.health;
     const { waitingForReady, readiness } = snapshotReadiness(room);
-    return { id: room.s.roomId, transportSequence:room.transportSequence, epoch: room.s.epoch, revision: room.revision, mediaVersion: room.mediaVersion, serverNow: now,
+    return {
+      id: room.s.roomId,
+      transportSequence: room.transportSequence,
+      epoch: room.s.epoch,
+      revision: room.revision,
+      mediaVersion: room.mediaVersion,
+      serverNow: now,
       plexReporting: {
         eligible: !!this.reporting?.isEligible(actor.userId),
         activity: viewer.plexReporting !== false,
         watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
-        watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false
+        watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false,
       },
       // Everyone in the room may share its invite.
-      invite:room.saved && room.s.inviteCode ? { code:room.s.inviteCode, url:this.hub.config.publicUrl + '/join/' + room.s.inviteCode } : undefined,
-      startAt:room.startAt, pauseAt:room.pauseAt,
-      title: room.media?.title || 'Choose something to watch…', subtitle: room.media?.subtitle || '', mediaId: room.media?.id,
-      chapters: room.media?.chapters || [], markers: room.media?.markers || [],
-      observationEpoch: viewer.observationEpoch, format: viewer.media?.format, quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
-      videoCodec: viewer.media?.videoCodec, compatible: !!viewer.media?.compatible, streamVersion: viewer.streamVersion,
-      audioCodec:viewer.media?.audioCodec,bitrate:viewer.media?.bitrate,bitrateCeiling:viewer.media?.bitrateCeiling,
-      hdr:!!viewer.media?.hdr,hdrKind:viewer.media?.hdrKind || 'sdr',hdrLabel:viewer.media?.hdrLabel || 'SDR',
-      doviProfile:viewer.media?.doviProfile ?? null,bitDepth:viewer.media?.bitDepth || 8,
-      mediaError:viewer.media?.playbackError, unavailableMedia:viewer.unavailableMedia || [], providerNotice:this.providerNotice(room),
-      qualityNotice:viewer.media?.qualityNotice, preferredQuality:viewer.preferredQuality,
-      deliveryInfo:viewer.media?{format:viewer.media.format,reason:viewer.media.deliveryReason,videoCodec:viewer.media.videoCodec,audioCodec:viewer.media.audioCodec,
-        hdr:!!viewer.media.hdr,hdrKind:viewer.media.hdrKind || 'sdr',hdrLabel:viewer.media.hdrLabel || 'SDR',
-        sourceHdr:!!viewer.media.sourceHdr,sourceHdrKind:viewer.media.sourceHdrKind || 'sdr',sourceHdrLabel:viewer.media.sourceHdrLabel || 'SDR',
-        toneMapped:!!(viewer.media.sourceHdr && viewer.media.format !== 'file'),
-        videoDecision:viewer.media.output?.videoDecision,audioDecision:viewer.media.output?.audioDecision,
-        width:viewer.media.output?.width,height:viewer.media.output?.height,bitrate:viewer.media.bitrate,bitrateCeiling:viewer.media.bitrateCeiling,
-        encoder:viewer.media.av1Lease?.group.encoder,cpuFallback:!!viewer.media.av1Lease?.group.cpuFallback}:undefined,
-      ...(viewer.media?.tracks ? {tracks:{...Tracks.publicCatalog(viewer.media.tracks),audioChoice:viewer.trackChoice?.audioId || 'auto',subtitleChoice:viewer.trackChoice?.subtitleId || 'auto',
-        audioId:viewer.media.selection.audio?.id,subtitleId:viewer.media.selection.subtitle?.id,subtitleOffset:viewer.subtitleOffset || 0,
-        subtitleDelivery:viewer.media.selection.subtitle?.delivery,subtitleMode:viewer.trackChoice?.subtitleMode || 'auto',
-        subtitleError:viewer.media.selection.subtitle && !viewer.media.selection.subtitle.available ? viewer.media.selection.subtitle.reason : undefined}} : {}),
+      invite:
+        room.saved && room.s.inviteCode
+          ? { code: room.s.inviteCode, url: this.hub.config.publicUrl + '/join/' + room.s.inviteCode }
+          : undefined,
+      startAt: room.startAt,
+      pauseAt: room.pauseAt,
+      title: room.media?.title || 'Choose something to watch…',
+      subtitle: room.media?.subtitle || '',
+      mediaId: room.media?.id,
+      chapters: room.media?.chapters || [],
+      markers: room.media?.markers || [],
+      observationEpoch: viewer.observationEpoch,
+      format: viewer.media?.format,
+      quality: room.media?.kind === 'demo' ? 'direct' : viewer.quality,
+      videoCodec: viewer.media?.videoCodec,
+      compatible: !!viewer.media?.compatible,
+      streamVersion: viewer.streamVersion,
+      audioCodec: viewer.media?.audioCodec,
+      bitrate: viewer.media?.bitrate,
+      bitrateCeiling: viewer.media?.bitrateCeiling,
+      hdr: !!viewer.media?.hdr,
+      hdrKind: viewer.media?.hdrKind || 'sdr',
+      hdrLabel: viewer.media?.hdrLabel || 'SDR',
+      doviProfile: viewer.media?.doviProfile ?? null,
+      bitDepth: viewer.media?.bitDepth || 8,
+      mediaError: viewer.media?.playbackError,
+      unavailableMedia: viewer.unavailableMedia || [],
+      providerNotice: this.providerNotice(room),
+      qualityNotice: viewer.media?.qualityNotice,
+      preferredQuality: viewer.preferredQuality,
+      deliveryInfo: viewer.media
+        ? {
+            format: viewer.media.format,
+            reason: viewer.media.deliveryReason,
+            videoCodec: viewer.media.videoCodec,
+            audioCodec: viewer.media.audioCodec,
+            hdr: !!viewer.media.hdr,
+            hdrKind: viewer.media.hdrKind || 'sdr',
+            hdrLabel: viewer.media.hdrLabel || 'SDR',
+            sourceHdr: !!viewer.media.sourceHdr,
+            sourceHdrKind: viewer.media.sourceHdrKind || 'sdr',
+            sourceHdrLabel: viewer.media.sourceHdrLabel || 'SDR',
+            toneMapped: !!(viewer.media.sourceHdr && viewer.media.format !== 'file'),
+            videoDecision: viewer.media.output?.videoDecision,
+            audioDecision: viewer.media.output?.audioDecision,
+            width: viewer.media.output?.width,
+            height: viewer.media.output?.height,
+            bitrate: viewer.media.bitrate,
+            bitrateCeiling: viewer.media.bitrateCeiling,
+            encoder: viewer.media.av1Lease?.group.encoder,
+            cpuFallback: !!viewer.media.av1Lease?.group.cpuFallback,
+          }
+        : undefined,
+      ...(viewer.media?.tracks
+        ? {
+            tracks: {
+              ...Tracks.publicCatalog(viewer.media.tracks),
+              audioChoice: viewer.trackChoice?.audioId || 'auto',
+              subtitleChoice: viewer.trackChoice?.subtitleId || 'auto',
+              audioId: viewer.media.selection.audio?.id,
+              subtitleId: viewer.media.selection.subtitle?.id,
+              subtitleOffset: viewer.subtitleOffset || 0,
+              subtitleDelivery: viewer.media.selection.subtitle?.delivery,
+              subtitleMode: viewer.trackChoice?.subtitleMode || 'auto',
+              subtitleError:
+                viewer.media.selection.subtitle && !viewer.media.selection.subtitle.available
+                  ? viewer.media.selection.subtitle.reason
+                  : undefined,
+            },
+          }
+        : {}),
       qualities: this.plex.qualities?.(room.media) || Engine.QUALITIES,
-      ...(room.saved ? (() => {
-        const queueSummary = this.roomState.queue.summary(room.s.roomId);
-        const completed = queueSummary?.lastHistory;
-        const next = queueSummary?.next || (queueSummary?.autoQueue?.next ? { ...queueSummary.autoQueue.next, id: 'auto:' + queueSummary.autoQueue.next.mediaId, source: 'auto' } : null);
-        const endingOffer = room.endingOffer?.key === (completed?.id + ':' + queueSummary?.queueRevision) ? room.endingOffer.offer : null;
-        const hasInterstitial = !room.media && !!(completed || next || endingOffer);
-        const ending = hasInterstitial ? {
-          state: room.autoplayCountdown ? 'countdown' : next ? 'upNext' : endingOffer ? 'offer' : 'finished',
-          completed: completed ? {
-            entryId: completed.id,
-            mediaId: completed.mediaId,
-            type: completed.type,
-            title: completed.title,
-            subtitle: formatEntrySubtitle(completed),
-            outcome: completed.outcome
-          } : null,
-          next: next ? {
-            entryId: next.id,
-            mediaId: next.mediaId,
-            type: next.type,
-            title: next.title,
-            subtitle: room.endingMeta?.get(next.mediaId)?.subtitle || formatEntrySubtitle(next),
-            duration: next.duration,
-            summary: room.endingMeta?.get(next.mediaId)?.summary || '',
-            hasLandscape: Boolean(room.endingMeta?.get(next.mediaId)?.hasLandscape ?? next.hasLandscape),
-            hasPoster: Boolean(room.endingMeta?.get(next.mediaId)?.hasPoster ?? next.hasPoster),
-            source: next.provenance === 'following' || next.provenance === 'random' || next.provenance === 'continue' || next.source === 'auto' ? 'auto' : 'queue'
-          } : endingOffer ? {
-            ...endingOffer,
-            source: 'offer'
-          } : null,
-          countdown: room.autoplayCountdown ? {
-            id: room.autoplayCountdown.id,
-            startedAt: room.autoplayCountdown.startedAt,
-            durationMs: room.autoplayCountdown.durationMs,
-            endsAt: room.autoplayCountdown.endsAt
-          } : null,
-          error: room.autoplayError || room.autoQueueError || null
-        } : null;
-        if (!room.media && hasInterstitial && !room.refreshingEndingMeta) {
-          const offerKey = completed?.id + ':' + queueSummary?.queueRevision;
-          const needsOffer = !next && completed?.type === 'episode' && queueSummary.autoQueue.mode === 'off' && room.endingOffer?.key !== offerKey;
-          const needsSummary = next && !room.endingMeta?.has(next.mediaId);
-          if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
-        }
-        return {
-          hasPrevious: this.position(room) >= 5 || (queueSummary?.historyCount || 0) > 0,
-          hasNext: !!(queueSummary?.next || queueSummary?.autoQueue?.next),
-          queueSummary,
-          ending
-        };
-      })() : {
-        hasPrevious: !!room.media?.previousId,
-        hasNext: !!room.media?.nextId,
-        queueSummary: undefined,
-        ending: null
-      }),
-      autoplay: room.saved ? { enabled:this.roomState.store.get(room.s.roomId).autoplay,
-        countdown:room.autoplayCountdown ? {id:room.autoplayCountdown.id,title:room.autoplayCountdown.title,endsAt:room.autoplayCountdown.endsAt} : null,
-        error:room.autoplayError || room.autoQueueError } : undefined,
-      readinessVersion: room.readinessVersion, waitingForReady, readiness,
-      recovery:this.roomState?.recoveryState(room),maxMembers:room.saved ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers,this.roomState.limits.maxMembers) : undefined,
-      roomName:room.s.name, slug:room.s.slug || room.saved?.slug, durable:!!room.saved, roomRole:room.saved ? RoomPolicy.role(room.s,actor.userId) : undefined, saveError:room.saveError, waitingForHost:!!room.waitingForHost,
+      ...(room.saved
+        ? (() => {
+            const queueSummary = this.roomState.queue.summary(room.s.roomId);
+            const completed = queueSummary?.lastHistory;
+            const next =
+              queueSummary?.next ||
+              (queueSummary?.autoQueue?.next
+                ? { ...queueSummary.autoQueue.next, id: 'auto:' + queueSummary.autoQueue.next.mediaId, source: 'auto' }
+                : null);
+            const endingOffer =
+              room.endingOffer?.key === completed?.id + ':' + queueSummary?.queueRevision
+                ? room.endingOffer.offer
+                : null;
+            const hasInterstitial = !room.media && !!(completed || next || endingOffer);
+            const ending = hasInterstitial
+              ? {
+                  state: room.autoplayCountdown ? 'countdown' : next ? 'upNext' : endingOffer ? 'offer' : 'finished',
+                  completed: completed
+                    ? {
+                        entryId: completed.id,
+                        mediaId: completed.mediaId,
+                        type: completed.type,
+                        title: completed.title,
+                        subtitle: formatEntrySubtitle(completed),
+                        outcome: completed.outcome,
+                      }
+                    : null,
+                  next: next
+                    ? {
+                        entryId: next.id,
+                        mediaId: next.mediaId,
+                        type: next.type,
+                        title: next.title,
+                        subtitle: room.endingMeta?.get(next.mediaId)?.subtitle || formatEntrySubtitle(next),
+                        duration: next.duration,
+                        summary: room.endingMeta?.get(next.mediaId)?.summary || '',
+                        hasLandscape: Boolean(room.endingMeta?.get(next.mediaId)?.hasLandscape ?? next.hasLandscape),
+                        hasPoster: Boolean(room.endingMeta?.get(next.mediaId)?.hasPoster ?? next.hasPoster),
+                        source:
+                          next.provenance === 'following' ||
+                          next.provenance === 'random' ||
+                          next.provenance === 'continue' ||
+                          next.source === 'auto'
+                            ? 'auto'
+                            : 'queue',
+                      }
+                    : endingOffer
+                      ? {
+                          ...endingOffer,
+                          source: 'offer',
+                        }
+                      : null,
+                  countdown: room.autoplayCountdown
+                    ? {
+                        id: room.autoplayCountdown.id,
+                        startedAt: room.autoplayCountdown.startedAt,
+                        durationMs: room.autoplayCountdown.durationMs,
+                        endsAt: room.autoplayCountdown.endsAt,
+                      }
+                    : null,
+                  error: room.autoplayError || room.autoQueueError || null,
+                }
+              : null;
+            if (!room.media && hasInterstitial && !room.refreshingEndingMeta) {
+              const offerKey = completed?.id + ':' + queueSummary?.queueRevision;
+              const needsOffer =
+                !next &&
+                completed?.type === 'episode' &&
+                queueSummary.autoQueue.mode === 'off' &&
+                room.endingOffer?.key !== offerKey;
+              const needsSummary = next && !room.endingMeta?.has(next.mediaId);
+              if (needsOffer || needsSummary) void this.refreshEndingMeta(room);
+            }
+            return {
+              hasPrevious: this.position(room) >= 5 || (queueSummary?.historyCount || 0) > 0,
+              hasNext: !!(queueSummary?.next || queueSummary?.autoQueue?.next),
+              queueSummary,
+              ending,
+            };
+          })()
+        : {
+            hasPrevious: !!room.media?.previousId,
+            hasNext: !!room.media?.nextId,
+            queueSummary: undefined,
+            ending: null,
+          }),
+      autoplay: room.saved
+        ? {
+            enabled: this.roomState.store.get(room.s.roomId).autoplay,
+            countdown: room.autoplayCountdown
+              ? {
+                  id: room.autoplayCountdown.id,
+                  title: room.autoplayCountdown.title,
+                  endsAt: room.autoplayCountdown.endsAt,
+                }
+              : null,
+            error: room.autoplayError || room.autoQueueError,
+          }
+        : undefined,
+      readinessVersion: room.readinessVersion,
+      waitingForReady,
+      readiness,
+      recovery: this.roomState?.recoveryState(room),
+      maxMembers: room.saved
+        ? Math.min(room.saved.maxMembers || this.roomState.limits.maxMembers, this.roomState.limits.maxMembers)
+        : undefined,
+      roomName: room.s.name,
+      slug: room.s.slug || room.saved?.slug,
+      durable: !!room.saved,
+      roomRole: room.saved ? RoomPolicy.role(room.s, actor.userId) : undefined,
+      saveError: room.saveError,
+      waitingForHost: !!room.waitingForHost,
       participants,
-      allHosts:!!room.s.permissions?.allHosts,hostPermissions:room.saved ? {...room.s.permissions.host} : undefined,
-      participantPermissions:room.saved ? { ...room.s.permissions.viewer } : undefined,
-      capabilities:room.saved ? Object.fromEntries([...RoomPolicy.CAPABILITIES,'managePermissions','manageHosts'].map(key => [key,this.hub.canRoom(room.s,actor,key)])) : undefined,
-      hostName: room.s.hostName, canBrowse:true, isHost:isHost(room.s,actor), adminMode:this.hub.isAdmin(actor),
-      state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }), canManage: owner, controls: { ...room.s.controls },
+      allHosts: !!room.s.permissions?.allHosts,
+      hostPermissions: room.saved ? { ...room.s.permissions.host } : undefined,
+      participantPermissions: room.saved ? { ...room.s.permissions.viewer } : undefined,
+      capabilities: room.saved
+        ? Object.fromEntries(
+            [...RoomPolicy.CAPABILITIES, 'managePermissions', 'manageHosts'].map(key => [
+              key,
+              this.hub.canRoom(room.s, actor, key),
+            ]),
+          )
+        : undefined,
+      hostName: room.s.hostName,
+      canBrowse: true,
+      isHost: isHost(room.s, actor),
+      adminMode: this.hub.isAdmin(actor),
+      state: Engine.snapshot({ ...room.s.state, volume: viewer.volume, muted: viewer.muted }),
+      canManage: owner,
+      controls: { ...room.s.controls },
       visibility: room.s.visibility,
-      canPlayback:room.saved ? this.hub.roomCommandAllowed(room.s,actor,{action:'media.play'}) : owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback,
-      canTransform:room.saved ? this.hub.canRoom(room.s,actor,'picture') : owner || eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.transform, viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
-      feedback: room.feedback };
+      canPlayback: room.saved
+        ? this.hub.roomCommandAllowed(room.s, actor, { action: 'media.play' })
+        : owner || (eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback),
+      canTransform: room.saved
+        ? this.hub.canRoom(room.s, actor, 'picture')
+        : owner || (eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.transform),
+      viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
+      feedback: room.feedback,
+    };
   }
   cancelAutoplay(room) {
     this.dropPreload(room);
-    clearTimeout(room.autoplayTimer); room.autoplayTimer = undefined;
-    if (room.autoplayCountdown) { room.autoplayCountdown = undefined; room.revision++; }
+    clearTimeout(room.autoplayTimer);
+    room.autoplayTimer = undefined;
+    if (room.autoplayCountdown) {
+      room.autoplayCountdown = undefined;
+      room.revision++;
+    }
     room.playbackIntent = (room.playbackIntent || 0) + 1;
   }
   async autoCorpus(id, actor, config = this.roomState.store.get(id).autoQueue, anchorOverride) {
@@ -788,23 +1512,29 @@ class Watch {
     const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
     if (config.mode === 'continue') {
       const queue = this.roomState.queue;
-      const pending = queue.pending(id), current = queue.current(id), lastHistory = queue.lastHistory(id);
+      const pending = queue.pending(id),
+        current = queue.current(id),
+        lastHistory = queue.lastHistory(id);
       const active = [...(current ? [current] : []), ...pending];
-      const anchorItem = anchorOverride !== undefined ? anchorOverride : (active.length ? active[active.length - 1] : lastHistory);
+      const anchorItem =
+        anchorOverride !== undefined ? anchorOverride : active.length ? active[active.length - 1] : lastHistory;
       if (!anchorItem || anchorItem.type !== 'episode' || anchorItem.mediaId === 'demo') return [];
       const details = plex.details ? await plex.details(anchorItem.mediaId, 'episode') : null;
       const showId = details?.showId;
       if (!showId) return [];
-      const serverId = anchorItem.serverId || await this.roomState.identify({ id: String(showId) });
+      const serverId = anchorItem.serverId || (await this.roomState.identify({ id: String(showId) }));
       const items = await plex.queueItems({ type: 'show', id: String(showId), includeSpecials: false });
-      if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+        throw Object.assign(new Error('Plex access changed'), { status: 403 });
       return items.map(item => this.queueItem(item, serverId));
     }
-    const serverId = await this.roomState.identify({id:config.scope.id});
-    if (serverId !== config.scope.serverId) throw Object.assign(new Error('The auto-queue Plex server changed'),{status:409});
-    const items = await plex.queueItems({...config.scope,includeSpecials:config.includeSpecials});
-    if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
-    return items.map(item => this.queueItem(item,serverId));
+    const serverId = await this.roomState.identify({ id: config.scope.id });
+    if (serverId !== config.scope.serverId)
+      throw Object.assign(new Error('The auto-queue Plex server changed'), { status: 409 });
+    const items = await plex.queueItems({ ...config.scope, includeSpecials: config.includeSpecials });
+    if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+      throw Object.assign(new Error('Plex access changed'), { status: 403 });
+    return items.map(item => this.queueItem(item, serverId));
   }
   async verifyAutoNext(id, actor, corpus) {
     const queue = this.roomState?.queue;
@@ -817,16 +1547,26 @@ class Watch {
       const candidate = currentAuto?.mode !== 'off' ? currentAuto?.next : null;
       if (!candidate || candidate.mediaId === 'demo') return currentAuto;
       const status = await plex.availability([candidate.mediaId]);
-      if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'), { status: 403 });
+      if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+        throw Object.assign(new Error('Plex access changed'), { status: 403 });
       if (status.get(candidate.mediaId) !== false) return currentAuto;
-      remaining = (remaining || await this.autoCorpus(id, actor) || []).filter(item => item.mediaId !== candidate.mediaId);
-      await queue.generate(id, actor.userId, attempt === 4 ? [] : remaining, { continuation: true, forceAdvance: true });
+      remaining = (remaining || (await this.autoCorpus(id, actor)) || []).filter(
+        item => item.mediaId !== candidate.mediaId,
+      );
+      await queue.generate(id, actor.userId, attempt === 4 ? [] : remaining, {
+        continuation: true,
+        forceAdvance: true,
+      });
     }
     return this.roomState.store.get(id).autoQueue;
   }
   queueItem(item, serverId) {
     let parentTitle = item.parentTitle;
-    const epNum = Number.isInteger(item.index) ? item.index : (typeof item.episode === 'number' && Number.isInteger(item.episode)) ? item.episode : undefined;
+    const epNum = Number.isInteger(item.index)
+      ? item.index
+      : typeof item.episode === 'number' && Number.isInteger(item.episode)
+        ? item.episode
+        : undefined;
     if (item.type === 'episode' && Number.isInteger(epNum)) {
       const epStr = 'Episode ' + epNum;
       if (parentTitle && !parentTitle.includes('Episode')) {
@@ -835,34 +1575,58 @@ class Watch {
         parentTitle = epStr;
       }
     }
-    return { ...item, serverId, mediaId:String(item.mediaId || item.id || ''),
-      type:item.type === 'demo' || item.mediaId === 'demo' || item.id === 'demo' ? 'movie' : item.type,
-      parentTitle, grandparentTitle:item.grandparentTitle || item.showTitle };
+    return {
+      ...item,
+      serverId,
+      mediaId: String(item.mediaId || item.id || ''),
+      type: item.type === 'demo' || item.mediaId === 'demo' || item.id === 'demo' ? 'movie' : item.type,
+      parentTitle,
+      grandparentTitle: item.grandparentTitle || item.showTitle,
+    };
   }
   async queueCommand(id, command, actor, permitted) {
-    if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'),{status:400});
-    const room = this.rooms.get(id), {action,args} = command, queue = this.roomState.queue;
-    if (room?.mediaTransition || room?.queueEditing) throw Object.assign(new Error('Wait for the current queue operation'),{status:409});
-    const currentRequest = async () => permitted() && (!actor.watchCurrent || await actor.watchCurrent()) && permitted();
-    await this.roomState.eligible(actor,currentRequest);
-    await this.roomState.metadata(id,actor);
+    if (!this.roomState) throw Object.assign(new Error('Saved rooms are unavailable'), { status: 400 });
+    const room = this.rooms.get(id),
+      { action, args } = command,
+      queue = this.roomState.queue;
+    if (room?.mediaTransition || room?.queueEditing)
+      throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
+    const currentRequest = async () =>
+      permitted() && (!actor.watchCurrent || (await actor.watchCurrent())) && permitted();
+    await this.roomState.eligible(actor, currentRequest);
+    await this.roomState.metadata(id, actor);
     const check = async () => {
-      if (!await currentRequest() || this.rooms.get(id) !== room || room && !await this.canView(room,actor) || !await currentRequest()) {
-        throw Object.assign(new Error('Room access changed; retry manually'),{status:403});
+      if (
+        !(await currentRequest()) ||
+        this.rooms.get(id) !== room ||
+        (room && !(await this.canView(room, actor))) ||
+        !(await currentRequest())
+      ) {
+        throw Object.assign(new Error('Room access changed; retry manually'), { status: 403 });
       }
-      if ((action === 'queue.auto.playNow' || action === 'media.next' || action === 'queue.history.replay') && !room?.media && !queue.current(id)) {
-        const r = queue.room(id), canonical = queue.account(actor.userId);
-        if (this.roomState.store.isAdmin(canonical) !== true && !RoomPolicy.allowed(r, canonical, 'chooseMedia') && !RoomPolicy.allowed(r, canonical, 'playPause')) {
+      if (
+        (action === 'queue.auto.playNow' || action === 'media.next' || action === 'queue.history.replay') &&
+        !room?.media &&
+        !queue.current(id)
+      ) {
+        const r = queue.room(id),
+          canonical = queue.account(actor.userId);
+        if (
+          this.roomState.store.isAdmin(canonical) !== true &&
+          !RoomPolicy.allowed(r, canonical, 'chooseMedia') &&
+          !RoomPolicy.allowed(r, canonical, 'playPause')
+        ) {
           throw Object.assign(new Error('Room queue permission required'), { status: 403 });
         }
       } else {
-        queue.assertAllowed(queue.room(id),actor.userId,RoomPolicy.commandCapability(action));
+        queue.assertAllowed(queue.room(id), actor.userId, RoomPolicy.commandCapability(action));
       }
     };
     await check();
     const revision = args.expectedRevision ?? queue.room(id).queueRevision;
-    queue.assertRevision(queue.room(id),revision);
-    if (room?.mediaTransition || room?.queueEditing) throw Object.assign(new Error('Wait for the current queue operation'),{status:409});
+    queue.assertRevision(queue.room(id), revision);
+    if (room?.mediaTransition || room?.queueEditing)
+      throw Object.assign(new Error('Wait for the current queue operation'), { status: 409 });
     const priorCountdown = room?.autoplayCountdown;
     const hadMedia = !!room?.media;
     const wasEmptyQueue = !priorCountdown && !queue.current(id) && !queue.pending(id).length;
@@ -876,31 +1640,58 @@ class Watch {
     try {
       let value;
       if (action === 'queue.remove' && (args.advance || queue.current(id)?.id === args.entryId)) {
-        if (queue.current(id)?.id !== args.entryId) throw Object.assign(new Error('Current video changed; refresh before removing'),{status:409});
-        queue.assertAllowed(queue.room(id),actor.userId,'chooseMedia');
-        if (args.advance && !this.nextCandidate(id)) throw Object.assign(new Error('No next video is available'),{status:409});
+        if (queue.current(id)?.id !== args.entryId)
+          throw Object.assign(new Error('Current video changed; refresh before removing'), { status: 409 });
+        queue.assertAllowed(queue.room(id), actor.userId, 'chooseMedia');
+        if (args.advance && !this.nextCandidate(id))
+          throw Object.assign(new Error('No next video is available'), { status: 409 });
         if (room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,command,actor,permitted);
+          return this.changeQueueMedia(room, command, actor, permitted);
         }
-        value = args.advance ? await queue.next(id,actor.userId,{expectedRevision:revision,currentEntryId:args.entryId,discardCurrent:true}) :
-          await queue.remove(id,actor.userId,args.entryId,revision,{allowCurrent:true});
+        value = args.advance
+          ? await queue.next(id, actor.userId, {
+              expectedRevision: revision,
+              currentEntryId: args.entryId,
+              discardCurrent: true,
+            })
+          : await queue.remove(id, actor.userId, args.entryId, revision, { allowCurrent: true });
       } else if (action === 'queue.add' || action === 'queue.playNow') {
-        const raw = args.item, serverId = raw.serverId || await this.roomState.identify({id:raw.mediaId || raw.id});
+        const raw = args.item,
+          serverId = raw.serverId || (await this.roomState.identify({ id: raw.mediaId || raw.id }));
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
-        const checked = plex.playableItem && (raw.mediaId || raw.id) !== 'demo' ? await plex.playableItem(raw.mediaId || raw.id) : raw;
-        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
-        const item = this.queueItem(checked,serverId); await check();
-        queue.assertRevision(queue.room(id),revision);
+        const checked =
+          plex.playableItem && (raw.mediaId || raw.id) !== 'demo'
+            ? await plex.playableItem(raw.mediaId || raw.id)
+            : raw;
+        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+          throw Object.assign(new Error('Plex access changed'), { status: 403 });
+        const item = this.queueItem(checked, serverId);
+        await check();
+        queue.assertRevision(queue.room(id), revision);
         if (action === 'queue.playNow' && room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted);
+          return this.changeQueueMedia(
+            room,
+            { action: 'media.load', args: { mediaId: item.mediaId } },
+            actor,
+            permitted,
+          );
         }
         if (action === 'queue.add' && room && !room.media && wasEmptyQueue) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.load',args:{mediaId:item.mediaId}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
+          return this.changeQueueMedia(
+            room,
+            { action: 'media.load', args: { mediaId: item.mediaId } },
+            actor,
+            permitted,
+            { initialAdd: true, forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay },
+          );
         }
-        value = action === 'queue.add' ? await queue.add(id,actor.userId,item,{expectedRevision:revision}) : await queue.playNow(id,actor.userId,item);
+        value =
+          action === 'queue.add'
+            ? await queue.add(id, actor.userId, item, { expectedRevision: revision })
+            : await queue.playNow(id, actor.userId, item);
       } else if (action === 'queue.offer.start') {
         if (!room) throw Object.assign(new Error('Room unavailable'), { status: 404 });
         if (!this.hub.canRoom(room.s, actor, 'addQueue') || !this.hub.canRoom(room.s, actor, 'playPause')) {
@@ -910,7 +1701,9 @@ class Watch {
           throw Object.assign(new Error('Queue is no longer empty'), { status: 409 });
         }
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
-        const checked = plex.playableItem ? await plex.playableItem(args.mediaId) : { id: args.mediaId, type: 'episode' };
+        const checked = plex.playableItem
+          ? await plex.playableItem(args.mediaId)
+          : { id: args.mediaId, type: 'episode' };
         if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) {
           throw Object.assign(new Error('Plex access changed'), { status: 403 });
         }
@@ -918,111 +1711,204 @@ class Watch {
         const autoConfig = { mode: 'continue', scope: null, includeSpecials: false };
         await queue.configureAuto(id, actor.userId, autoConfig, { expectedRevision: revision });
         room.queueEditing = false;
-        return this.changeQueueMedia(room, { action: 'media.load', args: { mediaId: checked.id || args.mediaId } }, actor, permitted, { initialAdd: true, forcePlay: true });
+        return this.changeQueueMedia(
+          room,
+          { action: 'media.load', args: { mediaId: checked.id || args.mediaId } },
+          actor,
+          permitted,
+          { initialAdd: true, forcePlay: true },
+        );
       } else if (action === 'queue.playEntry' || action === 'queue.skipTo') {
         const skipPrevious = action === 'queue.skipTo' || !!args.skipPrevious;
         if (room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:args.entryId,skipPrevious}},actor,permitted);
+          return this.changeQueueMedia(
+            room,
+            { action: 'queue.playEntry', args: { entryId: args.entryId, skipPrevious } },
+            actor,
+            permitted,
+          );
         }
-        value = await queue.playEntry(id,actor.userId,args.entryId,{skipPrevious,expectedRevision:revision});
+        value = await queue.playEntry(id, actor.userId, args.entryId, { skipPrevious, expectedRevision: revision });
       } else if (action === 'queue.bulk') {
         const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
-        const serverId = await this.roomState.identify({id:args.mediaId});
-        const items = await plex.queueItems({type:args.type,id:args.mediaId,includeSpecials:args.includeSpecials});
-        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) throw Object.assign(new Error('Plex access changed'),{status:403});
+        const serverId = await this.roomState.identify({ id: args.mediaId });
+        const items = await plex.queueItems({
+          type: args.type,
+          id: args.mediaId,
+          includeSpecials: args.includeSpecials,
+        });
+        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+          throw Object.assign(new Error('Plex access changed'), { status: 403 });
         await check();
-        value = await queue.addBulk(id,actor.userId,items.map(item => this.queueItem(item,serverId)),{expectedRevision:revision,unfinished:args.unfinished});
+        value = await queue.addBulk(
+          id,
+          actor.userId,
+          items.map(item => this.queueItem(item, serverId)),
+          { expectedRevision: revision, unfinished: args.unfinished },
+        );
         if (room && !room.media && wasEmptyQueue && value.addedCount) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:queue.pending(id)[0].id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
+          return this.changeQueueMedia(
+            room,
+            { action: 'queue.playEntry', args: { entryId: queue.pending(id)[0].id } },
+            actor,
+            permitted,
+            { initialAdd: true, forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay },
+          );
         }
       } else if (action === 'queue.auto') {
-        let scope = null, corpus;
-        if (['following','random'].includes(args.mode)) {
+        let scope = null,
+          corpus;
+        if (['following', 'random'].includes(args.mode)) {
           scope = args.scope;
           const plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
           if (!scope.id) {
-            if (scope.type !== 'show' || !room?.media || room.media.id === 'demo') throw Object.assign(new Error('Choose a show from the library'),{status:400});
+            if (scope.type !== 'show' || !room?.media || room.media.id === 'demo')
+              throw Object.assign(new Error('Choose a show from the library'), { status: 400 });
             const details = await plex.details(room.media.id);
-            scope = {...scope,id:details.showId || (details.type === 'show' ? details.id : undefined)};
+            scope = { ...scope, id: details.showId || (details.type === 'show' ? details.id : undefined) };
           }
-          if (!scope.id) throw Object.assign(new Error('Choose a show from the library'),{status:400});
-          scope = {...scope,serverId:await this.roomState.identify({id:scope.id})};
-          corpus = await this.autoCorpus(id,actor,{...args,scope});
+          if (!scope.id) throw Object.assign(new Error('Choose a show from the library'), { status: 400 });
+          scope = { ...scope, serverId: await this.roomState.identify({ id: scope.id }) };
+          corpus = await this.autoCorpus(id, actor, { ...args, scope });
         } else if (args.mode === 'continue') {
-          corpus = await this.autoCorpus(id,actor,{mode:'continue',scope:null,includeSpecials:false});
+          corpus = await this.autoCorpus(id, actor, { mode: 'continue', scope: null, includeSpecials: false });
         }
         await check();
-        value = await queue.configureAuto(id,actor.userId,{...args,scope},{expectedRevision:revision});
+        value = await queue.configureAuto(id, actor.userId, { ...args, scope }, { expectedRevision: revision });
         if (corpus) {
           await check();
-          const generated = await queue.generate(id,actor.userId,corpus,{expectedRevision:value.queueRevision});
-          const verified = await this.verifyAutoNext(id,actor,corpus);
-          value = {...value,...generated,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
+          const generated = await queue.generate(id, actor.userId, corpus, { expectedRevision: value.queueRevision });
+          const verified = await this.verifyAutoNext(id, actor, corpus);
+          value = {
+            ...value,
+            ...generated,
+            autoQueue: verified,
+            next: verified.next,
+            queueRevision: this.roomState.store.get(id).queueRevision,
+          };
         }
-        if (room && !room.media && !queue.current(id) && !queue.pending(id).length && value.autoQueue?.next && this.roomState.store.get(id).autoplay) {
+        if (
+          room &&
+          !room.media &&
+          !queue.current(id) &&
+          !queue.pending(id).length &&
+          value.autoQueue?.next &&
+          this.roomState.store.get(id).autoplay
+        ) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'media.next',args:{}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
+          return this.changeQueueMedia(room, { action: 'media.next', args: {} }, actor, permitted, {
+            initialAdd: true,
+            forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay,
+          });
         }
       } else if (action === 'queue.auto.skip') {
-        const corpus = await this.autoCorpus(id,actor) || [];
+        const corpus = (await this.autoCorpus(id, actor)) || [];
         await check();
-        value = await queue.skipAuto(id,actor.userId,corpus,{expectedRevision:revision});
-        const verified = await this.verifyAutoNext(id,actor,corpus);
-        value = {...value,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
+        value = await queue.skipAuto(id, actor.userId, corpus, { expectedRevision: revision });
+        const verified = await this.verifyAutoNext(id, actor, corpus);
+        value = {
+          ...value,
+          autoQueue: verified,
+          next: verified.next,
+          queueRevision: this.roomState.store.get(id).queueRevision,
+        };
       } else if (action === 'queue.auto.pin') {
-        const corpus = await this.autoCorpus(id,actor) || [];
+        const corpus = (await this.autoCorpus(id, actor)) || [];
         await check();
-        value = await queue.pinAuto(id,actor.userId,corpus,{expectedRevision:revision});
-        const verified = await this.verifyAutoNext(id,actor,corpus);
-        value = {...value,autoQueue:verified,next:verified.next,queueRevision:this.roomState.store.get(id).queueRevision};
+        value = await queue.pinAuto(id, actor.userId, corpus, { expectedRevision: revision });
+        const verified = await this.verifyAutoNext(id, actor, corpus);
+        value = {
+          ...value,
+          autoQueue: verified,
+          next: verified.next,
+          queueRevision: this.roomState.store.get(id).queueRevision,
+        };
         if (room && !room.media && wasEmptyQueue && value.added && this.roomState.store.get(id).autoplay) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.playEntry',args:{entryId:value.added.id}},actor,permitted,{initialAdd:true,forcePlay:!!room.endedVersion && !!this.roomState.store.get(id).autoplay});
+          return this.changeQueueMedia(
+            room,
+            { action: 'queue.playEntry', args: { entryId: value.added.id } },
+            actor,
+            permitted,
+            { initialAdd: true, forcePlay: !!room.endedVersion && !!this.roomState.store.get(id).autoplay },
+          );
         }
       } else if (action === 'queue.auto.playNow') {
         if (room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,{action:'queue.auto.playNow',args:{skipPrevious:!!args.skipPrevious}},actor,permitted);
+          return this.changeQueueMedia(
+            room,
+            { action: 'queue.auto.playNow', args: { skipPrevious: !!args.skipPrevious } },
+            actor,
+            permitted,
+          );
         }
         const pendingItems = queue.pending(id);
-        const postAnchor = !args.skipPrevious && pendingItems.length > 0 ? pendingItems[pendingItems.length - 1] : undefined;
-        const corpus = await this.autoCorpus(id,actor,this.roomState.store.get(id).autoQueue,postAnchor);
+        const postAnchor =
+          !args.skipPrevious && pendingItems.length > 0 ? pendingItems[pendingItems.length - 1] : undefined;
+        const corpus = await this.autoCorpus(id, actor, this.roomState.store.get(id).autoQueue, postAnchor);
         await check();
-        value = await queue.playAutoNow(id,actor.userId,{expectedRevision:revision,autoCorpus:corpus,skipPrevious:!!args.skipPrevious});
-        await this.verifyAutoNext(id,actor,corpus);
-        value = {...value,queueRevision:this.roomState.store.get(id).queueRevision};
-      } else if (action === 'queue.move') value = await queue.move(id,actor.userId,args.entryId,args.targetRank,revision);
-      else if (action === 'queue.remove') value = await queue.remove(id,actor.userId,args.entryId,revision);
-      else if (action === 'queue.clear') value = await queue.clear(id,actor.userId,revision);
-      else if (action === 'queue.shuffle') value = await queue.shuffle(id,actor.userId,revision);
-      else if (action === 'queue.history.clear') value = await queue.historyClear(id,actor.userId);
+        value = await queue.playAutoNow(id, actor.userId, {
+          expectedRevision: revision,
+          autoCorpus: corpus,
+          skipPrevious: !!args.skipPrevious,
+        });
+        await this.verifyAutoNext(id, actor, corpus);
+        value = { ...value, queueRevision: this.roomState.store.get(id).queueRevision };
+      } else if (action === 'queue.move')
+        value = await queue.move(id, actor.userId, args.entryId, args.targetRank, revision);
+      else if (action === 'queue.remove') value = await queue.remove(id, actor.userId, args.entryId, revision);
+      else if (action === 'queue.clear') value = await queue.clear(id, actor.userId, revision);
+      else if (action === 'queue.shuffle') value = await queue.shuffle(id, actor.userId, revision);
+      else if (action === 'queue.history.clear') value = await queue.historyClear(id, actor.userId);
       else if (action === 'queue.history.replay' || action === 'queue.history.goBack') {
         if (room) {
           room.queueEditing = false;
-          return this.changeQueueMedia(room,command,actor,permitted);
+          return this.changeQueueMedia(room, command, actor, permitted);
         }
-        value = await queue.historyReplay(id,actor.userId,args.entryId,{resume:args.resume,restore:action === 'queue.history.goBack',expectedRevision:revision});
+        value = await queue.historyReplay(id, actor.userId, args.entryId, {
+          resume: args.resume,
+          restore: action === 'queue.history.goBack',
+          expectedRevision: revision,
+        });
       }
-      if (['queue.add','queue.playNow','queue.playEntry','queue.skipTo','queue.bulk','queue.move','queue.remove','queue.clear','queue.shuffle','queue.history.clear','queue.history.replay','queue.history.goBack'].includes(action) &&
-          this.roomState.store.get(id).autoQueue.mode !== 'off') {
+      if (
+        [
+          'queue.add',
+          'queue.playNow',
+          'queue.playEntry',
+          'queue.skipTo',
+          'queue.bulk',
+          'queue.move',
+          'queue.remove',
+          'queue.clear',
+          'queue.shuffle',
+          'queue.history.clear',
+          'queue.history.replay',
+          'queue.history.goBack',
+        ].includes(action) &&
+        this.roomState.store.get(id).autoQueue.mode !== 'off'
+      ) {
         try {
-          const corpus = await this.autoCorpus(id,actor);
+          const corpus = await this.autoCorpus(id, actor);
           if (corpus) {
             const latestRev = this.roomState.store.get(id).queueRevision;
-            await queue.generate(id,actor.userId,corpus,{expectedRevision:latestRev,continuation:true});
-            const verified = await this.verifyAutoNext(id,actor,corpus);
-            value = {...value,autoQueue:verified,queueRevision:this.roomState.store.get(id).queueRevision};
+            await queue.generate(id, actor.userId, corpus, { expectedRevision: latestRev, continuation: true });
+            const verified = await this.verifyAutoNext(id, actor, corpus);
+            value = { ...value, autoQueue: verified, queueRevision: this.roomState.store.get(id).queueRevision };
           }
-        } catch (error) { if (room) room.autoQueueError = error.message; }
+        } catch (error) {
+          if (room) room.autoQueueError = error.message;
+        }
       }
       if (room && this.rooms.get(id) === room) {
         const latest = this.roomState.store.get(id);
         this.roomState.apply(room, latest);
         if (priorCountdown && !room.media) {
           const afterNext = this.nextCandidate(id);
-          const afterKey = afterNext ? (afterNext.id || (afterNext.serverId + ':' + afterNext.mediaId)) : null;
+          const afterKey = afterNext ? afterNext.id || afterNext.serverId + ':' + afterNext.mediaId : null;
           if (!afterNext) {
             this.cancelAutoplay(room);
           } else if (afterKey === priorCountdown.nextKey && room.autoplayCountdown === priorCountdown) {
@@ -1037,12 +1923,14 @@ class Watch {
         room.revision++;
         room.autoQueueError = undefined;
       }
-      return {status:'applied',...value};
-    } finally { if (room) room.queueEditing = false; }
+      return { status: 'applied', ...value };
+    } finally {
+      if (room) room.queueEditing = false;
+    }
   }
   async observeEnd(room, viewer, data, observed) {
-    if (!room.saved || !observePlaybackEnd(room,viewer,data,observed)) return;
-    await this.finishQueueMedia(room,data);
+    if (!room.saved || !observePlaybackEnd(room, viewer, data, observed)) return;
+    await this.finishQueueMedia(room, data);
   }
   nextCandidate(roomId) {
     const queue = this.roomState?.queue;
@@ -1076,23 +1964,36 @@ class Watch {
                 summary: details?.summary || '',
                 subtitle: details?.subtitle || item.subtitle || '',
                 hasLandscape: Boolean(details?.hasLandscape || item.hasLandscape),
-                hasPoster: Boolean(details?.hasPoster || item.hasPoster)
+                hasPoster: Boolean(details?.hasPoster || item.hasPoster),
               });
               while (room.endingMeta.size > 8) room.endingMeta.delete(room.endingMeta.keys().next().value);
               changed = true;
             } catch {
-              room.endingMeta.set(item.mediaId, { summary: '', subtitle: item.subtitle || '', hasLandscape: Boolean(item.hasLandscape), hasPoster: Boolean(item.hasPoster) });
+              room.endingMeta.set(item.mediaId, {
+                summary: '',
+                subtitle: item.subtitle || '',
+                hasLandscape: Boolean(item.hasLandscape),
+                hasPoster: Boolean(item.hasPoster),
+              });
             }
           }
         }
       } else {
         for (const item of needed) {
           if (!room.endingMeta.has(item.mediaId)) {
-            room.endingMeta.set(item.mediaId, { summary: '', subtitle: item.subtitle || '', hasLandscape: Boolean(item.hasLandscape), hasPoster: Boolean(item.hasPoster) });
+            room.endingMeta.set(item.mediaId, {
+              summary: '',
+              subtitle: item.subtitle || '',
+              hasLandscape: Boolean(item.hasLandscape),
+              hasPoster: Boolean(item.hasPoster),
+            });
           }
         }
       }
-      if (changed) { room.revision++; this.refresh(room); }
+      if (changed) {
+        room.revision++;
+        this.refresh(room);
+      }
       if (!nextItem && summary.lastHistory?.type === 'episode' && record.autoQueue?.mode === 'off') {
         const offerKey = summary.lastHistory.id + ':' + record.queueRevision;
         if (!room.endingOffer || room.endingOffer.key !== offerKey) {
@@ -1126,7 +2027,7 @@ class Watch {
           summary: offer.summary || '',
           subtitle: offer.subtitle || '',
           hasLandscape: offer.hasLandscape,
-          hasPoster: offer.hasPoster
+          hasPoster: offer.hasPoster,
         });
         room.revision++;
       }
@@ -1139,20 +2040,46 @@ class Watch {
   async startAutoplayCountdown(room, { intent = room.playbackIntent || 0, data } = {}) {
     if (this.shuttingDown || room.removing) return;
     const record = this.roomState?.store.get(room.s.roomId);
-    if (!record || !record.autoplay || room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.manualPaused) return;
+    if (
+      !record ||
+      !record.autoplay ||
+      room.autoplayCountdown ||
+      room.mediaTransition ||
+      room.queueEditing ||
+      room.manualPaused
+    )
+      return;
     const hostConnected = [...room.viewers.values()].some(v => isHost(room.s, v.actor) || this.hub.isAdmin(v.actor));
-    const controller = !room.waitingForHost && [...room.viewers.entries()].find(([, person]) =>
-      (this.hub.canRoom(room.s, person.actor, 'chooseMedia') || this.hub.canRoom(room.s, person.actor, 'playPause')) &&
-      this.hub.canRoom(room.s, person.actor, 'autoplay') &&
-      (hostConnected || isHost(room.s, person.actor) || this.hub.isAdmin(person.actor) || this.hub.canRoom(room.s, person.actor, 'continueWithoutHost'))
-    );
+    const controller =
+      !room.waitingForHost &&
+      [...room.viewers.entries()].find(
+        ([, person]) =>
+          (this.hub.canRoom(room.s, person.actor, 'chooseMedia') ||
+            this.hub.canRoom(room.s, person.actor, 'playPause')) &&
+          this.hub.canRoom(room.s, person.actor, 'autoplay') &&
+          (hostConnected ||
+            isHost(room.s, person.actor) ||
+            this.hub.isAdmin(person.actor) ||
+            this.hub.canRoom(room.s, person.actor, 'continueWithoutHost')),
+      );
     if (!controller) return;
     const [viewerId, person] = controller;
-    if (person.alive && !await person.alive() || !await this.canView(room, person.actor) || room.viewers.get(viewerId) !== person || this.rooms.get(record.id) !== room || room.manualPaused ||
-        (data && (room.s.epoch !== data.epoch || (room.endedVersion !== data.mediaVersion && room.mediaVersion !== data.mediaVersion))) ||
-        room.autoplayCountdown || room.mediaTransition || room.queueEditing ||
-        (room.playbackIntent || 0) !== intent ||
-        !this.roomState.store.get(record.id).autoplay) return;
+    if (
+      (person.alive && !(await person.alive())) ||
+      !(await this.canView(room, person.actor)) ||
+      room.viewers.get(viewerId) !== person ||
+      this.rooms.get(record.id) !== room ||
+      room.manualPaused ||
+      (data &&
+        (room.s.epoch !== data.epoch ||
+          (room.endedVersion !== data.mediaVersion && room.mediaVersion !== data.mediaVersion))) ||
+      room.autoplayCountdown ||
+      room.mediaTransition ||
+      room.queueEditing ||
+      (room.playbackIntent || 0) !== intent ||
+      !this.roomState.store.get(record.id).autoplay
+    )
+      return;
     const latest = this.roomState.store.get(record.id);
     const next = this.nextCandidate(record.id);
     if (!next) return;
@@ -1168,38 +2095,59 @@ class Watch {
       mediaVersion: room.mediaVersion,
       currentEntryId: null,
       nextEntryId: next.id,
-      nextKey: next.id || (next.serverId + ':' + next.mediaId),
+      nextKey: next.id || next.serverId + ':' + next.mediaId,
       queueRevision: latest.queueRevision,
-      viewerId
+      viewerId,
     };
     room.autoplayCountdown = countdown;
     room.autoplayError = undefined;
     room.revision++;
     this.preloadNext(room, countdown, next, person.actor);
     room.autoplayTimer = setTimeout(() => {
-      const advance = this.hub.dispatch({ ...person.actor, watchViewerId: viewerId, watchQueueAdvance: countdown }, { roomId: record.id, action: 'media.next' }).then(result => {
-        if (result.status !== 'applied' && room.autoplayCountdown === countdown) {
-          this.cancelAutoplay(room); room.autoplayError = result.message || 'The next video could not be loaded.'; room.revision++;
-        }
-      }).catch(() => { this.cancelAutoplay(room); room.autoplayError = 'The next video could not be loaded.'; room.revision++; });
+      const advance = this.hub
+        .dispatch(
+          { ...person.actor, watchViewerId: viewerId, watchQueueAdvance: countdown },
+          { roomId: record.id, action: 'media.next' },
+        )
+        .then(result => {
+          if (result.status !== 'applied' && room.autoplayCountdown === countdown) {
+            this.cancelAutoplay(room);
+            room.autoplayError = result.message || 'The next video could not be loaded.';
+            room.revision++;
+          }
+        })
+        .catch(() => {
+          this.cancelAutoplay(room);
+          room.autoplayError = 'The next video could not be loaded.';
+          room.revision++;
+        });
       this.roomState.track(advance);
     }, this.autoplayDelayMs);
     room.autoplayTimer.unref?.();
   }
   finishQueueMedia(room, data) {
     if (this.shuttingDown || room.removing) return Promise.resolve();
-    return this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), { kind: 'transition', signal: currentSignal() }).promise;
+    return this.startMediaWork(room, work => this.finishQueueMediaOwned(room, data, work), {
+      kind: 'transition',
+      signal: currentSignal(),
+    }).promise;
   }
   async finishQueueMediaOwned(room, data, work) {
-    if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion) return;
+    if (room.autoplayCountdown || room.mediaTransition || room.queueEditing || room.endedVersion === room.mediaVersion)
+      return;
     const intent = room.playbackIntent || 0;
     const endedVersion = room.mediaVersion;
     room.endedVersion = endedVersion;
-    room.initialGate = false; room.readinessTimedOut = false; room.readinessVersion = randomUUID();
+    room.initialGate = false;
+    room.readinessTimedOut = false;
+    room.readinessVersion = randomUUID();
     room.readinessStartAt = room.pauseAt = room.startAt = undefined;
     if (room.media) room.position = room.media.duration;
-    room.changedAt = Date.now(); room.s.state.paused = true; room.revision++;
-    const record = this.roomState.store.get(room.s.roomId), current = this.roomState.queue.current(record.id);
+    room.changedAt = Date.now();
+    room.s.state.paused = true;
+    room.revision++;
+    const record = this.roomState.store.get(room.s.roomId),
+      current = this.roomState.queue.current(record.id);
     room.mediaTransition = true;
     try {
       const completing = (async () => {
@@ -1230,7 +2178,9 @@ class Watch {
         if (actor) {
           const corpus = await this.autoCorpus(record.id, actor);
           if (corpus) {
-            await this.roomState.queue.generate(record.id, actor.userId, corpus, { expectedRevision: latestRecord.queueRevision });
+            await this.roomState.queue.generate(record.id, actor.userId, corpus, {
+              expectedRevision: latestRecord.queueRevision,
+            });
             await this.verifyAutoNext(record.id, actor, corpus);
             latestRecord = this.roomState.store.get(record.id);
             this.roomState.apply(room, latestRecord);
@@ -1247,50 +2197,105 @@ class Watch {
   }
   unloadQueueMedia(room) {
     const old = room.media;
-    room.media = undefined; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
-    room.position = 0; room.changedAt = Date.now(); room.pauseAt = room.startAt = undefined;
-    room.initialGate = false; room.manualPaused = true; room.readinessTimedOut = false; room.endedVersion = undefined;
-    room.s.state.paused = true; room.s.state.position = 0; room.s.state.duration = 0; room.s.state.seekable = false;
+    room.media = undefined;
+    room.mediaVersion = randomUUID();
+    room.readinessVersion = undefined;
+    room.position = 0;
+    room.changedAt = Date.now();
+    room.pauseAt = room.startAt = undefined;
+    room.initialGate = false;
+    room.manualPaused = true;
+    room.readinessTimedOut = false;
+    room.endedVersion = undefined;
+    room.s.state.paused = true;
+    room.s.state.position = 0;
+    room.s.state.duration = 0;
+    room.s.state.seekable = false;
     this.dropMedia(room, 'end');
     if (old) void this.stopMedia(room, old);
   }
   changeQueueMedia(room, command, actor, permitted, options) {
-    if (this.shuttingDown || room.removing) return Promise.resolve({status:'unavailable',message:'Room is closing.'});
-    return this.startMediaWork(room, work => this.changeQueueMediaOwned(room, command, actor,
-      () => !work.signal.aborted && permitted(), options, work), { kind: 'transition', signal: currentSignal() }).promise;
+    if (this.shuttingDown || room.removing)
+      return Promise.resolve({ status: 'unavailable', message: 'Room is closing.' });
+    return this.startMediaWork(
+      room,
+      work =>
+        this.changeQueueMediaOwned(room, command, actor, () => !work.signal.aborted && permitted(), options, work),
+      { kind: 'transition', signal: currentSignal() },
+    ).promise;
   }
   async changeQueueMediaOwned(room, command, actor, permitted, { initialAdd = false, forcePlay = false } = {}, work) {
-    if (room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for the current queue operation.'};
-    if (!room.viewers.size && command.action !== 'media.load' && !(command.action === 'queue.remove' && !command.args.advance)) return {status:'unavailable',message:'No viewer is connected.'};
-    const {action,args} = command, id = room.s.roomId, queue = this.roomState?.queue, countdown = actor.watchQueueAdvance;
+    if (room.mediaTransition || room.queueEditing)
+      return { status: 'unavailable', message: 'Wait for the current queue operation.' };
+    if (
+      !room.viewers.size &&
+      command.action !== 'media.load' &&
+      !(command.action === 'queue.remove' && !command.args.advance)
+    )
+      return { status: 'unavailable', message: 'No viewer is connected.' };
+    const { action, args } = command,
+      id = room.s.roomId,
+      queue = this.roomState?.queue,
+      countdown = actor.watchQueueAdvance;
     const preload = countdown && room.preload?.countdown === countdown.id ? room.preload : undefined;
-    const version = room.mediaVersion, epoch = room.s.epoch, intent = room.playbackIntent || 0;
-    const record = room.saved ? this.roomState.store.get(id) : null, current = record && queue.current(id), next = record && this.nextCandidate(id);
-    const valid = () => !this.shuttingDown && !room.removing && permitted() && this.rooms.get(id) === room && room.mediaVersion === version && room.s.epoch === epoch &&
-      (room.playbackIntent || 0) === intent && (!countdown || room.autoplayCountdown === countdown && room.viewers.has(countdown.viewerId) &&
-        !room.manualPaused && this.roomState.store.get(id).autoplay && countdown.epoch === epoch && countdown.mediaVersion === version &&
-        (countdown.currentEntryId || null) === (current?.id || null) && countdown.nextEntryId === next?.id && countdown.queueRevision === record.queueRevision &&
-        this.hub.canRoom(room.s,actor,'autoplay'));
-    if (!valid()) return {status:'unavailable',message:'Autoplay or media selection was cancelled.'};
-    const removing = action === 'queue.remove', advance = removing && args.advance;
-    if (removing && current?.id !== args.entryId) return {status:'unavailable',message:'Current video changed; refresh before removing.'};
-    let target, prepared, adopted = false;
-    const old = room.media, oldPosition = this.position(room), restore = action === 'queue.history.goBack', replay = action === 'queue.history.replay' || restore, playEntry = action === 'queue.playEntry', playAuto = action === 'queue.auto.playNow';
+    const version = room.mediaVersion,
+      epoch = room.s.epoch,
+      intent = room.playbackIntent || 0;
+    const record = room.saved ? this.roomState.store.get(id) : null,
+      current = record && queue.current(id),
+      next = record && this.nextCandidate(id);
+    const valid = () =>
+      !this.shuttingDown &&
+      !room.removing &&
+      permitted() &&
+      this.rooms.get(id) === room &&
+      room.mediaVersion === version &&
+      room.s.epoch === epoch &&
+      (room.playbackIntent || 0) === intent &&
+      (!countdown ||
+        (room.autoplayCountdown === countdown &&
+          room.viewers.has(countdown.viewerId) &&
+          !room.manualPaused &&
+          this.roomState.store.get(id).autoplay &&
+          countdown.epoch === epoch &&
+          countdown.mediaVersion === version &&
+          (countdown.currentEntryId || null) === (current?.id || null) &&
+          countdown.nextEntryId === next?.id &&
+          countdown.queueRevision === record.queueRevision &&
+          this.hub.canRoom(room.s, actor, 'autoplay')));
+    if (!valid()) return { status: 'unavailable', message: 'Autoplay or media selection was cancelled.' };
+    const removing = action === 'queue.remove',
+      advance = removing && args.advance;
+    if (removing && current?.id !== args.entryId)
+      return { status: 'unavailable', message: 'Current video changed; refresh before removing.' };
+    let target,
+      prepared,
+      adopted = false;
+    const old = room.media,
+      oldPosition = this.position(room),
+      restore = action === 'queue.history.goBack',
+      replay = action === 'queue.history.replay' || restore,
+      playEntry = action === 'queue.playEntry',
+      playAuto = action === 'queue.auto.playNow';
     if (replay) {
       target = queue.getEntry(args.entryId);
-      if (!target || target.roomId !== id || target.state !== 'history') throw Object.assign(new Error('History entry unavailable'),{status:404});
+      if (!target || target.roomId !== id || target.state !== 'history')
+        throw Object.assign(new Error('History entry unavailable'), { status: 404 });
     } else if (playEntry) {
       target = queue.getEntry(args.entryId);
-      if (!target || target.roomId !== id || target.state !== 'pending') throw Object.assign(new Error('Queue entry unavailable'),{status:404});
+      if (!target || target.roomId !== id || target.state !== 'pending')
+        throw Object.assign(new Error('Queue entry unavailable'), { status: 404 });
     } else if (playAuto) {
       target = record?.autoQueue?.mode !== 'off' ? record?.autoQueue?.next : null;
-      if (!target) throw Object.assign(new Error('Auto-queue item unavailable'),{status:404});
+      if (!target) throw Object.assign(new Error('Auto-queue item unavailable'), { status: 404 });
     } else if (action === 'media.next' || advance) {
-      target = record ? next : old?.nextId && {mediaId:old.nextId};
-      if (!target) return {status:'unsupported',message:'No next video is available.'};
+      target = record ? next : old?.nextId && { mediaId: old.nextId };
+      if (!target) return { status: 'unsupported', message: 'No next video is available.' };
     } else if (action === 'media.previous') {
-      target = oldPosition < (record ? 5 : 3) && (record ? queue.lastHistory(id) : old?.previousId && {mediaId:old.previousId});
-    } else if (!removing) target = {mediaId:args.mediaId};
+      target =
+        oldPosition < (record ? 5 : 3) &&
+        (record ? queue.lastHistory(id) : old?.previousId && { mediaId: old.previousId });
+    } else if (!removing) target = { mediaId: args.mediaId };
     room.mediaTransition = true;
     // Transfer only after admission/target checks, inside the cleanup scope.
     if (preload) room.preload = undefined;
@@ -1301,15 +2306,27 @@ class Watch {
         // A failed preload is this load's failure; preparing again would only repeat it.
         const preloaded = preload?.mediaId === target.mediaId ? await preload.source : undefined;
         if (preloaded && preloaded.principal === plex.principal) preload.sourceAdopted = true;
-        prepared = target.mediaId === 'demo' ? this.demoMedia && {...this.demoMedia,id:'demo',resources:new Map()} :
-          preload?.sourceAdopted ? preloaded : await plex.prepare(target.mediaId,'direct',false,undefined,undefined,{sourceOnly:true});
-        if (!prepared) return {status:'failed',message:'Test video is unavailable.'};
+        prepared =
+          target.mediaId === 'demo'
+            ? this.demoMedia && { ...this.demoMedia, id: 'demo', resources: new Map() }
+            : preload?.sourceAdopted
+              ? preloaded
+              : await plex.prepare(target.mediaId, 'direct', false, undefined, undefined, { sourceOnly: true });
+        if (!prepared) return { status: 'failed', message: 'Test video is unavailable.' };
         if (record) {
           prepared.roomServerId = await this.roomState.identify(prepared);
-          if (target.serverId && (target.serverId !== prepared.roomServerId || Math.abs(target.duration-prepared.duration) > .5 ||
-              prepared.source?.type && target.type !== prepared.source.type)) throw Object.assign(new Error('The queued video changed; choose it again from the library'),{status:409});
+          if (
+            target.serverId &&
+            (target.serverId !== prepared.roomServerId ||
+              Math.abs(target.duration - prepared.duration) > 0.5 ||
+              (prepared.source?.type && target.type !== prepared.source.type))
+          )
+            throw Object.assign(new Error('The queued video changed; choose it again from the library'), {
+              status: 409,
+            });
         }
-        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal) return {status:'unavailable',message:'Plex access changed.'};
+        if (this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+          return { status: 'unavailable', message: 'Plex access changed.' };
       }
       let corpus;
       if (record && (action === 'media.next' || advance || playEntry || playAuto)) {
@@ -1320,216 +2337,405 @@ class Watch {
         } else if (playAuto) {
           if (!args.skipPrevious && pendingItems.length > 0) postAnchor = pendingItems[pendingItems.length - 1];
         } else if (playEntry) {
-          const remaining = pendingItems.filter(item => args.skipPrevious ? item.rank > target.rank : item.id !== target.id);
+          const remaining = pendingItems.filter(item =>
+            args.skipPrevious ? item.rank > target.rank : item.id !== target.id,
+          );
           if (remaining.length > 0) postAnchor = remaining[remaining.length - 1];
         }
-        corpus = await this.autoCorpus(id,actor,record.autoQueue,postAnchor);
+        corpus = await this.autoCorpus(id, actor, record.autoQueue, postAnchor);
       }
       const person = room.viewers.get(actor.watchViewerId);
-      if (countdown && (!person || person.alive && !await person.alive()) || actor.watchCurrent && !await actor.watchCurrent() ||
-          !await this.canView(room,actor) || !valid()) return {status:'unavailable',message:'Room changed or command expired.'};
+      if (
+        (countdown && (!person || (person.alive && !(await person.alive())))) ||
+        (actor.watchCurrent && !(await actor.watchCurrent())) ||
+        !(await this.canView(room, actor)) ||
+        !valid()
+      )
+        return { status: 'unavailable', message: 'Room changed or command expired.' };
       if (record) {
-        queue.assertRevision(queue.room(id),record.queueRevision);
+        queue.assertRevision(queue.room(id), record.queueRevision);
         const position = this.position(room);
         let saving;
-        const startPosition = (Number.isFinite(Number(args.position)) && Number(args.position) > 0) ? Math.min(Number(args.position), prepared.duration) : 0;
-        if (action === 'media.next' || advance) saving = queue.next(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
-          outcome:countdown || room.endedVersion === version ? 'completed' : 'skipped',expectedRevision:record.queueRevision,currentEntryId:current?.id,nextEntryId:target.id,autoCorpus:corpus,guard:valid,discardCurrent:!!advance,initialAdd});
-        else if (playAuto) saving = queue.playAutoNow(id,actor.userId,{currentPosition:countdown || room.endedVersion === version ? (old?.duration || 0) : position,
-          expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,skipPrevious:!!args.skipPrevious});
-        else if (removing) saving = queue.remove(id,actor.userId,args.entryId,record.queueRevision,{allowCurrent:true});
-        else if (replay) saving = queue.historyReplay(id,actor.userId,target.id,{resume:args.resume,restore,expectedRevision:record.queueRevision},position);
-        else if (playEntry) saving = queue.playEntry(id,actor.userId,target.id,{skipPrevious:!!args.skipPrevious,currentPosition:position,expectedRevision:record.queueRevision,autoCorpus:corpus,guard:valid,initialAdd});
-        else if (action === 'media.previous') saving = queue.previous(id,actor.userId,oldPosition,5);
-        else saving = queue.playNow(id,actor.userId,this.queueItem({...prepared,type:prepared.source?.type || 'movie',position:startPosition},prepared.roomServerId),position,{initialAdd});
+        const startPosition =
+          Number.isFinite(Number(args.position)) && Number(args.position) > 0
+            ? Math.min(Number(args.position), prepared.duration)
+            : 0;
+        if (action === 'media.next' || advance)
+          saving = queue.next(id, actor.userId, {
+            currentPosition: countdown || room.endedVersion === version ? old?.duration || 0 : position,
+            outcome: countdown || room.endedVersion === version ? 'completed' : 'skipped',
+            expectedRevision: record.queueRevision,
+            currentEntryId: current?.id,
+            nextEntryId: target.id,
+            autoCorpus: corpus,
+            guard: valid,
+            discardCurrent: !!advance,
+            initialAdd,
+          });
+        else if (playAuto)
+          saving = queue.playAutoNow(id, actor.userId, {
+            currentPosition: countdown || room.endedVersion === version ? old?.duration || 0 : position,
+            expectedRevision: record.queueRevision,
+            autoCorpus: corpus,
+            guard: valid,
+            skipPrevious: !!args.skipPrevious,
+          });
+        else if (removing)
+          saving = queue.remove(id, actor.userId, args.entryId, record.queueRevision, { allowCurrent: true });
+        else if (replay)
+          saving = queue.historyReplay(
+            id,
+            actor.userId,
+            target.id,
+            { resume: args.resume, restore, expectedRevision: record.queueRevision },
+            position,
+          );
+        else if (playEntry)
+          saving = queue.playEntry(id, actor.userId, target.id, {
+            skipPrevious: !!args.skipPrevious,
+            currentPosition: position,
+            expectedRevision: record.queueRevision,
+            autoCorpus: corpus,
+            guard: valid,
+            initialAdd,
+          });
+        else if (action === 'media.previous') saving = queue.previous(id, actor.userId, oldPosition, 5);
+        else
+          saving = queue.playNow(
+            id,
+            actor.userId,
+            this.queueItem(
+              { ...prepared, type: prepared.source?.type || 'movie', position: startPosition },
+              prepared.roomServerId,
+            ),
+            position,
+            { initialAdd },
+          );
         room.transitionCommit = saving;
         work.committing = true;
         await saving;
-        this.roomState.apply(room,this.roomState.store.get(id));
+        this.roomState.apply(room, this.roomState.store.get(id));
       }
       // The durable transaction is the transition's commit point. Close waits
       // for it; later controls apply to the newly adopted generation.
       room.pauseAt = room.startAt = undefined;
       if (removing && !advance) {
-        this.cancelAutoplay(room); clearPlaybackEnd(room); this.unloadQueueMedia(room);
+        this.cancelAutoplay(room);
+        clearPlaybackEnd(room);
+        this.unloadQueueMedia(room);
       } else if (prepared) {
-        const startPosition = (Number.isFinite(Number(args.position)) && Number(args.position) > 0) ? Math.min(Number(args.position), prepared.duration) : 0;
-        room.media = prepared; room.mediaVersion = randomUUID(); room.readinessVersion = undefined;
+        const startPosition =
+          Number.isFinite(Number(args.position)) && Number(args.position) > 0
+            ? Math.min(Number(args.position), prepared.duration)
+            : 0;
+        room.media = prepared;
+        room.mediaVersion = randomUUID();
+        room.readinessVersion = undefined;
         this.mediaChecks.start(prepared);
-        room.position = record ? queue.current(id).position : startPosition; room.changedAt = Date.now();
+        room.position = record ? queue.current(id).position : startPosition;
+        room.changedAt = Date.now();
         if (room.recovery) this.roomState.finishRecovery(room);
-        this.dropMedia(room); room.s.state.paused = true; room.manualPaused = forcePlay ? false : (initialAdd && !this.roomState.store.get(id).autoplay); room.initialGate = true;
-        this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys()); room.s.state.seekable = true;
-        void this.stopMedia(room, old); adopted = true;
+        this.dropMedia(room);
+        room.s.state.paused = true;
+        room.manualPaused = forcePlay ? false : initialAdd && !this.roomState.store.get(id).autoplay;
+        room.initialGate = true;
+        this.beginReadiness(room);
+        room.initialViewers = new Set(room.viewers.keys());
+        room.s.state.seekable = true;
+        void this.stopMedia(room, old);
+        adopted = true;
         // Viewers adopt their preloaded streams on their next poll; leftovers are stopped.
-        if (preload?.sourceAdopted && preload.source && prepared === await preload.source.catch(() => undefined)) {
-          if(preload.fallbackStream) {
-            room.fallbackStream=preload.fallbackStream;preload.fallbackStream=undefined;
-            const version=room.mediaVersion;
-            room.fallbackStream.authorized=async()=>this.rooms.get(id)===room && room.mediaVersion===version &&
-              room.viewers.size>0 && await this.canView(room,actor);
-            room.fallbackStream.reconcile(this.position(room),false);
+        if (preload?.sourceAdopted && preload.source && prepared === (await preload.source.catch(() => undefined))) {
+          if (preload.fallbackStream) {
+            room.fallbackStream = preload.fallbackStream;
+            preload.fallbackStream = undefined;
+            const version = room.mediaVersion;
+            room.fallbackStream.authorized = async () =>
+              this.rooms.get(id) === room &&
+              room.mediaVersion === version &&
+              room.viewers.size > 0 &&
+              (await this.canView(room, actor));
+            room.fallbackStream.reconcile(this.position(room), false);
           }
-          room.adoptable = preload; preload.expiry = setTimeout(() => this.dropPreload(room, preload), 60000); preload.expiry.unref?.();
+          room.adoptable = preload;
+          preload.expiry = setTimeout(() => this.dropPreload(room, preload), 60000);
+          preload.expiry.unref?.();
         }
       } else {
-        this.cancelAutoplay(room); clearPlaybackEnd(room); room.position = 0; room.changedAt = Date.now();
+        this.cancelAutoplay(room);
+        clearPlaybackEnd(room);
+        room.position = 0;
+        room.changedAt = Date.now();
         if (!room.s.state.paused || room.initialGate) {
-          room.readinessVersion = randomUUID(); room.initialGate = true; room.s.state.paused = true;
-          this.beginReadiness(room); room.initialViewers = new Set(room.viewers.keys());
+          room.readinessVersion = randomUUID();
+          room.initialGate = true;
+          room.s.state.paused = true;
+          this.beginReadiness(room);
+          room.initialViewers = new Set(room.viewers.keys());
           for (const viewer of room.viewers.values()) viewer.ready = false;
         }
       }
-      room.autoplayError = undefined; room.revision++; room.lastActivity = Date.now();
+      room.autoplayError = undefined;
+      room.revision++;
+      room.lastActivity = Date.now();
       room.transitionCommit = undefined;
       if (record && this.roomState.store.get(id).autoQueue.mode !== 'off') {
         try {
           let postCorpus = corpus;
-          if (!['media.next','queue.playEntry','queue.auto.playNow'].includes(action) && !advance) {
-            postCorpus = await this.autoCorpus(id,actor);
-            if (postCorpus) await queue.generate(id,actor.userId,postCorpus,{continuation:true});
+          if (!['media.next', 'queue.playEntry', 'queue.auto.playNow'].includes(action) && !advance) {
+            postCorpus = await this.autoCorpus(id, actor);
+            if (postCorpus) await queue.generate(id, actor.userId, postCorpus, { continuation: true });
           }
-          await this.verifyAutoNext(id,actor,postCorpus);
-          this.roomState.apply(room,this.roomState.store.get(id));
-        } catch (error) { room.autoQueueError = error.message; }
+          await this.verifyAutoNext(id, actor, postCorpus);
+          this.roomState.apply(room, this.roomState.store.get(id));
+        } catch (error) {
+          room.autoQueueError = error.message;
+        }
       }
-      return {status:'applied',message:'Viewing room updated.',...(initialAdd ? {added:queue.current(id),queueRevision:this.roomState.store.get(id).queueRevision} : {})};
+      return {
+        status: 'applied',
+        message: 'Viewing room updated.',
+        ...(initialAdd ? { added: queue.current(id), queueRevision: this.roomState.store.get(id).queueRevision } : {}),
+      };
     } catch (error) {
-      if (work.signal.aborted && !work.committing) return {status:'unavailable',message:'Media selection was cancelled.'};
-      room.autoplayError = error.status || error instanceof PlaybackError ? error.message : 'The next video could not be loaded. Check Plex and server storage.';
+      if (work.signal.aborted && !work.committing)
+        return { status: 'unavailable', message: 'Media selection was cancelled.' };
+      room.autoplayError =
+        error.status || error instanceof PlaybackError
+          ? error.message
+          : 'The next video could not be loaded. Check Plex and server storage.';
       room.revision++;
-      return {status:'failed',message:room.autoplayError};
+      return { status: 'failed', message: room.autoplayError };
     } finally {
-      room.transitionCommit = undefined; room.mediaTransition = false;
+      room.transitionCommit = undefined;
+      room.mediaTransition = false;
       if (prepared && !adopted) await this.plex.stop(prepared);
-      if (preload && room.adoptable !== preload) { if (!adopted) preload.sourceAdopted = false; this.dropPreload(room, preload); }
+      if (preload && room.adoptable !== preload) {
+        if (!adopted) preload.sourceAdopted = false;
+        this.dropPreload(room, preload);
+      }
     }
   }
   async execute(room, input, actor, permitted) {
-    if (this.shuttingDown || room.removing) return {status:'unavailable',message:'Room is closing.'};
-    const command = Engine.validate(input), { action, args } = command, s = room.s;
+    if (this.shuttingDown || room.removing) return { status: 'unavailable', message: 'Room is closing.' };
+    const command = Engine.validate(input),
+      { action, args } = command,
+      s = room.s;
     if (room.saved) this.roomState.store.healthy();
-    if (['room.publish','room.unpublish'].includes(action)) {
-      if(!room.saved || !this.publications)return {status:'unavailable',message:'Discord publishing requires a saved room.'};
-      return this.publications.command(room,action,actor,permitted);
+    if (['room.publish', 'room.unpublish'].includes(action)) {
+      if (!room.saved || !this.publications)
+        return { status: 'unavailable', message: 'Discord publishing requires a saved room.' };
+      return this.publications.command(room, action, actor, permitted);
     }
     if (action === 'room.kick') {
       if (room.transitionCommit) await room.transitionCommit.catch(() => {});
-      if (!room.saved || !permitted() || actor.watchCurrent && !await actor.watchCurrent() || !permitted()) return {status:'unavailable',message:'Room changed or command expired.'};
-      const record = this.roomState.store.get(room.s.roomId), userId = args.userId;
-      if (!this.hub.canRoom(room.s, actor, 'kickParticipants') || !RoomPolicy.canKickParticipant(record, actor.userId, userId, { isAdmin: this.hub.isAdmin(actor) })) return { status: 'forbidden', message: 'You cannot kick this participant.' };
-      const viewers = [...room.viewers.entries()].filter(([,viewer]) => viewer.userId === userId);
-      if (!viewers.length) return {status:'unavailable',message:'This participant has already left.'};
-      const now = Date.now(); room.kickedViewers ||= new Map();
-      for (const [id,until] of room.kickedViewers) if (until <= now) room.kickedViewers.delete(id);
-      for (const [id] of viewers) room.kickedViewers.set(id,now + RECONNECT_GRACE_MS);
-      for (const [id,viewer] of room.disconnectedViewers) if (viewer.userId === userId) { room.kickedViewers.set(id,now + RECONNECT_GRACE_MS); room.disconnectedViewers.delete(id); }
-      for (const socket of new Set(viewers.map(([,viewer]) => viewer.watchSocket).filter(Boolean))) socket.watchKick?.(room.s.roomId);
-      for (const [id,viewer] of viewers) await this.leave(room,viewer.actor,id,'kicked');
+      if (!room.saved || !permitted() || (actor.watchCurrent && !(await actor.watchCurrent())) || !permitted())
+        return { status: 'unavailable', message: 'Room changed or command expired.' };
+      const record = this.roomState.store.get(room.s.roomId),
+        userId = args.userId;
+      if (
+        !this.hub.canRoom(room.s, actor, 'kickParticipants') ||
+        !RoomPolicy.canKickParticipant(record, actor.userId, userId, { isAdmin: this.hub.isAdmin(actor) })
+      )
+        return { status: 'forbidden', message: 'You cannot kick this participant.' };
+      const viewers = [...room.viewers.entries()].filter(([, viewer]) => viewer.userId === userId);
+      if (!viewers.length) return { status: 'unavailable', message: 'This participant has already left.' };
+      const now = Date.now();
+      room.kickedViewers ||= new Map();
+      for (const [id, until] of room.kickedViewers) if (until <= now) room.kickedViewers.delete(id);
+      for (const [id] of viewers) room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
+      for (const [id, viewer] of room.disconnectedViewers)
+        if (viewer.userId === userId) {
+          room.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
+          room.disconnectedViewers.delete(id);
+        }
+      for (const socket of new Set(viewers.map(([, viewer]) => viewer.watchSocket).filter(Boolean)))
+        socket.watchKick?.(room.s.roomId);
+      for (const [id, viewer] of viewers) await this.leave(room, viewer.actor, id, 'kicked');
       // Kicking a guest ends their guest access; kicking someone invited into a
       // private room revokes the invite. Either way they stay out until the code changes.
       const guest = this.hub.guestMembers?.(room.s.roomId).has(userId);
       if (guest) {
-        const devices = viewers.map(([,viewer]) => viewer.actor.device).filter(Boolean);
-        await this.roomState.store.block(room.s.roomId, ['user:' + userId, ...devices.map(device => 'device:' + device)]);
+        const devices = viewers.map(([, viewer]) => viewer.actor.device).filter(Boolean);
+        await this.roomState.store.block(room.s.roomId, [
+          'user:' + userId,
+          ...devices.map(device => 'device:' + device),
+        ]);
         await this.hub.endGuestSessions?.(room.s.roomId, [userId]);
-        return {status:'applied',message:'Guest removed.'};
+        return { status: 'applied', message: 'Guest removed.' };
       }
       if (room.s.visibility === 'private' && record.invited?.includes(userId)) {
         this.roomState.apply(room, await this.roomState.store.revokeInvite(room.s.roomId, userId));
-        return {status:'applied',message:'Participant removed and their invite revoked.'};
+        return { status: 'applied', message: 'Participant removed and their invite revoked.' };
       }
-      return {status:'applied',message:'Participant removed. They may rejoin.'};
+      return { status: 'applied', message: 'Participant removed. They may rejoin.' };
     }
     if (!permitted()) return { status: 'unavailable', message: 'Room changed or command expired.' };
-    if (room.transitionCommit) return {status:'unavailable',message:'Wait for the current queue transition to finish.'};
+    if (room.transitionCommit)
+      return { status: 'unavailable', message: 'Wait for the current queue transition to finish.' };
     if (!room.media && room.saved && ['media.play', 'media.toggle'].includes(action) && this.nextCandidate(s.roomId)) {
       if (!this.hub.canRoom(s, actor, 'playPause') && !this.hub.canRoom(s, actor, 'chooseMedia')) {
         return { status: 'forbidden', message: 'Starting the next video requires permission.' };
       }
-      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      this.cancelAutoplay(room);
+      clearPlaybackEnd(room);
       return this.changeQueueMedia(room, { action: 'media.next', args: {} }, actor, permitted);
     }
     if (!room.media && room.saved && room.autoplayCountdown && action === 'media.pause') {
-      if (!this.hub.canRoom(s, actor, 'playPause')) return { status: 'forbidden', message: 'Pausing requires playback permission.' };
+      if (!this.hub.canRoom(s, actor, 'playPause'))
+        return { status: 'forbidden', message: 'Pausing requires playback permission.' };
       this.cancelAutoplay(room);
       room.manualPaused = true;
       room.endedVersion = undefined;
       return { status: 'applied', message: 'Autoplay paused.' };
     }
-    if (!room.media && room.saved && room.endedVersion && (action === 'media.seek.end' || action.startsWith('media.seek.'))) {
-      if (!this.hub.canRoom(s, actor, 'playPause')) return { status: 'forbidden', message: 'Seeking requires playback permission.' };
+    if (
+      !room.media &&
+      room.saved &&
+      room.endedVersion &&
+      (action === 'media.seek.end' || action.startsWith('media.seek.'))
+    ) {
+      if (!this.hub.canRoom(s, actor, 'playPause'))
+        return { status: 'forbidden', message: 'Seeking requires playback permission.' };
       return { status: 'applied', message: 'Current video finished.' };
     }
-    const endpointSeek = room.saved && room.media && (action === 'media.seek.end' ||
-      action === 'media.seek.absolute' && args.seconds >= room.media.duration ||
-      action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration);
-    const endpointPlay = room.saved && room.media && ['media.play','media.toggle'].includes(action) &&
-      (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - .1);
+    const endpointSeek =
+      room.saved &&
+      room.media &&
+      (action === 'media.seek.end' ||
+        (action === 'media.seek.absolute' && args.seconds >= room.media.duration) ||
+        (action === 'media.seek.relative' && this.position(room) + args.seconds >= room.media.duration));
+    const endpointPlay =
+      room.saved &&
+      room.media &&
+      ['media.play', 'media.toggle'].includes(action) &&
+      (room.endedVersion === room.mediaVersion || this.position(room) >= room.media.duration - 0.1);
     if (endpointSeek || endpointPlay) {
-      if (!room.viewers.size || room.mediaTransition || room.queueEditing) return {status:'unavailable',message:'Wait for an available viewing room.'};
-      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      if (!room.viewers.size || room.mediaTransition || room.queueEditing)
+        return { status: 'unavailable', message: 'Wait for an available viewing room.' };
+      this.cancelAutoplay(room);
+      clearPlaybackEnd(room);
       if (room.recovery) this.roomState.finishRecovery(room);
-      room.manualPaused = false; room.endedVersion = undefined;
-      await this.finishQueueMedia(room,{mediaVersion:room.mediaVersion,epoch:s.epoch});
-      return {status:'applied',message:'Current video finished.'};
+      room.manualPaused = false;
+      room.endedVersion = undefined;
+      await this.finishQueueMedia(room, { mediaVersion: room.mediaVersion, epoch: s.epoch });
+      return { status: 'applied', message: 'Current video finished.' };
     }
-    if (action.startsWith('queue.')) return this.queueCommand(s.roomId,command,actor,permitted);
+    if (action.startsWith('queue.')) return this.queueCommand(s.roomId, command, actor, permitted);
     if (action.startsWith('media.autoplay.')) {
-      if (!room.saved) return {status:'unsupported',message:'Autoplay requires a saved room.'};
-      this.cancelAutoplay(room); clearPlaybackEnd(room);
+      if (!room.saved) return { status: 'unsupported', message: 'Autoplay requires a saved room.' };
+      this.cancelAutoplay(room);
+      clearPlaybackEnd(room);
       if (action === 'media.autoplay.cancel') room.endedVersion = undefined;
       if (action === 'media.autoplay.set') {
-        await this.roomState.queue.setAutoplay(s.roomId,actor.userId,args.enabled);
-        this.roomState.apply(room,this.roomState.store.get(s.roomId));
+        await this.roomState.queue.setAutoplay(s.roomId, actor.userId, args.enabled);
+        this.roomState.apply(room, this.roomState.store.get(s.roomId));
         if (args.enabled && !room.media) {
           const next = this.nextCandidate(s.roomId);
           if (next) await this.startAutoplayCountdown(room);
         }
       }
-      return {status:'applied',message:'Autoplay updated.'};
+      return { status: 'applied', message: 'Autoplay updated.' };
     }
-    if (!actor.watchQueueAdvance && (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) {
-      this.cancelAutoplay(room); clearPlaybackEnd(room);
+    if (
+      !actor.watchQueueAdvance &&
+      (['media.load', 'media.next', 'media.previous', 'media.pause', 'media.play', 'media.toggle'].includes(action) ||
+        action.startsWith('media.seek.'))
+    ) {
+      this.cancelAutoplay(room);
+      clearPlaybackEnd(room);
       if (action !== 'media.next') room.endedVersion = undefined;
     }
-    if (['media.load','media.next','media.previous'].includes(action)) return this.changeQueueMedia(room,command,actor,permitted);
+    if (['media.load', 'media.next', 'media.previous'].includes(action))
+      return this.changeQueueMedia(room, command, actor, permitted);
     this.settle(room);
     if (action.startsWith('media.ready.')) {
-      if (!(room.saved ? this.hub.canRoom(s, actor, 'chooseMedia') : this.hub.canManage(s, actor))) return { status: 'unavailable', message: 'This readiness choice expired.' };
+      if (!(room.saved ? this.hub.canRoom(s, actor, 'chooseMedia') : this.hub.canManage(s, actor)))
+        return { status: 'unavailable', message: 'This readiness choice expired.' };
       const outcome = applyReadinessDecision(room, action, args.readinessId);
       if (outcome.status !== 'applied') return { status: outcome.status, message: outcome.message };
       if (outcome.checkAutoStart) await this.maybeStart(room);
       this.refresh(room);
       return { status: 'applied', message: outcome.message };
     }
-    if (room.readinessTimedOut && ['media.play','media.toggle','media.pause'].includes(action)) return { status:'unavailable', message:'The host must choose whether to start, wait or cancel.' };
-    if (['media.quality.set','media.tracks.set','media.stream.refresh','media.volume.set','media.mute','media.unmute','media.reporting.set'].includes(action)) {
+    if (room.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(action))
+      return { status: 'unavailable', message: 'The host must choose whether to start, wait or cancel.' };
+    if (
+      [
+        'media.quality.set',
+        'media.tracks.set',
+        'media.stream.refresh',
+        'media.volume.set',
+        'media.mute',
+        'media.unmute',
+        'media.reporting.set',
+      ].includes(action)
+    ) {
       const viewer = actor.surface === 'web' && room.viewers.get(actor.watchViewerId);
-      if (!viewer || viewer.userId !== actor.userId) return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
-      if (action === 'media.tracks.set') return this.changeTracks(room,viewer,args,actor,permitted);
-      if (action === 'media.stream.refresh') return this.refreshStream(room,viewer,args,actor,permitted);
+      if (!viewer || viewer.userId !== actor.userId)
+        return { status: 'unsupported', message: 'Use your watch player for personal audio and quality.' };
+      if (action === 'media.tracks.set') return this.changeTracks(room, viewer, args, actor, permitted);
+      if (action === 'media.stream.refresh') return this.refreshStream(room, viewer, args, actor, permitted);
       if (action === 'media.quality.set') {
-        if (!args.compatible && !args.fallback && args.quality) viewer.preferredQuality = Engine.qualityId(args.quality);
-        if (!room.media || room.media.kind === 'demo') return { status: 'applied', message: 'Preferred quality updated for future videos.' };
-        if (viewer.preparing || viewer.updating) return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
+        if (!args.compatible && !args.fallback && args.quality)
+          viewer.preferredQuality = Engine.qualityId(args.quality);
+        if (!room.media || room.media.kind === 'demo')
+          return { status: 'applied', message: 'Preferred quality updated for future videos.' };
+        if (viewer.preparing || viewer.updating)
+          return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
         const version = room.mediaVersion;
-        if (args.reset) { viewer.fallback = undefined; viewer.compatible = false; }
+        if (args.reset) {
+          viewer.fallback = undefined;
+          viewer.compatible = false;
+        }
         const fallback = args.fallback || viewer.fallback;
-        if(args.fallback)this.hub?.config?.logger?.info('Delivery',`Viewer "${viewer.name || actor.userId}" moving to ${args.fallback}: ${args.reason || 'no reason given'}`);
+        if (args.fallback)
+          this.hub?.config?.logger?.info(
+            'Delivery',
+            `Viewer "${viewer.name || actor.userId}" moving to ${args.fallback}: ${args.reason || 'no reason given'}`,
+          );
         viewer.updating = true;
         try {
-          const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-            this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,args.quality,args.compatible===true || !!viewer.compatible,fallback,authorized),{permitted});
-          if(result.status!=='applied'){this.hub?.config?.logger?.warn('Delivery',`Quality change not applied: ${result.message || result.status}`);return result;}
-          viewer.quality=viewer.media.quality;
-          viewer.compatible=args.compatible===true || !!viewer.compatible;viewer.fallback=fallback;
-        } catch(error) {
-          if(error instanceof PlaybackError){this.hub?.config?.logger?.warn('Delivery',`Quality change failed: ${error.message}`);return {status:'failed',message:error.message};}
+          const result = await this.replaceViewer(
+            room,
+            actor,
+            actor.watchViewerId,
+            async (authorized, source) =>
+              this.prepareQuality(
+                room,
+                viewer,
+                await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+                source,
+                args.quality,
+                args.compatible === true || !!viewer.compatible,
+                fallback,
+                authorized,
+              ),
+            { permitted },
+          );
+          if (result.status !== 'applied') {
+            this.hub?.config?.logger?.warn(
+              'Delivery',
+              `Quality change not applied: ${result.message || result.status}`,
+            );
+            return result;
+          }
+          viewer.quality = viewer.media.quality;
+          viewer.compatible = args.compatible === true || !!viewer.compatible;
+          viewer.fallback = fallback;
+        } catch (error) {
+          if (error instanceof PlaybackError) {
+            this.hub?.config?.logger?.warn('Delivery', `Quality change failed: ${error.message}`);
+            return { status: 'failed', message: error.message };
+          }
           throw error;
-        } finally {viewer.updating=false;}
-      } else if (action === 'media.volume.set') { viewer.volume = args.percent; viewer.muted = false; }
-      else if (action === 'media.mute' || action === 'media.unmute') viewer.muted = action === 'media.mute';
+        } finally {
+          viewer.updating = false;
+        }
+      } else if (action === 'media.volume.set') {
+        viewer.volume = args.percent;
+        viewer.muted = false;
+      } else if (action === 'media.mute' || action === 'media.unmute') viewer.muted = action === 'media.mute';
       else if (action === 'media.reporting.set') {
         if (typeof args.activity === 'boolean') viewer.plexReporting = args.activity;
         if (typeof args.watchState === 'boolean') viewer.plexWatchState = args.watchState;
@@ -1542,137 +2748,289 @@ class Watch {
             eligible: !!this.reporting?.isEligible(actor.userId),
             activity: viewer.plexReporting !== false,
             watchState: !!(viewer.plexWatchState && this.hub?.config?.plexReporting?.watchState !== false),
-            watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false
-          }
+            watchStateAllowed: this.hub?.config?.plexReporting?.watchState !== false,
+          },
         };
       }
-      return { status: 'applied', message: 'Your player updated.', state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }) };
+      return {
+        status: 'applied',
+        message: 'Your player updated.',
+        state: Engine.snapshot({ ...s.state, volume: viewer.volume, muted: viewer.muted }),
+      };
     }
-    if (actor.watchAutoplayVersion && (room.manualPaused || room.mediaVersion !== actor.watchAutoplayVersion || room.readinessVersion !== actor.watchReadinessVersion)) return { status: 'unavailable', message: 'Autoplay was cancelled.' };
-    if (!action.startsWith('room.') && action !== 'media.load' && !room.viewers.size) return { status: 'unavailable', message: 'No viewer is connected.' };
-    if (action.startsWith('media.') && action !== 'media.load' && !room.media) return { status: 'unavailable', message: 'Choose a video first.' };
-    if (['media.play','media.toggle'].includes(action) && room.media?.kind !== 'demo') {
+    if (
+      actor.watchAutoplayVersion &&
+      (room.manualPaused ||
+        room.mediaVersion !== actor.watchAutoplayVersion ||
+        room.readinessVersion !== actor.watchReadinessVersion)
+    )
+      return { status: 'unavailable', message: 'Autoplay was cancelled.' };
+    if (!action.startsWith('room.') && action !== 'media.load' && !room.viewers.size)
+      return { status: 'unavailable', message: 'No viewer is connected.' };
+    if (action.startsWith('media.') && action !== 'media.load' && !room.media)
+      return { status: 'unavailable', message: 'Choose a video first.' };
+    if (['media.play', 'media.toggle'].includes(action) && room.media?.kind !== 'demo') {
       const version = room.mediaVersion;
       // An outage must not stop anyone resuming media already buffered. A file
       // Plex confirms is missing still refuses, and access is checked below.
-      let plex, unconfirmed = false;
+      let plex,
+        unconfirmed = false;
       try {
         plex = this.hub.plexFor ? await this.hub.plexFor(actor) : this.plex;
         if (plex.playableItem) await plex.playableItem(room.media.id);
-      } catch (error) { if (!this.providerFailed(error)) throw error; unconfirmed = true; }
-      if (!permitted() || room.mediaVersion!==version || !await this.canView(room,actor) || !permitted() || !unconfirmed && this.hub.plexFor && (await this.hub.plexFor(actor)).principal!==plex.principal) return {status:'unavailable',message:'Room changed or command expired.'};
+      } catch (error) {
+        if (!this.providerFailed(error)) throw error;
+        unconfirmed = true;
+      }
+      if (
+        !permitted() ||
+        room.mediaVersion !== version ||
+        !(await this.canView(room, actor)) ||
+        !permitted() ||
+        (!unconfirmed && this.hub.plexFor && (await this.hub.plexFor(actor)).principal !== plex.principal)
+      )
+        return { status: 'unavailable', message: 'Room changed or command expired.' };
     }
-    if (room.recovery && (['media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) this.roomState.finishRecovery(room);
-    if (action === 'profile.load' && !room.profiles[args.slot]) return { status: 'unsupported', message: 'Save this profile first.' };
+    if (
+      room.recovery &&
+      (['media.pause', 'media.play', 'media.toggle'].includes(action) || action.startsWith('media.seek.'))
+    )
+      this.roomState.finishRecovery(room);
+    if (action === 'profile.load' && !room.profiles[args.slot])
+      return { status: 'unsupported', message: 'Save this profile first.' };
     const now = Date.now();
     if (!applyTimelineCommand(room, command, { now, autoplayVersion: actor.watchAutoplayVersion })) {
-      room.position = this.position(room, now); room.changedAt = now;
+      room.position = this.position(room, now);
+      room.changedAt = now;
       switch (action) {
         case 'room.visibility':
           if (room.saved) {
-            const record = await this.roomState.store.edit(s.roomId, actor.userId, room.saved.revision, { action: 'visibility', visibility: args.visibility });
+            const record = await this.roomState.store.edit(s.roomId, actor.userId, room.saved.revision, {
+              action: 'visibility',
+              visibility: args.visibility,
+            });
             this.roomState.apply(room, record);
           } else s.visibility = args.visibility;
           room.disconnectedViewers.clear();
           this.refresh(room);
           break;
-        case 'profile.save': room.profiles[args.slot] = { ...s.state.picture }; break;
-        case 'profile.load': s.state.picture = { ...room.profiles[args.slot] }; break;
-        default: s.state.picture = Engine.picture(s.state.picture, command);
+        case 'profile.save':
+          room.profiles[args.slot] = { ...s.state.picture };
+          break;
+        case 'profile.load':
+          s.state.picture = { ...room.profiles[args.slot] };
+          break;
+        default:
+          s.state.picture = Engine.picture(s.state.picture, command);
       }
     }
     if (action.startsWith('room.')) s.epoch = randomUUID();
-    s.state.profileSlots = Object.keys(room.profiles).map(Number); room.revision++; room.lastActivity = now; this.refresh(room, now);
+    s.state.profileSlots = Object.keys(room.profiles).map(Number);
+    room.revision++;
+    room.lastActivity = now;
+    this.refresh(room, now);
     room.feedback = { revision: room.revision, action, args, sender: Engine.senderName(actor.name), at: now };
-    if (room.saved && (['media.load','media.next','media.previous','media.pause','media.play','media.toggle'].includes(action) || action.startsWith('media.seek.'))) await this.roomState.save(room);
-    if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused) await this.maybeStart(room);
-    return { status: 'applied', message: 'Viewing room updated.', ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}) };
+    if (
+      room.saved &&
+      (['media.load', 'media.next', 'media.previous', 'media.pause', 'media.play', 'media.toggle'].includes(action) ||
+        action.startsWith('media.seek.'))
+    )
+      await this.roomState.save(room);
+    if (['media.play', 'media.toggle', 'room.visibility'].includes(action) && room.initialGate && !room.manualPaused)
+      await this.maybeStart(room);
+    return {
+      status: 'applied',
+      message: 'Viewing room updated.',
+      ...(actor.surface === 'web' ? { state: Engine.snapshot(s.state) } : {}),
+    };
   }
-  async changeTracks(room,viewer,args,actor,permitted) {
-    const current = viewer.media, version = room.mediaVersion;
-    if (!current?.tracks || current.kind!=='plex') return {status:'unsupported',message:'Audio and subtitles are unavailable for this video.'};
-    if (viewer.preparing || viewer.updating) return {status:'unavailable',message:'Wait for your stream to finish loading.'};
-    if (args.mediaVersion!==version || args.streamVersion!==viewer.streamVersion) return {status:'unavailable',message:'Track selection expired. Choose again for the current video.'};
-    const choices = {...viewer.trackChoice,audioId:args.audioId ?? viewer.trackChoice?.audioId ?? 'auto',subtitleId:args.subtitleId ?? viewer.trackChoice?.subtitleId ?? 'auto',
-      subtitleMode:args.subtitleMode ?? viewer.trackChoice?.subtitleMode ?? 'auto'};
-    if (args.audioId==='auto') choices.audioIntent=undefined;
-    if (['auto','off'].includes(args.subtitleId)) choices.subtitleIntent=undefined;
+  async changeTracks(room, viewer, args, actor, permitted) {
+    const current = viewer.media,
+      version = room.mediaVersion;
+    if (!current?.tracks || current.kind !== 'plex')
+      return { status: 'unsupported', message: 'Audio and subtitles are unavailable for this video.' };
+    if (viewer.preparing || viewer.updating)
+      return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
+    if (args.mediaVersion !== version || args.streamVersion !== viewer.streamVersion)
+      return { status: 'unavailable', message: 'Track selection expired. Choose again for the current video.' };
+    const choices = {
+      ...viewer.trackChoice,
+      audioId: args.audioId ?? viewer.trackChoice?.audioId ?? 'auto',
+      subtitleId: args.subtitleId ?? viewer.trackChoice?.subtitleId ?? 'auto',
+      subtitleMode: args.subtitleMode ?? viewer.trackChoice?.subtitleMode ?? 'auto',
+    };
+    if (args.audioId === 'auto') choices.audioIntent = undefined;
+    if (['auto', 'off'].includes(args.subtitleId)) choices.subtitleIntent = undefined;
     let selection;
     viewer.updating = true;
     try {
-      selection = Tracks.select(current.tracks,choices);
-      if (selection.subtitle?.delivery==='burn' && args.subtitleOffset!==undefined && args.subtitleOffset!==0) throw new PlaybackError('Burned subtitles cannot be shifted in this player.');
-      if (args.audioId && args.audioId!=='auto') choices.audioIntent=Tracks.intent(selection.audio);
-      if (args.subtitleId && !['auto','off'].includes(args.subtitleId)) choices.subtitleIntent=Tracks.intent(selection.subtitle);
-      const burnChanged=(selection.subtitle?.delivery==='burn' || current.selection.subtitle?.delivery==='burn') &&
-        (selection.subtitle?.id!==current.selection.subtitle?.id || selection.subtitle?.delivery!==current.selection.subtitle?.delivery);
-      if (selection.audio?.id!==current.selection.audio?.id || burnChanged || current.playbackError) {
-        const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-          this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
-            {...choices,browserSubtitles:viewer.browserSubtitles,localCodecs:viewer.localCodecs,shareKey:[room.s.roomId,version],authorized}),{permitted});
-        if(result.status!=='applied')return result;
+      selection = Tracks.select(current.tracks, choices);
+      if (selection.subtitle?.delivery === 'burn' && args.subtitleOffset !== undefined && args.subtitleOffset !== 0)
+        throw new PlaybackError('Burned subtitles cannot be shifted in this player.');
+      if (args.audioId && args.audioId !== 'auto') choices.audioIntent = Tracks.intent(selection.audio);
+      if (args.subtitleId && !['auto', 'off'].includes(args.subtitleId))
+        choices.subtitleIntent = Tracks.intent(selection.subtitle);
+      const burnChanged =
+        (selection.subtitle?.delivery === 'burn' || current.selection.subtitle?.delivery === 'burn') &&
+        (selection.subtitle?.id !== current.selection.subtitle?.id ||
+          selection.subtitle?.delivery !== current.selection.subtitle?.delivery);
+      if (selection.audio?.id !== current.selection.audio?.id || burnChanged || current.playbackError) {
+        const result = await this.replaceViewer(
+          room,
+          actor,
+          actor.watchViewerId,
+          async (authorized, source) =>
+            this.prepareQuality(
+              room,
+              viewer,
+              await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+              source,
+              viewer.quality,
+              viewer.compatible,
+              viewer.fallback,
+              {
+                ...choices,
+                browserSubtitles: viewer.browserSubtitles,
+                localCodecs: viewer.localCodecs,
+                shareKey: [room.s.roomId, version],
+                authorized,
+              },
+            ),
+          { permitted },
+        );
+        if (result.status !== 'applied') return result;
       } else {
-        const alive=!viewer.alive || await viewer.alive(),access=await this.canView(room,actor);
-        if(!alive || !access || !permitted() || version!==room.mediaVersion || viewer.media!==current || room.viewers.get(actor.watchViewerId)!==viewer)
-          return {status:'unavailable',message:'Room changed or command expired.'};
-        if (selection.subtitle?.id!==current.selection.subtitle?.id) {
-          current.subtitleAbort.abort(); current.subtitleAbort=new AbortController(); current.subtitleCache?.clear(); SubtitleResources.clear(current); current.captionVersion=randomUUID();
+        const alive = !viewer.alive || (await viewer.alive()),
+          access = await this.canView(room, actor);
+        if (
+          !alive ||
+          !access ||
+          !permitted() ||
+          version !== room.mediaVersion ||
+          viewer.media !== current ||
+          room.viewers.get(actor.watchViewerId) !== viewer
+        )
+          return { status: 'unavailable', message: 'Room changed or command expired.' };
+        if (selection.subtitle?.id !== current.selection.subtitle?.id) {
+          current.subtitleAbort.abort();
+          current.subtitleAbort = new AbortController();
+          current.subtitleCache?.clear();
+          SubtitleResources.clear(current);
+          current.captionVersion = randomUUID();
         }
-        current.selection=selection;
+        current.selection = selection;
       }
-      viewer.trackChoice=choices;
-      if (selection.subtitle?.delivery==='burn') viewer.subtitleOffset=0;
-      else if (args.subtitleOffset!==undefined) viewer.subtitleOffset=args.subtitleOffset;
-      return {status:'applied',message:'Your audio and subtitles updated.'};
+      viewer.trackChoice = choices;
+      if (selection.subtitle?.delivery === 'burn') viewer.subtitleOffset = 0;
+      else if (args.subtitleOffset !== undefined) viewer.subtitleOffset = args.subtitleOffset;
+      return { status: 'applied', message: 'Your audio and subtitles updated.' };
     } catch (error) {
-      return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Audio and subtitles could not be updated. Your previous selection is unchanged.'};
-    } finally { viewer.updating=false; }
+      return {
+        status: 'failed',
+        message:
+          error instanceof PlaybackError
+            ? error.message
+            : 'Audio and subtitles could not be updated. Your previous selection is unchanged.',
+      };
+    } finally {
+      viewer.updating = false;
+    }
   }
-  async refreshStream(room,viewer,args,actor,permitted) {
-    const current=viewer.media, version=room.mediaVersion;
-    if (!current || current.kind!=='plex' || !room.media || current.format!=='hls') return {status:'unsupported',message:'This stream cannot be refreshed.'};
-    if (viewer.preparing || viewer.updating) return {status:'unavailable',message:'Wait for your stream to finish loading.'};
-    if (args.mediaVersion!==version || args.streamVersion!==viewer.streamVersion) return {status:'unavailable',message:'Stream refresh expired.'};
-    viewer.updating=true;
+  async refreshStream(room, viewer, args, actor, permitted) {
+    const current = viewer.media,
+      version = room.mediaVersion;
+    if (!current || current.kind !== 'plex' || !room.media || current.format !== 'hls')
+      return { status: 'unsupported', message: 'This stream cannot be refreshed.' };
+    if (viewer.preparing || viewer.updating)
+      return { status: 'unavailable', message: 'Wait for your stream to finish loading.' };
+    if (args.mediaVersion !== version || args.streamVersion !== viewer.streamVersion)
+      return { status: 'unavailable', message: 'Stream refresh expired.' };
+    viewer.updating = true;
     try {
-      const result=await this.replaceViewer(room,actor,actor.watchViewerId,async (authorized,source)=>
-        this.prepareQuality(room,viewer,await (this.hub.plexFor?this.hub.plexFor(actor):this.plex),source,viewer.quality,viewer.compatible,viewer.fallback,
-          {...viewer.trackChoice,browserSubtitles:viewer.browserSubtitles,shareKey:[room.s.roomId,version],excludeLease:current.hlsLease,authorized}),
-        {permitted,accept:media=>media.format==='hls'});
-      return result.status==='applied'?{status:'applied',message:'Your stream refreshed.'}:result;
-    } catch(error) {
-      return {status:'failed',message:error instanceof PlaybackError ? error.message : 'Plex could not refresh this stream.'};
-    } finally {viewer.updating=false;}
+      const result = await this.replaceViewer(
+        room,
+        actor,
+        actor.watchViewerId,
+        async (authorized, source) =>
+          this.prepareQuality(
+            room,
+            viewer,
+            await (this.hub.plexFor ? this.hub.plexFor(actor) : this.plex),
+            source,
+            viewer.quality,
+            viewer.compatible,
+            viewer.fallback,
+            {
+              ...viewer.trackChoice,
+              browserSubtitles: viewer.browserSubtitles,
+              shareKey: [room.s.roomId, version],
+              excludeLease: current.hlsLease,
+              authorized,
+            },
+          ),
+        { permitted, accept: media => media.format === 'hls' },
+      );
+      return result.status === 'applied' ? { status: 'applied', message: 'Your stream refreshed.' } : result;
+    } catch (error) {
+      return {
+        status: 'failed',
+        message: error instanceof PlaybackError ? error.message : 'Plex could not refresh this stream.',
+      };
+    } finally {
+      viewer.updating = false;
+    }
   }
 
   remove(id, save = true) {
-    const room = this.rooms.get(id); if (!room) return;
+    const room = this.rooms.get(id);
+    if (!room) return;
     if (room.removal) return room.removal;
-    room.removing = true; room.removalAt = Date.now();
-    if(!this.shuttingDown)this.publications?.roomClosed(id);
+    room.removing = true;
+    room.removalAt = Date.now();
+    if (!this.shuttingDown) this.publications?.roomClosed(id);
     this.cancelAutoplay(room);
     const pending = [...this.mediaWork].some(work => work.room === room);
     if (pending || room.transitionCommit) {
-      room.removal = this.drainMedia(room).then(() => this.removeNow(room, save), async error => {
-        await this.removeNow(room, save); throw error;
-      });
+      room.removal = this.drainMedia(room).then(
+        () => this.removeNow(room, save),
+        async error => {
+          await this.removeNow(room, save);
+          throw error;
+        },
+      );
       return room.removal;
     }
-    return room.removal = this.removeNow(room, save);
+    return (room.removal = this.removeNow(room, save));
   }
   removeNow(room, save) {
     const id = room.s.roomId;
-    this.cancelAutoplay(room); clearPlaybackEnd(room);
-    const saved = room.saved && save ? this.roomState.save(room,{closing:!this.shuttingDown,final:true}).then(async () => {
-      if (!this.shuttingDown) { this.roomState.recoveries.delete(id); await this.roomState.deleteEmpty(id); }
-    }) : Promise.resolve();
+    this.cancelAutoplay(room);
+    clearPlaybackEnd(room);
+    const saved =
+      room.saved && save
+        ? this.roomState.save(room, { closing: !this.shuttingDown, final: true }).then(async () => {
+            if (!this.shuttingDown) {
+              this.roomState.recoveries.delete(id);
+              await this.roomState.deleteEmpty(id);
+            }
+          })
+        : Promise.resolve();
     if (room.saved) {
-      this.roomState.closing.set(id,saved);
-      saved.then(() => this.roomState.closing.delete(id), () => this.roomState.closing.delete(id));
+      this.roomState.closing.set(id, saved);
+      saved.then(
+        () => this.roomState.closing.delete(id),
+        () => this.roomState.closing.delete(id),
+      );
     }
-    room.s.state.paused = true; room.s.epoch = randomUUID();
+    room.s.state.paused = true;
+    room.s.epoch = randomUUID();
     this.dropMedia(room, 'room-closed');
-    this.hub.rooms.delete(id); this.rooms.delete(id); room.s.socket.readyState = 3; void this.stopMedia(room, room.media); this.dropPreload(room); this.dropPreload(room, room.adoptable);
+    this.hub.rooms.delete(id);
+    this.rooms.delete(id);
+    room.s.socket.readyState = 3;
+    void this.stopMedia(room, room.media);
+    this.dropPreload(room);
+    this.dropPreload(room, room.adoptable);
     this.hub?.config?.logger?.info('Room', `Room closed (${id})`);
     return saved.finally(() => this.drainMedia(room));
   }
@@ -1685,7 +3043,10 @@ class Watch {
   }
   /** Transcode sessions that something in uburoom still holds. */
   plexSessionsInUse() {
-    const ids = new Set(), add = media => { if (media?.transcodeId) ids.add(media.transcodeId); };
+    const ids = new Set(),
+      add = media => {
+        if (media?.transcodeId) ids.add(media.transcodeId);
+      };
     for (const room of this.rooms.values()) {
       add(room.media);
       for (const viewer of room.viewers.values()) add(viewer.media);
@@ -1695,23 +3056,41 @@ class Watch {
     return ids;
   }
   async reconcilePlexSessions() {
-    this.plexSessions = { ...await this.plex.reconcileSessions(this.plexSessionsInUse()), checkedAt: Date.now() };
+    this.plexSessions = { ...(await this.plex.reconcileSessions(this.plexSessionsInUse())), checkedAt: Date.now() };
     return this.plexSessions;
   }
   close() {
     if (this.closing) return this.closing;
     this.shuttingDown = true;
     this.shutdownDeadline = AbortSignal.timeout(this.mediaDrainMs);
-    if (this.roomState) { this.roomState.stopped = true; clearInterval(this.roomState.timer); }
+    if (this.roomState) {
+      this.roomState.stopped = true;
+      clearInterval(this.roomState.timer);
+    }
     this.closing = (async () => {
       await this.publications?.close();
       await this.events?.close();
       const results = await Promise.allSettled([...this.rooms.keys()].map(async id => this.remove(id)));
-      try { await this.drainMedia(); } catch (error) { results.push({status:'rejected',reason:error}); }
-      try { this.tracking.close(); } catch (error) { results.push({status:'rejected',reason:error}); }
-      try { await waitFor(this.roomState?.close(), this.shutdownDeadline); }
-      catch (error) { results.push({status:'rejected',reason:error}); }
-      results.push(...await Promise.allSettled([() => this.plex.close?.(), () => this.reporting?.close()].map(action => Promise.resolve().then(action))));
+      try {
+        await this.drainMedia();
+      } catch (error) {
+        results.push({ status: 'rejected', reason: error });
+      }
+      try {
+        this.tracking.close();
+      } catch (error) {
+        results.push({ status: 'rejected', reason: error });
+      }
+      try {
+        await waitFor(this.roomState?.close(), this.shutdownDeadline);
+      } catch (error) {
+        results.push({ status: 'rejected', reason: error });
+      }
+      results.push(
+        ...(await Promise.allSettled(
+          [() => this.plex.close?.(), () => this.reporting?.close()].map(action => Promise.resolve().then(action)),
+        )),
+      );
       const failure = results.find(result => result.status === 'rejected');
       if (failure) throw failure.reason;
     })();

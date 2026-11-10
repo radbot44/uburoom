@@ -12,7 +12,7 @@ export function createProtocolApi() {
     'room.visibility',
     'media.ready.start',
     'media.ready.wait',
-    'media.ready.cancel'
+    'media.ready.cancel',
   ]);
   const SYNC_ACTIONS = Object.freeze([
     'room.kick',
@@ -31,7 +31,7 @@ export function createProtocolApi() {
     'media.autoplay.cancel',
     'media.volume.set',
     'media.mute',
-    'media.unmute'
+    'media.unmute',
   ]);
 
   function controls(value = CONTROLS) {
@@ -60,9 +60,13 @@ export function createProtocolApi() {
   }
 
   function senderName(value, fallback = 'Participant') {
-    const clean = typeof value === 'string'
-      ? value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 100)
-      : '';
+    const clean =
+      typeof value === 'string'
+        ? value
+            .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+            .trim()
+            .slice(0, 100)
+        : '';
     return clean || fallback;
   }
 
@@ -130,12 +134,12 @@ export function createProtocolApi() {
     CONTROLS,
     SYNC_MANAGEMENT_ACTIONS,
     SYNC_ACTIONS,
-     numeric,
+    numeric,
     controls,
     controlFor,
     controlAllowed,
     senderName,
-    validateSyncCommand
+    validateSyncCommand,
   };
 }
 
@@ -148,5 +152,5 @@ export const {
   controlFor,
   controlAllowed,
   senderName,
-  validateSyncCommand
+  validateSyncCommand,
 } = createProtocolApi();

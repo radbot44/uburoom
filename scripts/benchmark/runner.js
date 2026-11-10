@@ -2,13 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
-const {
-  CHUNK,
-  encoderArgs,
-  rateArgs,
-  decodeRoute,
-  cpuPlaceboRoute
-} = require('../../server/av1');
+const { CHUNK, encoderArgs, rateArgs, decodeRoute, cpuPlaceboRoute } = require('../../server/av1');
 const { deriveOutputSpec } = require('./source');
 const { spawnSafe } = require('./tools');
 
@@ -31,7 +25,7 @@ function calculateStats(numbers) {
     mean: Math.round(mean * 1000) / 1000,
     median: Math.round(median * 1000) / 1000,
     p95: Math.round(p95 * 1000) / 1000,
-    max: Math.round(max * 1000) / 1000
+    max: Math.round(max * 1000) / 1000,
   };
 }
 
@@ -58,12 +52,19 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
 
   let probe;
   try {
-    const raw = cp.execFileSync(ffprobePath, [
-      '-v', 'error',
-      '-show_entries', 'stream=index,codec_type,codec_name,width,height:format=duration',
-      '-of', 'json',
-      filePath
-    ], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    const raw = cp.execFileSync(
+      ffprobePath,
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'stream=index,codec_type,codec_name,width,height:format=duration',
+        '-of',
+        'json',
+        filePath,
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 10000 },
+    );
     probe = JSON.parse(raw);
   } catch (err) {
     return { valid: false, errors: [`FFprobe inspection failed: ${err.message}`] };
@@ -93,13 +94,21 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
   let videoEndPts = 0;
   let videoDecodedDuration = 0;
   try {
-    const videoCsv = cp.execFileSync(ffprobePath, [
-      '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'packet=pts_time,duration_time',
-      '-of', 'csv=p=0',
-      filePath
-    ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) });
+    const videoCsv = cp.execFileSync(
+      ffprobePath,
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'packet=pts_time,duration_time',
+        '-of',
+        'csv=p=0',
+        filePath,
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) },
+    );
 
     for (const line of videoCsv.split(/\r?\n/)) {
       const trimmed = line.trim();
@@ -128,7 +137,9 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
       const deltaPackets = Math.abs(actualPackets - expectedPackets);
       // Allow at most 3 packets tolerance for partial container packets / cadence rounding
       if (deltaPackets > 3) {
-        errors.push(`Incomplete video packet coverage: expected ~${expectedPackets} packets, got ${actualPackets} packets (delta ${deltaPackets}).`);
+        errors.push(
+          `Incomplete video packet coverage: expected ~${expectedPackets} packets, got ${actualPackets} packets (delta ${deltaPackets}).`,
+        );
       }
     }
 
@@ -141,14 +152,18 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
       // For VFR, gaps can legitimately be slightly larger, but shouldn't exceed 0.25s
       const maxGap = isVfr ? 0.25 : 0.085;
       if (gap > maxGap) {
-        errors.push(`Packet discontinuity detected: ${gap.toFixed(3)}s gap between ${prevEnd.toFixed(3)}s and ${currentPts.toFixed(3)}s.`);
+        errors.push(
+          `Packet discontinuity detected: ${gap.toFixed(3)}s gap between ${prevEnd.toFixed(3)}s and ${currentPts.toFixed(3)}s.`,
+        );
         break;
       }
     }
 
     // Tight duration check based on real packet timestamps
     if (sampleDuration && Math.abs(videoDecodedDuration - sampleDuration) > 0.35) {
-      errors.push(`Decoded video duration (${videoDecodedDuration.toFixed(3)}s) deviates from requested sample duration (${sampleDuration}s) by >0.35s.`);
+      errors.push(
+        `Decoded video duration (${videoDecodedDuration.toFixed(3)}s) deviates from requested sample duration (${sampleDuration}s) by >0.35s.`,
+      );
     }
   }
 
@@ -161,13 +176,21 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
   if (hasAudio) {
     const audioPackets = [];
     try {
-      const audioCsv = cp.execFileSync(ffprobePath, [
-        '-v', 'error',
-        '-select_streams', 'a:0',
-        '-show_entries', 'packet=pts_time,duration_time',
-        '-of', 'csv=p=0',
-        filePath
-      ], { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) });
+      const audioCsv = cp.execFileSync(
+        ffprobePath,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'a:0',
+          '-show_entries',
+          'packet=pts_time,duration_time',
+          '-of',
+          'csv=p=0',
+          filePath,
+        ],
+        { encoding: 'utf8', windowsHide: true, timeout: Math.max(15000, Math.ceil((sampleDuration || 60) * 500)) },
+      );
 
       for (const line of audioCsv.split(/\r?\n/)) {
         const trimmed = line.trim();
@@ -193,19 +216,25 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
       // Verify real decoded A/V start alignment (independent of container headers)
       const avStartDelta = Math.abs(videoStartPts - audioStartPts);
       if (avStartDelta > 0.08) {
-        errors.push(`Audio/video start PTS misalignment: video starts at ${videoStartPts.toFixed(3)}s, audio at ${audioStartPts.toFixed(3)}s (delta ${avStartDelta.toFixed(3)}s).`);
+        errors.push(
+          `Audio/video start PTS misalignment: video starts at ${videoStartPts.toFixed(3)}s, audio at ${audioStartPts.toFixed(3)}s (delta ${avStartDelta.toFixed(3)}s).`,
+        );
       }
 
       // Verify real decoded A/V end alignment
       const avEndDelta = Math.abs(videoEndPts - audioEndPts);
       if (avEndDelta > 0.12) {
-        errors.push(`Audio/video end PTS misalignment: video ends at ${videoEndPts.toFixed(3)}s, audio at ${audioEndPts.toFixed(3)}s (delta ${avEndDelta.toFixed(3)}s).`);
+        errors.push(
+          `Audio/video end PTS misalignment: video ends at ${videoEndPts.toFixed(3)}s, audio at ${audioEndPts.toFixed(3)}s (delta ${avEndDelta.toFixed(3)}s).`,
+        );
       }
 
       // Verify real decoded A/V duration alignment
       const avDurationDelta = Math.abs(videoDecodedDuration - audioDecodedDuration);
       if (avDurationDelta > 0.12) {
-        errors.push(`Audio/video duration mismatch: video=${videoDecodedDuration.toFixed(3)}s, audio=${audioDecodedDuration.toFixed(3)}s (delta ${avDurationDelta.toFixed(3)}s).`);
+        errors.push(
+          `Audio/video duration mismatch: video=${videoDecodedDuration.toFixed(3)}s, audio=${audioDecodedDuration.toFixed(3)}s (delta ${avDurationDelta.toFixed(3)}s).`,
+        );
       }
     }
   }
@@ -213,12 +242,11 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
   // 3. Full decoding integrity test
   try {
     const decodeTimeout = Math.max(30000, Math.ceil((sampleDuration || 60) * 2000));
-    cp.execFileSync(ffmpegPath, [
-      '-v', 'error',
-      '-i', filePath,
-      '-f', 'null',
-      '-'
-    ], { encoding: 'utf8', windowsHide: true, timeout: decodeTimeout });
+    cp.execFileSync(ffmpegPath, ['-v', 'error', '-i', filePath, '-f', 'null', '-'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: decodeTimeout,
+    });
   } catch (err) {
     errors.push(`Full decoding verification failed: ${err.message}`);
   }
@@ -237,7 +265,7 @@ function validateOutputVideo(ffprobePath, ffmpegPath, filePath, options = {}) {
     videoStream,
     audioStream,
     sizeBytes: size,
-    errors
+    errors,
   };
 }
 
@@ -253,7 +281,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     outputDir,
     runIndex = 1,
     onProgress,
-    probedEncoders = []
+    probedEncoders = [],
   } = options;
 
   const { codec, requestedEncoder, quality } = testConfig;
@@ -282,13 +310,15 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     doviP5: sourceInfo.hdr?.doviP5,
     hdr: rawSpec.hdr,
     tonemap: rawSpec.tonemap,
-    filter: rawSpec.filter
+    filter: rawSpec.filter,
   };
 
   let actualEncoder = requestedEncoder;
   if (requestedEncoder === 'auto' || requestedEncoder === 'hardware') {
     const preferred = codec === 'av1' ? ['qsv', 'nvenc'] : codec === 'vp9' ? ['qsv'] : [];
-    const found = preferred.find(enc => probedEncoders.find(p => p.codec === codec && p.encoder === enc && p.available));
+    const found = preferred.find(enc =>
+      probedEncoders.find(p => p.codec === codec && p.encoder === enc && p.available),
+    );
     actualEncoder = found || (cpuFallback ? 'software' : preferred[0] || 'software');
   } else if (requestedEncoder === 'software') {
     actualEncoder = 'software';
@@ -298,13 +328,17 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
 
   // Determine decode routes (mirroring server/av1.js)
   const candidateRoutes = specForRoute.doviP5
-    ? [
-        ...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder)] : []),
-        cpuPlaceboRoute(specForRoute)
-      ].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i)
+    ? [...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder)] : []), cpuPlaceboRoute(specForRoute)].filter(
+        (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
+      )
     : [
-        ...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder), decodeRoute(specForRoute, actualEncoder, undefined, false)].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i) : []),
-        undefined
+        ...(hardwareDecode
+          ? [
+              decodeRoute(specForRoute, actualEncoder),
+              decodeRoute(specForRoute, actualEncoder, undefined, false),
+            ].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i)
+          : []),
+        undefined,
       ];
 
   if (specForRoute.doviP5 && !candidateRoutes.length) {
@@ -332,37 +366,55 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     const buildArgs = (encoderToUse, route) => {
       const vFilter = route?.filter || rawSpec.filter;
       const args = [
-        '-hide_banner', '-loglevel', 'error', '-y',
-        '-threads', '2',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-threads',
+        '2',
         ...(route?.input || []),
-        '-ss', String(chunkStart),
-        '-i', sourceInfo.filePath,
-        '-t', String(chunkDuration),
-        '-map', '0:v:0',
-        '-filter_threads', '2',
-        '-vf', vFilter,
-        '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
+        '-ss',
+        String(chunkStart),
+        '-i',
+        sourceInfo.filePath,
+        '-t',
+        String(chunkDuration),
+        '-map',
+        '0:v:0',
+        '-filter_threads',
+        '2',
+        '-vf',
+        vFilter,
+        '-sn',
+        '-dn',
+        '-map_metadata',
+        '-1',
+        '-map_chapters',
+        '-1',
         ...encoderArgs(encoderToUse, codec),
-        ...rateArgs(encoderToUse, codec, rawSpec.targetBitrateKbps)
+        ...rateArgs(encoderToUse, codec, rawSpec.targetBitrateKbps),
       ];
 
       if (rawSpec.frameRate) {
         args.push('-r', rawSpec.frameRate, '-fps_mode', 'cfr');
       }
 
-      args.push(
-        '-g', '180',
-        '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709'
-      );
+      args.push('-g', '180', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
 
       if (rawSpec.hasAudio) {
         args.push(
-          '-map', '0:a:0',
-          '-c:a', 'libopus',
-          '-b:a', '128k',
-          '-ac', '2',
-          '-ar', '48000',
-          '-af', 'asetpts=PTS-STARTPTS'
+          '-map',
+          '0:a:0',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-ar',
+          '48000',
+          '-af',
+          'asetpts=PTS-STARTPTS',
         );
       } else {
         args.push('-an');
@@ -390,7 +442,9 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
         await spawnSafe(tools.ffmpeg, currentArgs, {
           timeout: 45000,
           signal: options.signal,
-          onStderr: chunk => { stderrOutput += chunk.toString(); }
+          onStderr: chunk => {
+            stderrOutput += chunk.toString();
+          },
         });
         if (!fs.existsSync(chunkFile) || fs.statSync(chunkFile).size < 100) {
           throw new Error('FFmpeg completed but chunk output file is missing or empty.');
@@ -415,7 +469,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
             type: 'decode_route',
             from: activeRoute ? (activeRoute.input ? 'hardware-decode' : 'gpu-route') : 'default-route',
             to: nextRoute ? 'cpu-placebo' : 'cpu-decode',
-            reason: `Decode route failed on chunk ${i}: ${err.message}`
+            reason: `Decode route failed on chunk ${i}: ${err.message}`,
           });
           activeRoute = nextRoute;
           continue;
@@ -430,13 +484,15 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
             type: 'encoder',
             from: prev,
             to: 'software',
-            reason: `Hardware encoder (${prev}) failed on chunk ${i}: ${stderrOutput.slice(-200) || err.message}`
+            reason: `Hardware encoder (${prev}) failed on chunk ${i}: ${stderrOutput.slice(-200) || err.message}`,
           });
           continue;
         }
 
         // Fatal chunk failure
-        throw new Error(`Chunk ${i} encoding failed (${actualEncoder}/${codec}): ${err.message}\n${stderrOutput.slice(-300)}`);
+        throw new Error(
+          `Chunk ${i} encoding failed (${actualEncoder}/${codec}): ${err.message}\n${stderrOutput.slice(-300)}`,
+        );
       }
     }
 
@@ -452,7 +508,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       realTimeSpeed: Math.round(realTimeSpeed * 100) / 100,
       deadlineMissed,
       sizeBytes: chunkSizeBytes,
-      relativePath: path.relative(outputDir, chunkFile).replace(/\\/g, '/')
+      relativePath: path.relative(outputDir, chunkFile).replace(/\\/g, '/'),
     });
 
     const chunkHadFallback = fallbackEvents.length > initialFallbackCount;
@@ -467,7 +523,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       deadlineMissed,
       fallbackOccurred: chunkHadFallback,
       totalFallbacks: fallbackEvents.length,
-      fallbackEvents: [...fallbackEvents]
+      fallbackEvents: [...fallbackEvents],
     });
   }
 
@@ -489,27 +545,41 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
   // Assemble measured chunks into a seekable review file without re-encoding
   const assembledFile = path.join(runOutputDir, 'assembled.webm');
   const concatListFile = path.join(runOutputDir, 'chunks-list.txt');
-  const listLines = chunkResults.map(c => `file '${path.resolve(path.join(outputDir, c.relativePath)).replace(/\\/g, '/')}'`);
+  const listLines = chunkResults.map(
+    c => `file '${path.resolve(path.join(outputDir, c.relativePath)).replace(/\\/g, '/')}'`,
+  );
   fs.writeFileSync(concatListFile, listLines.join('\n') + '\n', 'utf8');
 
   let validationResult = { valid: false, errors: [] };
   let assembledSuccess = false;
   let assembledDuration = 0;
   try {
-    cp.execFileSync(tools.ffmpeg, [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0',
-      '-i', concatListFile,
-      '-c', 'copy',
-      assembledFile
-    ], { windowsHide: true, timeout: 20000 });
+    cp.execFileSync(
+      tools.ffmpeg,
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        concatListFile,
+        '-c',
+        'copy',
+        assembledFile,
+      ],
+      { windowsHide: true, timeout: 20000 },
+    );
 
     validationResult = validateOutputVideo(tools.ffprobe, tools.ffmpeg, assembledFile, {
       expectedCodec: codec,
       hasAudio: rawSpec.hasAudio,
       sampleDuration,
       fps: sourceInfo.video.fps || 30,
-      signal: options.signal
+      signal: options.signal,
     });
     assembledDuration = validationResult.videoDecodedDuration || 0;
     assembledSuccess = validationResult.valid;
@@ -528,7 +598,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
     configId,
     mode: 'chunked',
     status: isPassed ? 'pass' : 'fail',
-    error: isPassed ? null : (validationResult.errors.join('; ') || 'Assembled validation failed'),
+    error: isPassed ? null : validationResult.errors.join('; ') || 'Assembled validation failed',
     codec,
     requestedEncoder,
     actualEncoder,
@@ -539,7 +609,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       label: quality.label,
       width: rawSpec.targetWidth,
       height: rawSpec.targetHeight,
-      targetBitrateKbps: rawSpec.targetBitrateKbps
+      targetBitrateKbps: rawSpec.targetBitrateKbps,
     },
     performance: {
       sampleDuration,
@@ -558,7 +628,7 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       deadlineMisses: deadlineMissCount,
       totalBytes,
       actualBitrateKbps,
-      processingType: 'production-like'
+      processingType: 'production-like',
     },
     validation: validationResult,
     output: {
@@ -566,8 +636,8 @@ async function runChunkedBenchmark(tools, sourceInfo, testConfig, options = {}) 
       assembledDuration,
       isReviewFile: true,
       reviewLabel: 'Assembled from measured chunks (no re-encoding)',
-      chunks: chunkResults
-    }
+      chunks: chunkResults,
+    },
   };
 }
 
@@ -583,7 +653,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     outputDir,
     runIndex = 1,
     onProgress,
-    probedEncoders = []
+    probedEncoders = [],
   } = options;
 
   const { codec, requestedEncoder, quality } = testConfig;
@@ -611,7 +681,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     doviP5: sourceInfo.hdr?.doviP5,
     hdr: rawSpec.hdr,
     tonemap: rawSpec.tonemap,
-    filter: rawSpec.filter
+    filter: rawSpec.filter,
   };
 
   const outputFile = path.join(runOutputDir, 'continuous.webm');
@@ -619,7 +689,9 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
   let actualEncoder = requestedEncoder;
   if (requestedEncoder === 'auto' || requestedEncoder === 'hardware') {
     const preferred = codec === 'av1' ? ['qsv', 'nvenc'] : codec === 'vp9' ? ['qsv'] : [];
-    const found = preferred.find(enc => probedEncoders.find(p => p.codec === codec && p.encoder === enc && p.available));
+    const found = preferred.find(enc =>
+      probedEncoders.find(p => p.codec === codec && p.encoder === enc && p.available),
+    );
     actualEncoder = found || (cpuFallback ? 'software' : preferred[0] || 'software');
   } else if (requestedEncoder === 'software') {
     actualEncoder = 'software';
@@ -628,13 +700,17 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
   const allowFallback = cpuFallback && testConfig.allowFallback !== false;
 
   const candidateRoutes = specForRoute.doviP5
-    ? [
-        ...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder)] : []),
-        cpuPlaceboRoute(specForRoute)
-      ].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i)
+    ? [...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder)] : []), cpuPlaceboRoute(specForRoute)].filter(
+        (route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i,
+      )
     : [
-        ...(hardwareDecode ? [decodeRoute(specForRoute, actualEncoder), decodeRoute(specForRoute, actualEncoder, undefined, false)].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i) : []),
-        undefined
+        ...(hardwareDecode
+          ? [
+              decodeRoute(specForRoute, actualEncoder),
+              decodeRoute(specForRoute, actualEncoder, undefined, false),
+            ].filter((route, i, all) => route && all.findIndex(other => other?.filter === route.filter) === i)
+          : []),
+        undefined,
       ];
 
   if (specForRoute.doviP5 && !candidateRoutes.length) {
@@ -647,37 +723,55 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
   const buildArgs = (encoderToUse, route) => {
     const vFilter = route?.filter || rawSpec.filter;
     const args = [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-threads', '2',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-threads',
+      '2',
       ...(route?.input || []),
-      '-ss', String(startOffset),
-      '-t', String(sampleDuration),
-      '-i', sourceInfo.filePath,
-      '-map', '0:v:0',
-      '-filter_threads', '2',
-      '-vf', vFilter,
-      '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
+      '-ss',
+      String(startOffset),
+      '-t',
+      String(sampleDuration),
+      '-i',
+      sourceInfo.filePath,
+      '-map',
+      '0:v:0',
+      '-filter_threads',
+      '2',
+      '-vf',
+      vFilter,
+      '-sn',
+      '-dn',
+      '-map_metadata',
+      '-1',
+      '-map_chapters',
+      '-1',
       ...encoderArgs(encoderToUse, codec),
-      ...rateArgs(encoderToUse, codec, rawSpec.targetBitrateKbps)
+      ...rateArgs(encoderToUse, codec, rawSpec.targetBitrateKbps),
     ];
 
     if (rawSpec.frameRate) {
       args.push('-r', rawSpec.frameRate, '-fps_mode', 'cfr');
     }
 
-    args.push(
-      '-g', '180',
-      '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709'
-    );
+    args.push('-g', '180', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
 
     if (rawSpec.hasAudio) {
       args.push(
-        '-map', '0:a:0',
-        '-c:a', 'libopus',
-        '-b:a', '128k',
-        '-ac', '2',
-        '-ar', '48000',
-        '-af', 'asetpts=PTS-STARTPTS'
+        '-map',
+        '0:a:0',
+        '-c:a',
+        'libopus',
+        '-b:a',
+        '128k',
+        '-ac',
+        '2',
+        '-ar',
+        '48000',
+        '-af',
+        'asetpts=PTS-STARTPTS',
       );
     } else {
       args.push('-an');
@@ -704,7 +798,9 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       await spawnSafe(tools.ffmpeg, args, {
         timeout: 180000,
         signal: options.signal,
-        onStderr: chunk => { stderrOutput += chunk.toString(); }
+        onStderr: chunk => {
+          stderrOutput += chunk.toString();
+        },
       });
       if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 100) {
         throw new Error('Continuous encode completed but output file is missing or empty.');
@@ -723,7 +819,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
           type: 'decode_route',
           from: activeRoute ? 'hardware-decode' : 'gpu-route',
           to: nextRoute ? 'cpu-placebo' : 'cpu-decode',
-          reason: `Continuous decode route failed: ${err.message}`
+          reason: `Continuous decode route failed: ${err.message}`,
         });
         activeRoute = nextRoute;
         continue;
@@ -736,11 +832,13 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
           type: 'encoder',
           from: prev,
           to: 'software',
-          reason: `Continuous hardware encoder (${prev}) failed: ${stderrOutput.slice(-200) || err.message}`
+          reason: `Continuous hardware encoder (${prev}) failed: ${stderrOutput.slice(-200) || err.message}`,
         });
         continue;
       }
-      throw new Error(`Continuous encoding failed (${actualEncoder}/${codec}): ${err.message}\n${stderrOutput.slice(-300)}`);
+      throw new Error(
+        `Continuous encoding failed (${actualEncoder}/${codec}): ${err.message}\n${stderrOutput.slice(-300)}`,
+      );
     }
   }
 
@@ -757,7 +855,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
     hasAudio: rawSpec.hasAudio,
     sampleDuration,
     fps: sourceInfo.video.fps || 30,
-    signal: options.signal
+    signal: options.signal,
   });
 
   const isPassed = validationResult.valid;
@@ -781,7 +879,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       label: quality.label,
       width: rawSpec.targetWidth,
       height: rawSpec.targetHeight,
-      targetBitrateKbps: rawSpec.targetBitrateKbps
+      targetBitrateKbps: rawSpec.targetBitrateKbps,
     },
     performance: {
       sampleDuration,
@@ -799,7 +897,7 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       deadlineMisses: 0,
       totalBytes: outputSizeBytes,
       actualBitrateKbps,
-      processingType: 'continuous-baseline'
+      processingType: 'continuous-baseline',
     },
     validation: validationResult,
     output: {
@@ -807,8 +905,8 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
       assembledDuration: validationResult.videoDecodedDuration || sampleDuration,
       isReviewFile: false,
       reviewLabel: 'Continuous encode',
-      chunks: []
-    }
+      chunks: [],
+    },
   };
 }
 
@@ -818,15 +916,26 @@ async function runContinuousBenchmark(tools, sourceInfo, testConfig, options = {
 function extractScreenshot(ffmpegPath, videoPath, timestampSeconds, outputPath) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   try {
-    cp.execFileSync(ffmpegPath, [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-ss', String(Math.max(0, timestampSeconds)),
-      '-i', videoPath,
-      '-an',
-      '-vframes', '1',
-      '-q:v', '2',
-      outputPath
-    ], { windowsHide: true, timeout: 10000 });
+    cp.execFileSync(
+      ffmpegPath,
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-ss',
+        String(Math.max(0, timestampSeconds)),
+        '-i',
+        videoPath,
+        '-an',
+        '-vframes',
+        '1',
+        '-q:v',
+        '2',
+        outputPath,
+      ],
+      { windowsHide: true, timeout: 10000 },
+    );
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
       return true;
     }
@@ -834,15 +943,26 @@ function extractScreenshot(ffmpegPath, videoPath, timestampSeconds, outputPath) 
 
   // Fallback to start frame if seeking to target timestamp failed
   try {
-    cp.execFileSync(ffmpegPath, [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-ss', '0',
-      '-i', videoPath,
-      '-an',
-      '-vframes', '1',
-      '-q:v', '2',
-      outputPath
-    ], { windowsHide: true, timeout: 10000 });
+    cp.execFileSync(
+      ffmpegPath,
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-ss',
+        '0',
+        '-i',
+        videoPath,
+        '-an',
+        '-vframes',
+        '1',
+        '-q:v',
+        '2',
+        outputPath,
+      ],
+      { windowsHide: true, timeout: 10000 },
+    );
     return fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000;
   } catch {
     return false;
@@ -853,5 +973,5 @@ module.exports = {
   runChunkedBenchmark,
   runContinuousBenchmark,
   extractScreenshot,
-  validateOutputVideo
+  validateOutputVideo,
 };

@@ -15,62 +15,141 @@ async function waitFor(predicate) {
   }
 }
 function gate() {
-  let started = false, release;
-  return { get started() { return started; }, held: new Promise(resolve => { release = resolve; }), enter: () => { started = true; }, release: () => release() };
+  let started = false,
+    release;
+  return {
+    get started() {
+      return started;
+    },
+    held: new Promise(resolve => {
+      release = resolve;
+    }),
+    enter: () => {
+      started = true;
+    },
+    release: () => release(),
+  };
 }
 
-async function fixture(t, {fallback=false}={}) {
+async function fixture(t, { fallback = false } = {}) {
   const registry = new Accounts(undefined, credentialVault());
   const creatorId = registry.resolve('discord', '111111111111111111', 'Creator').id;
   const guestId = registry.resolve('discord', '222222222222222222', 'Host').id;
-  const actor = userId => ({ userId, name: userId === creatorId ? 'Creator' : 'Host', surface: 'web', guildId: 'guild', channelId: 'commands', watchViewerId: randomUUID() });
-  const creator = actor(creatorId), guest = actor(guestId);
+  const actor = userId => ({
+    userId,
+    name: userId === creatorId ? 'Creator' : 'Host',
+    surface: 'web',
+    guildId: 'guild',
+    channelId: 'commands',
+    watchViewerId: randomUUID(),
+  });
+  const creator = actor(creatorId),
+    guest = actor(guestId);
   const hub = new Hub({ ownerId: '111111111111111111', guildId: 'guild', channels: ['commands'] }, []);
   hub.access = { isMember: () => true, refresh: async () => true };
-  const stopped = [], prepared = [];
-  if(fallback)hub.config.transcoding={policy:'override',uburoom:true,formats:['av1'],fallback:{enabled:true,height:720,bitrate:2}};
+  const stopped = [],
+    prepared = [];
+  if (fallback)
+    hub.config.transcoding = {
+      policy: 'override',
+      uburoom: true,
+      formats: ['av1'],
+      fallback: { enabled: true, height: 720, bitrate: 2 },
+    };
   const plex = {
     json: async () => ({ machineIdentifier: 'fixture-plex' }),
     prepare: async id => {
-      const source = { id, kind: 'plex', format: 'file', duration: 100, title: 'Video ' + id, source: { type: 'movie' }, resources: new Map() };
-      if(fallback)Object.assign(source,{sourceStart:'http://fixture/file',sourceKey:id,tracks:{audio:[],subtitles:[]}});
+      const source = {
+        id,
+        kind: 'plex',
+        format: 'file',
+        duration: 100,
+        title: 'Video ' + id,
+        source: { type: 'movie' },
+        resources: new Map(),
+      };
+      if (fallback)
+        Object.assign(source, {
+          sourceStart: 'http://fixture/file',
+          sourceKey: id,
+          tracks: { audio: [], subtitles: [] },
+        });
       prepared.push(source);
       return source;
     },
-    stop: async media => { if (media) stopped.push(media); }
+    stop: async media => {
+      if (media) stopped.push(media);
+    },
   };
-  if(fallback) {
-    const {AV1}=require('../server/av1');
-    plex.av1=new AV1(plex,{ffmpegPath:'fixture'},async(_binary,args)=>args.includes('-show_entries')?
-      Buffer.from(JSON.stringify({streams:[{codec_type:'video',width:640,height:360}]})):args.includes('pipe:3')?{video:Buffer.alloc(200),audio:Buffer.alloc(100)}:Buffer.alloc(200));
-    plex.close=()=>plex.av1.close();
+  if (fallback) {
+    const { AV1 } = require('../server/av1');
+    plex.av1 = new AV1(plex, { ffmpegPath: 'fixture' }, async (_binary, args) =>
+      args.includes('-show_entries')
+        ? Buffer.from(JSON.stringify({ streams: [{ codec_type: 'video', width: 640, height: 360 }] }))
+        : args.includes('pipe:3')
+          ? { video: Buffer.alloc(200), audio: Buffer.alloc(100) }
+          : Buffer.alloc(200),
+    );
+    plex.close = () => plex.av1.close();
   }
   const watch = new Watch(hub, plex, undefined, registry);
   watch.autoplayDelayMs = 30;
   clearInterval(watch.roomState.timer);
   let controller = creator;
   const id = await watch.roomState.create(creator, { name: 'Autoplay room' });
-  const room = watch.rooms.get(id), queue = watch.roomState.queue, store = watch.roomState.store;
+  const room = watch.rooms.get(id),
+    queue = watch.roomState.queue,
+    store = watch.roomState.store;
   watch.snapshot(room, creator, creator.watchViewerId, async () => true, 'direct');
-  const command = (action, args, person = controller) => hub.dispatch(person, { roomId: id, action, ...(args ? { args } : {}) });
+  const command = (action, args, person = controller) =>
+    hub.dispatch(person, { roomId: id, action, ...(args ? { args } : {}) });
   assert.equal((await command('media.load', { mediaId: '100', quality: 'direct' })).status, 'applied');
   await watch.prepareViewer(room, creator, creator.watchViewerId);
   const upcoming = [];
-  for (const mediaId of ['101', '102']) upcoming.push((await queue.add(id, creatorId, { serverId: 'fixture-plex', mediaId, type: 'movie', title: 'Video ' + mediaId, duration: 100 })).added);
+  for (const mediaId of ['101', '102'])
+    upcoming.push(
+      (
+        await queue.add(id, creatorId, {
+          serverId: 'fixture-plex',
+          mediaId,
+          type: 'movie',
+          title: 'Video ' + mediaId,
+          duration: 100,
+        })
+      ).added,
+    );
   assert.equal((await command('media.autoplay.set', { enabled: true })).status, 'applied');
   function playTail() {
-    room.position = 96; room.changedAt = Date.now(); room.manualPaused = false; room.initialGate = false; room.s.state.paused = false;
+    room.position = 96;
+    room.changedAt = Date.now();
+    room.manualPaused = false;
+    room.initialGate = false;
+    room.s.state.paused = false;
     room.pauseAt = room.startAt = undefined;
   }
   playTail();
-  let observedAt = Date.now(), sequence = 0;
+  let observedAt = Date.now(),
+    sequence = 0;
   watch.tracking.now = () => observedAt;
   async function observe(position, state = 'playing', extra = {}) {
     observedAt += 1000;
     sequence++;
     const viewer = room.viewers.get(controller.watchViewerId);
-    const data = { epoch: room.s.epoch, mediaVersion: room.mediaVersion, streamVersion: viewer.streamVersion, observationEpoch: viewer.observationEpoch,
-      sequence, sampleAt: observedAt, observedAt, position, state, frames: sequence * 30, rate: 1, discontinuity: 0, ...extra };
+    const data = {
+      epoch: room.s.epoch,
+      mediaVersion: room.mediaVersion,
+      streamVersion: viewer.streamVersion,
+      observationEpoch: viewer.observationEpoch,
+      sequence,
+      sampleAt: observedAt,
+      observedAt,
+      position,
+      state,
+      frames: sequence * 30,
+      rate: 1,
+      discontinuity: 0,
+      ...extra,
+    };
     let observed;
     try {
       observed = watch.tracking.observe(room, viewer, controller.watchViewerId, data);
@@ -80,31 +159,60 @@ async function fixture(t, {fallback=false}={}) {
     }
     await watch.observeEnd(room, viewer, data, observed);
   }
-  async function end() { for (const position of [96, 97, 98, 99]) await observe(position); await observe(100, 'ended'); }
+  async function end() {
+    for (const position of [96, 97, 98, 99]) await observe(position);
+    await observe(100, 'ended');
+  }
   const flush = registry.flush.bind(registry);
   t.after(async () => {
     registry.flush = flush;
     delete store.failure;
     watch.tracking.now = Date.now;
-    await watch.close(); hub.close(); await registry.close();
+    await watch.close();
+    hub.close();
+    await registry.close();
   });
-  return { registry, hub, plex, watch, room, queue, store, id, creator, guest, upcoming, command, observe, end, playTail, prepared, stopped,
+  return {
+    registry,
+    hub,
+    plex,
+    watch,
+    room,
+    queue,
+    store,
+    id,
+    creator,
+    guest,
+    upcoming,
+    command,
+    observe,
+    end,
+    playTail,
+    prepared,
+    stopped,
     async hostController() {
       const record = store.get(id);
-      watch.roomState.apply(room, await store.edit(id, creatorId, record.revision, { action: 'host.add', userId: guestId }));
+      watch.roomState.apply(
+        room,
+        await store.edit(id, creatorId, record.revision, { action: 'host.add', userId: guestId }),
+      );
       watch.snapshot(room, guest, guest.watchViewerId, async () => true, 'direct');
       await watch.prepareViewer(room, guest, guest.watchViewerId);
       await watch.leave(room, creator, creator.watchViewerId);
-      controller = guest; playTail();
-    }
+      controller = guest;
+      playTail();
+    },
   };
 }
 
 test('verified natural ending broadcasts one countdown, atomically archives completion and consumes one upcoming occurrence', async t => {
-  const f = await fixture(t,{fallback:true}), before = f.queue.current(f.id), version = f.room.mediaVersion;
+  const f = await fixture(t, { fallback: true }),
+    before = f.queue.current(f.id),
+    version = f.room.mediaVersion;
   await f.end();
   const countdown = f.room.autoplayCountdown;
-  assert.ok(countdown); assert.equal(countdown.nextEntryId, f.upcoming[0].id);
+  assert.ok(countdown);
+  assert.equal(countdown.nextEntryId, f.upcoming[0].id);
   assert.equal(f.queue.current(f.id), null, 'current entry is completed immediately');
   assert.equal(f.room.media, undefined, 'media is unloaded immediately');
   assert.equal(f.store.get(f.id).bookmark, null, 'bookmark is cleared immediately');
@@ -117,11 +225,15 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   assert.equal(f.room.autoplayCountdown, countdown, 'duplicate endings retain one countdown');
   await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.mediaTransition);
   assert.notEqual(f.room.mediaVersion, version);
-  assert.equal(f.room.media.id, '101'); assert.equal(f.queue.list(f.id).total, 1);
+  assert.equal(f.room.media.id, '101');
+  assert.equal(f.queue.list(f.id).total, 1);
   const history = f.queue.history(f.id);
-  assert.equal(history.total, 1); assert.equal(history.items[0].id, before.id);
-  assert.equal(history.items[0].outcome, 'completed'); assert.equal(history.items[0].position, 100);
-  assert.equal(f.store.get(f.id).bookmark.mediaId, '101'); assert.equal(f.store.get(f.id).bookmark.position, 0);
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].id, before.id);
+  assert.equal(history.items[0].outcome, 'completed');
+  assert.equal(history.items[0].position, 100);
+  assert.equal(f.store.get(f.id).bookmark.mediaId, '101');
+  assert.equal(f.store.get(f.id).bookmark.position, 0);
   assert.equal(f.room.autoplayCountdown, undefined);
   // The countdown prepared the viewer's next stream; the switch adopts it instead of starting cold.
   const preloaded = f.prepared.filter(media => media.id === '101');
@@ -130,39 +242,51 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   assert.equal(f.room.viewers.get(f.creator.watchViewerId).media, preloaded[1]);
   assert.equal(f.prepared.filter(media => media.id === '101').length, 2, 'no second stream was prepared');
   assert.ok(!f.stopped.includes(preloaded[1]));
-  const fallback=f.room.fallbackStream;
-  assert.ok(fallback?.media,'countdown fallback is adopted with its ready chunks');
-  const lease=fallback.media.av1Lease;
-  assert.equal(lease.released,false);
-  f.room.manualPaused=true;f.room.s.state.paused=true;f.watch.reconcileFallback(f.room);
-  assert.equal(fallback.active,false,'paused room idles fallback work');
-  await f.command('media.load',{mediaId:'102',quality:'direct'});
-  assert.equal(lease.released,true,'changing the video releases the old fallback');
-  f.room.s.state.paused=false;f.watch.reconcileFallback(f.room);
-  await waitFor(()=>!!f.room.fallbackStream?.media);
-  const final=f.room.fallbackStream.media.av1Lease;
-  await f.watch.remove(f.id);assert.equal(final.released,true,'closing the room releases its fallback lease');
+  const fallback = f.room.fallbackStream;
+  assert.ok(fallback?.media, 'countdown fallback is adopted with its ready chunks');
+  const lease = fallback.media.av1Lease;
+  assert.equal(lease.released, false);
+  f.room.manualPaused = true;
+  f.room.s.state.paused = true;
+  f.watch.reconcileFallback(f.room);
+  assert.equal(fallback.active, false, 'paused room idles fallback work');
+  await f.command('media.load', { mediaId: '102', quality: 'direct' });
+  assert.equal(lease.released, true, 'changing the video releases the old fallback');
+  f.room.s.state.paused = false;
+  f.watch.reconcileFallback(f.room);
+  await waitFor(() => !!f.room.fallbackStream?.media);
+  const final = f.room.fallbackStream.media.av1Lease;
+  await f.watch.remove(f.id);
+  assert.equal(final.released, true, 'closing the room releases its fallback lease');
 });
 
 test('Cancel, pause, seek, queue edits and disabling autoplay immediately cancel countdowns without consuming entries', async t => {
   for (const [action, args] of [
-    ['media.autoplay.cancel'], ['media.pause'], ['queue.clear'],
-    ['media.autoplay.set', { enabled: false }]
-  ]) await t.test(action, async sub => {
-    const f = await fixture(sub), before = f.queue.current(f.id);
-    await f.end(); assert.ok(f.room.autoplayCountdown);
-    assert.equal((await f.command(action, args)).status, 'applied');
-    assert.equal(f.room.autoplayCountdown, undefined);
-    await delay(60);
-    assert.equal(f.queue.current(f.id), null); assert.equal(f.queue.history(f.id).total, 1);
-    assert.equal(f.queue.history(f.id).items[0].id, before.id);
-  });
+    ['media.autoplay.cancel'],
+    ['media.pause'],
+    ['queue.clear'],
+    ['media.autoplay.set', { enabled: false }],
+  ])
+    await t.test(action, async sub => {
+      const f = await fixture(sub),
+        before = f.queue.current(f.id);
+      await f.end();
+      assert.ok(f.room.autoplayCountdown);
+      assert.equal((await f.command(action, args)).status, 'applied');
+      assert.equal(f.room.autoplayCountdown, undefined);
+      await delay(60);
+      assert.equal(f.queue.current(f.id), null);
+      assert.equal(f.queue.history(f.id).total, 1);
+      assert.equal(f.queue.history(f.id).items[0].id, before.id);
+    });
 });
 
 test('autoplay off unloads ended media and presents upNext interstitial when queue has upcoming items, finished when empty', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id);
+  const f = await fixture(t),
+    before = f.queue.current(f.id);
   await f.command('media.autoplay.set', { enabled: false });
-  await f.end(); await delay(60);
+  await f.end();
+  await delay(60);
   assert.equal(f.room.autoplayCountdown, undefined);
   assert.equal(f.room.media, undefined);
   assert.equal(f.queue.current(f.id), null);
@@ -181,14 +305,17 @@ test('autoplay off unloads ended media and presents upNext interstitial when que
 });
 
 test('smart queue-edit countdown rule: appending preserves countdown, head change restarts, clearing cancels', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id);
+  const f = await fixture(t),
+    before = f.queue.current(f.id);
   await f.end();
   const countdown = f.room.autoplayCountdown;
   assert.ok(countdown);
   const endsAt = countdown.endsAt;
 
   // 1. Appending to the back of a non-empty queue preserves the running countdown instance
-  const addResult = await f.command('queue.add', { item: { serverId: 'fixture-plex', mediaId: '103', type: 'movie', title: 'Video 103', duration: 100 } });
+  const addResult = await f.command('queue.add', {
+    item: { serverId: 'fixture-plex', mediaId: '103', type: 'movie', title: 'Video 103', duration: 100 },
+  });
   assert.equal(addResult.status, 'applied');
   assert.equal(f.room.autoplayCountdown, countdown, 'same countdown instance continues running');
   assert.equal(f.room.autoplayCountdown.endsAt, endsAt, 'endsAt unchanged');
@@ -212,23 +339,32 @@ test('smart queue-edit countdown rule: appending preserves countdown, head chang
 });
 
 test('empty and closed rooms cannot consume the next occurrence', async t => {
-  for (const mode of ['empty', 'closed']) await t.test(mode, async sub => {
-    const f = await fixture(sub), before = f.queue.current(f.id);
-    await f.end(); assert.ok(f.room.autoplayCountdown);
-    if (mode === 'empty') { f.room.viewers.clear(); f.watch.refresh(f.room); }
-    else await f.watch.remove(f.id);
-    assert.equal(f.room.autoplayCountdown, undefined);
-    await delay(60);
-    assert.equal(f.queue.current(f.id), null);
-    assert.equal(f.queue.history(f.id).total, 1);
-    assert.equal(f.queue.history(f.id).items[0].id, before.id);
-  });
+  for (const mode of ['empty', 'closed'])
+    await t.test(mode, async sub => {
+      const f = await fixture(sub),
+        before = f.queue.current(f.id);
+      await f.end();
+      assert.ok(f.room.autoplayCountdown);
+      if (mode === 'empty') {
+        f.room.viewers.clear();
+        f.watch.refresh(f.room);
+      } else await f.watch.remove(f.id);
+      assert.equal(f.room.autoplayCountdown, undefined);
+      await delay(60);
+      assert.equal(f.queue.current(f.id), null);
+      assert.equal(f.queue.history(f.id).total, 1);
+      assert.equal(f.queue.history(f.id).items[0].id, before.id);
+    });
 });
 
 test('next media preparation failure preserves the occurrence and reports one truthful failure without retry loops', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id);
+  const f = await fixture(t),
+    before = f.queue.current(f.id);
   let attempts = 0;
-  f.plex.prepare = async () => { attempts++; throw Object.assign(new Error('Plex fixture is unavailable'), { status: 503 }); };
+  f.plex.prepare = async () => {
+    attempts++;
+    throw Object.assign(new Error('Plex fixture is unavailable'), { status: 503 });
+  };
   await f.end();
   await waitFor(() => !f.room.autoplayCountdown && !f.room.mediaTransition);
   assert.match(f.room.autoplayError, /Plex fixture is unavailable/);
@@ -240,17 +376,30 @@ test('next media preparation failure preserves the occurrence and reports one tr
   const snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
   assert.equal(snapshot.ending.state, 'upNext');
   assert.match(snapshot.ending.error, /Plex fixture is unavailable/);
-  await delay(60); assert.equal(attempts, 1);
+  await delay(60);
+  assert.equal(attempts, 1);
 });
 
 test('revoked host permissions during media preparation invalidate autoplay before consumption', async t => {
-  const f = await fixture(t), held = gate(), prepare = f.plex.prepare;
+  const f = await fixture(t),
+    held = gate(),
+    prepare = f.plex.prepare;
   await f.hostController();
-  f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { held.enter(); await held.held; } return prepare(...args); };
+  f.plex.prepare = async (...args) => {
+    if (args[5]?.sourceOnly) {
+      held.enter();
+      await held.held;
+    }
+    return prepare(...args);
+  };
   const before = f.queue.current(f.id);
-  await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
+  await f.end();
+  await waitFor(() => held.started && f.room.mediaTransition);
   const record = f.store.get(f.id);
-  f.watch.roomState.apply(f.room, await f.store.edit(f.id, f.creator.userId, record.revision, { action: 'host.remove', userId: f.guest.userId }));
+  f.watch.roomState.apply(
+    f.room,
+    await f.store.edit(f.id, f.creator.userId, record.revision, { action: 'host.remove', userId: f.guest.userId }),
+  );
   held.release();
   await waitFor(() => !f.room.mediaTransition && !f.room.autoplayCountdown);
   assert.equal(f.queue.current(f.id), null);
@@ -261,88 +410,152 @@ test('revoked host permissions during media preparation invalidate autoplay befo
 });
 
 test('a failed durable commit cannot adopt prepared media in the live room', async t => {
-  const f = await fixture(t), version = f.room.mediaVersion;
+  const f = await fixture(t),
+    version = f.room.mediaVersion;
   await f.end();
-  f.registry.flush = async () => { throw new Error('Fixture disk failure'); };
+  f.registry.flush = async () => {
+    throw new Error('Fixture disk failure');
+  };
   await waitFor(() => !f.room.autoplayCountdown && !f.room.mediaTransition);
   assert.equal(f.room.media, undefined);
-  assert.ok(f.store.failure); assert.match(f.room.autoplayError, /storage/i);
-  assert.ok(f.stopped.some(media => media.id === '101'), 'unadopted prepared stream is released');
+  assert.ok(f.store.failure);
+  assert.match(f.room.autoplayError, /storage/i);
+  assert.ok(
+    f.stopped.some(media => media.id === '101'),
+    'unadopted prepared stream is released',
+  );
 });
 
 test('manual Next during an autoplay prepare cancels that attempt and a retry consumes exactly one entry', async t => {
-  const f = await fixture(t), held = gate(), prepare = f.plex.prepare;
+  const f = await fixture(t),
+    held = gate(),
+    prepare = f.plex.prepare;
   let attempts = 0;
-  f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { attempts++; held.enter(); await held.held; } return prepare(...args); };
+  f.plex.prepare = async (...args) => {
+    if (args[5]?.sourceOnly) {
+      attempts++;
+      held.enter();
+      await held.held;
+    }
+    return prepare(...args);
+  };
   const before = f.queue.current(f.id);
-  await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
+  await f.end();
+  await waitFor(() => held.started && f.room.mediaTransition);
   assert.equal((await f.command('media.next')).status, 'unavailable');
   held.release();
   await waitFor(() => !f.room.mediaTransition && !f.room.autoplayCountdown);
-  assert.equal(f.queue.current(f.id), null); assert.equal(f.queue.history(f.id).total, 1); assert.equal(attempts, 1);
+  assert.equal(f.queue.current(f.id), null);
+  assert.equal(f.queue.history(f.id).total, 1);
+  assert.equal(attempts, 1);
   assert.equal((await f.command('media.next')).status, 'applied');
-  assert.equal(f.queue.current(f.id).id, f.upcoming[0].id); assert.equal(f.queue.history(f.id).total, 1);
-  assert.equal(f.queue.history(f.id).items[0].outcome, 'completed', 'manual advance retains the verified natural ending'); assert.equal(f.queue.list(f.id).total, 1);
+  assert.equal(f.queue.current(f.id).id, f.upcoming[0].id);
+  assert.equal(f.queue.history(f.id).total, 1);
+  assert.equal(
+    f.queue.history(f.id).items[0].outcome,
+    'completed',
+    'manual advance retains the verified natural ending',
+  );
+  assert.equal(f.queue.list(f.id).total, 1);
 });
 
 test('pause, Cancel and closing while the next item is preparing release it without adopting or consuming it', async t => {
-  for (const action of ['media.pause', 'media.autoplay.cancel', 'close']) await t.test(action, async sub => {
-    const f = await fixture(sub), held = gate(), prepare = f.plex.prepare;
-    f.plex.prepare = async (...args) => { if (args[5]?.sourceOnly) { held.enter(); await held.held; } return prepare(...args); };
-    const before = f.queue.current(f.id);
-    await f.end(); await waitFor(() => held.started && f.room.mediaTransition);
-    let closing;
-    try {
-      if (action === 'close') {
-        let closed = false;
-        closing = f.watch.remove(f.id).then(() => { closed = true; });
-        await delay(5);
-        assert.equal(closed, false, 'Close waits for the canceled preparation to release its output');
-      } else assert.equal((await f.command(action)).status, 'applied');
-    } finally { held.release(); }
-    await closing; await waitFor(() => !f.room.mediaTransition);
-    assert.equal(f.queue.current(f.id), null); assert.equal(f.queue.history(f.id).total, 1);
-    assert.equal(f.room.media, undefined); assert.ok(f.stopped.some(media => media.id === '101'));
-  });
+  for (const action of ['media.pause', 'media.autoplay.cancel', 'close'])
+    await t.test(action, async sub => {
+      const f = await fixture(sub),
+        held = gate(),
+        prepare = f.plex.prepare;
+      f.plex.prepare = async (...args) => {
+        if (args[5]?.sourceOnly) {
+          held.enter();
+          await held.held;
+        }
+        return prepare(...args);
+      };
+      const before = f.queue.current(f.id);
+      await f.end();
+      await waitFor(() => held.started && f.room.mediaTransition);
+      let closing;
+      try {
+        if (action === 'close') {
+          let closed = false;
+          closing = f.watch.remove(f.id).then(() => {
+            closed = true;
+          });
+          await delay(5);
+          assert.equal(closed, false, 'Close waits for the canceled preparation to release its output');
+        } else assert.equal((await f.command(action)).status, 'applied');
+      } finally {
+        held.release();
+      }
+      await closing;
+      await waitFor(() => !f.room.mediaTransition);
+      assert.equal(f.queue.current(f.id), null);
+      assert.equal(f.queue.history(f.id).total, 1);
+      assert.equal(f.room.media, undefined);
+      assert.ok(f.stopped.some(media => media.id === '101'));
+    });
 });
 
 test('authorized endpoint seeks finish without readiness or watch credit, while the room clock cannot prove completion', async t => {
-  for (const mode of ['seek', 'absolute', 'relative', 'clock']) await t.test(mode, async sub => {
-    const f = await fixture(sub), current = f.queue.current(f.id).id;
-    if (mode !== 'clock') {
-      await f.observe(96); await f.observe(97); await f.observe(98); await f.observe(99);
-      const viewer = f.room.viewers.get(f.creator.watchViewerId), watched = viewer.tracking.record.watchedSeconds;
-      const version = f.room.mediaVersion, readiness = f.room.readinessVersion;
-      f.room.initialGate = true; f.room.readinessTimedOut = true;
-      const action = mode === 'seek' ? 'media.seek.end' : 'media.seek.' + mode;
-      const args = mode === 'absolute' ? {seconds:100} : mode === 'relative' ? {seconds:15} : undefined;
-      assert.equal((await f.command(action,args)).status, 'applied');
-      assert.equal(f.room.initialGate, false);
-      assert.equal(f.room.readinessTimedOut, false);
-      assert.ok(f.room.autoplayCountdown);
-      const countdown = f.room.autoplayCountdown;
-      assert.equal((await f.command(action,args)).status, 'applied');
-      assert.equal(f.room.autoplayCountdown,countdown,'repeated endpoint intent cannot schedule another completion');
-      const saved = f.watch.tracking.db.prepare('SELECT record FROM playback_history WHERE userId = ? ORDER BY at DESC LIMIT 1').get(f.creator.userId);
-      const savedRecord = saved ? JSON.parse(saved.record) : viewer.tracking?.record;
-      assert.equal(savedRecord.watchedSeconds, watched);
-      await assert.rejects(f.watch.ready(f.room,f.creator,f.creator.watchViewerId,version,true,readiness),/Invalid readiness/);
-      await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.mediaTransition);
-      assert.equal(f.queue.history(f.id).items[0].id, current);
-      assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
-    } else {
-      f.room.position = 100; f.watch.refresh(f.room);
-      await delay(60);
-      assert.equal(f.room.autoplayCountdown, undefined); assert.equal(f.queue.current(f.id).id, current);
-      assert.equal(f.queue.history(f.id).total, 0); assert.equal(f.room.endedVersion, undefined);
-    }
-  });
+  for (const mode of ['seek', 'absolute', 'relative', 'clock'])
+    await t.test(mode, async sub => {
+      const f = await fixture(sub),
+        current = f.queue.current(f.id).id;
+      if (mode !== 'clock') {
+        await f.observe(96);
+        await f.observe(97);
+        await f.observe(98);
+        await f.observe(99);
+        const viewer = f.room.viewers.get(f.creator.watchViewerId),
+          watched = viewer.tracking.record.watchedSeconds;
+        const version = f.room.mediaVersion,
+          readiness = f.room.readinessVersion;
+        f.room.initialGate = true;
+        f.room.readinessTimedOut = true;
+        const action = mode === 'seek' ? 'media.seek.end' : 'media.seek.' + mode;
+        const args = mode === 'absolute' ? { seconds: 100 } : mode === 'relative' ? { seconds: 15 } : undefined;
+        assert.equal((await f.command(action, args)).status, 'applied');
+        assert.equal(f.room.initialGate, false);
+        assert.equal(f.room.readinessTimedOut, false);
+        assert.ok(f.room.autoplayCountdown);
+        const countdown = f.room.autoplayCountdown;
+        assert.equal((await f.command(action, args)).status, 'applied');
+        assert.equal(
+          f.room.autoplayCountdown,
+          countdown,
+          'repeated endpoint intent cannot schedule another completion',
+        );
+        const saved = f.watch.tracking.db
+          .prepare('SELECT record FROM playback_history WHERE userId = ? ORDER BY at DESC LIMIT 1')
+          .get(f.creator.userId);
+        const savedRecord = saved ? JSON.parse(saved.record) : viewer.tracking?.record;
+        assert.equal(savedRecord.watchedSeconds, watched);
+        await assert.rejects(
+          f.watch.ready(f.room, f.creator, f.creator.watchViewerId, version, true, readiness),
+          /Invalid readiness/,
+        );
+        await waitFor(() => f.queue.current(f.id)?.id === f.upcoming[0].id && !f.room.mediaTransition);
+        assert.equal(f.queue.history(f.id).items[0].id, current);
+        assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
+      } else {
+        f.room.position = 100;
+        f.watch.refresh(f.room);
+        await delay(60);
+        assert.equal(f.room.autoplayCountdown, undefined);
+        assert.equal(f.queue.current(f.id).id, current);
+        assert.equal(f.queue.history(f.id).total, 0);
+        assert.equal(f.room.endedVersion, undefined);
+      }
+    });
 });
 
 test('Play at the broken endpoint finishes instead of replaying, and finished Play advances only with video authority', async t => {
   const f = await fixture(t);
-  await f.command('media.autoplay.set', {enabled:false});
-  f.room.position = 99.95; f.room.initialGate = true; f.room.readinessTimedOut = true;
+  await f.command('media.autoplay.set', { enabled: false });
+  f.room.position = 99.95;
+  f.room.initialGate = true;
+  f.room.readinessTimedOut = true;
   f.room.s.state.paused = true;
   assert.equal((await f.command('media.play')).status, 'applied');
   assert.equal(f.room.position, 0);
@@ -350,38 +563,59 @@ test('Play at the broken endpoint finishes instead of replaying, and finished Pl
   assert.equal(f.room.media, undefined);
   assert.equal(f.queue.current(f.id), null);
   const record = f.store.get(f.id);
-  f.watch.roomState.apply(f.room, await f.store.edit(f.id,f.creator.userId,record.revision,{action:'permissions',role:'viewer',permissions:{playPause:false,chooseMedia:false}}));
+  f.watch.roomState.apply(
+    f.room,
+    await f.store.edit(f.id, f.creator.userId, record.revision, {
+      action: 'permissions',
+      role: 'viewer',
+      permissions: { playPause: false, chooseMedia: false },
+    }),
+  );
   f.watch.snapshot(f.room, f.guest, f.guest.watchViewerId, async () => true, 'direct');
-  assert.equal((await f.command('media.seek.end',undefined,f.guest)).status, 'forbidden');
-  assert.equal((await f.command('media.play',undefined,f.guest)).status, 'forbidden');
+  assert.equal((await f.command('media.seek.end', undefined, f.guest)).status, 'forbidden');
+  assert.equal((await f.command('media.play', undefined, f.guest)).status, 'forbidden');
   assert.equal((await f.command('media.play')).status, 'applied');
   assert.equal(f.room.media.id, '101');
   assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
 });
 
 test('endpoint completion with no successor releases media and invalidates old readiness', async t => {
-  const f = await fixture(t), version = f.room.mediaVersion, readiness = f.room.readinessVersion;
+  const f = await fixture(t),
+    version = f.room.mediaVersion,
+    readiness = f.room.readinessVersion;
   await f.command('queue.clear');
   f.room.initialGate = true;
-  assert.equal((await f.command('media.seek.absolute',{seconds:100})).status, 'applied');
+  assert.equal((await f.command('media.seek.absolute', { seconds: 100 })).status, 'applied');
   assert.equal(f.room.media, undefined);
   assert.equal(f.queue.current(f.id), null);
   assert.equal(f.queue.history(f.id).items[0].outcome, 'completed');
   assert.ok(f.stopped.some(media => media.id === '100'));
-  await assert.rejects(f.watch.ready(f.room,f.creator,f.creator.watchViewerId,version,true,readiness),/Invalid readiness/);
+  await assert.rejects(
+    f.watch.ready(f.room, f.creator, f.creator.watchViewerId, version, true, readiness),
+    /Invalid readiness/,
+  );
 });
 
 test('endpoint completion holds conflicting controls and shutdown until its durable commit', async t => {
-  const f = await fixture(t), held = gate(), flush = f.registry.flush.bind(f.registry);
+  const f = await fixture(t),
+    held = gate(),
+    flush = f.registry.flush.bind(f.registry);
   await f.command('queue.clear');
-  f.registry.flush = async () => { held.enter(); await held.held; return flush(); };
+  f.registry.flush = async () => {
+    held.enter();
+    await held.held;
+    return flush();
+  };
   t.after(() => held.release());
   const completion = f.command('media.seek.end');
   await waitFor(() => held.started && f.room.transitionCommit);
   assert.equal((await f.command('media.play')).status, 'unavailable');
   let closed = false;
-  const closing = f.watch.close().then(() => { closed = true; });
-  await delay(10); assert.equal(closed, false);
+  const closing = f.watch.close().then(() => {
+    closed = true;
+  });
+  await delay(10);
+  assert.equal(closed, false);
   held.release();
   assert.equal((await completion).status, 'applied');
   await closing;
@@ -389,97 +623,148 @@ test('endpoint completion holds conflicting controls and shutdown until its dura
   assert.equal(f.store.get(f.id).bookmark, null);
 });
 
-for (const enabled of [false, true]) test('first queue addition selects current media and respects auto-play ' + enabled, async t => {
-  const f = await fixture(t);
-  const id = await f.watch.roomState.create(f.creator, { name: 'Empty queue ' + enabled });
-  const room = f.watch.rooms.get(id), actor = f.creator;
-  f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
-  const command = (action, args) => f.hub.dispatch(actor, { roomId:id, action, args });
-  assert.equal((await command('media.autoplay.set', { enabled })).status, 'applied');
-  const item = { serverId:'fixture-plex', mediaId:'105', type:'movie', title:'First', duration:100 };
-  assert.equal((await command('queue.add', { item, expectedRevision:0 })).status, 'applied');
-  assert.equal(room.media.id, '105');
-  assert.equal(f.queue.current(id).mediaId, '105');
-  assert.equal(f.queue.pending(id).length, 0);
-  await f.watch.prepareViewer(room, actor, actor.watchViewerId);
-  await f.watch.ready(room, actor, actor.watchViewerId, room.mediaVersion, true, room.readinessVersion);
-  assert.equal(room.manualPaused, !enabled);
-  assert.equal(room.initialGate, !enabled);
-  assert.equal(room.s.state.paused, !enabled);
-  const current = f.queue.current(id).id;
-  assert.equal((await command('queue.add', { item:{...item,mediaId:'106'}, expectedRevision:1 })).status, 'applied');
-  assert.equal(f.queue.current(id).id, current);
-  assert.equal(f.queue.pending(id).length, 1);
-});
+for (const enabled of [false, true])
+  test('first queue addition selects current media and respects auto-play ' + enabled, async t => {
+    const f = await fixture(t);
+    const id = await f.watch.roomState.create(f.creator, { name: 'Empty queue ' + enabled });
+    const room = f.watch.rooms.get(id),
+      actor = f.creator;
+    f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
+    const command = (action, args) => f.hub.dispatch(actor, { roomId: id, action, args });
+    assert.equal((await command('media.autoplay.set', { enabled })).status, 'applied');
+    const item = { serverId: 'fixture-plex', mediaId: '105', type: 'movie', title: 'First', duration: 100 };
+    assert.equal((await command('queue.add', { item, expectedRevision: 0 })).status, 'applied');
+    assert.equal(room.media.id, '105');
+    assert.equal(f.queue.current(id).mediaId, '105');
+    assert.equal(f.queue.pending(id).length, 0);
+    await f.watch.prepareViewer(room, actor, actor.watchViewerId);
+    await f.watch.ready(room, actor, actor.watchViewerId, room.mediaVersion, true, room.readinessVersion);
+    assert.equal(room.manualPaused, !enabled);
+    assert.equal(room.initialGate, !enabled);
+    assert.equal(room.s.state.paused, !enabled);
+    const current = f.queue.current(id).id;
+    assert.equal(
+      (await command('queue.add', { item: { ...item, mediaId: '106' }, expectedRevision: 1 })).status,
+      'applied',
+    );
+    assert.equal(f.queue.current(id).id, current);
+    assert.equal(f.queue.pending(id).length, 1);
+  });
 
 test('an add-only participant can populate empty playback but cannot replace it, including bulk additions', async t => {
   const f = await fixture(t);
   for (const bulk of [false, true]) {
-    const id = await f.watch.roomState.create(f.creator, { name:'Participant additions' });
+    const id = await f.watch.roomState.create(f.creator, { name: 'Participant additions' });
     const room = f.watch.rooms.get(id);
     const record = f.store.get(id);
-    f.watch.roomState.apply(room, await f.store.edit(id, f.creator.userId, record.revision, {
-      action:'permissions', role:'viewer', permissions:{addQueue:true,chooseMedia:false}
-    }));
+    f.watch.roomState.apply(
+      room,
+      await f.store.edit(id, f.creator.userId, record.revision, {
+        action: 'permissions',
+        role: 'viewer',
+        permissions: { addQueue: true, chooseMedia: false },
+      }),
+    );
     await f.queue.setAutoplay(id, f.creator.userId, false);
     f.watch.snapshot(room, f.guest, f.guest.watchViewerId, async () => true, 'direct');
-    f.plex.queueItems = async () => ['105','106'].map(id => ({id,type:'movie',title:'Video ' + id,duration:100}));
-    const item = {serverId:'fixture-plex',mediaId:'105',type:'movie',title:'Video 105',duration:100};
-    const result = await f.hub.dispatch(f.guest, {roomId:id,action:bulk ? 'queue.bulk' : 'queue.add',
-      args:bulk ? {type:'show',mediaId:'50',unfinished:false,includeSpecials:false} : {item}});
+    f.plex.queueItems = async () =>
+      ['105', '106'].map(id => ({ id, type: 'movie', title: 'Video ' + id, duration: 100 }));
+    const item = { serverId: 'fixture-plex', mediaId: '105', type: 'movie', title: 'Video 105', duration: 100 };
+    const result = await f.hub.dispatch(f.guest, {
+      roomId: id,
+      action: bulk ? 'queue.bulk' : 'queue.add',
+      args: bulk ? { type: 'show', mediaId: '50', unfinished: false, includeSpecials: false } : { item },
+    });
     assert.equal(result.status, 'applied', result.message);
     assert.equal(f.queue.current(id).mediaId, '105');
     assert.equal(f.queue.pending(id).length, bulk ? 1 : 0);
     assert.equal(room.manualPaused, true);
-    assert.equal((await f.hub.dispatch(f.guest, {roomId:id,action:'queue.playNow',args:{item}})).status, 'forbidden');
+    assert.equal(
+      (await f.hub.dispatch(f.guest, { roomId: id, action: 'queue.playNow', args: { item } })).status,
+      'forbidden',
+    );
   }
 });
 
-for (const advance of [false, true]) test('current removal ' + (advance ? 'advances without history' : 'stops without consuming upcoming entries'), async t => {
-  const f = await fixture(t);
-  await f.command('media.next');
-  const current = f.queue.current(f.id), history = f.queue.history(f.id).items.map(item => item.id);
-  const upcoming = f.queue.pending(f.id).map(item => item.id), version = f.room.mediaVersion;
-  const result = await f.command('queue.remove', {entryId:current.id,advance,expectedRevision:f.store.get(f.id).queueRevision});
-  assert.equal(result.status,'applied',result.message);
-  assert.equal(f.queue.getEntry(current.id),null);
-  assert.deepEqual(f.queue.history(f.id).items.map(item => item.id),history);
-  assert.notEqual(f.room.mediaVersion,version);
-  assert.equal(f.room.autoplayCountdown,undefined);
-  if (advance) {
-    assert.equal(f.queue.current(f.id).id,upcoming[0]);
-    assert.equal(f.room.media.id,f.queue.current(f.id).mediaId);
-    assert.equal(f.store.get(f.id).bookmark.mediaId,f.room.media.id);
-  } else {
-    assert.equal(f.queue.current(f.id),null);
-    assert.deepEqual(f.queue.pending(f.id).map(item => item.id),upcoming);
-    assert.equal(f.store.get(f.id).bookmark,null);
-    assert.equal(f.room.media,undefined);
-    assert.equal(f.room.initialGate,false);
-    assert.equal(f.room.s.state.paused,true);
-    assert.equal(f.room.s.state.duration,0);
-  }
-});
+for (const advance of [false, true])
+  test(
+    'current removal ' + (advance ? 'advances without history' : 'stops without consuming upcoming entries'),
+    async t => {
+      const f = await fixture(t);
+      await f.command('media.next');
+      const current = f.queue.current(f.id),
+        history = f.queue.history(f.id).items.map(item => item.id);
+      const upcoming = f.queue.pending(f.id).map(item => item.id),
+        version = f.room.mediaVersion;
+      const result = await f.command('queue.remove', {
+        entryId: current.id,
+        advance,
+        expectedRevision: f.store.get(f.id).queueRevision,
+      });
+      assert.equal(result.status, 'applied', result.message);
+      assert.equal(f.queue.getEntry(current.id), null);
+      assert.deepEqual(
+        f.queue.history(f.id).items.map(item => item.id),
+        history,
+      );
+      assert.notEqual(f.room.mediaVersion, version);
+      assert.equal(f.room.autoplayCountdown, undefined);
+      if (advance) {
+        assert.equal(f.queue.current(f.id).id, upcoming[0]);
+        assert.equal(f.room.media.id, f.queue.current(f.id).mediaId);
+        assert.equal(f.store.get(f.id).bookmark.mediaId, f.room.media.id);
+      } else {
+        assert.equal(f.queue.current(f.id), null);
+        assert.deepEqual(
+          f.queue.pending(f.id).map(item => item.id),
+          upcoming,
+        );
+        assert.equal(f.store.get(f.id).bookmark, null);
+        assert.equal(f.room.media, undefined);
+        assert.equal(f.room.initialGate, false);
+        assert.equal(f.room.s.state.paused, true);
+        assert.equal(f.room.s.state.duration, 0);
+      }
+    },
+  );
 
 test('discard-and-advance preparation failure and revoked video authority preserve the current occurrence', async t => {
-  const f = await fixture(t), current = f.queue.current(f.id);
+  const f = await fixture(t),
+    current = f.queue.current(f.id);
   const revision = f.store.get(f.id).queueRevision;
   const prepare = f.plex.prepare;
-  f.plex.prepare = async () => { throw new Error('Fixture preparation failed'); };
-  assert.equal((await f.command('queue.remove',{entryId:current.id,advance:true,expectedRevision:revision})).status,'failed');
-  assert.equal(f.queue.current(f.id).id,current.id);
-  assert.equal(f.queue.pending(f.id).length,2);
-  assert.equal(f.queue.history(f.id).total,0);
+  f.plex.prepare = async () => {
+    throw new Error('Fixture preparation failed');
+  };
+  assert.equal(
+    (await f.command('queue.remove', { entryId: current.id, advance: true, expectedRevision: revision })).status,
+    'failed',
+  );
+  assert.equal(f.queue.current(f.id).id, current.id);
+  assert.equal(f.queue.pending(f.id).length, 2);
+  assert.equal(f.queue.history(f.id).total, 0);
   f.plex.prepare = prepare;
   const record = f.store.get(f.id);
-  f.watch.roomState.apply(f.room,await f.store.edit(f.id,f.creator.userId,record.revision,{action:'permissions',role:'viewer',permissions:{editQueue:true,chooseMedia:false}}));
-  f.watch.snapshot(f.room,f.guest,f.guest.watchViewerId,async () => true,'direct');
-  assert.notEqual((await f.command('queue.remove',{entryId:current.id,advance:false,expectedRevision:revision},f.guest)).status,'applied');
-  assert.equal(f.queue.current(f.id).id,current.id);
+  f.watch.roomState.apply(
+    f.room,
+    await f.store.edit(f.id, f.creator.userId, record.revision, {
+      action: 'permissions',
+      role: 'viewer',
+      permissions: { editQueue: true, chooseMedia: false },
+    }),
+  );
+  f.watch.snapshot(f.room, f.guest, f.guest.watchViewerId, async () => true, 'direct');
+  assert.notEqual(
+    (await f.command('queue.remove', { entryId: current.id, advance: false, expectedRevision: revision }, f.guest))
+      .status,
+    'applied',
+  );
+  assert.equal(f.queue.current(f.id).id, current.id);
 });
 
 test('reopen persistence: reopening after video finishes restores ending interstitial with completed and next', async t => {
-  const f = await fixture(t), before = f.queue.current(f.id);
+  const f = await fixture(t),
+    before = f.queue.current(f.id);
   await f.end();
   // Cancel countdown so it stays on interstitial
   await f.command('media.autoplay.cancel');
@@ -505,9 +790,11 @@ test('reopen persistence: reopening after video finishes restores ending interst
 test('next-episode offer: ending episode with empty queue and autoQueue off offers next episode and queue.offer.start starts it', async t => {
   const f = await fixture(t);
   const id = await f.watch.roomState.create(f.creator, { name: 'Offer room' });
-  const room = f.watch.rooms.get(id), actor = f.creator;
+  const room = f.watch.rooms.get(id),
+    actor = f.creator;
   f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
-  const command = (action, args, person = actor) => f.hub.dispatch(person, { roomId: id, action, ...(args ? { args } : {}) });
+  const command = (action, args, person = actor) =>
+    f.hub.dispatch(person, { roomId: id, action, ...(args ? { args } : {}) });
 
   // Mock Plex prepare for episode type
   const origPrepare = f.plex.prepare;
@@ -531,7 +818,7 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
         duration: 100,
         summary: 'Episode 2 summary',
         hasLandscape: true,
-        hasPoster: true
+        hasPoster: true,
       };
     }
     return null;
@@ -559,18 +846,32 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
 
   // Viewer lacking playPause or addQueue is rejected
   const guestId = f.registry.resolve('discord', '333333333333333333', 'RestrictedGuest').id;
-  const guestActor = { userId: guestId, name: 'RestrictedGuest', surface: 'web', guildId: 'guild', channelId: 'commands', watchViewerId: randomUUID() };
+  const guestActor = {
+    userId: guestId,
+    name: 'RestrictedGuest',
+    surface: 'web',
+    guildId: 'guild',
+    channelId: 'commands',
+    watchViewerId: randomUUID(),
+  };
   const record = f.store.get(id);
-  f.watch.roomState.apply(room, await f.store.edit(id, actor.userId, record.revision, { action: 'permissions', role: 'viewer', permissions: { addQueue: false, playPause: true } }));
+  f.watch.roomState.apply(
+    room,
+    await f.store.edit(id, actor.userId, record.revision, {
+      action: 'permissions',
+      role: 'viewer',
+      permissions: { addQueue: false, playPause: true },
+    }),
+  );
   f.watch.snapshot(room, guestActor, guestActor.watchViewerId, async () => true, 'direct');
   assert.equal((await command('queue.offer.start', { mediaId: '202', showId: '50' }, guestActor)).status, 'forbidden');
 
   // Authorized user starts offer
-  f.plex.details = async mediaId => mediaId === '202' ? { id: '202', type: 'episode', showId: '50' } : null;
+  f.plex.details = async mediaId => (mediaId === '202' ? { id: '202', type: 'episode', showId: '50' } : null);
   f.plex.queueItems = async () => [
     { id: '201', type: 'episode', title: 'Episode 1', duration: 100 },
     { id: '202', type: 'episode', title: 'Episode 2', duration: 100 },
-    { id: '203', type: 'episode', title: 'Episode 3', duration: 100 }
+    { id: '203', type: 'episode', title: 'Episode 3', duration: 100 },
   ];
   const startResult = await command('queue.offer.start', { mediaId: '202', showId: '50' }, actor);
   assert.equal(startResult.status, 'applied');
@@ -583,7 +884,8 @@ test('next-episode offer: ending episode with empty queue and autoQueue off offe
 test('turning auto-queue on in an idle room with autoplay enabled immediately materializes autoQueue.next and starts playback', async t => {
   const f = await fixture(t);
   const id = await f.watch.roomState.create(f.creator, { name: 'Idle auto-queue start' });
-  const room = f.watch.rooms.get(id), actor = f.creator;
+  const room = f.watch.rooms.get(id),
+    actor = f.creator;
   f.watch.snapshot(room, actor, actor.watchViewerId, async () => true, 'direct');
   const command = (action, args) => f.hub.dispatch(actor, { roomId: id, action, ...(args ? { args } : {}) });
   const origPrepare = f.plex.prepare;
@@ -596,9 +898,13 @@ test('turning auto-queue on in an idle room with autoplay enabled immediately ma
   f.plex.queueItems = async () => [
     { id: '300', type: 'episode', title: 'Missing Episode', duration: 100 },
     { id: '301', type: 'episode', title: 'Episode 1', duration: 100 },
-    { id: '302', type: 'episode', title: 'Episode 2', duration: 100 }
+    { id: '302', type: 'episode', title: 'Episode 2', duration: 100 },
   ];
-  const applied = await command('queue.auto', { mode: 'following', scope: { type: 'show', id: '50' }, includeSpecials: false });
+  const applied = await command('queue.auto', {
+    mode: 'following',
+    scope: { type: 'show', id: '50' },
+    includeSpecials: false,
+  });
   assert.equal(applied.status, 'applied');
   assert.equal(room.media.id, '301');
   assert.equal(f.queue.current(id).mediaId, '301');

@@ -13,9 +13,24 @@ function localDay(at) {
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 }
 function localTime(at) {
-  const d = new Date(at), offset = -d.getTimezoneOffset(), sign = offset < 0 ? '-' : '+';
-  return localDay(at) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '.' + pad(d.getMilliseconds(), 3) +
-    sign + pad(Math.floor(Math.abs(offset) / 60)) + ':' + pad(Math.abs(offset) % 60);
+  const d = new Date(at),
+    offset = -d.getTimezoneOffset(),
+    sign = offset < 0 ? '-' : '+';
+  return (
+    localDay(at) +
+    'T' +
+    pad(d.getHours()) +
+    ':' +
+    pad(d.getMinutes()) +
+    ':' +
+    pad(d.getSeconds()) +
+    '.' +
+    pad(d.getMilliseconds(), 3) +
+    sign +
+    pad(Math.floor(Math.abs(offset) / 60)) +
+    ':' +
+    pad(Math.abs(offset) % 60)
+  );
 }
 
 /**
@@ -41,15 +56,21 @@ class DiagnosticLog {
     this.writing = Promise.resolve();
     this.timer = setInterval(() => void this.flush(), 2000);
     this.pruner = setInterval(() => void this.prune(), 3600000);
-    this.timer.unref?.(); this.pruner.unref?.();
-    this.ready = fs.promises.mkdir(directory, { recursive: true }).then(() => this.prune()).catch(error => {
-      this.logger?.warn?.('Diagnostics', `Diagnostics folder unavailable: ${error.message}`);
-    });
+    this.timer.unref?.();
+    this.pruner.unref?.();
+    this.ready = fs.promises
+      .mkdir(directory, { recursive: true })
+      .then(() => this.prune())
+      .catch(error => {
+        this.logger?.warn?.('Diagnostics', `Diagnostics folder unavailable: ${error.message}`);
+      });
   }
   append(at, line) {
-    const day = localDay(at), lines = this.pending.get(day) || [];
+    const day = localDay(at),
+      lines = this.pending.get(day) || [];
     if (lines.length >= 20000) return;
-    lines.push(JSON.stringify(line)); this.pending.set(day, lines);
+    lines.push(JSON.stringify(line));
+    this.pending.set(day, lines);
   }
   /** A line the server logged at info or above. */
   server(level, tag, message) {
@@ -63,70 +84,113 @@ class DiagnosticLog {
    * @returns {number} rows kept
    */
   viewer({ room, viewerId, name, title, stream, rows }) {
-    const key = viewerId + '|' + stream, after = this.cursors.get(key) || 0, now = this.now();
-    let last = after, kept = 0;
+    const key = viewerId + '|' + stream,
+      after = this.cursors.get(key) || 0,
+      now = this.now();
+    let last = after,
+      kept = 0;
     for (const raw of rows) {
       const row = cleanRow(raw);
       if (!row || row.sequence <= after || Math.abs(row.at - now) > DAY) continue;
-      last = Math.max(last, row.sequence); kept++;
+      last = Math.max(last, row.sequence);
+      kept++;
       // The player's own change counters are kept apart so they never shadow the room's ID.
       const { at, room: roomChanges, media, stream: streamChanges, grant, observation, ...fields } = row;
-      this.append(at, { at: localTime(at), source: 'viewer', room: room.s.roomId, roomName: room.s.alias || undefined,
-        viewer: name, viewerId, title, ...fields, changes: { room: roomChanges, media, stream: streamChanges, grant, observation } });
+      this.append(at, {
+        at: localTime(at),
+        source: 'viewer',
+        room: room.s.roomId,
+        roomName: room.s.alias || undefined,
+        viewer: name,
+        viewerId,
+        title,
+        ...fields,
+        changes: { room: roomChanges, media, stream: streamChanges, grant, observation },
+      });
     }
     if (last > after) {
-      this.cursors.delete(key); this.cursors.set(key, last);
+      this.cursors.delete(key);
+      this.cursors.set(key, last);
       if (this.cursors.size > 2000) this.cursors.delete(this.cursors.keys().next().value);
     }
     return kept;
   }
   flush() {
-    const batches = [...this.pending]; this.pending.clear();
+    const batches = [...this.pending];
+    this.pending.clear();
     if (!batches.length) return this.writing;
-    this.writing = this.writing.then(() => this.ready).then(async () => {
-      for (const [day, lines] of batches) {
-        const text = lines.join('\n') + '\n', bytes = Buffer.byteLength(text);
-        if (this.total() + bytes > this.maxBytes) await this.prune();
-        // Never grow past the limit, even within one busy day.
-        if (this.total() + bytes > this.maxBytes) {
-          if (this.full !== day) {
-            this.full = day;
-            this.logger?.warn?.('Diagnostics', 'The diagnostics folder is full, so new entries are skipped until the oldest day is removed. Raise diagnostics.max_mb to keep more.');
+    this.writing = this.writing
+      .then(() => this.ready)
+      .then(async () => {
+        for (const [day, lines] of batches) {
+          const text = lines.join('\n') + '\n',
+            bytes = Buffer.byteLength(text);
+          if (this.total() + bytes > this.maxBytes) await this.prune();
+          // Never grow past the limit, even within one busy day.
+          if (this.total() + bytes > this.maxBytes) {
+            if (this.full !== day) {
+              this.full = day;
+              this.logger?.warn?.(
+                'Diagnostics',
+                'The diagnostics folder is full, so new entries are skipped until the oldest day is removed. Raise diagnostics.max_mb to keep more.',
+              );
+            }
+            continue;
           }
-          continue;
+          try {
+            await fs.promises.appendFile(path.join(this.directory, day + '.jsonl'), text);
+            this.sizes.set(day, (this.sizes.get(day) || 0) + bytes);
+          } catch (error) {
+            this.logger?.warn?.('Diagnostics', `Could not write diagnostics: ${error.message}`);
+          }
         }
-        try {
-          await fs.promises.appendFile(path.join(this.directory, day + '.jsonl'), text);
-          this.sizes.set(day, (this.sizes.get(day) || 0) + bytes);
-        } catch (error) { this.logger?.warn?.('Diagnostics', `Could not write diagnostics: ${error.message}`); }
-      }
-    });
+      });
     return this.writing;
   }
-  total() { let sum = 0; for (const size of this.sizes.values()) sum += size; return sum; }
+  total() {
+    let sum = 0;
+    for (const size of this.sizes.values()) sum += size;
+    return sum;
+  }
   /** Delete days past the limit, then the oldest days until the folder fits. Today stays. */
   async prune() {
     let files;
-    try { files = await fs.promises.readdir(this.directory); } catch { return; }
+    try {
+      files = await fs.promises.readdir(this.directory);
+    } catch {
+      return;
+    }
     const days = [];
     for (const name of files.sort()) {
       const day = FILE.exec(name)?.[1];
       if (!day) continue;
-      const file = path.join(this.directory, name), stat = await fs.promises.stat(file).catch(() => undefined);
+      const file = path.join(this.directory, name),
+        stat = await fs.promises.stat(file).catch(() => undefined);
       if (stat) days.push({ day, file, size: stat.size });
     }
     this.sizes = new Map(days.map(item => [item.day, item.size]));
-    const today = localDay(this.now()), start = new Date(this.now());
-    start.setHours(12, 0, 0, 0); start.setDate(start.getDate() - (this.keepDays - 1));
+    const today = localDay(this.now()),
+      start = new Date(this.now());
+    start.setHours(12, 0, 0, 0);
+    start.setDate(start.getDate() - (this.keepDays - 1));
     const oldest = localDay(start.getTime());
     let total = this.total();
     for (const item of days) {
-      if (item.day === today || item.day >= oldest && total <= this.maxBytes) continue;
-      if (await fs.promises.unlink(item.file).then(() => true, () => false)) { total -= item.size; this.sizes.delete(item.day); }
+      if (item.day === today || (item.day >= oldest && total <= this.maxBytes)) continue;
+      if (
+        await fs.promises.unlink(item.file).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        total -= item.size;
+        this.sizes.delete(item.day);
+      }
     }
   }
   async close() {
-    clearInterval(this.timer); clearInterval(this.pruner);
+    clearInterval(this.timer);
+    clearInterval(this.pruner);
     await this.flush();
   }
 }

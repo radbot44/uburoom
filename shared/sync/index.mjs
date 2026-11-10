@@ -26,13 +26,10 @@ export {
   jumpCorrection,
   bufferedAhead,
   readinessBuffered,
-  observationClock
+  observationClock,
 } from './timing.mjs';
 
-export {
-  createVideoElementAdapter,
-  normalizePlayerAdapter
-} from './player-adapter.mjs';
+export { createVideoElementAdapter, normalizePlayerAdapter } from './player-adapter.mjs';
 
 export { createSync } from './client-sync.mjs';
 
@@ -59,7 +56,7 @@ export {
   create as createSyncQualityTracker,
   validateSyncQualityMessage,
   reduceViewerSyncQuality,
-  aggregateParticipantSyncQuality
+  aggregateParticipantSyncQuality,
 } from './quality.mjs';
 
 export {
@@ -70,7 +67,7 @@ export {
   controlFor,
   controlAllowed,
   senderName,
-  validateSyncCommand
+  validateSyncCommand,
 } from './protocol.mjs';
 
 export {
@@ -86,7 +83,7 @@ export {
   assigned as isAssignedRoomMember,
   allowed as isCapabilityAllowed,
   commandCapability,
-  canKickParticipant
+  canKickParticipant,
 } from './policy.mjs';
 
 export {
@@ -96,7 +93,7 @@ export {
   validateCommandEnvelope,
   resolveCommandDeadlines,
   splitRoomSnapshot,
-  composeRoomSnapshot
+  composeRoomSnapshot,
 } from './envelope.mjs';
 
 export {
@@ -119,12 +116,12 @@ export {
   snapshotReadiness,
   applyReadinessDecision,
   applyTimelineCommand,
-  createRoomCoordinator
+  createRoomCoordinator,
 } from './room-authority.mjs';
 
 export {
   isRoomLocalAction,
   extractSubscribedRoomId,
   classifyMutationScope,
-  createSubscriptionBroker
+  createSubscriptionBroker,
 } from './subscriptions.mjs';

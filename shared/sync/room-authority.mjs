@@ -10,13 +10,9 @@ import {
   PRESENCE_TIMEOUT_MS,
   RECONNECT_GRACE_MS,
   validateCommandEnvelope,
-  composeRoomSnapshot
+  composeRoomSnapshot,
 } from './envelope.mjs';
-import {
-  validateSyncQualityMessage,
-  reduceViewerSyncQuality,
-  aggregateParticipantSyncQuality
-} from './quality.mjs';
+import { validateSyncQualityMessage, reduceViewerSyncQuality, aggregateParticipantSyncQuality } from './quality.mjs';
 
 export const INITIAL_START_LEAD_MS = 1750;
 export const READY_START_MARGIN_MS = 400;
@@ -56,9 +52,7 @@ function setEpoch(room, epoch) {
 
 export function position(room, now = Date.now()) {
   if (room.pauseAt) now = Math.min(now, room.pauseAt);
-  const elapsed = room.startAt
-    ? Math.max(0, now - Math.max(room.changedAt, room.startAt))
-    : now - room.changedAt;
+  const elapsed = room.startAt ? Math.max(0, now - Math.max(room.changedAt, room.startAt)) : now - room.changedAt;
   return Math.min(getDuration(room), Math.max(0, room.position + (getPaused(room) ? 0 : elapsed / 1000)));
 }
 
@@ -71,7 +65,7 @@ export function controlLead(room, monoNow = defaultMonoNow()) {
       .filter(sample => monoNow - sample.at <= 30000 && monoNow >= sample.at)
       .map(sample => sample.ms)
       .sort((a, b) => a - b);
-    if (samples.length) lead = Math.max(lead, samples[Math.ceil(samples.length * .95) - 1] + 100);
+    if (samples.length) lead = Math.max(lead, samples[Math.ceil(samples.length * 0.95) - 1] + 100);
   }
   return Math.min(MAX_CONTROL_LEAD_MS, Math.ceil(lead));
 }
@@ -94,7 +88,11 @@ export function promoteGroupReadinessLead(room, now = Date.now()) {
 
 export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
   if (room.viewers.size === 1) {
-    if (room.startAt > now) { room.startAt = now; room.changedAt = now; room.revision++; }
+    if (room.startAt > now) {
+      room.startAt = now;
+      room.changedAt = now;
+      room.revision++;
+    }
     if (room.pauseAt > now) room.pauseAt = now;
   }
   if (room.pauseAt && now >= room.pauseAt) {
@@ -104,7 +102,13 @@ export function settle(room, now = Date.now(), monoNow = defaultMonoNow()) {
     setPaused(room, true);
     room.revision++;
   }
-  if (!room.recovery && room.initialGate && !room.manualPaused && !room.readinessTimedOut && monoNow >= room.readinessDeadline) {
+  if (
+    !room.recovery &&
+    room.initialGate &&
+    !room.manualPaused &&
+    !room.readinessTimedOut &&
+    monoNow >= room.readinessDeadline
+  ) {
     room.readinessTimedOut = true;
     room.readinessStartAt = undefined;
     room.revision++;
@@ -123,7 +127,13 @@ export function recordViewerReadiness(room, { userId, viewerId, mediaVersion, re
   const monoNow = options.monoNow ?? defaultMonoNow();
   settle(room, now, monoNow);
   const viewer = room.viewers.get(viewerId);
-  if (!viewer || viewer.userId !== userId || room.mediaVersion !== mediaVersion || typeof ready !== 'boolean' || room.readinessVersion !== readinessVersion) {
+  if (
+    !viewer ||
+    viewer.userId !== userId ||
+    room.mediaVersion !== mediaVersion ||
+    typeof ready !== 'boolean' ||
+    room.readinessVersion !== readinessVersion
+  ) {
     throw new Error('Invalid readiness');
   }
   if (ready === true) viewer.readinessBypassedVersion = undefined;
@@ -145,12 +155,13 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
   if (!room.initialGate || room.manualPaused) {
     return { waitingForReady, readiness: undefined };
   }
-  const blockers = monoNow - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
-    ? [...room.initialViewers]
-        .map(id => room.viewers.get(id))
-        .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
-        .map(v => v.name)
-    : [];
+  const blockers =
+    monoNow - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
+      ? [...room.initialViewers]
+          .map(id => room.viewers.get(id))
+          .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
+          .map(v => v.name)
+      : [];
   const canStart = [...room.initialViewers].some(id => {
     const v = room.viewers.get(id);
     return Boolean(v?.ready && v.version === room.mediaVersion);
@@ -161,8 +172,8 @@ export function snapshotReadiness(room, monoNow = defaultMonoNow()) {
       id: room.readinessId,
       timedOut: !!room.readinessTimedOut,
       blockers,
-      canStart
-    }
+      canStart,
+    },
   };
 }
 
@@ -214,7 +225,7 @@ const TIMELINE_ACTIONS = new Set([
   'media.seek.relative',
   'media.seek.absolute',
   'media.seek.start',
-  'media.seek.end'
+  'media.seek.end',
 ]);
 
 /**
@@ -246,19 +257,25 @@ export function applyTimelineCommand(room, command, options = {}) {
       else setPaused(room, true);
       break;
     case 'media.play':
-      if (room.position >= duration - .1) room.position = 0;
+      if (room.position >= duration - 0.1) room.position = 0;
       if (room.manualPaused && room.initialGate) beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
       room.manualPaused = false;
       setPaused(room, room.initialGate);
       if (options.autoplayVersion === room.mediaVersion && !room.initialGate) {
-        room.startAt = Math.max(room.viewers.size > 1 ? room.readinessStartAt || 0 : 0, now + controlLead(room, monoNow));
+        room.startAt = Math.max(
+          room.viewers.size > 1 ? room.readinessStartAt || 0 : 0,
+          now + controlLead(room, monoNow),
+        );
       } else if (!room.initialGate && !wasPlaying) {
         room.startAt = now + controlLead(room, monoNow);
       }
       break;
     case 'media.toggle':
-      if (room.position >= duration - .1) { room.position = 0; setPaused(room, true); }
-      room.manualPaused = !pausePending && (!getPaused(room) || room.initialGate && !room.manualPaused);
+      if (room.position >= duration - 0.1) {
+        room.position = 0;
+        setPaused(room, true);
+      }
+      room.manualPaused = !pausePending && (!getPaused(room) || (room.initialGate && !room.manualPaused));
       if (room.initialGate) {
         if (room.manualPaused) room.readinessStartAt = undefined;
         else beginReadiness(room, now, READINESS_WAIT_MS, { monoNow, createId });
@@ -271,16 +288,16 @@ export function applyTimelineCommand(room, command, options = {}) {
       }
       break;
     case 'media.seek.relative':
-      room.position = Math.max(0, Math.min(duration - .05, room.position + args.seconds));
+      room.position = Math.max(0, Math.min(duration - 0.05, room.position + args.seconds));
       break;
     case 'media.seek.absolute':
-      room.position = Math.max(0, Math.min(duration - .05, args.seconds));
+      room.position = Math.max(0, Math.min(duration - 0.05, args.seconds));
       break;
     case 'media.seek.start':
       room.position = 0;
       break;
     case 'media.seek.end':
-      room.position = Math.max(0, duration - .05);
+      room.position = Math.max(0, duration - 0.05);
       break;
     default:
       return false;
@@ -350,7 +367,7 @@ export function createRoomCoordinator(options = {}) {
       ...viewer,
       actor: viewer.actor ? { ...viewer.actor } : undefined,
       rtts: Array.isArray(viewer.rtts) ? viewer.rtts.map(sample => ({ ...sample })) : [],
-      syncQuality: viewer.syncQuality ? cloneValue(viewer.syncQuality) : undefined
+      syncQuality: viewer.syncQuality ? cloneValue(viewer.syncQuality) : undefined,
     };
   }
 
@@ -363,7 +380,7 @@ export function createRoomCoordinator(options = {}) {
     for (const [id, saved] of room.disconnectedViewers) {
       disconnectedViewers.set(id, {
         ...saved,
-        syncQuality: saved.syncQuality ? cloneValue(saved.syncQuality) : undefined
+        syncQuality: saved.syncQuality ? cloneValue(saved.syncQuality) : undefined,
       });
     }
     return {
@@ -372,14 +389,14 @@ export function createRoomCoordinator(options = {}) {
       permissions: {
         host: { ...room.permissions.host },
         viewer: { ...room.permissions.viewer },
-        allHosts: room.permissions.allHosts
+        allHosts: room.permissions.allHosts,
       },
       controls: { ...room.controls },
       initialViewers: new Set(room.initialViewers),
       viewers,
       disconnectedViewers,
       kickedViewers: new Map(room.kickedViewers),
-      content: cloneValue(room.content)
+      content: cloneValue(room.content),
     };
   }
 
@@ -394,25 +411,26 @@ export function createRoomCoordinator(options = {}) {
           continue;
         }
         const liveTouchedMoreRecently =
-          (liveViewer.touchSequence || 0) > (draftViewer.touchSequence || 0) ||
-          liveViewer.at > draftViewer.at;
-        const sameStream = liveViewer.streamVersion === draftViewer.streamVersion && draft.mediaVersion === room.mediaVersion;
+          (liveViewer.touchSequence || 0) > (draftViewer.touchSequence || 0) || liveViewer.at > draftViewer.at;
+        const sameStream =
+          liveViewer.streamVersion === draftViewer.streamVersion && draft.mediaVersion === room.mediaVersion;
         mergedViewers.set(id, {
           ...draftViewer,
           at: liveTouchedMoreRecently ? liveViewer.at : draftViewer.at,
           touchSequence: Math.max(draftViewer.touchSequence || 0, liveViewer.touchSequence || 0),
           authVerifiedAt: Math.max(draftViewer.authVerifiedAt ?? -Infinity, liveViewer.authVerifiedAt ?? -Infinity),
-          rtts: liveTouchedMoreRecently && Array.isArray(liveViewer.rtts)
-            ? liveViewer.rtts.map(sample => ({ ...sample }))
-            : draftViewer.rtts,
+          rtts:
+            liveTouchedMoreRecently && Array.isArray(liveViewer.rtts)
+              ? liveViewer.rtts.map(sample => ({ ...sample }))
+              : draftViewer.rtts,
           ...(sameStream && (liveViewer.lastSyncQualityAt ?? -Infinity) > (draftViewer.lastSyncQualityAt ?? -Infinity)
             ? {
                 syncQuality: liveViewer.syncQuality ? cloneValue(liveViewer.syncQuality) : undefined,
                 lastSyncQualityAt: liveViewer.lastSyncQualityAt,
                 lastSyncQualityStatus: liveViewer.lastSyncQualityStatus,
-                lastSyncQualityConfidence: liveViewer.lastSyncQualityConfidence
+                lastSyncQualityConfidence: liveViewer.lastSyncQualityConfidence,
               }
-            : {})
+            : {}),
         });
       } else {
         mergedViewers.set(id, draftViewer);
@@ -421,7 +439,7 @@ export function createRoomCoordinator(options = {}) {
     const nextSequence = Math.max(room.transportSequence || 0, draft.transportSequence || 0);
     Object.assign(room, draft, {
       viewers: mergedViewers,
-      transportSequence: nextSequence
+      transportSequence: nextSequence,
     });
   }
 
@@ -480,7 +498,10 @@ export function createRoomCoordinator(options = {}) {
   function withKeyLock(key, fn) {
     const previous = keyLocks.get(key) || Promise.resolve();
     const current = previous.then(fn, fn);
-    const settled = current.then(() => undefined, () => undefined);
+    const settled = current.then(
+      () => undefined,
+      () => undefined,
+    );
     keyLocks.set(key, settled);
     settled.then(() => {
       if (keyLocks.get(key) === settled) keyLocks.delete(key);
@@ -491,7 +512,13 @@ export function createRoomCoordinator(options = {}) {
   function withRoomLock(room, fn) {
     const previous = roomLocks.get(room) || Promise.resolve();
     const current = previous.then(fn, fn);
-    roomLocks.set(room, current.then(() => undefined, () => undefined));
+    roomLocks.set(
+      room,
+      current.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
     return current;
   }
 
@@ -517,7 +544,7 @@ export function createRoomCoordinator(options = {}) {
       await options.onPersist(isolatedPayload, {
         operation: meta.operation,
         reason: meta.reason,
-        previousRevision: baseRoom.revision
+        previousRevision: baseRoom.revision,
       });
     } catch (err) {
       if (err && typeof err === 'object' && (err.ambiguous === true || err.persistenceUncertain === true)) {
@@ -528,18 +555,19 @@ export function createRoomCoordinator(options = {}) {
     }
   }
 
-  const checkAdmin = (actor, room) => Boolean(
-    actor && room && resolveActorTenant(actor, room.tenantId) && options.isAdmin?.(actor, room)
-  );
+  const checkAdmin = (actor, room) =>
+    Boolean(actor && room && resolveActorTenant(actor, room.tenantId) && options.isAdmin?.(actor, room));
 
   function checkFastRevoked(room, actor, viewerId) {
     if (!room || !actor) return true;
-    return Boolean(options.isRevoked?.({
-      tenantId: room.tenantId,
-      roomId: room.id,
-      actor,
-      viewerId
-    }));
+    return Boolean(
+      options.isRevoked?.({
+        tenantId: room.tenantId,
+        roomId: room.id,
+        actor,
+        viewerId,
+      }),
+    );
   }
 
   async function checkAuthorized(room, actor, operation, command, viewerId) {
@@ -556,7 +584,7 @@ export function createRoomCoordinator(options = {}) {
         room: cloneRoomState(room),
         actor: { ...actor },
         operation,
-        command
+        command,
       });
       if (!allowedByHost) return false;
     }
@@ -566,20 +594,25 @@ export function createRoomCoordinator(options = {}) {
   function applyAutoStartOnDraft(draft, now, monoNow) {
     if (!areInitialViewersReady(draft)) return false;
     const hostViewer = [...draft.viewers.values()].find(
-      v => v.userId === draft.hostId ||
-           Policy.role(draft, v.userId) !== 'viewer' ||
-           Policy.allowed(draft, v.userId, 'continueWithoutHost')
+      v =>
+        v.userId === draft.hostId ||
+        Policy.role(draft, v.userId) !== 'viewer' ||
+        Policy.allowed(draft, v.userId, 'continueWithoutHost'),
     );
     if (!hostViewer) return false;
     settle(draft, now, monoNow);
     if (!areInitialViewersReady(draft)) return false;
     draft.initialGate = false;
-    applyTimelineCommand(draft, { action: 'media.play', args: {} }, {
-      now,
-      monoNow,
-      autoplayVersion: draft.mediaVersion,
-      createId
-    });
+    applyTimelineCommand(
+      draft,
+      { action: 'media.play', args: {} },
+      {
+        now,
+        monoNow,
+        autoplayVersion: draft.mediaVersion,
+        createId,
+      },
+    );
     draft.revision++;
     draft.lastActivity = now;
     return true;
@@ -590,18 +623,22 @@ export function createRoomCoordinator(options = {}) {
     for (const [id, expiry] of draft.kickedViewers) {
       if (expiry <= now) draft.kickedViewers.delete(id);
     }
-    let pruned = false, hostRemoved = false, autoStarted = false;
+    let pruned = false,
+      hostRemoved = false,
+      autoStarted = false;
     for (const [id, saved] of draft.disconnectedViewers) {
-      if (saved.expires <= now || saved.mediaVersion !== draft.mediaVersion ||
-          draft.visibility === 'private' && !Policy.assigned(draft, saved.userId)) {
+      if (
+        saved.expires <= now ||
+        saved.mediaVersion !== draft.mediaVersion ||
+        (draft.visibility === 'private' && !Policy.assigned(draft, saved.userId))
+      ) {
         draft.disconnectedViewers.delete(id);
       }
     }
     for (const [id, viewer] of draft.viewers) {
       const revoked = Boolean(viewer.revoked || revokedViewerIds?.has(id) || checkFastRevoked(draft, viewer.actor, id));
-      const unauthorizedPrivate = draft.visibility === 'private' &&
-        !Policy.assigned(draft, viewer.userId) &&
-        !checkAdmin(viewer.actor, draft);
+      const unauthorizedPrivate =
+        draft.visibility === 'private' && !Policy.assigned(draft, viewer.userId) && !checkAdmin(viewer.actor, draft);
       const timedOut = now - viewer.at > PRESENCE_TIMEOUT_MS;
       if (timedOut || unauthorizedPrivate || revoked) {
         if (timedOut && !unauthorizedPrivate && !revoked) {
@@ -612,12 +649,14 @@ export function createRoomCoordinator(options = {}) {
             expires: now + RECONNECT_GRACE_MS,
             readinessBypassedVersion: viewer.readinessBypassedVersion,
             joinedAt: viewer.joinedAt,
-            syncQuality: viewer.syncQuality ? {
-              ...viewer.syncQuality,
-              status: 'disconnected',
-              confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-              updatedAt: now
-            } : undefined
+            syncQuality: viewer.syncQuality
+              ? {
+                  ...viewer.syncQuality,
+                  status: 'disconnected',
+                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
+                  updatedAt: now,
+                }
+              : undefined,
           });
           if (draft.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS) {
             draft.disconnectedViewers.delete(draft.disconnectedViewers.keys().next().value);
@@ -655,16 +694,18 @@ export function createRoomCoordinator(options = {}) {
     const activeViewers = new Map();
     const projectedDisconnected = new Map();
     for (const [id, saved] of room.disconnectedViewers) {
-      if (saved.expires > receivedAt && saved.mediaVersion === room.mediaVersion &&
-          !(room.visibility === 'private' && !Policy.assigned(room, saved.userId))) {
+      if (
+        saved.expires > receivedAt &&
+        saved.mediaVersion === room.mediaVersion &&
+        !(room.visibility === 'private' && !Policy.assigned(room, saved.userId))
+      ) {
         projectedDisconnected.set(id, saved);
       }
     }
     for (const [id, viewer] of room.viewers) {
       const revoked = Boolean(viewer.revoked || checkFastRevoked(room, viewer.actor, id));
-      const unauthorizedPrivate = room.visibility === 'private' &&
-        !Policy.assigned(room, viewer.userId) &&
-        !checkAdmin(viewer.actor, room);
+      const unauthorizedPrivate =
+        room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room);
       const timedOut = receivedAt - viewer.at > PRESENCE_TIMEOUT_MS;
       if (revoked || unauthorizedPrivate) continue;
       if (timedOut) {
@@ -676,12 +717,14 @@ export function createRoomCoordinator(options = {}) {
             streamVersion: viewer.streamVersion,
             expires: graceExpires,
             joinedAt: viewer.joinedAt,
-            syncQuality: viewer.syncQuality ? {
-              ...viewer.syncQuality,
-              status: 'disconnected',
-              confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-              updatedAt: viewer.at + PRESENCE_TIMEOUT_MS
-            } : undefined
+            syncQuality: viewer.syncQuality
+              ? {
+                  ...viewer.syncQuality,
+                  status: 'disconnected',
+                  confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
+                  updatedAt: viewer.at + PRESENCE_TIMEOUT_MS,
+                }
+              : undefined,
           });
         }
         continue;
@@ -693,12 +736,15 @@ export function createRoomCoordinator(options = {}) {
     let effectiveStartAt = singleViewer && room.startAt > receivedAt ? receivedAt : room.startAt;
     let effectivePauseAt = singleViewer && room.pauseAt > receivedAt ? receivedAt : room.pauseAt;
     let effectivePaused = Boolean(room.paused);
-    let effectivePosition = position({
-      ...room,
-      startAt: effectiveStartAt,
-      pauseAt: effectivePauseAt,
-      paused: effectivePaused
-    }, receivedAt);
+    let effectivePosition = position(
+      {
+        ...room,
+        startAt: effectiveStartAt,
+        pauseAt: effectivePauseAt,
+        paused: effectivePaused,
+      },
+      receivedAt,
+    );
     if (effectivePauseAt && receivedAt >= effectivePauseAt) {
       effectivePaused = true;
       effectivePauseAt = undefined;
@@ -710,18 +756,19 @@ export function createRoomCoordinator(options = {}) {
 
     const effectiveTimedOut = Boolean(
       room.readinessTimedOut ||
-      (!room.recovery && room.initialGate && !room.manualPaused && receivedMono >= room.readinessDeadline)
+      (!room.recovery && room.initialGate && !room.manualPaused && receivedMono >= room.readinessDeadline),
     );
     const waitingForReady = Boolean(room.initialGate && !room.manualPaused && !effectiveTimedOut);
     let readiness;
     if (room.initialGate && !room.manualPaused) {
       const activeInitialIds = [...room.initialViewers].filter(id => activeViewers.has(id));
-      const blockers = receivedMono - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
-        ? activeInitialIds
-            .map(id => activeViewers.get(id))
-            .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
-            .map(v => v.name)
-        : [];
+      const blockers =
+        receivedMono - room.readinessSince >= READINESS_BLOCKER_REVEAL_MS
+          ? activeInitialIds
+              .map(id => activeViewers.get(id))
+              .filter(v => v && (!v.ready || v.version !== room.mediaVersion))
+              .map(v => v.name)
+          : [];
       const canStart = activeInitialIds.some(id => {
         const v = activeViewers.get(id);
         return Boolean(v?.ready && v.version === room.mediaVersion);
@@ -730,7 +777,7 @@ export function createRoomCoordinator(options = {}) {
         id: room.readinessId,
         timedOut: effectiveTimedOut,
         blockers,
-        canStart
+        canStart,
       };
     }
 
@@ -742,18 +789,14 @@ export function createRoomCoordinator(options = {}) {
       effectivePaused,
       effectivePosition,
       waitingForReady,
-      readiness
+      readiness,
     };
   }
 
-  function formatRoomSnapshot(room, {
-    actor,
-    viewer,
-    receivedAt,
-    receivedMono,
-    envelopeOnly = false,
-    bumpSequence = false
-  }) {
+  function formatRoomSnapshot(
+    room,
+    { actor, viewer, receivedAt, receivedMono, envelopeOnly = false, bumpSequence = false },
+  ) {
     const projected = projectRoomReadOnly(room, receivedAt, receivedMono);
     if (bumpSequence) room.transportSequence++;
     const memberIds = [...new Set([...projected.activeViewers.values()].map(v => v.userId))];
@@ -761,10 +804,10 @@ export function createRoomCoordinator(options = {}) {
       {
         mediaVersion: room.mediaVersion,
         viewers: projected.activeViewers,
-        disconnectedViewers: projected.projectedDisconnected
+        disconnectedViewers: projected.projectedDisconnected,
       },
       memberIds.map(id => ({ id })),
-      receivedAt
+      receivedAt,
     );
     const isAdmin = actor ? checkAdmin(actor, room) : false;
     const coordination = {
@@ -791,18 +834,18 @@ export function createRoomCoordinator(options = {}) {
         paused: projected.effectivePaused,
         position: projected.effectivePosition,
         duration: room.duration,
-        seekable: room.seekable
+        seekable: room.seekable,
       },
       timing: {
         serverReceivedAt: receivedAt,
         serverSentAt: nowFn(),
         serverProcessingMs: monoNowFn() - receivedMono,
-        clockEpoch
-      }
+        clockEpoch,
+      },
     };
     const content = {
       ...cloneValue(room.content),
-      participants
+      participants,
     };
     return envelopeOnly ? { coordination, content } : composeRoomSnapshot({ coordination, content });
   }
@@ -817,11 +860,9 @@ export function createRoomCoordinator(options = {}) {
     visibility = 'public',
     hosts = [],
     permissions: customPermissions,
-    content = {}
+    content = {},
   }) {
-    const resolvedTenant = actor !== undefined
-      ? resolveActorTenant(actor, tenantId)
-      : normalizeTenantId(tenantId);
+    const resolvedTenant = actor !== undefined ? resolveActorTenant(actor, tenantId) : normalizeTenantId(tenantId);
     if (!resolvedTenant) {
       throw Object.assign(new Error('Invalid or unauthorized tenant'), { status: 403 });
     }
@@ -871,9 +912,9 @@ export function createRoomCoordinator(options = {}) {
         lastActivity: now,
         persistenceUncertain: false,
         reservedRevision: 0,
-        content: cloneValue(content || {})
+        content: cloneValue(content || {}),
       };
-      if (actor !== undefined && !await checkAuthorized(proposed, actor, 'create')) {
+      if (actor !== undefined && !(await checkAuthorized(proposed, actor, 'create'))) {
         throw Object.assign(new Error('Room creation not authorized'), { status: 403 });
       }
       if (options.onCreateRoom) {
@@ -882,7 +923,7 @@ export function createRoomCoordinator(options = {}) {
         await options.onPersist(cloneRoomState(proposed), {
           operation: 'create',
           reason: 'room-created',
-          previousRevision: undefined
+          previousRevision: undefined,
         });
       }
       rooms.set(key, proposed);
@@ -892,19 +933,16 @@ export function createRoomCoordinator(options = {}) {
       tenantId: createdRoom.tenantId,
       roomId: createdRoom.id,
       includeLobby: true,
-      reason: 'room-created'
+      reason: 'room-created',
     });
     return createdRoom;
   }
 
-  async function loadTimeline(roomId, actor, {
-    tenantId,
-    expectedRevision,
-    duration = 0,
-    position: initialPosition = 0,
-    autoplay = true,
-    content = {}
-  } = {}) {
+  async function loadTimeline(
+    roomId,
+    actor,
+    { tenantId, expectedRevision, duration = 0, position: initialPosition = 0, autoplay = true, content = {} } = {},
+  ) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     if (!resolvedTenant) {
       return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
@@ -914,26 +952,42 @@ export function createRoomCoordinator(options = {}) {
       return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
     }
     return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !await checkAuthorized(room, actor, 'loadTimeline')) {
+      if (getRoom(roomId, resolvedTenant) !== room || !(await checkAuthorized(room, actor, 'loadTimeline'))) {
         return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
       }
       if (room.persistenceUncertain) {
-        return { status: 'unavailable', httpStatus: 503, reason: 'persistence-uncertain', message: 'Room state requires persistence reconciliation.' };
+        return {
+          status: 'unavailable',
+          httpStatus: 503,
+          reason: 'persistence-uncertain',
+          message: 'Room state requires persistence reconciliation.',
+        };
       }
       if (!Policy.allowed(room, actor.userId, 'chooseMedia', { isAdmin: checkAdmin(actor, room) })) {
         return { status: 'forbidden', httpStatus: 403, message: 'Choose media permission required' };
       }
       if (expectedRevision !== undefined) {
         if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-          return { status: 'unavailable', httpStatus: 400, reason: 'invalid-revision', message: 'Invalid expected revision' };
+          return {
+            status: 'unavailable',
+            httpStatus: 400,
+            reason: 'invalid-revision',
+            message: 'Invalid expected revision',
+          };
         }
         if (expectedRevision !== room.revision) {
-          return { status: 'unavailable', httpStatus: 409, reason: 'revision-mismatch', message: 'Room revision changed; refresh and retry' };
+          return {
+            status: 'unavailable',
+            httpStatus: 409,
+            reason: 'revision-mismatch',
+            message: 'Room revision changed; refresh and retry',
+          };
         }
       }
       if (!Number.isFinite(duration) || duration < 0) throw new Error('Invalid timeline duration');
 
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       const draft = cloneRoomState(room);
       settleAndPruneDraft(draft, now, monoNow);
       draft.duration = duration;
@@ -967,12 +1021,7 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
-  async function joinViewer(roomId, actor, {
-    viewerId,
-    tenantId,
-    rtts = [],
-    envelopeOnly = false
-  }) {
+  async function joinViewer(roomId, actor, { viewerId, tenantId, rtts = [], envelopeOnly = false }) {
     if (typeof viewerId !== 'string' || !viewerId) {
       throw Object.assign(new Error('Invalid viewer identifier'), { status: 400 });
     }
@@ -985,13 +1034,17 @@ export function createRoomCoordinator(options = {}) {
       throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
     }
     return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !await checkAuthorized(room, actor, 'join', undefined, viewerId)) {
+      if (
+        getRoom(roomId, resolvedTenant) !== room ||
+        !(await checkAuthorized(room, actor, 'join', undefined, viewerId))
+      ) {
         throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
       }
       if (room.persistenceUncertain) {
         throw Object.assign(new Error('Room state requires persistence reconciliation.'), { status: 503 });
       }
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       if ((room.kickedViewers.get(viewerId) || 0) > now) {
         throw Object.assign(new Error('You were removed from this room. You may rejoin.'), { status: 403 });
       }
@@ -1015,10 +1068,11 @@ export function createRoomCoordinator(options = {}) {
         userId: actor.userId,
         streamVersion: createId(),
         observationEpoch: createId(),
-        readinessBypassedVersion: saved?.mediaVersion === draft.mediaVersion ? saved.readinessBypassedVersion : undefined,
+        readinessBypassedVersion:
+          saved?.mediaVersion === draft.mediaVersion ? saved.readinessBypassedVersion : undefined,
         syncQuality: saved?.syncQuality ? cloneValue(saved.syncQuality) : undefined,
         ready: false,
-        joinedAt: Math.min(now, saved?.joinedAt ?? now)
+        joinedAt: Math.min(now, saved?.joinedAt ?? now),
       };
       viewer.at = now;
       viewer.touchSequence = (existing?.touchSequence || 0) + 1;
@@ -1036,7 +1090,10 @@ export function createRoomCoordinator(options = {}) {
       }
 
       if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, { operation: 'joinViewer', reason: autoStarted ? 'ready-autostart' : 'viewer-joined' });
+        await persistRoomTransition(room, draft, {
+          operation: 'joinViewer',
+          reason: autoStarted ? 'ready-autostart' : 'viewer-joined',
+        });
       }
       commitRoomDraft(room, draft);
       if (autoStarted) {
@@ -1052,7 +1109,7 @@ export function createRoomCoordinator(options = {}) {
         receivedAt: now,
         receivedMono: monoNow,
         envelopeOnly,
-        bumpSequence: true
+        bumpSequence: true,
       });
     });
   }
@@ -1064,9 +1121,8 @@ export function createRoomCoordinator(options = {}) {
     const viewer = draft.viewers.get(viewerId);
     if (!viewer) return { removed: false, autoStarted: false };
     if (preserveGrace && !viewer.revoked) {
-      const unauthorizedPrivate = draft.visibility === 'private' &&
-        !Policy.assigned(draft, viewer.userId) &&
-        !checkAdmin(viewer.actor, draft);
+      const unauthorizedPrivate =
+        draft.visibility === 'private' && !Policy.assigned(draft, viewer.userId) && !checkAdmin(viewer.actor, draft);
       if (!unauthorizedPrivate) {
         draft.disconnectedViewers.set(viewerId, {
           userId: viewer.userId,
@@ -1075,12 +1131,14 @@ export function createRoomCoordinator(options = {}) {
           expires: now + RECONNECT_GRACE_MS,
           readinessBypassedVersion: viewer.readinessBypassedVersion,
           joinedAt: viewer.joinedAt,
-          syncQuality: viewer.syncQuality ? {
-            ...viewer.syncQuality,
-            status: 'disconnected',
-            confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
-            updatedAt: now
-          } : undefined
+          syncQuality: viewer.syncQuality
+            ? {
+                ...viewer.syncQuality,
+                status: 'disconnected',
+                confidence: viewer.syncQuality.confidence === 'provisional' ? 'provisional' : 'reduced',
+                updatedAt: now,
+              }
+            : undefined,
         });
         if (draft.disconnectedViewers.size > MAX_DISCONNECTED_VIEWERS) {
           draft.disconnectedViewers.delete(draft.disconnectedViewers.keys().next().value);
@@ -1108,13 +1166,14 @@ export function createRoomCoordinator(options = {}) {
       const liveViewer = room.viewers.get(viewerId);
       const hadDisconnected = room.disconnectedViewers.has(viewerId);
       if (!liveViewer && !hadDisconnected) return false;
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       const draft = cloneRoomState(room);
       const { removed, autoStarted } = removeViewerFromDraft(draft, viewerId, {
         reason,
         now,
         monoNow,
-        preserveGrace: false
+        preserveGrace: false,
       });
       if (!removed && !hadDisconnected) return false;
       if (durableStateChanged(room, draft)) {
@@ -1131,12 +1190,11 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
-  async function leaveViewer(roomId, actor, {
-    viewerId,
-    tenantId,
-    reason = 'left',
-    preserveReconnectGrace = reason === 'disconnected'
-  }) {
+  async function leaveViewer(
+    roomId,
+    actor,
+    { viewerId, tenantId, reason = 'left', preserveReconnectGrace = reason === 'disconnected' },
+  ) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     if (!resolvedTenant || typeof viewerId !== 'string' || !viewerId) return false;
     const room = getRoom(roomId, resolvedTenant);
@@ -1146,7 +1204,8 @@ export function createRoomCoordinator(options = {}) {
       const disconnectedMatch = room.disconnectedViewers.get(viewerId)?.userId === actor.userId;
       const viewer = room.viewers.get(viewerId);
       if ((!viewer || viewer.userId !== actor.userId) && !disconnectedMatch) return false;
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       const draft = cloneRoomState(room);
       if (disconnectedMatch && !preserveReconnectGrace) draft.disconnectedViewers.delete(viewerId);
       if (!viewer || viewer.userId !== actor.userId) {
@@ -1157,7 +1216,7 @@ export function createRoomCoordinator(options = {}) {
         reason,
         now,
         monoNow,
-        preserveGrace: Boolean(preserveReconnectGrace)
+        preserveGrace: Boolean(preserveReconnectGrace),
       });
       advanceRevision(room, draft);
       if (durableStateChanged(room, draft)) {
@@ -1172,39 +1231,46 @@ export function createRoomCoordinator(options = {}) {
     });
   }
 
-  async function reportReadiness(roomId, actor, {
-    viewerId,
-    mediaVersion,
-    ready,
-    readinessVersion,
-    tenantId
-  }) {
+  async function reportReadiness(roomId, actor, { viewerId, mediaVersion, ready, readinessVersion, tenantId }) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
     if (!room) {
       throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
     }
     return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !await checkAuthorized(room, actor, 'ready', undefined, viewerId)) {
+      if (
+        getRoom(roomId, resolvedTenant) !== room ||
+        !(await checkAuthorized(room, actor, 'ready', undefined, viewerId))
+      ) {
         throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
       }
       if (room.persistenceUncertain) {
         throw Object.assign(new Error('Room state requires persistence reconciliation.'), { status: 503 });
       }
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       const draft = cloneRoomState(room);
       const viewer = draft.viewers.get(viewerId);
-      if (!viewer || viewer.userId !== actor.userId || draft.mediaVersion !== mediaVersion ||
-          typeof ready !== 'boolean' || draft.readinessVersion !== readinessVersion) {
+      if (
+        !viewer ||
+        viewer.userId !== actor.userId ||
+        draft.mediaVersion !== mediaVersion ||
+        typeof ready !== 'boolean' ||
+        draft.readinessVersion !== readinessVersion
+      ) {
         throw new Error('Invalid readiness');
       }
       viewer.authVerifiedAt = now;
-      recordViewerReadiness(draft, { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion }, { now, monoNow });
+      recordViewerReadiness(
+        draft,
+        { userId: actor.userId, viewerId, mediaVersion, ready, readinessVersion },
+        { now, monoNow },
+      );
       const autoStarted = applyAutoStartOnDraft(draft, now, monoNow);
       if (durableStateChanged(room, draft)) {
         await persistRoomTransition(room, draft, {
           operation: 'reportReadiness',
-          reason: autoStarted ? 'ready-autostart' : 'viewer-ready'
+          reason: autoStarted ? 'ready-autostart' : 'viewer-ready',
         });
       }
       commitRoomDraft(room, draft);
@@ -1223,30 +1289,49 @@ export function createRoomCoordinator(options = {}) {
       return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
     }
     return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room ||
-          !await checkAuthorized(room, actor, 'command', envelopeInput?.command, envelopeInput?.viewerId)) {
+      if (
+        getRoom(roomId, resolvedTenant) !== room ||
+        !(await checkAuthorized(room, actor, 'command', envelopeInput?.command, envelopeInput?.viewerId))
+      ) {
         return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
       }
       if (room.persistenceUncertain) {
-        return { status: 'unavailable', httpStatus: 503, reason: 'persistence-uncertain', message: 'Room state requires persistence reconciliation.' };
+        return {
+          status: 'unavailable',
+          httpStatus: 503,
+          reason: 'persistence-uncertain',
+          message: 'Room state requires persistence reconciliation.',
+        };
       }
-      const now = nowFn(), monoNow = monoNowFn();
+      const now = nowFn(),
+        monoNow = monoNowFn();
       const checkedEnvelope = validateCommandEnvelope(envelopeInput, {
         expectedEpoch: room.epoch,
         currentRevision: room.revision,
         now,
-        maxTtlMs: commandTtlMs
+        maxTtlMs: commandTtlMs,
       });
       if (!checkedEnvelope.ok) {
-        return { status: 'unavailable', httpStatus: checkedEnvelope.status, reason: checkedEnvelope.reason, message: checkedEnvelope.error };
+        return {
+          status: 'unavailable',
+          httpStatus: checkedEnvelope.status,
+          reason: checkedEnvelope.reason,
+          message: checkedEnvelope.error,
+        };
       }
-      if (checkedEnvelope.coordination.tenantId !== undefined && checkedEnvelope.coordination.tenantId !== resolvedTenant) {
+      if (
+        checkedEnvelope.coordination.tenantId !== undefined &&
+        checkedEnvelope.coordination.tenantId !== resolvedTenant
+      ) {
         return { status: 'forbidden', httpStatus: 403, message: 'No controllable room.' };
       }
       if (checkedEnvelope.coordination.roomId !== undefined && checkedEnvelope.coordination.roomId !== roomId) {
         return { status: 'unavailable', httpStatus: 400, reason: 'room-mismatch', message: 'Invalid command target.' };
       }
-      if (checkedEnvelope.coordination.senderId !== undefined && checkedEnvelope.coordination.senderId !== actor.userId) {
+      if (
+        checkedEnvelope.coordination.senderId !== undefined &&
+        checkedEnvelope.coordination.senderId !== actor.userId
+      ) {
         return { status: 'forbidden', httpStatus: 403, message: 'Invalid command sender.' };
       }
       if (checkedEnvelope.coordination.viewerId !== undefined) {
@@ -1257,8 +1342,9 @@ export function createRoomCoordinator(options = {}) {
       }
       let command;
       try {
-        command = validateSyncCommand(checkedEnvelope.payload, { userIdPattern: options.idPattern })
-          || options.validateExtensionCommand?.(checkedEnvelope.payload);
+        command =
+          validateSyncCommand(checkedEnvelope.payload, { userIdPattern: options.idPattern }) ||
+          options.validateExtensionCommand?.(checkedEnvelope.payload);
         if (!command) throw new Error('Unsupported command');
       } catch {
         return { status: 'unsupported', httpStatus: 400, message: 'Unsupported command or value.' };
@@ -1276,9 +1362,16 @@ export function createRoomCoordinator(options = {}) {
         if (draftSenderViewer) draftSenderViewer.authVerifiedAt = now;
       }
 
-      if (['media.play', 'media.toggle', 'media.ready.start'].includes(command.action) &&
-          Policy.role(draft, actor.userId) === 'viewer' && !isAdmin &&
-          ![...draft.viewers.values()].some(v => (now - v.at <= PRESENCE_TIMEOUT_MS) && (Policy.role(draft, v.userId) !== 'viewer' || checkAdmin(v.actor, draft)))) {
+      if (
+        ['media.play', 'media.toggle', 'media.ready.start'].includes(command.action) &&
+        Policy.role(draft, actor.userId) === 'viewer' &&
+        !isAdmin &&
+        ![...draft.viewers.values()].some(
+          v =>
+            now - v.at <= PRESENCE_TIMEOUT_MS &&
+            (Policy.role(draft, v.userId) !== 'viewer' || checkAdmin(v.actor, draft)),
+        )
+      ) {
         if (!Policy.allowed(draft, actor.userId, 'continueWithoutHost', { isAdmin })) {
           return { status: 'forbidden', httpStatus: 403, message: 'Your room permissions do not allow this action.' };
         }
@@ -1290,7 +1383,8 @@ export function createRoomCoordinator(options = {}) {
           return { status: 'forbidden', httpStatus: 403, message: 'You cannot kick this participant.' };
         }
         const targetViewers = [...draft.viewers.entries()].filter(([, v]) => v.userId === targetUserId);
-        if (!targetViewers.length) return { status: 'unavailable', httpStatus: 409, message: 'This participant has already left.' };
+        if (!targetViewers.length)
+          return { status: 'unavailable', httpStatus: 409, message: 'This participant has already left.' };
         for (const [id] of targetViewers) draft.kickedViewers.set(id, now + RECONNECT_GRACE_MS);
         for (const [id, v] of draft.disconnectedViewers) {
           if (v.userId === targetUserId) {
@@ -1320,9 +1414,10 @@ export function createRoomCoordinator(options = {}) {
         draft.disconnectedViewers.clear();
         invalidateEpoch(draft, { createId });
         const { autoStarted: prunedAutoStart } = settleAndPruneDraft(draft, now, monoNow);
-        const gateAutoStart = !prunedAutoStart && draft.initialGate && !draft.manualPaused
-          ? applyAutoStartOnDraft(draft, now, monoNow)
-          : false;
+        const gateAutoStart =
+          !prunedAutoStart && draft.initialGate && !draft.manualPaused
+            ? applyAutoStartOnDraft(draft, now, monoNow)
+            : false;
         advanceRevision(room, draft);
         await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: 'visibility-changed' });
         commitRoomDraft(room, draft);
@@ -1336,7 +1431,11 @@ export function createRoomCoordinator(options = {}) {
       settleAndPruneDraft(draft, now, monoNow);
 
       if (command.action.startsWith('media.ready.')) {
-        const outcome = applyReadinessDecision(draft, command.action, command.args.readinessId, { now, monoNow, createId });
+        const outcome = applyReadinessDecision(draft, command.action, command.args.readinessId, {
+          now,
+          monoNow,
+          createId,
+        });
         if (outcome.status !== 'applied') {
           return { status: outcome.status, httpStatus: 409, message: outcome.message };
         }
@@ -1352,7 +1451,11 @@ export function createRoomCoordinator(options = {}) {
       }
 
       if (draft.readinessTimedOut && ['media.play', 'media.toggle', 'media.pause'].includes(command.action)) {
-        return { status: 'unavailable', httpStatus: 409, message: 'The host must choose whether to start, wait or cancel.' };
+        return {
+          status: 'unavailable',
+          httpStatus: 409,
+          message: 'The host must choose whether to start, wait or cancel.',
+        };
       }
       if (!draft.viewers.size) return { status: 'unavailable', httpStatus: 409, message: 'No viewer is connected.' };
       if (command.action.startsWith('media.') && !draft.hasMedia) {
@@ -1368,9 +1471,10 @@ export function createRoomCoordinator(options = {}) {
       }
       draft.revision++;
       draft.lastActivity = now;
-      const autoStarted = ['media.play', 'media.toggle'].includes(command.action) && draft.initialGate && !draft.manualPaused
-        ? applyAutoStartOnDraft(draft, now, monoNow)
-        : false;
+      const autoStarted =
+        ['media.play', 'media.toggle'].includes(command.action) && draft.initialGate && !draft.manualPaused
+          ? applyAutoStartOnDraft(draft, now, monoNow)
+          : false;
       advanceRevision(room, draft);
       await persistRoomTransition(room, draft, { operation: 'executeCommand', reason: command.action });
       commitRoomDraft(room, draft);
@@ -1395,9 +1499,11 @@ export function createRoomCoordinator(options = {}) {
       return { ok: false, code: 4003 };
     }
     const nowCheck = nowFn();
-    if ((room.kickedViewers.get(message.viewerId) || 0) > nowCheck ||
-        checkFastRevoked(room, actor, message.viewerId) ||
-        (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))) {
+    if (
+      (room.kickedViewers.get(message.viewerId) || 0) > nowCheck ||
+      checkFastRevoked(room, actor, message.viewerId) ||
+      (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))
+    ) {
       await evictRevokedViewer(room, message.viewerId, 'revoked');
       return { ok: false, code: 4003 };
     }
@@ -1412,7 +1518,7 @@ export function createRoomCoordinator(options = {}) {
       return { ok: true, displayChanged: false };
     }
 
-    if (!await checkAuthorized(room, actor, 'telemetry', undefined, message.viewerId)) {
+    if (!(await checkAuthorized(room, actor, 'telemetry', undefined, message.viewerId))) {
       await evictRevokedViewer(room, message.viewerId, 'revoked');
       return { ok: false, code: 4003 };
     }
@@ -1420,7 +1526,12 @@ export function createRoomCoordinator(options = {}) {
     return runRoomTransaction(room, async queuePublish => {
       if (getRoom(roomId, resolvedTenant) !== room) return { ok: false, code: 4003 };
       const viewer = room.viewers.get(message.viewerId);
-      if (!viewer || viewer.userId !== actor.userId || viewer.revoked || checkFastRevoked(room, actor, message.viewerId)) {
+      if (
+        !viewer ||
+        viewer.userId !== actor.userId ||
+        viewer.revoked ||
+        checkFastRevoked(room, actor, message.viewerId)
+      ) {
         return { ok: false, code: 4003 };
       }
       if (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId)) {
@@ -1437,7 +1548,7 @@ export function createRoomCoordinator(options = {}) {
         streamVersion: viewer.streamVersion,
         lastAt: viewer.lastSyncQualityAt,
         lastStatus: viewer.lastSyncQualityStatus,
-        lastConfidence: viewer.lastSyncQualityConfidence
+        lastConfidence: viewer.lastSyncQualityConfidence,
       });
       if (!outcome.throttled) {
         viewer.syncQuality = outcome.next;
@@ -1460,10 +1571,11 @@ export function createRoomCoordinator(options = {}) {
   async function snapshot(roomId, actor, { viewerId, tenantId, envelopeOnly = false } = {}) {
     const resolvedTenant = resolveActorTenant(actor, tenantId);
     const room = resolvedTenant ? getRoom(roomId, resolvedTenant) : undefined;
-    if (!room || !await checkAuthorized(room, actor, 'snapshot', undefined, viewerId)) {
+    if (!room || !(await checkAuthorized(room, actor, 'snapshot', undefined, viewerId))) {
       throw Object.assign(new Error('Room unavailable or private'), { status: 403 });
     }
-    const receivedAt = nowFn(), receivedMono = monoNowFn();
+    const receivedAt = nowFn(),
+      receivedMono = monoNowFn();
     if (viewerId !== undefined) {
       if (typeof viewerId !== 'string' || !viewerId) {
         throw Object.assign(new Error('Viewer identity mismatch'), { status: 403 });
@@ -1491,7 +1603,7 @@ export function createRoomCoordinator(options = {}) {
       receivedAt,
       receivedMono,
       envelopeOnly,
-      bumpSequence: true
+      bumpSequence: true,
     });
   }
 
@@ -1507,14 +1619,15 @@ export function createRoomCoordinator(options = {}) {
   function inspectRoomInternal(roomId, { tenantId = 'default', envelopeOnly = true } = {}) {
     const room = getRoom(roomId, tenantId);
     if (!room) return undefined;
-    const receivedAt = nowFn(), receivedMono = monoNowFn();
+    const receivedAt = nowFn(),
+      receivedMono = monoNowFn();
     return formatRoomSnapshot(room, {
       actor: undefined,
       viewer: undefined,
       receivedAt,
       receivedMono,
       envelopeOnly,
-      bumpSequence: false
+      bumpSequence: false,
     });
   }
 
@@ -1524,10 +1637,11 @@ export function createRoomCoordinator(options = {}) {
       throw Object.assign(new Error('Unauthorized tenant access'), { status: 403 });
     }
     const visible = [];
-    const now = nowFn(), monoNow = monoNowFn();
+    const now = nowFn(),
+      monoNow = monoNowFn();
     for (const room of [...rooms.values()]) {
       if (room.tenantId !== resolvedTenant) continue;
-      if (!await checkAuthorized(room, actor, 'list')) continue;
+      if (!(await checkAuthorized(room, actor, 'list'))) continue;
       if (getRoom(room.id, resolvedTenant) !== room) continue;
       const projected = projectRoomReadOnly(room, now, monoNow);
       const members = [...new Map([...projected.activeViewers.values()].map(v => [v.userId, v.name])).values()];
@@ -1538,7 +1652,7 @@ export function createRoomCoordinator(options = {}) {
         hostName: room.hostName,
         visibility: room.visibility,
         viewers: members.length,
-        members
+        members,
       });
     }
     return visible;
@@ -1554,7 +1668,7 @@ export function createRoomCoordinator(options = {}) {
       return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
     }
     return runRoomTransaction(room, async queuePublish => {
-      if (getRoom(roomId, resolvedTenant) !== room || !await checkAuthorized(room, actor, 'close')) {
+      if (getRoom(roomId, resolvedTenant) !== room || !(await checkAuthorized(room, actor, 'close'))) {
         return { status: 'forbidden', httpStatus: 403, message: 'Room unavailable or private' };
       }
       if (!Policy.allowed(room, actor.userId, 'closeRoom', { isAdmin: checkAdmin(actor, room) })) {
@@ -1562,14 +1676,29 @@ export function createRoomCoordinator(options = {}) {
       }
       if (expectedRevision !== undefined) {
         if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-          return { status: 'unavailable', httpStatus: 400, reason: 'invalid-revision', message: 'Invalid expected revision' };
+          return {
+            status: 'unavailable',
+            httpStatus: 400,
+            reason: 'invalid-revision',
+            message: 'Invalid expected revision',
+          };
         }
         if (expectedRevision !== room.revision) {
-          return { status: 'unavailable', httpStatus: 409, reason: 'revision-mismatch', message: 'Room revision changed; refresh before closing' };
+          return {
+            status: 'unavailable',
+            httpStatus: 409,
+            reason: 'revision-mismatch',
+            message: 'Room revision changed; refresh before closing',
+          };
         }
       }
       if (epoch !== undefined && epoch !== room.epoch) {
-        return { status: 'unavailable', httpStatus: 409, reason: 'epoch-mismatch', message: 'Room changed; refresh before closing' };
+        return {
+          status: 'unavailable',
+          httpStatus: 409,
+          reason: 'epoch-mismatch',
+          message: 'Room changed; refresh before closing',
+        };
       }
 
       const closedAt = nowFn();
@@ -1582,12 +1711,12 @@ export function createRoomCoordinator(options = {}) {
             epoch: room.epoch,
             revision: room.revision,
             closedAt,
-            room: isolatedRoom
+            room: isolatedRoom,
           });
         } else if (options.onPersist) {
           await options.onPersist(
             { ...isolatedRoom, closed: true, closedAt },
-            { operation: 'close', reason: 'room-closed', previousRevision: room.revision }
+            { operation: 'close', reason: 'room-closed', previousRevision: room.revision },
           );
         }
       } catch (err) {
@@ -1618,8 +1747,10 @@ export function createRoomCoordinator(options = {}) {
     const now = nowFn();
     if ((room.kickedViewers.get(viewerId) || 0) > now) return false;
 
-    if (checkFastRevoked(room, actor, viewerId) ||
-        (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))) {
+    if (
+      checkFastRevoked(room, actor, viewerId) ||
+      (room.visibility === 'private' && !checkAdmin(actor, room) && !Policy.assigned(room, actor.userId))
+    ) {
       viewer.revoked = true;
       await evictRevokedViewer(room, viewerId, 'revoked');
       return false;
@@ -1627,7 +1758,7 @@ export function createRoomCoordinator(options = {}) {
 
     const needsAuthRecheck = Boolean(
       options.authorize &&
-      (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs)
+      (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs),
     );
     if (needsAuthRecheck) {
       const stillAllowed = await checkAuthorized(room, actor, 'presence', undefined, viewerId);
@@ -1638,7 +1769,8 @@ export function createRoomCoordinator(options = {}) {
       }
       const latestViewer = getRoom(roomId, resolvedTenant)?.viewers.get(viewerId);
       if (!latestViewer || latestViewer.userId !== actor.userId || latestViewer.revoked) return false;
-      const refreshedNow = nowFn(), refreshedMono = monoNowFn();
+      const refreshedNow = nowFn(),
+        refreshedMono = monoNowFn();
       latestViewer.authVerifiedAt = refreshedNow;
       latestViewer.at = refreshedNow;
       latestViewer.touchSequence = (latestViewer.touchSequence || 0) + 1;
@@ -1669,47 +1801,55 @@ export function createRoomCoordinator(options = {}) {
   async function revokeActor({ userId, tenantId = 'default', roomId, viewerId } = {}) {
     const normalizedTenant = normalizeTenantId(tenantId);
     if (!normalizedTenant || typeof userId !== 'string' || !userId) return 0;
-    const candidateRooms = roomId !== undefined
-      ? [getRoom(roomId, normalizedTenant)].filter(Boolean)
-      : [...rooms.values()].filter(r => r.tenantId === normalizedTenant);
+    const candidateRooms =
+      roomId !== undefined
+        ? [getRoom(roomId, normalizedTenant)].filter(Boolean)
+        : [...rooms.values()].filter(r => r.tenantId === normalizedTenant);
     let evictedCount = 0;
-    await Promise.all(candidateRooms.map(room => runRoomTransaction(room, async queuePublish => {
-      if (getRoom(room.id, normalizedTenant) !== room) return;
-      const now = nowFn(), monoNow = monoNowFn();
-      const draft = cloneRoomState(room);
-      let roomChanged = false, autoStarted = false, removedLive = false;
-      for (const [id, v] of [...draft.viewers.entries()]) {
-        if (v.userId === userId && (viewerId === undefined || id === viewerId)) {
-          const live = room.viewers.get(id);
-          if (live) live.revoked = true;
-          const res = removeViewerFromDraft(draft, id, { reason: 'revoked', now, monoNow, preserveGrace: false });
-          if (res.removed) {
-            removedLive = true;
-            roomChanged = true;
-            evictedCount++;
+    await Promise.all(
+      candidateRooms.map(room =>
+        runRoomTransaction(room, async queuePublish => {
+          if (getRoom(room.id, normalizedTenant) !== room) return;
+          const now = nowFn(),
+            monoNow = monoNowFn();
+          const draft = cloneRoomState(room);
+          let roomChanged = false,
+            autoStarted = false,
+            removedLive = false;
+          for (const [id, v] of [...draft.viewers.entries()]) {
+            if (v.userId === userId && (viewerId === undefined || id === viewerId)) {
+              const live = room.viewers.get(id);
+              if (live) live.revoked = true;
+              const res = removeViewerFromDraft(draft, id, { reason: 'revoked', now, monoNow, preserveGrace: false });
+              if (res.removed) {
+                removedLive = true;
+                roomChanged = true;
+                evictedCount++;
+              }
+              if (res.autoStarted) autoStarted = true;
+            }
           }
-          if (res.autoStarted) autoStarted = true;
-        }
-      }
-      for (const [id, saved] of [...draft.disconnectedViewers.entries()]) {
-        if (saved.userId === userId && (viewerId === undefined || id === viewerId)) {
-          draft.disconnectedViewers.delete(id);
-          roomChanged = true;
-        }
-      }
-      if (!roomChanged) return;
-      if (removedLive) advanceRevision(room, draft);
-      if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, { operation: 'revokeActor', reason: 'viewer-left' });
-      }
-      commitRoomDraft(room, draft);
-      if (autoStarted) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
-      }
-      if (removedLive) {
-        queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
-      }
-    })));
+          for (const [id, saved] of [...draft.disconnectedViewers.entries()]) {
+            if (saved.userId === userId && (viewerId === undefined || id === viewerId)) {
+              draft.disconnectedViewers.delete(id);
+              roomChanged = true;
+            }
+          }
+          if (!roomChanged) return;
+          if (removedLive) advanceRevision(room, draft);
+          if (durableStateChanged(room, draft)) {
+            await persistRoomTransition(room, draft, { operation: 'revokeActor', reason: 'viewer-left' });
+          }
+          commitRoomDraft(room, draft);
+          if (autoStarted) {
+            queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: false, reason: 'ready-autostart' });
+          }
+          if (removedLive) {
+            queuePublish({ tenantId: room.tenantId, roomId: room.id, includeLobby: true, reason: 'viewer-left' });
+          }
+        }),
+      ),
+    );
     return evictedCount;
   }
 
@@ -1760,7 +1900,7 @@ export function createRoomCoordinator(options = {}) {
       lastActivity: now,
       persistenceUncertain: false,
       reservedRevision: baseRevision + 1,
-      content: cloneValue(persisted.content || {})
+      content: cloneValue(persisted.content || {}),
     };
     rooms.set(key, restored);
     return restored;
@@ -1784,7 +1924,8 @@ export function createRoomCoordinator(options = {}) {
           room.visibility = authoritative.visibility;
         }
         if (typeof authoritative.epoch === 'string' && authoritative.epoch) room.epoch = authoritative.epoch;
-        if (typeof authoritative.mediaVersion === 'string' && authoritative.mediaVersion) room.mediaVersion = authoritative.mediaVersion;
+        if (typeof authoritative.mediaVersion === 'string' && authoritative.mediaVersion)
+          room.mediaVersion = authoritative.mediaVersion;
         if (typeof authoritative.hasMedia === 'boolean') room.hasMedia = authoritative.hasMedia;
         if (typeof authoritative.paused === 'boolean') room.paused = authoritative.paused;
         if (Number.isFinite(authoritative.position)) room.position = authoritative.position;
@@ -1794,7 +1935,8 @@ export function createRoomCoordinator(options = {}) {
         if ('pauseAt' in authoritative) room.pauseAt = authoritative.pauseAt;
         if (typeof authoritative.initialGate === 'boolean') room.initialGate = authoritative.initialGate;
         if (typeof authoritative.manualPaused === 'boolean') room.manualPaused = authoritative.manualPaused;
-        if (typeof authoritative.readinessTimedOut === 'boolean') room.readinessTimedOut = authoritative.readinessTimedOut;
+        if (typeof authoritative.readinessTimedOut === 'boolean')
+          room.readinessTimedOut = authoritative.readinessTimedOut;
         if ('readinessVersion' in authoritative) room.readinessVersion = authoritative.readinessVersion;
         if (authoritative.content !== undefined) room.content = cloneValue(authoritative.content);
         room.changedAt = Number.isFinite(authoritative.changedAt) ? authoritative.changedAt : now;
@@ -1811,7 +1953,13 @@ export function createRoomCoordinator(options = {}) {
     const singleViewer = room.viewers.size === 1;
     if (singleViewer && (room.startAt > now || room.pauseAt > now)) return true;
     if (room.pauseAt && now >= room.pauseAt) return true;
-    if (!room.recovery && room.initialGate && !room.manualPaused && !room.readinessTimedOut && monoNow >= room.readinessDeadline) {
+    if (
+      !room.recovery &&
+      room.initialGate &&
+      !room.manualPaused &&
+      !room.readinessTimedOut &&
+      monoNow >= room.readinessDeadline
+    ) {
       return true;
     }
     if (room.hasMedia && room.duration > 0 && !room.paused && position(room, now) >= room.duration) return true;
@@ -1819,15 +1967,23 @@ export function createRoomCoordinator(options = {}) {
       if (expiry <= now) return true;
     }
     for (const saved of room.disconnectedViewers.values()) {
-      if (saved.expires <= now || saved.mediaVersion !== room.mediaVersion ||
-          (room.visibility === 'private' && !Policy.assigned(room, saved.userId))) {
+      if (
+        saved.expires <= now ||
+        saved.mediaVersion !== room.mediaVersion ||
+        (room.visibility === 'private' && !Policy.assigned(room, saved.userId))
+      ) {
         return true;
       }
     }
     for (const [id, viewer] of room.viewers) {
-      if (viewer.revoked || now - viewer.at > PRESENCE_TIMEOUT_MS || checkFastRevoked(room, viewer.actor, id)) return true;
-      if (room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room)) return true;
-      if (options.authorize && (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs)) {
+      if (viewer.revoked || now - viewer.at > PRESENCE_TIMEOUT_MS || checkFastRevoked(room, viewer.actor, id))
+        return true;
+      if (room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room))
+        return true;
+      if (
+        options.authorize &&
+        (viewer.authVerifiedAt === undefined || now - viewer.authVerifiedAt >= presenceAuthIntervalMs)
+      ) {
         return true;
       }
     }
@@ -1848,10 +2004,14 @@ export function createRoomCoordinator(options = {}) {
           revokedIds.add(id);
           continue;
         }
-        const alreadyExpiring = currentNow - viewer.at > PRESENCE_TIMEOUT_MS ||
+        const alreadyExpiring =
+          currentNow - viewer.at > PRESENCE_TIMEOUT_MS ||
           (room.visibility === 'private' && !Policy.assigned(room, viewer.userId) && !checkAdmin(viewer.actor, room));
-        if (!alreadyExpiring && options.authorize &&
-            (viewer.authVerifiedAt === undefined || currentNow - viewer.authVerifiedAt >= presenceAuthIntervalMs)) {
+        if (
+          !alreadyExpiring &&
+          options.authorize &&
+          (viewer.authVerifiedAt === undefined || currentNow - viewer.authVerifiedAt >= presenceAuthIntervalMs)
+        ) {
           const allowed = await checkAuthorized(room, viewer.actor, 'sweep', undefined, id);
           if (!allowed) revokedIds.add(id);
           else revalidatedIds.add(id);
@@ -1867,7 +2027,9 @@ export function createRoomCoordinator(options = {}) {
       const prevKickedSize = draft.kickedViewers.size;
       const prevDiscSize = draft.disconnectedViewers.size;
       const { pruned, autoStarted } = settleAndPruneDraft(draft, currentNow, currentMono, revokedIds);
-      const changed = pruned || autoStarted ||
+      const changed =
+        pruned ||
+        autoStarted ||
         draft.revision !== prevRevision ||
         draft.kickedViewers.size !== prevKickedSize ||
         draft.disconnectedViewers.size !== prevDiscSize ||
@@ -1882,7 +2044,10 @@ export function createRoomCoordinator(options = {}) {
       }
       if (draft.revision > room.revision) advanceRevision(room, draft);
       if (durableStateChanged(room, draft)) {
-        await persistRoomTransition(room, draft, { operation: 'sweep', reason: autoStarted ? 'ready-autostart' : 'room-swept' });
+        await persistRoomTransition(room, draft, {
+          operation: 'sweep',
+          reason: autoStarted ? 'ready-autostart' : 'room-swept',
+        });
       }
       commitRoomDraft(room, draft);
       if (autoStarted) {
@@ -1892,7 +2057,7 @@ export function createRoomCoordinator(options = {}) {
         tenantId: room.tenantId,
         roomId: room.id,
         includeLobby: pruned,
-        reason: pruned ? 'viewer-pruned' : 'timeline-settled'
+        reason: pruned ? 'viewer-pruned' : 'timeline-settled',
       });
     });
   }
@@ -1924,6 +2089,6 @@ export function createRoomCoordinator(options = {}) {
     executeCommand,
     recordSyncQuality,
     snapshot,
-    sweep
+    sweep,
   };
 }

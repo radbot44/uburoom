@@ -33,7 +33,7 @@ async function runConcurrentTier(options) {
     minRealtimeMargin = 1.05,
     maxChunkP95ThresholdSec = 5.1,
     requireHardwarePreserved = true,
-    workerRunner = null // For unit testing and injection
+    workerRunner = null, // For unit testing and injection
   } = options;
 
   if (signal?.aborted) {
@@ -56,7 +56,7 @@ async function runConcurrentTier(options) {
       tierIndex,
       runIndex,
       probedEncoders,
-      signal
+      signal,
     };
 
     const workerPromise = (async () => {
@@ -77,7 +77,7 @@ async function runConcurrentTier(options) {
           concurrency,
           tierIndex,
           runIndex,
-          workerElapsedSec: Math.round(workerElapsedSec * 1000) / 1000
+          workerElapsedSec: Math.round(workerElapsedSec * 1000) / 1000,
         };
       } catch (err) {
         const workerElapsedSec = Number(process.hrtime.bigint() - workerStartHr) / 1e9;
@@ -108,9 +108,9 @@ async function runConcurrentTier(options) {
             chunkP95DurationSec: 0,
             totalBytes: 0,
             actualBitrateKbps: 0,
-            processingType: 'production-like'
+            processingType: 'production-like',
           },
-          validation: { valid: false, errors: [err.message] }
+          validation: { valid: false, errors: [err.message] },
         };
       }
     })();
@@ -163,9 +163,7 @@ async function runConcurrentTier(options) {
 
   // Aggregate media-seconds completed per wall-clock second
   const totalCompletedMediaSec = passedWorkers * sampleDuration;
-  const aggregateThroughputMultiplier = wallClockTimeSec > 0
-    ? totalCompletedMediaSec / wallClockTimeSec
-    : 0;
+  const aggregateThroughputMultiplier = wallClockTimeSec > 0 ? totalCompletedMediaSec / wallClockTimeSec : 0;
 
   // Evaluate Sustainable Acceptance Criteria
   let isSustainable = true;
@@ -207,7 +205,7 @@ async function runConcurrentTier(options) {
     fallbackDetected,
     isSustainable,
     failureReason,
-    workers: workerResults
+    workers: workerResults,
   };
 }
 
@@ -236,7 +234,7 @@ async function runCapacityScan(options) {
     minRealtimeMargin = 1.05,
     maxChunkP95ThresholdSec = 5.1,
     requireHardwarePreserved = true,
-    workerRunner = null
+    workerRunner = null,
   } = options;
 
   // Hard clamp on maxConcurrency to prevent unbounded subprocess explosion
@@ -273,7 +271,7 @@ async function runCapacityScan(options) {
       minRealtimeMargin,
       maxChunkP95ThresholdSec,
       requireHardwarePreserved,
-      workerRunner
+      workerRunner,
     });
 
     testedTiers.push(tierResult);
@@ -294,19 +292,24 @@ async function runCapacityScan(options) {
     highestSustainableConcurrency,
     firstFailingConcurrency,
     maxTestedConcurrency: testedTiers[testedTiers.length - 1]?.concurrency || 0,
-    stoppingReason: overallStoppingReason || (highestSustainableConcurrency === boundedMaxConcurrency ? 'Reached maximum requested concurrency ceiling.' : null),
+    stoppingReason:
+      overallStoppingReason ||
+      (highestSustainableConcurrency === boundedMaxConcurrency
+        ? 'Reached maximum requested concurrency ceiling.'
+        : null),
     criteria: {
       zeroMissedDeadlines: true,
       minRealtimeMargin,
       maxChunkP95ThresholdSec,
-      hardwarePreserved: requireHardwarePreserved
+      hardwarePreserved: requireHardwarePreserved,
     },
     testedTiers,
-    estimateNotice: 'Short-run capacity estimate based on chunk deadline preservation and P95 latency headroom. Long-term production capacity requires extended thermal and memory soak testing.'
+    estimateNotice:
+      'Short-run capacity estimate based on chunk deadline preservation and P95 latency headroom. Long-term production capacity requires extended thermal and memory soak testing.',
   };
 }
 
 module.exports = {
   runConcurrentTier,
-  runCapacityScan
+  runCapacityScan,
 };

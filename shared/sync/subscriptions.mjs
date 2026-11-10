@@ -27,7 +27,7 @@ const ROOM_LOCAL_ACTIONS = new Set([
   'media.unmute',
   'media.reporting.set',
   'profile.save',
-  'profile.load'
+  'profile.load',
 ]);
 
 /**
@@ -91,7 +91,7 @@ export function createSubscriptionBroker({
   getRoomId = client => extractSubscribedRoomId(client?.subscription),
   getTenantId = client => client?.tenantId || 'default',
   onError = () => {},
-  schedule = typeof setImmediate === 'function' ? setImmediate : queueMicrotask
+  schedule = typeof setImmediate === 'function' ? setImmediate : queueMicrotask,
 }) {
   const clients = new Set();
   const dirtyTenants = new Set();
@@ -174,9 +174,15 @@ export function createSubscriptionBroker({
 
   return {
     clients,
-    add(client) { clients.add(client); },
-    delete(client) { clients.delete(client); },
-    get size() { return clients.size; },
+    add(client) {
+      clients.add(client);
+    },
+    delete(client) {
+      clients.delete(client);
+    },
+    get size() {
+      return clients.size;
+    },
     notify,
     subscribers(roomId, tenantId = 'default') {
       const matched = [];
@@ -186,6 +192,6 @@ export function createSubscriptionBroker({
         }
       }
       return matched;
-    }
+    },
   };
 }

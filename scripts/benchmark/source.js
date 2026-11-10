@@ -13,18 +13,24 @@ function inspectSourceVideo(ffprobePath, filePath) {
     throw new Error(`Source video file does not exist: ${filePath}`);
   }
 
-  const raw = cp.execFileSync(ffprobePath, [
-    '-v', 'error',
-    '-show_entries',
-    'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=duration,bit_rate,size',
-    '-of', 'json',
-    filePath
-  ], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 10000,
-    stdio: ['ignore', 'pipe', 'ignore']
-  });
+  const raw = cp.execFileSync(
+    ffprobePath,
+    [
+      '-v',
+      'error',
+      '-show_entries',
+      'stream=index,codec_type,codec_name,width,height,pix_fmt,color_space,color_primaries,color_transfer,r_frame_rate,avg_frame_rate:stream_side_data=side_data_type,dv_profile,bl_signal_compatibility_id:format=duration,bit_rate,size',
+      '-of',
+      'json',
+      filePath,
+    ],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
 
   let parsed;
   try {
@@ -55,9 +61,7 @@ function inspectSourceVideo(ffprobePath, filePath) {
 
   const hdrInfo = classifyHdr(videoStream);
   const isVfr = Boolean(
-    videoStream.r_frame_rate &&
-    videoStream.avg_frame_rate &&
-    videoStream.r_frame_rate !== videoStream.avg_frame_rate
+    videoStream.r_frame_rate && videoStream.avg_frame_rate && videoStream.r_frame_rate !== videoStream.avg_frame_rate,
   );
 
   return {
@@ -77,18 +81,18 @@ function inspectSourceVideo(ffprobePath, filePath) {
       colorTransfer: videoStream.color_transfer || 'unknown',
       frameRate: videoStream.r_frame_rate || videoStream.avg_frame_rate || '30/1',
       fps: Math.round(fps * 100) / 100,
-      isVfr
+      isVfr,
     },
     audio: {
       available: audioStreams.length > 0,
       count: audioStreams.length,
       streams: audioStreams.map(s => ({
         index: s.index,
-        codec: s.codec_name
-      }))
+        codec: s.codec_name,
+      })),
     },
     hdr: hdrInfo,
-    rawInfo: parsed
+    rawInfo: parsed,
   };
 }
 
@@ -109,12 +113,19 @@ function generateSyntheticSource(ffmpegPath, outputDir, requiredDuration = 60) {
         // Quick ffprobe check if ffprobe is alongside ffmpeg
         const probePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
         if (fs.existsSync(probePath)) {
-          const raw = cp.execFileSync(probePath, [
-            '-v', 'error',
-            '-show_entries', 'format=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            syntheticFile
-          ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          const raw = cp.execFileSync(
+            probePath,
+            [
+              '-v',
+              'error',
+              '-show_entries',
+              'format=duration',
+              '-of',
+              'default=noprint_wrappers=1:nokey=1',
+              syntheticFile,
+            ],
+            { encoding: 'utf8', timeout: 5000, windowsHide: true },
+          );
           const dur = parseFloat(raw.trim());
           if (dur >= targetDuration) {
             return syntheticFile;
@@ -126,29 +137,51 @@ function generateSyntheticSource(ffmpegPath, outputDir, requiredDuration = 60) {
 
   // Generate synthetic 1080p 30fps video using testsrc2 and sine wave audio
   // Uses libx264 ultrafast so generation takes only ~1-2 seconds
-  cp.execFileSync(ffmpegPath, [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-y',
-    '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
-    '-t', String(targetDuration),
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-crf', '18',
-    '-pix_fmt', 'yuv420p',
-    '-color_range', 'tv',
-    '-colorspace', 'bt709',
-    '-color_primaries', 'bt709',
-    '-color_trc', 'bt709',
-    '-c:a', 'aac',
-    '-b:a', '192k',
-    syntheticFile
-  ], {
-    windowsHide: true,
-    timeout: 60000,
-    stdio: ['ignore', 'pipe', 'ignore']
-  });
+  cp.execFileSync(
+    ffmpegPath,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=1920x1080:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000',
+      '-t',
+      String(targetDuration),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-crf',
+      '18',
+      '-pix_fmt',
+      'yuv420p',
+      '-color_range',
+      'tv',
+      '-colorspace',
+      'bt709',
+      '-color_primaries',
+      'bt709',
+      '-color_trc',
+      'bt709',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '192k',
+      syntheticFile,
+    ],
+    {
+      windowsHide: true,
+      timeout: 60000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
 
   return syntheticFile;
 }
@@ -174,17 +207,30 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
   if (isDoviP5) {
     try {
       const args = [
-        '-hide_banner', '-loglevel', 'error', '-y',
-        '-init_hw_device', 'vulkan=v',
-        '-filter_hw_device', 'v',
-        '-ss', String(startOffset),
-        '-t', String(sampleDuration),
-        '-i', sourceInfo.filePath,
-        '-map', '0:v:0',
-        '-vf', 'libplacebo=w=\'min(1920,iw)\':h=-2:format=yuv420p:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:apply_dolbyvision=1',
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-crf', '22'
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-init_hw_device',
+        'vulkan=v',
+        '-filter_hw_device',
+        'v',
+        '-ss',
+        String(startOffset),
+        '-t',
+        String(sampleDuration),
+        '-i',
+        sourceInfo.filePath,
+        '-map',
+        '0:v:0',
+        '-vf',
+        "libplacebo=w='min(1920,iw)':h=-2:format=yuv420p:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:apply_dolbyvision=1",
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '22',
       ];
       if (hasAudio) {
         args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'asetpts=PTS-STARTPTS');
@@ -196,7 +242,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
       cp.execFileSync(tools.ffmpeg, args, {
         windowsHide: true,
         timeout: 90000,
-        stdio: ['ignore', 'pipe', 'ignore']
+        stdio: ['ignore', 'pipe', 'ignore'],
       });
 
       if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
@@ -204,7 +250,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
           relativePath: sampleFileName,
           isLossyProxy: true,
           label: 'Viewing Proxy (Tonemapped Dolby Vision P5 — 8-bit SDR Preview)',
-          notice: 'Tonemapped via Vulkan libplacebo for browser preview; not the uncompressed master.'
+          notice: 'Tonemapped via Vulkan libplacebo for browser preview; not the uncompressed master.',
         };
       }
     } catch {
@@ -213,13 +259,14 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
         relativePath: null,
         isLossyProxy: true,
         label: 'Viewing Proxy Unavailable (Dolby Vision Profile 5)',
-        notice: 'Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping. Direct viewing proxy playback disabled to avoid misleading color representation.'
+        notice:
+          'Dolby Vision Profile 5 requires Vulkan libplacebo tone-mapping. Direct viewing proxy playback disabled to avoid misleading color representation.',
       };
     }
   }
 
   // HDR10 / HLG tone-mapping using zscale
-  let vFilter = 'scale=w=\'min(1920,iw)\':h=-2:force_original_aspect_ratio=decrease,format=yuv420p';
+  let vFilter = "scale=w='min(1920,iw)':h=-2:force_original_aspect_ratio=decrease,format=yuv420p";
   if (isHdr) {
     const transfer = sourceInfo.hdr.transfer || 'smpte2084';
     vFilter = `setparams=color_primaries=bt2020:color_trc=${transfer}:colorspace=bt2020nc,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale=w='min(1920,iw)':h=-2:force_original_aspect_ratio=decrease,format=yuv420p`;
@@ -228,26 +275,29 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
   try {
     const args = [
       '-hide_banner',
-      '-loglevel', 'error',
+      '-loglevel',
+      'error',
       '-y',
-      '-ss', String(startOffset),
-      '-t', String(sampleDuration),
-      '-i', sourceInfo.filePath,
-      '-map', '0:v:0',
-      '-vf', vFilter,
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '22'
+      '-ss',
+      String(startOffset),
+      '-t',
+      String(sampleDuration),
+      '-i',
+      sourceInfo.filePath,
+      '-map',
+      '0:v:0',
+      '-vf',
+      vFilter,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '22',
     ];
 
     if (hasAudio) {
-      args.push(
-        '-map', '0:a:0',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ac', '2',
-        '-af', 'asetpts=PTS-STARTPTS'
-      );
+      args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-af', 'asetpts=PTS-STARTPTS');
     } else {
       args.push('-an');
     }
@@ -257,7 +307,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
     cp.execFileSync(tools.ffmpeg, args, {
       windowsHide: true,
       timeout: Math.max(60000, Math.ceil(sampleDuration * 2000)),
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
 
     if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
@@ -269,7 +319,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
           : 'Viewing Proxy (Lossy 8-bit H.264/AAC Preview — Not Untouched Master)',
         notice: isHdr
           ? 'Viewing proxy tonemapped from HDR to 8-bit SDR (BT.709) for standard browser inspection.'
-          : 'Viewing proxy transcoded to lightweight 8-bit H.264/AAC for browser side-by-side inspection; not the untouched master.'
+          : 'Viewing proxy transcoded to lightweight 8-bit H.264/AAC for browser side-by-side inspection; not the untouched master.',
       };
     }
   } catch (err) {
@@ -279,7 +329,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
       label: 'Viewing Proxy Unavailable',
       notice: isHdr
         ? 'HDR tone-mapping could not be completed for the viewing proxy; proxy disabled to prevent misleading color representation.'
-        : 'Could not generate viewing proxy from source media.'
+        : 'Could not generate viewing proxy from source media.',
     };
   }
 
@@ -287,7 +337,7 @@ function extractReferenceSample(tools, sourceInfo, startOffset, sampleDuration, 
     relativePath: null,
     isLossyProxy: true,
     label: 'Viewing Proxy Unavailable',
-    notice: 'No viewing proxy generated.'
+    notice: 'No viewing proxy generated.',
   };
 }
 
@@ -316,7 +366,7 @@ function deriveOutputSpec(sourceInfo, qualityIdOrDef) {
     hdr: spec.hdr,
     hdrLabel: spec.hdrLabel,
     hasAudio: spec.audio,
-    sourceFormat: spec.sourceFormat
+    sourceFormat: spec.sourceFormat,
   };
 }
 
@@ -324,5 +374,5 @@ module.exports = {
   inspectSourceVideo,
   generateSyntheticSource,
   extractReferenceSample,
-  deriveOutputSpec
+  deriveOutputSpec,
 };
