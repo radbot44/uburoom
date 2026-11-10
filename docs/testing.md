@@ -24,6 +24,7 @@ Record date/revision, scope/environment, command/procedure, actual outcome and f
 | Node test suite | `npm test` (`node --test --test-reporter=dot tests/*.test.js`) |
 | Full pass/fail/skip output | `npm run test:full` (`node --test tests/*.test.js`) |
 | Installation diagnostics / doctor | `npm run doctor` (`node scripts/doctor.js`) |
+| Clock and drift-controller simulation | `npm run sync:bench` (also runs in `npm test` as `tests/sync-bench.test.js`) |
 | Decoded video/audio baseline | `npm run test:playback` (`node scripts/playback-baseline.js`) |
 | Room lifecycle / permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
@@ -103,6 +104,7 @@ P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one 
 - **A/B (2026-10-30):** Extracted reusable synchronization core into `shared/sync/` (free of Plex, Discord, FFmpeg, TLS, YAML, and SQLite dependencies).
 - **Stage 2 Hybrid EMA Pacing (2026-10-29):** Proportional rate correction (0.95x–1.05x) settles clock drift within ±50ms under synthetic latency without audible pitch warping or visual stepping.
 - **Open:** Physical/WAN multi-viewer measurement (±50ms p95 / ±100ms p99).
+- **Simulation bench (`scripts/lib/sync-bench.mjs`, `npm run sync:bench`):** runs the real `shared/sync/timing.mjs` clock filter and rate controller against seeded, deterministic network profiles (wired, Wi-Fi, mobile, bad) and a simple player model (rate-change lag, seek cost, start delay, frame quantisation, measurement noise). It records the owner-agreed targets as named constants (150 ms to under 20 ms within 15 s; two-viewer p95 spread under 50 ms; clock usable at least 99% on Wi-Fi and mobile; under 2% of steady-state time at a non-normal speed). `tests/sync-bench.test.js` asserts determinism, fails if any metric regresses past the recorded baseline in `scripts/lib/sync-bench-baseline.mjs`, and records unmet targets as data (`met: false`) until the controller and clock changes land. **Limits:** simulation only. It says nothing about real browsers, audio output delay or real networks; the player obeys rate changes after a fixed lag, and the presentation-timing smoothing and the server timeline are not modelled. Class B evidence at most; it does not replace two-browser confirmation.
 
 ### M1-P3 / M1-P9 — Format, language & subtitles
 - **A/B (2026-10-29 / 2026-11-06):** Bounded PGS extraction prevents runaway memory allocations during high-bitrate bitmap subtitles; seek recovery cancels obsolete window extraction jobs. DOM text subtitle layer operates on a dedicated stage overlay.
