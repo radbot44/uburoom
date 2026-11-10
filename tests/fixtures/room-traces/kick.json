@@ -1,0 +1,656 @@
+{
+  "scenario": "kick",
+  "steps": [
+    {
+      "at": 1000,
+      "step": "alice creates a public room and joins it",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "connection": "open",
+          "room": "joined",
+          "role": "creator",
+          "host": "alice",
+          "isHost": true,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 2000,
+      "step": "bob joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 3000,
+      "step": "carol joins the room",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "bob": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ]
+        },
+        "carol": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": null,
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 0,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": null,
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 4000,
+      "step": "alice loads the demo video",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "bob": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        },
+        "carol": {
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": true,
+            "position": 0,
+            "duration": 60,
+            "startAt": null,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": true,
+            "gate": {
+              "id": "readiness#1",
+              "timedOut": false,
+              "canStart": false,
+              "blockers": []
+            }
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          }
+        }
+      }
+    },
+    {
+      "at": 5000,
+      "step": "everyone reports ready",
+      "result": {
+        "alice": {
+          "ok": true
+        },
+        "bob": {
+          "ok": true
+        },
+        "carol": {
+          "ok": true
+        }
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 0.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          }
+        }
+      }
+    },
+    {
+      "at": 6000,
+      "step": "bob, a viewer, tries to remove carol",
+      "result": {
+        "ok": false,
+        "outcome": "forbidden",
+        "message": "Your room permissions do not allow this action."
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 1.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 7000,
+      "step": "alice removes bob",
+      "result": {
+        "ok": true,
+        "outcome": "applied"
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "bob": {
+          "connection": "open",
+          "room": "removed"
+        },
+        "carol": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 2.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 8000,
+      "step": "bob rejoins from the same tab",
+      "result": {
+        "ok": false,
+        "status": 403,
+        "error": "You were removed from this room. You may rejoin."
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 3.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        }
+      }
+    },
+    {
+      "at": 9000,
+      "step": "bob rejoins from a new tab",
+      "result": {
+        "ok": true
+      },
+      "views": {
+        "alice": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "bob-tab2": {
+          "connection": "open",
+          "room": "joined",
+          "role": "viewer",
+          "host": "alice",
+          "isHost": false,
+          "waitingForHost": false,
+          "canPlayback": true,
+          "participants": [
+            {
+              "who": "alice",
+              "role": "creator",
+              "present": true
+            },
+            {
+              "who": "carol",
+              "role": "viewer",
+              "present": true
+            },
+            {
+              "who": "bob",
+              "role": "viewer",
+              "present": true
+            }
+          ],
+          "epoch": "epoch#1",
+          "media": {
+            "id": "demo",
+            "title": "uburoom synchronization test",
+            "version": "media#1"
+          },
+          "timeline": {
+            "paused": false,
+            "position": 4.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          },
+          "readiness": {
+            "waiting": false,
+            "gate": null
+          },
+          "queue": {
+            "current": "uburoom synchronization test",
+            "next": null,
+            "pending": 0,
+            "history": 0
+          },
+          "autoplay": {
+            "enabled": true,
+            "countdown": null
+          },
+          "ending": null,
+          "recovery": null,
+          "errors": []
+        }
+      }
+    },
+    {
+      "at": 10000,
+      "step": "alice tries to remove herself",
+      "result": {
+        "ok": false,
+        "outcome": "forbidden",
+        "message": "You cannot kick this participant."
+      },
+      "views": {
+        "alice": {
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "carol": {
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        },
+        "bob-tab2": {
+          "timeline": {
+            "paused": false,
+            "position": 5.25,
+            "duration": 60,
+            "startAt": 4750,
+            "pauseAt": null
+          }
+        }
+      }
+    }
+  ]
+}

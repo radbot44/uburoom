@@ -28,12 +28,15 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 | Installation diagnostics / doctor | `npm run doctor` / `node scripts/doctor.js` |
 | Node suite | `npm test` |
 | Full pass/fail/skip output | `npm run test:full` |
+| Re-record room scenario traces after an intended room behaviour change (review the diff) | `npm run traces:record` (`-- <name> --runs=10`, or `--check` to compare only) |
 | Decoded video/audio baseline | `npm run test:playback` |
 | Room lifecycle/permissions | `node scripts/room-ui-smoke.js --browsers=chrome,firefox` |
 | Queue / Media controls | `node scripts/queue-controls-smoke.js` / `node scripts/media-controls-smoke.js` |
 | Library browsing | `node scripts/plex-library-smoke.js` |
 | Scheduled controls | `node scripts/sync-controls-smoke.js --browser=chrome` |
 | Local WebM | `node scripts/local-webm-smoke.js --browser=chrome --codec=vp9` |
+
+`tests/room-scenarios.test.js` replays scripted multi-viewer room scenarios (`tests/helpers/room-scenarios/`) against a real fixture server over real sockets on a controlled clock, and compares each viewer's semantic room facts with `tests/fixtures/room-traces/`. Only `protocol.js` there knows the wire format.
 
 Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
 
