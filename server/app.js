@@ -12,6 +12,7 @@ const { Plex } = require('./plex');
 const { Watch } = require('./watch');
 const { watchHttp } = require('./watch-http');
 const { watchPage } = require('./watch-page');
+const { spriteMarkup } = require('../web/icons');
 const { watchSockets } = require('./watch-socket');
 const { Accounts, credentialVault } = require('./accounts');
 const { PlexAuth } = require('./plex-auth');
@@ -53,6 +54,11 @@ const DIAGNOSTIC_ASSETS = {
   '/__diagnostics/codec': ['codec.html', 'text/html'],
   '/__diagnostics/codec.js': ['codec.js', 'text/javascript'],
   '/__diagnostics/codec.css': ['codec.css', 'text/css'],
+};
+const DEV_GALLERY_ASSETS = {
+  '/__dev/gallery': ['dev-gallery.html', 'text/html'],
+  '/__dev/gallery.js': ['dev-gallery.js', 'text/javascript'],
+  '/__dev/gallery.css': ['dev-gallery.css', 'text/css'],
 };
 const STATIC_ASSETS = {
   '/assets/fonts/UburoomSans-Regular.woff2': ['assets/fonts/UburoomSans-Regular.woff2', 'font/woff2'],
@@ -980,6 +986,19 @@ function createApp(
             return json(res, registry?.persistence.error ? 503 : 200, { ok: !registry?.persistence.error, version });
           if (req.method === 'GET' && ['/demo-plex', '/demo-discord'].includes(route) && !config.demo)
             return json(res, 404, { error: 'Not found' });
+          // Development-only control gallery: exists only on isolated demo servers (scripts set
+          // `demo: true`; private YAML cannot), which are themselves restricted to localhost.
+          if (['GET', 'HEAD'].includes(req.method) && DEV_GALLERY_ASSETS[route]) {
+            if (!config.demo) return json(res, 404, { error: 'Not found' });
+            const [file, type] = DEV_GALLERY_ASSETS[route];
+            let content = await readAsset(path.join(publicDir, file), 'utf8');
+            if (route === '/__dev/gallery')
+              content = content.replace(
+                '<svg id="icon-sprite" hidden aria-hidden="true" width="0" height="0"></svg>',
+                spriteMarkup(),
+              );
+            return sendStatic(req, res, content, type + '; charset=utf-8', route);
+          }
           if (req.method === 'GET' && route === '/auth/handoff') {
             const content = await readAsset(path.join(publicDir, 'handoff.html'));
             res.setHeader('Set-Cookie', cookie('uburoom_handoff', randomBytes(32).toString('hex'), 60));

@@ -38,6 +38,18 @@ Follow the [lean testing rules](../AGENTS.md#testing). Extend existing meaningfu
 
 `tests/room-scenarios.test.js` replays scripted multi-viewer room scenarios (`tests/helpers/room-scenarios/`) against a real fixture server over real sockets on a controlled clock, and compares each viewer's semantic room facts with `tests/fixtures/room-traces/`. Only `protocol.js` there knows the wire format.
 
+## Rendered checks
+
+Run on request; not part of `npm test` or a pass/fail gate. Fixture accounts and media only.
+
+| Need | Command |
+| --- | --- |
+| Screenshot set: fixed surfaces × dark/light × 390/820/1360 px, Chrome and Firefox, into `artifacts/ui-capture/<date>-<revision>/` | `npm run ui:capture` (`-- --browsers=chrome --surfaces=lobby,gallery --out=<folder>`) |
+| Pixel comparison of two capture folders; per-image changed pixels and bounding box, HTML report in `artifacts/ui-compare/`, exit 1 on any difference | `npm run ui:compare -- <folderA> <folderB>` (`--tolerance=8` per channel) |
+| Shared-control gallery from the shipped helpers and stylesheets | `/__dev/gallery` on a demo server (`node scripts/watch-demo.js --accounts`); 404 otherwise |
+
+Captures switch theme through the appearance toggle and freeze motion, overlay scrollbars, the invite URL and room times in the capture context only; `manifest.json` lists what is hidden.
+
 Use both Chrome and Firefox for relevant browser checks. TLS, browser binaries and FFmpeg/FFprobe may be required. Missing prerequisites or unexpected skips are not a clean pass. Fixtures establish isolated behavior, not real Plex/Activity/device support.
 
 ## Targeted media tools

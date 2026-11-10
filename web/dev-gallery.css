@@ -1,0 +1,55 @@
+/* Development gallery layout only: grid, spacing and positions. Controls keep their shipped styles. */
+.gallery-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.gallery-header h1 {
+  flex: 1;
+}
+.gallery-section {
+  margin: 28px 0;
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px 24px;
+  align-items: start;
+  margin-top: 12px;
+}
+.gallery-grid.gallery-wide {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+}
+.gallery-cell {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  align-content: start;
+  min-width: 0;
+}
+.gallery-cell > .hint {
+  margin: 0;
+}
+/* Text segmented groups fill their column in the app; equal flex shares of a content-sized group
+   would squeeze the longest label and break it mid-word. The icon view selector stays compact. */
+.gallery-cell > .watch-segmented:not(.watch-segmented-view) {
+  justify-self: stretch;
+}
+/* Popovers are fixed to the viewport in the app; here each stays beside its trigger. */
+.gallery-anchor {
+  position: relative;
+  padding-top: 44px;
+}
+.gallery-anchor > .watch-popover {
+  position: absolute;
+}
+/* The toast region is fixed over the player in the app; here it sits in the flow. */
+.gallery-cell > .watch-toast-region {
+  position: static;
+  max-width: 100%;
+}
+/* Non-modal open dialogs are absolutely centred by the browser; here they sit in the flow. */
+.gallery-cell > dialog {
+  position: static;
+  margin: 0;
+}

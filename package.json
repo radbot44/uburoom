@@ -17,6 +17,8 @@
     "sync:bench": "node scripts/sync-bench.js",
     "demo": "node scripts/watch-demo.js",
     "traces:record": "node scripts/record-room-traces.js",
+    "ui:capture": "node scripts/ui-capture.js",
+    "ui:compare": "node scripts/ui-compare.js",
     "build:player": "node scripts/build-player-vendor.js && node scripts/build-subtitle-vendor.js",
     "format": "prettier --write server shared web scripts tests",
     "format:check": "prettier --check server shared web scripts tests",
