@@ -217,7 +217,7 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
 
   // Telemetry correlation
   const telemetrySummary = telemetryCollector ? telemetryCollector.getSummary(config.id) : null;
-  const thermalClimb = telemetrySummary?.encoding?.thermalClimbC || 0;
+  const thermalClimb = typeof telemetrySummary?.encoding?.thermalClimbC === 'number' ? telemetrySummary.encoding.thermalClimbC : null;
   const throttlingConfirmed = telemetrySummary?.encoding?.throttlingDetected || false;
   const activeThrottles = telemetrySummary?.encoding?.activeThrottleReasons || [];
 
@@ -226,8 +226,8 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     degradationSummary = `Stability test stopped early: ${earlyStopReason}`;
   } else if (throughputChangePercent <= -10) {
     if (throttlingConfirmed) {
-      degradationSummary = `Performance declined by ${Math.abs(throughputChangePercent)}% under active hardware throttling (${activeThrottles.join(', ')}). Temperature rose by ${thermalClimb}°C.`;
-    } else if (thermalClimb >= 5) {
+      degradationSummary = `Performance declined by ${Math.abs(throughputChangePercent)}% under active hardware throttling (${activeThrottles.join(', ')}).${thermalClimb !== null ? ` Temperature rose by ${thermalClimb}°C.` : ''}`;
+    } else if (typeof thermalClimb === 'number' && thermalClimb >= 5) {
       degradationSummary = `Performance declined by ${Math.abs(throughputChangePercent)}% while temperature increased by ${thermalClimb}°C. No hardware throttle flag was asserted.`;
     } else {
       degradationSummary = `Performance declined by ${Math.abs(throughputChangePercent)}% over the course of the test.`;

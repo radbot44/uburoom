@@ -21,9 +21,10 @@ const {
   findWorstIntervals,
   buildQualityFilterChain,
   validateTemporalAlignment,
-  runQualityAnalysis
+  runQualityAnalysis,
+  parseFinalDecodedFrames
 } = require('../scripts/benchmark/quality');
-const { spawnSafe } = require('../scripts/benchmark/tools');
+const { spawnSafe, resolveTools } = require('../scripts/benchmark/tools');
 const {
   runConcurrentTier,
   runCapacityScan
@@ -2118,4 +2119,283 @@ test('runStabilityBenchmark stops on internal failure threshold with external si
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('parseFinalDecodedFrames reads final decoded frame count rather than intermediate progress lines', () => {
+  const multiProgressStderr = [
+    'frame=   77 fps=0.0 q=-0.0 size=N/A time=00:00:03.20 bitrate=N/A speed=6.4x',
+    'frame=  150 fps=49.8 q=-0.0 size=N/A time=00:00:06.25 bitrate=N/A speed=12.2x',
+    'frame=  720 fps=60.1 q=-0.0 size=N/A time=00:00:30.00 bitrate=N/A speed=15.0x',
+    'frame= 1440 fps=65.2 q=-0.0 Lsize=N/A time=00:01:00.00 bitrate=N/A speed=16.3x',
+    'video:64KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown'
+  ].join('\r\n');
+
+  const finalFrames = parseFinalDecodedFrames(multiProgressStderr);
+  assert.equal(finalFrames, 1440, 'Must extract the final 1440 frames, not the initial 77 progress frame');
+
+  assert.equal(parseFinalDecodedFrames(''), null);
+  assert.equal(parseFinalDecodedFrames(null), null);
+  assert.equal(parseFinalDecodedFrames('no frames mentioned here'), null);
+});
+
+test('validateTemporalAlignment reports unverified rather than misaligned when source probe times out or is incomplete', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-timeout-probe-'));
+  try {
+    const refFile = path.join(tmpDir, 'ref.mp4');
+    const matchingFile = path.join(tmpDir, 'matching.webm');
+
+    // Generate 2-second reference video (60 frames at 30 fps)
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+      '-t', '2',
+      '-c:v', 'libx264', '-preset', 'ultrafast',
+      refFile
+    ], { windowsHide: true });
+
+    // Generate matching encode (2 seconds, 60 frames)
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', refFile,
+      '-c:v', 'libvpx',
+      matchingFile
+    ], { windowsHide: true });
+
+    // Validate with an impossibly short probeTimeoutMs (1ms) to force probe timeout
+    const resTimeout = validateTemporalAlignment('ffprobe', refFile, matchingFile, {
+      startOffset: 0,
+      sampleDuration: 2,
+      fps: 30,
+      probeTimeoutMs: 1
+    });
+
+    // An incomplete probe must be reported as unverified, NOT misaligned
+    assert.equal(resTimeout.status, 'unverified', 'Incomplete or timed-out probe must be unverified, not misaligned');
+    assert.equal(resTimeout.sourceProbeIncomplete, true);
+    assert.equal(resTimeout.sourcePacketCount, null);
+    assert.equal(resTimeout.errors.length, 0, 'Incomplete source probe must not generate misalignment errors');
+    assert.ok(resTimeout.reason && resTimeout.reason.includes('timed out'));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('validateTemporalAlignment enforces real source/encoded frame divergence when probe completes', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-real-diverge-'));
+  try {
+    const refFile = path.join(tmpDir, 'ref.mp4');
+    const divergentFile = path.join(tmpDir, 'divergent.webm');
+
+    // Generate 2-second reference video (60 frames at 30 fps)
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+      '-t', '2',
+      '-c:v', 'libx264', '-preset', 'ultrafast',
+      refFile
+    ], { windowsHide: true });
+
+    // Generate 4-second divergent encode (120 frames at 30 fps)
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+      '-t', '4',
+      '-c:v', 'libvpx',
+      divergentFile
+    ], { windowsHide: true });
+
+    // Validate 2-second requested window against 4-second encode (real duration & frame divergence)
+    const resDivergent = validateTemporalAlignment('ffprobe', refFile, divergentFile, {
+      startOffset: 0,
+      sampleDuration: 2,
+      fps: 30
+    });
+
+    assert.equal(resDivergent.status, 'misaligned', 'Real frame and duration divergence must fail as misaligned');
+    assert.ok(resDivergent.errors.length > 0);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('runQualityAnalysis promotes unverified temporal alignment to pass when quality filter achieves verified frame coverage', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-qa-promote-'));
+  try {
+    const refFile = path.join(tmpDir, 'ref.mp4');
+    const encodedFile = path.join(tmpDir, 'enc.webm');
+
+    // Generate 2-second reference video (60 frames at 30 fps)
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+      '-t', '2',
+      '-c:v', 'libx264', '-preset', 'ultrafast',
+      refFile
+    ], { windowsHide: true });
+
+    // Encode matching 2-second webm
+    cp.execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', refFile,
+      '-c:v', 'libvpx',
+      encodedFile
+    ], { windowsHide: true });
+
+    const source = {
+      filePath: refFile,
+      fileName: 'ref.mp4',
+      durationSeconds: 2,
+      video: { width: 320, height: 240, fps: 30 }
+    };
+    const targetQuality = { id: 'test', width: 320, height: 240 };
+    const capabilities = detectQualityCapabilities('ffmpeg');
+
+    const tools = resolveTools();
+    const result = await runQualityAnalysis(tools.ffmpeg, {
+      ffprobePath: tools.ffprobe,
+      ffmpegPath: tools.ffmpeg,
+      source,
+      encodedFilePath: encodedFile,
+      startOffset: 0,
+      sampleDuration: 2,
+      targetQuality,
+      outputDir: tmpDir,
+      capabilities,
+      selectedMetrics: ['ssim', 'psnr']
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.ok(result.ssim?.mean > 0.9, `SSIM mean should be high (> 0.9), got: ${result.ssim?.mean}`);
+    assert.ok(result.normalization.coveragePercent >= 95, `Coverage must be >= 95%, got: ${result.normalization.coveragePercent}%`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('generateCsvReport and generateHtmlReport correctly present unavailable Windows PDH telemetry as N/A and separate host CPU from encoder util', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-pdh-report-'));
+  try {
+    const mockData = {
+      schemaVersion: '3.0.0',
+      benchmarkVersion: 'Stage 3',
+      timestamp: new Date().toISOString(),
+      telemetry: {
+        provider: 'windows-pdh',
+        device: 'Intel Arc A380 (DirectX / QSV)',
+        throttlingSupported: false,
+        unavailableFields: ['temperatureC', 'powerWatts', 'gpuUtilization'],
+        encoding: {
+          metrics: {
+            encoderUtilization: { mean: 65.5 },
+            hostCpuUtilization: { mean: 18.2 }
+          },
+          thermalClimbC: null,
+          throttlingSupported: false,
+          throttlingDetected: null
+        }
+      },
+      results: [
+        {
+          runIndex: 1,
+          configId: 'av1-qsv-1080p8',
+          codec: 'av1',
+          requestedEncoder: 'qsv',
+          actualEncoder: 'qsv',
+          mode: 'chunks',
+          status: 'pass',
+          quality: { id: '1080p8', width: 1920, height: 1080, targetBitrateKbps: 8000 },
+          performance: { speedMultiplier: 2.1, effectiveFps: 63.0 },
+          qualityMetrics: {
+            status: 'failed',
+            reason: 'Temporal alignment probe failed'
+          },
+          telemetry: {
+            encoding: {
+              metrics: {
+                encoderUtilization: { mean: 65.5 },
+                hostCpuUtilization: { mean: 18.2 }
+              },
+              thermalClimbC: null,
+              throttlingSupported: false,
+              throttlingDetected: null
+            }
+          }
+        }
+      ]
+    };
+
+    const csvPath = path.join(tmpDir, 'report.csv');
+    const htmlPath = path.join(tmpDir, 'report.html');
+
+    generateCsvReport(mockData, csvPath);
+    generateHtmlReport(mockData, htmlPath);
+
+    const csv = fs.readFileSync(csvPath, 'utf8');
+    const csvLines = csv.trim().split(/\r?\n/);
+    assert.equal(csvLines.length, 2);
+
+    // Headers must include Quality_Status, Quality_Reason, and Avg_Host_CPU
+    assert.ok(csvLines[0].includes('Quality_Status'));
+    assert.ok(csvLines[0].includes('Quality_Reason'));
+    assert.ok(csvLines[0].includes('Avg_Host_CPU'));
+
+    // Data row: Status is PASS, Quality_Status is FAILED, Temp & Thermal Climb are N/A (never 0)
+    const row = csvLines[1];
+    assert.ok(row.includes(',pass,FAILED,"Temporal alignment probe failed",'), 'CSV must separate encode pass from quality failed');
+    assert.ok(row.includes(',65.5,18.2,N/A,N/A,N/A,'), 'CSV must report N/A for temperature and thermal climb on Windows PDH, not 0');
+
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    // HTML must display both GPU Encoder Util and Host CPU Util
+    assert.ok(html.includes('Avg GPU Encoder Util'));
+    assert.ok(html.includes('Avg Host CPU Util'));
+    assert.ok(html.includes('65.5%'));
+    assert.ok(html.includes('18.2%'));
+    // HTML must display N/A for GPU Core Temp and Thermal Climb, never 0°C or +0°C
+    assert.ok(html.includes('N/A (Unsupported)'));
+    assert.ok(html.includes('<div class="stat-label">Thermal Climb (ΔT)</div>\n        <div class="stat-val" style="color:var(--text);">\n          N/A'));
+    // HTML must display Quality Status failure and failure banner
+    assert.ok(html.includes('Objective Quality Analysis Failure'));
+    assert.ok(html.includes('FAILED'));
+    assert.ok(html.includes('Temporal alignment probe failed'));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('generateConfigurationRecommendations withholds AV1 output recommendation when AV1 quality failed', () => {
+  const payload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'reference.mkv' },
+    results: [
+      {
+        runIndex: 1,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.5, effectiveFps: 75.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'failed', reason: 'Temporal misalignment' },
+        fallbackEvents: []
+      },
+      {
+        runIndex: 2,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.6, effectiveFps: 78.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'failed', reason: 'Temporal misalignment' },
+        fallbackEvents: []
+      }
+    ]
+  };
+
+  const advice = generateConfigurationRecommendations(payload, { transcoding: { outputs: ['plex'] } });
+  const outRec = advice.recommendations.find(r => r.setting === 'transcoding.outputs');
+  assert.equal(outRec, undefined, 'AV1 output recommendation must be withheld when AV1 quality analysis failed');
+  assert.ok(advice.warningsAndUncertainties.some(w => w.includes('AV1 encoding achieved real-time throughput, but objective quality analysis failed')));
 });

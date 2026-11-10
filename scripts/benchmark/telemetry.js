@@ -624,7 +624,7 @@ class TelemetryCollector {
           encoding: {
             sampleCount: 0,
             metrics: {},
-            thermalClimbC: 0,
+            thermalClimbC: null,
             throttlingDetected: null,
             activeThrottleReasons: []
           },
@@ -677,7 +677,9 @@ class TelemetryCollector {
     const temps = encodingSamples
       .map(s => s.metrics?.temperatureC)
       .filter(v => typeof v === 'number' && !isNaN(v) && v !== null);
-    const thermalClimb = temps.length >= 2 ? Math.round((temps[temps.length - 1] - temps[0]) * 10) / 10 : 0;
+    const thermalClimb = temps.length >= 2
+      ? Math.round((temps[temps.length - 1] - temps[0]) * 10) / 10
+      : (temps.length === 1 ? 0 : null);
 
     // Active hardware throttling during encoding
     let throttlingSupported = Boolean(this.providerInfo.throttlingSupported);

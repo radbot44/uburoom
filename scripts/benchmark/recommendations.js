@@ -211,20 +211,36 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
 
   // 3. Supported Outputs (transcoding.outputs)
   const currentOutputs = currentTranscoding.outputs || ['av1', 'plex'];
+  const av1Results = results.filter(r => r.codec === 'av1');
   const av1Passed = passedResults.some(r => r.codec === 'av1' && getSpeed(r) >= 1.2);
+  const av1QualityFailed = av1Results.some(r => r.qualityMetrics?.status === 'failed' || r.qualityMetrics?.status === 'misaligned');
+  const av1QualityVerified = av1Results.some(r => r.qualityMetrics?.status === 'pass');
   const vp9Passed = passedResults.some(r => r.codec === 'vp9' && getSpeed(r) >= 1.2);
 
   if (av1Passed && !currentOutputs.includes('av1')) {
-    const newOutputs = [...new Set(['av1', ...currentOutputs])];
-    recommendations.push({
-      setting: 'transcoding.outputs',
-      currentValue: currentOutputs,
-      recommendedValue: newOutputs,
-      reason: 'AV1 encoding achieved fast, reliable real-time throughput. Enabling AV1 offers superior visual quality at lower bitrates.',
-      expectedBenefit: 'Significantly lower bandwidth consumption for viewers while preserving sharp picture quality.',
-      supportingEvidence: 'AV1 transcode succeeded with > 1.2x throughput margin.',
-      confidence: isSynthetic ? 'preliminary' : 'medium'
-    });
+    if (av1QualityFailed) {
+      warningsAndUncertainties.push('AV1 encoding achieved real-time throughput, but objective quality analysis failed. Withholding AV1 outputs recommendation until visual quality is verified.');
+      insufficientEvidence.push({
+        setting: 'transcoding.outputs',
+        reason: 'AV1 transcode passed throughput benchmarks but failed objective visual quality validation.',
+        neededTests: 'Inspect quality filter logs and verify encoding parameters with real reference media.'
+      });
+    } else {
+      const newOutputs = [...new Set(['av1', ...currentOutputs])];
+      recommendations.push({
+        setting: 'transcoding.outputs',
+        currentValue: currentOutputs,
+        recommendedValue: newOutputs,
+        reason: av1QualityVerified
+          ? 'AV1 encoding achieved fast, reliable real-time throughput and passed objective quality validation. Enabling AV1 offers superior visual quality at lower bitrates.'
+          : 'AV1 encoding achieved fast, reliable real-time throughput margin.',
+        expectedBenefit: 'Significantly lower bandwidth consumption for viewers while preserving sharp picture quality.',
+        supportingEvidence: av1QualityVerified
+          ? 'AV1 transcode succeeded with > 1.2x throughput margin and verified objective quality.'
+          : 'AV1 transcode succeeded with > 1.2x throughput margin.',
+        confidence: (isSynthetic || !av1QualityVerified) ? 'preliminary' : 'medium'
+      });
+    }
   } else if (!av1Passed && currentOutputs.includes('av1') && vp9Passed) {
     warningsAndUncertainties.push('AV1 encoding failed or remained below real-time margin. Consider prioritizing VP9 in transcoding.outputs for smoother playback.');
   }

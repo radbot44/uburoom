@@ -125,6 +125,8 @@ function generateCsvReport(benchmarkData, outputPath) {
     'TargetBitrateKbps',
     'ActualBitrateKbps',
     'Status',
+    'Quality_Status',
+    'Quality_Reason',
     'SpeedMultiplier',
     'TotalElapsedSpeed',
     'EffectiveFPS',
@@ -148,6 +150,7 @@ function generateCsvReport(benchmarkData, outputPath) {
     'CAMBI',
     'Avg_GPU_Util',
     'Avg_Enc_Util',
+    'Avg_Host_CPU',
     'Avg_Temp_C',
     'Avg_Power_W',
     'Thermal_Climb_C',
@@ -166,7 +169,14 @@ function generateCsvReport(benchmarkData, outputPath) {
       .map(f => `${f.type || 'step'}:${f.from}->${f.to} (${(f.reason || '').replace(/[\r\n]+/g, ' ').trim()})`)
       .join('; ');
 
-    const err = r.error || (val.errors?.length ? val.errors.join('; ') : '');
+    const qStatus = qm.status ? qm.status.toUpperCase() : (r.qualityMetrics === null ? '' : (cleanData.selectedMetrics?.length ? 'SKIPPED' : ''));
+    const qReason = qm.reason || (qm.validation?.errors?.length ? qm.validation.errors.join('; ') : '');
+
+    const errorsList = [];
+    if (r.error) errorsList.push(r.error);
+    if (val.errors?.length) errorsList.push(...val.errors);
+    if (qm.status === 'failed' && qm.reason) errorsList.push(`Quality: ${qm.reason}`);
+    const err = errorsList.join('; ');
 
     const frameCov = val.videoPacketCount && val.expectedFrames
       ? Math.round((val.videoPacketCount / val.expectedFrames) * 100)
@@ -179,6 +189,26 @@ function generateCsvReport(benchmarkData, outputPath) {
     const avEnd = val.videoEndPts !== undefined && val.audioEndPts !== undefined
       ? Math.round(Math.abs(val.videoEndPts - val.audioEndPts) * 1000) / 1000
       : '';
+
+    const isPdh = cleanData.telemetry?.provider === 'windows-pdh' || cleanData.telemetry?.provider === 'pdh' || r.telemetry?.provider === 'windows-pdh';
+    const tempUnavailable = cleanData.telemetry?.unavailableFields?.includes('temperatureC') || isPdh;
+    const powerUnavailable = cleanData.telemetry?.unavailableFields?.includes('powerWatts') || isPdh;
+
+    const hostCpu = telem.hostCpuUtilization?.mean !== undefined && telem.hostCpuUtilization?.mean !== null
+      ? telem.hostCpuUtilization.mean
+      : '';
+
+    const gpuTemp = telem.temperatureC?.mean !== undefined && telem.temperatureC?.mean !== null
+      ? telem.temperatureC.mean
+      : (tempUnavailable ? 'N/A' : '');
+
+    const gpuPower = telem.powerWatts?.mean !== undefined && telem.powerWatts?.mean !== null
+      ? telem.powerWatts.mean
+      : (powerUnavailable ? 'N/A' : '');
+
+    const thermalClimb = typeof r.telemetry?.encoding?.thermalClimbC === 'number'
+      ? r.telemetry.encoding.thermalClimbC
+      : (tempUnavailable ? 'N/A' : '');
 
     return [
       r.runIndex || 1,
@@ -196,6 +226,8 @@ function generateCsvReport(benchmarkData, outputPath) {
       q.targetBitrateKbps || '',
       perf.actualBitrateKbps || '',
       r.status,
+      qStatus,
+      qReason ? `"${qReason.replace(/"/g, '""')}"` : '',
       perf.speedMultiplier || '',
       perf.totalElapsedSpeedMultiplier || '',
       perf.effectiveFps || '',
@@ -219,9 +251,10 @@ function generateCsvReport(benchmarkData, outputPath) {
       qm.cambi?.mean || '',
       telem.gpuUtilization?.mean !== undefined && telem.gpuUtilization?.mean !== null ? telem.gpuUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('gpuUtilization') ? 'N/A' : ''),
       telem.encoderUtilization?.mean !== undefined && telem.encoderUtilization?.mean !== null ? telem.encoderUtilization.mean : (cleanData.telemetry?.unavailableFields?.includes('encoderUtilization') ? 'N/A' : ''),
-      telem.temperatureC?.mean !== undefined && telem.temperatureC?.mean !== null ? telem.temperatureC.mean : (cleanData.telemetry?.unavailableFields?.includes('temperatureC') ? 'N/A' : ''),
-      telem.powerWatts?.mean !== undefined && telem.powerWatts?.mean !== null ? telem.powerWatts.mean : (cleanData.telemetry?.unavailableFields?.includes('powerWatts') ? 'N/A' : ''),
-      r.telemetry?.encoding?.thermalClimbC !== undefined && r.telemetry?.encoding?.thermalClimbC !== null ? r.telemetry.encoding.thermalClimbC : '',
+      hostCpu,
+      gpuTemp,
+      gpuPower,
+      thermalClimb,
       cleanData.telemetry?.throttlingSupported === false || r.telemetry?.encoding?.throttlingSupported === false
         ? 'N/A'
         : (r.telemetry?.encoding?.throttlingDetected ? (r.telemetry.encoding.activeThrottleReasons?.join(';') || 'Active') : 'None'),
@@ -520,6 +553,8 @@ function generateHtmlReport(benchmarkData, outputPath) {
   const referenceVideoRel = src.referenceVideoRelative ? src.referenceVideoRelative.replace(/\\/g, '/') : null;
   const chunkedRuns = results.filter(r => r.mode === 'chunked' && r.status === 'pass' && r.output?.chunks?.length);
   const scoredRuns = results.filter(r => r.qualityMetrics?.vmaf?.mean > 0);
+  const qualityAttempted = results.some(r => r.qualityMetrics);
+  const failedQualityRuns = results.filter(r => r.qualityMetrics?.status === 'failed');
 
   // Statistics
   const passedCount = results.filter(r => r.status === 'pass').length;
@@ -885,13 +920,17 @@ function generateHtmlReport(benchmarkData, outputPath) {
         <div class="stat-val" style="color:var(--success);">${cleanData.telemetry.encoding?.metrics?.encoderUtilization?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.encoderUtilization.mean}%` : 'N/A'}</div>
       </div>
       <div>
+        <div class="stat-label">Avg Host CPU Util</div>
+        <div class="stat-val" style="color:var(--text);">${cleanData.telemetry.encoding?.metrics?.hostCpuUtilization?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.hostCpuUtilization.mean}%` : 'N/A'}</div>
+      </div>
+      <div>
         <div class="stat-label">Avg GPU Core Temp</div>
-        <div class="stat-val" style="color:var(--primary);">${cleanData.telemetry.encoding?.metrics?.temperatureC?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.temperatureC.mean}°C` : 'N/A'}</div>
+        <div class="stat-val" style="color:var(--primary);">${cleanData.telemetry.encoding?.metrics?.temperatureC?.mean !== undefined ? `${cleanData.telemetry.encoding.metrics.temperatureC.mean}°C` : 'N/A (Unsupported)'}</div>
       </div>
       <div>
         <div class="stat-label">Thermal Climb (ΔT)</div>
         <div class="stat-val" style="color:${(cleanData.telemetry.encoding?.thermalClimbC || 0) > 8 ? 'var(--warn)' : 'var(--text)'};">
-          ${cleanData.telemetry.encoding?.thermalClimbC !== undefined ? `+${cleanData.telemetry.encoding.thermalClimbC}°C` : '0°C'}
+          ${typeof cleanData.telemetry.encoding?.thermalClimbC === 'number' ? `+${cleanData.telemetry.encoding.thermalClimbC}°C` : 'N/A'}
         </div>
       </div>
       <div>
@@ -934,7 +973,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
       <div>
         <div class="stat-label">Observed Thermal Rise</div>
-        <div class="stat-val">+${cleanData.stability.thermalClimbC}°C</div>
+        <div class="stat-val">${typeof cleanData.stability.thermalClimbC === 'number' ? `+${cleanData.stability.thermalClimbC}°C` : 'N/A'}</div>
       </div>
     </div>
     <div style="padding:12px;background:#14171F;border-radius:6px;border:1px solid var(--card-border);font-size:13px;line-height:1.5;">
@@ -1106,6 +1145,15 @@ function generateHtmlReport(benchmarkData, outputPath) {
       </div>
     </div>
 
+    ${failedQualityRuns.length > 0 ? `
+    <div style="padding:12px 16px;background:var(--error-bg);border:1px solid rgba(255,113,151,0.3);border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.5;">
+      <strong style="color:var(--error);">Objective Quality Analysis Failure:</strong> ${failedQualityRuns.length} configuration(s) failed objective quality analysis.
+      <ul style="margin:6px 0 0 18px;color:var(--text);">
+        ${failedQualityRuns.map(f => `<li><strong>${escapeHtml(f.codec.toUpperCase())} (${escapeHtml(f.actualEncoder)}) @ ${escapeHtml(f.quality?.label || f.quality?.id)}:</strong> ${escapeHtml(f.qualityMetrics?.reason || 'Quality analysis failed')}</li>`).join('')}
+      </ul>
+    </div>
+    ` : ''}
+
     <div style="overflow-x:auto;">
       <table id="results-table">
         <thead>
@@ -1118,9 +1166,9 @@ function generateHtmlReport(benchmarkData, outputPath) {
             <th onclick="sortTable(${hasMultipleRuns ? 5 : 4})">Bitrate</th>
             <th onclick="sortTable(${hasMultipleRuns ? 6 : 5})">Speed</th>
             <th onclick="sortTable(${hasMultipleRuns ? 7 : 6})">FPS</th>
-            ${scoredRuns.length > 0 ? `<th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : ''}
-            <th onclick="sortTable(${hasMultipleRuns ? 8 : 7})">1st Chunk</th>
-            <th>Status</th>
+            ${qualityAttempted ? `<th>Quality</th><th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : (scoredRuns.length > 0 ? `<th>VMAF (p1)</th><th>SSIM</th><th>PSNR</th>` : '')}
+            <th onclick="sortTable(${hasMultipleRuns ? (qualityAttempted ? 12 : 8) : (qualityAttempted ? 11 : 7)})">1st Chunk</th>
+            <th>Encode</th>
             <th>Playable Output</th>
           </tr>
         </thead>
@@ -1151,9 +1199,30 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 : `${perf.firstChunkDurationSec.toFixed(2)}s`)
               : '-';
 
-            const vmafText = qm.vmaf?.mean ? `<strong>${qm.vmaf.mean.toFixed(1)}</strong> <span style="font-size:11px;color:var(--muted);">(${qm.vmaf.p1?.toFixed(1) || '-'})</span>` : '-';
-            const ssimText = qm.ssim?.mean ? `${qm.ssim.mean.toFixed(3)}` : '-';
-            const psnrText = qm.psnr?.mean ? `${qm.psnr.mean.toFixed(1)} dB` : '-';
+            let qualityBadge = '<span style="color:var(--muted)">-</span>';
+            if (r.qualityMetrics) {
+              if (qm.status === 'pass') {
+                qualityBadge = '<span class="pill success" title="Quality verified">PASS</span>';
+              } else if (qm.status === 'unverified') {
+                qualityBadge = `<span class="pill warn" title="${escapeHtml(qm.reason || 'Temporal alignment unverified')}">UNVERIFIED</span>`;
+              } else if (qm.status === 'failed') {
+                qualityBadge = `<span class="pill error" title="${escapeHtml(qm.reason || 'Quality analysis failed')}">FAILED</span>`;
+              } else if (qm.status === 'skipped') {
+                qualityBadge = `<span class="pill muted" title="${escapeHtml(qm.reason || 'Skipped')}">SKIPPED</span>`;
+              }
+            }
+
+            const vmafText = qm.status === 'failed'
+              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+              : (qm.vmaf?.mean ? `<strong>${qm.vmaf.mean.toFixed(1)}</strong> <span style="font-size:11px;color:var(--muted);">(${qm.vmaf.p1?.toFixed(1) || '-'})</span>` : '-');
+
+            const ssimText = qm.status === 'failed'
+              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+              : (qm.ssim?.mean ? `${qm.ssim.mean.toFixed(3)}` : '-');
+
+            const psnrText = qm.status === 'failed'
+              ? `<span style="color:var(--error);font-size:11px;" title="${escapeHtml(qm.reason || 'Quality failed')}">Failed</span>`
+              : (qm.psnr?.mean ? `${qm.psnr.mean.toFixed(1)} dB` : '-');
 
             return `
               <tr data-codec="${escapeHtml(r.codec)}">
@@ -1165,7 +1234,7 @@ function generateHtmlReport(benchmarkData, outputPath) {
                 <td>${escapeHtml(perf.actualBitrateKbps || q.targetBitrateKbps || '-')} kbps</td>
                 <td><span class="pill ${speedClass}"><strong>${speed.toFixed(2)}x</strong></span></td>
                 <td>${escapeHtml(perf.effectiveFps || '-')}</td>
-                ${scoredRuns.length > 0 ? `<td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : ''}
+                ${qualityAttempted ? `<td>${qualityBadge}</td><td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : (scoredRuns.length > 0 ? `<td>${vmafText}</td><td>${ssimText}</td><td>${psnrText}</td>` : '')}
                 <td>${firstChunkText}</td>
                 <td><span class="pill ${statusClass}" ${errTooltip}>${escapeHtml(r.status.toUpperCase())}</span></td>
                 <td>${outLink}</td>

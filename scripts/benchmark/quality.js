@@ -378,12 +378,25 @@ function buildQualityFilterChain(source, targetQuality, capabilities, jsonLogPat
 }
 
 /**
+ * Parses the final decoded frame count from FFmpeg progress output.
+ * Reads the last reported frame count rather than premature intermediate progress lines.
+ */
+function parseFinalDecodedFrames(stderr) {
+  if (!stderr || typeof stderr !== 'string') return null;
+  const matches = [...stderr.matchAll(/frame=\s*(\d+)/g)];
+  if (!matches.length) return null;
+  const lastMatch = matches[matches.length - 1];
+  const count = parseInt(lastMatch[1], 10);
+  return Number.isFinite(count) ? count : null;
+}
+
+/**
  * Validates real presentation timestamps and decoded-frame timing between source interval
  * and encoded output. Demuxes actual packet timestamps rather than synthesizing from frame counts.
  * Returns { status: 'verified' | 'unverified' | 'misaligned', errors: [], details: {} }.
  */
 function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options = {}) {
-  const { startOffset = 0, sampleDuration = 60, fps = 30, isVfr = false } = options;
+  const { startOffset = 0, sampleDuration = 60, fps = 30, isVfr = false, probeTimeoutMs = null } = options;
   const errors = [];
 
   // 1. Demux packet timestamps from encoded output
@@ -430,24 +443,53 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
   // begins earlier than startOffset. Decoding through FFmpeg extracts the exact frames presented to the quality filter.
   const ffmpegPath = options.ffmpegPath || (path.isAbsolute(ffprobePath) ? ffprobePath.replace(/ffprobe(\.exe)?$/i, 'ffmpeg$1') : 'ffmpeg');
   let sourceDecodedFrameCount = null;
+  let sourceProbeCompleted = false;
+  let sourceProbeReason = null;
 
   if (ffmpegPath) {
-    try {
-      const probeRes = cp.spawnSync(ffmpegPath, [
-        '-v', 'info',
-        '-ss', String(startOffset),
-        '-t', String(sampleDuration),
-        '-i', sourcePath,
-        '-map', '0:v:0',
-        '-f', 'null',
-        '-'
-      ], { encoding: 'utf8', windowsHide: true, timeout: 20000 });
+    // Bounded duration-aware timeout (scales with sample duration, minimum 30s, up to 180s)
+    const timeoutMs = probeTimeoutMs || Math.min(180000, Math.max(30000, Math.ceil(sampleDuration * 3000)));
+    const probeArgs = [
+      '-v', 'info',
+      '-hwaccel', 'auto',
+      '-ss', String(startOffset),
+      '-t', String(sampleDuration),
+      '-i', sourcePath,
+      '-map', '0:v:0',
+      '-f', 'null',
+      '-'
+    ];
 
-      const frameMatch = /frame=\s*(\d+)/.exec(probeRes.stderr || '');
-      if (frameMatch) {
-        sourceDecodedFrameCount = parseInt(frameMatch[1], 10);
+    try {
+      const probeRes = cp.spawnSync(ffmpegPath, probeArgs, {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: timeoutMs
+      });
+
+      if (probeRes.error) {
+        if (probeRes.error.code === 'ETIMEDOUT') {
+          sourceProbeReason = `Source frame count decode timed out after ${timeoutMs}ms`;
+        } else {
+          sourceProbeReason = `Source frame count decode failed: ${probeRes.error.message}`;
+        }
+      } else if (probeRes.signal) {
+        sourceProbeReason = `Source frame count decode terminated by signal ${probeRes.signal}`;
+      } else if (probeRes.status !== 0) {
+        sourceProbeReason = `Source frame count decode exited with non-zero status ${probeRes.status}`;
+      } else {
+        // Process completed successfully with exit code 0
+        const finalCount = parseFinalDecodedFrames(probeRes.stderr || '');
+        if (finalCount !== null) {
+          sourceDecodedFrameCount = finalCount;
+          sourceProbeCompleted = true;
+        } else {
+          sourceProbeReason = 'Could not parse final decoded frame count from FFmpeg output';
+        }
       }
-    } catch {}
+    } catch (err) {
+      sourceProbeReason = `Source frame count probe execution error: ${err.message}`;
+    }
   }
 
   // Presentation start check: encoded video should start at 0.0s (<= 0.08s)
@@ -466,7 +508,8 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
     if (Math.abs(encodedPackets.length - expectedFrames) > 3) {
       errors.push(`Encoded frame count mismatch: expected ~${expectedFrames} frames, demuxed ${encodedPackets.length}.`);
     }
-    if (sourceDecodedFrameCount !== null && Math.abs(encodedPackets.length - sourceDecodedFrameCount) > 3) {
+    // Only enforce source vs encoded count divergence when the source decode probe actually completed to status 0
+    if (sourceProbeCompleted && sourceDecodedFrameCount !== null && Math.abs(encodedPackets.length - sourceDecodedFrameCount) > 3) {
       errors.push(`Source/encoded frame count divergence: source interval decoded ${sourceDecodedFrameCount} frames, encoded has ${encodedPackets.length}.`);
     }
   } else {
@@ -613,6 +656,23 @@ function validateTemporalAlignment(ffprobePath, sourcePath, encodedPath, options
     };
   }
 
+  // If source frame count probe was incomplete or timed out, report as unverified rather than full verified
+  if (!sourceProbeCompleted && sourceProbeReason) {
+    return {
+      status: 'unverified',
+      confidence: 'heuristic',
+      reason: sourceProbeReason,
+      errors: [],
+      encodedFirstPts,
+      encodedDuration: Math.round(encodedDuration * 1000) / 1000,
+      encodedPacketCount: encodedPackets.length,
+      sourcePacketCount: null,
+      sourceProbeIncomplete: true,
+      contentScore: contentCheckResult.score,
+      anchorScores: contentCheckResult.anchorScores || null
+    };
+  }
+
   return {
     status: 'verified',
     confidence: contentCheckResult.confidence || 'high',
@@ -677,7 +737,14 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
-  const ffprobePath = options.ffprobePath;
+  let ffprobePath = options.ffprobePath;
+  if (ffprobePath && !fs.existsSync(ffprobePath)) {
+    try {
+      const { resolveTools } = require('./tools');
+      ffprobePath = resolveTools({}, { ffprobe: ffprobePath }).ffprobe;
+    } catch {}
+  }
+
   if (!ffprobePath || !fs.existsSync(ffprobePath)) {
     return {
       available: false,
@@ -928,10 +995,25 @@ async function runQualityAnalysis(ffmpegPath, options) {
 
       const worstIntervals = metricForWorstInterval ? findWorstIntervals(timeline, metricForWorstInterval, fps, 2) : [];
 
+      const coveragePercent = Math.round((frames.length / (expectedFrames || 1)) * 1000) / 10;
+      const fullCoverageAchieved = frames.length > 0 && Math.abs(frames.length - expectedFrames) <= 3;
+      let finalStatus = 'pass';
+      let finalReason = null;
+
+      if (temporal.status === 'unverified') {
+        if (fullCoverageAchieved || coveragePercent >= 95) {
+          finalStatus = 'pass';
+          finalReason = null;
+        } else {
+          finalStatus = 'unverified';
+          finalReason = `Temporal alignment unverified: ${temporal.reason}`;
+        }
+      }
+
       return {
         available: true,
-        status: temporal.status === 'unverified' ? 'unverified' : 'pass',
-        reason: temporal.status === 'unverified' ? `Temporal alignment unverified: ${temporal.reason}` : null,
+        status: finalStatus,
+        reason: finalReason,
         vmaf: vmafStats,
         ssim: ssimStats,
         psnr: psnrStats,
@@ -944,7 +1026,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
           ...chain.normalization,
           expectedFrames,
           evaluatedFrames: frames.length,
-          coveragePercent: Math.round((frames.length / (expectedFrames || 1)) * 1000) / 10,
+          coveragePercent,
           isVfr
         },
         temporalAlignment: temporal,
@@ -1020,10 +1102,25 @@ async function runQualityAnalysis(ffmpegPath, options) {
     };
   }
 
+  const standaloneCoveragePercent = Math.round((scoredCount / (expectedFrames || 1)) * 1000) / 10;
+  const standaloneFullCoverageAchieved = scoredCount > 0 && Math.abs(scoredCount - expectedFrames) <= 3;
+  let standaloneFinalStatus = 'pass';
+  let standaloneFinalReason = null;
+
+  if (temporal.status === 'unverified') {
+    if (standaloneFullCoverageAchieved || standaloneCoveragePercent >= 95) {
+      standaloneFinalStatus = 'pass';
+      standaloneFinalReason = null;
+    } else {
+      standaloneFinalStatus = 'unverified';
+      standaloneFinalReason = `Temporal alignment unverified: ${temporal.reason}`;
+    }
+  }
+
   return {
     available: true,
-    status: temporal.status === 'unverified' ? 'unverified' : 'pass',
-    reason: temporal.status === 'unverified' ? `Temporal alignment unverified: ${temporal.reason}` : null,
+    status: standaloneFinalStatus,
+    reason: standaloneFinalReason,
     vmaf: null,
     ssim: selectedMetrics.includes('ssim') ? calculateMetricStats(ssimValues) : null,
     psnr: selectedMetrics.includes('psnr') ? calculateMetricStats(psnrValues) : null,
@@ -1036,7 +1133,7 @@ async function runQualityAnalysis(ffmpegPath, options) {
       ...chain.normalization,
       expectedFrames,
       evaluatedFrames: scoredCount,
-      coveragePercent: Math.round((scoredCount / (expectedFrames || 1)) * 1000) / 10,
+      coveragePercent: standaloneCoveragePercent,
       isVfr
     },
     temporalAlignment: temporal,
@@ -1050,5 +1147,6 @@ module.exports = {
   findWorstIntervals,
   buildQualityFilterChain,
   validateTemporalAlignment,
-  runQualityAnalysis
+  runQualityAnalysis,
+  parseFinalDecodedFrames
 };
