@@ -30,6 +30,11 @@
 .gallery-cell > .hint {
   margin: 0;
 }
+/* Text segmented groups fill their column in the app; equal flex shares of a content-sized group
+   would squeeze the longest label and break it mid-word. The icon view selector stays compact. */
+.gallery-cell > .watch-segmented:not(.watch-segmented-view) {
+  justify-self: stretch;
+}
 /* Popovers are fixed to the viewport in the app; here each stays beside its trigger. */
 .gallery-anchor {
   position: relative;
