@@ -35,10 +35,6 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
   const hwEncodersTested = passedResults.filter(r => ['nvenc', 'qsv'].includes(r.actualEncoder || r.requestedEncoder));
   const fallbacksObserved = results.some(r => (r.fallbackEvents && r.fallbackEvents.length > 0) || r.fallback);
 
-  // Quality check across tested hardware encoders
-  const qualityFailedOrMisaligned = hwEncodersTested.some(r => r.qualityMetrics?.status === 'failed' || r.qualityMetrics?.status === 'misaligned');
-  const qualityVerified = hwEncodersTested.some(r => r.qualityMetrics?.status === 'pass');
-
   if (fallbacksObserved) {
     warningsAndUncertainties.push('Hardware encoding experienced runtime fallback to CPU during testing. Recommending auto or software encoder to protect stream availability.');
     if (currentEncoderSetting !== 'auto') {
@@ -52,54 +48,117 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
         confidence: 'high'
       });
     }
-  } else if (qualityFailedOrMisaligned) {
-    warningsAndUncertainties.push('Objective quality validation failed or detected temporal misalignment for hardware encoded streams. Withholding hardware encoder recommendation until visual quality is verified.');
-    insufficientEvidence.push({
-      setting: 'transcoding.encoder',
-      reason: 'Hardware encoder output failed objective quality or temporal alignment checks.',
-      neededTests: 'Inspect quality validation logs and verify encoding parameters with real reference media.'
-    });
   } else if (hwEncodersTested.length > 0) {
-    const bestHw = hwEncodersTested.find(r => getSpeed(r) >= 1.5);
-    if (bestHw) {
-      const hwEncoderName = bestHw.actualEncoder || bestHw.requestedEncoder;
-      const speed = getSpeed(bestHw);
-      const fps = getFps(bestHw);
-      const bestHwDeadlines = bestHw.deadlinesMissed ?? bestHw.performance?.deadlineMisses ?? 0;
-
-      // Determine confidence level strictly based on evidence
-      let confidence = 'preliminary';
-      const confidenceReasons = [];
-
-      if (isSynthetic) {
-        confidence = 'preliminary';
-        confidenceReasons.push('capped at preliminary because test used synthetic media');
-      } else if (runsCount < 2 || sampleDuration < 30) {
-        confidence = 'preliminary';
-        confidenceReasons.push(`preliminary observation from ${runsCount} run(s) over ${sampleDuration}s interval (requires >= 2 runs and >= 30s)`);
-      } else if (speed >= 1.5 && !fallbacksObserved && bestHwDeadlines === 0 && qualityVerified) {
-        confidence = 'high';
-      } else {
-        confidence = 'medium';
-        if (!qualityVerified) {
-          confidenceReasons.push('visual quality was not confirmed via objective quality metrics');
-        }
-        if (bestHwDeadlines > 0) {
-          confidenceReasons.push(`experienced ${bestHwDeadlines} missed deadline(s)`);
-        }
-      }
-
-      if (currentEncoderSetting !== hwEncoderName) {
-        const synthNotice = isSynthetic ? ' (Note: Tested on synthetic media; verify with real media before production deployment).' : '';
-        recommendations.push({
-          setting: 'transcoding.encoder',
-          currentValue: currentEncoderSetting,
-          recommendedValue: hwEncoderName,
-          reason: `Measured ${speed}x real-time throughput (${fps.toFixed(1)} fps) with 0 missed deadlines and 0 fallback events during benchmark trials${synthNotice}`,
-          expectedBenefit: `Utilizes hardware video encoding (${hwEncoderName}), offloading video encode workload from the host CPU.`,
-          supportingEvidence: `Tested ${bestHw.codec.toUpperCase()} (${hwEncoderName}) @ ${bestHw.quality?.label || bestHw.quality?.id} at ${speed}x speed.`,
-          confidence
+    // Group results strictly by specific configuration: codec + encoder + qualityId + mode
+    const configMap = new Map();
+    for (const r of results) {
+      const enc = r.actualEncoder || r.requestedEncoder;
+      if (!['nvenc', 'qsv'].includes(enc)) continue;
+      const qId = r.quality?.id || r.qualityId || 'default';
+      const mode = r.mode || 'chunks';
+      const key = `${r.codec}::${enc}::${qId}::${mode}`;
+      if (!configMap.has(key)) {
+        configMap.set(key, {
+          codec: r.codec,
+          encoder: enc,
+          qualityId: qId,
+          quality: r.quality,
+          mode,
+          trials: []
         });
+      }
+      configMap.get(key).trials.push(r);
+    }
+
+    // Find candidate configurations that achieved real-time throughput
+    const candidateConfigs = [...configMap.values()];
+    const passingConfigs = candidateConfigs.filter(c => c.trials.some(t => t.status === 'pass' && getSpeed(t) >= 1.5));
+
+    if (passingConfigs.length > 0) {
+      // Pick best configuration: prefer highest throughput among passing configurations
+      const bestConfig = passingConfigs.sort((a, b) => {
+        const speedA = Math.max(...a.trials.filter(t => t.status === 'pass').map(getSpeed));
+        const speedB = Math.max(...b.trials.filter(t => t.status === 'pass').map(getSpeed));
+        return speedB - speedA;
+      })[0];
+
+      const hwEncoderName = bestConfig.encoder;
+      const passedTrials = bestConfig.trials.filter(t => t.status === 'pass');
+      const failedTrials = bestConfig.trials.filter(t => t.status !== 'pass');
+
+      // Check distinct run identifiers
+      const distinctRuns = new Set(passedTrials.map((t, idx) => t.runIndex !== undefined ? `run-${t.runIndex}` : (t.runId || `trial-${idx}`)));
+      const measuredRunCount = distinctRuns.size;
+
+      // Check sample durations on all passed trials
+      const allAdequateDuration = passedTrials.every(t => {
+        const dur = t.sampleDuration ?? t.performance?.sampleDuration ?? sampleDuration ?? 0;
+        return dur >= 30;
+      });
+
+      // Check missed deadlines and fallbacks specifically on this configuration
+      const totalMissedDeadlines = bestConfig.trials.reduce((sum, t) => sum + (t.deadlinesMissed ?? t.performance?.deadlineMisses ?? 0), 0);
+      const configFallbacks = bestConfig.trials.some(t => (t.fallbackEvents && t.fallbackEvents.length > 0) || t.fallback || (t.actualEncoder && t.actualEncoder !== hwEncoderName));
+
+      // Quality validation strictly for this specific configuration's trials
+      const qualityPassTrials = passedTrials.filter(t => t.qualityMetrics?.status === 'pass' && (t.qualityMetrics?.vmaf?.mean >= 70 || t.qualityMetrics?.ssim?.mean >= 0.85 || typeof t.qualityMetrics?.vmaf === 'number'));
+      const qualityFailTrials = bestConfig.trials.filter(t => t.qualityMetrics?.status === 'failed' || t.qualityMetrics?.status === 'misaligned');
+
+      if (qualityFailTrials.length > 0) {
+        warningsAndUncertainties.push(`Objective quality validation failed or detected temporal misalignment for ${bestConfig.codec.toUpperCase()} (${hwEncoderName}) @ ${bestConfig.qualityId}. Withholding hardware encoder recommendation until visual quality is verified.`);
+        insufficientEvidence.push({
+          setting: 'transcoding.encoder',
+          reason: `Hardware encoder (${hwEncoderName}) output failed objective quality or temporal alignment checks for ${bestConfig.codec.toUpperCase()} @ ${bestConfig.qualityId}.`,
+          neededTests: 'Inspect quality validation logs and verify encoding parameters with real reference media.'
+        });
+      } else {
+        const avgSpeed = Math.round((passedTrials.reduce((sum, t) => sum + getSpeed(t), 0) / passedTrials.length) * 100) / 100;
+        const avgFps = Math.round((passedTrials.reduce((sum, t) => sum + getFps(t), 0) / passedTrials.length) * 10) / 10;
+
+        let confidence = 'preliminary';
+        const confidenceReasons = [];
+
+        if (isSynthetic) {
+          confidence = 'preliminary';
+          confidenceReasons.push('capped at preliminary because test used synthetic media');
+        } else if (passedTrials.length < 2 || measuredRunCount < 2) {
+          confidence = 'preliminary';
+          confidenceReasons.push(`only ${passedTrials.length} successful trial(s) measured (requires at least 2 independent runs for high confidence)`);
+        } else if (!allAdequateDuration) {
+          confidence = 'preliminary';
+          confidenceReasons.push('trial duration was under 30s threshold');
+        } else if (failedTrials.length > 0) {
+          confidence = 'preliminary';
+          confidenceReasons.push(`mixed trial outcomes (${passedTrials.length} passed, ${failedTrials.length} failed) for this configuration`);
+        } else if (qualityPassTrials.length === 0) {
+          confidence = 'medium';
+          confidenceReasons.push('visual quality was not verified with objective quality metrics for this specific configuration');
+        } else if (totalMissedDeadlines > 0) {
+          confidence = 'medium';
+          confidenceReasons.push(`experienced ${totalMissedDeadlines} missed deadline(s) during trials`);
+        } else if (configFallbacks) {
+          confidence = 'medium';
+          confidenceReasons.push('fallback events observed during trials');
+        } else if (avgSpeed >= 1.5) {
+          confidence = 'high';
+        } else {
+          confidence = 'medium';
+        }
+
+        if (currentEncoderSetting !== hwEncoderName) {
+          const synthNotice = isSynthetic ? ' (Note: Tested on synthetic media; verify with real media before production deployment).' : '';
+          const downgradeNotice = confidence !== 'high' && confidenceReasons.length > 0 ? ` (Confidence: ${confidence} — ${confidenceReasons.join('; ')}).` : '';
+          recommendations.push({
+            setting: 'transcoding.encoder',
+            currentValue: currentEncoderSetting,
+            recommendedValue: hwEncoderName,
+            reason: `Measured ${avgSpeed}x real-time throughput (${avgFps.toFixed(1)} fps) across ${passedTrials.length} trial(s) with 0 missed deadlines and 0 fallback events during benchmark trials${synthNotice}${downgradeNotice}`,
+            expectedBenefit: `Utilizes hardware video encoding (${hwEncoderName}), offloading video encode workload from the host CPU.`,
+            supportingEvidence: `Tested ${bestConfig.codec.toUpperCase()} (${hwEncoderName}) @ ${bestConfig.quality?.label || bestConfig.qualityId} at ${avgSpeed}x speed (${passedTrials.length} successful trial(s)).`,
+            confidence,
+            confidenceReasons
+          });
+        }
       }
     } else {
       insufficientEvidence.push({
@@ -124,7 +183,8 @@ function generateConfigurationRecommendations(benchmarkPayload, currentConfig = 
     if (highestTested >= 1) {
       // Conservative recommendation: apply headroom of N - 1 if > 2 streams
       const recommendedJobs = Math.max(1, highestTested > 2 ? highestTested - 1 : highestTested);
-      let concurrencyConfidence = (isSynthetic || sampleDuration < 30 || runsCount < 2) ? 'preliminary' : (highestTested >= 2 && qualityVerified ? 'high' : 'medium');
+      const anyQualityVerified = results.some(r => r.qualityMetrics?.status === 'pass');
+      let concurrencyConfidence = (isSynthetic || sampleDuration < 30 || runsCount < 2) ? 'preliminary' : (highestTested >= 2 && anyQualityVerified ? 'high' : 'medium');
 
       if (recommendedJobs !== currentMaxJobs) {
         const shortRunNote = sampleDuration < 30 ? ' Derived from short-run chunk tests; monitor long-term thermals and memory under real production load.' : '';

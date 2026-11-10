@@ -625,7 +625,7 @@ class TelemetryCollector {
             sampleCount: 0,
             metrics: {},
             thermalClimbC: 0,
-            throttlingDetected: this.providerInfo.throttlingSupported ? false : null,
+            throttlingDetected: null,
             activeThrottleReasons: []
           },
           qualityAnalysis: {
@@ -686,24 +686,45 @@ class TelemetryCollector {
 
     if (throttlingSupported) {
       const activeReasonsSet = new Set();
+      let hasValidReading = false;
       let asserted = false;
 
       for (const s of encodingSamples) {
-        const isAsserted = s.metrics?.throttlingDetected === true || s.metrics?.throttling === true || (Array.isArray(s.metrics?.throttleReasons) && s.metrics.throttleReasons.length > 0);
+        const m = s.metrics || {};
+        const isAsserted = m.throttlingDetected === true ||
+          m.throttling === true ||
+          (Array.isArray(m.throttleReasons) && m.throttleReasons.length > 0) ||
+          (Array.isArray(m.activeThrottleReasons) && m.activeThrottleReasons.length > 0);
+
+        const isUnasserted = m.throttlingDetected === false ||
+          m.throttling === false ||
+          m.throttling === 'None' ||
+          (Array.isArray(m.throttleReasons) && m.throttleReasons.length === 0 && m.throttlingDetected !== null && m.throttling !== null) ||
+          (Array.isArray(m.activeThrottleReasons) && m.activeThrottleReasons.length === 0 && m.throttlingDetected !== null && m.throttling !== null);
+
         if (isAsserted) {
+          hasValidReading = true;
           asserted = true;
-          const reasons = s.metrics.activeThrottleReasons || s.metrics.throttleReasons;
+          const reasons = m.activeThrottleReasons || m.throttleReasons;
           if (Array.isArray(reasons)) {
             for (const r of reasons) {
               if (r && r !== 'None') activeReasonsSet.add(r);
             }
-          } else if (typeof s.metrics.throttling === 'string' && s.metrics.throttling !== 'None') {
-            activeReasonsSet.add(s.metrics.throttling);
+          } else if (typeof m.throttling === 'string' && m.throttling !== 'None') {
+            activeReasonsSet.add(m.throttling);
           }
+        } else if (isUnasserted) {
+          hasValidReading = true;
         }
       }
 
-      throttlingDetected = asserted;
+      if (asserted) {
+        throttlingDetected = true;
+      } else if (hasValidReading) {
+        throttlingDetected = false;
+      } else {
+        throttlingDetected = null;
+      }
       activeThrottleReasons = [...activeReasonsSet];
     }
 

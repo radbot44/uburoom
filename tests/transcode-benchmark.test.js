@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const cp = require('node:child_process');
 
 const {
   resolveConfigFile,
@@ -1262,6 +1263,7 @@ test('generateConfigurationRecommendations produces conservative advice adhering
     source: { isSynthetic: false, fileName: 'real-feature.mkv' },
     results: [
       {
+        runIndex: 1,
         codec: 'av1',
         requestedEncoder: 'nvenc',
         actualEncoder: 'nvenc',
@@ -1269,6 +1271,17 @@ test('generateConfigurationRecommendations produces conservative advice adhering
         quality: { id: '1080p8', label: '1080p 8Mbps' },
         performance: { speedMultiplier: 2.2, effectiveFps: 66.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.0 } },
+        fallbackEvents: []
+      },
+      {
+        runIndex: 2,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8', label: '1080p 8Mbps' },
+        performance: { speedMultiplier: 2.4, effectiveFps: 72.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 94.5 } },
         fallbackEvents: []
       }
     ],
@@ -1586,31 +1599,117 @@ test('TelemetryCollector getSummary(configId) returns 0 samples when requested c
   assert.equal(summaryB.sampleCount, 0);
   assert.equal(summaryB.encoding.sampleCount, 0);
   assert.deepEqual(summaryB.encoding.metrics, {});
+  assert.equal(summaryB.encoding.throttlingDetected, null);
 });
 
-test('saveRunToHistory serializes concurrent updates with file lock preventing lost records', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-lock-'));
-  try {
-    const payloads = Array.from({ length: 5 }, (_, i) => ({
-      timestamp: new Date().toISOString(),
-      benchmarkVersion: 'Stage 3',
-      sourceFingerprint: `v1:source${i}`,
-      source: { fileName: `test${i}.mp4` },
-      environment: { gpu: 'Test GPU' },
-      results: [
-        { configId: `cfg-${i}`, codec: 'av1', requestedEncoder: 'nvenc', status: 'pass' }
-      ]
-    }));
+test('TelemetryCollector getSummary() strictly distinguishes true, false, and unknown throttling states', () => {
+  // 1. True state: active throttling detected (e.g. SW_POWER or reason)
+  const colTrue = new TelemetryCollector({ provider: 'nvidia-smi' });
+  colTrue.setPhase('encoding', { configId: 'cfg-1' });
+  colTrue.recordSample({ gpuUtilization: 99, throttling: 'SW_POWER', throttleReasons: ['SW_POWER'] });
+  const sumTrue = colTrue.getSummary('cfg-1');
+  assert.equal(sumTrue.encoding.throttlingDetected, true);
+  assert.deepEqual(sumTrue.encoding.activeThrottleReasons, ['SW_POWER']);
 
-    // Save all 5 runs
-    for (const p of payloads) {
-      saveRunToHistory(p, tmpDir);
+  // 2. False state: valid readings confirming absence of throttling ('None' / false)
+  const colFalse = new TelemetryCollector({ provider: 'nvidia-smi' });
+  colFalse.setPhase('encoding', { configId: 'cfg-1' });
+  colFalse.recordSample({ gpuUtilization: 50, throttling: 'None', throttleReasons: [] });
+  const sumFalse = colFalse.getSummary('cfg-1');
+  assert.equal(sumFalse.encoding.throttlingDetected, false);
+  assert.deepEqual(sumFalse.encoding.activeThrottleReasons, []);
+
+  // 3. Unknown state (failed queries): provider supports throttling but queries returned null / no throttle data
+  const colFailed = new TelemetryCollector({ provider: 'nvidia-smi' });
+  colFailed.setPhase('encoding', { configId: 'cfg-1' });
+  colFailed.recordSample({ gpuUtilization: 50, throttling: null, throttleReasons: null });
+  const sumFailed = colFailed.getSummary('cfg-1');
+  assert.equal(sumFailed.encoding.throttlingDetected, null, 'Failed query must result in null throttlingDetected');
+
+  // 4. Unknown state (empty config samples): zero matching samples for requested config
+  const sumEmpty = colFalse.getSummary('cfg-nonexistent');
+  assert.equal(sumEmpty.encoding.throttlingDetected, null, 'Empty config samples must result in null throttlingDetected');
+
+  // 5. Unsupported provider (e.g. PDH on Windows without GPU throttle sensor)
+  const colUnsupported = new TelemetryCollector({
+    provider: 'pdh',
+    providerInfo: { provider: 'pdh', throttlingSupported: false }
+  });
+  colUnsupported.setPhase('encoding', { configId: 'cfg-1' });
+  colUnsupported.recordSample({ hostCpuUtilization: 30 });
+  const sumUnsupported = colUnsupported.getSummary('cfg-1');
+  assert.equal(sumUnsupported.encoding.throttlingDetected, null);
+  assert.equal(sumUnsupported.encoding.throttlingSupported, false);
+});
+
+test('saveRunToHistory serializes concurrent updates across multiple child processes preventing lost records', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-lock-'));
+  const workerScript = path.join(tmpDir, 'save-worker.js');
+  const historyModulePath = path.resolve(__dirname, '../scripts/benchmark/history.js');
+
+  try {
+    fs.writeFileSync(workerScript, `
+      const { saveRunToHistory } = require(${JSON.stringify(historyModulePath)});
+      const historyDir = process.argv[2];
+      const workerId = process.argv[3];
+      const payload = {
+        timestamp: new Date().toISOString(),
+        benchmarkVersion: 'Stage 3',
+        sourceFingerprint: 'v1:source' + workerId,
+        source: { fileName: 'test' + workerId + '.mp4' },
+        environment: { gpu: 'Test GPU ' + workerId },
+        results: [
+          { configId: 'cfg-' + workerId, codec: 'av1', requestedEncoder: 'nvenc', status: 'pass' }
+        ]
+      };
+      saveRunToHistory(payload, historyDir);
+    `, 'utf8');
+
+    const workerCount = 5;
+    const workers = [];
+
+    for (let i = 0; i < workerCount; i++) {
+      workers.push(new Promise((resolve, reject) => {
+        const proc = cp.spawn(process.execPath, [workerScript, tmpDir, String(i)], {
+          stdio: ['ignore', 'ignore', 'pipe']
+        });
+        let stderr = '';
+        proc.stderr.on('data', d => { stderr += d.toString(); });
+        proc.on('error', reject);
+        proc.on('close', code => {
+          if (code === 0) resolve();
+          else reject(new Error(`Worker ${i} failed with code ${code}: ${stderr}`));
+        });
+      }));
     }
 
+    await Promise.all(workers);
+
+    // 1. Raw file content must be valid JSON
+    const rawIndex = fs.readFileSync(path.join(tmpDir, 'history-index.json'), 'utf8');
+    const parsedIndex = JSON.parse(rawIndex);
+    assert.ok(parsedIndex && Array.isArray(parsedIndex.runs));
+
+    // 2. Load history index helper
     const index = loadHistoryIndex(tmpDir);
-    assert.equal(index.runs.length, 5, 'All 5 runs must be preserved in history index');
+    assert.equal(index.runs.length, workerCount, 'All 5 runs must be preserved in history index');
+
+    // 3. Confirm every run appears exactly once with distinct runIds
+    const runIds = new Set(index.runs.map(r => r.runId));
+    assert.equal(runIds.size, workerCount, 'Every run must have a unique runId');
+
+    // 4. Confirm all individual record files exist on disk
+    for (const run of index.runs) {
+      assert.ok(run.recordFile, 'Run entry must point to recordFile');
+      const recPath = path.join(tmpDir, run.recordFile);
+      assert.ok(fs.existsSync(recPath), `Record file ${run.recordFile} must exist on disk`);
+      const record = JSON.parse(fs.readFileSync(recPath, 'utf8'));
+      assert.equal(record.runId, run.runId);
+    }
+
+    // 5. Confirm no sources disappeared
     const sourceNames = index.runs.map(r => r.sourceFileName);
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < workerCount; i++) {
       assert.ok(sourceNames.includes(`test${i}.mp4`), `Index must contain test${i}.mp4`);
     }
   } finally {
@@ -1780,6 +1879,7 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
     source: { isSynthetic: false, fileName: 'reference.mkv' },
     results: [
       {
+        runIndex: 1,
         codec: 'av1',
         requestedEncoder: 'nvenc',
         actualEncoder: 'nvenc',
@@ -1787,6 +1887,17 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
         quality: { id: '1080p8' },
         performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 0 },
         qualityMetrics: { status: 'pass', vmaf: { mean: 94.2 } },
+        fallbackEvents: []
+      },
+      {
+        runIndex: 2,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.9, effectiveFps: 87.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 94.5 } },
         fallbackEvents: []
       }
     ]
@@ -1797,12 +1908,10 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
   // Case 2: Same conditions but quality metrics were omitted -> capped at MEDIUM confidence
   const noQualityPayload = {
     ...highPayload,
-    results: [
-      {
-        ...highPayload.results[0],
-        qualityMetrics: null
-      }
-    ]
+    results: highPayload.results.map(r => ({
+      ...r,
+      qualityMetrics: null
+    }))
   };
   const mediumAdvice = generateConfigurationRecommendations(noQualityPayload);
   assert.equal(mediumAdvice.recommendations[0]?.confidence, 'medium', 'Unverified visual quality must cap confidence at medium');
@@ -1811,8 +1920,9 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
   const deadlineMissPayload = {
     ...highPayload,
     results: [
+      highPayload.results[0],
       {
-        ...highPayload.results[0],
+        ...highPayload.results[1],
         performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 1 },
         deadlinesMissed: 1
       }
@@ -1829,6 +1939,18 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
     source: { isSynthetic: true, fileName: 'synthetic-pattern.mkv' },
     results: [
       {
+        runIndex: 1,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 3.5, effectiveFps: 105.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 98.0 } },
+        fallbackEvents: []
+      },
+      {
+        runIndex: 2,
         codec: 'av1',
         requestedEncoder: 'nvenc',
         actualEncoder: 'nvenc',
@@ -1842,4 +1964,158 @@ test('generateConfigurationRecommendations strictly gates high confidence on rea
   };
   const multiSynthAdvice = generateConfigurationRecommendations(multiSynthPayload);
   assert.equal(multiSynthAdvice.recommendations[0]?.confidence, 'preliminary', 'Synthetic media must always be capped at preliminary');
+
+  // Regression Test 1: Declared runs: 2 but only 1 actual result -> capped at preliminary
+  const singleResultPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'reference.mkv' },
+    results: [highPayload.results[0]] // only 1 measured trial
+  };
+  const singleAdvice = generateConfigurationRecommendations(singleResultPayload);
+  assert.equal(singleAdvice.recommendations[0]?.confidence, 'preliminary', 'Single measured result despite runs: 2 must cap confidence at preliminary');
+  assert.ok(singleAdvice.recommendations[0]?.confidenceReasons.some(r => r.includes('requires at least 2 independent runs')));
+
+  // Regression Test 2: Mixed successes and failures for the same configuration -> not high confidence
+  const mixedPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'reference.mkv' },
+    results: [
+      highPayload.results[0],
+      {
+        ...highPayload.results[1],
+        status: 'fail',
+        error: 'Encoder crash'
+      }
+    ]
+  };
+  const mixedAdvice = generateConfigurationRecommendations(mixedPayload);
+  assert.notEqual(mixedAdvice.recommendations[0]?.confidence, 'high', 'Mixed pass and fail trials must disqualify high confidence');
+
+  // Regression Test 3: Quality PASS on unrelated software encoder cannot qualify NVENC recommendation
+  const unrelatedQualityPayload = {
+    benchmarkVersion: 'Stage 3',
+    runs: 2,
+    sampleDuration: 60,
+    source: { isSynthetic: false, fileName: 'reference.mkv' },
+    results: [
+      {
+        runIndex: 1,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.8, effectiveFps: 84.0, deadlineMisses: 0 },
+        qualityMetrics: null, // No quality check on NVENC!
+        fallbackEvents: []
+      },
+      {
+        runIndex: 2,
+        codec: 'av1',
+        requestedEncoder: 'nvenc',
+        actualEncoder: 'nvenc',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 2.9, effectiveFps: 87.0, deadlineMisses: 0 },
+        qualityMetrics: null, // No quality check on NVENC!
+        fallbackEvents: []
+      },
+      {
+        runIndex: 1,
+        codec: 'av1',
+        requestedEncoder: 'software',
+        actualEncoder: 'software',
+        status: 'pass',
+        quality: { id: '1080p8' },
+        performance: { speedMultiplier: 0.8, effectiveFps: 24.0, deadlineMisses: 0 },
+        qualityMetrics: { status: 'pass', vmaf: { mean: 95.0 } }, // Pass on SOFTWARE, not NVENC!
+        fallbackEvents: []
+      }
+    ]
+  };
+  const unrelatedAdvice = generateConfigurationRecommendations(unrelatedQualityPayload);
+  const nvencRec = unrelatedAdvice.recommendations.find(r => r.recommendedValue === 'nvenc');
+  assert.ok(nvencRec);
+  assert.equal(nvencRec.confidence, 'medium', 'Quality pass on software cannot qualify nvenc for high confidence');
+  assert.ok(nvencRec.confidenceReasons.some(r => r.includes('visual quality was not verified with objective quality metrics')));
+});
+
+test('runStabilityBenchmark stops on internal failure threshold with external signal present without launching further chunks', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uburoom-test-stability-thresh-'));
+  const externalAbort = new AbortController();
+  let chunksLaunched = 0;
+
+  try {
+    const mockChunkedRunner = async (tools, source, config, options) => {
+      for (let i = 0; i < 5; i++) {
+        if (options.signal?.aborted) {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        chunksLaunched++;
+        // Each chunk takes 10s (exceeds chunkDuration * 1.5 = 6 * 1.5 = 9s threshold)
+        options.onProgress?.({
+          chunkIndex: i,
+          totalChunks: 5,
+          encodeDurationSec: 10,
+          realTimeSpeed: 0.6,
+          deadlineMissed: true,
+          fallbackOccurred: false
+        });
+      }
+      return { status: 'pass' };
+    };
+
+    const source = {
+      filePath: 'C:/media/test.mkv',
+      durationSeconds: 120,
+      video: { width: 1920, height: 1080, fps: 30, codec: 'h264' }
+    };
+    const config = {
+      id: 'test-stability-cfg',
+      codec: 'av1',
+      requestedEncoder: 'nvenc',
+      quality: { id: '1080p8', label: '1080p 8Mbps' }
+    };
+
+    const result = await runStabilityBenchmark(
+      {}, // tools
+      source,
+      config,
+      {
+        duration: 30, // 5 chunks of 6s
+        chunkDuration: 6,
+        maxConsecutiveFailures: 2,
+        outputDir: tmpDir,
+        signal: externalAbort.signal,
+        chunkedRunner: mockChunkedRunner
+      }
+    );
+
+    // 1. External signal was NOT aborted by caller
+    assert.equal(externalAbort.signal.aborted, false, 'External signal must remain unaborted');
+
+    // 2. Chunks stopped after exactly 2 consecutive failures
+    assert.equal(chunksLaunched, 2, 'No further chunks should be launched after threshold exceeded');
+
+    // 3. Status reflects early stop
+    assert.equal(result.stability.status, 'early_stopped');
+
+    // 4. Completed chunk count matches
+    assert.equal(result.stability.chunksCompleted, 2);
+
+    // 5. Early stop reason accurately records consecutive severe performance failures
+    assert.ok(result.stability.earlyStopReason);
+    assert.ok(
+      result.stability.earlyStopReason.includes('consecutive severe chunk performance failures'),
+      `Expected early stop reason to mention consecutive failures, got: ${result.stability.earlyStopReason}`
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

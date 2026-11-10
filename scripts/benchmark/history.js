@@ -234,7 +234,7 @@ function saveRunToHistory(benchmarkPayload, historyDir) {
       avgTemperatureC: r.telemetry.encoding?.metrics?.temperatureC?.mean ?? null,
       avgPowerWatts: r.telemetry.encoding?.metrics?.powerWatts?.mean ?? null,
       thermalClimbC: r.telemetry.encoding?.thermalClimbC ?? 0,
-      throttlingDetected: r.telemetry.encoding?.throttlingDetected ?? false,
+      throttlingDetected: r.telemetry.encoding?.throttlingDetected !== undefined ? r.telemetry.encoding.throttlingDetected : null,
       activeThrottleReasons: r.telemetry.encoding?.activeThrottleReasons || []
     } : null
   }));

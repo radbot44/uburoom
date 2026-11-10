@@ -60,7 +60,8 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
     chunkDuration = 6,
     hardwareDecode = true,
     cpuFallback = true,
-    probedEncoders = []
+    probedEncoders = [],
+    chunkedRunner = null
   } = opts;
 
   // 1. Validate duration bounds (6s to 3600s)
@@ -103,7 +104,8 @@ async function runStabilityBenchmark(toolsOrOptions, sourceInfo, testConfig, opt
   let benchmarkResult = null;
 
   try {
-    benchmarkResult = await runChunkedBenchmark(tools, source, config, {
+    const runner = chunkedRunner || runChunkedBenchmark;
+    benchmarkResult = await runner(tools, source, config, {
       startOffset,
       sampleDuration: duration,
       outputDir: stabilityOutputDir,
