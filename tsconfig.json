@@ -1,0 +1,17 @@
+{
+  // Type checking only: tsc never emits or transpiles. Files opt in with `// @ts-check`;
+  // add it to more server/ and shared/ files as they are brought to zero errors.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "strict": false,
+    "skipLibCheck": true
+  },
+  "include": ["server/**/*.js", "shared/**/*.js", "shared/**/*.mjs"]
+}

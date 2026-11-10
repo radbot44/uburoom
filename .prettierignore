@@ -1,0 +1,29 @@
+# Dependencies, lockfiles and vendored/bundled output (scripts/build-*-vendor.js write to web/vendor).
+node_modules/
+/web/vendor/
+package-lock.json
+pnpm-lock.yaml
+
+# Generated, private or runtime output.
+/artifacts/
+/releases/
+/dist/
+/build/
+/coverage/
+/backups/
+/certs/
+/data/
+/state/
+/diagnostics/
+/reference/
+/personal/
+/private/
+/local-notes/
+
+# Binary and asset folders.
+/assets/
+/web/assets/
+/tests/fixtures/
+
+# Documentation is not reformatted.
+*.md
