@@ -114,6 +114,14 @@ async function captureBrowser(name, out, only) {
     const shoot = async (page, surface, theme, label, width, height, fullPage = false, each) => {
       await browser.viewport(page, width, height);
       if (each) await each();
+      // Player chrome (controls and the centre play overlay) shows for 2.5 s after any player interaction
+      // and stays on while player settings is open. Shoot only once that timer has run out, so the
+      // chrome is in the same state on every run; the open player-settings dialog holds it on by design.
+      await until(
+        page,
+        '!document.getElementById("stage")?.classList.contains("controls-visible") || !!document.getElementById("tracks-dialog")?.open',
+        'Player chrome at rest',
+      );
       await settle(page);
       if (fullPage) {
         const full = await run(page, 'Math.ceil(document.documentElement.scrollHeight)');
