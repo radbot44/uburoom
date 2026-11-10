@@ -120,7 +120,7 @@ P5/P6 human check: watch together ~3 minutes, pause/resume/seek, background one 
 
 | Issue | Disposition |
 | --- | --- |
-| Room smoke | B (2026-11-10, `program/v0-rendered-checks`): navigation repaired, on-screen assertions; full flow including Bulk excludes Specials passed in Chrome and Firefox. Same-commit `ui:capture` pairs compare identical at tolerance 8 (2 px of wordmark anti-aliasing in Chrome light phone at tolerance 0). Fixtures only; screenshots are not visual acceptance |
+| Room smoke | B (2026-11-10, `program/v0-rendered-checks` at 7bf0fc4): navigation repaired, on-screen assertions; full flow including Bulk excludes Specials passed in Chrome and Firefox (Firefox alone 5/5, combined 3/3). Before 7bf0fc4 Firefox failed 4/5 at Auto-play: the runner pressed during the queue's smooth-scroll tail, whose scroll events close the confirmation popover. Same-commit `ui:capture` pairs compare identical at tolerance 8 (2 px of wordmark anti-aliasing in Chrome light phone at tolerance 0). Fixtures only; screenshots are not visual acceptance |
 | AV1 ending | Prior live ~42ms final-buffer gap; 2026-10-23 C/D Discord AV1/QSV near-end replay finished cleanly and encoder child exited; broader media/multi-viewer/endurance coverage remains open |
 | Real soak | First run unloaded/recovered; repeat run clean. Original trigger unproven (suspected transient internet dropout, not a confirmed current playback defect) |
 | Resource/timing fixtures | A locked-disk timer assertion failed under extreme contention then passed alone/full rerun; no assertion weakened |
