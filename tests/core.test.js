@@ -8,27 +8,9 @@ const config = { ownerId: 'owner', guildId: 'guild', channels: ['commands'] };
 const actor = { userId: 'owner', guildId: 'guild', channelId: 'commands' };
 
 test('command validation enforces explicit units, bounded finite values and no arbitrary actions', () => {
-  assert.equal(Engine.factor('150'), 1.5);
-  assert.equal(Engine.factor('1.5'), 1.5);
-  assert.equal(Engine.factor('150%'), 1.5);
-  for (const text of ['Infinity', 'NaN', '2000%', '+5']) assert.throws(() => Engine.factor(text));
   assert.equal(Engine.validate({ action: 'media.volume.set', args: { percent: 50 } }).args.percent, 50);
   assert.throws(() => Engine.validate({ action: 'media.volume.set', args: { percent: 101 } }));
   assert.throws(() => Engine.validate({ action: 'zoom.set', args: { value: '1.5' } }));
-  let picture = Engine.picture(Engine.DEFAULT, { action: 'zoom.set', args: { value: 16 } });
-  picture = Engine.picture(picture, { action: 'stretch.set', args: { axis: 'stretchX', value: 16 } });
-  picture = Engine.picture(picture, { action: 'pan.edge', args: { axis: 'x', sign: 1 } });
-  assert.ok(picture.x > (1 + 256) / 2, 'pan moves the entire maximum-scale picture out of frame');
-  assert.equal(
-    Engine.picture(picture, { action: 'zoom.adjust', args: { delta: 0.005 } }).zoom,
-    16,
-    'fine steps stop at the bound like the original userscript',
-  );
-  for (const field of ['zoom', 'stretchX', 'stretchY']) {
-    assert.deepEqual(Engine.picture(picture, { action: 'reset.' + field }), { ...picture, [field]: 1 });
-  }
-  assert.deepEqual(Engine.picture(picture, { action: 'reset.all' }), Engine.DEFAULT);
-
   const entryId = randomUUID();
   assert.equal(Engine.validate({ action: 'queue.remove', args: { entryId, advance: true } }).args.advance, true);
   assert.equal(Engine.validate({ action: 'queue.remove', args: { entryId, advance: false } }).args.advance, false);
@@ -67,16 +49,12 @@ test('media seeking stays inside available DVR ranges and snapshots contain only
     50,
   );
   const state = Engine.snapshot({
-    picture: { ...Engine.DEFAULT, secret: 'private title' },
     title: 'private title',
     volume: 72,
     paused: true,
-    profileSlots: [1, 1, 10],
   });
-  assert.deepEqual(state.picture, Engine.DEFAULT);
-  assert.equal(state.title, undefined);
-  assert.deepEqual(state.profileSlots, [1]);
-  assert.equal(Engine.snapshot({ picture: { ...Engine.DEFAULT, zoom: Infinity } }), undefined);
+  assert.deepEqual(state, { paused: true, volume: 72 });
+  assert.equal(Engine.snapshot({ volume: Infinity }), undefined);
 });
 
 test('live watch rooms use the shared engine and reject removed management actions', async () => {
@@ -119,7 +97,7 @@ test('live watch rooms use the shared engine and reject removed management actio
       socket: { readyState: 1 },
       viewers: new Map([['guest-viewer', { userId: 'friend', at: Date.now(), actor: guest }]]),
       controls: { ...Engine.CONTROLS },
-      state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false },
+      state: { paused: true, muted: false, volume: 50, seekable: false },
       execute: async command => ({ status: 'applied', message: command.action }),
     };
   hub.rooms.set(roomId, room);
@@ -157,7 +135,7 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
     permissions: { host: { playPause: true }, viewer: {} },
     viewers: new Map([['viewer-1', { userId: 'owner', at: Date.now(), actor: host }]]),
     controls: { ...Engine.CONTROLS },
-    state: { picture: { ...Engine.DEFAULT }, paused: true, muted: false, volume: 50, seekable: false },
+    state: { paused: true, muted: false, volume: 50, seekable: false },
     execute: async (command, actor, permitted) => {
       capturedPermitted = permitted;
       return { status: 'applied' };

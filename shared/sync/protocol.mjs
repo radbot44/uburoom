@@ -7,7 +7,7 @@ export function createProtocolApi() {
   const DEFAULT_UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
   const READINESS_ID_PATTERN = /^[a-f0-9-]{36}$/;
 
-  const CONTROLS = Object.freeze({ playback: true, transform: true });
+  const CONTROLS = Object.freeze({ playback: true });
   const SYNC_MANAGEMENT_ACTIONS = Object.freeze([
     'room.visibility',
     'media.ready.start',
@@ -35,15 +35,14 @@ export function createProtocolApi() {
   ]);
 
   function controls(value = CONTROLS) {
-    if (!value || typeof value.playback !== 'boolean' || typeof value.transform !== 'boolean') {
+    if (!value || typeof value.playback !== 'boolean') {
       throw new Error('Invalid control permissions');
     }
-    return { playback: value.playback, transform: value.transform };
+    return { playback: value.playback };
   }
 
   function controlFor(command) {
     if (command.action.startsWith('media.')) return 'playback';
-    if (/^(zoom|stretch|pan|reset|profile)\./.test(command.action)) return 'transform';
     return undefined;
   }
 

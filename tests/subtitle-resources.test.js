@@ -451,7 +451,6 @@ test('uburoomSubtitles preserves loading status until window scheduler covers me
     global.window.uburoomSubtitleRenderers = {
       create: async () => ({
         offset: () => {},
-        picture: () => {},
         append: async bytes => {
           appends.push(bytes);
         },

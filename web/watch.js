@@ -4321,9 +4321,6 @@ function applyState(next, local = false) {
     if (state === next) void restorePlayerSubtitles(next);
   });
   if (next.mediaError) playbackError = next.mediaError;
-  const picture = next.state.picture;
-  video.style.scale = picture.zoom * picture.stretchX + ' ' + picture.zoom * picture.stretchY;
-  video.style.translate = picture.x * 100 + '% ' + picture.y * 100 + '%';
   const isIdle = !next.mediaUrl;
   const isEnding = isIdle && !!next.ending;
   $('stage').classList.toggle('ending-active', isEnding);
@@ -4392,8 +4389,7 @@ function applyState(next, local = false) {
   if (next.mediaUrl && !pending && !qualityPending && document.activeElement !== $('quality'))
     $('quality').value = uburoom.qualityId(next.quality);
   renderBrowsing();
-  const transformed = Object.keys(uburoom.DEFAULT).some(key => Math.abs(picture[key] - uburoom.DEFAULT[key]) > 1e-8);
-  document.title = (transformed ? '🔵 ' : '') + next.title + ' · uburoom';
+  document.title = next.title + ' · uburoom';
   renderVisibility();
   renderTransport();
   if (resumed) {

@@ -393,7 +393,7 @@ test('an empty timed-out room admits only its eligible host tab and revokes old 
   watch.close();
 });
 
-test('watch quality and audio belong to an authenticated viewer; shared playback and picture still use permissions', async () => {
+test('watch quality and audio belong to an authenticated viewer; shared playback still uses permissions', async () => {
   const hub = new Hub({ ownerId: 'host', guildId: 'guild', channels: ['commands'] }, []);
   hub.access = {
     refresh: async () => true,
@@ -455,7 +455,6 @@ test('watch quality and audio belong to an authenticated viewer; shared playback
     'unsupported',
     'unaddressed personal settings cannot mute the room',
   );
-  assert.equal((await command(guest, b, 'zoom.set', { value: 1.2 })).status, 'applied');
   assert.equal(
     (await command(guest, b, 'media.quality.set', { quality: '720p' })).status,
     'applied',

@@ -159,12 +159,10 @@ class Watch {
       ubumfaWord: saved?.ubumfaWord || slug,
       controls: { ...Engine.CONTROLS },
       state: {
-        picture: { ...Engine.DEFAULT },
         paused: true,
         muted: false,
         volume: 30,
         seekable: false,
-        profileSlots: [],
       },
     };
     const room = {
@@ -176,7 +174,6 @@ class Watch {
       changedAt: Date.now(),
       viewers: new Map(),
       disconnectedViewers: new Map(),
-      profiles: {},
       lastActivity: Date.now(),
       initialGate: false,
       manualPaused: false,
@@ -1502,9 +1499,6 @@ class Watch {
       canPlayback: room.saved
         ? this.hub.roomCommandAllowed(room.s, actor, { action: 'media.play' })
         : owner || (eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.playback),
-      canTransform: room.saved
-        ? this.hub.canRoom(room.s, actor, 'picture')
-        : owner || (eligible(room.s, actor, this.hub.config, now, this.hub.access) && room.s.controls.transform),
       viewers: new Set([...room.viewers.values()].map(x => x.userId)).size,
       feedback: room.feedback,
     };
@@ -2810,36 +2804,23 @@ class Watch {
       (['media.pause', 'media.play', 'media.toggle'].includes(action) || action.startsWith('media.seek.'))
     )
       this.roomState.finishRecovery(room);
-    if (action === 'profile.load' && !room.profiles[args.slot])
-      return { status: 'unsupported', message: 'Save this profile first.' };
     const now = Date.now();
     if (!applyTimelineCommand(room, command, { now, autoplayVersion: actor.watchAutoplayVersion })) {
       room.position = this.position(room, now);
       room.changedAt = now;
-      switch (action) {
-        case 'room.visibility':
-          if (room.saved) {
-            const record = await this.roomState.store.edit(s.roomId, actor.userId, room.saved.revision, {
-              action: 'visibility',
-              visibility: args.visibility,
-            });
-            this.roomState.apply(room, record);
-          } else s.visibility = args.visibility;
-          room.disconnectedViewers.clear();
-          this.refresh(room);
-          break;
-        case 'profile.save':
-          room.profiles[args.slot] = { ...s.state.picture };
-          break;
-        case 'profile.load':
-          s.state.picture = { ...room.profiles[args.slot] };
-          break;
-        default:
-          s.state.picture = Engine.picture(s.state.picture, command);
+      if (action === 'room.visibility') {
+        if (room.saved) {
+          const record = await this.roomState.store.edit(s.roomId, actor.userId, room.saved.revision, {
+            action: 'visibility',
+            visibility: args.visibility,
+          });
+          this.roomState.apply(room, record);
+        } else s.visibility = args.visibility;
+        room.disconnectedViewers.clear();
+        this.refresh(room);
       }
     }
     if (action.startsWith('room.')) s.epoch = randomUUID();
-    s.state.profileSlots = Object.keys(room.profiles).map(Number);
     room.revision++;
     room.lastActivity = now;
     this.refresh(room, now);

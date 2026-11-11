@@ -26,8 +26,6 @@ const ROOM_LOCAL_ACTIONS = new Set([
   'media.mute',
   'media.unmute',
   'media.reporting.set',
-  'profile.save',
-  'profile.load',
 ]);
 
 /**
@@ -37,9 +35,7 @@ const ROOM_LOCAL_ACTIONS = new Set([
  */
 export function isRoomLocalAction(action) {
   if (typeof action !== 'string') return false;
-  if (ROOM_LOCAL_ACTIONS.has(action)) return true;
-  if (/^(?:zoom|stretch|pan|reset)\./.test(action)) return true;
-  return false;
+  return ROOM_LOCAL_ACTIONS.has(action);
 }
 
 /**

@@ -831,8 +831,6 @@ class WatchRooms {
         room.mediaVersion = require('node:crypto').randomUUID();
         room.initialGate = false;
         room.s.state.seekable = false;
-        room.s.state.picture = { ...require('../shared/engine').DEFAULT };
-        room.profiles = {};
         room.readinessVersion = undefined;
         room.readinessStartAt = undefined;
         room.readinessTimedOut = undefined;

@@ -59,9 +59,7 @@ export function permissions(value, base, { role: targetRole, stored = false } = 
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    Object.keys(value).some(
-      key => !(CAPABILITIES.includes(key) || (stored && key === 'picture')) || typeof value[key] !== 'boolean',
-    )
+    Object.keys(value).some(key => !CAPABILITIES.includes(key) || typeof value[key] !== 'boolean')
   ) {
     throw new Error('Invalid room permissions');
   }
@@ -87,7 +85,6 @@ export function policy(value = {}) {
   ) {
     throw new Error('Invalid room permission roles');
   }
-  // Old saved policies may contain the retired picture flag; it no longer grants authority.
   return {
     host: permissions(value.host ?? {}, DEFAULTS.host, { stored: true }),
     viewer: permissions(value.viewer ?? {}, DEFAULTS.viewer, { role: 'viewer', stored: true }),
@@ -98,7 +95,7 @@ export function policy(value = {}) {
 export function permissionList(value, base) {
   if (value === undefined) return { ...base };
   if (['all', 'none'].includes(value)) return Object.fromEntries(CAPABILITIES.map(key => [key, value === 'all']));
-  if (!Array.isArray(value) || value.some(name => !CAPABILITIES.includes(name) && name !== 'picture')) {
+  if (!Array.isArray(value) || value.some(name => !CAPABILITIES.includes(name))) {
     throw new Error('Unknown capability in room permission defaults');
   }
   return Object.fromEntries(CAPABILITIES.map(key => [key, value.includes(key)]));
@@ -142,10 +139,8 @@ export function assigned(room, userId) {
  * verified tenant/operator administration without global single-owner assumptions.
  */
 export function allowed(room, userId, capability, { isAdmin = false } = {}) {
-  if (isAdmin) return [...CAPABILITIES, ...CREATOR_ONLY, 'picture'].includes(capability);
+  if (isAdmin) return [...CAPABILITIES, ...CREATOR_ONLY].includes(capability);
   const level = role(room, userId);
-  // Picture controls retain fixed host authority while their editable permission is retired.
-  if (capability === 'picture') return level === 'creator' || level === 'host';
   if (![...CAPABILITIES, ...CREATOR_ONLY].includes(capability)) return false;
   if (level === 'viewer' && VIEWER_BLOCKED.includes(capability)) return false;
   if (level === 'creator') return true;
@@ -177,7 +172,6 @@ export function commandCapability(action) {
   if (['media.load', 'media.next', 'media.previous'].includes(action) || action.startsWith('media.ready.'))
     return 'chooseMedia';
   if (action.startsWith('room.')) return 'roomSettings';
-  if (/^(zoom|stretch|pan|reset|profile)\./.test(action)) return 'picture';
   return undefined;
 }
 

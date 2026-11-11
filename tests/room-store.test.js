@@ -343,20 +343,17 @@ test('explicit room presets preserve defaults, reject unknown names and protect 
   await assert.rejects(f.store.create(f.creator, { permissionPreset: 'unknown' }), /Unknown/);
 });
 
-test('old stored picture flags are retired and participant management stays off across restart', async t => {
+test('participant management stays off across restart for forged stored policies', async t => {
   const f = fixture(t, { disk: true });
   const room = await f.store.create(f.creator);
   const old = {
     ...room.permissions,
-    host: { ...room.permissions.host, picture: true },
-    viewer: { ...room.permissions.viewer, picture: true, roomSettings: true, closeRoom: true, deleteRoom: true },
+    viewer: { ...room.permissions.viewer, roomSettings: true, closeRoom: true, deleteRoom: true },
   };
   f.registry.db.prepare('UPDATE watch_rooms SET permissions=? WHERE id=?').run(JSON.stringify(old), room.id);
   await f.registry.flush();
   await f.restart();
   const restored = f.store.get(room.id);
-  assert.equal(Object.hasOwn(restored.permissions.host, 'picture'), false);
-  assert.equal(Object.hasOwn(restored.permissions.viewer, 'picture'), false);
   assert.ok(Policy.VIEWER_BLOCKED.every(key => !restored.permissions.viewer[key]));
   assert.equal(restored.creatorId, room.creatorId);
   assert.equal(restored.revision, room.revision);

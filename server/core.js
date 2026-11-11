@@ -343,7 +343,7 @@ class Hub {
       if (!this.roomCommandAllowed(s, actor, command, personal))
         return { status: 'forbidden', message: 'Your room permissions do not allow this action.' };
     } else {
-      if (!this.canManage(s, actor) && (manage || command.action === 'profile.save'))
+      if (!this.canManage(s, actor) && manage)
         return { status: 'forbidden', message: 'This action requires the host.' };
       if (!personal && !this.canManage(s, actor) && !Engine.controlAllowed(s.controls, command))
         return { status: 'forbidden', message: 'This control is not shared.' };
@@ -455,7 +455,6 @@ class Hub {
       hostName: s.hostName,
       visibility: s.visibility,
       canPlayback: this.canManage(s, actor) || s.controls.playback,
-      canTransform: this.canManage(s, actor) || s.controls.transform,
     }));
   }
 }

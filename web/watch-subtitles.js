@@ -604,8 +604,6 @@ class uburoomSubtitles {
       this.windowScheduler?.check(this.mediaTime() - offset);
       this.textWindows?.check(this.mediaTime() - offset);
     }
-    this.picture = state.state?.picture;
-    if (this.picture) this.renderer?.picture(this.picture);
     if (!this.url) {
       this.status({ message: state.tracks?.subtitleError || '', error: !!state.tracks?.subtitleError, loading: false });
       return;
@@ -819,7 +817,6 @@ class uburoomSubtitles {
         renderer.offset(this.offset || 0);
         this.track.mode = 'disabled';
         this.paint();
-        if (this.picture) renderer.picture(this.picture);
         if (value.window && value.format === 'pgs') {
           this.streamSynced = undefined;
           if (

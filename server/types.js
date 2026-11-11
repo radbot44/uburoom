@@ -19,26 +19,14 @@
  */
 
 /**
- * Picture transformation parameters (zoom, stretch, and pan).
- * @typedef {Object} PictureState
- * @property {number} zoom - Zoom factor (0.1 to 16, default 1).
- * @property {number} stretchX - Horizontal stretch multiplier (0.1 to 16, default 1).
- * @property {number} stretchY - Vertical stretch multiplier (0.1 to 16, default 1).
- * @property {number} x - Horizontal pan offset in pixels (-129 to 129, default 0).
- * @property {number} y - Vertical pan offset in pixels (-129 to 129, default 0).
- */
-
-/**
  * Control permission flags for a watch room.
  * @typedef {Object} Controls
  * @property {boolean} playback - Whether media transport controls (play, pause, seek) are enabled.
- * @property {boolean} transform - Whether picture adjustments (zoom, stretch, pan) are enabled.
  */
 
 /**
  * Media playback state in a room.
  * @typedef {Object} RoomPlaybackState
- * @property {PictureState} picture - Current viewport transformation state.
  * @property {boolean} paused - Whether playback is currently paused.
  * @property {boolean} [waitingForReady] - Playback intent is playing while startup/seek preparation holds the timeline.
  * @property {boolean} muted - Whether audio is muted.
@@ -46,7 +34,6 @@
  * @property {boolean} seekable - Whether the current stream supports seeking.
  * @property {number} [position] - Current playback position in seconds.
  * @property {number} [duration] - Total media duration in seconds.
- * @property {Array<any>} [profileSlots] - Saved picture profile slots.
  */
 
 /**
@@ -158,7 +145,7 @@
 /**
  * A validated command parsed by the shared engine.
  * @typedef {Object} EngineCommand
- * @property {string} action - Action name (e.g. 'media.play', 'media.seek.end', 'zoom.set').
+ * @property {string} action - Action name (e.g. 'media.play', 'media.seek.end').
  * @property {Record<string, any>} [args] - Action arguments validated by the engine.
  * @property {string} [sender] - Display name of the command initiator.
  */

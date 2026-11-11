@@ -247,9 +247,6 @@ test('readiness schedules one initial start without advancing early; ordinary co
     assert.equal(f.room.s.state.paused, false);
     assert.equal(f.watch.position(f.room, deadline - 500), 0);
     assert.equal(f.watch.position(f.room, deadline + 1000), 1);
-    // Unrelated picture commands cannot accidentally advance the scheduled anchor.
-    await f.dispatch('zoom.set', { value: 1.2 });
-    assert.equal(f.watch.position(f.room, deadline - 1), 0);
     const late = randomUUID();
     f.watch.snapshot(f.room, f.guest, late);
     await f.watch.ready(f.room, f.guest, late, f.room.mediaVersion, false);

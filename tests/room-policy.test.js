@@ -123,19 +123,16 @@ test('the three presets grant exact participant controls and keep host deletion 
       granted,
     );
     assert.ok(Policy.CAPABILITIES.every(key => policy.host[key] === !['deleteRoom', 'addHosts'].includes(key)));
-    assert.equal(Object.hasOwn(policy.host, 'picture'), false);
-    assert.equal(Object.hasOwn(policy.viewer, 'picture'), false);
   }
   assert.throws(() => Policy.preset('custom'), /Unknown/);
 });
 
 test('participant management grants are denied even in old stored/default policies or forged live policies', () => {
   const old = {
-    host: { picture: true },
-    viewer: { picture: true, roomSettings: true, closeRoom: true, deleteRoom: true },
+    host: {},
+    viewer: { roomSettings: true, closeRoom: true, deleteRoom: true },
   };
   const normalized = Policy.policy(old);
-  assert.equal(Object.hasOwn(normalized.viewer, 'picture'), false);
   for (const key of Policy.VIEWER_BLOCKED) {
     assert.equal(normalized.viewer[key], false);
     assert.throws(
@@ -144,14 +141,6 @@ test('participant management grants are denied even in old stored/default polici
     );
     assert.equal(Policy.allowed({ creatorId: 'creator', hosts: ['host'], permissions: old }, 'viewer', key), false);
   }
-  assert.throws(() => Policy.permissions({ picture: true }, normalized.host), /Invalid/);
-  const room = { creatorId: 'creator', hosts: ['host'], permissions: normalized };
-  assert.equal(Policy.allowed(room, 'viewer', 'picture'), false);
-  assert.equal(Policy.allowed(room, 'host', 'picture'), true);
-  assert.equal(Policy.allowed(room, 'creator', 'picture'), true);
   const configured = Policy.configuration({ viewer_permissions: 'all' }).roomPermissions;
   assert.ok(Policy.VIEWER_BLOCKED.every(key => !configured.viewer[key]));
-  const retired = Policy.configuration({ host_permissions: ['playPause', 'picture'] }).roomPermissions.host;
-  assert.equal(retired.playPause, true);
-  assert.equal(Object.hasOwn(retired, 'picture'), false);
 });

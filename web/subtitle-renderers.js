@@ -180,10 +180,6 @@ window.uburoomSubtitleRenderers = {
           renderer.timeOffset = -value;
           repaint();
         },
-        picture(value) {
-          layer.style.scale = value.zoom * value.stretchX + ' ' + value.zoom * value.stretchY;
-          layer.style.translate = value.x * 100 + '% ' + value.y * 100 + '%';
-        },
       };
     } catch (error) {
       dispose();

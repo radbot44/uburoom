@@ -3,10 +3,7 @@
   'use strict';
   const icons = root.uburoomIcons;
   function badgeDetails(command, state = {}) {
-    const { action, args = {} } = command,
-      picture = state.picture || {};
-    const percent = n => Number(((n ?? 1) * 100).toFixed(2)) + '%';
-    const position = (axis, n) => axis.toUpperCase() + ' ' + (n > 0 ? '+' : '') + percent(n ?? 0);
+    const { action, args = {} } = command;
     let symbol,
       value = '',
       label;
@@ -61,54 +58,6 @@
         symbol = 'end';
         label = 'Go to end / live';
         break;
-      case 'zoom.set':
-      case 'zoom.adjust':
-      case 'reset.zoom':
-        symbol = 'zoom';
-        value = percent(picture.zoom);
-        label = action === 'reset.zoom' ? 'Reset zoom' : 'Zoom';
-        break;
-      case 'stretch.set':
-      case 'stretch.adjust':
-      case 'reset.stretchX':
-      case 'reset.stretchY':
-        symbol = args.axis || action.slice(6);
-        value = percent(picture[symbol]);
-        label = (action.startsWith('reset.') ? 'Reset ' : '') + (symbol === 'stretchX' ? 'width' : 'height');
-        break;
-      case 'pan.step':
-      case 'pan.edge':
-        symbol = args.axis === 'x' ? (args.sign < 0 ? 'left' : 'right') : args.sign < 0 ? 'up' : 'down';
-        value = action === 'pan.edge' ? 'Offscreen' : position(args.axis, picture[args.axis]);
-        label = 'Move ' + symbol;
-        break;
-      case 'pan.set':
-      case 'pan.move':
-        symbol = 'center';
-        value = position('x', picture.x) + ' · ' + position('y', picture.y);
-        label = 'Position';
-        break;
-      case 'reset.pan':
-        symbol = 'center';
-        value = 'Centered';
-        label = 'Recenter';
-        break;
-      case 'reset.stretch':
-        symbol = 'refresh';
-        value = 'Width / height';
-        label = 'Reset stretch';
-        break;
-      case 'reset.all':
-        symbol = 'refresh';
-        value = 'Reset all';
-        label = value;
-        break;
-      case 'profile.load':
-      case 'profile.save':
-        symbol = 'bookmark';
-        value = (action === 'profile.load' ? '↥ Load ' : '↧ Save ') + args.slot;
-        label = value;
-        break;
       case 'room.visibility':
         symbol = args.visibility === 'private' ? 'lock' : 'users';
         value = args.visibility === 'private' ? 'Private' : 'Public';
@@ -117,14 +66,11 @@
       default:
         return;
     }
-    const color =
-      { zoom: 'var(--accent-text)', stretchX: 'var(--accent-text)', stretchY: 'var(--accent-text)' }[symbol] ||
-      (action === 'reset.all' ? '#ea3035' : 'var(--text)');
     return {
       symbol,
       value,
       label,
-      color,
+      color: 'var(--text)',
       ...(action === 'media.seek.relative' ? { seekSeconds: Math.abs(args.seconds) } : {}),
     };
   }
