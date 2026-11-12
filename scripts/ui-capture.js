@@ -305,6 +305,21 @@ async function captureBrowser(name, out, only) {
         },
       });
 
+    // Last room surface, since it advances the queue: playing the next item moves the first video into history.
+    await capture(host, 'room-queue-history', {
+      open: async () => {
+        await run(host, pressId('next'));
+        await until(host, count('#queue-history-list .queue-history-entry') + '>=1', 'History entry');
+        await until(host, attr('#player-play', 'aria-label') + '==="Pause"', 'Next item plays');
+        await run(host, pressId('player-play'));
+        await until(host, attr('#player-play', 'aria-label') + '==="Play"', 'Next item paused');
+        await run(host, choose('timeline', '17'));
+        await until(host, text('#time') + '.startsWith("0:17")', 'Paused at 0:17');
+        await run(host, 'window.dispatchEvent(new Event("scroll"));true');
+        await until(host, count('.watch-popover') + '===0', 'Popovers gone');
+      },
+    });
+
     // The development gallery, full height, in its own tab after the room surfaces (the theme is shared).
     if (!only || only.includes('gallery')) {
       const gallery = await openPage(browser, config.publicUrl + '/__dev/gallery');

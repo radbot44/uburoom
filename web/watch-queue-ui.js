@@ -850,6 +850,7 @@
       previousCount.textContent = hLen ? hLen + ' past' : '';
       // Without history the button has nothing to scroll to and would cover the "No playback history yet" line.
       previousButton.classList.toggle('queue-navigation-idle', !hLen);
+      timeline.classList.toggle('queue-has-history', hLen > 0);
       nextCount.textContent = qLen ? qLen + ' queued' : '';
       const badge = doc.getElementById('queue-count-badge');
       if (badge) {

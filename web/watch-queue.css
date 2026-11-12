@@ -599,9 +599,12 @@ button.queue-title-link:hover {
   display: none;
 }
 /* The floating scroll buttons sit over the timeline box; its bottom strip holds the "N queued" button
-   below the list, so it never covers the last row. */
+   below the list and, when history exists, a top strip holds "N past", so neither covers a row. */
 [data-view='list'] .queue-timeline {
   padding-bottom: var(--space-44);
+}
+[data-view='list'] .queue-timeline.queue-has-history {
+  padding-top: var(--space-44);
 }
 [data-view='list'] .queue-navigation {
   flex-direction: column;

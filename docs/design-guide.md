@@ -175,7 +175,7 @@ A watch night is a room with a time on it: every event belongs to one saved room
 
 - **One layout:** The queue is a single vertically scrolling list (history, Now Playing, Upcoming). There is no card view and no layout selector.
 - **Row surfaces:** In the dark theme rows sit on a darkened blur of their artwork. In the light theme they use the ordinary surface tokens like other list surfaces: `var(--elevated)` rows, the Now Playing row with its primary tint, normal text and muted tokens, and no artwork backdrop.
-- **Scroll buttons:** The "N past" and "N queued" buttons float over the timeline box. The timeline keeps a bottom strip below the list for "N queued", so it never covers the last row. "N past" is hidden while there is no history.
+- **Scroll buttons:** The "N past" and "N queued" buttons float over the timeline box. The timeline keeps a bottom strip below the list for "N queued" and, while history exists, a top strip above it for "N past", so neither covers a row. "N past" and its strip are hidden while there is no history.
 - **No history:** With no playback history the empty centering space above Now Playing is dropped: a single "No playback history yet." line is followed directly by Now Playing, and the list starts at the top. The space returns once history exists.
 - **Now Playing outline:** Now Playing retains the primary accent outline (a 2px inset `var(--primary)` box-shadow) instead of a transient selected-item state.
 - **Auto-queue preview row:** Auto-queue maintains at most one preview row (`autoQueue.next`) at the tail of Upcoming, styled with a `var(--secondary)` inset accent, an `AUTO` rank badge (`Auto · Up in …` caption), and dedicated actions (Add to queue, Skip suggestion, Play now, Skip to) with no reorder arrows.
