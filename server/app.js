@@ -606,8 +606,8 @@ function createApp(
           hub.setOwnerName(account.name);
         for (const login of logins.values()) if (login.userId === id) login.name = account.name;
         for (const room of watch.rooms.values()) {
-          if (room.s.hostId === id) room.s.hostName = account.name;
-          if (room.s.ownerId === id) room.s.ownerName = account.name;
+          if (room.hostId === id) room.hostName = account.name;
+          if (room.ownerId === id) room.ownerName = account.name;
           for (const viewer of room.viewers.values())
             if (viewer.userId === id) {
               viewer.name = account.name;
@@ -803,10 +803,10 @@ function createApp(
           if (req.method === 'GET' && roomRouteMatch) {
             const reqSlug = roomRouteMatch[1].toLowerCase();
             const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(reqSlug));
-            if (activeRoom && activeRoom.s.slug && activeRoom.s.slug !== reqSlug) {
+            if (activeRoom && activeRoom.slug && activeRoom.slug !== reqSlug) {
               const rem = url.searchParams.toString();
               res.writeHead(302, {
-                Location: '/room/' + encodeURIComponent(activeRoom.s.slug) + (rem ? '?' + rem : ''),
+                Location: '/room/' + encodeURIComponent(activeRoom.slug) + (rem ? '?' + rem : ''),
               });
               return res.end();
             }

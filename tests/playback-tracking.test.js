@@ -8,7 +8,7 @@ const { Accounts, credentialVault } = require('../server/accounts');
 function fixture(registry) {
   let now = 100000;
   const tracking = new PlaybackTracking(registry, () => now);
-  const room = { s: { roomId: randomUUID() }, media: { id: '42', duration: 300 }, mediaVersion: randomUUID() };
+  const room = { roomId: randomUUID(), media: { id: '42', duration: 300 }, mediaVersion: randomUUID() };
   const viewer = () => ({
     userId: 'user',
     observationEpoch: randomUUID(),

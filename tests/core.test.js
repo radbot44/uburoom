@@ -83,7 +83,6 @@ test('live watch rooms use the shared engine and reject removed management actio
   const guest = { ...actor, userId: 'friend' };
   const roomId = randomUUID(),
     room = {
-      kind: 'watch',
       roomId,
       epoch: randomUUID(),
       ownerId: 'owner',
@@ -91,9 +90,6 @@ test('live watch rooms use the shared engine and reject removed management actio
       hostName: 'owner',
       ownerName: 'owner',
       visibility: 'public',
-      lastSeen: Date.now(),
-      reachable: true,
-      socket: { readyState: 1 },
       viewers: new Map([['guest-viewer', { userId: 'friend', at: Date.now(), actor: guest }]]),
       controls: { ...Engine.CONTROLS },
       state: { paused: true, muted: false, volume: 50, seekable: false },
@@ -114,7 +110,6 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
   const roomId = randomUUID();
   let capturedPermitted;
   const room = {
-    kind: 'watch',
     roomId,
     epoch: randomUUID(),
     ownerId: 'owner',
@@ -122,9 +117,6 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
     hostName: 'owner',
     ownerName: 'owner',
     visibility: 'public',
-    lastSeen: Date.now(),
-    reachable: true,
-    socket: { readyState: 1 },
     permissions: { host: { playPause: true }, viewer: {} },
     viewers: new Map([['viewer-1', { userId: 'owner', at: Date.now(), actor: host }]]),
     controls: { ...Engine.CONTROLS },
@@ -147,14 +139,12 @@ test('dispatch grants 30s deadline to personal track/stream refreshes and queue 
   const now = Date.now;
   try {
     Date.now = () => now() + 5000;
-    room.lastSeen = Date.now();
     assert.equal(
       capturedPermitted(),
       true,
       'personal track change is still permitted after 5s (exceeding default 2.5s)',
     );
     Date.now = () => now() + 31000;
-    room.lastSeen = Date.now();
     assert.equal(capturedPermitted(), false, 'personal track change expires after 30s');
   } finally {
     Date.now = now;

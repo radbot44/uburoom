@@ -121,7 +121,7 @@ async function fixture(t, { fallback = false } = {}) {
     room.changedAt = Date.now();
     room.manualPaused = false;
     room.initialGate = false;
-    room.s.state.paused = false;
+    room.state.paused = false;
     room.pauseAt = room.startAt = undefined;
   }
   playTail();
@@ -133,7 +133,7 @@ async function fixture(t, { fallback = false } = {}) {
     sequence++;
     const viewer = room.viewers.get(controller.watchViewerId);
     const data = {
-      epoch: room.s.epoch,
+      epoch: room.epoch,
       mediaVersion: room.mediaVersion,
       streamVersion: viewer.streamVersion,
       observationEpoch: viewer.observationEpoch,
@@ -244,12 +244,12 @@ test('verified natural ending broadcasts one countdown, atomically archives comp
   const lease = fallback.media.av1Lease;
   assert.equal(lease.released, false);
   f.room.manualPaused = true;
-  f.room.s.state.paused = true;
+  f.room.state.paused = true;
   f.watch.reconcileFallback(f.room);
   assert.equal(fallback.active, false, 'paused room idles fallback work');
   await f.command('media.load', { mediaId: '102', quality: 'direct' });
   assert.equal(lease.released, true, 'changing the video releases the old fallback');
-  f.room.s.state.paused = false;
+  f.room.state.paused = false;
   f.watch.reconcileFallback(f.room);
   await waitFor(() => !!f.room.fallbackStream?.media);
   const final = f.room.fallbackStream.media.av1Lease;
@@ -298,7 +298,7 @@ test('autoplay off unloads ended media and presents upNext interstitial when que
   await f.command('queue.clear');
   snapshot = f.watch.snapshot(f.room, f.creator, f.creator.watchViewerId);
   assert.equal(snapshot.ending.state, 'finished');
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
 });
 
 test('smart queue-edit countdown rule: appending preserves countdown, head change restarts, clearing cancels', async t => {
@@ -552,7 +552,7 @@ test('Play at the broken endpoint finishes instead of replaying, and finished Pl
   f.room.position = 99.95;
   f.room.initialGate = true;
   f.room.readinessTimedOut = true;
-  f.room.s.state.paused = true;
+  f.room.state.paused = true;
   assert.equal((await f.command('media.play')).status, 'applied');
   assert.equal(f.room.position, 0);
   assert.equal(f.room.initialGate, false);
@@ -637,7 +637,7 @@ for (const enabled of [false, true])
     await f.watch.ready(room, actor, actor.watchViewerId, room.mediaVersion, true, room.readinessVersion);
     assert.equal(room.manualPaused, !enabled);
     assert.equal(room.initialGate, !enabled);
-    assert.equal(room.s.state.paused, !enabled);
+    assert.equal(room.state.paused, !enabled);
     const current = f.queue.current(id).id;
     assert.equal(
       (await command('queue.add', { item: { ...item, mediaId: '106' }, expectedRevision: 1 })).status,
@@ -718,8 +718,8 @@ for (const advance of [false, true])
         assert.equal(f.store.get(f.id).bookmark, null);
         assert.equal(f.room.media, undefined);
         assert.equal(f.room.initialGate, false);
-        assert.equal(f.room.s.state.paused, true);
-        assert.equal(f.room.s.state.duration, 0);
+        assert.equal(f.room.state.paused, true);
+        assert.equal(f.room.state.duration, 0);
       }
     },
   );

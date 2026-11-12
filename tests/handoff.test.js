@@ -165,7 +165,7 @@ test(
     const results = await Promise.all([f.redeem(claimed), f.redeem(claimed)]);
     assert.equal(results.filter(r => r.status === 200).length, 1);
     const done = results.find(r => r.status === 200);
-    assert.equal(done.body.destination, '/room/' + f.app.watch.rooms.get(id).s.slug);
+    assert.equal(done.body.destination, '/room/' + f.app.watch.rooms.get(id).slug);
     const cookie = done.headers['set-cookie'][0];
     assert.match(cookie, /HttpOnly; Secure; SameSite=Lax/);
     assert.ok(Number(/Max-Age=(\d+)/.exec(cookie)[1]) <= 3600);
@@ -173,7 +173,7 @@ test(
     const me = await f.request('/api/watch/me', undefined, { Cookie: cookie.split(';')[0] });
     assert.equal(me.body.name, 'Demo host');
     assert.equal(me.body.adminMode, false);
-    assert.equal(f.app.watch.rooms.get(id).s.state.paused, true, 'handoff does not issue playback commands');
+    assert.equal(f.app.watch.rooms.get(id).state.paused, true, 'handoff does not issue playback commands');
     assert.equal(f.app.watch.rooms.get(id).viewers.size, 1, 'redemption itself does not create a viewer');
     const state = await f.request(`/api/watch/rooms/${id}?viewer=${randomUUID()}`, undefined, {
       Cookie: cookie.split(';')[0],
@@ -251,7 +251,7 @@ test(
     assert.equal((await f.request('/api/watch/handoff', { roomId: randomUUID() }, guest)).status, 403);
     const privateClaim = await f.claim(await f.issue(guest, roomId));
     await f.approve(guest, privateClaim);
-    f.app.watch.rooms.get(roomId).s.visibility = 'private';
+    f.app.watch.rooms.get(roomId).visibility = 'private';
     const privateDone = await f.redeem(privateClaim);
     assert.equal(privateDone.body.destination, '/', 'room revoked before redemption is not disclosed');
     const closedClaim = await f.claim(await f.issue(host, roomId));

@@ -10,7 +10,9 @@ function fixture() {
     sequence = 0;
   const tracking = new PlaybackTracking(undefined, () => now);
   const room = {
-    s: { roomId: randomUUID(), epoch: randomUUID(), state: { paused: false } },
+    roomId: randomUUID(),
+    epoch: randomUUID(),
+    state: { paused: false },
     media: { id: 'episode', duration: 100 },
     mediaVersion: randomUUID(),
     viewers: new Map(),
@@ -29,7 +31,7 @@ function fixture() {
     now += delay;
     sequence++;
     const data = {
-      epoch: room.s.epoch,
+      epoch: room.epoch,
       observationEpoch: viewer.observationEpoch,
       streamVersion: viewer.streamVersion,
       mediaVersion: room.mediaVersion,
@@ -59,7 +61,7 @@ test('natural ending requires recent sequential decoded playback; clamped room c
   const f = fixture();
   try {
     f.tail();
-    f.room.s.state.paused = true;
+    f.room.state.paused = true;
     assert.equal(f.send(100, 'ended'), true);
     assert.equal(f.send(100, 'ended'), false, 'the same ending cannot be consumed twice');
   } finally {
@@ -144,7 +146,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
   // 3. Epoch, media, stream, and observation lease fences
   for (const change of [
     f => {
-      f.room.s.epoch = randomUUID();
+      f.room.epoch = randomUUID();
     },
     f => {
       f.room.mediaVersion = f.viewer.mediaVersion = randomUUID();

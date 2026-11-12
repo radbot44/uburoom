@@ -493,12 +493,12 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
     await watch.prepareViewer(room, host, a);
     await watch.prepareViewer(room, guest, b);
     room.position = 12;
-    room.s.state.paused = true;
+    room.state.paused = true;
     const command = async (args, who = guest, viewerId = b) =>
       hub.dispatch(
         { ...who, watchViewerId: viewerId },
         {
-          roomId: room.s.roomId,
+          roomId: room.roomId,
           action: 'media.tracks.set',
           args: { mediaVersion: room.mediaVersion, streamVersion: room.viewers.get(viewerId).streamVersion, ...args },
         },
@@ -511,7 +511,7 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
     assert.equal(room.viewers.get(b).media.selection.audio.id, '12');
     assert.equal(room.viewers.get(a).media, other);
     assert.equal(room.position, 12);
-    assert.equal(room.s.state.paused, true);
+    assert.equal(room.state.paused, true);
     const good = room.viewers.get(b).media;
     state.wrongBurn = true;
     assert.equal((await command({ subtitleId: '22' })).status, 'failed');
@@ -554,7 +554,7 @@ test('a failed automatic burn keeps its catalog available for an explicit Off re
     const result = await hub.dispatch(
       { ...host, watchViewerId: viewerId },
       {
-        roomId: room.s.roomId,
+        roomId: room.roomId,
         action: 'media.tracks.set',
         args: { mediaVersion: room.mediaVersion, streamVersion: viewer.streamVersion, subtitleId: 'off' },
       },

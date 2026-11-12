@@ -120,7 +120,7 @@ async function fixture(t, { autoLoad = false } = {}) {
   room.changedAt = Date.now();
   room.initialGate = false;
   room.manualPaused = true;
-  room.s.state.paused = true;
+  room.state.paused = true;
   const originalFlush = registry.flush.bind(registry);
   let release;
   const held = new Promise(resolve => {
@@ -213,7 +213,7 @@ test('orderly shutdown captures final progress and restart intent before detachi
   f.room.position = 25;
   f.room.changedAt = Date.now();
   f.room.initialGate = false;
-  f.room.s.state.paused = true;
+  f.room.state.paused = true;
   await f.watch.roomState.save(f.room);
   const flush = f.registry.flush.bind(f.registry);
   let release, entered;
@@ -233,7 +233,7 @@ test('orderly shutdown captures final progress and restart intent before detachi
   f.room.position = 80;
   f.room.changedAt = Date.now();
   f.room.startAt = undefined;
-  f.room.s.state.paused = false;
+  f.room.state.paused = false;
   f.room.manualPaused = false;
   const closing = f.watch.close();
   try {

@@ -23,7 +23,7 @@ function fixture(t) {
     g = randomUUID();
   watch.snapshot(room, host, h);
   watch.snapshot(room, guest, g);
-  const dispatch = (action, args, actor = host) => hub.dispatch(actor, { roomId: room.s.roomId, action, args });
+  const dispatch = (action, args, actor = host) => hub.dispatch(actor, { roomId: room.roomId, action, args });
   const ready = (viewer, value = true) =>
     watch.ready(room, viewer === h ? host : guest, viewer, room.mediaVersion, value, room.readinessVersion);
   const advance = ms => {
@@ -88,13 +88,13 @@ test('pause and resume share deadlines, project the pause target, and supersede 
   const at = f.room.pauseAt,
     before = f.watch.position(f.room);
   assert.equal(at, f.now() + 400);
-  assert.equal(f.room.s.state.paused, false);
+  assert.equal(f.room.state.paused, false);
   const snapshot = f.watch.snapshot(f.room, f.host, f.h);
   assert.equal(target(snapshot, at + 1000), before + 0.4);
   f.advance(200);
   assert.equal(f.watch.position(f.room), before + 0.2);
   f.advance(200);
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   assert.equal(f.watch.position(f.room), before + 0.4);
   await f.dispatch('media.play');
   assert.equal(f.room.startAt, f.now() + 400);
@@ -102,7 +102,7 @@ test('pause and resume share deadlines, project the pause target, and supersede 
   assert.equal(f.watch.position(f.room), before + 0.4);
   await f.dispatch('media.pause');
   assert.equal(f.room.startAt, undefined);
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   await f.dispatch('media.play');
   f.advance(500);
   await f.dispatch('media.pause');
@@ -110,7 +110,7 @@ test('pause and resume share deadlines, project the pause target, and supersede 
   await f.dispatch('media.toggle');
   assert.equal(f.room.pauseAt, undefined);
   assert.equal(f.room.startAt, undefined);
-  assert.equal(f.room.s.state.paused, false, 'toggle cancels a pending pause without freezing healthy playback');
+  assert.equal(f.room.state.paused, false, 'toggle cancels a pending pause without freezing healthy playback');
 });
 
 test('control lead uses fresh bounded server round trips and discards stale evidence', t => {
@@ -131,25 +131,25 @@ test('a sole viewing tab skips startup, resume, pause and seek leads while retai
   assert.equal(f.watch.controlLead(f.room), 0);
   await f.load();
   assert.equal(f.room.readinessStartAt, f.now());
-  assert.equal(f.room.s.state.paused, true, 'decoding readiness is still required');
+  assert.equal(f.room.state.paused, true, 'decoding readiness is still required');
   await f.ready(f.h);
   assert.equal(f.room.startAt, f.now());
   f.advance(1000);
   assert.equal(f.watch.position(f.room), 1);
   await f.dispatch('media.pause');
   assert.equal(f.room.pauseAt, undefined);
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   await f.dispatch('media.play');
   assert.equal(f.room.startAt, f.now());
   f.advance(1000);
   await f.dispatch('media.toggle');
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   await f.dispatch('media.toggle');
   assert.equal(f.room.startAt, f.now());
   await f.dispatch('media.seek.absolute', { seconds: 40 });
   const old = f.room.readinessVersion;
   assert.equal(f.room.readinessStartAt, f.now());
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   await f.dispatch('media.seek.absolute', { seconds: 45 });
   await assert.rejects(f.watch.ready(f.room, f.host, f.h, f.room.mediaVersion, true, old), /Invalid readiness/);
   await f.ready(f.h);
@@ -187,7 +187,7 @@ test('joining an already playing solo room does not stop its timeline and restor
   const position = f.watch.position(f.room);
   f.watch.snapshot(f.room, f.guest, f.g);
   assert.equal(f.room.initialGate, false);
-  assert.equal(f.room.s.state.paused, false);
+  assert.equal(f.room.state.paused, false);
   assert.equal(f.watch.position(f.room), position);
   await f.dispatch('media.pause');
   assert.equal(f.room.pauseAt, f.now() + 400);
@@ -212,7 +212,7 @@ test('departure and expired viewers release coordination delays without timeline
   f.advance(100);
   await f.watch.leave(f.room, f.guest, f.g);
   assert.equal(f.room.pauseAt, undefined);
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   assert.equal(f.watch.position(f.room), 1.1);
   f.watch.snapshot(f.room, f.guest, f.g);
   await f.dispatch('media.play');
@@ -240,7 +240,7 @@ test('timeout names blockers, latches despite late readiness, and only the host 
   const id = f.room.readinessId;
   assert.equal(f.room.readinessTimedOut, true);
   await f.ready(f.g);
-  assert.equal(f.room.s.state.paused, true, 'late readiness cannot surprise the host');
+  assert.equal(f.room.state.paused, true, 'late readiness cannot surprise the host');
   assert.equal((await f.dispatch('media.play')).status, 'unavailable');
   assert.equal(
     (await f.dispatch('media.pause', undefined, f.guest)).status,
@@ -254,7 +254,7 @@ test('timeout names blockers, latches despite late readiness, and only the host 
   assert.equal(f.room.startAt, f.now() + 400);
   f.advance(500);
   await f.ready(f.g, false);
-  assert.equal(f.room.s.state.paused, false, 'unready viewers recover independently after force-start');
+  assert.equal(f.room.state.paused, false, 'unready viewers recover independently after force-start');
   assert.equal((await f.dispatch('media.ready.start', { readinessId: id })).status, 'unavailable');
 
   // Verify Item 6: straggler bypass persists across mid-playback seeks
@@ -288,9 +288,9 @@ test('wait extends by fifteen seconds, cancel stays paused, and superseded choic
   await f.dispatch('media.ready.cancel', { readinessId: id });
   await f.ready(f.h);
   await f.ready(f.g);
-  assert.equal(f.room.s.state.paused, true);
+  assert.equal(f.room.state.paused, true);
   await f.dispatch('media.play');
-  assert.equal(f.room.s.state.paused, false);
+  assert.equal(f.room.state.paused, false);
   f.advance(2000);
   await f.dispatch('media.seek.absolute', { seconds: 30 });
   f.advance(10000);

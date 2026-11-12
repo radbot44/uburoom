@@ -290,7 +290,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
     waiting,
     finish,
     calls = 0;
-  const room = { s: { roomId: 'room' } },
+  const room = { roomId: 'room' },
     rooms = new Map([['room', room]]);
   const wait = () => {
     calls++;
@@ -437,7 +437,7 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
 
 test('room watch party history takes priority over personal Plex progress in library listings and details', async () => {
   const room = {
-    s: { roomId: 'room-1' },
+    roomId: 'room-1',
     media: { id: '10', duration: 7200 },
   };
   const rooms = new Map([['room-1', room]]);

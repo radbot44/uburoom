@@ -221,8 +221,8 @@ test('lobby browsing needs no room; private creation never exposes the room to a
   assert.equal((await host.call('/api/watch/rooms', { visibility: 'invalid' })).status, 400);
   assert.equal(f.app.watch.rooms.size, 0);
   const roomId = (await host.call('/api/watch/rooms', { visibility: 'private' })).value.id;
-  assert.equal(f.app.watch.rooms.get(roomId).s.visibility, 'private');
-  assert.equal(Object.hasOwn(f.app.watch.rooms.get(roomId).s, 'enabled'), false);
+  assert.equal(f.app.watch.rooms.get(roomId).visibility, 'private');
+  assert.equal(Object.hasOwn(f.app.watch.rooms.get(roomId), 'enabled'), false);
   assert.deepEqual((await guest.call('/api/watch/rooms')).value.rooms, []);
   assert.equal((await guest.call('/api/watch/rooms/' + roomId + '?viewer=' + randomUUID())).status, 403);
   assert.equal((await guest.call('/api/watch/library?room=' + roomId)).status, 403);
@@ -289,7 +289,7 @@ test(
     await closed;
     await new Promise(resolve => setTimeout(resolve, 30));
     const room = f.app.watch.rooms.get(roomId);
-    assert.equal(Object.hasOwn(room.s, 'enabled'), false);
+    assert.equal(Object.hasOwn(room, 'enabled'), false);
     assert.ok(room.disconnectedViewers.has(viewer));
     const rejoined = await f.connect(await f.login('host'));
     state = (await rejoined.call(target + '?viewer=' + viewer)).value;
@@ -354,7 +354,7 @@ test(
       firstKnownAt = hostPresence.syncQuality.lastKnownAt;
     await host.call(path + '?viewer=' + hostViewer);
     assert.equal(hostPresence.syncQuality.score, 1, 'the current viewer retains its ephemeral score');
-    assert.equal(Object.hasOwn(room.s, 'syncQuality'), false, 'the score is separate from durable room state');
+    assert.equal(Object.hasOwn(room, 'syncQuality'), false, 'the score is separate from durable room state');
     // Telemetry already in flight when a viewer leaves must not cost the socket.
     host.ws.send(
       JSON.stringify({

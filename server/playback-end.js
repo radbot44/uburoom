@@ -65,7 +65,7 @@ function observePlaybackEnd(room, viewer, data, result, now = Date.now()) {
     room.manualPaused ||
     room.initialGate ||
     room.pauseAt ||
-    data.epoch !== room.s.epoch ||
+    data.epoch !== room.epoch ||
     data.mediaVersion !== room.mediaVersion ||
     viewer.mediaVersion !== room.mediaVersion ||
     data.streamVersion !== viewer.streamVersion ||

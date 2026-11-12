@@ -174,7 +174,7 @@ function watchOperations({
         const lobby = !url.searchParams.has('room') && !url.searchParams.has('session');
         const eligible = async () =>
           !context.signal?.aborted &&
-          (lobby || (room && watch.rooms.get(room.s.roomId) === room && (await watch.canView(room, auth.actor)))) &&
+          (lobby || (room && watch.rooms.get(room.roomId) === room && (await watch.canView(room, auth.actor)))) &&
           (await login(context))?.userId === auth.actor.userId;
         if (!(await eligible())) {
           return result(403, { error: 'Library access requires room access' });
@@ -444,7 +444,7 @@ function watchOperations({
       }
       // The video check is for the people who run the room; it names server details like free space.
       if (!write && match[2] === 'check') {
-        if (!hub.canManage(room.s, auth.actor)) return result(403, { error: 'Only hosts can see the video check' });
+        if (!hub.canManage(room, auth.actor)) return result(403, { error: 'Only hosts can see the video check' });
         if (!room.media || room.media.kind !== 'plex')
           return result(200, { items: [], level: 'ok', title: room.media?.title });
         if (url.searchParams.get('refresh') === '1') {
@@ -458,7 +458,7 @@ function watchOperations({
         if (!throttle('watch-command:' + auth.actor.userId, 120)) {
           return result(429, { error: 'Too many commands' });
         }
-        const envelope = validateCommandEnvelope(data, { expectedEpoch: room.s.epoch, now: Date.now() });
+        const envelope = validateCommandEnvelope(data, { expectedEpoch: room.epoch, now: Date.now() });
         if (!envelope.ok) {
           return result(409, { error: 'Room changed or command expired; retry manually' });
         }
@@ -471,17 +471,17 @@ function watchOperations({
             watchCurrent: current,
             ...(viewer ? { watchViewerId: envelope.coordination.viewerId } : {}),
           },
-          { ...envelope.payload, roomId: room.s.roomId, expiresAt: envelope.coordination.expiresAt },
+          { ...envelope.payload, roomId: room.roomId, expiresAt: envelope.coordination.expiresAt },
         );
         return result(200, applied);
       }
       if (write && match[2] === 'close') {
-        if (!(room.saved ? hub.canRoom(room.s, auth.actor, 'closeRoom') : hub.canManage(room.s, auth.actor))) {
+        if (!(room.saved ? hub.canRoom(room, auth.actor, 'closeRoom') : hub.canManage(room, auth.actor))) {
           return result(403, { error: 'Room close permission required' });
         }
-        if (room.saved && data.epoch !== room.s.epoch)
+        if (room.saved && data.epoch !== room.epoch)
           return result(409, { error: 'Room changed; refresh before closing' });
-        await watch.remove(room.s.roomId);
+        await watch.remove(room.roomId);
         return result(200, { ok: true });
       }
       if (write && match[2] === 'leave') {

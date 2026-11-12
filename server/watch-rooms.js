@@ -80,7 +80,7 @@ class WatchRooms {
     for (const saved of room.disconnectedViewers.values())
       if (saved.expires > now) members.add(this.store.account(saved.userId));
     if (room.recovery?.until > now) for (const id of room.recovery.viewers) members.add(this.store.account(id));
-    const record = this.store.get(room.s.roomId),
+    const record = this.store.get(room.roomId),
       maximum = Math.min(record.maxMembers || this.limits.maxMembers, this.limits.maxMembers);
     if (!members.has(userId) && members.size >= maximum) throw failure('Room full; try again when someone leaves', 429);
   }
@@ -122,11 +122,11 @@ class WatchRooms {
           room.media = media || null;
           media = undefined;
           room.position = saved?.position || 0;
-          room.s.state.seekable = !!room.media;
+          room.state.seekable = !!room.media;
           room.manualPaused = !recovery.wasPlaying;
           room.recovery = recovery;
-          room.s.hostId = record.creatorId;
-          room.s.hostName = this.registry.canonical(record.creatorId)?.name || 'Room leader';
+          room.hostId = record.creatorId;
+          room.hostName = this.registry.canonical(record.creatorId)?.name || 'Room leader';
           room.initialGate = !!room.media;
           if (room.media) this.watch.beginReadiness(room);
         } finally {
@@ -156,8 +156,8 @@ class WatchRooms {
       return;
     const controller = [...room.viewers.values()].find(
       v =>
-        (isHost(room.s, v.actor) || this.watch.hub.canRoom(room.s, v.actor, 'continueWithoutHost')) &&
-        this.watch.hub.canRoom(room.s, v.actor, 'playPause'),
+        (isHost(room, v.actor) || this.watch.hub.canRoom(room, v.actor, 'continueWithoutHost')) &&
+        this.watch.hub.canRoom(room, v.actor, 'playPause'),
     );
     if (!controller) return;
     room.recovering = true;
@@ -176,7 +176,7 @@ class WatchRooms {
         return;
       await this.watch.hub.dispatch(
         { ...controller.actor, watchViewerId: [...room.viewers.entries()].find(([, v]) => v === controller)[0] },
-        { roomId: room.s.roomId, action: 'media.play' },
+        { roomId: room.roomId, action: 'media.play' },
       );
     } finally {
       room.recovering = false;
@@ -184,7 +184,7 @@ class WatchRooms {
   }
   finishRecovery(room) {
     room.recovery = undefined;
-    this.recoveries.delete(room.s.roomId);
+    this.recoveries.delete(room.roomId);
   }
   async maintain(now = Date.now()) {
     if (this.stopped || this.maintaining || !this.readyAt) return;
@@ -275,11 +275,11 @@ class WatchRooms {
       record = { ...record, queueRevision: previous.queueRevision };
     }
     room.saved = record;
-    if (room.s.slug && record.slug && room.s.slug !== record.slug) {
+    if (room.slug && record.slug && room.slug !== record.slug) {
       room.previousSlugs ||= new Set();
-      room.previousSlugs.add(room.s.slug);
+      room.previousSlugs.add(room.slug);
     }
-    Object.assign(room.s, {
+    Object.assign(room, {
       creatorId: record.creatorId,
       hosts: record.hosts,
       invited: record.invited,
@@ -434,8 +434,8 @@ class WatchRooms {
             room = this.watch.rooms.get(opened);
           room.media = media || null;
           room.position = Math.min(saved?.position || 0, media?.duration || 0);
-          room.s.state.seekable = !!media;
-          room.s.state.paused = true;
+          room.state.seekable = !!media;
+          room.state.paused = true;
           room.manualPaused = true;
           if (media) {
             room.initialGate = true;
@@ -535,7 +535,7 @@ class WatchRooms {
       revision: record.revision,
       active: !!room && !room.reconnecting,
       hasLiveRoom: !!room,
-      epoch: room?.s.epoch,
+      epoch: room?.epoch,
       hasBookmark: !!record.bookmark,
       creator: person(record.creatorId),
       hosts: record.hosts.map(person),
@@ -652,9 +652,9 @@ class WatchRooms {
     await this.eligible(actor, current);
     await this.metadata(id, actor);
     const room = this.watch.rooms.get(id);
-    if (!room || room.s.epoch !== epoch) throw failure('Room changed; refresh before closing');
-    if (!this.watch.hub.canRoom(room.s, actor, 'closeRoom')) throw failure('Room close permission required', 403);
-    if (!(await current()) || this.watch.rooms.get(id) !== room || room.s.epoch !== epoch)
+    if (!room || room.epoch !== epoch) throw failure('Room changed; refresh before closing');
+    if (!this.watch.hub.canRoom(room, actor, 'closeRoom')) throw failure('Room close permission required', 403);
+    if (!(await current()) || this.watch.rooms.get(id) !== room || room.epoch !== epoch)
       throw failure('Room connection changed');
     await this.watch.remove(id);
     return { ok: true };
@@ -664,7 +664,7 @@ class WatchRooms {
     room.position = this.watch.position(room, Math.max(room.changedAt, at));
     room.changedAt = Date.now();
     room.pauseAt = room.startAt = undefined;
-    room.s.state.paused = true;
+    room.state.paused = true;
     room.manualPaused = true;
     room.revision++;
   }
@@ -722,8 +722,8 @@ class WatchRooms {
         if (!this.watch.rooms.has(id)) {
           this.watch.create(actor, record.visibility, record);
           const room = this.watch.rooms.get(id);
-          room.s.hostId = owner.id;
-          room.s.hostName = owner.name;
+          room.hostId = owner.id;
+          room.hostName = owner.name;
           room.recovery = this.recoveries.get(id);
           if (record.bookmark) {
             const saved = record.bookmark;
@@ -746,8 +746,8 @@ class WatchRooms {
                   room.media = media;
                   room.position = Math.min(saved.position, media.duration);
                   media.roomServerId = saved.serverId;
-                  room.s.state.seekable = true;
-                  room.s.state.paused = true;
+                  room.state.seekable = true;
+                  room.state.paused = true;
                   room.manualPaused = true;
                   room.initialGate = true;
                   this.watch.beginReadiness(room);
@@ -827,7 +827,7 @@ class WatchRooms {
         room.position = 0;
         room.mediaVersion = require('node:crypto').randomUUID();
         room.initialGate = false;
-        room.s.state.seekable = false;
+        room.state.seekable = false;
         room.readinessVersion = undefined;
         room.readinessStartAt = undefined;
         room.readinessTimedOut = undefined;
@@ -847,63 +847,63 @@ class WatchRooms {
     }
   }
   async elect(room) {
-    if (room.electing || this.watch.rooms.get(room.s.roomId) !== room) return;
+    if (room.electing || this.watch.rooms.get(room.roomId) !== room) return;
     const candidates = [...room.viewers.entries()].sort(
       (a, b) =>
-        Number(isHost(room.s, b[1].actor) || this.watch.hub.isAdmin(b[1].actor)) -
-          Number(isHost(room.s, a[1].actor) || this.watch.hub.isAdmin(a[1].actor)) || a[1].joinedAt - b[1].joinedAt,
+        Number(isHost(room, b[1].actor) || this.watch.hub.isAdmin(b[1].actor)) -
+          Number(isHost(room, a[1].actor) || this.watch.hub.isAdmin(a[1].actor)) || a[1].joinedAt - b[1].joinedAt,
     );
     const current = room.viewers.get(room.hostViewerId);
     const hasHostCandidate = candidates.some(
-      ([, viewer]) => isHost(room.s, viewer.actor) || this.watch.hub.isAdmin(viewer.actor),
+      ([, viewer]) => isHost(room, viewer.actor) || this.watch.hub.isAdmin(viewer.actor),
     );
     if (
       current &&
       Date.now() - current.at < 10000 &&
-      (isHost(room.s, current.actor) ||
+      (isHost(room, current.actor) ||
         this.watch.hub.isAdmin(current.actor) ||
-        (!hasHostCandidate && this.watch.hub.canRoom(room.s, current.actor, 'continueWithoutHost')))
+        (!hasHostCandidate && this.watch.hub.canRoom(room, current.actor, 'continueWithoutHost')))
     )
       return;
     if (
       room.waitingForHost &&
       !candidates.some(
         ([, viewer]) =>
-          isHost(room.s, viewer.actor) ||
+          isHost(room, viewer.actor) ||
           this.watch.hub.isAdmin(viewer.actor) ||
-          this.watch.hub.canRoom(room.s, viewer.actor, 'continueWithoutHost'),
+          this.watch.hub.canRoom(room, viewer.actor, 'continueWithoutHost'),
       )
     )
       return;
     // Freeze immediately; permission refresh/media authorization can take time.
-    const wasPlaying = !room.s.state.paused;
+    const wasPlaying = !room.state.paused;
     this.freeze(room);
     this.watch.invalidateControls(room);
     room.electing = true;
     try {
       for (const [viewerId, viewer] of candidates) {
         if (
-          !isHost(room.s, viewer.actor) &&
+          !isHost(room, viewer.actor) &&
           !this.watch.hub.isAdmin(viewer.actor) &&
-          !this.watch.hub.canRoom(room.s, viewer.actor, 'continueWithoutHost')
+          !this.watch.hub.canRoom(room, viewer.actor, 'continueWithoutHost')
         )
           continue;
         if (
           (viewer.alive && !(await viewer.alive())) ||
           !(await this.watch.canView(room, viewer.actor)) ||
-          this.watch.rooms.get(room.s.roomId) !== room ||
+          this.watch.rooms.get(room.roomId) !== room ||
           room.viewers.get(viewerId) !== viewer ||
           Date.now() - viewer.at >= 10000
         )
           continue;
-        room.s.hostId = viewer.userId;
-        room.s.hostName = viewer.name;
+        room.hostId = viewer.userId;
+        room.hostName = viewer.name;
         room.hostViewerId = viewerId;
         room.waitingForHost = false;
-        if (wasPlaying && this.watch.hub.canRoom(room.s, viewer.actor, 'playPause')) {
+        if (wasPlaying && this.watch.hub.canRoom(room, viewer.actor, 'playPause')) {
           await this.watch.hub.dispatch(
             { ...viewer.actor, watchViewerId: viewerId },
-            { roomId: room.s.roomId, action: 'media.play' },
+            { roomId: room.roomId, action: 'media.play' },
           );
         }
         return;
@@ -939,7 +939,7 @@ class WatchRooms {
       : room.recovery || {
           viewers,
           wasPlaying:
-            !room.s.state.paused ||
+            !room.state.paused ||
             (room.initialGate && !room.manualPaused) ||
             (room.reconnecting && !!room.disconnectedWasPlaying),
         };
@@ -956,9 +956,9 @@ class WatchRooms {
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();
     const saving = previous
       .then(async () => {
-        if (!final && this.watch.rooms.get(room.s.roomId) !== room) return;
+        if (!final && this.watch.rooms.get(room.roomId) !== room) return;
         const { bookmark, live, active } = captured || this.capture(room, { closing });
-        const record = this.store.get(room.s.roomId);
+        const record = this.store.get(room.roomId);
         this.store.db
           .prepare('UPDATE watch_rooms SET liveState=? WHERE id=?')
           .run(

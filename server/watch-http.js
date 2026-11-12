@@ -121,7 +121,7 @@ function watchHttp({
       grant &&
       grant.expires > Date.now() &&
       (await grant.alive()) &&
-      watch.rooms.get(grant.room.s.roomId) === grant.room &&
+      watch.rooms.get(grant.room.roomId) === grant.room &&
       grant.version === grant.room.mediaVersion &&
       (grant.fallback
         ? watch.fallbackFor(grant.room, grant.room.viewers.get(grant.viewerId) || {}) === grant.media
@@ -136,7 +136,7 @@ function watchHttp({
       grant &&
       grant.expires > Date.now() &&
       (await grant.alive()) &&
-      watch.rooms.get(grant.room.s.roomId) === grant.room &&
+      watch.rooms.get(grant.room.roomId) === grant.room &&
       grant.version === grant.room.mediaVersion &&
       viewer?.media?.captionVersion === captionVersion &&
       (await watch.canView(grant.room, grant.actor))
@@ -921,14 +921,14 @@ function watchHttp({
         attempt.redeeming = true;
         try {
           const room = watch.rooms.get(attempt.roomId);
-          const roomId = (await watch.canView(room, webActor(attempt.source))) ? room.s.roomId : undefined;
+          const roomId = (await watch.canView(room, webActor(attempt.source))) ? room.roomId : undefined;
           if (!(await alive()) || !handoff.consume(attempt)) {
             json(res, 410, { error: 'Activity sign-in expired or was cancelled' });
             return true;
           }
           if (existing?.userId !== attempt.source.userId) browserLogin(res, attempt.source);
           else res.setHeader('Set-Cookie', 'uburoom_handoff=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-          const target = roomId ? (room?.s?.slug ? '/room/' + room.s.slug : '/room/' + roomId) : '/';
+          const target = roomId ? (room?.slug ? '/room/' + room.slug : '/room/' + roomId) : '/';
           json(res, 200, {
             destination: attempt.connectPlex
               ? '/auth/plex' + (roomId ? '?return=' + encodeURIComponent(target) : '')
@@ -1257,18 +1257,18 @@ function watchHttp({
           } catch {
             const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
             if (activeRoom) {
-              roomId = activeRoom.s.roomId;
-              roomSlug = activeRoom.s.slug;
-              roomName = activeRoom.s.name;
+              roomId = activeRoom.roomId;
+              roomSlug = activeRoom.slug;
+              roomName = activeRoom.name;
             }
           }
         }
         if (!roomId && watch.rooms) {
-          const activeRoom = [...watch.rooms.values()].find(r => r.s?.slug === requested || r.s?.roomId === requested);
+          const activeRoom = [...watch.rooms.values()].find(r => r?.slug === requested || r?.roomId === requested);
           if (activeRoom) {
-            roomId = activeRoom.s.roomId;
-            roomSlug = activeRoom.s.slug;
-            roomName = activeRoom.s.name;
+            roomId = activeRoom.roomId;
+            roomSlug = activeRoom.slug;
+            roomName = activeRoom.name;
           }
         }
         if (roomId) {

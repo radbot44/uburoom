@@ -33,10 +33,10 @@ async function main() {
   for (const name of browsers) {
     const { app, config, subjects } = await startFixtureServer();
     let browser, host, guest;
-    const roomByName = roomName => [...app.watch.rooms.values()].find(room => room.s.name === roomName);
-    const roomIdByName = roomName => [...app.watch.rooms.entries()].find(([, room]) => room.s.name === roomName)?.[0];
-    const queueOf = id => app.watch.roomState.queue.summary(app.watch.rooms.get(id).s.roomId);
-    const enginePosition = id => require('../shared/engine').snapshot(app.watch.rooms.get(id).s.state);
+    const roomByName = roomName => [...app.watch.rooms.values()].find(room => room.name === roomName);
+    const roomIdByName = roomName => [...app.watch.rooms.entries()].find(([, room]) => room.name === roomName)?.[0];
+    const queueOf = id => app.watch.roomState.queue.summary(app.watch.rooms.get(id).roomId);
+    const enginePosition = id => require('../shared/engine').snapshot(app.watch.rooms.get(id).state);
     try {
       browser = await playbackBrowser(name);
       host = await openPage(browser, config.publicUrl + '/?demo=host');
@@ -246,7 +246,7 @@ async function main() {
       // Switching the queue tab smooth-scrolls #queue-layout; Firefox ends it with sub-pixel steps for
       // ~60 ms. Popovers close on any scroll, so a press inside that tail loses its confirmation.
       await settledScroll(browser, host, 'queue-layout');
-      const autoplay = () => app.watch.roomState.store.get(app.watch.rooms.get(id).s.roomId).autoplay;
+      const autoplay = () => app.watch.roomState.store.get(app.watch.rooms.get(id).roomId).autoplay;
       await until(enabled('#queue-autoplay'), 'Autoplay toggle ready');
       await run(pressId('queue-autoplay'));
       await until(
@@ -429,7 +429,7 @@ async function main() {
       await waitFor(() => queueOf(id).pendingCount === 0, 'Countdown advances once', 30000);
       assert.equal(queueOf(id).historyCount, 2);
       const completed = app.watch.roomState.queue
-        .history(app.watch.rooms.get(id).s.roomId)
+        .history(app.watch.rooms.get(id).roomId)
         .items.find(item => item.id === endingEntry);
       assert.equal(completed.outcome, 'completed');
       assert.equal(completed.position, 60);
@@ -459,7 +459,7 @@ async function main() {
         ),
         true,
       );
-      const viewerPermissions = app.watch.rooms.get(id).s.permissions.viewer;
+      const viewerPermissions = app.watch.rooms.get(id).permissions.viewer;
       assert.equal(viewerPermissions.addQueue || viewerPermissions.editQueue, false);
       // A viewer without seek permission is refused by the server's command engine, not only by a disabled
       // control. execute() is the page's command path; no on-screen control can send a refused seek.
@@ -500,7 +500,7 @@ async function main() {
       );
       await until(hasText('#room-current-people', 'Demo guest') + ' && ' + enabled('#room-transfer'), 'Host controls');
       await run(settingsSection('general') + ';' + choose('room-settings-visibility', 'private'));
-      await waitFor(() => app.watch.rooms.get(id).s.visibility === 'private', 'Private cohost room');
+      await waitFor(() => app.watch.rooms.get(id).visibility === 'private', 'Private cohost room');
       await until(enabled('#room-transfer'), 'Transfer still available');
       await browser.viewport(host, 390, 844);
       await shot('phone-settings');
@@ -589,10 +589,10 @@ async function main() {
       );
       await until(text('#options-title') + '==="Full permissions"', 'Full-permission creation');
       const largeRoom = roomByName('Full permissions');
-      assert.equal(largeRoom.s.permissions.viewer.editQueue, true);
-      assert.equal(largeRoom.s.permissions.viewer.deleteRoom, false);
+      assert.equal(largeRoom.permissions.viewer.editQueue, true);
+      assert.equal(largeRoom.permissions.viewer.deleteRoom, false);
       await app.watch.roomState.queue.addBulk(
-        largeRoom.s.roomId,
+        largeRoom.roomId,
         largeRoom.saved.creatorId,
         Array.from({ length: 110 }, (_, i) => ({
           serverId: 'fixture-machine',
@@ -624,7 +624,7 @@ async function main() {
     } catch (error) {
       console.error(
         [...app.watch.rooms.values()].map(room => ({
-          name: room.s.name,
+          name: room.name,
           creator: room.saved?.creatorId,
           hosts: room.saved?.hosts,
           revision: room.saved?.revision,

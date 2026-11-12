@@ -80,7 +80,7 @@ async function startLifecycle({ host, guest, h, g, app, room, output }) {
   await pause(3000);
   const after = await host.evaluate(h, 'video.currentTime');
   assert.ok(after > before + 2);
-  assert.equal(active.s.state.paused, false);
+  assert.equal(active.state.paused, false);
   assert.equal(active.startAt, deadline, 'Ongoing buffering cannot reschedule healthy viewers');
   assert.deepEqual(
     [...active.viewers.values()].map(v => v.streamVersion),

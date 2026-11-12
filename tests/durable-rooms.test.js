@@ -643,7 +643,7 @@ test(
         ? await command(creator, id, a, 'room.visibility', { visibility: 'private' })
         : await edit({ action: 'visibility', visibility: 'private' });
       assert.equal(result.status, 200);
-      assert.equal(room.s.visibility, 'private');
+      assert.equal(room.visibility, 'private');
       assert.equal(
         [...room.viewers.values()].some(v => v.userId === guestId),
         false,
@@ -990,7 +990,7 @@ test(
     await creator.call('/api/watch/rooms/' + id + '/leave', { viewerId: a });
     const room = f.app.watch.rooms.get(id);
     assert.ok(room);
-    assert.equal(room.s.state.paused, true);
+    assert.equal(room.state.paused, true);
     assert.equal((await command(guest, id, b, 'media.play')).body.status, 'forbidden');
     const selectionPolicy = (await creator.call('/api/watch/rooms/' + id + '/settings')).body;
     await creator.call('/api/watch/rooms/' + id + '/settings', {
@@ -1080,7 +1080,7 @@ test(
     let settings = (await admin.call('/api/watch/rooms/' + id + '/settings')).body;
     assert.ok(settings.capabilities.manageHosts);
     assert.equal(settings.hosts.length, 0);
-    const oldSlug = f.app.watch.rooms.get(id).s.slug;
+    const oldSlug = f.app.watch.rooms.get(id).slug;
     settings = (
       await admin.call('/api/watch/rooms/' + id + '/settings', {
         revision: settings.revision,
@@ -1089,7 +1089,7 @@ test(
     ).body;
     assert.equal(settings.creator.name, 'Demo host');
     const active = f.app.watch.rooms.get(id);
-    assert.equal(active.s.slug, 'moderated-name');
+    assert.equal(active.slug, 'moderated-name');
     assert.ok(active.previousSlugs.has(oldSlug));
     const redirect = await new Promise((resolve, reject) => {
       https
@@ -1658,7 +1658,7 @@ test('reboot recovery admits ordinary returning viewers, waits for everyone and 
   await f.app.watch.roomState.maintain(recovery.until + 1);
   const room = f.app.watch.rooms.get(id);
   assert.equal(room.recovery, undefined);
-  assert.equal(room.s.state.paused, true);
+  assert.equal(room.state.paused, true);
   assert.equal(room.manualPaused, true);
 });
 
@@ -1704,7 +1704,7 @@ test('reboot playback resumes only with all expected people ready, or explicit p
     await f.app.watch.ready(room2, v.actor, key, room2.mediaVersion, true, room2.readinessVersion);
   assert.equal(room2.recovery, undefined);
   assert.equal(room2.manualPaused, true);
-  assert.equal(room2.s.state.paused, true);
+  assert.equal(room2.state.paused, true);
 });
 
 test('permitted Play bypasses missing restart participants and closed rooms remain closed', tls, async t => {
@@ -1774,7 +1774,7 @@ test('missing queue media remains removable, blocks raw additions and restores w
   });
   assert.notEqual(rejected.body.status, 'applied');
   assert.equal(queue.pending(id).length, 0);
-  await queue.playNow(id, room.s.ownerId, item);
+  await queue.playNow(id, room.ownerId, item);
   room.media = await f.app.watch.roomState.savedSource(plex, { ...item, position: 0 });
   room.media.roomServerId = item.serverId;
   const response = await client.call(root + '?viewer=' + viewer);

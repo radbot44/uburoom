@@ -121,7 +121,7 @@ class PlaybackTracking {
           id: randomUUID(),
           userId: viewer.userId,
           identities,
-          roomId: room.s.roomId,
+          roomId: room.roomId,
           viewerId,
           mediaId: room.media.id,
           duration: room.media.duration,

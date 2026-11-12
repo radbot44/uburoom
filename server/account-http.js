@@ -31,7 +31,7 @@ function accountHttp({
   const sourceHash = req => cookies(req).uburoom && hash(cookies(req).uburoom);
   const busy = ids =>
     [...watch.rooms.values()].some(
-      room => ids.includes(room.s.hostId) || [...room.viewers.values()].some(v => ids.includes(v.userId)),
+      room => ids.includes(room.hostId) || [...room.viewers.values()].some(v => ids.includes(v.userId)),
     );
   async function invalidate(ids, ownerChanged = false) {
     for (const id of ids) if (hub.adminUsers.delete(id)) hub.adminEpoch++;

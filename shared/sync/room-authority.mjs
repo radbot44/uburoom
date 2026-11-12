@@ -28,11 +28,11 @@ const defaultCreateId = () => globalThis.crypto.randomUUID();
 const defaultMonoNow = () => globalThis.performance.now();
 
 function getPaused(room) {
-  return room.s?.state ? room.s.state.paused : Boolean(room.paused);
+  return room.state ? room.state.paused : Boolean(room.paused);
 }
 
 function setPaused(room, paused) {
-  if (room.s?.state) room.s.state.paused = paused;
+  if (room.state) room.state.paused = paused;
   else room.paused = paused;
 }
 
@@ -42,8 +42,7 @@ function getDuration(room) {
 }
 
 function setEpoch(room, epoch) {
-  if (room.s) room.s.epoch = epoch;
-  else room.epoch = epoch;
+  room.epoch = epoch;
 }
 
 export function position(room, now = Date.now()) {

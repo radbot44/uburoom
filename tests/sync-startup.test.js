@@ -226,7 +226,7 @@ function roomFixture() {
   watch.snapshot(room, guest, g);
   const dispatch = async (action, args) => {
     const result = await hub.dispatch(host, {
-      roomId: room.s.roomId,
+      roomId: room.roomId,
       action,
       args: action === 'media.load' ? { quality: 'direct', ...args } : args,
     });
@@ -244,7 +244,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
     await f.watch.ready(f.room, f.guest, f.g, f.room.mediaVersion, true);
     const deadline = f.room.startAt;
     assert.ok(deadline > Date.now() + 1500);
-    assert.equal(f.room.s.state.paused, false);
+    assert.equal(f.room.state.paused, false);
     assert.equal(f.watch.position(f.room, deadline - 500), 0);
     assert.equal(f.watch.position(f.room, deadline + 1000), 1);
     const late = randomUUID();
@@ -253,7 +253,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
     assert.equal(f.room.startAt, deadline, 'a late unready viewer cannot delay the group');
     await f.dispatch('media.pause');
     assert.equal(f.room.startAt, undefined);
-    assert.equal(f.room.s.state.paused, true);
+    assert.equal(f.room.state.paused, true);
     await f.dispatch('media.play');
     assert.ok(f.room.startAt >= Date.now() + 390, 'ordinary resume is scheduled');
     await f.dispatch('media.seek.absolute', { seconds: 35 });
@@ -264,7 +264,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
     await f.watch.ready(f.room, f.host, f.h, f.room.mediaVersion, true);
     await f.watch.ready(f.room, f.guest, f.g, f.room.mediaVersion, true);
     assert.equal(f.room.startAt, undefined, 'explicit initial pause survives readiness');
-    assert.equal(f.room.s.state.paused, true);
+    assert.equal(f.room.state.paused, true);
     await f.dispatch('media.load', { mediaId: 'demo' });
     assert.equal(f.room.startAt, undefined, 'replacement cannot inherit the old start');
   } finally {
@@ -304,7 +304,7 @@ test('startup and seek buffering consume the start lead; late readiness uses onl
     const slow = f.room.readinessStartAt;
     now += 2500;
     await ready(f.h);
-    assert.equal(f.room.s.state.paused, true, 'expiry alone cannot release unready viewers');
+    assert.equal(f.room.state.paused, true, 'expiry alone cannot release unready viewers');
     assert.equal(f.watch.position(f.room), 40);
     await ready(f.g);
     assert.ok(f.room.startAt > slow);
@@ -315,7 +315,7 @@ test('startup and seek buffering consume the start lead; late readiness uses onl
     now += 2000;
     await ready(f.h);
     await ready(f.g);
-    assert.equal(f.room.s.state.paused, true);
+    assert.equal(f.room.state.paused, true);
     await f.dispatch('media.play');
     assert.equal(f.room.startAt, now + 1750, 'deliberate pause cancels the old countdown');
   } finally {

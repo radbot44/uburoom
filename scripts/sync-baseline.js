@@ -161,7 +161,7 @@ async function main() {
           (await host.evaluate(h, 'video.currentTime')) > before + 2,
           'Guest recovery must not stop healthy playback',
         );
-        assert.equal(app.watch.rooms.get(room).s.state.paused, false);
+        assert.equal(app.watch.rooms.get(room).state.paused, false);
         await guest.evaluate(g, 'probing=false;playerWaiting=false;sync.synchronize().then(()=>true)');
         await guest.until(g, '!video.paused && !video.seeking', 'Guest catch-up');
         await pause(3000);

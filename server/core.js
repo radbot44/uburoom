@@ -25,21 +25,14 @@ function sameVoice(room, actor, access) {
   return !!channel && !!access?.validVoiceChannel?.(channel) && access.voiceChannel(actor.userId) === channel;
 }
 function watching(room, actor, now = Date.now()) {
-  return (
-    room.kind === 'watch' &&
-    [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS)
-  );
+  return [...(room.viewers?.values() || [])].some(v => v.userId === actor.userId && now - v.at < PRESENCE_MS);
 }
 
 function viewEligible(room, actor, config, now = Date.now(), access, admin = false) {
   // A guest session opens one room only.
   if (actor.guestRoomId && (room.roomId ?? room.id) !== actor.guestRoomId) return false;
   return (
-    room.kind === 'watch' &&
     canWatch(access, actor.userId, actor) &&
-    room.reachable &&
-    now - room.lastSeen < PRESENCE_MS &&
-    room.socket.readyState === 1 &&
     (admin ||
       room.visibility === 'public' ||
       (room.creatorId ? RoomPolicy.admitted(room, actor.userId) : isHost(room, actor)) ||
@@ -235,7 +228,7 @@ class Hub {
     // Only the authenticated watch endpoint can attach a viewer identity.
     // Personal audio/quality never changes the room for other viewers.
     const personal =
-      this.rooms.get(input.roomId)?.kind === 'watch' &&
+      this.rooms.has(input.roomId) &&
       !!actor.watchViewerId &&
       [
         'media.quality.set',
@@ -255,7 +248,7 @@ class Hub {
         : eligible(s, actor, this.config, Date.now(), this.access, manage, this.isAdmin(actor)))
     )
       return { status: 'forbidden', message: 'No controllable room.' };
-    if (s.kind === 'watch' && this.watchCanView && !(await this.watchCanView(s, actor)))
+    if (this.watchCanView && !(await this.watchCanView(s, actor)))
       return { status: 'forbidden', message: 'No controllable room.' };
     if (s.permissions) {
       if (!this.roomCommandAllowed(s, actor, command, personal))

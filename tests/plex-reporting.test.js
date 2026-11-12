@@ -103,7 +103,7 @@ function fixture({ reportingEnabled = true, watchStateEnabled = true } = {}) {
   });
 
   const room = {
-    s: { roomId: randomUUID() },
+    roomId: randomUUID(),
     media: { kind: 'plex', id: '13159', duration: 720 },
     mediaVersion: randomUUID(),
     viewers: new Map(),

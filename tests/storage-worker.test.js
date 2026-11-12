@@ -111,7 +111,7 @@ test('worker-backed playback writes keep the local event-loop p95 below the sync
     accounts = new Accounts(file, vault),
     tracking = new PlaybackTracking(accounts);
   const user = accounts.resolve('plex', '101', 'Load fixture');
-  const room = { s: { roomId: randomUUID() }, media: { id: '42', duration: 300 }, mediaVersion: randomUUID() };
+  const room = { roomId: randomUUID(), media: { id: '42', duration: 300 }, mediaVersion: randomUUID() };
   const viewers = Array.from({ length: 16 }, () => ({
     userId: user.id,
     observationEpoch: randomUUID(),

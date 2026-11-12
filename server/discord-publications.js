@@ -123,15 +123,15 @@ class DiscordPublications {
               room.mediaTransition ||
               !room.media ||
               room.media.unavailable ||
-              room.s.state.waitingForReady
+              room.state.waitingForReady
             ? 'Waiting'
-            : room.s.state.paused
+            : room.state.paused
               ? 'Paused'
               : 'Playing',
       viewers,
       visibility: record.visibility,
       revision: record.revision,
-      epoch: room?.s.epoch,
+      epoch: room?.epoch,
       invite: this.config.publicUrl + '/join/' + record.inviteCode,
       posterUrl: this.posterUrl(record.id),
     };
@@ -279,7 +279,7 @@ class DiscordPublications {
   }
   async check(room, actor, permitted) {
     if (actor.watchCurrent && !(await actor.watchCurrent())) throw fail('Room access changed.', 403);
-    const id = room.s.roomId;
+    const id = room.roomId;
     let media;
     do {
       if (this.watch.rooms.get(id) !== room || room.removing) throw fail('This room is closed.', 409);
@@ -296,7 +296,7 @@ class DiscordPublications {
   }
   async command(room, action, actor, permitted) {
     if (!room?.saved || room.removing) throw fail('This room is closed.', 409);
-    const id = room.s.roomId;
+    const id = room.roomId;
     return this.lane(id, async () => {
       await this.check(room, actor, permitted);
       let publication = this.records.get(id);

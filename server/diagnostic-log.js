@@ -103,8 +103,8 @@ class DiagnosticLog {
       this.append(at, {
         at: localTime(at),
         source: 'viewer',
-        room: room.s.roomId,
-        roomName: room.s.name || undefined,
+        room: room.roomId,
+        roomName: room.name || undefined,
         viewer: name,
         viewerId,
         title,

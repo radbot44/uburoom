@@ -70,7 +70,7 @@ async function main() {
     const soloPosition = room.position;
     await guest.evaluate(g, 'selectRoom(' + JSON.stringify(roomId) + ').then(()=>true)');
     assert.equal(room.initialGate, false);
-    assert.equal(room.s.state.paused, false);
+    assert.equal(room.state.paused, false);
     assert.equal(room.position, soloPosition, 'joining preserves solo playback');
     assert.ok(app.watch.controlLead(room) >= 400, 'second viewing tab restores shared delivery lead');
     await host.evaluate(h, 'execute({action:"media.load",args:{mediaId:"demo",quality:"direct"}}).then(()=>true)');

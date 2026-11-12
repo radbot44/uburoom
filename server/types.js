@@ -34,21 +34,17 @@
  */
 
 /**
- * Room descriptor managed by the Hub.
+ * Room identity, roles and shared playback state that the Hub authorizes against.
  * @typedef {Object} RoomDescriptor
  * @property {string} roomId - Unique room UUID.
  * @property {string} epoch - Epoch UUID rotated on consent revocation or host changes.
- * @property {'watch'} kind - Room type for watch rooms.
  * @property {string} ownerId - Account UUID of the room creator.
  * @property {string} ownerName - Display name of the room creator.
  * @property {string} hostId - Account UUID of the current room host.
  * @property {string} hostName - Display name of the current room host.
  * @property {'public'|'private'} visibility - Room visibility gate.
- * @property {boolean} reachable - Whether the room is actively connected and reachable.
- * @property {number} lastSeen - Timestamp (ms) of last presence ping or activity.
  * @property {Controls} controls - Current allowed control categories.
  * @property {RoomPlaybackState} state - Live playback and picture state.
- * @property {any} socket - WebSocket or virtual socket connection object.
  * @property {Map<string, Viewer>} [viewers] - Active viewers in the room.
  * @property {Function} [execute] - Command execution delegate.
  */
@@ -100,9 +96,8 @@
  */
 
 /**
- * An active watch room instance managing shared timeline and viewers.
- * @typedef {Object} Room
- * @property {RoomDescriptor} s - Underlying hub room descriptor.
+ * Live state of an active watch room: shared timeline, viewers and in-flight work.
+ * @typedef {Object} RoomRuntime
  * @property {boolean} [saved] - Whether the room is backed by a saved room record.
  * @property {any} media - Currently loaded Plex media metadata object (or null).
  * @property {InstanceType<typeof import('./fallback-stream').FallbackStream>} [fallbackStream] - Ephemeral room-owned fallback; never persisted.
@@ -136,6 +131,11 @@
  * @property {any} [autoplayCountdown] - Active cancellable autoplay countdown.
  * @property {ReturnType<typeof setTimeout>} [autoplayTimer] - Timer that fires the autoplay countdown.
  * @property {string} [autoplayError] - Last autoplay failure shown to the room.
+ */
+
+/**
+ * An active watch room: one object the Hub and Watch share.
+ * @typedef {RoomDescriptor & RoomRuntime} Room
  */
 
 /**

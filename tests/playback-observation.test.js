@@ -129,7 +129,7 @@ test('frame observation tracks advancing callbacks, freezes counters when callba
 test('client clock steps in both directions retain exactly observed decoded credit', async () => {
   const f = client(),
     tracking = new PlaybackTracking(undefined, () => f.sent.at(-1)?.sampleAt + 99000 || 100000);
-  const room = { s: { roomId: 'room' }, mediaVersion: 'media', media: { id: 'fixture', duration: 100 } };
+  const room = { roomId: 'room', mediaVersion: 'media', media: { id: 'fixture', duration: 100 } };
   const viewer = {
     userId: 'user',
     observationEpoch: 'epoch',

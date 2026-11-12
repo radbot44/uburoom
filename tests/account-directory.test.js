@@ -75,10 +75,9 @@ test('all-hosts changes controls without exposing private rooms or conferring sa
   assert.throws(() => store.restore(room.id, viewer.id), { status: 403 });
   const actor = { userId: viewer.id },
     config = {};
-  const live = { ...room, kind: 'watch', reachable: true, lastSeen: Date.now(), socket: { readyState: 1 } };
-  assert.equal(viewEligible(live, actor, config, Date.now(), { isMember: () => true }), false);
+  assert.equal(viewEligible(room, actor, config, Date.now(), { isMember: () => true }), false);
   room = await store.edit(room.id, creator.id, room.revision, { action: 'host.add', userId: viewer.id });
-  assert.equal(viewEligible({ ...live, hosts: room.hosts }, actor, config, Date.now(), { isMember: () => true }), true);
+  assert.equal(viewEligible(room, actor, config, Date.now(), { isMember: () => true }), true);
 });
 test('pending host grants create no account, require exact verified identity, are cancellable, and follow canonical merges', async t => {
   const { registry, store, creator, host, viewer } = fixture(t);

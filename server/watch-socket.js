@@ -76,7 +76,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
       viewer = room?.viewers.get(message.viewerId);
     // A report can cross the viewer's own leave. Only a foreign identity is misuse.
     if (!room || !viewer) return;
-    if (room.s.roomId !== message.roomId || viewer.userId !== client.userId)
+    if (room.roomId !== message.roomId || viewer.userId !== client.userId)
       return client.ws.close(4003, 'Playback viewer unavailable');
     let subscription;
     try {

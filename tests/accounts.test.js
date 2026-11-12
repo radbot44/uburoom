@@ -1612,10 +1612,10 @@ test(
     });
     aliceState = (await alice.request(`/api/watch/rooms/${aliceRoom}?viewer=${aliceViewer}`)).body;
     const restrictedRoom = f.app.watch.rooms.get(aliceRoom);
-    restrictedRoom.s.permissions.allHosts = true;
+    restrictedRoom.permissions.allHosts = true;
     assert.equal(await f.app.watch.canView(restrictedRoom, actor), false, 'All hosts grants no item entitlement');
-    restrictedRoom.s.permissions.allHosts = false;
-    restrictedRoom.s.hosts.push(b.id);
+    restrictedRoom.permissions.allHosts = false;
+    restrictedRoom.hosts.push(b.id);
     assert.equal(
       await f.app.watch.canView(restrictedRoom, actor),
       false,
@@ -1729,7 +1729,7 @@ test(
       400,
       'active rooms must be left before changing identities',
     );
-    await browser.post('/api/watch/rooms/' + room + '/close', { epoch: f.app.watch.rooms.get(room).s.epoch });
+    await browser.post('/api/watch/rooms/' + room + '/close', { epoch: f.app.watch.rooms.get(room).epoch });
     f.members.delete(f.provider.subjects.guest);
     assert.equal(
       (await browser.post('/api/account/plex/remove', { subject: '101' })).status,
@@ -1859,7 +1859,7 @@ test(
       400,
       'live room ownership cannot move during a merge',
     );
-    await discord.post('/api/watch/rooms/' + roomId + '/close', { epoch: f.app.watch.rooms.get(roomId).s.epoch });
+    await discord.post('/api/watch/rooms/' + roomId + '/close', { epoch: f.app.watch.rooms.get(roomId).epoch });
     assert.equal((await plex.post('/api/account/merge', { id: preview.id })).status, 200);
     assert.equal((await discord.request('/api/watch/me')).status, 401);
     assert.equal((await plex.request('/api/account')).body.account.id, oldP);
