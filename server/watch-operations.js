@@ -14,20 +14,18 @@ const { clientAddress } = require('./plex-delivery');
 function applyRoomProgress(watch, roomId, items = []) {
   if (!roomId || !items.length) return;
   const liveRoom = watch.rooms.get(roomId);
-  const saved = watch.roomState?.store.get(roomId);
+  const saved = watch.roomState.store.get(roomId);
   let dbRows = new Map();
-  if (watch.roomState?.store?.db) {
-    try {
-      const rows = watch.roomState.store.db
-        .prepare(
-          "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC",
-        )
-        .all(roomId);
-      for (const r of rows) {
-        dbRows.set(r.mediaId, r);
-      }
-    } catch {}
-  }
+  try {
+    const rows = watch.roomState.store.db
+      .prepare(
+        "SELECT mediaId, position, duration, outcome FROM watch_queue_entries WHERE roomId = ? AND state IN ('current', 'history') ORDER BY updatedAt ASC",
+      )
+      .all(roomId);
+    for (const r of rows) {
+      dbRows.set(r.mediaId, r);
+    }
+  } catch {}
   for (const item of items) {
     if (!item) continue;
     let pos = null;
@@ -106,11 +104,9 @@ function watchOperations({
       const auth = await authorized(context, !!context.controlSocket || write);
       if (!auth) return result(401, { error: 'Log in with Discord' });
       context.signal?.throwIfAborted();
-      watch.roomState?.people.enter(auth.actor.userId);
-      if (registry) {
-        if (context.controlSocket) hub.directory?.connected(context.controlSocket, auth.actor.userId);
-        await watch.roomState?.claimHosts(auth.actor.userId);
-      }
+      watch.roomState.people.enter(auth.actor.userId);
+      if (context.controlSocket) hub.directory?.connected(context.controlSocket, auth.actor.userId);
+      await watch.roomState.claimHosts(auth.actor.userId);
       await hub.refreshAdmin?.(auth.actor);
       const current = async () =>
         !context.signal?.aborted &&
@@ -137,13 +133,13 @@ function watchOperations({
           owner: hub.isOwner(auth.actor),
           adminEligible: hub.canAdmin(auth.actor),
           adminMode: hub.isAdmin(auth.actor),
-          durableRooms: !!watch.roomState,
-          roomLimits: watch.roomState?.limits,
+          durableRooms: true,
+          roomLimits: watch.roomState.limits,
           singleRoom: !!config.singleRoom,
           roomPermissionDefaults: RoomPolicy.policy(config.roomPermissions),
           csrf: auth.identity.csrf,
-          account: registry?.summary(auth.actor.userId),
-          guest: !!registry?.isGuest(auth.actor.userId),
+          account: registry.summary(auth.actor.userId),
+          guest: registry.isGuest(auth.actor.userId),
           guestRoomId: auth.actor.guestRoomId,
         });
       }
@@ -230,7 +226,6 @@ function watchOperations({
         return result(200, history);
       }
       if (url.pathname === '/api/watch/rooms/saved' && !write) {
-        if (!watch.roomState) return result(200, { rooms: [], total: 0 });
         await watch.roomState.eligible(auth.actor, current);
         return result(200, watch.roomState.list(auth.actor, { offset: Number(url.searchParams.get('offset') || 0) }));
       }
@@ -264,11 +259,11 @@ function watchOperations({
       }
       if (config.singleRoom && match[1] !== registry.meta('singleRoomId'))
         return result(403, { error: 'Only the configured shared room is available' });
-      if (watch.roomState && match[2] === 'reopen' && write) {
+      if (match[2] === 'reopen' && write) {
         if (data.viewerId !== undefined && !UUID.test(data.viewerId)) return result(400, { error: 'Invalid viewer' });
         return opened(await watch.roomState.reopen(match[1], auth.actor, current));
       }
-      if (watch.roomState && match[2] === 'people' && !write) {
+      if (match[2] === 'people' && !write) {
         if (!throttle('room-people:' + auth.actor.userId, 120)) return result(429, { error: 'Too many searches' });
         const check = async () => {
           await watch.roomState.eligible(auth.actor, current);
@@ -293,7 +288,7 @@ function watchOperations({
         if (latest.revision !== room.revision) return result(409, { error: 'Room changed; search again' });
         return result(200, found);
       }
-      if (watch.roomState && match[2] === 'settings') {
+      if (match[2] === 'settings') {
         if (write) {
           if (!throttle('room-settings:' + auth.actor.userId, 60))
             return result(429, { error: 'Too many room changes' });
@@ -346,7 +341,7 @@ function watchOperations({
         if (!(await current())) return result(403, { error: 'Room access changed' });
         return result(200, value);
       }
-      if (watch.roomState && match[2] === 'queue') {
+      if (match[2] === 'queue') {
         await watch.roomState.eligible(auth.actor, current);
         await watch.roomState.metadata(match[1], auth.actor);
         if (!(await current())) return result(403, { error: 'Room access changed' });
@@ -398,7 +393,7 @@ function watchOperations({
           }),
         );
       }
-      if (watch.roomState && match[2] === 'history') {
+      if (match[2] === 'history') {
         await watch.roomState.eligible(auth.actor, current);
         await watch.roomState.metadata(match[1], auth.actor);
         if (!(await current())) return result(403, { error: 'Room access changed' });
@@ -432,9 +427,9 @@ function watchOperations({
         );
       }
       if (!watch.rooms.has(match[1]) && !write && !match[2])
-        await watch.roomState?.recover(match[1], auth.actor, current);
+        await watch.roomState.recover(match[1], auth.actor, current);
       const room = watch.rooms.get(match[1]);
-      if (room?.saved && write && match[2] === 'close')
+      if (room && write && match[2] === 'close')
         return result(200, await watch.roomState.closeRoom(match[1], auth.actor, data.epoch, current));
       if (!(await watch.canView(room, auth.actor))) {
         return result(403, { error: 'Room unavailable or private' });
@@ -474,15 +469,6 @@ function watchOperations({
           { ...envelope.payload, roomId: room.roomId, expiresAt: envelope.coordination.expiresAt },
         );
         return result(200, applied);
-      }
-      if (write && match[2] === 'close') {
-        if (!(room.saved ? hub.canRoom(room, auth.actor, 'closeRoom') : hub.canManage(room, auth.actor))) {
-          return result(403, { error: 'Room close permission required' });
-        }
-        if (room.saved && data.epoch !== room.epoch)
-          return result(409, { error: 'Room changed; refresh before closing' });
-        await watch.remove(room.roomId);
-        return result(200, { ok: true });
       }
       if (write && match[2] === 'leave') {
         await watch.leave(room, auth.actor, data.viewerId);

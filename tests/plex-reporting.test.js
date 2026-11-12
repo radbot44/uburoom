@@ -25,8 +25,11 @@ test('reporting coalesces queued states, applies current consent and drains reti
       }
     },
   };
-  const reporting = new PlexReporting({ plexAuth: { forUser: async () => scope } });
-  const viewer = { userId: 'viewer', streamVersion: 'stream', observationEpoch: 'epoch', plexWatchState: true };
+  const registry = new Accounts(undefined, credentialVault());
+  const account = registry.resolve('plex', 'viewer-sub', 'Viewer');
+  registry.credential('viewer-sub', { token: 'viewer-token', clientId: 'fixture' });
+  const reporting = new PlexReporting({ registry, plexAuth: { forUser: async () => scope } });
+  const viewer = { userId: account.id, streamVersion: 'stream', observationEpoch: 'epoch', plexWatchState: true };
   const room = { media: { kind: 'plex', id: '123:456', duration: 120 }, mediaVersion: 'media' };
   const observe = (state, position) =>
     reporting.observe(room, viewer, 'viewer', { state, position }, { credit: { reason: 'credited' } });

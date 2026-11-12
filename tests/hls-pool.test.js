@@ -26,6 +26,7 @@ function fixture() {
   const fetch = async (input, options = {}) => {
     const url = new URL(input),
       token = options.headers['X-Plex-Token'];
+    if (url.pathname === '/') return json({ machineIdentifier: 'pool-fixture' });
     state.requests.push({ path: url.pathname, token });
     if (state.invalid.has(token)) return new Response(null, { status: 403 });
     if (url.pathname === '/library/metadata/1') {
@@ -596,7 +597,7 @@ test('shared HTTP delivery retains viewer grants and own-scope access checks, an
     validVoiceChannel: () => true,
     options: () => ({ available: true }),
   };
-  app.hub.plexFor = async actor => scopes.get(actor.userId);
+  app.hub.plexFor = async actor => scopes.get(actor.discordId);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;
   config.publicUrl = 'https://localhost:' + port;

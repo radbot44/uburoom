@@ -136,8 +136,8 @@ function createApp(
       );
     if (config.accountFile && fs.existsSync(config.accountFile) && !fs.existsSync(config.credentialKeyFile))
       throw new Error('The uburoom credential key is missing; restore the original key before starting');
-    const vault = config.accountFile || config.unifiedAccounts ? credentialVault(config.credentialKeyFile) : undefined;
-    registry = vault ? new Accounts(config.accountFile, vault) : undefined;
+    const vault = credentialVault(config.credentialKeyFile);
+    registry = new Accounts(config.accountFile, vault);
     // Persist policy identity without leaving an offline verifier of the shared
     // password in SQLite. Password grants are process-local and reset on restart.
     const accounts = loginStore(
@@ -161,7 +161,7 @@ function createApp(
     const hub = new Hub(config);
     hub.ownerName = accounts.ownerName;
     hub.setOwnerName = name => {
-      const owner = registry?.identity('discord', config.ownerId);
+      const owner = registry.identity('discord', config.ownerId);
       if (owner?.verified) name = registry.canonical(owner.userId)?.name || name;
       if (typeof name !== 'string' || !name || name === accounts.ownerName) return;
       hub.ownerName = accounts.ownerName = name.slice(0, 100);
@@ -171,12 +171,10 @@ function createApp(
       oauthStates = new Map(),
       limits = new Map();
     function discordIdentity(identity) {
-      if (!registry) return identity;
       const account = registry.resolve('discord', identity.userId, identity.name);
       return { ...identity, name: account.name, userId: account.id, accountRevision: account.revision };
     }
     function validIdentity(identity) {
-      if (!registry) return true;
       const account = registry.canonical(identity.userId);
       return !!account && account.id === identity.userId && account.revision === identity.accountRevision;
     }
@@ -367,7 +365,7 @@ function createApp(
         ...(registry
           ? { discordId: registry.identities(login.userId).find(i => i.provider === 'discord' && i.verified)?.subject }
           : {}),
-        name: registry?.canonical(login.userId)?.name || login.name,
+        name: registry.canonical(login.userId)?.name || login.name,
         activity: login.activity === true,
         ...(login.guestRoom ? { guestRoomId: login.guestRoom, device: login.device } : {}),
       };
@@ -390,187 +388,180 @@ function createApp(
     }
     const demoFile = path.join(__dirname, '../assets/demo/sync-test.mp4');
     const plex = new Plex(config, plexFetch);
-    const plexAuth = registry ? new PlexAuth(config, registry, plex, plexFetch) : undefined;
+    const plexAuth = new PlexAuth(config, registry, plex, plexFetch);
     let entryPolicy;
-    if (config.demo && plexAuth) plexAuth.demo = plexDemo;
-    if (registry) {
-      let rawAccess;
-      entryPolicy = new AccessPolicy(config, registry, plexAuth, () => rawAccess);
-      let singleLeader;
-      hub.singleRoomLeader = async () => {
-        if (!singleLeader) {
-          singleLeader = (async () => {
-            if (config.singleRoomLeaderPlexId)
-              return registry.resolve('plex', config.singleRoomLeaderPlexId, 'Assigned account', false);
-            if (config.accessPolicy?.discord !== false || !config.accessPolicy?.plex)
-              return registry.resolve('discord', config.ownerId, 'Assigned account', false);
-            let profile;
-            try {
-              profile = await plexAuth.request('/user', { token: config.plexToken });
-            } catch {
-              throw new Error(
-                'Cannot identify the single-room leader from plex.token; check the token or set rooms.single_room_leader_plex_id',
-              );
-            }
-            if (!/^\d{1,20}$/.test(String(profile?.id || '')))
-              throw new Error('Plex did not identify the token account; set rooms.single_room_leader_plex_id');
-            return registry.resolve('plex', String(profile.id), 'Assigned account', false);
-          })();
-          singleLeader.catch(() => {
-            singleLeader = undefined;
-          });
-        }
-        return singleLeader.then(account => registry.canonical(account.id));
-      };
-      hub.adminEligible = actor => RoomPolicy.administrator(registry, config, actor.userId, rawAccess);
-      hub.refreshAdmin = async actor => {
-        // Trusted roles decide who may turn on guests and who may schedule events.
-        const roles = [
-          ...(config.roomAdministrators?.discordRoles || []),
-          ...(config.trustedMembers?.discordRoles || []),
-        ];
-        const discord = registry
-          .identities(actor.userId)
-          .find(identity => identity.provider === 'discord' && identity.verified)?.subject;
-        if (roles.length && discord && !rawAccess?.isMember(discord)) {
+    if (config.demo) plexAuth.demo = plexDemo;
+    let rawAccess;
+    entryPolicy = new AccessPolicy(config, registry, plexAuth, () => rawAccess);
+    let singleLeader;
+    hub.singleRoomLeader = async () => {
+      if (!singleLeader) {
+        singleLeader = (async () => {
+          if (config.singleRoomLeaderPlexId)
+            return registry.resolve('plex', config.singleRoomLeaderPlexId, 'Assigned account', false);
+          if (config.accessPolicy?.discord !== false || !config.accessPolicy?.plex)
+            return registry.resolve('discord', config.ownerId, 'Assigned account', false);
+          let profile;
           try {
-            await rawAccess?.refresh(discord);
+            profile = await plexAuth.request('/user', { token: config.plexToken });
           } catch {
-            /* Missing live guild authority fails closed below. */
+            throw new Error(
+              'Cannot identify the single-room leader from plex.token; check the token or set rooms.single_room_leader_plex_id',
+            );
           }
-        }
-        if (!hub.canAdmin(actor)) hub.clearAdmin(actor);
-      };
-      const discordId = id =>
-        registry.canonical(id)
-          ? registry.identities(id).find(i => i.provider === 'discord' && i.verified)?.subject
-          : id;
-      const access = {
-        isMember: id => {
-          const discord = discordId(id);
-          return !!discord && !!rawAccess?.isMember(discord);
-        },
-        refresh: async id => {
-          const discord = discordId(id);
-          return !!discord && !!(await rawAccess?.refresh(discord));
-        },
-        voiceChannel: id => {
-          const discord = discordId(id);
-          return discord && rawAccess?.voiceChannel(discord);
-        },
-        hasRole: (id, role) => {
-          const discord = discordId(id);
-          return !!discord && rawAccess?.hasRole?.(discord, role) === true;
-        },
-        identity: async id =>
-          rawAccess?.identity
-            ? rawAccess.identity(id)
-            : (await rawAccess?.refresh(id))
-              ? { id, name: registry.identity('discord', id)?.name || id }
-              : undefined,
-        directory: () =>
-          rawAccess?.directory?.() ||
-          Promise.reject(new Error('Discord directory unavailable; check the bot and Server Members Intent')),
-        discordOnline: subject => rawAccess?.discordOnline?.(subject),
-        validVoiceChannel: id => !!rawAccess?.validVoiceChannel(id),
-        options: () => rawAccess?.options() || { available: false },
-        canWatch: (id, actor) =>
-          config.accessPolicy
-            ? entryPolicy.fresh(id, actor)
-            : access.isMember(id) || (!!registry.canonical(id) && plexAuth.fresh(id)),
-        refreshWatch: async (id, actor) => {
-          if (config.accessPolicy) return entryPolicy.admit(id, actor);
-          if (access.isMember(id) || (await access.refresh(id))) return true;
-          try {
-            return !!(await plexAuth.forUser(id));
-          } catch {
-            return false;
-          }
-        },
-      };
-      Object.defineProperty(hub, 'access', {
-        get: () => access,
-        set: value => {
-          rawAccess = value;
-        },
-      });
-      // Guests: people a room's invite lets in who could not otherwise enter. Their
-      // browser session carries the room (login.guestRoom); guest accounts end with
-      // their session, and signed-in visitors' guest access ends at login.guestUntil.
-      const guestsOn = () => !!config.guests?.enabled && !!watch.roomState;
-      hub.guestsEnabled = guestsOn;
-      entryPolicy.guests = {
-        admits(roomId, userId) {
-          if (!guestsOn()) return false;
-          try {
-            watch.roomState.store.get(roomId);
-          } catch {
-            return false;
-          }
-          return !(config.guests.requireSignIn && registry.isGuest(userId));
-        },
-      };
-      hub.guestMembers = roomId => {
-        const now = Date.now(),
-          members = new Set();
-        for (const login of logins.values())
-          if (
-            login.guestRoom === roomId &&
-            (login.expires === null || login.expires > now) &&
-            (login.guestUntil ?? Infinity) > now
-          )
-            members.add(login.userId);
-        return members;
-      };
-      // Turning guests on needs the configured server tier and hosting this room
-      // (Admin mode always counts). Guests themselves never can.
-      hub.canAllowGuests = (record, actor) =>
-        guestsOn() &&
-        !actor.guestRoomId &&
-        !registry.isGuest(actor.userId) &&
-        !record.guests?.includes(actor.userId) &&
-        RoomPolicy.tierAtLeast(
-          RoomPolicy.serverTier(registry, config, actor.userId, rawAccess),
-          config.guests.issuers,
-        ) &&
-        (hub.isAdmin(actor) || RoomPolicy.role(record, actor.userId) !== 'viewer');
-      // Scheduling watch nights needs the configured server tier; guests never can.
-      hub.canScheduleEvents = actor =>
-        !actor.guestRoomId &&
-        !registry.isGuest(actor.userId) &&
-        RoomPolicy.tierAtLeast(
-          RoomPolicy.serverTier(registry, config, actor.userId, rawAccess),
-          config.events?.schedulers || 'trusted',
-        );
-      hub.accountActor = actor =>
-        registry.canonical(actor.userId)
-          ? { ...actor, name: registry.canonical(actor.userId).name }
-          : {
-              ...actor,
-              ...discordIdentity({ userId: actor.userId, name: actor.name || 'Discord user' }),
-              discordId: actor.userId,
-            };
-      hub.plexFor = async actor => {
-        const identity = registry.identities(actor.userId).find(i => i.provider === 'plex' && i.verified);
-        const fallback = () => {
-          if (config.plexFallback?.enabled === false)
-            throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
-          return plexAuth.fallback();
-        };
-        if (!identity) return fallback();
-        if (!registry.hasCredential(identity.subject)) throw new Error('Connect your Plex account again');
+          if (!/^\d{1,20}$/.test(String(profile?.id || '')))
+            throw new Error('Plex did not identify the token account; set rooms.single_room_leader_plex_id');
+          return registry.resolve('plex', String(profile.id), 'Assigned account', false);
+        })();
+        singleLeader.catch(() => {
+          singleLeader = undefined;
+        });
+      }
+      return singleLeader.then(account => registry.canonical(account.id));
+    };
+    hub.adminEligible = actor => RoomPolicy.administrator(registry, config, actor.userId, rawAccess);
+    hub.refreshAdmin = async actor => {
+      // Trusted roles decide who may turn on guests and who may schedule events.
+      const roles = [
+        ...(config.roomAdministrators?.discordRoles || []),
+        ...(config.trustedMembers?.discordRoles || []),
+      ];
+      const discord = registry
+        .identities(actor.userId)
+        .find(identity => identity.provider === 'discord' && identity.verified)?.subject;
+      if (roles.length && discord && !rawAccess?.isMember(discord)) {
         try {
-          const scoped = await plexAuth.forUser(actor.userId);
-          if (!scoped) throw new Error('Connect your Plex account again');
-          return scoped;
-        } catch (error) {
-          // Only a confirmed lack of server membership may use explicit open-entry
-          // sponsorship. Expiry, network errors and item restrictions never do.
-          if (config.accessPolicy && !entryPolicy.requiresPlex(actor) && error.noServerAccess) return fallback();
-          throw error;
+          await rawAccess?.refresh(discord);
+        } catch {
+          /* Missing live guild authority fails closed below. */
         }
+      }
+      if (!hub.canAdmin(actor)) hub.clearAdmin(actor);
+    };
+    const discordId = id =>
+      registry.canonical(id) ? registry.identities(id).find(i => i.provider === 'discord' && i.verified)?.subject : id;
+    const access = {
+      isMember: id => {
+        const discord = discordId(id);
+        return !!discord && !!rawAccess?.isMember(discord);
+      },
+      refresh: async id => {
+        const discord = discordId(id);
+        return !!discord && !!(await rawAccess?.refresh(discord));
+      },
+      voiceChannel: id => {
+        const discord = discordId(id);
+        return discord && rawAccess?.voiceChannel(discord);
+      },
+      hasRole: (id, role) => {
+        const discord = discordId(id);
+        return !!discord && rawAccess?.hasRole?.(discord, role) === true;
+      },
+      identity: async id =>
+        rawAccess?.identity
+          ? rawAccess.identity(id)
+          : (await rawAccess?.refresh(id))
+            ? { id, name: registry.identity('discord', id)?.name || id }
+            : undefined,
+      directory: () =>
+        rawAccess?.directory?.() ||
+        Promise.reject(new Error('Discord directory unavailable; check the bot and Server Members Intent')),
+      discordOnline: subject => rawAccess?.discordOnline?.(subject),
+      validVoiceChannel: id => !!rawAccess?.validVoiceChannel(id),
+      options: () => rawAccess?.options() || { available: false },
+      canWatch: (id, actor) =>
+        config.accessPolicy
+          ? entryPolicy.fresh(id, actor)
+          : access.isMember(id) || (!!registry.canonical(id) && plexAuth.fresh(id)),
+      refreshWatch: async (id, actor) => {
+        if (config.accessPolicy) return entryPolicy.admit(id, actor);
+        if (access.isMember(id) || (await access.refresh(id))) return true;
+        try {
+          return !!(await plexAuth.forUser(id));
+        } catch {
+          return false;
+        }
+      },
+    };
+    Object.defineProperty(hub, 'access', {
+      get: () => access,
+      set: value => {
+        rawAccess = value;
+      },
+    });
+    // Guests: people a room's invite lets in who could not otherwise enter. Their
+    // browser session carries the room (login.guestRoom); guest accounts end with
+    // their session, and signed-in visitors' guest access ends at login.guestUntil.
+    const guestsOn = () => !!config.guests?.enabled;
+    hub.guestsEnabled = guestsOn;
+    entryPolicy.guests = {
+      admits(roomId, userId) {
+        if (!guestsOn()) return false;
+        try {
+          watch.roomState.store.get(roomId);
+        } catch {
+          return false;
+        }
+        return !(config.guests.requireSignIn && registry.isGuest(userId));
+      },
+    };
+    hub.guestMembers = roomId => {
+      const now = Date.now(),
+        members = new Set();
+      for (const login of logins.values())
+        if (
+          login.guestRoom === roomId &&
+          (login.expires === null || login.expires > now) &&
+          (login.guestUntil ?? Infinity) > now
+        )
+          members.add(login.userId);
+      return members;
+    };
+    // Turning guests on needs the configured server tier and hosting this room
+    // (Admin mode always counts). Guests themselves never can.
+    hub.canAllowGuests = (record, actor) =>
+      guestsOn() &&
+      !actor.guestRoomId &&
+      !registry.isGuest(actor.userId) &&
+      !record.guests?.includes(actor.userId) &&
+      RoomPolicy.tierAtLeast(RoomPolicy.serverTier(registry, config, actor.userId, rawAccess), config.guests.issuers) &&
+      (hub.isAdmin(actor) || RoomPolicy.role(record, actor.userId) !== 'viewer');
+    // Scheduling watch nights needs the configured server tier; guests never can.
+    hub.canScheduleEvents = actor =>
+      !actor.guestRoomId &&
+      !registry.isGuest(actor.userId) &&
+      RoomPolicy.tierAtLeast(
+        RoomPolicy.serverTier(registry, config, actor.userId, rawAccess),
+        config.events?.schedulers || 'trusted',
+      );
+    hub.accountActor = actor =>
+      registry.canonical(actor.userId)
+        ? { ...actor, name: registry.canonical(actor.userId).name }
+        : {
+            ...actor,
+            ...discordIdentity({ userId: actor.userId, name: actor.name || 'Discord user' }),
+            discordId: actor.userId,
+          };
+    hub.plexFor = async actor => {
+      const identity = registry.identities(actor.userId).find(i => i.provider === 'plex' && i.verified);
+      const fallback = () => {
+        if (config.plexFallback?.enabled === false)
+          throw new Error('Connect a Plex account with access to this server; shared fallback is disabled');
+        return plexAuth.fallback();
       };
-    }
+      if (!identity) return fallback();
+      if (!registry.hasCredential(identity.subject)) throw new Error('Connect your Plex account again');
+      try {
+        const scoped = await plexAuth.forUser(actor.userId);
+        if (!scoped) throw new Error('Connect your Plex account again');
+        return scoped;
+      } catch (error) {
+        // Only a confirmed lack of server membership may use explicit open-entry
+        // sponsorship. Expiry, network errors and item restrictions never do.
+        if (config.accessPolicy && !entryPolicy.requiresPlex(actor) && error.noServerAccess) return fallback();
+        throw error;
+      }
+    };
     const watch = new Watch(
       hub,
       plex,
@@ -587,36 +578,32 @@ function createApp(
       registry,
       plexAuth,
     );
-    if (registry) {
-      hub.directory = new (require('./user-directory').UserDirectory)({
-        registry,
-        config,
-        discord: () => hub.access.directory(),
-        discordOnline: subject => hub.access.discordOnline(subject),
-        plex: () => require('./plex-directory').plexDirectory(plexAuth),
-      });
-      hub.renameAccount = async (id, name) => {
-        const account = registry.rename(id, name);
-        await registry.flush();
-        if (
-          registry
-            .identities(id)
-            .some(identity => identity.provider === 'discord' && identity.subject === config.ownerId)
-        )
-          hub.setOwnerName(account.name);
-        for (const login of logins.values()) if (login.userId === id) login.name = account.name;
-        for (const room of watch.rooms.values()) {
-          if (room.hostId === id) room.hostName = account.name;
-          if (room.ownerId === id) room.ownerName = account.name;
-          for (const viewer of room.viewers.values())
-            if (viewer.userId === id) {
-              viewer.name = account.name;
-              viewer.actor.name = account.name;
-            }
-        }
-        return account;
-      };
-    }
+    hub.directory = new (require('./user-directory').UserDirectory)({
+      registry,
+      config,
+      discord: () => hub.access.directory(),
+      discordOnline: subject => hub.access.discordOnline(subject),
+      plex: () => require('./plex-directory').plexDirectory(plexAuth),
+    });
+    hub.renameAccount = async (id, name) => {
+      const account = registry.rename(id, name);
+      await registry.flush();
+      if (
+        registry.identities(id).some(identity => identity.provider === 'discord' && identity.subject === config.ownerId)
+      )
+        hub.setOwnerName(account.name);
+      for (const login of logins.values()) if (login.userId === id) login.name = account.name;
+      for (const room of watch.rooms.values()) {
+        if (room.hostId === id) room.hostName = account.name;
+        if (room.ownerId === id) room.ownerName = account.name;
+        for (const viewer of room.viewers.values())
+          if (viewer.userId === id) {
+            viewer.name = account.name;
+            viewer.actor.name = account.name;
+          }
+      }
+      return account;
+    };
     hub.watchCanView = (room, actor) => watch.canView(watch.rooms.get(room.roomId), actor);
     // Kept diagnostics: server log lines and viewer uploads share one daily timeline.
     const diagnosticLog = config.diagnostics?.enabled
@@ -671,7 +658,7 @@ function createApp(
       });
       res.setHeader('Set-Cookie', cookie('uburoom_oauth', state, 300));
       const destination =
-        config.demo && plexAuth?.demo ? config.publicUrl + '/demo-discord?state=' + state : authorizeUrl + '?' + query;
+        config.demo && plexAuth.demo ? config.publicUrl + '/demo-discord?state=' + state : authorizeUrl + '?' + query;
       if (linkLogin) json(res, 200, { url: destination });
       else {
         res.writeHead(302, { Location: destination });
@@ -743,7 +730,7 @@ function createApp(
           });
         }
         let operatorSettingsFlushed = false;
-        if (registry && req.url?.split('?')[0] !== '/health') {
+        if (req.url?.split('?')[0] !== '/health') {
           const end = res.end.bind(res);
           res.end = (...args) => {
             if (operatorSettingsFlushed) return end(...args);
@@ -813,7 +800,7 @@ function createApp(
           }
           if (req.method === 'GET' && route === '/watch') {
             const roomParam = url.searchParams.get('room');
-            if (roomParam && watch.roomState) {
+            if (roomParam) {
               try {
                 const r = watch.roomState.store.get(roomParam);
                 if (r?.slug) {
@@ -976,7 +963,7 @@ function createApp(
             return;
           }
           if (req.method === 'GET' && route === '/health')
-            return json(res, registry?.persistence.error ? 503 : 200, { ok: !registry?.persistence.error, version });
+            return json(res, registry.persistence.error ? 503 : 200, { ok: !registry.persistence.error, version });
           if (req.method === 'GET' && ['/demo-plex', '/demo-discord'].includes(route) && !config.demo)
             return json(res, 404, { error: 'Not found' });
           // Development-only control gallery: exists only on isolated demo servers (scripts set
@@ -1183,7 +1170,7 @@ function createApp(
             const id = randomBytes(32).toString('hex');
             // Signing in replaces a guest session in this browser.
             const previous = logins.get(hash(cookies(req).uburoom || ''));
-            if (previous && registry?.isGuest(previous.userId)) logins.delete(hash(cookies(req).uburoom));
+            if (previous && registry.isGuest(previous.userId)) logins.delete(hash(cookies(req).uburoom));
             if (identity.id === config.ownerId) hub.setOwnerName(name);
             logins.set(hash(id), {
               ...discordIdentity({ userId: identity.id, name }),
@@ -1270,7 +1257,6 @@ function createApp(
       guestCleanupAt = 0;
     hub.sweepGuests = () =>
       (guestSweep ||= (async () => {
-        if (!registry) return;
         const now = Date.now(),
           rooms = new Set();
         for (const login of logins.values()) {
@@ -1302,7 +1288,7 @@ function createApp(
           for (const room of watch.rooms.values())
             for (const viewer of [...room.viewers.values(), ...room.disconnectedViewers.values()])
               inUse.add(viewer.userId);
-          for (const recovery of watch.roomState?.recoveries.values() || [])
+          for (const recovery of watch.roomState.recoveries.values())
             for (const id of recovery.viewers || []) inUse.add(id);
           registry.removeUnusedGuests(inUse);
           await registry.flush();
@@ -1351,7 +1337,7 @@ function createApp(
         new Promise(resolve => (server.listening ? server.close(resolve) : resolve())),
       ]).then(async results => {
         try {
-          await registry?.close();
+          await registry.close();
         } catch (error) {
           results.push({ status: 'rejected', reason: error });
         }
@@ -1362,6 +1348,7 @@ function createApp(
     }
     return { server, hub, watch, close, registry, plexAuth };
   } catch (error) {
+    // Construction may fail before the registry exists.
     Promise.resolve(registry?.persistence.abort()).catch(() => {});
     throw error;
   }

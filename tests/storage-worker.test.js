@@ -151,7 +151,6 @@ test('worker-backed playback writes keep the local event-loop p95 below the sync
   } finally {
     delay.disable();
     for (const viewer of viewers) tracking.end(viewer, 'test-end');
-    tracking.close();
     await accounts.close();
   }
 });

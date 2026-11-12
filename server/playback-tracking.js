@@ -23,8 +23,7 @@ class PlaybackTracking {
   constructor(registry, now = Date.now) {
     this.registry = registry;
     this.now = now;
-    this.owned = !registry;
-    this.db = registry?.db || new (require('node:sqlite').DatabaseSync)(':memory:');
+    this.db = registry.db;
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS playback_history(id TEXT PRIMARY KEY,userId TEXT NOT NULL,at INTEGER NOT NULL,record TEXT NOT NULL); CREATE INDEX IF NOT EXISTS playback_history_user ON playback_history(userId,at);',
     );
@@ -114,8 +113,9 @@ class PlaybackTracking {
     viewer.observationSample = data.sampleAt;
     const starting = !viewer.tracking;
     if (starting) {
-      const identities =
-        this.registry?.identities(viewer.userId).map(i => ({ provider: i.provider, subject: i.subject })) || [];
+      const identities = this.registry
+        .identities(viewer.userId)
+        .map(i => ({ provider: i.provider, subject: i.subject }));
       viewer.tracking = {
         record: {
           id: randomUUID(),
@@ -209,23 +209,17 @@ class PlaybackTracking {
     };
   }
   history(userId) {
-    const canonicalId = this.registry ? this.registry.canonical(userId)?.id : userId;
-    if (this.registry && !canonicalId) return { retentionDays: 90, totals: [], sessions: [] };
-    const ids = this.registry
-      ? this.db
-          .prepare(
-            'WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged',
-          )
-          .all(canonicalId)
-          .map(u => u.id)
-      : [userId];
+    const canonicalId = this.registry.canonical(userId)?.id;
+    if (!canonicalId) return { retentionDays: 90, totals: [], sessions: [] };
+    const ids = this.db
+      .prepare(
+        'WITH RECURSIVE merged(id) AS (SELECT ? UNION SELECT u.id FROM users u JOIN merged m ON u.retiredInto=m.id) SELECT id FROM merged',
+      )
+      .all(canonicalId)
+      .map(u => u.id);
     if (ids.length === 0) return { retentionDays: 90, totals: [], sessions: [] };
-    if (this.registry?.persistence?.history) return this.registry.persistence.history(ids);
+    if (this.registry.persistence.history) return this.registry.persistence.history(ids);
     return require('./history-projection').historyProjection(this.db, ids);
-  }
-
-  close() {
-    if (this.owned) this.db.close();
   }
 }
 module.exports = { PlaybackTracking, union, ObservationError };

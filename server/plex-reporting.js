@@ -40,7 +40,6 @@ class PlexReporting {
    */
   isEligible(userId) {
     if (!userId || this.config.plexReporting?.enabled === false) return false;
-    if (!this.registry) return true;
     const identity = this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified);
     const cred =
       identity &&
@@ -64,9 +63,7 @@ class PlexReporting {
   }
 
   subject(userId) {
-    return this.registry
-      ? this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified)?.subject
-      : userId;
+    return this.registry.identities(userId)?.find(i => i.provider === 'plex' && i.verified)?.subject;
   }
 
   personal(scoped) {

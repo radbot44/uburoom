@@ -111,7 +111,6 @@ function accountHttp({
       : undefined;
   }
   async function route(req, res, url) {
-    if (!registry) return false;
     const route = url.pathname;
     if (!route.startsWith('/api/account') && !route.startsWith('/auth/plex')) return false;
     if (!throttle('account:' + (clientAddress(req) || 'local'), 120)) {

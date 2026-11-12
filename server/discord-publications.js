@@ -295,7 +295,7 @@ class DiscordPublications {
     return record;
   }
   async command(room, action, actor, permitted) {
-    if (!room?.saved || room.removing) throw fail('This room is closed.', 409);
+    if (!room || room.removing) throw fail('This room is closed.', 409);
     const id = room.roomId;
     return this.lane(id, async () => {
       await this.check(room, actor, permitted);

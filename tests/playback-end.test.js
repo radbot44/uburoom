@@ -3,12 +3,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { PlaybackTracking } = require('../server/playback-tracking');
+const { Accounts, credentialVault } = require('../server/accounts');
 const { observePlaybackEnd, clearPlaybackEnd } = require('../server/playback-end');
 
 function fixture() {
   let now = 100000,
     sequence = 0;
-  const tracking = new PlaybackTracking(undefined, () => now);
+  const registry = new Accounts(undefined, credentialVault()),
+    tracking = new PlaybackTracking(registry, () => now);
   const room = {
     roomId: randomUUID(),
     epoch: randomUUID(),
@@ -54,7 +56,7 @@ function fixture() {
     send(98);
     send(99);
   };
-  return { tracking, room, viewer, send, tail };
+  return { tracking, registry, room, viewer, send, tail };
 }
 
 test('natural ending requires recent sequential decoded playback; clamped room clock does not veto valid intent', () => {
@@ -65,7 +67,7 @@ test('natural ending requires recent sequential decoded playback; clamped room c
     assert.equal(f.send(100, 'ended'), true);
     assert.equal(f.send(100, 'ended'), false, 'the same ending cannot be consumed twice');
   } finally {
-    f.tracking.close();
+    f.registry.close();
   }
 });
 
@@ -100,7 +102,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
     try {
       assert.equal(scenario(f), false);
     } finally {
-      f.tracking.close();
+      f.registry.close();
     }
   }
 
@@ -112,7 +114,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
       f.send(99, state);
       assert.equal(f.send(100, 'ended'), false, state);
     } finally {
-      f.tracking.close();
+      f.registry.close();
     }
   }
   for (const change of [
@@ -132,7 +134,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
       change(f);
       assert.equal(f.send(100, 'ended'), false);
     } finally {
-      f.tracking.close();
+      f.registry.close();
     }
   }
   const gapFixture = fixture();
@@ -140,7 +142,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
     gapFixture.tail();
     assert.equal(gapFixture.send(100, 'ended', {}, 3000), false, 'time gap discards ending evidence');
   } finally {
-    gapFixture.tracking.close();
+    gapFixture.registry.close();
   }
 
   // 3. Epoch, media, stream, and observation lease fences
@@ -164,7 +166,7 @@ test('ending evidence is fenced by room epochs, stream leases, and invalidated b
       change(f);
       assert.equal(f.send(100, 'ended'), false);
     } finally {
-      f.tracking.close();
+      f.registry.close();
     }
   }
 });
@@ -187,7 +189,7 @@ test('a short near-end restart must earn its own decoded tail; accepted ending d
     assert.equal(f.send(100, 'ended', { discontinuity: 1 }), true);
     assert.equal(f.viewer.tracking.record.watchedSeconds, before);
   } finally {
-    f.tracking.close();
+    f.registry.close();
   }
 });
 
@@ -207,7 +209,7 @@ test('ending evidence belongs to an individual viewer and short clips require ac
     b.send(1, 'playing', { discontinuity: 1 });
     assert.equal(b.send(2, 'ended', { discontinuity: 1 }), true);
   } finally {
-    a.tracking.close();
-    b.tracking.close();
+    a.registry.close();
+    b.registry.close();
   }
 });

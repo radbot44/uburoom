@@ -5,12 +5,13 @@ const { randomUUID } = require('node:crypto');
 const { PlaybackTracking } = require('../server/playback-tracking');
 const { Accounts, credentialVault } = require('../server/accounts');
 
-function fixture(registry) {
+function fixture(registry = new Accounts(undefined, credentialVault())) {
   let now = 100000;
-  const tracking = new PlaybackTracking(registry, () => now);
+  const tracking = new PlaybackTracking(registry, () => now),
+    userId = registry.create('Viewer');
   const room = { roomId: randomUUID(), media: { id: '42', duration: 300 }, mediaVersion: randomUUID() };
   const viewer = () => ({
-    userId: 'user',
+    userId,
     observationEpoch: randomUUID(),
     streamVersion: randomUUID(),
     mediaVersion: room.mediaVersion,
@@ -30,7 +31,7 @@ function fixture(registry) {
     discontinuity: 0,
     ...extra,
   });
-  return { tracking, room, viewer, data, tick: (ms = 1000) => (now += ms) };
+  return { tracking, registry, userId, room, viewer, data, tick: (ms = 1000) => (now += ms) };
 }
 
 test('only advancing decoded playback earns credit; seeks, buffering, paused presence and replay do not', async () => {
@@ -84,10 +85,10 @@ test('only advancing decoded playback earns credit; seeks, buffering, paused pre
   assert.ok(v.tracking.record.watchedSeconds > 2, 'small synchronized rate adjustments retain observed viewing');
 
   f.tracking.end(v, 'logout');
-  const row = (await f.tracking.history('user')).sessions[0];
+  const row = (await f.tracking.history(f.userId)).sessions[0];
   assert.equal(row.endReason, 'logout');
   assert.equal(row.deliveryMode, 'uburoom-av1');
-  f.tracking.close();
+  f.registry.close();
 });
 
 test('overlapping tabs retain individual sessions, union wall time and source coverage, and use source timestamps', async () => {
@@ -98,7 +99,7 @@ test('overlapping tabs retain individual sessions, union wall time and source co
     if (seq > 1) f.tick();
     for (const v of [a, b]) f.tracking.observe(f.room, v, v === a ? 'a' : 'b', f.data(v, seq, seq));
   }
-  const history = await f.tracking.history('user');
+  const history = await f.tracking.history(f.userId);
   assert.equal(history.sessions.length, 2);
   assert.equal(
     history.sessions.reduce((n, s) => n + s.watchedSeconds, 0),
@@ -108,8 +109,8 @@ test('overlapping tabs retain individual sessions, union wall time and source co
   f.tracking.end(a, 'left');
   f.tick();
   f.tracking.observe(f.room, b, 'b', f.data(b, 4, 4));
-  assert.equal((await f.tracking.history('user')).totals[0].watchedSeconds, 3);
-  f.tracking.close();
+  assert.equal((await f.tracking.history(f.userId)).totals[0].watchedSeconds, 3);
+  f.registry.close();
 
   // Overlap uses source observation timestamps rather than differing delivery latency
   const f2 = fixture(),
@@ -122,8 +123,8 @@ test('overlapping tabs retain individual sessions, union wall time and source co
   f2.tracking.observe(f2.room, v1, 'a', f2.data(v1, 2, 1));
   f2.tick(500);
   f2.tracking.observe(f2.room, v2, 'b', f2.data(v2, 2, 1, 'playing', { observedAt: 101000 }));
-  assert.equal((await f2.tracking.history('user')).totals[0].watchedSeconds, 1);
-  f2.tracking.close();
+  assert.equal((await f2.tracking.history(f2.userId)).totals[0].watchedSeconds, 1);
+  f2.registry.close();
 });
 
 test('observation timeout rotates the lease; reconnect never credits the gap or replays a previous report', async () => {
@@ -140,11 +141,11 @@ test('observation timeout rotates the lease; reconnect never credits the gap or 
   f.tracking.observe(f.room, v, 'tab', f.data(v, 10, 50));
   f.tick();
   f.tracking.observe(f.room, v, 'tab', f.data(v, 11, 51));
-  const history = await f.tracking.history('user');
+  const history = await f.tracking.history(f.userId);
   assert.equal(history.sessions.length, 2);
   assert.equal(history.totals[0].watchedSeconds, 2);
   assert.ok(history.sessions.some(s => s.endReason === 'observation-timeout'));
-  f.tracking.close();
+  f.registry.close();
 });
 
 test('durable records preserve provider provenance, mark interrupted runs and survive explicit account merges', async () => {
@@ -192,7 +193,7 @@ test('server wall-clock steps reject stale/future reports without replaying or c
         1,
       );
     } finally {
-      f.tracking.close();
+      f.registry.close();
     }
   }
 });

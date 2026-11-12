@@ -68,7 +68,7 @@ class AccessPolicy {
   }
   async admit(id, context) {
     if (!this.settings) return false;
-    const account = this.registry?.canonical(id);
+    const account = this.registry.canonical(id);
     if (!account) return false;
     if (this.guestRoom(context)) {
       const key = this.admissionKey(account.id, context);
@@ -143,7 +143,7 @@ class AccessPolicy {
     return (this.allowed.get(this.admissionKey(id, context)) || 0) > Date.now();
   }
   entered(id) {
-    const account = this.registry?.canonical(id);
+    const account = this.registry.canonical(id);
     if (account) this.entryUsers.set(account.id, Date.now() + 12 * 3600000);
   }
   public() {

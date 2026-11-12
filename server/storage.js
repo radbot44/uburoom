@@ -137,9 +137,7 @@ function initializeSchema(db, { checkOnly = false } = {}) {
     PRAGMA user_version=${SCHEMA_VERSION};
     COMMIT;`);
 }
-// Fixtures without a database stay ephemeral; production always supplies Accounts.
 function loginStore(context, vault, registry) {
-  if (!registry) return { logins: new Map(), ownerName: '', save() {} };
   const db = registry.db;
   const matching = registry.meta('loginContext') === context;
   const entries = matching

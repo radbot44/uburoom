@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { Plex } = require('../server/plex');
-const { Watch } = require('../server/watch');
+const { liveWatch } = require('./helpers/live-room');
 const { Hub } = require('../server/core');
 const Tracks = require('../server/media-tracks');
 const Subtitles = require('../server/subtitles');
@@ -79,6 +79,7 @@ function provider() {
     const url = new URL(input),
       json = value =>
         new Response(JSON.stringify({ MediaContainer: value }), { headers: { 'Content-Type': 'application/json' } });
+    if (url.pathname === '/') return json({ machineIdentifier: 'fixture-plex' });
     state.events.push({ path: url.pathname, method: options.method || 'GET', token: options.headers['X-Plex-Token'] });
     if (url.pathname === '/library/metadata/1') {
       if (state.deny) return new Response(null, { status: 403 });
@@ -479,17 +480,17 @@ test('personal tracks preserve room state, isolate viewers, reject stale choices
   const { plex, state } = provider(),
     hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
-  const watch = new Watch(hub, plex),
-    actor = userId => ({ userId }),
+  const { watch, actor, open } = liveWatch(hub, plex),
     host = actor('host'),
     guest = actor('guest');
-  const room = watch.rooms.get(watch.create(host)),
+  const room = await open(host),
     a = randomUUID(),
     b = randomUUID();
   try {
     watch.snapshot(room, host, a);
     watch.snapshot(room, guest, b);
     room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
+    room.media.roomServerId = 'fixture';
     await watch.prepareViewer(room, host, a);
     await watch.prepareViewer(room, guest, b);
     room.position = 12;
@@ -538,15 +539,16 @@ test('a failed automatic burn keeps its catalog available for an explicit Off re
   const { plex, state } = provider(),
     hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
-  const watch = new Watch(hub, plex),
-    host = { userId: 'host' },
+  const { watch, actor, open } = liveWatch(hub, plex),
+    host = actor('host'),
     viewerId = randomUUID();
-  const room = watch.rooms.get(watch.create(host));
+  const room = await open(host);
   state.selected = '22';
   state.wrongBurn = true;
   try {
     watch.snapshot(room, host, viewerId);
     room.media = await plex.prepare('1', 'direct', false, undefined, undefined, { sourceOnly: true });
+    room.media.roomServerId = 'fixture';
     await watch.prepareViewer(room, host, viewerId);
     const viewer = room.viewers.get(viewerId);
     assert.match(viewer.media.playbackError, /did not confirm burning/);

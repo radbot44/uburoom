@@ -22,7 +22,7 @@ const {
 // WebSocket framing calls shared operations directly; commands are never replayed.
 function watchSockets({ server, config, routes, watch, hub, throttle, publishTimeoutMs = 12000 }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
-  server.once('listening', () => watch.roomState?.startRecovery());
+  server.once('listening', () => watch.roomState.startRecovery());
   const clockEpoch = routes.clockEpoch;
   const allowed = origin =>
     origin === config.publicUrl ||
@@ -265,7 +265,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
         // Native pongs keep presence alive even when the browser throttles its
         // JavaScript timers. Authorization is still checked by publish/requests.
         client.lastSeen = Date.now();
-        if (client.authenticated) watch.roomState?.people.reserve(client.userId, client.lastSeen + 60000);
+        if (client.authenticated) watch.roomState.people.reserve(client.userId, client.lastSeen + 60000);
         if (client.authenticated)
           for (const room of watch.rooms.values())
             for (const viewer of room.viewers.values()) if (viewer.watchSocket === ws) viewer.at = client.lastSeen;
@@ -301,7 +301,7 @@ function watchSockets({ server, config, routes, watch, hub, throttle, publishTim
             if (!auth || (client.userId && client.userId !== auth.actor.userId) || ws.readyState !== 1)
               return ws.close(4003, 'Authentication failed');
             try {
-              watch.roomState?.people.enter(auth.actor.userId);
+              watch.roomState.people.enter(auth.actor.userId);
             } catch {
               send(client, {
                 type: 'unavailable',

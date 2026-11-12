@@ -45,8 +45,8 @@ function watchHttp({
   const publicConfig = () => ({
     watchVersion: 19,
     keepDiagnostics: diagnosticLog ? config.diagnostics.keepDays : 0,
-    unifiedAccounts: !!registry,
-    accountDemo: !!config.demo && !!config.unifiedAccounts,
+    unifiedAccounts: true,
+    accountDemo: !!config.demo,
     watchUrl: config.publicUrl,
     clientId: config.clientId,
     demo: !!config.demo,
@@ -549,7 +549,6 @@ function watchHttp({
   async function joinInvite(req, res) {
     if (!allowedOrigin(req) || !throttle('invite:' + (clientAddress(req) || 'local'), 20))
       return json(res, 429, { error: 'Too many tries; wait a minute and try again' });
-    if (!registry || !watch.roomState) return json(res, 404, { error: 'Room invites are unavailable on this server' });
     const data = await body(req);
     if (!['preview', 'join'].includes(data.action)) return json(res, 400, { error: 'Unsupported invite action' });
     const record = watch.roomState.store.byInvite(data.code);
@@ -678,7 +677,7 @@ function watchHttp({
     if (!url.pathname.startsWith('/api/watch/')) return false;
     const sharedPoster = /^\/api\/watch\/shared-poster\/([a-f0-9-]{36})\/([a-f0-9]{48})$/.exec(url.pathname);
     if (sharedPoster && req.method === 'GET') {
-      const art = watch.publications?.posterResource(sharedPoster[1], sharedPoster[2]);
+      const art = watch.publications.posterResource(sharedPoster[1], sharedPoster[2]);
       if (!art) {
         json(res, 404, { error: 'Poster unavailable' });
         return true;
@@ -1207,7 +1206,7 @@ function watchHttp({
       admitted: !!identity && !!(await login(req)),
       csrf: identity?.csrf,
       pendingIdentity: identity
-        ? { name: identity.name, csrf: identity.csrf, account: registry?.summary(identity.userId) }
+        ? { name: identity.name, csrf: identity.csrf, account: registry.summary(identity.userId) }
         : undefined,
     };
   }
@@ -1224,7 +1223,7 @@ function watchHttp({
       if (initial.me.status === 200) {
         const [rooms, events, library] = await Promise.all([
           operations.execute(ctx, '/api/watch/rooms'),
-          watch.events ? operations.execute(ctx, '/api/watch/events') : undefined,
+          operations.execute(ctx, '/api/watch/events'),
           !initial.me.value.guestRoomId
             ? operations.execute({ ...ctx, signal: AbortSignal.timeout(1500) }, '/api/watch/library')
             : undefined,
@@ -1248,19 +1247,17 @@ function watchHttp({
       const requested = roomMatch ? roomMatch[1] : reqUrl.searchParams.get('room');
       if (requested) {
         let roomId, roomSlug, roomName;
-        if (watch.roomState) {
-          try {
-            const room = watch.roomState.store.getBySlug(requested);
-            roomId = room.id;
-            roomSlug = room.slug;
-            roomName = room.name;
-          } catch {
-            const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
-            if (activeRoom) {
-              roomId = activeRoom.roomId;
-              roomSlug = activeRoom.slug;
-              roomName = activeRoom.name;
-            }
+        try {
+          const room = watch.roomState.store.getBySlug(requested);
+          roomId = room.id;
+          roomSlug = room.slug;
+          roomName = room.name;
+        } catch {
+          const activeRoom = [...watch.rooms.values()].find(r => r.previousSlugs?.has(requested.toLowerCase()));
+          if (activeRoom) {
+            roomId = activeRoom.roomId;
+            roomSlug = activeRoom.slug;
+            roomName = activeRoom.name;
           }
         }
         if (!roomId && watch.rooms) {

@@ -4,7 +4,7 @@ const test = require('node:test'),
   assert = require('node:assert/strict');
 const { alarm, target } = require('../web/playback-timing');
 const { Hub } = require('../server/core'),
-  { Watch } = require('../server/watch'),
+  { liveWatch } = require('./helpers/live-room'),
   { randomUUID } = require('node:crypto');
 test('scheduled targets hold nonzero positions and then interpolate from the shared deadline', () => {
   const state = { serverNow: 100000, startAt: 101750, state: { position: 35, paused: false, duration: 120 } };
@@ -212,14 +212,17 @@ test('sync owner resets replacement state and closes its timer and scheduled ala
   assert.equal(starts, 2);
   assert.equal(pauses, 2);
 });
-function roomFixture() {
+async function roomFixture() {
   const hub = new Hub({ ownerId: 'host', guildId: 'fixture', channels: ['channel'] }, []);
   hub.access = { refresh: async () => true, isMember: () => true, options: () => ({ available: true }) };
-  const watch = new Watch(hub, { stop: async () => {} }, { kind: 'demo', format: 'file', duration: 120 });
-  const actor = userId => ({ userId, name: userId }),
-    host = actor('host'),
+  const { watch, actor, open } = liveWatch(
+    hub,
+    { stop: async () => {} },
+    { kind: 'demo', title: 'Fixture', format: 'file', duration: 120 },
+  );
+  const host = actor('host'),
     guest = actor('guest');
-  const room = watch.rooms.get(watch.create(host)),
+  const room = await open(host),
     h = randomUUID(),
     g = randomUUID();
   watch.snapshot(room, host, h);
@@ -236,7 +239,7 @@ function roomFixture() {
   return { hub, watch, room, host, guest, h, g, dispatch };
 }
 test('readiness schedules one initial start without advancing early; ordinary commands supersede it', async () => {
-  const f = roomFixture();
+  const f = await roomFixture();
   try {
     await f.dispatch('media.load', { mediaId: 'demo' });
     await f.watch.ready(f.room, f.host, f.h, f.room.mediaVersion, true);
@@ -275,7 +278,7 @@ test('readiness schedules one initial start without advancing early; ordinary co
 test('startup and seek buffering consume the start lead; late readiness uses only the delivery margin', async t => {
   let now = 100000;
   t.mock.method(Date, 'now', () => now);
-  const f = roomFixture();
+  const f = await roomFixture();
   const ready = viewer =>
     f.watch.ready(
       f.room,

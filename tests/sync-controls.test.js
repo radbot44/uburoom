@@ -3,22 +3,26 @@ const { install } = require('./helpers/watch-sync');
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { Hub } = require('../server/core'),
-  { Watch } = require('../server/watch');
+const { Hub } = require('../server/core');
+const { liveWatch } = require('./helpers/live-room');
 const { target } = require('../web/playback-timing');
 
-function fixture(t) {
+async function fixture(t) {
   let now = 100000,
     mono = 1000;
   t.mock.method(Date, 'now', () => now);
   t.mock.method(performance, 'now', () => mono);
   const hub = new Hub({ ownerId: 'host' }, []);
   hub.access = { isMember: () => true, refresh: async () => true, options: () => ({ available: true }) };
-  const watch = new Watch(hub, { stop: async () => {} }, { kind: 'demo', format: 'file', duration: 120 });
+  const { watch, actor, open } = liveWatch(
+    hub,
+    { stop: async () => {} },
+    { kind: 'demo', title: 'Fixture', format: 'file', duration: 120 },
+  );
   t.after(() => watch.close());
-  const host = { userId: 'host', name: 'Host' },
-    guest = { ...host, userId: 'guest', name: 'Guest' };
-  const room = watch.rooms.get(watch.create(host)),
+  const host = actor('Host'),
+    guest = actor('Guest');
+  const room = await open(host),
     h = randomUUID(),
     g = randomUUID();
   watch.snapshot(room, host, h);
@@ -79,7 +83,7 @@ test('a durable room holds an ended player until verified advancement, while an 
 });
 
 test('pause and resume share deadlines, project the pause target, and supersede pending controls', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.load();
   await f.ready(f.h);
   await f.ready(f.g);
@@ -113,8 +117,8 @@ test('pause and resume share deadlines, project the pause target, and supersede 
   assert.equal(f.room.state.paused, false, 'toggle cancels a pending pause without freezing healthy playback');
 });
 
-test('control lead uses fresh bounded server round trips and discards stale evidence', t => {
-  const f = fixture(t);
+test('control lead uses fresh bounded server round trips and discards stale evidence', async t => {
+  const f = await fixture(t);
   f.room.viewers.get(f.h).watchSocket = { watchRtts: [{ at: f.mono(), ms: 550 }] };
   assert.equal(f.watch.controlLead(f.room), 650);
   f.room.viewers.get(f.g).watchSocket = { watchRtts: [{ at: f.mono(), ms: 5000 }] };
@@ -124,7 +128,7 @@ test('control lead uses fresh bounded server round trips and discards stale evid
 });
 
 test('a sole viewing tab skips startup, resume, pause and seek leads while retaining readiness and RTT evidence', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.watch.leave(f.room, f.guest, f.g);
   const rtts = [{ at: f.mono(), ms: 900 }];
   f.room.viewers.get(f.h).watchSocket = { watchRtts: rtts };
@@ -159,7 +163,7 @@ test('a sole viewing tab skips startup, resume, pause and seek leads while retai
 });
 
 test('a second tab of the same account restores group readiness and delivery leads', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.watch.leave(f.room, f.guest, f.g);
   await f.load();
   f.advance(200);
@@ -179,7 +183,7 @@ test('a second tab of the same account restores group readiness and delivery lea
 });
 
 test('joining an already playing solo room does not stop its timeline and restores shared control deadlines', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.watch.leave(f.room, f.guest, f.g);
   await f.load();
   await f.ready(f.h);
@@ -197,7 +201,7 @@ test('joining an already playing solo room does not stop its timeline and restor
 });
 
 test('departure and expired viewers release coordination delays without timeline jumps', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.load();
   await f.ready(f.h);
   await f.ready(f.g);
@@ -231,7 +235,7 @@ test('departure and expired viewers release coordination delays without timeline
 });
 
 test('timeout names blockers, latches despite late readiness, and only the host may force a generation', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.load();
   await f.ready(f.h);
   f.advance(3000);
@@ -271,7 +275,7 @@ test('timeout names blockers, latches despite late readiness, and only the host 
 });
 
 test('wait extends by fifteen seconds, cancel stays paused, and superseded choices cannot act', async t => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.load();
   f.advance(10000);
   let id = f.room.readinessId;

@@ -23,6 +23,13 @@ function fixture(handler, files) {
   });
 }
 
+// Library routes only touch room presence and saved progress; these tests have none.
+const roomStateStub = {
+  people: { enter() {} },
+  claimHosts: async () => {},
+  store: { get: () => undefined, db: { prepare: () => ({ all: () => [] }) } },
+};
+
 test('library pagination and native search/sort/filter queries cover titles beyond the former 200-item cutoff', async t => {
   const rows = Array.from({ length: 250 }, (_, i) => movie(i + 1)),
     requests = [];
@@ -305,6 +312,7 @@ test('every room-scoped library route rejects inaccessible viewers and rechecks 
     hub,
     watch: {
       rooms,
+      roomState: roomStateStub,
       canView: async (room, actor) => manage && actor.userId === 'host',
       plex: { configured: true, browse: wait, details: wait, filters: wait, artwork: wait, availability: wait },
     },
@@ -378,7 +386,7 @@ test('lobby catalog, details, filters and artwork recheck identity and Plex scop
   const routes = watchHttp({
     config: { publicUrl: 'https://localhost' },
     hub,
-    watch: { rooms: new Map() },
+    watch: { rooms: new Map(), roomState: roomStateStub },
     user: async () => (signedIn ? { userId: 'viewer' } : undefined),
     webActor: identity => identity,
     throttle: () => true,
@@ -455,6 +463,7 @@ test('room watch party history takes priority over personal Plex progress in lib
   };
   const watch = {
     rooms,
+    roomState: roomStateStub,
     position: () => 1500,
     canView: async () => true,
     plex,

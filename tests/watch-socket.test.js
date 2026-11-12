@@ -623,7 +623,7 @@ test('a slow room publication retries without telling a healthy browser it disco
     server,
     config: { publicUrl: 'http://fixture.invalid' },
     routes,
-    watch: { rooms: new Map(), refresh() {} },
+    watch: { rooms: new Map(), refresh() {}, roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } } },
     hub: { dispatch: async () => {} },
     throttle: () => true,
     publishTimeoutMs: 50,
@@ -696,7 +696,7 @@ test('cancelled library work releases admission and stalled discovery cannot blo
     server,
     config: { publicUrl: 'http://fixture.invalid' },
     routes,
-    watch: { rooms: new Map(), refresh() {} },
+    watch: { rooms: new Map(), refresh() {}, roomState: { startRecovery() {}, people: { reserve() {}, enter() {} } } },
     hub: { dispatch: async () => {} },
     throttle: () => true,
   });

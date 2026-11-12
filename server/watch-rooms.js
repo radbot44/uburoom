@@ -67,7 +67,7 @@ class WatchRooms {
   }
   reason(record) {
     if (this.watch.hub.config.singleRoom || record.keepEmpty) return 'Kept when empty';
-    if (this.watch.events?.upcoming(record.id)) return 'Event scheduled';
+    if (this.watch.events.upcoming(record.id)) return 'Event scheduled';
     if (record.bookmark && record.bookmark.position < record.bookmark.duration * 0.9) return 'Video in progress';
     if (this.queue.pending(record.id).length) return 'Queue pending';
     if (record.autoQueue.mode === 'following' || record.autoQueue.mode === 'random' || record.autoQueue.next)
@@ -217,7 +217,7 @@ class WatchRooms {
           this.opening.has(id) ||
           this.closing.has(id) ||
           this.recoveries.has(id) ||
-          this.watch.events?.upcoming(id) ||
+          this.watch.events.upcoming(id) ||
           (this.watch.hub.config.singleRoom && id === this.registry.meta('singleRoomId'))
         )
           continue;
@@ -784,7 +784,7 @@ class WatchRooms {
     if (!(await current())) throw failure('Room access changed', 403);
     if (room && (room.mediaTransition || room.queueEditing))
       throw failure('Wait for the current queue or media operation before resetting');
-    this.watch.publications?.roomClosed(id);
+    this.watch.publications.roomClosed(id);
     if (room) room.mediaTransition = true;
     try {
       if (room) {
@@ -950,7 +950,6 @@ class WatchRooms {
     };
   }
   save(room, { closing = false, final = false } = {}) {
-    if (!room.saved) return Promise.resolve();
     if (room.transitionCommit) return this.track(room.transitionCommit.then(() => this.save(room, { closing, final })));
     const captured = final ? this.capture(room, { closing, at: room.removalAt ?? Date.now() }) : undefined;
     const previous = room.saving ? room.saving.catch(() => {}) : Promise.resolve();

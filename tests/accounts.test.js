@@ -34,7 +34,6 @@ test('server operator authority requires an explicit verified provider identity 
   for (const id of [undefined, '', randomUUID(), discordId, ordinary.id, admin.id, plexOwner.id]) {
     assert.equal(isServerOperator(accounts, config, id), false);
   }
-  assert.equal(isServerOperator(undefined, config, admin.id), false);
   // Manual matches reserve identities but cannot confer operator authority.
   const pending = accounts.assign(accounts.preview(discordId, '101'), admin.id);
   assert.equal(isServerOperator(accounts, config, pending), false);
