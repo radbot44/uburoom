@@ -592,8 +592,16 @@ button.queue-title-link:hover {
   white-space: nowrap;
   line-height: 1.3;
 }
+.queue-navigation .queue-navigation-idle {
+  visibility: hidden;
+}
 .queue-navigation-count:empty {
   display: none;
+}
+/* The floating scroll buttons sit over the timeline box; its bottom strip holds the "N queued" button
+   below the list, so it never covers the last row. */
+[data-view='list'] .queue-timeline {
+  padding-bottom: var(--space-44);
 }
 [data-view='list'] .queue-navigation {
   flex-direction: column;
@@ -626,12 +634,16 @@ button.queue-title-link:hover {
 [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
   isolation: isolate;
   overflow: hidden;
+}
+/* Dark theme: rows sit on a darkened blur of their artwork. In the light theme they keep the
+   ordinary surface tokens (elevated rows, the Now Playing tint) like the other list surfaces. */
+:root:not([data-theme='light']) [data-view='list'] :is(.queue-entry, .queue-history-entry, .queue-now-playing) {
   background: var(--chrome-background);
   --text: var(--chrome-text);
   --muted: var(--chrome-muted);
   color: var(--text);
 }
-[data-view='list'] .queue-row-backdrop {
+:root:not([data-theme='light']) [data-view='list'] .queue-row-backdrop {
   display: block;
   position: absolute;
   inset: -20px;
