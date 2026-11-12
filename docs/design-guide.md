@@ -96,7 +96,7 @@ Shared modal dialogs use `.watch-dialog` with a semantic `<header>` containing a
   - **Player settings (`#tracks-dialog`):** Groups related controls in two columns on wide screens, stacking in reading order on narrow screens.
   - **Account dialog (`#account-dialog`):** Houses Log out in `.dialog-footer.with-divider` separated from the scrollable account body.
   - **Rooms dialog (`#room-dialog`):** Places list tabs in `#room-chooser-nav`, uses the standard header Close button, and displays `.dialog-footer` (`[Cancel (.quiet)]` left, `[Create room (.primary)]` and `[Settings (.icon-button)]` right) only while in New room mode.
-  - **Room settings dialog (`#room-settings-dialog`):** Full settings workspace with navigation tabs, section panels, and header Close button.
+  - **Room settings dialog (`#room-settings-dialog`):** Full settings workspace with navigation tabs, section panels, and header Close button. At phone width the section tabs wrap onto a second row so every tab stays fully visible.
   - **Codec tester (`#codec-test-dialog`):** Semantic `<header>` with title and top-right Close button.
 
 ### Share Dialog (`#room-share-dialog`)
